@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.runners.domain.AgentKind
@@ -30,12 +31,20 @@ class KubernetesRuntimeDriverTest {
     private val api = FakeApi()
     private var tokenReads = 0
     private val settings = KubernetesSettings("https://k8s/", "ostrom", "/t", "/c", "fast", "5Gi", "ghcr")
-    private val driver = KubernetesRuntimeDriver(api.client, settings, "http://ostrom-server.ostrom.svc:8080", "img:1") { "sa-${++tokenReads}" }
+    private val driver = KubernetesRuntimeDriver(
+        api.client,
+        settings,
+        "http://ostrom-server.ostrom.svc:8080",
+        "img:1",
+    ) { "sa-${++tokenReads}" }
     private val session = session().copy(epoch = 4)
     private val hex = session.id.toHexString()
     private val ns = "/api/v1/namespaces/ostrom"
 
-    private fun spec(restricted: Boolean = true, repository: RepositorySpec? = RepositorySpec("https://github.com/acme/api", "main")) =
+    private fun spec(
+        restricted: Boolean = true,
+        repository: RepositorySpec? = RepositorySpec("https://github.com/acme/api", "main"),
+    ) =
         ExecutionSpec(
             session.id,
             ORG_A,
@@ -59,16 +68,25 @@ class KubernetesRuntimeDriverTest {
         assertEquals(listOf("POST $ns/persistentvolumeclaims", "POST $ns/persistentvolumeclaims"), api.lines())
         val claim = body(0)
         assertEquals("ostrom-ws-$hex", claim["metadata"]!!.jsonObject["name"]!!.jsonPrimitive.content)
-        assertEquals(hex, claim["metadata"]!!.jsonObject["labels"]!!.jsonObject["ostrom.run/session"]!!.jsonPrimitive.content)
+        assertEquals(
+            hex,
+            claim["metadata"]!!.jsonObject["labels"]!!.jsonObject["ostrom.run/session"]!!.jsonPrimitive.content,
+        )
         assertEquals("fast", claim["spec"]!!.jsonObject["storageClassName"]!!.jsonPrimitive.content)
-        assertEquals("5Gi", claim["spec"]!!.jsonObject["resources"]!!.jsonObject["requests"]!!.jsonObject["storage"]!!.jsonPrimitive.content)
+        val requests = claim["spec"]!!.jsonObject["resources"]!!.jsonObject["requests"]!!.jsonObject
+        assertEquals("5Gi", requests["storage"]!!.jsonPrimitive.content)
         assertEquals("Bearer sa-1", api.calls[0].authorization)
         assertEquals("Bearer sa-2", api.calls[1].authorization)
     }
 
     @Test
     fun aClaimWithoutStorageClassUsesTheClusterDefault() = runTest {
-        KubernetesRuntimeDriver(api.client, settings.copy(storageClass = null, imagePullSecret = null), "http://s", "img") { "t" }.ensureWorkspace(session)
+        KubernetesRuntimeDriver(
+            api.client,
+            settings.copy(storageClass = null, imagePullSecret = null),
+            "http://s",
+            "img",
+        ) { "t" }.ensureWorkspace(session)
         assertNull(body(0)["spec"]!!.jsonObject["storageClassName"])
     }
 
@@ -86,14 +104,19 @@ class KubernetesRuntimeDriverTest {
         assertEquals("ostrom-s-$hex-e4", metadata["name"]!!.jsonPrimitive.content)
         assertEquals("restricted", metadata["labels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
         assertEquals("4", metadata["labels"]!!.jsonObject["ostrom.run/epoch"]!!.jsonPrimitive.content)
-        assertEquals("20M", metadata["annotations"]!!.jsonObject["kubernetes.io/egress-bandwidth"]!!.jsonPrimitive.content)
+        assertEquals(
+            "20M",
+            metadata["annotations"]!!.jsonObject["kubernetes.io/egress-bandwidth"]!!.jsonPrimitive.content,
+        )
         val spec = pod["spec"]!!.jsonObject
         assertEquals("Never", spec["restartPolicy"]!!.jsonPrimitive.content)
         assertEquals("false", spec["automountServiceAccountToken"]!!.jsonPrimitive.content)
         assertEquals("ghcr", spec["imagePullSecrets"]!!.jsonArray[0].jsonObject["name"]!!.jsonPrimitive.content)
         val container = spec["containers"]!!.jsonArray[0].jsonObject
         assertEquals("img:1", container["image"]!!.jsonPrimitive.content)
-        val env = container["env"]!!.jsonArray.associate { it.jsonObject["name"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content }
+        val env = container["env"]!!.jsonArray.associate {
+            it.jsonObject["name"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content
+        }
         assertEquals("/run/ostrom/token", env["OSTROM_RUNNER_TOKEN_FILE"])
         assertNull(env["OSTROM_RUNNER_TOKEN"])
         assertEquals("https://github.com/acme/api", env["OSTROM_REPOSITORY_URL"])
@@ -104,14 +127,41 @@ class KubernetesRuntimeDriverTest {
         assertEquals("/run/ostrom/prompt", env["OSTROM_AGENT_PROMPT_FILE"])
         assertFalse("Fix the tests" in pod.toString())
         assertFalse("ostrom_runner_abc" in pod.toString())
-        assertEquals("ostrom-ws-$hex", spec["volumes"]!!.jsonArray[0].jsonObject["persistentVolumeClaim"]!!.jsonObject["claimName"]!!.jsonPrimitive.content)
-        assertEquals("ostrom-s-$hex-e4", spec["volumes"]!!.jsonArray[1].jsonObject["secret"]!!.jsonObject["secretName"]!!.jsonPrimitive.content)
+        val claimName = spec["volumes"]!!.jsonArray[0].jsonObject["persistentVolumeClaim"]!!.jsonObject["claimName"]
+        assertEquals("ostrom-ws-$hex", claimName!!.jsonPrimitive.content)
+        assertEquals(
+            "ostrom-s-$hex-e4",
+            spec["volumes"]!!.jsonArray[1].jsonObject["secret"]!!.jsonObject["secretName"]!!.jsonPrimitive.content,
+        )
+        assertEquals(
+            "1Gi",
+            spec["volumes"]!!.jsonArray[2].jsonObject["emptyDir"]!!.jsonObject["sizeLimit"]!!.jsonPrimitive.content,
+        )
+        assertEquals(
+            "true",
+            container["securityContext"]!!.jsonObject["readOnlyRootFilesystem"]!!.jsonPrimitive.content,
+        )
+        assertEquals("/tmp", container["volumeMounts"]!!.jsonArray[2].jsonObject["mountPath"]!!.jsonPrimitive.content)
+        assertEquals(
+            "2Gi",
+            container["resources"]!!.jsonObject["limits"]!!.jsonObject["ephemeral-storage"]!!.jsonPrimitive.content,
+        )
+        assertEquals(
+            "RuntimeDefault",
+            spec["securityContext"]!!.jsonObject["seccompProfile"]!!.jsonObject["type"]!!.jsonPrimitive.content,
+        )
+        assertNull(spec["priorityClassName"])
 
         // The policies are applied once per process.
-        driver.startExecution(spec(restricted = false, repository = RepositorySpec("https://github.com/acme/api", null)))
+        driver.startExecution(
+            spec(restricted = false, repository = RepositorySpec("https://github.com/acme/api", null)),
+        )
         assertEquals(listOf("POST $ns/secrets", "POST $ns/pods"), api.lines().drop(4))
         val open = body(5)
-        assertEquals("open", open["metadata"]!!.jsonObject["labels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
+        assertEquals(
+            "open",
+            open["metadata"]!!.jsonObject["labels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content,
+        )
         assertNull(open["metadata"]!!.jsonObject["annotations"])
         assertNull(body(4)["stringData"]!!.jsonObject["prompt"])
         assertFalse("OSTROM_AGENT_PROMPT_FILE" in open.toString())
@@ -119,10 +169,23 @@ class KubernetesRuntimeDriverTest {
     }
 
     @Test
+    fun sessionPodsTakeTheConfiguredLowPriorityClass() = runTest {
+        val low = KubernetesRuntimeDriver(
+            api.client,
+            settings.copy(priorityClass = "ostrom-low"),
+            "http://s",
+            "img:1",
+        ) { "t" }
+        low.startExecution(spec(repository = null))
+        assertEquals("ostrom-low", body(3)["spec"]!!.jsonObject["priorityClassName"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun existingPoliciesAreReplacedAtTheirVersion() = runTest {
         val policies = "/apis/networking.k8s.io/v1/namespaces/ostrom/networkpolicies"
         api.on("POST", policies, HttpStatusCode.Conflict to "{}")
-        api.on("GET", "$policies/ostrom-sessions-restricted", HttpStatusCode.OK to """{"metadata":{"resourceVersion":"41"}}""")
+        val versioned = """{"metadata":{"resourceVersion":"41"}}"""
+        api.on("GET", "$policies/ostrom-sessions-restricted", HttpStatusCode.OK to versioned)
         api.on("GET", "$policies/ostrom-sessions-open", HttpStatusCode.OK to """{"metadata":{}}""")
         driver.startExecution(spec(repository = null))
 
@@ -149,8 +212,10 @@ class KubernetesRuntimeDriverTest {
     @Test
     fun podPhasesMapToExecutionStates() = runTest {
         val path = "$ns/pods/ostrom-s-$hex-e4"
-        fun pod(phase: String, waiting: String? = null) = HttpStatusCode.OK to
-            """{"status":{"phase":"$phase","containerStatuses":[{"state":${if (waiting != null) """{"waiting":{"reason":"$waiting"}}""" else "{}"}}]}}"""
+        fun pod(phase: String, waiting: String? = null): Pair<HttpStatusCode, String> {
+            val state = if (waiting != null) """{"waiting":{"reason":"$waiting"}}""" else "{}"
+            return HttpStatusCode.OK to """{"status":{"phase":"$phase","containerStatuses":[{"state":$state}]}}"""
+        }
         val cases = listOf(
             pod("Pending") to ExecutionStatus.PENDING,
             pod("Pending", "ContainerCreating") to ExecutionStatus.PENDING,
@@ -197,19 +262,26 @@ class KubernetesRuntimeDriverTest {
 
     @Test
     fun thePoliciesBlockPrivateRangesAndRestrictPorts() {
-        val restricted = SessionNetworkPolicy.manifest("r", restricted = true)
+        val selector = mapOf("app.kubernetes.io/name" to "ostrom", "app.kubernetes.io/instance" to "prod")
+        val restricted = SessionNetworkPolicy.manifest("r", restricted = true, serverSelector = selector)
         val egress = restricted["spec"]!!.jsonObject["egress"]!!.jsonArray
         assertEquals(3, egress.size)
+        val server = egress[1].jsonObject["to"]!!.jsonArray[0].jsonObject["podSelector"]!!.jsonObject["matchLabels"]!!
+        assertEquals(selector, server.jsonObject.mapValues { it.value.jsonPrimitive.content })
         val internet = egress[2].jsonObject
         val v4 = internet["to"]!!.jsonArray[0].jsonObject["ipBlock"]!!.jsonObject
         assertEquals("0.0.0.0/0", v4["cidr"]!!.jsonPrimitive.content)
         val blocked = v4["except"]!!.jsonArray.map { it.jsonPrimitive.content }
-        assertTrue("10.0.0.0/8" in blocked && "169.254.0.0/16" in blocked && "172.16.0.0/12" in blocked && "192.168.0.0/16" in blocked)
-        assertEquals(listOf(80, 443, 22, 9418), internet["ports"]!!.jsonArray.map { it.jsonObject["port"]!!.jsonPrimitive.content.toInt() })
-        assertEquals("restricted", restricted["spec"]!!.jsonObject["podSelector"]!!.jsonObject["matchLabels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
+        assertTrue(blocked.containsAll(listOf("10.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16")))
+        assertEquals(
+            listOf(80, 443, 22, 9418),
+            internet["ports"]!!.jsonArray.map { it.jsonObject["port"]!!.jsonPrimitive.content.toInt() },
+        )
+        val podSelector = restricted["spec"]!!.jsonObject["podSelector"]!!.jsonObject["matchLabels"]!!.jsonObject
+        assertEquals("restricted", podSelector["ostrom.run/egress"]!!.jsonPrimitive.content)
         assertEquals(0, restricted["spec"]!!.jsonObject["ingress"]!!.jsonArray.size)
 
-        val open = SessionNetworkPolicy.manifest("o", restricted = false)
+        val open = SessionNetworkPolicy.manifest("o", restricted = false, serverSelector = selector)
         assertNull(open["spec"]!!.jsonObject["egress"]!!.jsonArray[2].jsonObject["ports"])
     }
 }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.infrastructure
 
 import dev.ostrom.server.runners.domain.CloudSession
@@ -136,6 +137,9 @@ class DockerRuntimeDriver(
             putJsonObject("RestartPolicy") { put("Name", "no") }
             putJsonArray("CapDrop") { add(JsonPrimitive("ALL")) }
             putJsonArray("SecurityOpt") { add(JsonPrimitive("no-new-privileges")) }
+            put("ReadonlyRootfs", true)
+            putJsonObject("Tmpfs") { put("/tmp", "rw,nosuid,size=1g") }
+            put("PidsLimit", PIDS_LIMIT)
             put("Memory", MEMORY_BYTES)
             put("NanoCpus", NANO_CPUS)
         }
@@ -165,6 +169,7 @@ class DockerRuntimeDriver(
         private val GONE_OR_DONE = setOf(HttpStatusCode.NotModified, HttpStatusCode.NotFound)
         private const val MEMORY_BYTES = 4L * 1024 * 1024 * 1024
         private const val NANO_CPUS = 2_000_000_000L
+        private const val PIDS_LIMIT = 4096
 
         /**
          * Splits an image reference into the name and the tag the engine's pull expects.

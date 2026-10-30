@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.fakes
 
 import io.ktor.client.HttpClient
@@ -12,7 +13,14 @@ import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 
 /** A recorded call to a fake HTTP API. */
-data class ApiCall(val method: String, val path: String, val query: Map<String, String>, val body: String?, val authorization: String?)
+data class ApiCall(
+    val method: String,
+    val path: String,
+    val query: Map<String,
+    String>,
+    val body: String?,
+    val authorization: String?,
+)
 
 /**
  * A fake HTTP API: answers each call with [answer] (path → status and body), 200 `{}` by default, and records it.

@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 rootProject.name = "ostrom-server"
 
-enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+// No TYPESAFE_PROJECT_ACCESSORS (CONVENTIONS section 9): the module `artifacts` would generate an accessor that
+// clashes with ProjectDependency.getArtifacts() and breaks the build. Modules depend on project(":path").
 
 pluginManagement {
     includeBuild("build-logic")

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.runners.domain.DesiredState
@@ -29,10 +30,19 @@ class RunnerHeartbeatUseCaseTest {
     private val startedAt = clock.now
 
     private fun running(state: SessionState = SessionState.CREATING, desired: DesiredState = DesiredState.RUNNING) =
-        session(state = state, desired = desired).copy(epoch = 3, runnerTokenHash = "hash(tok)", executionStartedAt = startedAt)
+        session(
+            state = state,
+            desired = desired,
+        ).copy(epoch = 3, runnerTokenHash = "hash(tok)", executionStartedAt = startedAt)
             .also { repository.put(it) }
 
-    private fun beat(id: Uuid, epoch: Long = 3, ready: Boolean = false, stopped: Boolean = false, model: kotlin.time.Instant? = null) =
+    private fun beat(
+        id: Uuid,
+        epoch: Long = 3,
+        ready: Boolean = false,
+        stopped: Boolean = false,
+        model: kotlin.time.Instant? = null,
+    ) =
         RunnerHeartbeat(id, epoch, ready, stopped, model)
 
     @Test
@@ -73,7 +83,9 @@ class RunnerHeartbeatUseCaseTest {
 
     @Test
     fun usageCountsTheGapBetweenHeartbeatsCappedAtAMinute() = runTest {
-        val session = running(state = SessionState.RUNNING).copy(lastHeartbeatAt = startedAt).also { repository.put(it) }
+        val session = running(
+            state = SessionState.RUNNING,
+        ).copy(lastHeartbeatAt = startedAt).also { repository.put(it) }
         clock.now += 15.seconds
         heartbeat("tok", beat(session.id))
         clock.now += 10.minutes
@@ -140,7 +152,9 @@ class RunnerHeartbeatUseCaseTest {
         repository.loseNextRaces = 1
         assertEquals(SessionState.RUNNING, heartbeat("tok", beat(session.id, ready = true)).state)
 
-        val other = running(state = SessionState.RUNNING).copy(id = Uuid.random(), runnerTokenHash = "hash(tok2)").also { repository.put(it) }
+        val other = running(
+            state = SessionState.RUNNING,
+        ).copy(id = Uuid.random(), runnerTokenHash = "hash(tok2)").also { repository.put(it) }
         repository.loseNextRaces = 3
         assertFailsWith<ExecutionFencedException> { heartbeat("tok2", beat(other.id)) }
     }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.domain
 
 import kotlin.time.Clock
@@ -82,17 +83,16 @@ class ReconcileCloudSessionUseCaseImpl(
         )
         if (session.state == SessionState.RESUMING) return write(session.toPaused(now, failure), null)
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
-        val failed = session.moveTo(SessionState.FAILED, now)
+        val ended = session.moveTo(SessionState.FAILED, now)
             .copy(failure = failure, runnerTokenHash = null, executionStartedAt = null)
-        return write(failed, null)
+        return write(ended, null)
     }
 
     private suspend fun startExecution(session: CloudSession, now: Instant): Instant? {
-        val plan = plans.planFor(session.orgId)
-        if (hoursExhausted(session, plan, now)) {
+        val refused = planFailure(session, now)
+        if (refused != null) {
             driver.stopExecutions(session)
-            val failure = SessionFailure("hours_exhausted", "The cloud hours of this month are used up.")
-            return write(session.toPaused(now, failure).copy(desiredState = DesiredState.PAUSED), null)
+            return write(session.toPaused(now, refused).copy(desiredState = DesiredState.PAUSED), null)
         }
         driver.ensureWorkspace(session)
         val token = tokens.mint()
@@ -150,9 +150,7 @@ class ReconcileCloudSessionUseCaseImpl(
                 )
             now - (session.readyAt ?: now) >= session.limits.maxRunMinutes.minutes ->
                 SessionFailure("max_duration", "Paused after ${session.limits.maxRunMinutes} minutes of running.")
-            hoursExhausted(session, plans.planFor(session.orgId), now) ->
-                SessionFailure("hours_exhausted", "The cloud hours of this month are used up.")
-            else -> return now + WATCH_DELAY
+            else -> planFailure(session, now) ?: return now + WATCH_DELAY
         }
         return write(session.toPausing(now, reason).copy(desiredState = DesiredState.PAUSED), now + STEP_DELAY)
     }
@@ -176,9 +174,16 @@ class ReconcileCloudSessionUseCaseImpl(
         )
     }
 
-    private suspend fun hoursExhausted(session: CloudSession, plan: CloudPlan, now: Instant): Boolean {
-        val hours = plan.monthlyHours ?: return false
-        return repository.usageSeconds(session.orgId, monthOf(now)) >= hours * SECONDS_PER_HOUR
+    /** Why the organization's plan stops the session now: cloud sessions closed to it, or its hours used up. */
+    private suspend fun planFailure(session: CloudSession, now: Instant): SessionFailure? {
+        val plan = plans.planFor(session.orgId)
+        val hours = plan.monthlyHours?.let { it * SECONDS_PER_HOUR }
+        return when {
+            !plan.available -> SessionFailure("closed", "Cloud sessions are closed to this organization.")
+            hours != null && repository.usageSeconds(session.orgId, monthOf(now)) >= hours ->
+                SessionFailure("hours_exhausted", "The cloud hours of this month are used up.")
+            else -> null
+        }
     }
 
     /** Writes a step; a lost race asks for an immediate new look, which re-reads the row. */

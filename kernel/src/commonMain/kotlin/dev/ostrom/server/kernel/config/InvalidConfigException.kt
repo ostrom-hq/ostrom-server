@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.config
 
 /** A configuration value is missing or invalid; the server refuses to start rather than guess. */

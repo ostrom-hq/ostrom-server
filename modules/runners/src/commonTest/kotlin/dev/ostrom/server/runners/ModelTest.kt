@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
+import dev.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
+import dev.ostrom.server.runners.domain.AllowedOrgs
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -17,8 +20,10 @@ import dev.ostrom.server.runners.domain.RuntimeNames
 import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.domain.SessionStateMachine
 import dev.ostrom.server.runners.fakes.ORG_A
+import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.infrastructure.DisabledRuntimeDriver
+import dev.ostrom.server.runners.infrastructure.KubernetesSettings
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.presentation.CLOUD_READ
@@ -47,7 +52,10 @@ class ModelTest {
         assertFalse(SessionStateMachine.canMove(SessionState.PAUSED, SessionState.RUNNING))
         assertFalse(SessionStateMachine.canMove(SessionState.FAILED, SessionState.RESUMING))
         SessionStateMachine.requireTransition(SessionState.PAUSING, SessionState.RUNNING)
-        assertFailsWith<IllegalStateException> { SessionStateMachine.requireTransition(SessionState.RUNNING, SessionState.CREATING) }
+        assertFailsWith<IllegalStateException> { SessionStateMachine.requireTransition(
+            SessionState.RUNNING,
+            SessionState.CREATING,
+        ) }
     }
 
     @Test
@@ -58,14 +66,17 @@ class ModelTest {
         assertFailsWith<IllegalArgumentException> { SessionState.fromWire("sleeping") }
         assertFailsWith<IllegalArgumentException> { DesiredState.fromWire("sleeping") }
         assertNull(AgentKind.fromWire("cursor"))
-        assertEquals(listOf(SessionState.CREATING, SessionState.RUNNING, SessionState.PAUSING, SessionState.RESUMING), SessionState.entries.filter { it.holdsExecution })
+        assertEquals(
+            listOf(SessionState.CREATING, SessionState.RUNNING, SessionState.PAUSING, SessionState.RESUMING),
+            SessionState.entries.filter { it.holdsExecution },
+        )
         assertEquals(listOf(SessionState.TERMINATED, SessionState.FAILED), SessionState.entries.filter { it.isFinal })
         assertEquals("bash", AgentKind.SHELL.command)
     }
 
     @Test
     fun theFreePlanIsTheDecidedOne() = runTest {
-        assertEquals(CloudPlan(5, 300, 30, 240, true), FreeCloudPlanProvider().planFor(ORG_A))
+        assertEquals(CloudPlan(5, 300, 30, 240, true, true), FreeCloudPlanProvider().planFor(ORG_A))
     }
 
     @Test
@@ -78,7 +89,15 @@ class ModelTest {
 
     @Test
     fun anExecutionSpecNeverPrintsItsToken() {
-        val spec = ExecutionSpec(Uuid.random(), ORG_A, 1, AgentKind.CLAUDE, null, "ostrom_runner_secret", CloudPlan.FREE.sessionLimits())
+        val spec = ExecutionSpec(
+            Uuid.random(),
+            ORG_A,
+            1,
+            AgentKind.CLAUDE,
+            null,
+            "ostrom_runner_secret",
+            CloudPlan.FREE.sessionLimits(),
+        )
         assertFalse("secret" in spec.toString())
         val withPrompt = spec.copy(prompt = "private words")
         assertFalse("private" in withPrompt.toString())
@@ -142,9 +161,13 @@ class ModelTest {
         assertEquals("10Gi", config.kubernetes.workspaceSize)
         assertNull(config.kubernetes.storageClass)
         assertNull(config.kubernetes.imagePullSecret)
+        assertNull(config.kubernetes.priorityClass)
         assertEquals("http://127.0.0.1:2375", config.docker.apiUrl)
         assertNull(config.docker.network)
-        assertEquals(RunnersConfig.DriverKind.NONE, RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "none"))).driver)
+        assertEquals(
+            RunnersConfig.DriverKind.NONE,
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "none"))).driver,
+        )
     }
 
     @Test
@@ -162,6 +185,8 @@ class ModelTest {
                     "OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS" to "fast",
                     "OSTROM_RUNNERS_WORKSPACE_SIZE" to "5Gi",
                     "OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET" to "ghcr",
+                    "OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS" to "ostrom-low",
+                    "OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to " app.kubernetes.io/instance=prod , role=api",
                     "OSTROM_RUNNERS_DOCKER_API_URL" to "http://docker:2375",
                     "OSTROM_RUNNERS_DOCKER_NETWORK" to "ostrom",
                 ),
@@ -177,20 +202,57 @@ class ModelTest {
         assertEquals("fast", config.kubernetes.storageClass)
         assertEquals("5Gi", config.kubernetes.workspaceSize)
         assertEquals("ghcr", config.kubernetes.imagePullSecret)
+        assertEquals("ostrom-low", config.kubernetes.priorityClass)
+        assertEquals(mapOf("app.kubernetes.io/instance" to "prod", "role" to "api"), config.kubernetes.serverSelector)
         assertEquals("http://docker:2375", config.docker.apiUrl)
         assertEquals("ostrom", config.docker.network)
         assertEquals(
             RunnersConfig.DriverKind.DOCKER,
-            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "https://x"))).driver,
+            RunnersConfig.from(
+                MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "https://x")),
+            ).driver,
         )
     }
 
     @Test
-    fun theConfigurationRefusesAnUnknownDriverOrAMissingServerUrl() {
-        assertFailsWith<InvalidConfigException> { RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "nomad"))) }
-        assertFailsWith<InvalidConfigException> { RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker"))) }
+    fun theServerSelectorDefaultsToTheChartLabelsAndIsChecked() {
+        val default = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to " ")))
+        assertEquals(KubernetesSettings.DEFAULT_SERVER_SELECTOR, default.kubernetes.serverSelector)
         assertFailsWith<InvalidConfigException> {
-            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "ftp://x")))
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to "a=b,c")))
         }
+    }
+
+    @Test
+    fun theConfigurationRefusesAnUnknownDriverOrAMissingServerUrl() {
+        assertFailsWith<InvalidConfigException> { RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "nomad")),
+        ) }
+        assertFailsWith<InvalidConfigException> { RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker")),
+        ) }
+        assertFailsWith<InvalidConfigException> {
+            RunnersConfig.from(
+                MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "ftp://x")),
+            )
+        }
+    }
+
+    @Test
+    fun cloudSessionsAreOpenOnlyToTheAllowedOrganizations() = runTest {
+        assertEquals(AllowedOrgs.NONE, RunnersConfig.from(MapConfigSource(emptyMap())).allowedOrgs)
+        val everyone = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to " * "))).allowedOrgs
+        assertTrue(ORG_B in everyone)
+        val listed = RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to "$ORG_A, ,")),
+        ).allowedOrgs
+        assertTrue(ORG_A in listed)
+        assertFalse(ORG_B in listed)
+        assertFailsWith<InvalidConfigException> {
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to "acme")))
+        }
+        val plans = AllowlistedCloudPlanProvider(listed, FreeCloudPlanProvider())
+        assertTrue(plans.planFor(ORG_A).available)
+        assertFalse(plans.planFor(ORG_B).available)
     }
 }

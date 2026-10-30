@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.kernel.config.MapConfigSource
@@ -37,11 +38,25 @@ import kotlin.test.assertTrue
 
 class DockerRuntimeDriverTest {
     private val api = FakeApi()
-    private val driver = DockerRuntimeDriver(api.client, DockerSettings("http://docker:2375/", "ostrom"), "http://host.docker.internal:8080", "ghcr.io/ostrom-hq/ostrom-runner:1.2")
+    private val driver = DockerRuntimeDriver(
+        api.client,
+        DockerSettings("http://docker:2375/", "ostrom"),
+        "http://host.docker.internal:8080",
+        "ghcr.io/ostrom-hq/ostrom-runner:1.2",
+    )
     private val session = session().copy(epoch = 2)
     private val hex = session.id.toHexString()
     private val name = "ostrom-s-$hex-e2"
-    private val spec = ExecutionSpec(session.id, ORG_A, 2, AgentKind.SHELL, null, "ostrom_runner_xyz", CloudPlan.FREE.sessionLimits(), prompt = "hi")
+    private val spec = ExecutionSpec(
+        session.id,
+        ORG_A,
+        2,
+        AgentKind.SHELL,
+        null,
+        "ostrom_runner_xyz",
+        CloudPlan.FREE.sessionLimits(),
+        prompt = "hi",
+    )
 
     private fun body(index: Int): JsonObject = Json.parseToJsonElement(api.calls[index].body!!).jsonObject
 
@@ -71,6 +86,8 @@ class DockerRuntimeDriverTest {
         assertTrue("OSTROM_SERVER_URL=http://host.docker.internal:8080" in env)
         assertFalse(env.any { it.startsWith("OSTROM_REPOSITORY_URL") })
         val host = container["HostConfig"]!!.jsonObject
+        assertEquals("true", host["ReadonlyRootfs"]!!.jsonPrimitive.content)
+        assertEquals("rw,nosuid,size=1g", host["Tmpfs"]!!.jsonObject["/tmp"]!!.jsonPrimitive.content)
         assertEquals("ostrom-ws-$hex:/workspace", host["Binds"]!!.jsonArray[0].jsonPrimitive.content)
         assertEquals("ostrom", host["NetworkMode"]!!.jsonPrimitive.content)
         assertEquals("no", host["RestartPolicy"]!!.jsonObject["Name"]!!.jsonPrimitive.content)
@@ -83,7 +100,15 @@ class DockerRuntimeDriverTest {
         api.on("POST", "/containers/create", HttpStatusCode.NotFound to "{}", HttpStatusCode.Created to "{}")
         driver.startExecution(spec)
 
-        assertEquals(listOf("POST /containers/create", "POST /images/create", "POST /containers/create", "POST /containers/$name/start"), api.lines())
+        assertEquals(
+            listOf(
+                "POST /containers/create",
+                "POST /images/create",
+                "POST /containers/create",
+                "POST /containers/$name/start",
+            ),
+            api.lines(),
+        )
         assertEquals("ghcr.io/ostrom-hq/ostrom-runner", api.calls[1].query["fromImage"])
         assertEquals("1.2", api.calls[1].query["tag"])
     }
@@ -134,7 +159,13 @@ class DockerRuntimeDriverTest {
         driver.stopExecutions(session)
 
         assertEquals(
-            listOf("GET /containers/json", "POST /containers/a/stop", "DELETE /containers/a", "POST /containers/b/stop", "DELETE /containers/b"),
+            listOf(
+                "GET /containers/json",
+                "POST /containers/a/stop",
+                "DELETE /containers/a",
+                "POST /containers/b/stop",
+                "DELETE /containers/b",
+            ),
             api.lines(),
         )
         assertEquals("""{"label":["ostrom.run/session=$hex"]}""", api.calls[0].query["filters"])
@@ -182,9 +213,13 @@ class DockerRuntimeDriverTest {
     fun theConfigurationChoosesTheDriver() {
         val none = RunnersConfig.from(MapConfigSource(emptyMap()))
         assertIs<DisabledRuntimeDriver>(RuntimeDrivers.create(none))
-        val kubernetes = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes", "OSTROM_RUNNERS_SERVER_URL" to "http://s")))
+        val kubernetes = RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "kubernetes", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
+        )
         assertIs<KubernetesRuntimeDriver>(RuntimeDrivers.create(kubernetes) { "token" })
-        val docker = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "http://s")))
+        val docker = RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "http://s")),
+        )
         assertIs<DockerRuntimeDriver>(RuntimeDrivers.create(docker))
     }
 
