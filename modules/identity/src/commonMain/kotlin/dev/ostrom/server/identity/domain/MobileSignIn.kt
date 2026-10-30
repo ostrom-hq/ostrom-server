@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -24,6 +25,15 @@ const val MOBILE_CHALLENGE_METHOD = "S256"
 
 /** How long the one-time code of a mobile sign-in works: the app exchanges it at once. */
 val MOBILE_CODE_LIFETIME: Duration = 60.seconds
+
+/**
+ * How many phones a person keeps signed in: a new sign-in beyond it revokes the oldest app token (a reinstalled app, a
+ * wiped keychain or a replaced phone never locks the person out).
+ */
+const val MAX_PHONES_PER_USER = 5
+
+/** The rate-limit window of the exchanges and the unlocks. */
+internal val MOBILE_LIMIT_WINDOW: Duration = 10.minutes
 
 /** How long the app's token lasts before the person signs in again on the phone. */
 val MOBILE_TOKEN_LIFETIME: Duration = 30.days

@@ -2,7 +2,6 @@
 package dev.ostrom.server.identity.domain
 
 import kotlin.time.Clock
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -105,7 +104,7 @@ class CompleteMobileSignInUseCaseImpl(
 interface ExchangeMobileCodeUseCase {
     /**
      * Takes the code (once, even when what follows fails), checks the redirect URI and the PKCE verifier, then issues
-     * the app's token and its unlock key.
+     * the app's token and its unlock key; beyond [MAX_PHONES_PER_USER] live app tokens, the oldest are revoked.
      *
      * @param code The one-time code from the deep link.
      * @param codeVerifier The PKCE verifier only the app knows.
@@ -117,7 +116,6 @@ interface ExchangeMobileCodeUseCase {
      * @throws RateLimitedException When the address exchanges too many codes.
      * @throws InvalidMobileCodeException When the code is unknown, used or expired, or the verifier or the redirect
      *   URI does not match.
-     * @throws TooManyTokensException When the user already has [MAX_TOKENS_PER_USER] live tokens.
      */
     suspend operator fun invoke(
         code: String,
@@ -132,7 +130,7 @@ interface ExchangeMobileCodeUseCase {
  *
  * @param codes The one-time codes.
  * @param mobileTokens Stores the app's token with its unlock key.
- * @param tokens Counts the user's live tokens, for the cap.
+ * @param tokens Lists and revokes the user's app tokens, for the cap of [MAX_PHONES_PER_USER].
  * @param users Reads the user.
  * @param services Makes and hashes secrets, computes the PKCE challenge, limits the rate; the clock.
  * @param audit The audit log.
@@ -151,7 +149,7 @@ class ExchangeMobileCodeUseCaseImpl(
         redirectUri: String,
         source: String,
     ): IssuedMobileToken {
-        if (!services.limiter.tryAcquire("mobile-token:$source", EXCHANGE_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
+        if (!services.limiter.tryAcquire("mobile-token:$source", EXCHANGE_LIMIT, MOBILE_LIMIT_WINDOW)) {
             throw RateLimitedException()
         }
         val now = services.clock.nowMillis()
@@ -167,8 +165,11 @@ class ExchangeMobileCodeUseCaseImpl(
         isPkceVerifier(verifier) && constantTimeEquals(services.hasher.pkceChallenge(verifier), codeChallenge)
 
     private suspend fun issueToken(user: User, now: Instant): IssuedMobileToken {
-        val live = tokens.countLive(user.id, USER_TOKEN_KINDS, now)
-        if (live >= MAX_TOKENS_PER_USER) throw TooManyTokensException()
+        // listLive is newest first: what is left beyond the newest MAX_PHONES_PER_USER - 1 makes room for this one.
+        tokens.listLive(user.id, MOBILE_KIND, now).drop(MAX_PHONES_PER_USER - 1).forEach {
+            tokens.revoke(user.id, it.id, now)
+            audit.record(AuditEntry(null, user.id, "token.revoked", "token", it.id.toString(), MOBILE_DETAILS))
+        }
         val expiresAt = now + MOBILE_TOKEN_LIFETIME
         val issued = issue(services.generator, TokenKind.MOBILE) { id, hint ->
             val name = MOBILE_TOKEN_NAME
@@ -176,15 +177,15 @@ class ExchangeMobileCodeUseCaseImpl(
         }
         val unlockKey = services.generator.secret()
         mobileTokens.create(issued.token, services.hasher.hash(issued.secret), services.hasher.hash(unlockKey))
-        val details = mapOf("kind" to "mobile")
-        audit.record(AuditEntry(null, user.id, "token.created", "token", issued.token.id.toString(), details))
+        audit.record(AuditEntry(null, user.id, "token.created", "token", issued.token.id.toString(), MOBILE_DETAILS))
         return IssuedMobileToken(issued, unlockKey, user, expiresAt)
     }
 
     private companion object {
         const val EXCHANGE_LIMIT = 30
-        const val LIMIT_WINDOW_MINUTES = 10
         const val MOBILE_TOKEN_NAME = "Ostrom app"
+        val MOBILE_KIND = setOf(TokenKind.MOBILE)
+        val MOBILE_DETAILS = mapOf("kind" to "mobile")
     }
 }
 
@@ -196,13 +197,15 @@ interface UnlockMobileAppUseCase {
      * @param userId The token's owner.
      * @param tokenId The app's token that calls.
      * @param unlockKey The key the app read from behind the phone's biometrics.
+     * @param source Who is asking (the client address): with the token, the rate limit, so a copy of the token used
+     *   elsewhere cannot exhaust the phone's unlocks.
      *
      * @return When the unlock was recorded: a yes is accepted for five minutes after it.
      *
      * @throws RateLimitedException When the token unlocks too often.
      * @throws MobileUnlockRefusedException When the key is wrong or the token is not a live app token.
      */
-    suspend operator fun invoke(userId: Uuid, tokenId: Uuid, unlockKey: String): Instant
+    suspend operator fun invoke(userId: Uuid, tokenId: Uuid, unlockKey: String, source: String): Instant
 }
 
 /**
@@ -210,7 +213,7 @@ interface UnlockMobileAppUseCase {
  *
  * @param mobileTokens The app's tokens.
  * @param hasher Hashes the key.
- * @param limiter Limits the unlocks per token.
+ * @param limiter Limits the unlocks per token and address.
  * @param audit Records each unlock: the proof behind a yes from the phone.
  * @param clock The clock.
  */
@@ -221,8 +224,8 @@ class UnlockMobileAppUseCaseImpl(
     private val audit: AuditLog,
     private val clock: Clock,
 ) : UnlockMobileAppUseCase {
-    override suspend fun invoke(userId: Uuid, tokenId: Uuid, unlockKey: String): Instant {
-        if (!limiter.tryAcquire("mobile-unlock:$tokenId", UNLOCK_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
+    override suspend fun invoke(userId: Uuid, tokenId: Uuid, unlockKey: String, source: String): Instant {
+        if (!limiter.tryAcquire("mobile-unlock:$tokenId:$source", UNLOCK_LIMIT, MOBILE_LIMIT_WINDOW)) {
             throw RateLimitedException()
         }
         val now = clock.nowMillis()
@@ -236,6 +239,5 @@ class UnlockMobileAppUseCaseImpl(
 
     private companion object {
         const val UNLOCK_LIMIT = 30
-        const val LIMIT_WINDOW_MINUTES = 10
     }
 }

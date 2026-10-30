@@ -8,12 +8,13 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * The token kinds a user sees, revokes and is capped on in the console: a lost phone's token is revoked there.
+ * The token kinds a user creates and rotates, capped at [MAX_TOKENS_PER_USER]. The app's tokens are not among them:
+ * they have their own cap ([MAX_PHONES_PER_USER]), and a phone signs in again instead of rotating (its unlock key).
  */
-val USER_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.PERSONAL, TokenKind.CLI, TokenKind.MOBILE)
+val USER_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.PERSONAL, TokenKind.CLI)
 
-/** The token kinds a user rotates: the app's token keeps its unlock key, so a phone signs in again instead. */
-val ROTATABLE_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.PERSONAL, TokenKind.CLI)
+/** The token kinds the console lists and revokes: a lost phone's token is revoked there. */
+val LISTED_TOKEN_KINDS: Set<TokenKind> = USER_TOKEN_KINDS + TokenKind.MOBILE
 
 /** How many characters of a secret are shown to recognize it (after its prefix). */
 private const val HINT_LENGTH = 12
@@ -122,7 +123,8 @@ interface ListTokensUseCase {
  * @param clock The clock.
  */
 class ListTokensUseCaseImpl(private val tokens: ApiTokensRepository, private val clock: Clock) : ListTokensUseCase {
-    override suspend fun invoke(userId: Uuid): List<ApiToken> = tokens.listLive(userId, USER_TOKEN_KINDS, clock.now())
+    override suspend fun invoke(userId: Uuid): List<ApiToken> =
+        tokens.listLive(userId, LISTED_TOKEN_KINDS, clock.now())
 }
 
 /** Revokes one of the user's tokens. */
@@ -209,7 +211,7 @@ class RotateTokenUseCaseImpl(
 
     /** A live personal or CLI token: an agent or app token, a revoked or an expired one is never rotated. */
     private fun ApiToken.isRotatableAt(now: Instant): Boolean =
-        kind in ROTATABLE_TOKEN_KINDS && revokedAt == null && expiresAt?.let { it <= now } != true
+        kind in USER_TOKEN_KINDS && revokedAt == null && expiresAt?.let { it <= now } != true
 }
 
 /**

@@ -18,7 +18,7 @@ import dev.ostrom.server.identity.domain.MOBILE_ACCESS_DENIED
 import dev.ostrom.server.identity.domain.MOBILE_LINK_REQUIRED
 import dev.ostrom.server.identity.domain.MOBILE_REFUSED
 import dev.ostrom.server.identity.domain.ListTokensUseCaseImpl
-import dev.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
+import dev.ostrom.server.identity.domain.MAX_PHONES_PER_USER
 import dev.ostrom.server.identity.domain.MOBILE_SCOPES
 import dev.ostrom.server.identity.domain.MobileCallback
 import dev.ostrom.server.identity.domain.MobileClient
@@ -33,7 +33,6 @@ import dev.ostrom.server.identity.domain.StartOAuthSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.TokenNotFoundException
-import dev.ostrom.server.identity.domain.TooManyTokensException
 import dev.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.domain.grantedScopes
@@ -283,12 +282,12 @@ class MobileSignInTest {
         assertNull(before.authenticatedAt)
 
         clock.now += 1.days
-        assertEquals(clock.now, unlock(token.userId, token.id, issued.unlockKey))
+        assertEquals(clock.now, unlock(token.userId, token.id, issued.unlockKey, "ip"))
         val unlocked = assertNotNull(authenticator.authenticate(issued.token.secret))
         assertEquals(clock.now, unlocked.authenticatedAt)
         assertEquals(MOBILE_SCOPES, unlocked.scopes)
         assertEquals("token.unlocked", audit.entries.last().action)
-        assertEquals(listOf("mobile-unlock:${token.id}"), limiter.keys.filter { it.startsWith("mobile-unlock") })
+        assertEquals(listOf("mobile-unlock:${token.id}:ip"), limiter.keys.filter { it.startsWith("mobile-unlock") })
 
         clock.now += 5.minutes
         assertTrue(ANSWER_SCOPE in assertNotNull(authenticator.authenticate(issued.token.secret)).scopes)
@@ -301,7 +300,7 @@ class MobileSignInTest {
     fun unlocksAreRateLimitedPerToken() = runTest {
         limiter.allow = false
 
-        assertFailsWith<RateLimitedException> { unlock(Uuid.random(), Uuid.random(), "key") }
+        assertFailsWith<RateLimitedException> { unlock(Uuid.random(), Uuid.random(), "key", "ip") }
     }
 
     @Test
@@ -320,18 +319,18 @@ class MobileSignInTest {
     }
 
     @Test
-    fun aPersonAtTheTokenCapRevokesOneBeforeAnotherPhone() = runTest {
-        val state = startMobile()
-        val code = assertNotNull(completeMobile("github", state, state, "good", null).code)
-        val userId = users.users.values.single().id
-        repeat(MAX_TOKENS_PER_USER) { n ->
-            apiTokens.tokens["h(osp_$n)"] = ApiToken(
-                Uuid.random(), userId, null, "t$n", TokenKind.PERSONAL, setOf("profile:read"), "osp_$n", null,
-                clock.now, null, null, null,
-            )
+    fun aSixthPhoneSignsInAndTheOldestIsSignedOut() = runTest {
+        val phones = (1..MAX_PHONES_PER_USER + 1).map {
+            clock.now += 1.seconds
+            val state = startMobile()
+            val code = assertNotNull(completeMobile("github", state, state, "good", null).code)
+            exchange(code, verifier, APP_REDIRECT_URI, "ip").token
         }
 
-        assertFailsWith<TooManyTokensException> { exchange(code, verifier, APP_REDIRECT_URI, "ip") }
+        assertNull(authenticator.authenticate(phones.first().secret), "The oldest phone is signed out")
+        phones.drop(1).forEach { assertNotNull(authenticator.authenticate(it.secret)) }
+        val revoked = audit.entries.filter { it.action == "token.revoked" }
+        assertEquals(listOf(phones.first().token.id.toString()), revoked.map { it.targetId })
     }
 
     @Test
@@ -341,12 +340,12 @@ class MobileSignInTest {
         val issued = exchange(code, verifier, APP_REDIRECT_URI, "ip")
         val token = issued.token.token
 
-        assertFailsWith<MobileUnlockRefusedException> { unlock(token.userId, token.id, "wrong") }
-        assertFailsWith<MobileUnlockRefusedException> { unlock(token.userId, token.id, "") }
-        assertFailsWith<MobileUnlockRefusedException> { unlock(token.userId, token.id, "k".repeat(129)) }
-        assertFailsWith<MobileUnlockRefusedException> { unlock(Uuid.random(), token.id, issued.unlockKey) }
+        assertFailsWith<MobileUnlockRefusedException> { unlock(token.userId, token.id, "wrong", "ip") }
+        assertFailsWith<MobileUnlockRefusedException> { unlock(token.userId, token.id, "", "ip") }
+        assertFailsWith<MobileUnlockRefusedException> { unlock(token.userId, token.id, "k".repeat(129), "ip") }
+        assertFailsWith<MobileUnlockRefusedException> { unlock(Uuid.random(), token.id, issued.unlockKey, "ip") }
         clock.now += 31.days
-        assertFailsWith<MobileUnlockRefusedException>("Expired") { unlock(token.userId, token.id, issued.unlockKey) }
+        assertFailsWith<MobileUnlockRefusedException>("Expired") { unlock(token.userId, token.id, issued.unlockKey, "ip") }
         assertNull(apiTokens.tokens.values.single().authenticatedAt)
     }
 
