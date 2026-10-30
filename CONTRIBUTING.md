@@ -101,4 +101,5 @@ Pull requests that clearly were not run or read are closed with a link to this s
 
 [release-please](https://github.com/googleapis/release-please) keeps a release pull request open on `main`, built from
 the Conventional Commit titles. Merging it tags the version, writes [CHANGELOG.md](CHANGELOG.md) and publishes the
-release. Do not edit the changelog or the version by hand.
+release. Do not edit the changelog or the version by hand. Until the release GitHub App is configured, a release pull
+request opened by `GITHUB_TOKEN` does not start CI: close and reopen it to run the checks.

@@ -32,7 +32,7 @@ jobs:
           case "$perm" in admin|maintain|write) echo "dco: $AUTHOR is a maintainer ($perm)"; exit 0;; esac
           missing=0
           while IFS=$'\t' read -r sha email msg; do
-            if ! printf '%s' "$msg" | base64 -d | grep -qiE "^Signed-off-by: .+ <$email>$"; then
+            if ! printf '%s' "$msg" | base64 -d | grep -i '^Signed-off-by: ' | grep -qiF "<$email>"; then
               echo "::error::commit ${sha:0:12} has no 'Signed-off-by: ... <$email>' line"
               missing=1
             fi

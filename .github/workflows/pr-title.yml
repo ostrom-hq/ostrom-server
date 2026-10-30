@@ -18,7 +18,9 @@ jobs:
     permissions:
       pull-requests: read
     steps:
-      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+      # GitHub's revert button titles a pull request 'Revert "<original title>"': accepted as is.
+      - if: ${{ !startsWith(github.event.pull_request.title, 'Revert "') }}
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
@@ -35,6 +37,6 @@ jobs:
             revert
             style
           requireScope: false
-          subjectPattern: ^(?![A-Z]).+$
+          subjectPattern: ^(?![A-Z][a-z]).+$
           subjectPatternError: >-
-            The subject "{subject}" must start with a lowercase letter, for example "feat(cli): add ostrom doctor".
+            The subject "{subject}" must not start with a capitalized word ("Add ..."): write "feat(cli): add ostrom doctor". Acronyms (API, CLI) are fine.

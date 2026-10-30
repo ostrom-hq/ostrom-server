@@ -56,12 +56,21 @@ jobs:
           bad = []
           for f in glob.glob('sarif/*.sarif'):
               for run in json.load(open(f))['runs']:
-                  rules = {r['id']: r for r in run['tool']['driver'].get('rules', [])}
+                  rules = run['tool']['driver'].get('rules', [])
+                  by_id = {r.get('id'): r for r in rules}
                   for res in run.get('results', []):
-                      level = res.get('level') or rules.get(res['ruleId'], {}).get('defaultConfiguration', {}).get('level', 'warning')
+                      rule = by_id.get(res.get('ruleId'))
+                      if rule is None and isinstance(res.get('ruleIndex'), int) and res['ruleIndex'] < len(rules):
+                          rule = rules[res['ruleIndex']]
+                      rule = rule or {}
+                      level = res.get('level') or rule.get('defaultConfiguration', {}).get('level', 'warning')
                       if level == 'error':
-                          loc = res['locations'][0]['physicalLocation']
-                          bad.append(f"{loc['artifactLocation']['uri']}:{loc.get('region', {}).get('startLine', 0)} {res['ruleId']}: {res['message']['text']}")
+                          locs = res.get('locations') or [{}]
+                          phys = locs[0].get('physicalLocation', {})
+                          uri = phys.get('artifactLocation', {}).get('uri', '?')
+                          line = phys.get('region', {}).get('startLine', 0)
+                          rid = res.get('ruleId') or rule.get('id', '?')
+                          bad.append(f"{uri}:{line} {rid}: {res.get('message', {}).get('text', '')}")
           for b in bad:
               print('::error::' + b)
           print(f"codeql: {len(bad)} error-level alert(s)")

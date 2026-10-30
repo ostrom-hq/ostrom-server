@@ -14,7 +14,8 @@ Usage:
   check_spdx.py                       check (scope from the configuration)
   check_spdx.py --base <ref>          scope "added": files added since the merge base with <ref>
   check_spdx.py --all                 check every tracked source file, whatever the scope
-  check_spdx.py --fix [paths...]      add the expected header where it is missing
+  check_spdx.py --fix [paths...]      add the expected header where it is missing (default: the files this branch
+                                      adds since origin/main, untracked files included)
 """
 from __future__ import annotations
 
@@ -121,8 +122,10 @@ def main() -> int:
         files = source_files(args.paths, cfg)
     elif args.all or cfg.get("scope", "all") == "all":
         files = source_files(git("ls-files").splitlines(), cfg)
-    elif args.base:
-        added = git("diff", "--name-only", "--diff-filter=A", f"{args.base}...HEAD").splitlines()
+    elif args.base or args.fix:
+        base = args.base or "origin/main"  # --fix alone: the files this branch adds
+        added = git("diff", "--name-only", "--diff-filter=A", f"{base}...HEAD").splitlines()
+        added += git("ls-files", "--others", "--exclude-standard").splitlines()
         files = source_files(added, cfg)
     else:
         files = []
