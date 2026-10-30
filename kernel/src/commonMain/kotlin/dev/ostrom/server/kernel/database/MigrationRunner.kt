@@ -44,7 +44,11 @@ class MigrationRunnerImpl(
             afterFileMigration = { migration, duration ->
                 logger.info(
                     "migration applied",
-                    mapOf("module" to module, "version" to migration.version, "duration_ms" to duration.inWholeMilliseconds),
+                    mapOf(
+                        "module" to module,
+                        "version" to migration.version,
+                        "duration_ms" to duration.inWholeMilliseconds,
+                    ),
                 )
             },
         ).getOrThrow()

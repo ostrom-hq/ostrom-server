@@ -21,6 +21,7 @@ import io.github.smyrgeorge.sqlx4k.Driver
 import io.ktor.client.HttpClient
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -62,7 +63,12 @@ fun main() {
     val modules = serverModules()
     var driver: Driver? = null
     var koin: Koin? = null
-    val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // On Kotlin/Native an uncaught coroutine exception ends the process: a failing background job is logged instead,
+    // with its class only (its message may quote a provider error), and the other jobs keep running.
+    val failures = CoroutineExceptionHandler { _, error ->
+        logger.error("background job failed", mapOf("error" to error::class.simpleName))
+    }
+    val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default + failures)
     try {
         val database = connectPostgres(config.database).also { driver = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
@@ -78,8 +84,9 @@ fun main() {
             "server starting",
             mapOf("version" to SERVER_VERSION, "host" to config.host, "port" to config.port, "key_id" to signer.keyId),
         )
-        embeddedServer(CIO, port = config.port, host = config.host) { configureHttp(server, modules) }.start(wait = true)
-    } catch (error: Throwable) {
+        embeddedServer(CIO, port = config.port, host = config.host) { configureHttp(server, modules) }
+            .start(wait = true)
+    } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         logger.error("server stopped on a failure", error = error)
         shutDown(workers, koin, driver, telemetry, exporters)
         exitProcess(1)

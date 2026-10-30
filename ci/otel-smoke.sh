@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Proves the server's telemetry reaches a real OpenTelemetry collector (BRIEF, rule TESTS: integration with a collector
 # in CI): one traced request, then its span, the request metrics and a log line are read back from the collector's
-# files. Needs the image ostrom-server:ci and PostgreSQL on localhost:5432 (the CI job's service).
+# files. Needs the image ostrom-server:ci and the CI job's PostgreSQL service (ostrom/ostrom on localhost:5432).
 set -euo pipefail
 
 out="$(mktemp -d)"
@@ -17,8 +17,7 @@ docker run -d --name otel-collector --network host \
 
 docker run -d --name ostrom-otel --network host \
   -e OSTROM_PORT=8081 \
-  -e OSTROM_DATABASE_URL=postgresql://localhost:5432/postgres \
-  -e OSTROM_DATABASE_USER=postgres -e OSTROM_DATABASE_PASSWORD=postgres \
+  -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom_test \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
   -e OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=ci \
   ostrom-server:ci >/dev/null
