@@ -1,7 +1,5 @@
 package dev.ostrom.server.kernel.module
 
-import dev.ostrom.server.kernel.auth.RejectingTokenAuthenticator
-import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
@@ -15,8 +13,7 @@ import org.koin.dsl.module
 import kotlin.time.Clock
 
 /**
- * The kernel's Koin definitions, loaded before every functional module so that a module can override one
- * (the identity module binds its own [TokenAuthenticator]).
+ * The kernel's Koin definitions, loaded before every functional module ([serverKoin]).
  *
  * @param logger The root logger.
  * @param driver The database.
@@ -30,7 +27,6 @@ fun kernelModule(logger: Logger, driver: Driver, signer: InstanceSigner, clock: 
     single { driver }
     single { signer }
     single { clock }
-    single<TokenAuthenticator> { RejectingTokenAuthenticator() }
     single<MigrationRunner> { MigrationRunnerImpl(get(), get()) }
     single<HealthCheck>(named("database")) { DatabaseHealthCheck(get()) }
 }

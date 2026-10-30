@@ -1,5 +1,7 @@
 package dev.ostrom.server.instance
 
+import dev.ostrom.server.instance.domain.GetCurrentSigningKeyUseCase
+import dev.ostrom.server.instance.domain.GetCurrentSigningKeyUseCaseImpl
 import dev.ostrom.server.instance.domain.GetOrCreateInstanceUseCase
 import dev.ostrom.server.instance.domain.GetOrCreateInstanceUseCaseImpl
 import dev.ostrom.server.instance.domain.InstanceRepository
@@ -27,6 +29,7 @@ object InstanceModule : ServerModule {
         single<GetOrCreateInstanceUseCase> { GetOrCreateInstanceUseCaseImpl(get(), get()) }
         single<RegisterCurrentSigningKeyUseCase> { RegisterCurrentSigningKeyUseCaseImpl(get(), get(), get()) }
         single<ListSigningKeysUseCase> { ListSigningKeysUseCaseImpl(get()) }
+        single<GetCurrentSigningKeyUseCase> { GetCurrentSigningKeyUseCaseImpl(get(), get()) }
         single { InstanceRoutesDependencies(get(), get(), get()) }
     }
 
