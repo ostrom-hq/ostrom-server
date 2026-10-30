@@ -62,9 +62,10 @@ private val ORG_B = Uuid.parse("0195f7a2-0000-7000-8000-00000000000b")
 private const val WEBHOOK_SECRET = "whsec_postgres_test"
 private val TOKENS = setOf("admin-a", "member-a", "admin-b")
 
-/** A person's read-only token and a device token, both of organization A's billing admin. */
+/** A person's read-only and manage tokens and a device token, all of organization A's billing admin. */
 private val SCOPED_TOKENS = mapOf(
     "reader-a" to AuthenticatedPrincipal("admin-a", PrincipalKind.USER, setOf("billing:read")),
+    "manager-a" to AuthenticatedPrincipal("admin-a", PrincipalKind.USER, setOf("billing:manage")),
     "device-a" to AuthenticatedPrincipal("admin-a", PrincipalKind.DEVICE, setOf("user:*")),
 )
 
@@ -82,9 +83,13 @@ private fun checkoutCompleted() = """{"id":"evt_checkout","type":"checkout.sessi
 /** Posts [payload] to the webhook, signed with the test secret. */
 private suspend fun HttpClient.webhook(payload: String): HttpResponse = webhook(payload, sign(payload))
 
-/** Posts [payload] to the webhook with [signature], or without the header when it is null. */
-private suspend fun HttpClient.webhook(payload: String, signature: String?): HttpResponse =
-    post("/api/v1/billing/stripe/webhook") {
+/** Posts [payload] to the webhook at [path] with [signature], or without the header when it is null. */
+private suspend fun HttpClient.webhook(
+    payload: String,
+    signature: String?,
+    path: String = "/webhooks/stripe",
+): HttpResponse =
+    post(path) {
         signature?.let { header("Stripe-Signature", it) }
         setBody(payload)
     }
@@ -293,12 +298,25 @@ class BillingPostgresTest {
     }
 
     @Test
-    fun onlyAPersonsTokenWithTheBillingScopeGetsIn() = serverTest(listOf(BillingModule), overrides) { server ->
+    fun aPersonsTokenReadsAndOnlyTheConsoleChangesBilling() = serverTest(listOf(BillingModule), overrides) { server ->
         val client = server.client
         assertEquals(HttpStatusCode.OK, client.get("/api/v1/orgs/$ORG_A/billing") { bearerAuth("reader-a") }.status)
-        val readOnly = client.post("/api/v1/orgs/$ORG_A/billing/portal") { bearerAuth("reader-a") }
-        assertEquals(HttpStatusCode.Forbidden, readOnly.status)
-        assertTrue(readOnly.bodyAsText().contains("billing:manage"))
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/orgs/$ORG_A/billing") { bearerAuth("manager-a") }.status)
+        // S2-52: no token changes billing, not even one with billing:manage; the console session does.
+        for (token in listOf("reader-a", "manager-a")) {
+            for (path in listOf("portal", "cancel", "resume")) {
+                val refused = client.post("/api/v1/orgs/$ORG_A/billing/$path") { bearerAuth(token) }
+                assertEquals(HttpStatusCode.Forbidden, refused.status, "$token $path")
+                assertTrue(refused.bodyAsText().contains("a token cannot make it"), "$token $path")
+            }
+            for (path in listOf("checkout", "plan")) {
+                val refused = client.post("/api/v1/orgs/$ORG_A/billing/$path") {
+                    bearerAuth(token); contentType(ContentType.Application.Json); setBody(PlanRequest("team", "month"))
+                }
+                assertEquals(HttpStatusCode.Forbidden, refused.status, "$token $path")
+            }
+        }
+        assertTrue(stripe.calls.isEmpty(), "Nothing reached Stripe")
         val billingOfA = "/api/v1/orgs/$ORG_A/billing"
         assertEquals(HttpStatusCode.Forbidden, client.get(billingOfA) { bearerAuth("device-a") }.status)
         assertEquals(HttpStatusCode.Unauthorized, client.get(billingOfA) { bearerAuth("nobody") }.status)
@@ -317,7 +335,10 @@ class BillingPostgresTest {
         assertEquals(WebhookResponse(true, "processed"), client.webhook(payload).body<WebhookResponse>())
         assertEquals(WebhookResponse(true, "duplicate"), client.webhook(payload).body<WebhookResponse>())
         val signature = sign(payload)
-        val tooLarge = client.post("/api/v1/billing/stripe/webhook") {
+        // The first path stays an alias until live billing opens.
+        val legacy = client.webhook(payload, signature, path = "/api/v1/billing/stripe/webhook")
+        assertEquals(WebhookResponse(true, "duplicate"), legacy.body<WebhookResponse>())
+        val tooLarge = client.post("/webhooks/stripe") {
             header("Stripe-Signature", signature)
             setBody("x".repeat(300_000))
         }
@@ -328,6 +349,20 @@ class BillingPostgresTest {
         assertEquals("active", overview.status)
         assertEquals(true, overview.limits.sso)
         assertEquals("free", client.overview(ORG_B, "admin-b").effectivePlan, "B does not see A's subscription")
+    }
+
+    @Test
+    fun aSignedEventForAnUnknownOrganizationCreatesNothing() = serverTest(listOf(BillingModule), overrides) { server ->
+        val unknown = Uuid.parse("0195f7a2-0000-7000-8000-0000000000ff")
+        stripe.subscription = stripeSubscription("ostrom_business_monthly")
+        val payload = """{"id":"evt_unknown","type":"checkout.session.completed","created":${NOW.epochSeconds},
+            "data":{"object":{"object":"checkout.session","customer":"cus_9","subscription":"sub_9",
+            "client_reference_id":"$unknown"}}}"""
+        val response = server.client.webhook(payload)
+        assertEquals(HttpStatusCode.OK, response.status, "Answered 200: Stripe must not retry it")
+        assertEquals(WebhookResponse(true, "ignored_unknown_org"), response.body<WebhookResponse>())
+        assertNull(server.koin.get<BillingRepository>().get(unknown))
+        assertTrue(stripe.calls.isEmpty())
     }
 
     @Test

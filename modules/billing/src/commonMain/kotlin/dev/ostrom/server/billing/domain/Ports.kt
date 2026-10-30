@@ -142,6 +142,21 @@ class NoLicenseProvider : LicenseProvider {
     override suspend fun current(): LicenseGrant? = null
 }
 
+/**
+ * What billing counts for operators (the observability module binds its OpenTelemetry counters; until then the
+ * default logs each event and keeps the count in memory).
+ */
+interface BillingMetrics {
+    /**
+     * A signed Stripe event named an organization that does not exist: nothing was created, Stripe was answered 200
+     * (BILL-001). Counted as `ignored_unknown_org`.
+     *
+     * @param eventId Stripe's id of the event.
+     * @param eventType Its type.
+     */
+    fun stripeEventForUnknownOrganization(eventId: String, eventType: String)
+}
+
 /** Where usage alerts go (the notifications module binds the e-mail and console ones). */
 interface BillingNotifier {
     /** An organization used [percent] % of its agent hours this period. */

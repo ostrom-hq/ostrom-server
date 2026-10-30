@@ -34,6 +34,7 @@ class StripeEventsUsageAndLimitsTest {
     @Test
     fun aCompletedCheckoutActivatesThePlanAndBackfillsThePeopleOfTheMonth() = runTest {
         val world = World()
+        world.opensACheckout()
         world.repository.recordActivePerson(world.org, MONTH, "early", NOW - 1.days)
         world.stripe.subscription = stripeSubscription("ostrom_team_monthly")
         val outcome = world.events(
@@ -123,12 +124,7 @@ class StripeEventsUsageAndLimitsTest {
             EventOutcome.IGNORED,
             world.events(world.event("customer.subscription.updated", id = "e1").copy(customerId = "cus_unknown")),
         )
-        assertEquals(
-            EventOutcome.IGNORED,
-            world.events(
-                world.event("customer.subscription.updated", id = "e2").copy(customerId = null, orgId = "not-a-uuid")
-            ),
-        )
+        world.opensACheckout()
         assertEquals(
             EventOutcome.IGNORED,
             world.events(
@@ -143,12 +139,46 @@ class StripeEventsUsageAndLimitsTest {
             EventOutcome.IGNORED,
             world.events(world.event("customer.updated", id = "e4").copy(subscriptionId = null)),
         )
-        assertEquals(setOf("e1", "e2", "e3", "e4"), world.repository.events.keys)
+        assertEquals(setOf("e1", "e3", "e4"), world.repository.events.keys)
+        assertEquals(emptyList(), world.metrics.unknownOrganizations)
+    }
+
+    @Test
+    fun anEventForAnOrganizationThatDoesNotExistCreatesNothing() = runTest {
+        val world = World()
+        world.stripe.subscription = stripeSubscription("ostrom_business_monthly")
+        val unknown = Uuid.parse("0195f7a2-0000-7000-8000-0000000000ff")
+        for ((id, orgId) in listOf("e1" to unknown.toString(), "e2" to "not-a-uuid")) {
+            assertEquals(
+                EventOutcome.IGNORED_UNKNOWN_ORG,
+                world.events(world.event("checkout.session.completed", id = id).copy(customerId = null, orgId = orgId)),
+            )
+        }
+        // A customer Stripe knows but this instance does not is no better: the organization decides.
+        assertEquals(
+            EventOutcome.IGNORED_UNKNOWN_ORG,
+            world.events(
+                world.event("customer.subscription.created", id = "e3").copy(customerId = "cus_x", orgId = "$unknown")
+            ),
+        )
+        assertNull(world.repository.get(unknown))
+        assertEquals(0, world.stripe.calls.count { it.startsWith("getSubscription") }, "Stripe is not even asked")
+        assertEquals(
+            listOf(
+                "e1 checkout.session.completed",
+                "e2 checkout.session.completed",
+                "e3 customer.subscription.created",
+            ),
+            world.metrics.unknownOrganizations,
+        )
+        assertEquals(setOf("e1", "e2", "e3"), world.repository.events.keys, "Recorded: a replay is a duplicate")
+        assertEquals(EventOutcome.DUPLICATE, world.events(world.event("checkout.session.completed", id = "e1")))
     }
 
     @Test
     fun anEventFindsTheOrganizationByMetadataWhenTheCustomerIsNew() = runTest {
         val world = World()
+        world.opensACheckout()
         world.stripe.subscription = stripeSubscription()
         world.events(
             world.event("customer.subscription.created").copy(customerId = "cus_new", orgId = world.org.toString())
