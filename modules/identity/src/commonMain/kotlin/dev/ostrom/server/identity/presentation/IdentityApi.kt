@@ -399,21 +399,19 @@ data class DeviceCodeResponse(
 data class DeviceTokenRequest(val deviceCode: String)
 
 /**
- * Where an `ostrom login` stands.
+ * The CLI token of an approved `ostrom login` (the contract's `AuthToken`).
  *
- * @property status `pending`, `slow_down`, `denied`, `expired` or `approved`.
- * @property accessToken With `approved`, the CLI token (once).
- * @property expiresAt With `approved`, when the token expires (ISO 8601).
- * @property scopes With `approved`, what the token allows.
- * @property interval Seconds to wait before the next poll.
+ * @property token The CLI token, given once.
+ * @property login The login of the user who approved.
+ * @property expiresAt When the token expires (ISO 8601).
+ * @property scopes What the token allows.
  */
 @Serializable
-data class DeviceTokenResponse(
-    val status: String,
-    val accessToken: String? = null,
-    val expiresAt: String? = null,
-    val scopes: List<String>? = null,
-    val interval: Long,
+data class AuthTokenResponse(
+    val token: String,
+    val login: String,
+    val expiresAt: String?,
+    val scopes: List<String>,
 )
 
 /**

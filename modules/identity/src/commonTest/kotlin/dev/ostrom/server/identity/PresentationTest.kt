@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.AuditEntry
 import dev.ostrom.server.identity.domain.AuditEvent
+import dev.ostrom.server.identity.domain.DevicePollResult
+import dev.ostrom.server.identity.domain.IssuedToken
 import dev.ostrom.server.identity.domain.Profile
 import dev.ostrom.server.identity.domain.SessionRequiredException
+import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.trimmedOrNull
+import dev.ostrom.server.identity.presentation.AuthTokenResponse
 import dev.ostrom.server.identity.presentation.MeDevResponse
 import dev.ostrom.server.identity.presentation.MeMemberResponse
 import dev.ostrom.server.identity.presentation.MeOrganizationResponse
 import dev.ostrom.server.identity.presentation.MeResponse
 import dev.ostrom.server.identity.presentation.credentialUuid
 import dev.ostrom.server.identity.presentation.currentOrganization
-import dev.ostrom.server.identity.presentation.toAuditEventResponse
 import dev.ostrom.server.identity.presentation.toAccountResponse
+import dev.ostrom.server.identity.presentation.toAuditEventResponse
 import dev.ostrom.server.identity.presentation.toAuditEventsResponse
+import dev.ostrom.server.identity.presentation.toAuthTokenResponse
 import dev.ostrom.server.identity.presentation.toMeResponse
 import dev.ostrom.server.identity.presentation.userId
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -137,5 +143,15 @@ class PresentationTest {
         assertEquals("email", via(), "No way in recorded: the e-mail link")
         val account = Profile(user, emptyList(), listOf("github")).toAccountResponse()
         assertEquals(listOf("github"), account.providers)
+    }
+
+    @Test
+    fun aDeviceTokenWithoutExpiryReadsWithoutOne() {
+        val token = ApiToken(
+            Uuid.random(), Uuid.random(), null, "laptop", TokenKind.CLI, setOf("runs:read", "profile:read"), "abcd",
+            null, Instant.fromEpochSeconds(0), null, null, null,
+        )
+        val answer = DevicePollResult.Approved(IssuedToken(token, "osc_secret")).toAuthTokenResponse("ada")
+        assertEquals(AuthTokenResponse("osc_secret", "ada", null, listOf("profile:read", "runs:read")), answer)
     }
 }

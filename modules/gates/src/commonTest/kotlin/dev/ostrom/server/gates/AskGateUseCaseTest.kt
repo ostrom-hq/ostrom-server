@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
+import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateCommands
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
@@ -21,6 +23,7 @@ import dev.ostrom.server.gates.domain.usecases.AskGate
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCaseImpl
 import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.IdentityDigester
+import dev.ostrom.server.gates.fakes.ORG
 import dev.ostrom.server.gates.fakes.RecordingLogger
 import dev.ostrom.server.gates.fakes.SESSION
 import dev.ostrom.server.gates.fakes.SHA_A
@@ -31,7 +34,6 @@ import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
-import dev.ostrom.server.gates.infrastructure.UnavailableGateReceiptSigner
 import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -144,7 +146,7 @@ class AskGateUseCaseTest {
                     "ostrom-hq/gate-demo: NOT the repository this command runs in (evil/fork). " +
                         "Check before saying yes.",
                 ),
-                Evidence("Asked by", "agent-$SESSION · session s-000005"),
+                Evidence("Asked by", "lyes · session s-000005"),
             ),
             view.gate.evidence,
         )
@@ -190,7 +192,7 @@ class AskGateUseCaseTest {
         assertNull(view.gate.subject.diffDigest)
         assertEquals("mcp", view.gate.subject.tool)
         assertEquals(
-            Evidence("Asked by", "agent-$SESSION · session s-000005 · PR #6 @ aaaaaaa into main"),
+            Evidence("Asked by", "lyes · session s-000005 · PR #6 @ aaaaaaa into main"),
             view.gate.evidence[3],
         )
 
@@ -251,7 +253,7 @@ class AskGateUseCaseTest {
         assertEquals("push-main", view.gate.label)
         assertEquals(GateStatus.UNGATED, view.gate.status)
         assertEquals("session:-", view.gate.subject.scope)
-        assertEquals(listOf(Evidence("Command", "Bash"), Evidence("Asked by", "device-lyes")), view.gate.evidence)
+        assertEquals(listOf(Evidence("Command", "Bash"), Evidence("Asked by", "lyes")), view.gate.evidence)
     }
 
     @Test
@@ -291,19 +293,29 @@ class AskGateUseCaseTest {
     }
 
     @Test
+    fun s215AGateIsAskedForAPersonNeverForACredential() = runTest {
+        val bench = GateBench()
+        val keyWithoutPerson = GateActor("ci-key", ORG, ActorKind.SERVICE)
+        val agentWithoutPerson = GateActor("agent", ORG, ActorKind.AGENT_SESSION, launchId = "launch-$SESSION")
+        for (actor in listOf(keyWithoutPerson, agentWithoutPerson)) {
+            val refused = assertFailsWith<OstromException> { ask(bench)(actor, pushAsk()) }
+            assertEquals(ErrorKind.FORBIDDEN, refused.kind)
+        }
+        assertTrue(bench.repository.gates.isEmpty())
+    }
+
+    @Test
     fun theDefaultPortsFailClosed() = runTest {
         val gate = GateBench().open(GateBench().pushRequest()).gate
-        assertEquals(SelfApprovalPolicy.SOLE_APPROVER, DefaultGatePolicies().selfApproval(gate.orgId))
+        // S2-15: no organization setting, no self-approval: a yes comes from another person.
+        assertEquals(SelfApprovalPolicy.NEVER, DefaultGatePolicies().selfApproval(gate.orgId))
         val sessions = assertFailsWith<OstromException> {
             UnavailableGateSessions().assertOpen(gate.orgId, SESSION, null)
         }
         assertEquals(ErrorKind.UNAVAILABLE, sessions.kind)
         assertNull(NoGateNodes().resolve(gate.orgId, "o/r", "push-main"))
         assertNull(UnknownPullRequestHeads().head(gate.orgId, "o/r", 6))
-        assertEquals(
-            ErrorKind.UNAVAILABLE,
-            assertFailsWith<OstromException> { UnavailableGateReceiptSigner().sign(gate) }.kind,
-        )
+        assertNull(UnavailableGateSessions().agentOf(gate.orgId, SESSION))
 
         val silent = ChannelsGateNotifier({ emptyList() }, RecordingLogger())
         silent.requested(gate, emptyList())

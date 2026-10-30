@@ -3,13 +3,15 @@ package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.AuditEvent
-import dev.ostrom.server.identity.domain.DEVICE_POLL_INTERVAL
 import dev.ostrom.server.identity.domain.DevicePollResult
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.IssuedToken
 import dev.ostrom.server.identity.domain.Profile
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgProfile
+import dev.ostrom.server.kernel.http.ApiError
+import dev.ostrom.server.kernel.http.ErrorDetail
+import io.ktor.http.HttpStatusCode
 
 /** Maps the account: the profile with its e-mails and ways in. */
 fun Profile.toAccountResponse() = AccountResponse(
@@ -83,22 +85,42 @@ fun ApiToken.toTokenResponse() = TokenResponse(
 /** Maps an issued token, with its secret. */
 fun IssuedToken.toCreatedTokenResponse() = CreatedTokenResponse(token.toTokenResponse(), secret)
 
-/** Maps a poll result. */
-fun DevicePollResult.toDeviceTokenResponse(): DeviceTokenResponse {
-    val interval = DEVICE_POLL_INTERVAL.inWholeSeconds
-    return when (this) {
-        DevicePollResult.Pending -> DeviceTokenResponse("pending", interval = interval)
-        DevicePollResult.SlowDown -> DeviceTokenResponse("slow_down", interval = interval * 2)
-        DevicePollResult.Denied -> DeviceTokenResponse("denied", interval = interval)
-        DevicePollResult.Expired -> DeviceTokenResponse("expired", interval = interval)
-        is DevicePollResult.Approved -> DeviceTokenResponse(
-            status = "approved",
-            accessToken = token.secret,
-            expiresAt = token.token.expiresAt?.toString(),
-            scopes = token.token.scopes.sorted(),
-            interval = interval,
-        )
-    }
+/**
+ * Maps an approved poll to the contract's `AuthToken`.
+ *
+ * @param login The login of the user who approved.
+ */
+fun DevicePollResult.Approved.toAuthTokenResponse(login: String) = AuthTokenResponse(
+    token = token.secret,
+    login = login,
+    expiresAt = token.token.expiresAt?.toString(),
+    scopes = token.token.scopes.sorted(),
+)
+
+/** 428 Precondition Required: the contract's « authorization pending ». */
+private val AUTHORIZATION_PENDING = HttpStatusCode(428, "Precondition Required")
+
+/** Not yet (428), or never (400): the contract's `pollDeviceLogin`, with RFC 8628 § 3.5's error codes. */
+private val DEVICE_POLL_REFUSALS: Map<DevicePollResult, Pair<HttpStatusCode, ErrorDetail>> = mapOf(
+    DevicePollResult.Pending to
+        (AUTHORIZATION_PENDING to ErrorDetail("authorization_pending", "Waiting for the sign-in to be approved.")),
+    DevicePollResult.SlowDown to
+        (HttpStatusCode.BadRequest to ErrorDetail("slow_down", "Polling too fast: wait longer between polls.")),
+    DevicePollResult.Denied to
+        (HttpStatusCode.BadRequest to ErrorDetail("access_denied", "The sign-in was denied.")),
+    DevicePollResult.Expired to
+        (HttpStatusCode.BadRequest to ErrorDetail("expired_token", "The code expired or was used: start again.")),
+)
+
+/**
+ * The status and error of a poll that gives no token.
+ *
+ * @param result Anything but [DevicePollResult.Approved].
+ * @return The status and the error body.
+ */
+fun devicePollRefusal(result: DevicePollResult): Pair<HttpStatusCode, ApiError> {
+    val (status, detail) = DEVICE_POLL_REFUSALS.getValue(result)
+    return status to ApiError(detail)
 }
 
 /** Maps an audit event. */

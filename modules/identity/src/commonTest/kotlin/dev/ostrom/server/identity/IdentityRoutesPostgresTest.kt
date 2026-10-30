@@ -11,13 +11,13 @@ import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.presentation.AnswerDeviceRequest
 import dev.ostrom.server.identity.presentation.AuditEventsResponse
+import dev.ostrom.server.identity.presentation.AuthTokenResponse
 import dev.ostrom.server.identity.presentation.CreateTokenRequest
 import dev.ostrom.server.identity.presentation.CreatedTokenResponse
 import dev.ostrom.server.identity.presentation.DeviceAuthorizationResponse
 import dev.ostrom.server.identity.presentation.DeviceCodeRequest
 import dev.ostrom.server.identity.presentation.DeviceCodeResponse
 import dev.ostrom.server.identity.presentation.DeviceTokenRequest
-import dev.ostrom.server.identity.presentation.DeviceTokenResponse
 import dev.ostrom.server.identity.presentation.AccountResponse
 import dev.ostrom.server.identity.presentation.MeDevResponse
 import dev.ostrom.server.identity.presentation.MeResponse
@@ -25,6 +25,7 @@ import dev.ostrom.server.identity.presentation.TokensResponse
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
+import dev.ostrom.server.kernel.http.ApiError
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -35,6 +36,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -56,8 +58,11 @@ class IdentityRoutesPostgresTest {
         return user to koin.get<StartWebSessionUseCase>()(user.id)
     }
 
-    private suspend fun TestServer.pollDevice(deviceCode: String): DeviceTokenResponse =
-        client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(deviceCode)) }.body<DeviceTokenResponse>()
+    private suspend fun TestServer.pollDevice(deviceCode: String): HttpResponse =
+        client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(deviceCode)) }
+
+    /** A poll that gives no token: its status and its error type. */
+    private suspend fun HttpResponse.refusal(): Pair<Int, String> = status.value to body<ApiError>().error.type
 
     private fun HttpRequestBuilder.session(started: StartedSession, csrf: Boolean = true) =
         browserSession(started.secret, started.csrfToken.takeIf { csrf })
@@ -260,11 +265,9 @@ class IdentityRoutesPostgresTest {
         assertEquals("http://localhost:5173/device?code=${codes.userCode}", codes.verificationUriComplete)
         assertEquals(600L, codes.expiresIn)
         assertEquals(5L, codes.interval)
-        val pending = server.pollDevice(codes.deviceCode)
-        assertEquals("pending", pending.status)
-        val tooFast = server.pollDevice(codes.deviceCode)
-        assertEquals("slow_down", tooFast.status)
-        assertEquals(10L, tooFast.interval)
+        // The contract's `pollDeviceLogin`, as the CLI reads it: 428 while pending, RFC 8628's codes otherwise.
+        assertEquals(428 to "authorization_pending", server.pollDevice(codes.deviceCode).refusal())
+        assertEquals(400 to "slow_down", server.pollDevice(codes.deviceCode).refusal())
 
         val shown = server.client.get("/api/v1/auth/device?userCode=${codes.userCode}") { session(started) }
         assertEquals("laptop", shown.body<DeviceAuthorizationResponse>().clientName)
@@ -284,15 +287,19 @@ class IdentityRoutesPostgresTest {
 
         // The CLI polled twice in a row: the next poll after the interval gets the token. The test does not wait:
         // a poll that comes too soon after an approval still gets it (only pending polls are slowed down).
-        val approved = server.pollDevice(codes.deviceCode)
-        assertEquals("approved", approved.status)
-        val secret = assertNotNull(approved.accessToken)
+        val answer = server.pollDevice(codes.deviceCode)
+        assertEquals(HttpStatusCode.OK, answer.status)
+        val approved = answer.body<AuthTokenResponse>()
+        assertEquals(user.login, approved.login)
+        assertTrue("profile:read" in approved.scopes)
+        assertNotNull(approved.expiresAt)
+        val secret = approved.token
         assertTrue(secret.startsWith("osc_"))
         assertEquals(
             user.id.toString(),
             server.client.get("/api/v1/auth/me/account") { bearerAuth(secret) }.body<AccountResponse>().id,
         )
-        assertEquals("expired", server.pollDevice(codes.deviceCode).status)
+        assertEquals(400 to "expired_token", server.pollDevice(codes.deviceCode).refusal())
         assertEquals(
             HttpStatusCode.NotFound,
             server.client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest("unknown")) }.status,
@@ -313,7 +320,7 @@ class IdentityRoutesPostgresTest {
             json(AnswerDeviceRequest(other.userCode, false))
         }
         assertEquals(HttpStatusCode.NoContent, denied.status)
-        assertEquals("denied", server.pollDevice(other.deviceCode).status)
+        assertEquals(400 to "access_denied", server.pollDevice(other.deviceCode).refusal())
 
         // `ostrom logout` revokes the CLI token.
         assertEquals(HttpStatusCode.NoContent, server.client.post("/api/v1/auth/logout") { bearerAuth(secret) }.status)
