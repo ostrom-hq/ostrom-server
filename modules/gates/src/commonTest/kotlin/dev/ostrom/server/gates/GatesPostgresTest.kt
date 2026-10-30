@@ -27,6 +27,7 @@ import dev.ostrom.server.gates.presentation.ApprovalsPage
 import dev.ostrom.server.gates.presentation.GateAskRequest
 import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.GateResponse
+import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -64,12 +65,18 @@ class GatesPostgresTest {
     private val sha = "0123456789abcdef0123456789abcdef01234567"
     private val nextSha = "fedcba9876543210fedcba9876543210fedcba98"
 
-    // Tokens are `<kind>:<org letter>:<id>`: `user:a:rev-b`, `agent:a:<session>`, `device:a:lyes`.
+    // Tokens are `<kind>:<org letter>:<id>`: `user:a:rev-b`, `agent:a:<session>`, `device:a:lyes`, `reader:a:ops`.
+    // A user's browser session holds every scope; a device holds `gates:answer` yet is no person (S2-31).
     private val overrides = module {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) =
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
+                override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
+                    "user" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
+                    "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
+                    "reader" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
+                    "device" -> AuthenticatedPrincipal(token, PrincipalKind.DEVICE, setOf(GateScopes.ANSWER))
+                    else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
+                }
             }
         }
         single<GateActorResolver> {
@@ -78,7 +85,7 @@ class GatesPostgresTest {
                     val (kind, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
-                        "user" -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        "user", "reader" -> GateActor(id, orgId, ActorKind.USER, personId = id)
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
                     }
@@ -440,6 +447,21 @@ class GatesPostgresTest {
         // Audit S2-03, S2-04: approvals are read and answered by a signed-in person, never by an agent or device token.
         assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:$session", "/api/v1/approvals").status)
         assertEquals(HttpStatusCode.Forbidden, server.call("device:a:lyes", "/api/v1/approvals?mine=true").status)
+        // S2-03: every gates route requires its scope; S2-31: only a person with the answer scope says yes.
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val approval = server.approvalsOf(opened).first { it.requestedFrom == "rev-b" }
+        assertEquals(HttpStatusCode.OK, server.call("reader:a:rev-b", "/api/v1/approvals/${approval.id}").status)
+        assertEquals(HttpStatusCode.OK, server.call("reader:a:rev-b", "/api/v1/gates/${opened.gate.id}").status)
+        val readerAnswer = server.answer("reader:a:rev-b", opened, "rev-b")
+        assertEquals(HttpStatusCode.Forbidden, readerAnswer.status)
+        assertTrue(readerAnswer.bodyAsText().contains("does not allow gates:answer"))
+        val deviceAnswer = server.answer("device:a:rev-b", opened, "rev-b")
+        assertTrue(deviceAnswer.bodyAsText().contains("Only a person answers a gate."))
+        val userAsks = server.call("user:a:rev-b", "/api/v1/gates", push())
+        assertEquals(HttpStatusCode.Forbidden, userAsks.status, "A person's session asks no gate: hooks and CI do")
+        assertTrue(userAsks.bodyAsText().contains("does not allow gates:ask"))
+        assertEquals(HttpStatusCode.Forbidden, server.move("reader:a:rev-b", opened, "consume").status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/gates/${opened.gate.id}").status)
 
 
         assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/gates/not-a-uuid").status)

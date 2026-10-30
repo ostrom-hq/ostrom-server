@@ -113,7 +113,8 @@ class OpenGateUseCaseImpl(
             lockKey(orgId, key)
             val same = byKey(orgId, key, SAME_KEY_LIMIT)
                 .filter { request.subject.push == null || it.subject.diffDigest == request.subject.diffDigest }
-            val live = same.firstOrNull { it.status in LIVE }
+            // An expired yes is not joined: the same action asks a new one (S2-29).
+            val live = same.firstOrNull { it.status in LIVE && !it.yesExpired(clock.now()) }
             if (live != null) {
                 val joined = join(live, request)
                 if (joined != live) updateGate(joined)

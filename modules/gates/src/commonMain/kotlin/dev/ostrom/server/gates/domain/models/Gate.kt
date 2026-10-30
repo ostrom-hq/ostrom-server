@@ -1,5 +1,7 @@
 package dev.ostrom.server.gates.domain.models
 
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -58,7 +60,22 @@ data class Gate(
     val reservedAt: Instant? = null,
     val consumedAt: Instant? = null,
     val createdAt: Instant,
-)
+) {
+    /**
+     * Whether an approved yes outlived [YES_LIFETIME] without being reserved (SECURITY-AUDIT S2-29): it no longer
+     * covers the action, which asks a new yes. A reserved yes is not expired: its action is already running.
+     *
+     * @param now The current time.
+     * @return True for an approved yes given [YES_LIFETIME] or more ago.
+     */
+    fun yesExpired(now: Instant): Boolean =
+        status == GateStatus.APPROVED && decidedAt?.let { now - it >= YES_LIFETIME } == true
+
+    companion object {
+        /** How long a yes waits for its action: one yes is one head commit and one destination, used soon. */
+        val YES_LIFETIME: Duration = 15.minutes
+    }
+}
 
 /**
  * The workflow node that gates an action, as compiled for the organization.
