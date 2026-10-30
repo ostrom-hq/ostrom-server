@@ -29,12 +29,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      # Stripe's official mock, for the billing gateway's integration test.
+      stripe-mock:
+        image: stripe/stripe-mock:latest
+        ports:
+          - 12111:12111
     env:
       # Database tests run against this service and fail (instead of being skipped) if it is missing.
       OSTROM_TEST_DATABASE_URL: postgresql://localhost:5432/postgres
       OSTROM_TEST_DATABASE_USER: postgres
       OSTROM_TEST_DATABASE_PASSWORD: postgres
       OSTROM_TEST_DATABASE_REQUIRED: "true"
+      # Billing: stripe-mock integration, and the end-to-end test against the real Stripe test mode.
+      OSTROM_STRIPE_MOCK_URL: http://localhost:12111
+      OSTROM_STRIPE_MOCK_REQUIRED: "true"
+      OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+      OSTROM_STRIPE_E2E_REQUIRED: "true"
       # Reads ostrom-core from GitHub Packages once the server depends on it.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

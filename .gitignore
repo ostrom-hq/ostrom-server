@@ -12,3 +12,6 @@
 # Instance signing keys never enter the repository.
 /data/*.pem
 /*.pem
+# Python tooling of ops/ (coverage, bytecode).
+__pycache__/
+.coverage

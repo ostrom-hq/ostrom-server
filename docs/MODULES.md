@@ -166,6 +166,10 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | Pool size |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `OSTROM_STRIPE_SECRET_KEY` (or `_FILE`) | — | Billing: Stripe secret key (`sk_test_…` or `sk_live_…`). Unset: self-hosted, limits come from the license key |
+| `OSTROM_STRIPE_WEBHOOK_SECRET` (or `_FILE`) | required with a key | Billing: the endpoint's `whsec_…` signing secret; two comma-separated during a rotation |
+| `OSTROM_STRIPE_API_BASE` | `https://api.stripe.com` | Billing: Stripe's API (stripe-mock in tests) |
+| `OSTROM_CONSOLE_URL` | `https://app.ostrom.run` | Billing: the console, for Checkout and portal return pages and limit messages |
 
 A module that needs its own keys reads them from the `ConfigSource` with the `OSTROM_<MODULE>_…` prefix and adds them
 to this table.
