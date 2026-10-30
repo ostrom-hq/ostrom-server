@@ -25,7 +25,7 @@ interface RulesRepository {
      * Lists the rules that put a gate on boundary actions and are not rejected, for the gates catalogue.
      *
      * @param orgId The organization.
-     * @return The rules, by id.
+     * @return The rules, by id; at most [dev.ostrom.server.rules.domain.usecases.ListRulesUseCase.MAX_RULES].
      */
     suspend fun gatedRules(orgId: Uuid): List<Rule>
 
