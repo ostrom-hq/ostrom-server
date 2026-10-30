@@ -3,6 +3,10 @@ package dev.ostrom.server.kernel.database
 
 import dev.ostrom.server.kernel.logging.Logger
 import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asString
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asStringOrNull
 import io.github.smyrgeorge.sqlx4k.impl.migrate.MigrationFile
 
 /**
@@ -19,13 +23,34 @@ interface MigrationRunner {
      * @throws io.github.smyrgeorge.sqlx4k.SQLError When a migration fails or an applied one was edited.
      */
     suspend fun migrate(module: String, migrations: List<SchemaMigration>)
+
+    /**
+     * Checks, without changing anything, that every migration of a module is applied unchanged: the serving process
+     * runs this at start, since only `ostrom-server migrate` (owner's credentials) applies migrations.
+     *
+     * @param module The module name.
+     * @param migrations The module's migrations.
+     *
+     * @throws MigrationsNotAppliedException When a migration is missing or differs from the applied one.
+     */
+    suspend fun verify(module: String, migrations: List<SchemaMigration>)
 }
 
 /**
- * [MigrationRunner] on sqlx4k's migrator: each module's migrations run in one transaction per file.
+ * The database is behind the code (or an applied migration was edited): the server does not serve until
+ * `ostrom-server migrate` has run.
  *
- * Several replicas starting at once are not serialized yet: start one replica first after a release that adds
- * migrations (docs/MODULES.md, limits).
+ * @param module The module.
+ * @param versions The versions missing or different.
+ */
+class MigrationsNotAppliedException(module: String, versions: List<Long>) : IllegalStateException(
+    "Migrations $versions of module $module are not applied, or differ from the applied ones: run " +
+        "`ostrom-server migrate`.",
+)
+
+/**
+ * [MigrationRunner] on sqlx4k's migrator: each module's migrations run in one transaction per file. Concurrent
+ * passes are serialized by [migrateUnderLock].
  *
  * @param driver The database.
  * @param logger Where applied migrations are reported.
@@ -35,12 +60,10 @@ class MigrationRunnerImpl(
     private val logger: Logger,
 ) : MigrationRunner {
     override suspend fun migrate(module: String, migrations: List<SchemaMigration>) {
-        require(MODULE_NAME.matches(module)) { "Module name must match $MODULE_NAME." }
+        val table = historyTable(module)
         if (migrations.isEmpty()) return
-        val table = "_migrations_" + module.replace('-', '_')
-        val files = migrations.map { MigrationFile("${it.version}_${it.name}.sql", it.sql) }
         val results = driver.migrate(
-            files = files,
+            files = migrations.files(),
             table = table,
             afterFileMigration = { migration, duration ->
                 logger.info(
@@ -58,6 +81,32 @@ class MigrationRunnerImpl(
             mapOf("module" to module, "total" to results.total, "applied" to results.applied),
         )
     }
+
+    override suspend fun verify(module: String, migrations: List<SchemaMigration>) {
+        val table = historyTable(module)
+        if (migrations.isEmpty()) return
+        val lookup = Statement.create("SELECT CAST(to_regclass(:table) AS text) AS name").bind("table", table)
+        val present = driver.fetchAll(lookup)
+            .getOrThrow()
+            .single()
+            .get("name")
+            .asStringOrNull()
+        val applied = if (present == null) {
+            emptyMap()
+        } else {
+            driver.fetchAll("SELECT version, checksum FROM $table").getOrThrow()
+                .associate { it.get("version").asLong() to it.get("checksum").asString() }
+        }
+        val missing = migrations.files().filter { applied[it.version] != it.checksum }.map { it.version }
+        if (missing.isNotEmpty()) throw MigrationsNotAppliedException(module, missing)
+    }
+
+    private fun historyTable(module: String): String {
+        require(MODULE_NAME.matches(module)) { "Module name must match $MODULE_NAME." }
+        return "_migrations_" + module.replace('-', '_')
+    }
+
+    private fun List<SchemaMigration>.files() = map { MigrationFile("${it.version}_${it.name}.sql", it.sql) }
 }
 
 // No `_`: `a-b` and `a_b` would share the table `_migrations_a_b`.

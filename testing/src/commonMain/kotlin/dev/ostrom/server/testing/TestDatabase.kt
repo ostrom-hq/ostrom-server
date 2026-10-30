@@ -23,6 +23,42 @@ class TestDatabase private constructor(
     private val admin: DatabaseConfig,
     private val name: String,
 ) {
+    private val url: String get() = admin.url.substringBeforeLast('/') + "/" + name
+
+    /**
+     * Runs [block] connected to this database as a fresh login role, like a deployment's serving role: not a
+     * superuser, owning nothing, granted only the use of the `public` schema (grant it the tables it needs). With
+     * [bypassRowLevelSecurity] the role has `BYPASSRLS`, the case the server refuses. The role is dropped afterwards.
+     *
+     * @param bypassRowLevelSecurity Whether the role bypasses row-level security.
+     * @param block The test, given the role's name and a pool connected as the role.
+     *
+     * @return What [block] returns.
+     */
+    suspend fun <T> withRole(
+        bypassRowLevelSecurity: Boolean = false,
+        block: suspend (role: String, driver: Driver) -> T,
+    ): T {
+        val role = "ostrom_test_role_" + Uuid.random().toHexString()
+        val password = Uuid.random().toHexString()
+        val bypass = if (bypassRowLevelSecurity) "BYPASSRLS" else "NOBYPASSRLS"
+        driver.execute(
+            "CREATE ROLE $role LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION $bypass PASSWORD '$password'",
+        ).getOrThrow()
+        try {
+            driver.execute("GRANT USAGE ON SCHEMA public TO $role").getOrThrow()
+            val connected = connectPostgres(DatabaseConfig(url, role, password, ROLE_POOL_SIZE))
+            try {
+                return block(role, connected)
+            } finally {
+                connected.close()
+            }
+        } finally {
+            driver.execute("DROP OWNED BY $role").getOrThrow()
+            driver.execute("DROP ROLE $role").getOrThrow()
+        }
+    }
+
     /** Closes the pool and drops the database. */
     suspend fun close() {
         driver.close()
@@ -32,6 +68,7 @@ class TestDatabase private constructor(
     /** Creating test databases. */
     companion object {
         private const val POOL_SIZE = 4
+        private const val ROLE_POOL_SIZE = 2
 
         /**
          * Creates a fresh database.

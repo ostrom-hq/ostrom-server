@@ -16,6 +16,7 @@ import dev.ostrom.server.kernel.http.ApiError
 import dev.ostrom.server.kernel.http.HealthCheck
 import dev.ostrom.server.kernel.http.HealthResponse
 import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.kernel.http.Readiness
 import dev.ostrom.server.kernel.http.configureHttp
 import dev.ostrom.server.kernel.http.httpStatus
 import dev.ostrom.server.kernel.http.isValidRequestId
@@ -24,6 +25,7 @@ import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.network.TrustedProxies
 import io.github.smyrgeorge.sqlx4k.SQLError
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -38,6 +40,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.plugins.NotFoundException
 import io.ktor.server.plugins.PayloadTooLargeException
+import io.ktor.server.plugins.origin
 import io.ktor.server.request.receive
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
@@ -115,6 +118,7 @@ class HttpTest {
                     kind = SQLError.Kind.Deadlock,
                 )
             }
+            route.get("/probe/origin") { call.respondText(call.request.origin.remoteAddress) }
             route.get("/probe/cancelled") { throw CancellationException("client gone") }
             route.get("/probe/unprotected-me") { call.respondText(call.requirePrincipal().subjectId) }
             route.post("/probe/echo") { call.respondText(call.receive<ProbeBody>().name) }
@@ -139,7 +143,12 @@ class HttpTest {
         }
     }
 
-    private fun probeServer(health: List<HealthCheck>? = null, block: suspend ApplicationTestBuilder.() -> Unit) =
+    private fun probeServer(
+        health: List<HealthCheck>? = null,
+        readiness: Readiness? = null,
+        proxies: TrustedProxies? = null,
+        block: suspend ApplicationTestBuilder.() -> Unit,
+    ) =
         testApplication {
             val koin = koinApplication {
                 modules(
@@ -150,6 +159,8 @@ class HttpTest {
                         (health ?: listOf(FixedHealthCheck("database", true))).forEach { check ->
                             single<HealthCheck>(named(check.name)) { check }
                         }
+                        readiness?.let { value -> single { value } }
+                        proxies?.let { value -> single { value } }
                     },
                 )
             }.koin
@@ -195,6 +206,51 @@ class HttpTest {
             val expected = HealthResponse("degraded", "0.1.0-dev", mapOf("database" to "down", "cache" to "down"))
             assertEquals(expected, health)
         }
+
+    @Test
+    fun readyIsOkWhenEveryCheckPasses() = probeServer {
+        val response = client.get("/ready")
+        assertEquals(HttpStatusCode.OK, response.status)
+        val ready = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
+        assertEquals(HealthResponse("ready", "0.1.0-dev", mapOf("database" to "ok")), ready)
+    }
+
+    @Test
+    fun readyIs503WhenACheckIsDown() = probeServer(listOf(FixedHealthCheck("database", false))) {
+        val response = client.get("/ready")
+        assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+        assertEquals("degraded", OstromJson.decodeFromString<HealthResponse>(response.bodyAsText()).status)
+    }
+
+    @Test
+    fun aDrainingServerIsNotReadyButStaysHealthy() {
+        val readiness = Readiness()
+        probeServer(readiness = readiness) {
+            assertEquals(HttpStatusCode.OK, client.get("/ready").status)
+            assertFalse(readiness.isDraining)
+            readiness.drain()
+            assertTrue(readiness.isDraining)
+            val response = client.get("/ready")
+            assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+            val draining = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
+            assertEquals(HealthResponse("draining", "0.1.0-dev", emptyMap()), draining)
+            assertEquals(HttpStatusCode.OK, client.get("/health").status, "Draining is not a failure")
+        }
+    }
+
+    @Test
+    fun probesAreLoggedAtDebug() = probeServer {
+        client.get("/ready")
+        val line = requestLines(1).single()
+        assertTrue("\"level\":\"DEBUG\"" in line, line)
+    }
+
+    @Test
+    fun aPeerThatIsNotATrustedProxyKeepsItsAddress() = probeServer(proxies = TrustedProxies.parse("10.0.0.0/8")) {
+        val response = client.get("/probe/origin") { header("X-Forwarded-For", "198.51.100.1") }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText() != "198.51.100.1", "The test engine's peer is not a trusted proxy")
+    }
 
     @Test
     fun aCancelledHealthCheckIsNotReportedAsAnError() = probeServer(listOf(FixedHealthCheck("database", null))) {

@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: write # dispatch the release binaries when the tag was pushed by GITHUB_TOKEN
       contents: write # tags, releases, CHANGELOG.md
       issues: write # release labels
       pull-requests: write # the release pull request
@@ -41,3 +42,11 @@ jobs:
           token: ${{ steps.app.outputs.token || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      # A tag pushed with GITHUB_TOKEN starts no workflow: build the release binaries by dispatch. With the App, the tag
+      # push starts release-binaries.yml itself.
+      - name: Release binaries
+        if: steps.release.outputs.release_created == 'true' && vars.RELEASE_APP_ID == ''
+        run: gh workflow run release-binaries.yml --repo "$GITHUB_REPOSITORY" -f tag="$TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
