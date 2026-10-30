@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions.presentation
 
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -13,13 +14,6 @@ import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.SessionQuery
 import dev.ostrom.server.sessions.domain.models.SessionView
 import dev.ostrom.server.sessions.domain.models.StartSession
-import dev.ostrom.server.sessions.domain.usecases.EndSessionUseCase
-import dev.ostrom.server.sessions.domain.usecases.GetSessionUseCase
-import dev.ostrom.server.sessions.domain.usecases.ListSessionsUseCase
-import dev.ostrom.server.sessions.domain.usecases.ReopenSessionUseCase
-import dev.ostrom.server.sessions.domain.usecases.ReportSeenUseCase
-import dev.ostrom.server.sessions.domain.usecases.SessionAliveUseCase
-import dev.ostrom.server.sessions.domain.usecases.StartSessionUseCase
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
@@ -27,29 +21,6 @@ import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-
-/**
- * What the sessions routes need.
- *
- * @property actors Resolves callers.
- * @property start Starts a segment.
- * @property end Ends one.
- * @property alive Records a sign of life.
- * @property reopen Reopens after a closed one.
- * @property seen Records a skill or sub-agent opened.
- * @property get Reads one.
- * @property list Lists them.
- */
-data class SessionsRoutesDependencies(
-    val actors: GateActorResolver,
-    val start: StartSessionUseCase,
-    val end: EndSessionUseCase,
-    val alive: SessionAliveUseCase,
-    val reopen: ReopenSessionUseCase,
-    val seen: ReportSeenUseCase,
-    val get: GetSessionUseCase,
-    val list: ListSessionsUseCase,
-)
 
 /**
  * The sessions routes of the contract. Every route is authenticated; the organization and the person always come
@@ -76,21 +47,21 @@ fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies) = with(depend
             call.respond(get(call.actor(actors, SessionScopes.reading), params.id).toResponse())
         }
         post<SessionsApi.Id.Alive> { params ->
-            val session = alive(call.actor(actors), SessionScopes.writing, params.parent.id)
+            val session = alive(call.actor(actors, SessionScopes.writing), params.parent.id)
             call.respond(session.toDto())
         }
         post<SessionsApi.Id.End> { params ->
             val body = call.receive<EndSessionRequest>()
             val end = EndSession(body.tools, body.model, body.costUsd, body.source, body.exitCode)
-            call.respond(get.view(end(call.actor(actors), SessionScopes.writing, params.parent.id, end)).toResponse())
+            call.respond(get.view(end(call.actor(actors, SessionScopes.writing), params.parent.id, end)).toResponse())
         }
         post<SessionsApi.Id.Reopen> { params ->
-            val reopened = reopen(call.actor(actors), SessionScopes.writing, params.parent.id)
+            val reopened = reopen(call.actor(actors, SessionScopes.writing), params.parent.id)
             call.respond(get.view(reopened.session).toResponse(reopened.reopened))
         }
         post<SessionsApi.Id.Seen> { params ->
             val body = call.receive<SeenRequest>()
-            seen(call.actor(actors), SessionScopes.writing, params.parent.id, body.kind, body.name, body.via)
+            seen(call.actor(actors, SessionScopes.writing), params.parent.id, body.kind, body.name, body.via)
             call.respond(HttpStatusCode.NoContent)
         }
     }

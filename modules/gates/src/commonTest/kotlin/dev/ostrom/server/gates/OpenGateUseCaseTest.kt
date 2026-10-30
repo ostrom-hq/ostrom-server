@@ -23,7 +23,6 @@ import dev.ostrom.server.gates.fakes.SHA_B
 import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.device
 import dev.ostrom.server.kernel.errors.OstromException
-import dev.ostrom.server.kernel.logging.LogLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -247,17 +246,6 @@ class OpenGateUseCaseTest {
         val sha256 = "c".repeat(64)
         val long = bench.open(pushOf(good.copy(refs = listOf(PushRef("refs/heads/main", sha256)))))
         assertEquals(GateStatus.PENDING, long.gate.status, "A SHA-256 commit id is accepted")
-    }
-
-    @Test
-    fun aFailedNotificationNeverLosesTheRequest() = runTest {
-        val bench = GateBench()
-        bench.notifier.failure = IllegalStateException("slack down")
-        val view = bench.open(bench.pushRequest())
-
-        assertEquals(GateStatus.PENDING, view.gate.status)
-        assertEquals(1, bench.repository.gates.size)
-        assertEquals(LogLevel.WARN to "gate notification failed", bench.logger.lines.single())
     }
 
     @Test

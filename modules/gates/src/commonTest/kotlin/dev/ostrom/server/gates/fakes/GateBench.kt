@@ -31,8 +31,8 @@ class GateBench {
     val clock = SettableClock()
     val logger = RecordingLogger()
     val receipts = EnsureGateReceiptUseCaseImpl(repository, signer, logger)
-    val open = OpenGateUseCaseImpl(repository, sessions, policies, notifier, IdentityDigester(), clock, logger)
-    val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock, logger)
+    val open = OpenGateUseCaseImpl(repository, sessions, policies, notifier, IdentityDigester(), clock)
+    val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock)
     val use = UseGateUseCaseImpl(repository, clock)
     val get = GetGateUseCaseImpl(repository, policies, receipts)
     val approvals = ListApprovalsUseCaseImpl(repository)
@@ -43,6 +43,7 @@ class GateBench {
         GateNode("ship", "g-main", "Merge into main", approvers.toList(), enforced)
 
     /** A push of [sha] to main from the session [session]. */
+    @Suppress("LongParameterList") // A test fixture: one named argument with a default per field.
     fun pushRequest(
         sha: String = SHA_A,
         session: String = SESSION,
@@ -73,6 +74,7 @@ class GateBench {
     )
 
     /** The merge of pull request #6 at [sha] into [base], asked by the hook of [session] or by the GitHub check. */
+    @Suppress("LongParameterList") // A test fixture: one named argument with a default per field.
     fun mergeRequest(
         sha: String = SHA_A,
         base: String = "main",

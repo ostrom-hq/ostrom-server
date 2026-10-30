@@ -4,6 +4,8 @@ package dev.ostrom.server.gates.domain.usecases
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
+import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateAlreadyDecidedException
 import dev.ostrom.server.gates.domain.models.GateChangedException
@@ -18,9 +20,8 @@ import dev.ostrom.server.gates.domain.models.SelfApprovalRefusedException
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
-import dev.ostrom.server.kernel.logging.Logger
-import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** One approver answers the request a gate sent them. */
@@ -57,9 +58,8 @@ interface AnswerGateUseCase {
  * @param repository The gates.
  * @param policies The organization's self-approval setting.
  * @param receipts Signs the decision.
- * @param notifier Tells the other approvers, the GitHub check and the waiting hooks.
+ * @param notifier Tells the other approvers, the GitHub check and the waiting hooks; it never throws.
  * @param clock The clock.
- * @param logger Logs failures after the decision, which never undo it.
  */
 class AnswerGateUseCaseImpl(
     private val repository: GatesRepository,
@@ -67,7 +67,6 @@ class AnswerGateUseCaseImpl(
     private val receipts: EnsureGateReceiptUseCase,
     private val notifier: GateNotifier,
     private val clock: Clock,
-    private val logger: Logger,
 ) : AnswerGateUseCase {
     override suspend fun invoke(
         actor: GateActor,
@@ -82,11 +81,7 @@ class AnswerGateUseCaseImpl(
         val decided = repository.transaction {
             val request = request(orgId, requestId) ?: throw GateNotFoundException()
             val gate = lockGate(orgId, request.gateId) ?: throw GateNotFoundException()
-            if (!SelfApproval.same(request.approverId, actor.id)) throw NotTheApproverException()
-            if (gate.status != GateStatus.PENDING || request.status != RequestStatus.PENDING) {
-                throw GateAlreadyDecidedException()
-            }
-            if (shownDigest != gate.shownDigest) throw GateChangedException()
+            checkAnswerable(actor, request, gate, shownDigest)
             val requests = requestsOf(orgId, gate.id)
             val verdict = SelfApproval.check(gate.askedBy, requests.map { it.approverId }, actor.id, answer, policy)
             val selfApproved = when (verdict) {
@@ -94,18 +89,7 @@ class AnswerGateUseCaseImpl(
                 is SelfApproval.Verdict.Allowed -> verdict.selfApproved
             }
             val now = clock.now()
-            // The gate is pending, so every request is: the answered one takes the answer, the others are closed.
-            val answered = requests.map {
-                if (it.id == request.id) {
-                    it.copy(
-                        status = if (answer == Answer.YES) RequestStatus.APPROVED else RequestStatus.REJECTED,
-                        answeredAt = now,
-                        channel = channel,
-                    )
-                } else {
-                    it.copy(status = RequestStatus.CLOSED, answeredAt = now)
-                }
-            }
+            val answered = answered(requests, request.id, answer, channel, now)
             val next = gate.copy(
                 status = if (answer == Answer.YES) GateStatus.APPROVED else GateStatus.REJECTED,
                 decidedBy = request.approverId,
@@ -118,13 +102,34 @@ class AnswerGateUseCaseImpl(
         }
         val requests = decided.second
         val gate = receipts.ensureSigned(decided.first)
-        try {
-            notifier.decided(gate, requests)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            logger.warn("gate decision notification failed", mapOf("gate_id" to gate.id), error)
-        }
+        notifier.decided(gate, requests)
         return viewOf(gate, requests, policy)
+    }
+
+    private fun checkAnswerable(actor: GateActor, request: ApprovalRequest, gate: Gate, shownDigest: String) {
+        if (!SelfApproval.same(request.approverId, actor.id)) throw NotTheApproverException()
+        if (gate.status != GateStatus.PENDING || request.status != RequestStatus.PENDING) {
+            throw GateAlreadyDecidedException()
+        }
+        if (shownDigest != gate.shownDigest) throw GateChangedException()
+    }
+
+    // The gate is pending, so every request is: the answered one takes the answer, the others are closed.
+    private fun answered(
+        requests: List<ApprovalRequest>,
+        answeredId: Uuid,
+        answer: Answer,
+        channel: AnswerChannel,
+        now: Instant,
+    ): List<ApprovalRequest> = requests.map {
+        if (it.id == answeredId) {
+            it.copy(
+                status = if (answer == Answer.YES) RequestStatus.APPROVED else RequestStatus.REJECTED,
+                answeredAt = now,
+                channel = channel,
+            )
+        } else {
+            it.copy(status = RequestStatus.CLOSED, answeredAt = now)
+        }
     }
 }

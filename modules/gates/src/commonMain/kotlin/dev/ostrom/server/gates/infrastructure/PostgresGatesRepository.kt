@@ -46,7 +46,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
     }
 
     override suspend fun get(orgId: Uuid, id: Uuid): Gate? = driver.transaction {
-        Tx(this).run { scoped(orgId); selectGate(orgId, id, lock = false) }
+        Tx(this).run { scoped(orgId); executor.selectGate(orgId, id, lock = false) }
     }
 
     override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> = driver.transaction {
@@ -70,7 +70,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? = driver.transaction {
         Tx(this).run {
             request(orgId, id)?.let { request ->
-                selectGate(orgId, request.gateId, lock = false)?.let { ApprovalView(request, it) }
+                executor.selectGate(orgId, request.gateId, lock = false)?.let { ApprovalView(request, it) }
             }
         }
     }
@@ -94,7 +94,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             ).bind("org", orgId).bind("limit", limit)
             approverId?.let { page.bind("approver", it) }
             status?.let { page.bind("status", it.name) }
-            val requests = fetch(page).map { it.toRequest() }
+            val requests = executor.rows(page).map { it.toRequest() }
             val gateIds = requests.map { it.gateId }.distinct()
             // One read for every gate of the page (at most `limit` ids, each bound): no query per request.
             val gates = if (gateIds.isEmpty()) {
@@ -105,14 +105,14 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                     "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id IN ($names)",
                 ).bind("org", orgId)
                 gateIds.forEachIndexed { index, gateId -> statement.bind("g$index", gateId) }
-                fetch(statement).map { it.toGate() }.associateBy { it.id }
+                executor.rows(statement).map { it.toGate() }.associateBy { it.id }
             }
             // Every request has its gate (foreign key, gates are never deleted).
             requests.map { ApprovalView(it, gates.getValue(it.gateId)) }
         }
     }
 
-    private class Tx(private val executor: QueryExecutor) : GatesTransaction {
+    private class Tx(val executor: QueryExecutor) : GatesTransaction {
         private var org: Uuid? = null
 
         suspend fun scoped(orgId: Uuid) {
@@ -123,16 +123,6 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             org = orgId
         }
 
-        suspend fun fetch(statement: Statement): List<ResultSet.Row> =
-            executor.fetchAll(statement).getOrThrow().toList()
-
-        suspend fun selectGate(orgId: Uuid, id: Uuid, lock: Boolean): Gate? = fetch(
-            Statement.create(
-                "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id = :id" +
-                    if (lock) " FOR UPDATE" else "",
-            ).bind("org", orgId).bind("id", id),
-        ).firstOrNull()?.toGate()
-
         override suspend fun lockKey(orgId: Uuid, key: String) {
             scoped(orgId)
             executor.fetchAll(
@@ -142,7 +132,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
         override suspend fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate> {
             scoped(orgId)
-            return fetch(
+            return executor.rows(
                 Statement.create(
                     "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND gate_key = :key " +
                         "ORDER BY created_at DESC, id DESC LIMIT :limit",
@@ -152,12 +142,12 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
         override suspend fun lockGate(orgId: Uuid, id: Uuid): Gate? {
             scoped(orgId)
-            return selectGate(orgId, id, lock = true)
+            return executor.selectGate(orgId, id, lock = true)
         }
 
         override suspend fun request(orgId: Uuid, id: Uuid): ApprovalRequest? {
             scoped(orgId)
-            return fetch(
+            return executor.rows(
                 Statement.create("SELECT $REQUEST_COLUMNS FROM gates_requests WHERE org_id = :org AND id = :id")
                     .bind("org", orgId).bind("id", id),
             ).firstOrNull()?.toRequest()
@@ -165,7 +155,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
         override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> {
             scoped(orgId)
-            return fetch(
+            return executor.rows(
                 Statement.create(
                     "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE org_id = :org AND gate_id = :gate " +
                         "ORDER BY position LIMIT $MAX_REQUESTS",
@@ -238,6 +228,16 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         val evidences = ListSerializer(EvidenceRecord.serializer())
         val json = Json { ignoreUnknownKeys = true }
         val strings = ListSerializer(String.serializer())
+
+        suspend fun QueryExecutor.rows(statement: Statement): List<ResultSet.Row> =
+            fetchAll(statement).getOrThrow().toList()
+
+        suspend fun QueryExecutor.selectGate(orgId: Uuid, id: Uuid, lock: Boolean): Gate? = rows(
+            Statement.create(
+                "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id = :id" +
+                    if (lock) " FOR UPDATE" else "",
+            ).bind("org", orgId).bind("id", id),
+        ).firstOrNull()?.toGate()
 
         // A null for a typed column (uuid, timestamptz) is bound with its type, or PostgreSQL takes it for text.
         fun Statement.bindOrNull(name: String, value: Any?, type: KClass<*>): Statement =

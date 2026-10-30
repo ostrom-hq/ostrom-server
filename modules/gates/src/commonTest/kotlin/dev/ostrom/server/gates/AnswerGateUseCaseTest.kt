@@ -204,17 +204,6 @@ class AnswerGateUseCaseTest {
     }
 
     @Test
-    fun aFailedDecisionNotificationIsLogged() = runTest {
-        val bench = GateBench()
-        val view = bench.open(bench.pushRequest())
-        bench.notifier.failure = IllegalStateException("push service down")
-        val answered = bench.answer(view, "rev-b")
-
-        assertEquals(GateStatus.APPROVED, answered.gate.status)
-        assertTrue(bench.logger.lines.contains(LogLevel.WARN to "gate decision notification failed"))
-    }
-
-    @Test
     fun invokeWithCancellationPropagatesException() = runTest {
         val bench = GateBench()
         val view = bench.open(bench.pushRequest())

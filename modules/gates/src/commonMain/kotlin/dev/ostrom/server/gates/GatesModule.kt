@@ -3,6 +3,7 @@ package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateDigester
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
@@ -28,6 +29,7 @@ import dev.ostrom.server.gates.domain.usecases.OpenGateUseCase
 import dev.ostrom.server.gates.domain.usecases.OpenGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCase
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
+import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.GatesMigrations
 import dev.ostrom.server.gates.infrastructure.NoGateActors
@@ -35,7 +37,6 @@ import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import dev.ostrom.server.gates.infrastructure.ReceiptsGateSigner
 import dev.ostrom.server.gates.infrastructure.Sha256GateDigester
-import dev.ostrom.server.gates.infrastructure.SilentGateNotifier
 import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
 import dev.ostrom.server.gates.presentation.GatesRoutesDependencies
@@ -60,9 +61,9 @@ object GatesModule : ServerModule {
         single<GateDigester> { Sha256GateDigester() }
         single<GateReceiptSigner> { ReceiptsGateSigner(get(), get(), get(), get()) }
         single<EnsureGateReceiptUseCase> { EnsureGateReceiptUseCaseImpl(get(), get(), get()) }
-        single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get(), get()) }
+        single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<AskGateUseCase> { AskGateUseCaseImpl(get(), get(), get(), get()) }
-        single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get()) }
         single<UseGateUseCase> { UseGateUseCaseImpl(get(), get()) }
         single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get()) }
         single<ListApprovalsUseCase> { ListApprovalsUseCaseImpl(get()) }
@@ -88,7 +89,9 @@ object GatesModule : ServerModule {
         if (koin.getOrNull<GateSessions>() == null) single<GateSessions> { UnavailableGateSessions() }
         if (koin.getOrNull<GateNodeResolver>() == null) single<GateNodeResolver> { NoGateNodes() }
         if (koin.getOrNull<PullRequestHeads>() == null) single<PullRequestHeads> { UnknownPullRequestHeads() }
-        if (koin.getOrNull<GateNotifier>() == null) single<GateNotifier> { SilentGateNotifier() }
+        if (koin.getOrNull<GateNotifier>() == null) {
+            single<GateNotifier> { ChannelsGateNotifier({ koin.getAll<GateChannel>() }, get()) }
+        }
         if (koin.getOrNull<GateActorResolver>() == null) single<GateActorResolver> { NoGateActors() }
     }
 

@@ -10,6 +10,7 @@ import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.NotYourGateException
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The three moves of a yes around the action it covers. */
@@ -59,32 +60,44 @@ class UseGateUseCaseImpl(
 ) : UseGateUseCase {
     override suspend fun invoke(actor: GateActor, gateId: Uuid, use: GateUse): Gate = repository.transaction {
         val gate = lockGate(actor.orgId, gateId) ?: throw GateNotFoundException()
-        val launch = actor.launchId
-        if (actor.kind != ActorKind.AGENT_SESSION || launch == null || launch !in gate.launchIds) {
-            throw NotYourGateException()
-        }
+        val launch = launchOf(actor, gate)
+        val now = clock.now()
         val next = when (use) {
-            GateUse.RESERVE -> {
-                if (gate.status != GateStatus.APPROVED) throw GateNotUsableException(reserveRefusal(gate))
-                if (gate.yesExpired(clock.now())) throw GateNotUsableException(EXPIRED)
-                gate.copy(status = GateStatus.RESERVED, reservedBy = launch, reservedAt = clock.now())
-            }
-            GateUse.CONSUME -> when {
-                gate.status == GateStatus.SHADOW || gate.status == GateStatus.UNGATED -> return@transaction gate
-                gate.yesExpired(clock.now()) -> throw GateNotUsableException(EXPIRED)
-                gate.status == GateStatus.APPROVED -> gate.copy(status = GateStatus.CONSUMED, consumedAt = clock.now())
-                else -> {
-                    heldBy(gate, launch)
-                    gate.copy(status = GateStatus.CONSUMED, consumedAt = clock.now())
-                }
-            }
+            GateUse.RESERVE -> reserved(gate, launch, now)
+            GateUse.CONSUME -> consumed(gate, launch, now)
             GateUse.RELEASE -> {
                 heldBy(gate, launch)
                 gate.copy(status = GateStatus.APPROVED, reservedBy = null, reservedAt = null)
             }
         }
-        updateGate(next)
+        if (next != gate) updateGate(next)
         next
+    }
+
+    // Only an agent session of a launch that asked for the gate moves its yes.
+    private fun launchOf(actor: GateActor, gate: Gate): String {
+        val launch = actor.launchId
+        if (actor.kind != ActorKind.AGENT_SESSION || launch == null || launch !in gate.launchIds) {
+            throw NotYourGateException()
+        }
+        return launch
+    }
+
+    private fun reserved(gate: Gate, launch: String, now: Instant): Gate {
+        if (gate.status != GateStatus.APPROVED) throw GateNotUsableException(reserveRefusal(gate))
+        if (gate.yesExpired(now)) throw GateNotUsableException(EXPIRED)
+        return gate.copy(status = GateStatus.RESERVED, reservedBy = launch, reservedAt = now)
+    }
+
+    // A shadow or ungated action has no yes to use: the gate stays as it is.
+    private fun consumed(gate: Gate, launch: String, now: Instant): Gate = when {
+        gate.status == GateStatus.SHADOW || gate.status == GateStatus.UNGATED -> gate
+        gate.yesExpired(now) -> throw GateNotUsableException(EXPIRED)
+        gate.status == GateStatus.APPROVED -> gate.copy(status = GateStatus.CONSUMED, consumedAt = now)
+        else -> {
+            heldBy(gate, launch)
+            gate.copy(status = GateStatus.CONSUMED, consumedAt = now)
+        }
     }
 
     private fun heldBy(gate: Gate, launch: String) {
