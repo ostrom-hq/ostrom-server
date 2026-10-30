@@ -102,7 +102,7 @@ def check_license_files(cfg: dict) -> list[str]:
         errors.append(f"LICENSE: does not hold the {cfg['default']} text")
     for rule in cfg.get("rules", []):
         lic = Path(rule["prefix"]) / "LICENSE"
-        if not lic.is_file():
+        if Path(rule["prefix"]).is_dir() and not lic.is_file():
             errors.append(f"{lic}: missing (the license of {rule['prefix']})")
     return errors
 

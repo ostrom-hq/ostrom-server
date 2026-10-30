@@ -18,8 +18,8 @@ goes through the same short path. This guide takes ten minutes to read and saves
 - **Security problems are never reported in public**: see [SECURITY.md](SECURITY.md).
 - For anything larger than a bug fix, open a [discussion](https://github.com/ostrom-hq/ostrom-server/discussions) or an
   issue first, so we agree on the direction before you write code.
-- Read the engineering conventions shared by every Ostrom repository, [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md), and the short version for this
-  repository in [`AGENTS.md`](AGENTS.md). They bind humans and agents alike.
+- Read the engineering conventions shared by every Ostrom repository, [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md). They bind humans and
+  agents alike.
 
 ## Set up your machine
 
