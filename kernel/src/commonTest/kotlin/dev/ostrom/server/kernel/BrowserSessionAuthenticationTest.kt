@@ -3,7 +3,9 @@ package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -37,6 +39,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 
 /** The browser session cookie, its CSRF token, and the scopes a route requires (`requireScope`). */
 class BrowserSessionAuthenticationTest {
@@ -51,6 +54,7 @@ class BrowserSessionAuthenticationTest {
             sessionToken: String,
             csrfToken: String?,
             requireCsrf: Boolean,
+            origin: String?,
         ): AuthenticatedPrincipal? {
             val csrfHolds = !requireCsrf || csrfToken == "good-csrf"
             return if (sessionToken == "good-session" && csrfHolds) {
@@ -102,6 +106,7 @@ class BrowserSessionAuthenticationTest {
 
         val written = client.post("/probe/write") {
             cookie(SESSION_COOKIE, "good-session")
+            cookie(CSRF_COOKIE, "good-csrf")
             header(CSRF_HEADER, "good-csrf")
         }
         assertEquals(HttpStatusCode.OK, written.status)
@@ -141,6 +146,18 @@ class BrowserSessionAuthenticationTest {
         assertFalse(agent.allows("orgs:write"))
         assertTrue(token.allows("probe:read"))
         assertFalse(token.allows("probe:write"))
+    }
+
+    @Test
+    fun aPrincipalIsAnApiTokenOfUnknownSignInUnlessIdentitySaysOtherwise() {
+        val token = AuthenticatedPrincipal("u", PrincipalKind.USER, emptySet())
+        val signedIn = Instant.parse("2026-10-30T08:00:00Z")
+        val browser = token.copy(channel = PrincipalChannel.BROWSER, authenticatedAt = signedIn)
+
+        assertEquals(PrincipalChannel.API_TOKEN, token.channel)
+        assertNull(token.authenticatedAt)
+        assertEquals(PrincipalChannel.BROWSER, browser.channel)
+        assertEquals(signedIn, browser.authenticatedAt)
     }
 
     @Test
