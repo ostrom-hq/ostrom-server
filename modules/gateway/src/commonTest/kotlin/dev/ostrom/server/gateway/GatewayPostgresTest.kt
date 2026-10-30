@@ -430,6 +430,12 @@ class GatewayPostgresTest {
             }
             val settings = client.get("/api/v1/inference/settings") { bearerAuth("admin-a") }
             assertEquals(InferenceSettingsDto(), settings.body<InferenceSettingsDto>())
+            val keyed = InferenceSettingsDto(anthropicKeySecret = "anthropic-key")
+            assertEquals(HttpStatusCode.OK, putJson("/api/v1/inference/settings", "inference-admin-a", keyed).status)
+            assertEquals(
+                keyed,
+                client.get("/api/v1/inference/settings") { bearerAuth("admin-a") }.body<InferenceSettingsDto>(),
+            )
 
             val models = Json.parseToJsonElement(
                 client.get("/api/v1/inference/v1/models") { bearerAuth("agent-a") }.bodyAsText(),

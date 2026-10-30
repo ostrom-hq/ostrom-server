@@ -24,13 +24,16 @@ import kotlin.uuid.Uuid
  * @param driver The database.
  */
 class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySettingsRepository {
-    override suspend fun get(orgId: Uuid): GatewaySettings = driver.fetchInOrg(
-        orgId,
-        Statement.create(
-            "SELECT anthropic_key_secret, openai_key_secret, openrouter_key_secret, use_shared_accounts " +
-                "FROM gateway_settings WHERE org_id = :org_id",
-        ).bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.let(::settingsOf) ?: GatewaySettings()
+    override suspend fun get(orgId: Uuid): GatewaySettings {
+        val row = driver.fetchInOrg(
+            orgId,
+            Statement.create(
+                "SELECT anthropic_key_secret, openai_key_secret, openrouter_key_secret, use_shared_accounts " +
+                    "FROM gateway_settings WHERE org_id = :org_id",
+            ).bind("org_id", orgId),
+        ).getOrThrow().firstOrNull()
+        return if (row == null) GatewaySettings() else settingsOf(row)
+    }
 
     override suspend fun forCall(orgId: Uuid): GatewayOrgConfig = driver.fetchInOrg(
         orgId,
@@ -67,11 +70,17 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
         ).getOrThrow()
     }
 
-    override suspend fun policy(orgId: Uuid): ModelPolicy = driver.fetchInOrg(
-        orgId,
-        Statement.create("SELECT allowed, default_model, by_member FROM gateway_model_policies WHERE org_id = :org_id")
-            .bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.let(::policyOf) ?: ModelPolicy()
+    override suspend fun policy(orgId: Uuid): ModelPolicy {
+        val row = driver.fetchInOrg(
+            orgId,
+            Statement.create(
+                "SELECT allowed, default_model, by_member FROM gateway_model_policies " +
+                    "WHERE org_id = :org_id",
+            )
+                .bind("org_id", orgId),
+        ).getOrThrow().firstOrNull()
+        return if (row == null) ModelPolicy() else policyOf(row)
+    }
 
     override suspend fun putPolicy(orgId: Uuid, policy: ModelPolicy) {
         driver.executeInOrg(
