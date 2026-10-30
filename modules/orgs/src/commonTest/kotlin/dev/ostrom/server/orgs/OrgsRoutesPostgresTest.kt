@@ -12,6 +12,7 @@ import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.orgs.presentation.CreateLinkRequest
@@ -82,7 +83,8 @@ class OrgsRoutesPostgresTest {
     }
 
     private fun HttpRequestBuilder.session(started: StartedSession) {
-        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}")
+        // Double submit (#58): the header counts only when it repeats the readable CSRF cookie.
+        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}; $CSRF_COOKIE=${started.csrfToken}")
         header(CSRF_HEADER, started.csrfToken)
     }
 
