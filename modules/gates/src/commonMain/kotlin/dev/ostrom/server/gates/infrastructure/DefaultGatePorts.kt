@@ -7,6 +7,7 @@ import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
@@ -15,6 +16,8 @@ import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.logging.Logger
+import kotlinx.coroutines.CancellationException
 import kotlin.uuid.Uuid
 
 // The gates module's ports are owned by other modules (identity, orgs, sessions, receipts, compiler,
@@ -45,11 +48,34 @@ class UnknownPullRequestHeads : PullRequestHeads {
     override suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest? = null
 }
 
-/** Without notifications, approvers find their requests in the console and the hooks poll the gate. */
-class SilentGateNotifier : GateNotifier {
-    override suspend fun requested(gate: Gate, requests: List<ApprovalRequest>) = Unit
+/**
+ * Tells every bound [GateChannel], one after the other. A channel that fails is logged and skipped: the request is
+ * stored and visible in the console, and the other channels still hear of it. Without any channel, approvers find
+ * their requests in the console and the hooks poll the gate.
+ *
+ * @param channels The channels, read at the first event (the integrations bind theirs after this module).
+ * @param logger Logs a failing channel.
+ */
+class ChannelsGateNotifier(channels: () -> List<GateChannel>, private val logger: Logger) : GateNotifier {
+    private val channels by lazy(channels)
 
-    override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) = Unit
+    override suspend fun requested(gate: Gate, requests: List<ApprovalRequest>) =
+        each(gate) { it.requested(gate, requests) }
+
+    override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) =
+        each(gate) { it.decided(gate, requests) }
+
+    private suspend fun each(gate: Gate, event: suspend (GateChannel) -> Unit) {
+        for (channel in channels) {
+            try {
+                event(channel)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                logger.warn("gate channel failed", mapOf("channel" to channel.name, "gate_id" to gate.id), error)
+            }
+        }
+    }
 }
 
 /** Without the identity module, no credential belongs to an organization. */
