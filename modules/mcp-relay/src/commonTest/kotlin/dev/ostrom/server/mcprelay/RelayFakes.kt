@@ -75,6 +75,8 @@ class FakeReveal(val values: MutableMap<Uuid, String> = mutableMapOf()) : Reveal
         if (failing) error("key changed")
         return ids.mapNotNull { id -> values[id]?.let { id to SecretValue(it) } }.toMap()
     }
+
+    override suspend fun byName(orgId: Uuid, names: Collection<String>): Map<String, SecretValue> = emptyMap()
 }
 
 /** An upstream answering what the test sets, recording what it received. */
@@ -173,16 +175,20 @@ class InMemoryRelayRepository : McpRelayRepository {
         journal += call
     }
 
-    override suspend fun listCalls(orgId: Uuid, before: Instant?, limit: Int): List<McpCall> =
-        journal.filter { it.orgId == orgId && (before == null || it.startedAt < before) }.sortedByDescending { it.startedAt }.take(limit)
+    override suspend fun listCalls(orgId: Uuid, before: Instant?, limit: Int, server: String?, memberId: Uuid?): List<McpCall> =
+        journal.filter {
+            it.orgId == orgId && (before == null || it.startedAt < before) && (server == null || it.serverName == server) &&
+                (memberId == null || it.memberId == memberId)
+        }.sortedByDescending { it.startedAt }.take(limit)
 
     override suspend fun usage(orgId: Uuid, since: Instant, memberId: Uuid?): List<McpUsage> =
         journal.filter { it.orgId == orgId && it.startedAt >= since && (memberId == null || it.memberId == memberId) }
-            .groupBy { it.memberId to it.serverName }
+            .groupBy { Triple(it.memberId, it.serverName, it.tool) }
             .map { (key, calls) ->
                 McpUsage(
                     memberId = key.first,
                     serverName = key.second,
+                    tool = key.third,
                     calls = calls.count { it.operation == McpOperation.CALL }.toLong(),
                     lists = calls.count { it.operation == McpOperation.LIST }.toLong(),
                     errors = calls.count { it.outcome in setOf(McpOutcome.UPSTREAM_ERROR, McpOutcome.TIMEOUT, McpOutcome.TOO_LARGE) }.toLong(),

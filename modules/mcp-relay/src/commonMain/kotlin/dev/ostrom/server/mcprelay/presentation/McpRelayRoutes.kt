@@ -14,6 +14,8 @@ import dev.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCase
 import dev.ostrom.server.mcprelay.domain.ListMcpCallsUseCase
 import dev.ostrom.server.mcprelay.domain.ListMcpServersUseCase
 import dev.ostrom.server.mcprelay.domain.ListMemberServersUseCase
+import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
+import dev.ostrom.server.mcprelay.domain.McpSecretNotFoundException
 import dev.ostrom.server.mcprelay.domain.McpServerNotFoundException
 import dev.ostrom.server.mcprelay.domain.McpSettings
 import dev.ostrom.server.mcprelay.domain.McpUsageUseCase
@@ -23,7 +25,9 @@ import dev.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
 import dev.ostrom.server.mcprelay.domain.ToolPolicy
 import dev.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
 import dev.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
+import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCase
 import dev.ostrom.server.secrets.presentation.requireCaller
 import dev.ostrom.server.secrets.presentation.toIdOr
 import io.ktor.http.ContentType
@@ -68,89 +72,100 @@ data class McpRelayRoutesDependencies(
     val usage: McpUsageUseCase,
     val listMemberServers: ListMemberServersUseCase,
     val relay: RelayMcpMessageUseCase,
+    val directory: SecretDirectoryUseCase,
 )
 
 /** The largest MCP message an agent may send. */
 const val MAX_MCP_REQUEST_BYTES: Long = 1024 * 1024
 
 /**
- * The relay routes: administration under `/v1/orgs/{orgId}/mcp`, and the agent side, `GET /v1/mcp/servers` and the
- * Streamable HTTP endpoint `POST /v1/mcp/{server}` (stateless: no session, no server-initiated stream).
+ * The relay routes, in the org of the caller's token: administration under `/api/v1/mcp` (servers addressed by name,
+ * secrets by name), the agent's list (`GET /api/v1/mcp/servers?mine=true`) and the Streamable HTTP endpoint
+ * `POST /api/v1/mcp/{server}` (stateless: no session, no server-initiated stream).
  *
  * @param dependencies The use cases.
  */
 fun Route.mcpRelayRoutes(dependencies: McpRelayRoutesDependencies) = with(dependencies) {
     authenticated {
-        get<OrgMcpApi.Servers> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
-            call.respond(McpServersResponse(listServers(caller).map { it.toResponse() }))
+        get<McpApi.Servers> { params ->
+            val caller = call.requireCaller(callers, null)
+            if (params.mine || !caller.role.isAdmin) {
+                call.respond(McpServersPage(listMemberServers(caller).map { it.toDto() }))
+            } else {
+                val servers = listServers(caller)
+                val names = directory.namesById(caller.orgId, servers.flatMap { it.secretIds() })
+                call.respond(McpServersPage(servers.map { it.toDto(names) }))
+            }
         }
-        post<OrgMcpApi.Servers> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
-            call.respond(HttpStatusCode.Created, createServer(caller, call.receive<McpServerRequest>().toPayload()).toResponse())
+        post<McpApi.Servers> {
+            val caller = call.requireCaller(callers, null)
+            val request = call.receive<McpServerDto>()
+            val server = createServer(caller, request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed())))
+            call.respond(HttpStatusCode.Created, server.toDto(directory.namesById(caller.orgId, server.secretIds())))
         }
-        put<OrgMcpApi.Servers.Id> { params ->
-            val caller = call.requireCaller(callers, params.parent.parent.orgId)
-            val id = params.id.toIdOr(::McpServerNotFoundException)
-            call.respond(updateServer(caller, id, call.receive<McpServerRequest>().toPayload()).toResponse())
+        put<McpApi.Servers.Name> { params ->
+            val caller = call.requireCaller(callers, null)
+            val request = call.receive<McpServerDto>()
+            if (request.name != params.name) throw InvalidMcpServerException("The name of the body differs from the name of the path.")
+            val payload = request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed()))
+            val existing = listServers(caller).firstOrNull { it.name == params.name }
+            val server = if (existing == null) createServer(caller, payload) else updateServer(caller, existing.id, payload)
+            call.respond(server.toDto(directory.namesById(caller.orgId, server.secretIds())))
         }
-        delete<OrgMcpApi.Servers.Id> { params ->
-            val caller = call.requireCaller(callers, params.parent.parent.orgId)
-            deleteServer(caller, params.id.toIdOr(::McpServerNotFoundException))
+        delete<McpApi.Servers.Name> { params ->
+            val caller = call.requireCaller(callers, null)
+            deleteServer(caller, serverId(caller, params.name))
             call.respond(HttpStatusCode.NoContent)
         }
-        get<OrgMcpApi.Servers.Id.Assignments> { params ->
-            val caller = call.requireCaller(callers, params.parent.parent.parent.orgId)
-            val assignments = listAssignments(caller, params.parent.id.toIdOr(::McpServerNotFoundException))
-            call.respond(McpAssignmentsResponse(assignments.map { it.toResponse() }))
+        get<McpApi.Servers.Name.Assignments> { params ->
+            val caller = call.requireCaller(callers, null)
+            val assignments = listAssignments(caller, serverId(caller, params.parent.name))
+            val names = directory.namesById(caller.orgId, assignments.mapNotNull { it.credentialSecretId })
+            call.respond(McpAssignmentsPage(assignments.map { it.toResponse(params.parent.name, it.credentialSecretId?.let(names::get)) }))
         }
-        put<OrgMcpApi.Servers.Id.Assignments.Member> { params ->
-            val caller = call.requireCaller(callers, params.parent.parent.parent.parent.orgId)
+        put<McpApi.Servers.Name.Assignments.Member> { params ->
+            val caller = call.requireCaller(callers, null)
             val request = call.receive<McpAssignmentRequest>()
-            val assignment = assign(
-                caller,
-                params.parent.parent.id.toIdOr(::McpServerNotFoundException),
-                params.member.toMemberId(),
-                ToolPolicy(request.tools?.toSet()),
-                request.credentialSecretId?.toIdOr(::McpServerNotFoundException),
-            )
-            call.respond(assignment.toResponse())
+            val member = params.member.toMemberId()
+            val credential = request.credentialSecret?.let { name ->
+                // A member's own credential is one of their personal secrets.
+                val owner = member ?: throw InvalidMcpServerException("A credential is assigned to one member, not to all.")
+                directory.idsByName(caller.orgId, owner, listOf(name))[name] ?: throw McpSecretNotFoundException()
+            }
+            val assignment = assign(caller, serverId(caller, params.parent.parent.name), member, ToolPolicy(request.tools?.toSet()), credential)
+            call.respond(assignment.toResponse(params.parent.parent.name, request.credentialSecret))
         }
-        delete<OrgMcpApi.Servers.Id.Assignments.Member> { params ->
-            val caller = call.requireCaller(callers, params.parent.parent.parent.parent.orgId)
-            unassign(caller, params.parent.parent.id.toIdOr(::McpServerNotFoundException), params.member.toMemberId())
+        delete<McpApi.Servers.Name.Assignments.Member> { params ->
+            val caller = call.requireCaller(callers, null)
+            unassign(caller, serverId(caller, params.parent.parent.name), params.member.toMemberId())
             call.respond(HttpStatusCode.NoContent)
         }
-        get<OrgMcpApi.Servers.Id.Policies> { params ->
-            val caller = call.requireCaller(callers, params.parent.parent.parent.orgId)
-            val policies = listPolicies(caller, params.parent.id.toIdOr(::McpServerNotFoundException))
+        get<McpApi.Servers.Name.Policies> { params ->
+            val caller = call.requireCaller(callers, null)
+            val policies = listPolicies(caller, serverId(caller, params.parent.name))
             call.respond(ArgumentPoliciesResponse(policies.map { it.toResponse() }))
         }
-        post<OrgMcpApi.Servers.Id.Policies> { params ->
-            val caller = call.requireCaller(callers, params.parent.parent.parent.orgId)
+        post<McpApi.Servers.Name.Policies> { params ->
+            val caller = call.requireCaller(callers, null)
             val request = call.receive<ArgumentPolicyRequest>()
-            val policy = createPolicy(caller, params.parent.id.toIdOr(::McpServerNotFoundException), request.toPayload())
+            val policy = createPolicy(caller, serverId(caller, params.parent.name), request.toPayload())
             call.respond(HttpStatusCode.Created, policy.toResponse())
         }
-        delete<OrgMcpApi.Servers.Id.Policies.PolicyId> { params ->
-            val caller = call.requireCaller(callers, params.parent.parent.parent.parent.orgId)
-            deletePolicy(
-                caller,
-                params.parent.parent.id.toIdOr(::McpServerNotFoundException),
-                params.policyId.toIdOr(::McpServerNotFoundException),
-            )
+        delete<McpApi.Servers.Name.Policies.PolicyId> { params ->
+            val caller = call.requireCaller(callers, null)
+            deletePolicy(caller, serverId(caller, params.parent.parent.name), params.policyId.toIdOr(::McpServerNotFoundException))
             call.respond(HttpStatusCode.NoContent)
         }
-        get<OrgMcpApi.Settings> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
+        get<McpApi.Settings> {
+            val caller = call.requireCaller(callers, null)
             call.respond(McpSettingsDto(getSettings(caller).agentPrefix))
         }
-        put<OrgMcpApi.Settings> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
+        put<McpApi.Settings> {
+            val caller = call.requireCaller(callers, null)
             call.respond(McpSettingsDto(putSettings(caller, McpSettings(call.receive<McpSettingsDto>().agentPrefix)).agentPrefix))
         }
-        get<OrgMcpApi.Calls> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
+        get<McpApi.Calls> { params ->
+            val caller = call.requireCaller(callers, null)
             val before = params.before?.let {
                 try {
                     Instant.parse(it)
@@ -158,19 +173,16 @@ fun Route.mcpRelayRoutes(dependencies: McpRelayRoutesDependencies) = with(depend
                     throw OstromException(ErrorKind.INVALID_REQUEST, "before is not an ISO 8601 instant.")
                 }
             }
+            val member = params.dev?.let { Uuid.parseOrNull(it) ?: throw OstromException(ErrorKind.INVALID_REQUEST, "dev is not a member id.") }
             val limit = params.limit.coerceIn(1, 200)
-            val calls = listCalls(caller, before, limit)
-            call.respond(McpCallsResponse(calls.map { it.toResponse() }, calls.takeIf { it.size == limit }?.last()?.startedAt?.toString()))
+            val calls = listCalls(caller, before, limit, params.server, member)
+            call.respond(McpCallsPage(calls.map { it.toDto() }, calls.takeIf { it.size == limit }?.last()?.startedAt?.toString()))
         }
-        get<OrgMcpApi.Usage> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
-            call.respond(McpUsagesResponse(usage(caller, params.days).map { it.toResponse() }))
-        }
-        get<MemberMcpServersApi> {
+        get<McpApi.Usage> { params ->
             val caller = call.requireCaller(callers, null)
-            call.respond(MemberMcpServersResponse(listMemberServers(caller).map { it.toResponse() }))
+            call.respond(usage(caller, params.days).toResponse())
         }
-        route("/v1/mcp/{server}") {
+        route("/api/v1/mcp/{server}") {
             routePost {
                 // Streamable HTTP from a browser is refused (DNS rebinding): agents never send an Origin.
                 if (call.request.headers[HttpHeaders.Origin] != null) {
@@ -201,5 +213,8 @@ fun Route.mcpRelayRoutes(dependencies: McpRelayRoutesDependencies) = with(depend
         }
     }
 }
+
+private suspend fun McpRelayRoutesDependencies.serverId(caller: Caller, name: String): Uuid =
+    listServers(caller).firstOrNull { it.name == name }?.id ?: throw McpServerNotFoundException()
 
 private fun String.toMemberId(): Uuid? = if (this == "all") null else toIdOr(::McpServerNotFoundException)

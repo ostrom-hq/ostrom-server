@@ -202,13 +202,17 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         ).getOrThrow()
     }
 
-    override suspend fun listCalls(orgId: Uuid, before: Instant?, limit: Int): List<McpCall> {
-        val cursor = if (before == null) "" else " AND started_at < :before"
+    override suspend fun listCalls(orgId: Uuid, before: Instant?, limit: Int, server: String?, memberId: Uuid?): List<McpCall> {
+        val filters = (if (before == null) "" else " AND started_at < :before") +
+            (if (server == null) "" else " AND server_name = :server") +
+            (if (memberId == null) "" else " AND member_id = :member_id")
         val statement = Statement.create(
             "SELECT id, org_id, member_id, server_id, server_name, operation, tool, outcome, started_at, duration_ms, response_bytes, " +
-                "policy_id FROM mcp_relay_calls WHERE org_id = :org_id$cursor ORDER BY started_at DESC, id LIMIT :limit",
+                "policy_id FROM mcp_relay_calls WHERE org_id = :org_id$filters ORDER BY started_at DESC, id LIMIT :limit",
         ).bind("org_id", orgId).bind("limit", limit)
         if (before != null) statement.bind("before", before)
+        if (server != null) statement.bind("server", server)
+        if (memberId != null) statement.bind("member_id", memberId)
         return driver.fetchAll(statement).getOrThrow().map { it.toCall() }
     }
 
@@ -232,13 +236,13 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
     override suspend fun usage(orgId: Uuid, since: Instant, memberId: Uuid?): List<McpUsage> {
         val member = if (memberId == null) "" else " AND member_id = :member_id"
         val statement = Statement.create(
-            "SELECT member_id, server_name, " +
+            "SELECT member_id, server_name, tool, " +
                 "COUNT(*) FILTER (WHERE operation = 'CALL') AS calls, COUNT(*) FILTER (WHERE operation = 'LIST') AS lists, " +
                 "COUNT(*) FILTER (WHERE outcome IN ('UPSTREAM_ERROR', 'TIMEOUT', 'TOO_LARGE')) AS errors, " +
                 "COUNT(*) FILTER (WHERE outcome IN ('DENIED', 'APPROVAL_REQUIRED')) AS denied, " +
                 "COALESCE(SUM(response_bytes), 0) AS bytes, COALESCE(SUM(duration_ms), 0) AS duration " +
                 "FROM mcp_relay_calls WHERE org_id = :org_id AND started_at >= :since$member " +
-                "GROUP BY member_id, server_name ORDER BY server_name, member_id LIMIT 10000",
+                "GROUP BY member_id, server_name, tool ORDER BY server_name, member_id, tool LIMIT 10000",
         ).bind("org_id", orgId).bind("since", since)
         if (memberId != null) statement.bind("member_id", memberId)
         return driver.fetchAll(statement).getOrThrow().map { row ->
@@ -251,6 +255,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
                 denied = row.get("denied").asLong(),
                 bytes = row.get("bytes").asLong(),
                 durationMillis = row.get("duration").asLong(),
+                tool = row.get("tool").asStringOrNull(),
             )
         }
     }

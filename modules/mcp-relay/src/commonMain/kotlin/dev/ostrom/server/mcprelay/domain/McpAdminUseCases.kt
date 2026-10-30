@@ -317,17 +317,17 @@ class PutMcpSettingsUseCaseImpl(private val repository: McpRelayRepository) : Pu
     }
 }
 
-/** Reads the journal (admins), newest first. */
+/** Reads the journal, newest first: admins read every member's calls, a member only their own. */
 interface ListMcpCallsUseCase {
-    /** Reads a page. */
-    suspend operator fun invoke(caller: Caller, before: Instant?, limit: Int): List<McpCall>
+    /** Reads a page, of one server or member when given. */
+    suspend operator fun invoke(caller: Caller, before: Instant?, limit: Int, server: String? = null, memberId: Uuid? = null): List<McpCall>
 }
 
 /** [ListMcpCallsUseCase] on the repository. */
 class ListMcpCallsUseCaseImpl(private val repository: McpRelayRepository) : ListMcpCallsUseCase {
-    override suspend fun invoke(caller: Caller, before: Instant?, limit: Int): List<McpCall> {
-        caller.requireAdmin()
-        return repository.listCalls(caller.orgId, before, limit.coerceIn(1, 200))
+    override suspend fun invoke(caller: Caller, before: Instant?, limit: Int, server: String?, memberId: Uuid?): List<McpCall> {
+        val member = if (caller.role.isAdmin) memberId else caller.memberId
+        return repository.listCalls(caller.orgId, before, limit.coerceIn(1, 200), server, member)
     }
 }
 

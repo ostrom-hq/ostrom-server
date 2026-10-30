@@ -109,7 +109,7 @@ data class McpRelayConfig(val host: McpHostConfig?, val allowPrivateUpstreams: B
 
 /** The MCP relay module. */
 object McpRelayModule : ServerModule {
-    override val name: String = "mcp_relay"
+    override val name: String = "mcp-relay"
 
     /** The Koin name of the relay's HTTP client (redirects off), replaced by tests. */
     val HTTP_CLIENT = named("mcpRelayHttpClient")
@@ -163,7 +163,7 @@ object McpRelayModule : ServerModule {
         single {
             McpRelayRoutesDependencies(
                 getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(),
-                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
             )
         }
     }

@@ -11,8 +11,8 @@ object McpRules {
     /** The most tools listed per server and allowlisted per assignment. */
     const val MAX_TOOLS: Int = 256
 
-    /** The name kept for the list route `/v1/mcp/servers`. */
-    const val RESERVED_NAME: String = "servers"
+    /** Names kept for the routes next to `POST /api/v1/mcp/{server}`. */
+    val RESERVED_NAMES: Set<String> = setOf("servers", "settings", "calls", "usage")
 
     /** The most argument policies per server. */
     const val MAX_POLICIES: Int = 64
@@ -37,7 +37,7 @@ object McpRules {
      * @throws InvalidMcpServerException On the first broken rule.
      */
     fun requireServer(server: McpServer) {
-        if (!serverName.matches(server.name) || server.name == RESERVED_NAME) {
+        if (!serverName.matches(server.name) || server.name in RESERVED_NAMES) {
             invalid("A server name is 1 to 64 characters of a-z 0-9 . _ - and starts with a letter or digit (not `servers`).")
         }
         server.credentialHeader?.let {
