@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.testing
 
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -59,7 +60,8 @@ internal fun serverTest(
     val database = TestDatabase.create(environment) ?: return@testApplication
     try {
         val signer = Ed25519InstanceSigner.generate()
-        val koin = serverKoin(kernelModule(JsonLogger(LogLevel.WARN), database.driver, signer), modules, overrides)
+        val kernel = kernelModule(JsonLogger(LogLevel.WARN), database.driver, signer, environment)
+        val koin = serverKoin(kernel, modules, overrides)
         try {
             val migrations = koin.get<MigrationRunner>()
             modules.forEach { migrations.migrate(it.name, it.migrations) }

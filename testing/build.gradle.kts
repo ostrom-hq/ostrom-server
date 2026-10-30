@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Test helpers shared by every module's tests: a throwaway PostgreSQL database per test and a test server with
 // the kernel and the modules under test. Only ever a test dependency.
 plugins {

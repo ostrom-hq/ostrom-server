@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Convention for every Kotlin module of Ostrom (docs/CONVENTIONS.md sections 7, 8, 9 and 10).
 // A module applies `id("ostrom.kmp")` and declares its own dependencies; nothing else goes in its build file.
 //

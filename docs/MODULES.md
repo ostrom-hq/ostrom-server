@@ -104,7 +104,7 @@ driver.fetchAll(Statement.create("SELECT id, name, created_at FROM orgs_organiza
 ## 5. Routes and errors
 
 ```kotlin
-@Serializable @Resource("/v1/orgs") class OrgsApi { @Serializable @Resource("{id}") class Id(val parent: OrgsApi = OrgsApi(), val id: String) }
+@Serializable @Resource("/api/v1/orgs") class OrgsApi { @Serializable @Resource("{id}") class Id(val parent: OrgsApi = OrgsApi(), val id: String) }
 
 fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) {
     authenticated {
@@ -116,7 +116,8 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) 
 }
 ```
 
-- Every route is under `/v1/…`, except `/health`.
+- Every route is under `/api/v1/…` (the prefix of ostrom-core's `api/openapi.yaml`), except `/health`, which the
+  kernel also serves as `/api/v1/health`.
 - **Errors are thrown, never answered by hand**: a domain error subclasses `OstromException(ErrorKind.X, "message safe
   for the client")` (`class OrgNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")`).
   The kernel answers `{"error":{"type":"not_found","message":"…"}}` (CONVENTIONS section 3.3) with the kind's status;
@@ -150,7 +151,7 @@ Every request is already logged once by the kernel (method, path, status, durati
   test cases).
 - **Unit tests** (use cases): hand-written fakes (`InMemoryOrgsRepository`); MockK does not exist on Kotlin/Native.
   Coroutines with `runTest`; time from an injected `Clock`.
-- **Database and route tests**: `serverTest(listOf(OrgsModule)) { server -> server.client.get("/v1/orgs") … }` starts
+- **Database and route tests**: `serverTest(listOf(OrgsModule)) { server -> server.client.get("/api/v1/orgs") … }` starts
   a fresh PostgreSQL database, applies the migrations, runs `initialize`, serves the routes, and drops the database
   afterwards. Fakes replace real bindings through `overrides = module { single<TokenAuthenticator> { … } }`.
   Name these classes `*PostgresTest`.
@@ -163,7 +164,7 @@ Every request is already logged once by the kernel (method, path, status, durati
 
 ## 8. Before the PR
 
-- CI job `linux` green: `scripts/check-conventions.py`, then
+- CI job `ci` green: `scripts/check-conventions.py`, then
   `./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test`, the binaries (`ci/build-linux.sh` leaves
   `dist/ostrom-server`) and the image smoke test.
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
@@ -184,8 +185,9 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
-A module that needs its own keys reads them from the `ConfigSource` with the `OSTROM_<MODULE>_…` prefix and adds them
-to this table.
+A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
+environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
+`serverTest`, give it values with `overrides = module { single<ConfigSource> { MapConfigSource(mapOf(…)) } }`.
 
 ## Known limits of the foundation
 
