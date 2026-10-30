@@ -10,7 +10,7 @@ All repository content (code, comments, docs, commits, pull requests) is in Engl
 
 ## Specific to this repository
 
-Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests (ENG-054). Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request, p95/p99 thresholds.
+Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests (ENG-054). Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request, p95/p99 thresholds. Every customer table carries `org_id` under PostgreSQL Row-Level Security, with one end-to-end test per resource proving another organization cannot see or change it; console writes need a user session, agent tokens are scoped to their own session (CONVENTIONS.md section 16). Budgets tested in CI: start-up < 200 ms, API p95 < 50 ms under nominal load.
 
 ## The 15 rules that matter most
 
