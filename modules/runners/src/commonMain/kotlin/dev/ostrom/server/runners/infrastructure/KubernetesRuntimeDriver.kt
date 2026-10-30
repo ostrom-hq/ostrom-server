@@ -24,9 +24,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -138,8 +136,7 @@ class KubernetesRuntimeDriver(
             if (created.status == HttpStatusCode.Conflict) {
                 val current = call(HttpMethod.Get, "$path/$name")
                 current.requireSuccess("read network policy")
-                val version = Json.parseToJsonElement(current.bodyAsText()).jsonObject["metadata"]?.jsonObject
-                    ?.get("resourceVersion")?.jsonPrimitive?.content
+                val version = Json.parseToJsonElement(current.bodyAsText()).textAt("metadata", "resourceVersion")
                 val metadata = policy.getValue("metadata").jsonObject + ("resourceVersion" to JsonPrimitive(version))
                 val replaced = JsonObject(policy + ("metadata" to JsonObject(metadata)))
                 call(HttpMethod.Put, "$path/$name", replaced).requireSuccess("replace network policy")
@@ -256,7 +253,7 @@ class KubernetesRuntimeDriver(
         val response = call(HttpMethod.Post, "$base$path", body)
         // Creating what exists is a success: every step can be repeated after a crash.
         if (response.status != HttpStatusCode.Conflict) {
-            response.requireSuccess("create ${body["kind"]?.jsonPrimitive?.content}")
+            response.requireSuccess("create ${body.textAt("kind")}")
         }
     }
 
@@ -313,11 +310,10 @@ class KubernetesRuntimeDriver(
          * @return The state.
          */
         fun podStatus(pod: JsonObject): ExecutionStatus {
-            val status = pod["status"]?.jsonObject ?: return ExecutionStatus.PENDING
-            val waiting = status["containerStatuses"]?.jsonArray.orEmpty().mapNotNull {
-                it.jsonObject["state"]?.jsonObject?.get("waiting")?.jsonObject?.get("reason")?.jsonPrimitive?.content
-            }
-            val phase = status["phase"]?.jsonPrimitive?.content
+            val status = pod["status"] as? JsonObject ?: return ExecutionStatus.PENDING
+            val containers = status["containerStatuses"] as? JsonArray ?: JsonArray(emptyList())
+            val waiting = containers.mapNotNull { it.textAt("state", "waiting", "reason") }
+            val phase = status.textAt("phase")
             return when {
                 waiting.any { it in FATAL_WAITING } -> ExecutionStatus.FAILED
                 phase == "Running" -> ExecutionStatus.RUNNING

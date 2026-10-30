@@ -184,12 +184,13 @@ class KubernetesRuntimeDriverTest {
     fun sessionPodsTakeTheConfiguredLowPriorityClass() = runTest {
         val low = KubernetesRuntimeDriver(
             api.client,
-            settings.copy(priorityClass = "ostrom-low"),
+            settings.copy(priorityClass = "ostrom-low", imagePullSecret = null),
             "http://s",
             "img:1",
         ) { "t" }
         low.startExecution(spec(repository = null))
         assertEquals("ostrom-low", body(3)["spec"]!!.jsonObject["priorityClassName"]!!.jsonPrimitive.content)
+        assertNull(body(3)["spec"]!!.jsonObject["imagePullSecrets"])
     }
 
     @Test
@@ -237,6 +238,9 @@ class KubernetesRuntimeDriverTest {
             pod("Failed") to ExecutionStatus.ENDED,
             (HttpStatusCode.OK to "{}") to ExecutionStatus.PENDING,
             (HttpStatusCode.OK to """{"status":{}}""") to ExecutionStatus.PENDING,
+            (HttpStatusCode.OK to """{"status":"odd"}""") to ExecutionStatus.PENDING,
+            (HttpStatusCode.OK to """{"status":{"phase":"Running","containerStatuses":3}}""") to
+                ExecutionStatus.RUNNING,
             (HttpStatusCode.NotFound to "{}") to ExecutionStatus.MISSING,
         )
         for ((answer, expected) in cases) {
