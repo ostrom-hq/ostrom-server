@@ -70,11 +70,14 @@ class TrustedProxies(private val networks: List<IpNetwork>) {
      */
     fun clientAddress(peer: String, forwardedFor: List<String>): String {
         val peerBytes = parseIpAddress(peer) ?: return peer
-        if (networks.none { peerBytes in it }) return formatIpAddress(peerBytes)
+        val client = if (networks.any { peerBytes in it }) forwardedClient(forwardedFor) else null
+        return formatIpAddress(client ?: peerBytes)
+    }
+
+    private fun forwardedClient(forwardedFor: List<String>): ByteArray? {
         val hops = forwardedFor.flatMap { it.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }
         val readable = hops.asReversed().map(::parseIpAddress).takeWhile { it != null }.filterNotNull()
-        val client = readable.firstOrNull { address -> networks.none { address in it } } ?: readable.lastOrNull()
-        return formatIpAddress(client ?: peerBytes)
+        return readable.firstOrNull { address -> networks.none { address in it } } ?: readable.lastOrNull()
     }
 
     /** Reading the trusted proxies. */

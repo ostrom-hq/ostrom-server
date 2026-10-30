@@ -407,12 +407,13 @@ class HttpTest {
 
     @Test
     fun everyRequestIsLoggedOnceWithoutItsQuery() = probeServer {
-        client.get("/probe/missing?token=abc")
+        client.get("/probe/missing?token=qqsecretqq")
         client.get("/health")
         val requestLines = requestLines(2)
         assertEquals(2, requestLines.size)
         assertTrue("\"level\":\"INFO\"" in requestLines[0] && "\"status\":404" in requestLines[0])
-        assertFalse("abc" in requestLines[0])
+        // Not "abc": a random request id can contain hex letters.
+        assertFalse("qqsecretqq" in requestLines[0])
         assertTrue("\"level\":\"DEBUG\"" in requestLines[1])
     }
 
