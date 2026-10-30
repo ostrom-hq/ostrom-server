@@ -21,7 +21,7 @@ import dev.ostrom.server.secrets.domain.RotateSecretUseCase
 import dev.ostrom.server.secrets.domain.RotateSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.domain.SecretsRepository
-import dev.ostrom.server.secrets.domain.UnresolvedCallerResolver
+import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.secrets.infrastructure.SecretsKey
 import dev.ostrom.server.secrets.infrastructure.SecretsMigrations
@@ -50,7 +50,7 @@ object SecretsModule : ServerModule {
         single<RevealSecretsUseCase> { RevealSecretsUseCaseImpl(get(), get()) }
         single<FindSecretUseCase> { FindSecretUseCaseImpl(get()) }
         single<SecretDirectoryUseCase> { SecretDirectoryUseCaseImpl(get()) }
-        single { SecretsRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get(), get()) }
+        single { SecretsRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = SecretsMigrations

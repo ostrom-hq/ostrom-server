@@ -2,8 +2,10 @@ package dev.ostrom.server.instance
 
 import dev.ostrom.server.instance.domain.Instance
 import dev.ostrom.server.instance.domain.InstanceRepository
+import dev.ostrom.server.instance.infrastructure.InstanceRepositoryImpl
 import dev.ostrom.server.instance.presentation.InstanceResponse
 import dev.ostrom.server.instance.presentation.SigningKeysResponse
+import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -12,10 +14,11 @@ import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** Against a real PostgreSQL (CI service): the proof that the driver, the migrations and the repositories work natively. */
+/** Against a real PostgreSQL (CI service): the driver, the migrations and the repositories, on the JVM and natively. */
 class InstancePostgresTest {
     @Test
     fun repositoryWritesThenReadsTheInstance() = serverTest(listOf(InstanceModule)) { server ->
@@ -41,5 +44,13 @@ class InstancePostgresTest {
 
         val keys = server.client.get("/v1/instance/keys").body<SigningKeysResponse>()
         assertEquals(listOf(signer.keyId), keys.keys.map { it.keyId })
+    }
+
+    @Test
+    fun repositoryReadsNoInstanceBeforeItsCreation() = serverTest(emptyList()) { server ->
+        server.koin.get<MigrationRunner>().migrate(InstanceModule.name, InstanceModule.migrations)
+        val repository = InstanceRepositoryImpl(server.driver)
+        assertNull(repository.get())
+        assertEquals(emptyList(), repository.listKeys())
     }
 }

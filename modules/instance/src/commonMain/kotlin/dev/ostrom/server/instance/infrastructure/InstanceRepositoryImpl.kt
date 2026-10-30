@@ -27,7 +27,8 @@ class InstanceRepositoryImpl(private val driver: Driver) : InstanceRepository {
                 .bind("id", instance.id)
                 .bind("created_at", instance.createdAt),
         ).getOrThrow()
-        return checkNotNull(get()) { "The instance row is missing right after its creation." }
+        // The row exists now, ours or the one another replica wrote first.
+        return driver.fetchAll("SELECT id, created_at FROM instance_info").getOrThrow().single().toInstance()
     }
 
     override suspend fun registerKey(key: SigningKey) {
@@ -44,7 +45,8 @@ class InstanceRepositoryImpl(private val driver: Driver) : InstanceRepository {
     }
 
     override suspend fun listKeys(): List<SigningKey> = driver.fetchAll(
-        "SELECT key_id, algorithm, public_key_pem, first_seen_at FROM instance_signing_keys ORDER BY first_seen_at, key_id",
+        "SELECT key_id, algorithm, public_key_pem, first_seen_at FROM instance_signing_keys " +
+            "ORDER BY first_seen_at, key_id",
     ).getOrThrow().map { it.toSigningKey() }
 
     private fun ResultSet.Row.toInstance() = Instance(
