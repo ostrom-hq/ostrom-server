@@ -43,11 +43,9 @@ import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
-import io.ktor.client.request.preparePost
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -56,9 +54,10 @@ import io.ktor.http.contentType
 import io.ktor.http.headersOf
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
-import io.ktor.utils.io.toByteArray
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -213,6 +212,11 @@ class GatewayPostgresTest {
 
     private val modules = listOf(SecretsModule, SharingModule, GatewayModule)
 
+    private companion object {
+        val KEEP_ALIVE = ": keep-alive\n".repeat(5_000)
+        const val KEEP_ALIVE_BLOCKS = 48
+    }
+
     private suspend fun TestServer.infer(
         path: String,
         body: String,
@@ -283,24 +287,25 @@ class GatewayPostgresTest {
         with(server) {
             shareClaude()
             val upstream = ByteChannel()
-            upstream.writeStringUtf8(events.substringBefore("event: content_block_delta"))
-            upstream.flush()
             broken = upstream
-            client.preparePost("/api/v1/inference/v1/messages") {
-                header("x-api-key", "agent-a")
-                setBody(TextContent("""{"model":"claude-opus-5","stream":true}""", ContentType.Application.Json))
-            }.execute { response ->
-                assertEquals(HttpStatusCode.OK, response.status)
-                val body = response.bodyAsChannel()
-                body.awaitContent()
-                upstream.cancel(IllegalStateException("connection reset"))
-                val rest = try {
-                    body.toByteArray().decodeToString()
+            val answer = coroutineScope {
+                // The provider sends its first event, then 3 MiB of keep-alives: a channel holds at most 1 MiB, so
+                // the gateway has read and relayed bytes before the connection resets.
+                launch {
+                    upstream.writeStringUtf8(events.substringBefore("event: content_block_delta"))
+                    repeat(KEEP_ALIVE_BLOCKS) {
+                        upstream.writeStringUtf8(KEEP_ALIVE)
+                        upstream.flush()
+                    }
+                    upstream.cancel(IllegalStateException("connection reset"))
+                }
+                try {
+                    infer("messages", """{"model":"claude-opus-5","stream":true}""").bodyAsText()
                 } catch (_: Exception) {
                     ""
                 }
-                assertFalse("message_delta" in rest, "Never ended as if complete")
             }
+            assertFalse("message_delta" in answer, "Never ended as if complete")
             var record = recorded.receive()
             while (record.outcome == "ok") record = recorded.receive()
             assertEquals("upstream_broken", record.outcome)
