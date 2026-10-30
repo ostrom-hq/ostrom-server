@@ -13,6 +13,7 @@ import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.models.GitHubRequiredException
 import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
 import dev.ostrom.server.gates.domain.models.MissingPullRequestException
+import dev.ostrom.server.gates.domain.models.NoPersonException
 import dev.ostrom.server.gates.domain.models.OutdatedLauncherException
 import dev.ostrom.server.gates.domain.services.GateDigester
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -80,7 +81,8 @@ class AskGateUseCaseImpl(
 ) : AskGateUseCase {
     override suspend fun invoke(actor: GateActor, ask: AskGate): GateView {
         val orgId = actor.orgId
-        val asker = actor.personId ?: actor.id
+        // S2-15: a gate is asked for a person, never for a credential id that self-approval could not recognize.
+        val asker = actor.personId ?: throw NoPersonException()
         // `?.trim()?.takeIf` has a null check nothing reaches: Kover counts it, so the texts are read as non-null.
         val repo = ask.repo.orEmpty().trim().ifEmpty { null }
         val realRepo = ask.realRepo.orEmpty().trim().takeIf { it.isNotEmpty() && it != repo }
