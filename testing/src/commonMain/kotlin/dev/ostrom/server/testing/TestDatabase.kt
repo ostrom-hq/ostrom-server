@@ -46,10 +46,24 @@ class TestDatabase private constructor(
             }
             val user = environment["OSTROM_TEST_DATABASE_USER"] ?: "postgres"
             val password = environment["OSTROM_TEST_DATABASE_PASSWORD"] ?: "postgres"
+            require(Regex("postgres(ql)?://[^/?]+/[^/?]+").matches(url)) {
+                "OSTROM_TEST_DATABASE_URL must be postgresql://host:port/database, without a query string."
+            }
             val admin = connectPostgres(DatabaseConfig(url, user, password, maxConnections = 1))
             val name = "ostrom_test_" + Uuid.random().toHexString()
-            admin.execute("CREATE DATABASE $name").getOrThrow()
-            val driver = connectPostgres(DatabaseConfig(url.substringBeforeLast('/') + "/" + name, user, password, 4))
+            try {
+                admin.execute("CREATE DATABASE $name").getOrThrow()
+            } catch (error: Throwable) {
+                admin.close()
+                throw error
+            }
+            val driver = try {
+                connectPostgres(DatabaseConfig(url.substringBeforeLast('/') + "/" + name, user, password, 4))
+            } catch (error: Throwable) {
+                admin.execute("DROP DATABASE IF EXISTS $name WITH (FORCE)")
+                admin.close()
+                throw error
+            }
             return TestDatabase(driver, admin, name)
         }
     }

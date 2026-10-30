@@ -6,20 +6,21 @@ package dev.ostrom.server.kernel.auth
  *
  * @property subjectId The stable id of the user, device or service the token belongs to.
  * @property kind What the subject is.
- * @property scopes What the token allows; empty means the subject's full rights.
+ * @property scopes What the token allows, as decided by the identity module. Empty grants no scope: a route that
+ *   requires a scope refuses it. There is no implicit "everything".
  */
 data class AuthenticatedPrincipal(
     val subjectId: String,
     val kind: PrincipalKind,
-    val scopes: Set<String> = emptySet(),
+    val scopes: Set<String>,
 )
 
 /** The kinds of subject a token can belong to. */
 enum class PrincipalKind { USER, DEVICE, SERVICE }
 
 /**
- * Turns a bearer token into a principal. The kernel binds [RejectingTokenAuthenticator]; the identity module
- * replaces it with its own implementation in its Koin module (docs/MODULES.md).
+ * Turns a bearer token into a principal. The identity module binds its implementation in its Koin module; until
+ * then [serverKoin][dev.ostrom.server.kernel.module.serverKoin] binds [RejectingTokenAuthenticator] (docs/MODULES.md).
  */
 interface TokenAuthenticator {
     /**

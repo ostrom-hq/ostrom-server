@@ -1,9 +1,9 @@
 package dev.ostrom.server.instance.presentation
 
+import dev.ostrom.server.instance.domain.GetCurrentSigningKeyUseCase
 import dev.ostrom.server.instance.domain.GetOrCreateInstanceUseCase
 import dev.ostrom.server.instance.domain.Instance
 import dev.ostrom.server.instance.domain.ListSigningKeysUseCase
-import dev.ostrom.server.instance.domain.RegisterCurrentSigningKeyUseCase
 import dev.ostrom.server.instance.domain.SigningKey
 import dev.ostrom.server.kernel.http.SERVER_VERSION
 import io.ktor.server.resources.get
@@ -14,12 +14,12 @@ import io.ktor.server.routing.Route
  * What the instance routes need.
  *
  * @property getOrCreateInstance Reads the instance.
- * @property registerCurrentSigningKey Returns the current key (recorded at start, so this changes nothing).
+ * @property getCurrentSigningKey Reads the current key (recorded at start).
  * @property listSigningKeys Lists the keys.
  */
 data class InstanceRoutesDependencies(
     val getOrCreateInstance: GetOrCreateInstanceUseCase,
-    val registerCurrentSigningKey: RegisterCurrentSigningKeyUseCase,
+    val getCurrentSigningKey: GetCurrentSigningKeyUseCase,
     val listSigningKeys: ListSigningKeysUseCase,
 )
 
@@ -30,7 +30,7 @@ data class InstanceRoutesDependencies(
  */
 fun Route.instanceRoutes(dependencies: InstanceRoutesDependencies) = with(dependencies) {
     get<InstanceApi> {
-        call.respond(getOrCreateInstance().toInstanceResponse(registerCurrentSigningKey()))
+        call.respond(getOrCreateInstance().toInstanceResponse(getCurrentSigningKey()))
     }
     get<InstanceApi.Keys> {
         call.respond(SigningKeysResponse(listSigningKeys().map { it.toSigningKeyResponse() }))
