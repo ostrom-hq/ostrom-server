@@ -47,6 +47,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
 import org.koin.dsl.module
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -121,7 +124,12 @@ class GitHubPostgresTest {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
             }
         }
-        single { GitHubSettings("123", null, secret, slug, webOrigin = "https://console.example") }
+        single {
+            GitHubSettings(
+                "123", null, secret, slug, webOrigin = "https://console.example",
+                clientId = "Iv1.test", clientSecret = "client-secret",
+            )
+        }
         single<GitHubApi> { github }
     }
 
@@ -138,11 +146,13 @@ class GitHubPostgresTest {
             token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
         }
 
-    private suspend fun TestServer.install(token: String, installation: Long): HttpResponse {
+    /** Installs [installation] as the GitHub person who reaches it, unless [code] names another person. */
+    private suspend fun TestServer.install(token: String, installation: Long, code: String? = null): HttpResponse {
         val start = get(token, "/api/v1/github/app/install/start")
         assertEquals(HttpStatusCode.Found, start.status)
         val state = start.headers[HttpHeaders.Location].orEmpty().substringAfter("state=")
-        return get(null, "/api/v1/github/app/install/callback?installation_id=$installation&state=$state")
+        val person = code ?: if (installation == 42L) "code-acme" else "code-globex"
+        return get(null, "/api/v1/github/app/install/callback?installation_id=$installation&code=$person&state=$state")
     }
 
     private suspend fun sign(body: String): String {
@@ -235,13 +245,33 @@ class GitHubPostgresTest {
 
         val start = server.get("user:a:owner", "/api/v1/github/app/install/start")
         val state = start.headers[HttpHeaders.Location].orEmpty().substringAfter("state=")
-        val callback = "/api/v1/github/app/install/callback?installation_id=42&state=$state"
+        val callback = "/api/v1/github/app/install/callback?installation_id=42&code=code-acme&state=$state"
         assertEquals(HttpStatusCode.Found, server.get(null, callback).status)
         assertEquals(HttpStatusCode.Forbidden, server.get(null, callback).status, "Used once")
         assertEquals(HttpStatusCode.BadRequest, server.get(null, "/api/v1/github/app/install/callback").status)
 
         assertEquals(HttpStatusCode.Conflict, server.install("user:b:owner", 42).status, "Org A holds it")
         assertEquals(HttpStatusCode.Found, server.install("user:b:owner", 43).status)
+    }
+
+    @Test
+    fun anOrganizationCannotTakeAnotherOnesInstallation() = gitHubTest { server ->
+        // The owner of org B reaches only globex's installation (43) on GitHub, and comes back with acme's (42),
+        // which no organization has linked yet.
+        val stolen = server.install("user:b:owner", 42, code = "code-globex")
+        assertEquals(HttpStatusCode.Forbidden, stolen.status)
+        val type = stolen.body<JsonObject>()["error"]?.jsonObject?.get("type")?.jsonPrimitive?.content
+        assertEquals("installation_not_yours", type)
+        assertEquals(false, server.get("user:b:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
+        // A code GitHub does not accept, or none at all (the App does not ask for the person's authorization).
+        assertEquals(HttpStatusCode.Forbidden, server.install("user:b:owner", 43, code = "code-forged").status)
+        val start = server.get("user:b:owner", "/api/v1/github/app/install/start")
+        val state = start.headers[HttpHeaders.Location].orEmpty().substringAfter("state=")
+        val noCode = server.get(null, "/api/v1/github/app/install/callback?installation_id=43&state=$state")
+        assertEquals(HttpStatusCode.BadRequest, noCode.status)
+        // The owner of acme's organization still installs it.
+        assertEquals(HttpStatusCode.Found, server.install("user:a:owner", 42).status)
+        assertEquals(true, server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
     }
 
     @Test

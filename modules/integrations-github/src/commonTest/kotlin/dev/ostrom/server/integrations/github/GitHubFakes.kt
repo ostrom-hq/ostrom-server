@@ -40,8 +40,18 @@ class RecordingLogger : Logger {
     override fun with(fields: Map<String, Any?>): Logger = this
 }
 
-/** GitHub as a map of pull requests and installations, recording every check it is sent. */
+/**
+ * GitHub as a map of pull requests and installations, recording every check it is sent. The person `acme-admin`
+ * (code `code-acme`) reaches installation 42, `globex-admin` (code `code-globex`) reaches 43.
+ */
 class FakeGitHubApi : GitHubApi {
+    init {
+        codes["code-acme"] = "gho_acme"
+        codes["code-globex"] = "gho_globex"
+        reachable["gho_acme"] = setOf(42L)
+        reachable["gho_globex"] = setOf(43L)
+    }
+
     val pulls = mutableMapOf<Pair<String, Int>, GitHubPull>()
     val accounts = mutableMapOf<Long, String>()
     val published = mutableListOf<Triple<String, CheckRun, Long?>>()
@@ -59,6 +69,16 @@ class FakeGitHubApi : GitHubApi {
     }
 
     override suspend fun installationAccount(installationId: Long): String? = accounts[installationId]
+
+    /** The OAuth codes GitHub gives back, each the token of a person. */
+    val codes = mutableMapOf<String, String>()
+
+    /** The installations each person's token reaches. */
+    val reachable = mutableMapOf<String, Set<Long>>()
+
+    override suspend fun userToken(code: String): String? = codes[code]
+
+    override suspend fun userInstallations(userToken: String): Set<Long> = reachable[userToken].orEmpty()
 }
 
 /** The repository in memory, with the same rules (one installation per organization, single-use states). */

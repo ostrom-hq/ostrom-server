@@ -57,14 +57,14 @@ object GitHubIntegrationModule : ServerModule {
         single<GitHubApi> {
             val settings = get<GitHubSettings>()
             val jwt = settings.appId?.let { id -> settings.privateKeyPem?.let { AppJwt(id, it, get()) } }
-            HttpGitHubApi(get(GITHUB_HTTP), settings.apiUrl, jwt, get())
+            HttpGitHubApi(get(GITHUB_HTTP), settings.apiUrl, jwt, get(), settings.webUrl, settings.oauthClient)
         }
         single<PullRequestHeads> { GitHubPullRequestHeads(get(), get(), get()) }
         single { GitHubGateChecks(get(), get(), get<GitHubSettings>().webOrigin, get()) } bind GateChannel::class
         single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get()) }
         single {
             val settings = get<GitHubSettings>()
-            GitHubInstalls(get(), get(), settings.slug, settings.webUrl, get())
+            GitHubInstalls(get(), get(), settings.installSlug, settings.webUrl, get())
         }
         single {
             val settings = get<GitHubSettings>()

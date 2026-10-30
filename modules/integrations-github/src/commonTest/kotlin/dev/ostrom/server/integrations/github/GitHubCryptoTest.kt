@@ -19,6 +19,7 @@ import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class GitHubCryptoTest {
@@ -75,6 +76,8 @@ class GitHubCryptoTest {
             "OSTROM_GITHUB_API" to "https://ghe.example/api/v3/",
             "OSTROM_GITHUB_WEB" to "https://ghe.example/",
             "OSTROM_WEB_ORIGIN" to "https://console.example/",
+            "OSTROM_GITHUB_APP_CLIENT_ID" to "Iv1.abc",
+            "OSTROM_GITHUB_APP_CLIENT_SECRET" to "client-s3cret",
             "OSTROM_EMPTY" to " ",
         )
         val settings = GitHubSettings.from(source(values))
@@ -84,7 +87,14 @@ class GitHubCryptoTest {
         assertEquals("https://ghe.example", settings.webUrl)
         assertEquals("https://console.example", settings.webOrigin)
         assertTrue(settings.configured)
+        assertEquals("Iv1.abc", settings.clientId)
+        assertEquals("client-s3cret", settings.clientSecret)
+        assertEquals("ostrom-dev", settings.installSlug)
         assertFalse("abc" in settings.toString() || "s3cret" in settings.toString())
+        // Without its OAuth client, the App is not installed: nothing would prove the installation is the person's.
+        assertNull(settings.copy(clientId = null).installSlug)
+        assertNull(settings.copy(clientSecret = null).installSlug)
+        assertNull(settings.copy(slug = null).installSlug)
 
         val empty = GitHubSettings.from(source(mapOf("OSTROM_GITHUB_APP_ID" to " ")))
         assertEquals(GitHubSettings(null, null, null, null), empty)

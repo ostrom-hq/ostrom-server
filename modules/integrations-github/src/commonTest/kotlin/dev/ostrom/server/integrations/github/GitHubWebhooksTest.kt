@@ -11,6 +11,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubAppNotConfiguredExcept
 import dev.ostrom.server.integrations.github.domain.GitHubGateChecks
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
 import dev.ostrom.server.integrations.github.domain.GitHubInstalls
+import dev.ostrom.server.integrations.github.domain.InstallationNotYoursException
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
 import dev.ostrom.server.integrations.github.domain.WebhookOutcome
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -109,28 +110,65 @@ class GitHubWebhooksTest {
         assertEquals(64, state.length)
         api.accounts[42] = "acme"
 
-        assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", state))
+        assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", state))
         assertEquals(GitHubInstallation(ORG, 42, "acme"), repository.installation(ORG))
-        val reused = assertFailsWith<OstromException> { installs.finish("42", state) }
+        val reused = assertFailsWith<OstromException> { installs.finish("42", "code-acme", state) }
         assertEquals(ErrorKind.FORBIDDEN, reused.kind)
 
         val expired = installs.start(ORG, "owner").substringAfter("state=")
         clock.now += 11.minutes
-        assertEquals(ErrorKind.FORBIDDEN, assertFailsWith<OstromException> { installs.finish("42", expired) }.kind)
+        val late = assertFailsWith<OstromException> { installs.finish("42", "code-acme", expired) }
+        assertEquals(ErrorKind.FORBIDDEN, late.kind)
 
-        for ((id, value) in listOf(null to state, "x" to state, "42" to null, "42" to "", "42" to "s".repeat(129))) {
-            val refused = assertFailsWith<OstromException> { installs.finish(id, value) }
-            assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
+        val long = "s".repeat(129)
+        val malformed = listOf(
+            Triple(null, "code-acme", state), Triple("x", "code-acme", state), Triple("42", "code-acme", null),
+            Triple("42", "code-acme", ""), Triple("42", "code-acme", long), Triple("42", null, state),
+            Triple("42", "", state), Triple("42", long, state),
+        )
+        for ((id, code, value) in malformed) {
+            val refused = assertFailsWith<OstromException> { installs.finish(id, code, value) }
+            assertEquals(ErrorKind.INVALID_REQUEST, refused.kind, "$id $code $value")
         }
+        // Installation 7 is reachable but not one of this App's installations GitHub knows.
+        api.reachable["gho_acme"] = setOf(42L, 7L)
         val unknown = installs.start(ORG, "owner").substringAfter("state=")
-        assertEquals(ErrorKind.INVALID_REQUEST, assertFailsWith<OstromException> { installs.finish("7", unknown) }.kind)
+        val notTheApp = assertFailsWith<OstromException> { installs.finish("7", "code-acme", unknown) }
+        assertEquals(ErrorKind.INVALID_REQUEST, notTheApp.kind)
 
         val other = installs.start(OTHER_ORG, "owner").substringAfter("state=")
-        assertEquals(ErrorKind.CONFLICT, assertFailsWith<OstromException> { installs.finish("42", other) }.kind)
+        assertEquals(
+            ErrorKind.CONFLICT,
+            assertFailsWith<OstromException> { installs.finish("42", "code-acme", other) }.kind,
+        )
         val again = installs.start(ORG, "owner").substringAfter("state=")
-        assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", again), "Its own: installed again")
+        assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", again), "Installed again")
 
         val unconfigured = GitHubInstalls(repository, api, null, "https://github.com", clock)
         assertFailsWith<GitHubAppNotConfiguredException> { unconfigured.start(ORG, "owner") }
+    }
+
+    @Test
+    fun anInstallationIsLinkedOnlyIfThePersonWhoCameBackReachesIt() = runTest {
+        val installs = GitHubInstalls(repository, api, "ostrom-dev", "https://github.com", clock)
+        api.accounts[42] = "acme"
+        api.accounts[43] = "globex"
+        // The owner of org B, who reaches only 43, comes back with the id of acme's installation.
+        val stolen = installs.start(OTHER_ORG, "owner-b").substringAfter("state=")
+        val refused = assertFailsWith<InstallationNotYoursException> { installs.finish("42", "code-globex", stolen) }
+        assertEquals(ErrorKind.FORBIDDEN, refused.kind)
+        assertEquals("installation_not_yours", refused.type)
+        assertTrue(repository.installations.isEmpty(), "Nothing linked")
+        assertEquals(
+            ErrorKind.FORBIDDEN,
+            assertFailsWith<OstromException> { installs.finish("43", "code-globex", stolen) }.kind,
+            "The state served once, even refused",
+        )
+        // A code GitHub does not accept proves nobody.
+        val forged = installs.start(OTHER_ORG, "owner-b").substringAfter("state=")
+        assertFailsWith<InstallationNotYoursException> { installs.finish("43", "code-forged", forged) }
+
+        val own = installs.start(OTHER_ORG, "owner-b").substringAfter("state=")
+        assertEquals(GitHubInstallation(OTHER_ORG, 43, "globex"), installs.finish("43", "code-globex", own))
     }
 }

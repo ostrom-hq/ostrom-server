@@ -38,6 +38,26 @@ interface GitHubApi {
      * @throws GitHubCallException When GitHub fails.
      */
     suspend fun installationAccount(installationId: Long): String?
+
+    /**
+     * Exchanges the code GitHub gives the install's return for the token of the person who installed, with the App's
+     * OAuth client. The token is only used to read [userInstallations], then dropped: never stored nor logged.
+     *
+     * @param code The `code` of the callback.
+     * @return The person's token, or null when GitHub refuses the code (unknown, used or expired).
+     * @throws GitHubCallException When GitHub fails, or the App has no OAuth client on this server.
+     */
+    suspend fun userToken(code: String): String?
+
+    /**
+     * Lists the installations of the App the person can reach (`GET /user/installations`): the ones on their own
+     * account and on the organizations they administer.
+     *
+     * @param userToken The person's token, from [userToken].
+     * @return The ids of the installations.
+     * @throws GitHubCallException When GitHub fails or refuses the token.
+     */
+    suspend fun userInstallations(userToken: String): Set<Long>
 }
 
 /** The GitHub integration's rows: installations, published checks and the single-use states of the install flow. */

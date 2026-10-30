@@ -41,6 +41,7 @@ class GitHubAppPath {
      * GitHub's return from the install.
      *
      * @property installationId The installation.
+     * @property code The authorization of the person who installed (the App asks for it during the install).
      * @property state The state of the start.
      */
     @Serializable
@@ -48,6 +49,7 @@ class GitHubAppPath {
     class Callback(
         val parent: GitHubAppPath = GitHubAppPath(),
         @SerialName("installation_id") val installationId: String? = null,
+        val code: String? = null,
         val state: String? = null,
     )
 }
@@ -84,7 +86,7 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
         call.respond(HttpStatusCode.NoContent)
     }
     get<GitHubAppPath.Callback> { params ->
-        installs.finish(params.installationId, params.state)
+        installs.finish(params.installationId, params.code, params.state)
         call.respondRedirect("${settings.webOrigin}/console/settings?github=installed")
     }
     authenticated {
