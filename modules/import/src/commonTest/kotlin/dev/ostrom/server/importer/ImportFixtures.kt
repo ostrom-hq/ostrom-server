@@ -51,6 +51,7 @@ object Importing {
     val orgA: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     val orgB: Uuid = Uuid.parse("0000000b-0000-0000-0000-000000000000")
     val adminA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000a1"), MemberRole.ADMIN)
+    val ownerA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000d1"), MemberRole.OWNER)
     val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     val otherA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000c1"), MemberRole.MEMBER)
     val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
@@ -154,14 +155,15 @@ class FakeAccountImporter : AccountImporter {
     /** The providers imported. */
     val imported = mutableListOf<String>()
 
-    override suspend fun begin(caller: Caller, dryRun: Boolean): AccountImportRun = object : AccountImportRun {
-        override suspend fun import(account: TeamCodeAccount): ImportAction {
-            if (account.provider != "claude") throw RefusedAccountException()
-            if (dryRun) return ImportAction.PLANNED
-            imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
-            return ImportAction.CREATED
+    override suspend fun begin(caller: Caller, dryRun: Boolean, cutover: Boolean): AccountImportRun =
+        object : AccountImportRun {
+            override suspend fun import(account: TeamCodeAccount): ImportAction {
+                if (account.provider != "claude") throw RefusedAccountException()
+                if (dryRun) return ImportAction.PLANNED
+                imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
+                return ImportAction.CREATED
+            }
         }
-    }
 }
 
 /**
@@ -169,16 +171,22 @@ class FakeAccountImporter : AccountImporter {
  * is refused, one containing `offline` cannot be tested, any other renews as `renewed-` plus the old tokens.
  */
 class TeamCodeRefresher : OAuthRefresher {
-    override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials): RefreshResult = when {
-        "refused" in credentials.refreshToken -> RefreshResult.Revoked
-        "offline" in credentials.refreshToken -> RefreshResult.Unavailable
-        else -> RefreshResult.Renewed(
-            AccountCredentials(
-                "renewed-${credentials.accessToken}",
-                "renewed-${credentials.refreshToken}",
-                credentials.expiresAt,
-            ),
-        )
+    /** How many refreshes were asked: none while TeamCode runs. */
+    var calls = 0
+
+    override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials): RefreshResult {
+        calls++
+        return when {
+            "refused" in credentials.refreshToken -> RefreshResult.Revoked
+            "offline" in credentials.refreshToken -> RefreshResult.Unavailable
+            else -> RefreshResult.Renewed(
+                AccountCredentials(
+                    "renewed-${credentials.accessToken}",
+                    "renewed-${credentials.refreshToken}",
+                    credentials.expiresAt,
+                ),
+            )
+        }
     }
 }
 
@@ -187,6 +195,7 @@ class RefusedAccountException : OstromException(ErrorKind.CONFLICT, "This accoun
 
 private val byToken = mapOf(
     "admin-a" to Importing.adminA,
+    "owner-a" to Importing.ownerA,
     "member-a" to Importing.memberA,
     "admin-b" to Importing.adminB,
     "agent-a" to Importing.adminA,
@@ -229,7 +238,8 @@ suspend fun TestServer.import(
     request: TeamCodeImportRequest,
     token: String = "admin-a",
     dryRun: Boolean = false,
-): HttpResponse = client.post("/api/v1/import/teamcode?dryRun=$dryRun") {
+    cutover: Boolean = false,
+): HttpResponse = client.post("/api/v1/import/teamcode?dryRun=$dryRun&cutover=$cutover") {
     bearerAuth(token)
     contentType(ContentType.Application.Json)
     setBody(request)
@@ -240,8 +250,9 @@ suspend fun TestServer.report(
     request: TeamCodeImportRequest,
     token: String = "admin-a",
     dryRun: Boolean = false,
+    cutover: Boolean = false,
 ): ImportReportDto {
-    val response = import(request, token, dryRun)
+    val response = import(request, token, dryRun, cutover)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
     return response.body()
 }

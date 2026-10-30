@@ -11,10 +11,12 @@ import kotlinx.serialization.Serializable
  * ostrom-core).
  *
  * @property dryRun Reports the plan without writing anything.
+ * @property cutover The final run, once TeamCode is stopped (owners only, recorded in the audit log): it also revives
+ *   the shared accounts waiting for a reconnection, testing TeamCode's tokens first.
  */
 @Serializable
 @Resource("/api/v1/import/teamcode")
-class TeamCodeImportApi(val dryRun: Boolean = false)
+class TeamCodeImportApi(val dryRun: Boolean = false, val cutover: Boolean = false)
 
 /** The scope a console token needs to import (a browser session has every user scope). */
 const val IMPORT_SCOPE: String = "import:write"

@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.importer
 
+import dev.ostrom.server.identity.domain.AuditEntry
+import dev.ostrom.server.identity.domain.AuditEvent
+import dev.ostrom.server.identity.domain.AuditLog
 import dev.ostrom.server.importer.Importing.adminA
 import dev.ostrom.server.importer.domain.ImportAction
 import dev.ostrom.server.importer.domain.ImportAction.CREATED
 import dev.ostrom.server.importer.domain.ImportAction.PLANNED
+import dev.ostrom.server.importer.domain.ImportAction.REVIVE_AT_CUTOVER
 import dev.ostrom.server.importer.domain.ImportAction.SKIPPED
 import dev.ostrom.server.importer.domain.ImportAction.UNCHANGED
 import dev.ostrom.server.importer.domain.ImportAction.UPDATED
+import dev.ostrom.server.importer.infrastructure.IdentityImportAudit
 import dev.ostrom.server.importer.presentation.ImportItemDto
 import dev.ostrom.server.importer.presentation.TeamCodeAccountDto
 import dev.ostrom.server.importer.presentation.TeamCodeImportRequest
@@ -19,6 +24,7 @@ import dev.ostrom.server.sharing.domain.AccountTokenCipher
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
 import dev.ostrom.server.sharing.domain.NoAccountSpendReader
+import dev.ostrom.server.sharing.domain.OAuthRefresher
 import dev.ostrom.server.sharing.domain.ShareAccountPayload
 import dev.ostrom.server.sharing.domain.ShareAccountUseCase
 import dev.ostrom.server.sharing.domain.SharedAccount
@@ -28,14 +34,25 @@ import dev.ostrom.server.sharing.domain.UpdateAccountPayload
 import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCase
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
+import io.ktor.http.HttpStatusCode
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /** With the sharing module installed, TeamCode's shared accounts become the org's, through its use cases. */
 class ImportAccountsPostgresTest {
     private val modules = Importing.modules + SharingModule
+
+    private companion object {
+        const val WAITS = "This account waits for a reconnection. It is left so while TeamCode runs (testing " +
+            "TeamCode's tokens would disconnect TeamCode): the cutover run revives it."
+        const val REFUSED = "TeamCode's tokens for this account are refused too: it keeps waiting for its owner to " +
+            "sign in again."
+        const val UNTESTED = "The provider could not be reached to test TeamCode's tokens: the account keeps " +
+            "waiting. Run the import again."
+    }
 
     private fun account(provider: String, id: String, disabled: Boolean = false, run: Int = 1) = TeamCodeAccountDto(
         provider = provider,
@@ -61,10 +78,21 @@ class ImportAccountsPostgresTest {
         return koin.get<AccountTokenCipher>().open(envelope, adminA.orgId, id)?.accessToken
     }
 
-    private suspend fun TestServer.accountLines(vararg accounts: TeamCodeAccountDto, dryRun: Boolean = false) =
-        report(TeamCodeImportRequest(accounts = accounts.toList()), dryRun = dryRun).items.filter {
-            it.kind == "account"
-        }
+    private suspend fun TestServer.accountLines(
+        vararg accounts: TeamCodeAccountDto,
+        dryRun: Boolean = false,
+        cutover: Boolean = false,
+    ): List<ImportItemDto> {
+        val request = TeamCodeImportRequest(accounts = accounts.toList())
+        val token = if (cutover) "owner-a" else "admin-a"
+        return report(request, token, dryRun, cutover).items.filter { it.kind == "account" }
+    }
+
+    /** The import's bindings with an audit log that records what it is given. */
+    private fun withAudit(audit: RecordingAuditLog) = module {
+        includes(importOverrides())
+        single<AuditLog> { audit }
+    }
 
     private suspend fun TestServer.reconnectRequired(vararg ids: String) {
         val repository = koin.get<SharedAccountRepository>()
@@ -144,8 +172,9 @@ class ImportAccountsPostgresTest {
         }
 
     @Test
-    fun aRerunTurnsOffWhatTeamCodeDisabledAndRevivesOnlyWhatStillRenews() =
-        serverTest(modules, importOverrides()) { server ->
+    fun whileTeamCodeRunsNoTokenIsTestedAndTheCutoverRevivesOnlyWhatStillRenews() {
+        val audit = RecordingAuditLog()
+        serverTest(modules, withAudit(audit)) { server ->
             with(server) {
                 accountLines(*(1..5).map { account("claude", "claude-$it") }.toTypedArray())
                 // claude-2 serves although TeamCode has since disabled it; the others lost their tokens.
@@ -159,40 +188,49 @@ class ImportAccountsPostgresTest {
                     account("claude", "claude-6", run = 2).copy(label = ""),
                 )
                 val names = listOf("Renamed in TeamCode", "Lyes claude-2", "Lyes claude-3", "Lyes claude-4")
-                    .map { "claude/$it" } + listOf("claude/Lyes claude-5", "claude/")
-                val refused = "TeamCode's tokens for this account are refused too: it keeps waiting for its owner to " +
-                    "sign in again."
-                val untested = "The provider could not be reached to test TeamCode's tokens: the account keeps " +
-                    "waiting. Run the import again."
+                    .map { "claude/$it" } + listOf("claude/Lyes claude-5")
                 val unnamed = line("account", "claude/", SKIPPED, "A label is 1 to 120 printable characters.")
                 val all = arrayOf("claude-1", "claude-2", "claude-3", "claude-4", "claude-5")
-                val before = List(5) { if (it == 1) AccountStatus.READY else AccountStatus.RECONNECT_REQUIRED }
+                val waiting = AccountStatus.RECONNECT_REQUIRED
+                fun lines(vararg actions: ImportAction, reasons: Map<Int, String> = emptyMap()) =
+                    names.zip(actions).mapIndexed { index, (name, action) ->
+                        line("account", name, action, reasons[index] ?: WAITS.takeIf { action == REVIVE_AT_CUTOVER })
+                    } + unnamed
 
+                // While TeamCode runs: a serving account is turned off; the others wait, their tokens untouched.
+                val wait = REVIVE_AT_CUTOVER
+                assertEquals(lines(wait, PLANNED, wait, wait, wait), accountLines(*again, dryRun = true))
+                assertEquals(lines(wait, UPDATED, wait, wait, wait), accountLines(*again))
+                val refresher = koin.get<OAuthRefresher>() as TeamCodeRefresher
+                assertEquals(0, refresher.calls, "No token is tested at the provider while TeamCode runs")
+                val parked = listOf(waiting, AccountStatus.DISABLED, waiting, waiting, waiting)
+                assertEquals(parked, statuses(*all))
+
+                // The cutover, TeamCode stopped: an owner's run, recorded; its dry run tests no token either.
                 assertEquals(
-                    names.take(5).map { line("account", it, PLANNED) } + unnamed,
-                    accountLines(*again, dryRun = true),
+                    lines(PLANNED, UNCHANGED, PLANNED, PLANNED, PLANNED),
+                    accountLines(*again, dryRun = true, cutover = true),
                     "A dry run makes the share's checks; it cannot test tokens (renewing rotates them)",
                 )
-                assertEquals(before, statuses(*all), "A dry run writes nothing")
-
+                assertEquals(listOf(0, 0), listOf(refresher.calls, audit.entries.size), "A dry run records nothing")
+                assertEquals(parked, statuses(*all), "A dry run writes nothing")
                 assertEquals(
-                    names.take(3).map { line("account", it, UPDATED) } + listOf(
-                        line("account", names[3], SKIPPED, refused),
-                        line("account", names[4], SKIPPED, untested),
-                        unnamed,
-                    ),
-                    accountLines(*again),
+                    lines(UPDATED, UNCHANGED, UPDATED, SKIPPED, SKIPPED, reasons = mapOf(3 to REFUSED, 4 to UNTESTED)),
+                    accountLines(*again, cutover = true),
                 )
                 assertEquals(
-                    listOf(AccountStatus.READY, AccountStatus.DISABLED, AccountStatus.DISABLED) +
-                        List(2) { AccountStatus.RECONNECT_REQUIRED },
+                    listOf(AccountStatus.READY, AccountStatus.DISABLED, AccountStatus.DISABLED, waiting, waiting),
                     statuses(*all),
-                    "Revived; turned off; revived off; refused tokens never stored; untested ones neither",
+                    "Revived; off; revived off; refused tokens never stored; untested ones neither",
                 )
                 assertEquals("renewed-access-claude-1-token-2", accessToken("claude-1"), "TeamCode's, renewed")
                 assertEquals("Lyes claude-1", accounts().getValue("claude-1").label, "Its label stays the org's")
                 assertEquals("access-claude-2-token-1", accessToken("claude-2"), "Turning it off keeps its tokens")
                 assertEquals("access-claude-4-token-1", accessToken("claude-4"))
+                val event = audit.entries.single()
+                assertEquals(IdentityImportAudit.CUTOVER, event.action)
+                assertEquals(adminA.orgId, event.orgId)
+                assertEquals(mapOf("memberId" to "${Importing.ownerA.memberId}", "accounts" to "6"), event.details)
                 assertEquals(
                     names.take(3).map { line("account", it, UNCHANGED) },
                     accountLines(*again.take(3).toTypedArray()),
@@ -200,6 +238,17 @@ class ImportAccountsPostgresTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun onlyAnOwnerRunsTheCutoverAndOnlyWhereAnAuditLogRecordsIt() = serverTest(modules, importOverrides()) { server ->
+        with(server) {
+            val request = TeamCodeImportRequest(accounts = listOf(account("claude", "claude-1")))
+            assertEquals(HttpStatusCode.Forbidden, import(request, "admin-a", dryRun = true, cutover = true).status)
+            assertEquals(HttpStatusCode.ServiceUnavailable, import(request, "owner-a", cutover = true).status)
+            assertEquals(emptyMap(), accounts(), "Nothing imported")
+        }
+    }
 
     @Test
     fun aReconnectionOrAnEditMadeDuringTheRunIsNeverOverwritten() {
@@ -207,7 +256,7 @@ class ImportAccountsPostgresTest {
             single { RacingList(ListSharedAccountsUseCaseImpl(get(), get(), get(), NoAccountSpendReader(), get())) }
             single<ListSharedAccountsUseCase> { get<RacingList>() }
         }
-        serverTest(modules, module { includes(importOverrides(), racing) }) { server ->
+        serverTest(modules, module { includes(withAudit(RecordingAuditLog()), racing) }) { server ->
             with(server) {
                 accountLines(account("claude", "claude-1"), account("claude", "claude-2"))
                 reconnectRequired("claude-1")
@@ -236,12 +285,27 @@ class ImportAccountsPostgresTest {
                         line("account", "claude/Lyes claude-1", SKIPPED, changed),
                         line("account", "claude/Lyes claude-2", SKIPPED, changed),
                     ),
-                    accountLines(account("claude", "claude-1", run = 2), account("claude", "claude-2", true, 2)),
+                    accountLines(
+                        account("claude", "claude-1", run = 2),
+                        account("claude", "claude-2", true, 2),
+                        cutover = true,
+                    ),
                 )
                 assertEquals(listOf(AccountStatus.READY, AccountStatus.READY), statuses("claude-1", "claude-2"))
                 assertEquals("access-owner-claude-1-token", accessToken("claude-1"), "The owner's reconnection stays")
                 assertEquals("Renamed", accounts().getValue("claude-2").label, "The admin's edit stays")
             }
+        }
+    }
+
+    /** Records the audit entries it is given. */
+    private class RecordingAuditLog : AuditLog {
+        val entries = mutableListOf<AuditEntry>()
+
+        override suspend fun record(entry: AuditEntry): AuditEvent {
+            entries += entry
+            val at = Instant.parse("2026-10-30T12:00:00Z")
+            return AuditEvent(Uuid.random(), entries.size.toLong(), entry, at, null, "hash", "signature", "key")
         }
     }
 

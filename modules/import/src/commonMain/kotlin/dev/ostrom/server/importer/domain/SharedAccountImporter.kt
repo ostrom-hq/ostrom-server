@@ -46,9 +46,10 @@ class TeamCodeTokensUntestedException :
  *
  * - An account the org does not share yet is shared, stored turned off in the same write when TeamCode had it
  *   disabled.
- * - An account waiting for a reconnection is revived only if TeamCode's tokens still renew: they are renewed first
- *   (a dry run cannot: renewing rotates them), then stored, turned off in the same write when TeamCode had it
- *   disabled; its label and email stay the org's.
+ * - An account waiting for a reconnection is left so while TeamCode runs ([ImportAction.REVIVE_AT_CUTOVER]): testing
+ *   TeamCode's tokens rotates them, which would disconnect TeamCode. The cutover run revives it, only if TeamCode's
+ *   tokens still renew: they are renewed first (a dry run cannot: renewing rotates them), then stored, turned off in
+ *   the same write when TeamCode had it disabled; its label and email stay the org's.
  * - A serving account TeamCode has disabled is turned off, its tokens kept: it is never left serving.
  * - Any other account is left alone: its tokens may have been refreshed since TeamCode last stored them, and the
  *   provider rotates refresh tokens, so TeamCode's older pair could disconnect it. An account turned off in Ostrom
@@ -68,9 +69,9 @@ class SharedAccountImporter(
     private val update: UpdateSharedAccountUseCase,
     private val refresher: OAuthRefresher,
 ) : AccountImporter {
-    override suspend fun begin(caller: Caller, dryRun: Boolean): AccountImportRun {
+    override suspend fun begin(caller: Caller, dryRun: Boolean, cutover: Boolean): AccountImportRun {
         val known = list(caller).map { Known(it.account) }.associateBy { it.key }.toMutableMap()
-        return Run(caller, dryRun, known)
+        return Run(caller, dryRun, cutover, known)
     }
 
     /** What the run knows of one of the org's accounts, as read or as it wrote (or would write) it. */
@@ -111,13 +112,21 @@ class SharedAccountImporter(
     private inner class Run(
         private val caller: Caller,
         private val dryRun: Boolean,
+        private val cutover: Boolean,
         private val known: MutableMap<Pair<AccountProvider, String>, Known>,
     ) : AccountImportRun {
         override suspend fun import(account: TeamCodeAccount): ImportAction {
             val provider = AccountProvider.entries.firstOrNull { it.wire == account.provider.trim().lowercase() }
                 ?: throw UnknownAccountProviderException(account.provider)
             val key = keyOf(provider, account.providerAccountId)
-            val change = change(provider, account, known[key]) ?: return ImportAction.UNCHANGED
+            val existing = known[key]
+            return when {
+                existing?.status == AccountStatus.RECONNECT_REQUIRED && !cutover -> ImportAction.REVIVE_AT_CUTOVER
+                else -> change(provider, account, existing)?.let { carryOut(key, it) } ?: ImportAction.UNCHANGED
+            }
+        }
+
+        private suspend fun carryOut(key: Pair<AccountProvider, String>, change: Change): ImportAction {
             refuseLikeTheShare(change)
             return if (dryRun) {
                 known[key] = planned(change)

@@ -19,7 +19,8 @@ fun Route.importRoutes(dependencies: ImportRoutesDependencies) = with(dependenci
         post<TeamCodeImportApi> { params ->
             val caller = call.requireCaller(callers, IMPORT_SCOPE)
             val request = call.receive<TeamCodeImportRequest>()
-            val report = importTeamCode(caller, request.toExport(), request.memberIds(), params.dryRun)
+            val export = request.toExport()
+            val report = importTeamCode(caller, export, request.memberIds(), params.dryRun, params.cutover)
             call.respond(report.toDto())
         }
     }
