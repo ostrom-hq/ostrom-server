@@ -28,7 +28,7 @@ interface ServerModule {
      *
      * @param koin Resolves the module's dependencies.
      */
-    suspend fun initialize(koin: Koin) {}
+    suspend fun initialize(koin: Koin) = Unit
 
     /**
      * Declares the module's routes.
@@ -36,7 +36,7 @@ interface ServerModule {
      * @param route The root route; wrap protected routes in `authenticated { }`.
      * @param koin Resolves the routes' dependencies.
      */
-    fun routes(route: Route, koin: Koin) {}
+    fun routes(route: Route, koin: Koin) = Unit
 
     /**
      * Starts the module's background work (schedulers, listeners) once migrations have run. Work is launched in
@@ -45,5 +45,5 @@ interface ServerModule {
      * @param scope The server's scope.
      * @param koin Resolves the work's dependencies.
      */
-    fun start(scope: CoroutineScope, koin: Koin) {}
+    fun start(scope: CoroutineScope, koin: Koin) = Unit
 }

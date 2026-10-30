@@ -19,7 +19,13 @@ data class ServerConfig(
     val signingKeyFile: String,
     val logLevel: LogLevel,
 ) {
+    /** Reading the configuration. */
     companion object {
+        private const val DEFAULT_PORT = 8080
+        private const val MAX_PORT = 65535
+        private const val DEFAULT_MAX_CONNECTIONS = 10
+        private const val MAX_CONNECTIONS = 1000
+
         /**
          * Reads the configuration from a source.
          *
@@ -31,50 +37,54 @@ data class ServerConfig(
          */
         fun from(source: ConfigSource): ServerConfig = ServerConfig(
             host = source["OSTROM_HOST"] ?: "0.0.0.0",
-            port = source.int("OSTROM_PORT", 8080, 1..65535),
-            database = DatabaseConfig(
-                url = source.required("OSTROM_DATABASE_URL"),
-                username = source.required("OSTROM_DATABASE_USER"),
-                password = source.required("OSTROM_DATABASE_PASSWORD"),
-                maxConnections = source.int("OSTROM_DATABASE_MAX_CONNECTIONS", 10, 1..1000),
+            port = source.int("OSTROM_PORT", DEFAULT_PORT, 1..MAX_PORT),
+            database = DatabaseConfig.of(
+                url = source["OSTROM_DATABASE_URL"] ?: throw InvalidConfigException("OSTROM_DATABASE_URL is required."),
+                username = source["OSTROM_DATABASE_USER"],
+                password = source["OSTROM_DATABASE_PASSWORD"],
+                maxConnections = source.int(
+                    "OSTROM_DATABASE_MAX_CONNECTIONS",
+                    DEFAULT_MAX_CONNECTIONS,
+                    1..MAX_CONNECTIONS,
+                ),
             ),
             signingKeyFile = source["OSTROM_SIGNING_KEY_FILE"] ?: "data/instance-key.pem",
-            logLevel = source["OSTROM_LOG_LEVEL"]?.let { value ->
-                LogLevel.entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
-                    ?: throw InvalidConfigException("OSTROM_LOG_LEVEL must be one of ${LogLevel.entries.joinToString()}.")
-            } ?: LogLevel.INFO,
+            logLevel = source["OSTROM_LOG_LEVEL"]?.let(::logLevel) ?: LogLevel.INFO,
         )
 
         /**
          * Reads the configuration from the environment, then from the file named by `OSTROM_CONFIG_FILE` if set.
          * The environment wins over the file.
          *
+         * @param environment The process environment; replaced in tests.
+         *
          * @return The validated configuration.
          *
          * @throws InvalidConfigException When a required value is missing or a value is invalid.
          */
-        fun load(): ServerConfig = from(source())
+        fun load(environment: ConfigSource = EnvironmentConfigSource()): ServerConfig = from(source(environment))
 
         /**
          * The configuration source of the process: the environment, then the file named by `OSTROM_CONFIG_FILE`.
-         * Modules read their own keys from it (bound in Koin by the kernel).
+         * Modules read their own keys from it (the kernel binds it in Koin, `kernelModule`).
+         *
+         * @param environment The process environment; replaced in tests.
          *
          * @return The source.
          *
          * @throws InvalidConfigException When the configuration file is missing or malformed.
          */
-        fun source(): ConfigSource {
-            val environment = EnvironmentConfigSource()
+        fun source(environment: ConfigSource = EnvironmentConfigSource()): ConfigSource {
             val file = environment["OSTROM_CONFIG_FILE"]?.let { MapConfigSource(readConfigFile(it)) }
             return LayeredConfigSource(listOfNotNull(environment, file))
         }
 
-        private fun ConfigSource.required(key: String): String =
-            this[key]?.takeIf { it.isNotBlank() } ?: throw InvalidConfigException("$key is required.")
+        private fun logLevel(value: String): LogLevel = LogLevel.entries.firstOrNull { it.name.equals(value, true) }
+            ?: throw InvalidConfigException("OSTROM_LOG_LEVEL must be one of ${LogLevel.entries.joinToString()}.")
 
         private fun ConfigSource.int(key: String, default: Int, range: IntRange): Int {
-            val raw = this[key] ?: return default
-            val value = raw.toIntOrNull() ?: throw InvalidConfigException("$key must be an integer.")
+            val value = this[key]?.let { it.toIntOrNull() ?: throw InvalidConfigException("$key must be an integer.") }
+                ?: return default
             if (value !in range) throw InvalidConfigException("$key must be between ${range.first} and ${range.last}.")
             return value
         }
@@ -95,5 +105,49 @@ data class DatabaseConfig(
     val password: String,
     val maxConnections: Int,
 ) {
-    override fun toString(): String = "DatabaseConfig(url=$url, username=$username, password=***, maxConnections=$maxConnections)"
+    override fun toString(): String =
+        "DatabaseConfig(url=$url, username=$username, password=***, maxConnections=$maxConnections)"
+
+    /** Reading a database URL. */
+    companion object {
+        private val URL = Regex("(postgres(?:ql)?://)(?:([^:@/?#]*)(?::([^@/?#]*))?@)?([^@/?#]+/[^@/?#]+)")
+
+        /**
+         * Builds the configuration from a URL that may carry the credentials
+         * (`postgresql://user:password@host:5432/database`). An explicit user or password wins over the URL's.
+         *
+         * @param url The connection URL, with or without credentials, without a query string.
+         * @param username The user, or null to take the URL's.
+         * @param password The password, or null to take the URL's.
+         * @param maxConnections The size of the connection pool.
+         *
+         * @return The configuration, its URL without credentials.
+         *
+         * @throws InvalidConfigException When the URL is not a PostgreSQL URL with a database, or the user or the
+         *   password is given nowhere.
+         */
+        fun of(url: String, username: String?, password: String?, maxConnections: Int): DatabaseConfig {
+            val match = URL.matchEntire(url) ?: throw InvalidConfigException(
+                "The database URL must be postgresql://[user[:password]@]host[:port]/database.",
+            )
+            val (scheme, urlUser, urlPassword, location) = match.destructured
+            if ('%' in urlUser + urlPassword) {
+                throw InvalidConfigException(
+                    "Percent-encoded credentials are not supported in the database URL: set OSTROM_DATABASE_USER " +
+                        "and OSTROM_DATABASE_PASSWORD instead.",
+                )
+            }
+            return DatabaseConfig(
+                url = scheme + location,
+                username = credential(username, urlUser, "user", "OSTROM_DATABASE_USER"),
+                password = credential(password, urlPassword, "password", "OSTROM_DATABASE_PASSWORD"),
+                maxConnections = maxConnections,
+            )
+        }
+
+        private fun credential(explicit: String?, fromUrl: String, what: String, key: String): String =
+            explicit ?: fromUrl.ifEmpty {
+                throw InvalidConfigException("The database $what is required: in the URL or $key.")
+            }
+    }
 }
