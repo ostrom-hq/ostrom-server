@@ -31,8 +31,11 @@ docker run -d --name ostrom-otel --network host \
   ostrom-server:ci >/dev/null
 for _ in $(seq 1 30); do curl -fsS localhost:8081/ready >/dev/null 2>&1 && break; sleep 1; done
 
-# A share link whose slug and path must never leave the server: only the route template may.
-curl -sS -o /dev/null localhost:8081/l/smokeSECRETslug/smokeSECRETpath || true
+# A request whose path and query must never leave the server (S2-45): only its route template may. Its own trace id
+# tells when its span and its log line have reached the collector.
+secret_trace="5ec2e75ec2e75ec2e75ec2e75ec2e75e"
+curl -sS -o /dev/null -H "traceparent: 00-${secret_trace}-00f067aa0ba902b7-01" \
+  "localhost:8081/l/smokeSECRETslug/smokeSECRETpath?ticket=smokeSECRETticket" || true
 
 trace_id="4bf92f3577b34da6a3ce929d0e0e4736"
 headers="$(curl -fsS -D - -o /dev/null -H "traceparent: 00-${trace_id}-00f067aa0ba902b7-01" localhost:8081/api/v1/instance)"
@@ -50,7 +53,8 @@ wait_for() {
 wait_for traces.json "\"traceId\":\"${trace_id}\""
 wait_for traces.json '"name":"GET /api/v1/instance"'
 wait_for logs.json '"service.name"'
-wait_for logs.json 'l/{slug}/{path'
+wait_for traces.json "\"traceId\":\"${secret_trace}\""
+wait_for logs.json "\"traceId\":\"${secret_trace}\""
 wait_for metrics.json '"name":"http.server.request.duration"'
 wait_for metrics.json '"name":"process.cpu.time"'
 grep -q '"key":"service.namespace","value":{"stringValue":"ostrom"}' "$out/traces.json"
