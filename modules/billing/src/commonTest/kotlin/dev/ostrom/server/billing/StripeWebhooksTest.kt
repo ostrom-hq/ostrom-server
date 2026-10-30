@@ -45,7 +45,10 @@ class StripeWebhooksTest {
 
     @Test
     fun anyOfSeveralV1EntriesMayMatch() = runTest {
-        StripeSignatureVerifier(listOf("whsec_test"), FixedClock()).verify(payload, "t=$t,v1=deadbeef," + header().substringAfter(','))
+        StripeSignatureVerifier(
+            listOf("whsec_test"),
+            FixedClock(),
+        ).verify(payload, "t=$t,v1=deadbeef," + header().substringAfter(','))
     }
 
     @Test
@@ -86,7 +89,8 @@ class StripeWebhooksTest {
     fun aCheckoutEventNamesItsCustomerSubscriptionAndOrganization() {
         val event = parseStripeEvent(
             """{"id":"evt_1","type":"checkout.session.completed","created":1800000000,"data":{"object":{
-                "object":"checkout.session","customer":"cus_1","subscription":"sub_1","client_reference_id":"org-1"}}}""",
+                "object":"checkout.session","customer":"cus_1","subscription":"sub_1",
+                "client_reference_id":"org-1"}}}""",
         )
         assertEquals("evt_1", event.id)
         assertEquals("checkout.session.completed", event.type)
@@ -119,7 +123,8 @@ class StripeWebhooksTest {
         assertEquals("org-1", current.orgId)
         assertEquals("https://invoice.stripe.com/i/1", current.hostedInvoiceUrl)
         val older = parseStripeEvent(
-            """{"id":"e","type":"invoice.paid","data":{"object":{"object":"invoice","customer":{"id":"cus_2"},"subscription":"sub_2"}}}""",
+            """{"id":"e","type":"invoice.paid","data":{"object":{"object":"invoice",
+                "customer":{"id":"cus_2"},"subscription":"sub_2"}}}""",
         )
         assertEquals("sub_2", older.subscriptionId)
         assertEquals("cus_2", older.customerId)
@@ -129,14 +134,26 @@ class StripeWebhooksTest {
 
     @Test
     fun aCustomerEventIsItsOwnCustomer() {
-        val event = parseStripeEvent("""{"id":"e","type":"customer.updated","data":{"object":{"object":"customer","id":"cus_3","subscription":null}}}""")
+        val event = parseStripeEvent(
+            """{"id":"e","type":"customer.updated","data":{"object":{"object":"customer","id":"cus_3",
+                "subscription":null}}}""",
+        )
         assertEquals("cus_3", event.customerId)
         assertNull(event.subscriptionId)
     }
 
     @Test
     fun aBodyThatIsNotAStripeEventIsRefused() {
-        for (body in listOf("not json", "[]", """{"type":"x","data":{"object":{}}}""", """{"id":"e","data":{"object":{}}}""", """{"id":"e","type":"x"}""", """{"id":"e","type":"x","data":{"object":1}}""")) {
+        for (
+            body in listOf(
+                "not json",
+                "[]",
+                """{"type":"x","data":{"object":{}}}""",
+                """{"id":"e","data":{"object":{}}}""",
+                """{"id":"e","type":"x"}""",
+                """{"id":"e","type":"x","data":{"object":1}}""",
+            )
+        ) {
             assertFailsWith<InvalidWebhookSignatureException>(body) { parseStripeEvent(body) }
         }
     }

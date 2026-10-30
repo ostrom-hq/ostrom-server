@@ -16,6 +16,8 @@ enum class Plan(val key: String) {
     /** Whether the plan is bought through Stripe Checkout (Enterprise is invoiced by hand, Free is not bought). */
     val selfServe: Boolean get() = this == TEAM || this == BUSINESS
 
+    /** Reading it back. */
+
     companion object {
         /**
          * Reads a plan from its key.
@@ -36,6 +38,8 @@ enum class BillingInterval(val key: String) {
     MONTH("month"),
     YEAR("year"),
     ;
+
+    /** Reading it back. */
 
     companion object {
         /**
@@ -66,6 +70,20 @@ data class PlanLimits(
     val receiptRetentionDays: Int?,
 )
 
+// The grid decided on 30/10/2026 (`.coord/JOURNAL.md` 02:25): Free is 5 people, 5 cloud agents at once and 300 agent
+// hours; paid plans grow with the people billed.
+private const val FREE_PEOPLE = 5
+private const val FREE_AGENTS = 5
+private const val FREE_HOURS = 300
+private const val FREE_RETENTION_DAYS = 30
+private const val AGENTS_PER_PERSON = 5
+private const val TEAM_HOURS_PER_PERSON = 100
+private const val TEAM_RETENTION_DAYS = 90
+private const val BUSINESS_MIN_AGENTS = 10
+private const val BUSINESS_MIN_HOURS = 600
+private const val BUSINESS_HOURS_PER_PERSON = 150
+private const val BUSINESS_RETENTION_DAYS = 365
+
 /**
  * The limits of each plan, in one place so that a pricing change is one line. Free is Lyes's decision of 30/10/2026
  * (5 people, 5 cloud agents, 300 hours, BYOK). The paid amounts of agents and hours are not decided yet: they follow
@@ -84,15 +102,10 @@ object PlanCatalog {
      *
      * @return The plan and interval, or null when the key is not one of ours.
      */
-    fun fromLookupKey(lookupKey: String?): Pair<Plan, BillingInterval>? {
-        if (lookupKey == null) return null
-        for (plan in Plan.entries.filter { it.selfServe }) {
-            for (interval in BillingInterval.entries) {
-                if (lookupKey(plan, interval) == lookupKey) return plan to interval
-            }
-        }
-        return null
-    }
+    fun fromLookupKey(lookupKey: String?): Pair<Plan, BillingInterval>? = Plan.entries
+        .filter { it.selfServe }
+        .flatMap { plan -> BillingInterval.entries.map { plan to it } }
+        .firstOrNull { (plan, interval) -> lookupKey(plan, interval) == lookupKey }
 
     /**
      * The limits of a plan for an organization billed for [billedPeople] people (at least one).
@@ -105,28 +118,28 @@ object PlanCatalog {
         val people = maxOf(1, billedPeople)
         return when (plan) {
             Plan.FREE -> PlanLimits(
-                maxPeople = 5,
-                maxConcurrentCloudAgents = 5,
-                agentHoursPerPeriod = 300,
+                maxPeople = FREE_PEOPLE,
+                maxConcurrentCloudAgents = FREE_AGENTS,
+                agentHoursPerPeriod = FREE_HOURS,
                 sso = false,
                 policies = false,
-                receiptRetentionDays = 30,
+                receiptRetentionDays = FREE_RETENTION_DAYS,
             )
             Plan.TEAM -> PlanLimits(
                 maxPeople = null,
-                maxConcurrentCloudAgents = maxOf(5, 5 * people),
-                agentHoursPerPeriod = maxOf(300, 100 * people),
+                maxConcurrentCloudAgents = maxOf(FREE_AGENTS, AGENTS_PER_PERSON * people),
+                agentHoursPerPeriod = maxOf(FREE_HOURS, TEAM_HOURS_PER_PERSON * people),
                 sso = false,
                 policies = false,
-                receiptRetentionDays = 90,
+                receiptRetentionDays = TEAM_RETENTION_DAYS,
             )
             Plan.BUSINESS -> PlanLimits(
                 maxPeople = null,
-                maxConcurrentCloudAgents = maxOf(10, 5 * people),
-                agentHoursPerPeriod = maxOf(600, 150 * people),
+                maxConcurrentCloudAgents = maxOf(BUSINESS_MIN_AGENTS, AGENTS_PER_PERSON * people),
+                agentHoursPerPeriod = maxOf(BUSINESS_MIN_HOURS, BUSINESS_HOURS_PER_PERSON * people),
                 sso = true,
                 policies = true,
-                receiptRetentionDays = 365,
+                receiptRetentionDays = BUSINESS_RETENTION_DAYS,
             )
             Plan.ENTERPRISE -> UNLIMITED
         }

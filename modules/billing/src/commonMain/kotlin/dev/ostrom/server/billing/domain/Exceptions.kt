@@ -3,20 +3,15 @@ package dev.ostrom.server.billing.domain
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 
-/**
- * A plan limit was reached. The message says which limit, what is used, and where to upgrade.
- *
- * Answered 403 until the kernel has a 402 kind (CONVENTIONS § 3.2 asks 402 for a plan limit; requested from
- * SERVER-SOCLE in `.coord/JOURNAL.md`).
- */
-class PlanLimitException(message: String) : OstromException(ErrorKind.FORBIDDEN, message)
+/** A plan limit was reached (402). The message says which limit, what is used, and where to upgrade. */
+class PlanLimitException(message: String) : OstromException(ErrorKind.PAYMENT_REQUIRED, message)
 
 /** The organization does not exist for the caller, or the caller may not see its billing (no leak: 404). */
 class BillingAccessDeniedException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 
 /** The caller is a member but not an owner or billing admin. */
 class BillingAdminRequiredException :
-    OstromException(ErrorKind.FORBIDDEN, "Only an owner or a billing admin can change the subscription.")
+    OstromException(ErrorKind.FORBIDDEN, "Only an owner, an admin or a billing admin can manage the subscription.")
 
 /** Purchases are off on this instance (self-hosted: limits come from the license key). */
 class BillingNotConfiguredException :

@@ -65,7 +65,10 @@ class StripeGatewayImplTest {
         assertEquals("POST", sent.method)
         assertEquals("/v1/customers", sent.url)
         assertEquals("name=Acme%20%26%20Co&email=a%40acme.dev&metadata%5Borg_id%5D=$ORG", sent.body)
-        assertEquals("sk_test_123:", sent.headers.getValue(HttpHeaders.Authorization).removePrefix("Basic ").decodeBase64String())
+        assertEquals(
+            "sk_test_123:",
+            sent.headers.getValue(HttpHeaders.Authorization).removePrefix("Basic ").decodeBase64String(),
+        )
         assertEquals(STRIPE_API_VERSION, sent.headers.getValue("Stripe-Version"))
         assertEquals("2026-09-30.endive", STRIPE_API_VERSION)
         assertEquals("idem-1", sent.headers.getValue("Idempotency-Key"))
@@ -95,13 +98,17 @@ class StripeGatewayImplTest {
 
     @Test
     fun checkoutHasAutomaticTaxTaxIdsAddressAndTheOrganization() = runTest {
-        val harness = Harness(200 to """{"url":"https://checkout.stripe.com/x"}""", 200 to """{"url":"https://checkout.stripe.com/y"}""")
+        val harness = Harness(
+            200 to """{"url":"https://checkout.stripe.com/x"}""",
+            200 to """{"url":"https://checkout.stripe.com/y"}""",
+        )
         val request = CheckoutRequest(ORG, "cus_1", "price_1", null, "https://app/s", "https://app/c")
         assertEquals("https://checkout.stripe.com/x", harness.gateway.createCheckoutSession(request))
         val form = harness.sent[0].body.split('&').toSet()
         for (expected in listOf(
             "mode=subscription", "customer=cus_1", "client_reference_id=$ORG", "line_items%5B0%5D%5Bprice%5D=price_1",
-            "automatic_tax%5Benabled%5D=true", "tax_id_collection%5Benabled%5D=true", "billing_address_collection=required",
+            "automatic_tax%5Benabled%5D=true", "tax_id_collection%5Benabled%5D=true",
+            "billing_address_collection=required",
             "customer_update%5Baddress%5D=auto", "customer_update%5Bname%5D=auto", "allow_promotion_codes=true",
             "metadata%5Borg_id%5D=$ORG", "subscription_data%5Bmetadata%5D%5Borg_id%5D=$ORG",
             "success_url=https%3A%2F%2Fapp%2Fs", "cancel_url=https%3A%2F%2Fapp%2Fc",
@@ -123,9 +130,10 @@ class StripeGatewayImplTest {
     @Test
     fun aSubscriptionIsReadWithItsPeriodOnTheItem() = runTest {
         val harness = Harness(
-            200 to """{"id":"sub_1","customer":"cus_1","status":"past_due","cancel_at_period_end":false,"cancel_at":null,
-                "metadata":{"org_id":"$ORG"},
-                "items":{"data":[{"id":"si_1","quantity":3,"current_period_start":1760486400,"current_period_end":1763164800,
+            200 to """{"id":"sub_1","customer":"cus_1","status":"past_due","cancel_at_period_end":false,
+                "cancel_at":null,"metadata":{"org_id":"$ORG"},
+                "items":{"data":[{"id":"si_1","quantity":3,
+                "current_period_start":1760486400,"current_period_end":1763164800,
                 "price":{"id":"price_1","lookup_key":"ostrom_team_yearly"}}]}}""",
         )
         val subscription = harness.gateway.getSubscription("sub_1")
@@ -143,7 +151,8 @@ class StripeGatewayImplTest {
     @Test
     fun anOlderSubscriptionShapeIsReadToo() = runTest {
         val harness = Harness(
-            200 to """{"id":"sub_1","customer":{"id":"cus_1"},"current_period_start":10,"current_period_end":20,"cancel_at":20}""",
+            200 to """{"id":"sub_1","customer":{"id":"cus_1"},
+                "current_period_start":10,"current_period_end":20,"cancel_at":20}""",
         )
         val subscription = harness.gateway.getSubscription("sub_1")
         assertEquals("cus_1", subscription.customerId)
@@ -157,7 +166,9 @@ class StripeGatewayImplTest {
 
     @Test
     fun aCancelAtAnotherDateIsNotAPeriodEndCancellation() = runTest {
-        val harness = Harness(200 to """{"id":"sub_1","customer":"cus_1","status":"active","current_period_end":20,"cancel_at":30}""")
+        val harness = Harness(
+            200 to """{"id":"sub_1","customer":"cus_1","status":"active","current_period_end":20,"cancel_at":30}"""
+        )
         assertFalse(harness.gateway.getSubscription("sub_1").cancelAtPeriodEnd)
     }
 
@@ -172,11 +183,14 @@ class StripeGatewayImplTest {
         harness.gateway.recordActivePerson("cus_1", "ostrom-x", Instant.fromEpochSeconds(1_800_000_000))
         assertEquals(
             listOf(
-                "items%5B0%5D%5Bid%5D=si_1&items%5B0%5D%5Bprice%5D=price_2&proration_behavior=always_invoice&payment_behavior=pending_if_incomplete",
-                "items%5B0%5D%5Bid%5D=si_1&items%5B0%5D%5Bprice%5D=price_3&proration_behavior=create_prorations&payment_behavior=pending_if_incomplete&items%5B0%5D%5Bquantity%5D=5",
+                "items%5B0%5D%5Bid%5D=si_1&items%5B0%5D%5Bprice%5D=price_2&proration_behavior=always_invoice" +
+                    "&payment_behavior=pending_if_incomplete",
+                "items%5B0%5D%5Bid%5D=si_1&items%5B0%5D%5Bprice%5D=price_3&proration_behavior=create_prorations" +
+                    "&payment_behavior=pending_if_incomplete&items%5B0%5D%5Bquantity%5D=5",
                 "cancel_at_period_end=true",
                 "items%5B0%5D%5Bid%5D=si_1&items%5B0%5D%5Bquantity%5D=7&proration_behavior=always_invoice",
-                "event_name=ostrom_active_person&identifier=ostrom-x&timestamp=1800000000&payload%5Bstripe_customer_id%5D=cus_1&payload%5Bvalue%5D=1",
+                "event_name=ostrom_active_person&identifier=ostrom-x&timestamp=1800000000" +
+                    "&payload%5Bstripe_customer_id%5D=cus_1&payload%5Bvalue%5D=1",
             ),
             harness.sent.map { it.body },
         )
@@ -214,16 +228,25 @@ class StripeGatewayImplTest {
     @Test
     fun aRefusalWithoutJsonStillFails() = runTest {
         val harness = Harness(502 to "<html>bad gateway</html>", 500 to """{"error":"flat"}""")
-        assertEquals("Stripe answered 502.", assertFailsWith<StripeApiException> { harness.gateway.setCancelAtPeriodEnd("s", true) }.message)
+        assertEquals(
+            "Stripe answered 502.",
+            assertFailsWith<StripeApiException> { harness.gateway.setCancelAtPeriodEnd("s", true) }.message,
+        )
         assertNull(assertFailsWith<StripeApiException> { harness.gateway.setCancelAtPeriodEnd("s", true) }.code)
     }
 
     @Test
     fun aSuccessThatIsNotJsonOrMissesAFieldFails() = runTest {
         val harness = Harness(200 to "ok", 200 to "[1]", 200 to """{"object":"customer"}""")
-        assertEquals("Stripe answered a body that is not JSON.", assertFailsWith<StripeApiException> { harness.gateway.createCustomer(ORG, null, null) }.message)
+        assertEquals(
+            "Stripe answered a body that is not JSON.",
+            assertFailsWith<StripeApiException> { harness.gateway.createCustomer(ORG, null, null) }.message,
+        )
         assertFailsWith<StripeApiException> { harness.gateway.createCustomer(ORG, null, null) }
-        assertEquals("Stripe's answer has no id.", assertFailsWith<StripeApiException> { harness.gateway.createCustomer(ORG, null, null) }.message)
+        assertEquals(
+            "Stripe's answer has no id.",
+            assertFailsWith<StripeApiException> { harness.gateway.createCustomer(ORG, null, null) }.message,
+        )
     }
 
     @Test

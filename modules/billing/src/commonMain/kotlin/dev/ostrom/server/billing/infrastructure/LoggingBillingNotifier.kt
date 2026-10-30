@@ -14,7 +14,10 @@ import kotlin.uuid.Uuid
  */
 class LoggingBillingNotifier(private val logger: Logger) : BillingNotifier {
     override suspend fun agentHoursReached(orgId: Uuid, percent: Int, usedHours: Long, limitHours: Int) {
-        logger.info("agent hours alert", mapOf("org_id" to orgId, "percent" to percent, "used_hours" to usedHours, "limit_hours" to limitHours))
+        logger.info(
+            "agent hours alert",
+            mapOf("org_id" to orgId, "percent" to percent, "used_hours" to usedHours, "limit_hours" to limitHours),
+        )
     }
 
     override suspend fun paymentIssue(orgId: Uuid, issue: PaymentIssue) {

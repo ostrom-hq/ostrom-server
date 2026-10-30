@@ -32,6 +32,7 @@ private const val ACCOUNT_COLUMNS = "org_id, stripe_customer_id, stripe_subscrip
  *
  * @param driver The database.
  */
+@Suppress("TooManyFunctions") // implements BillingRepository, one function per query
 class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
     override suspend fun get(orgId: Uuid): OrgBilling? = driver.fetchAll(
         Statement.create("SELECT $ACCOUNT_COLUMNS FROM billing_accounts WHERE org_id = :org_id").bind("org_id", orgId),
@@ -104,7 +105,11 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         ).bind("org_id", orgId).bind("period", periodStart),
     ).getOrThrow().first().get("people").asInt()
 
-    override suspend fun listActivePeople(orgId: Uuid, periodStart: Instant, limit: Int): List<String> = driver.fetchAll(
+    override suspend fun listActivePeople(
+        orgId: Uuid,
+        periodStart: Instant,
+        limit: Int,
+    ): List<String> = driver.fetchAll(
         Statement.create(
             "SELECT user_id FROM billing_active_people WHERE org_id = :org_id AND period_start = :period " +
                 "ORDER BY first_active_at, user_id LIMIT :limit",
@@ -118,7 +123,8 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
                     "VALUES (:org_id, :period, :seconds, :sessions) ON CONFLICT (org_id, period_start) DO UPDATE SET " +
                     "agent_seconds = billing_usage.agent_seconds + EXCLUDED.agent_seconds, " +
                     "sessions = billing_usage.sessions + EXCLUDED.sessions RETURNING agent_seconds, sessions",
-            ).bind("org_id", orgId).bind("period", periodStart).bind("seconds", agentSeconds).bind("sessions", sessions),
+            ).bind("org_id", orgId).bind("period", periodStart)
+                .bind("seconds", agentSeconds).bind("sessions", sessions),
         ).getOrThrow().first().toUsage(periodStart)
 
     override suspend fun usage(orgId: Uuid, periodStart: Instant): Usage = driver.fetchAll(
@@ -145,7 +151,8 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         driver.execute(
             Statement.create(
                 "INSERT INTO billing_outbox (id, org_id, kind, identifier, happened_at, attempts, next_attempt_at) " +
-                    "VALUES (:id, :org_id, :kind, :identifier, :at, :attempts, :at) ON CONFLICT (identifier) DO NOTHING",
+                    "VALUES (:id, :org_id, :kind, :identifier, :at, :attempts, :at) " +
+                    "ON CONFLICT (identifier) DO NOTHING",
             )
                 .bind("id", task.id)
                 .bind("org_id", task.orgId)
@@ -180,13 +187,15 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
 
     override suspend fun failTask(id: Uuid, retryAt: Instant) {
         driver.execute(
-            Statement.create("UPDATE billing_outbox SET attempts = attempts + 1, next_attempt_at = :retry WHERE id = :id")
-                .bind("id", id).bind("retry", retryAt),
+            Statement.create(
+                "UPDATE billing_outbox SET attempts = attempts + 1, next_attempt_at = :retry WHERE id = :id",
+            ).bind("id", id).bind("retry", retryAt),
         ).getOrThrow()
     }
 
     private fun ResultSet.Row.toBilling(): OrgBilling {
-        val issueKind = get("payment_issue_kind").asStringOrNull()?.let { key -> PaymentIssueKind.entries.first { it.key == key } }
+        val issueKind = get("payment_issue_kind").asStringOrNull()
+            ?.let { key -> PaymentIssueKind.entries.first { it.key == key } }
         return OrgBilling(
             orgId = get("org_id").asUuid(),
             stripeCustomerId = get("stripe_customer_id").asStringOrNull(),

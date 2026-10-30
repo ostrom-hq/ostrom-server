@@ -7,15 +7,17 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            // Darwin on macOS, Curl on Linux, CIO on the test-only JVM target.
             implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.engine.defaults)
             implementation(libs.cryptography.core)
-            implementation(libs.cryptography.openssl)
+            implementation(libs.kotlinx.datetime)
         }
-        linuxMain.dependencies {
-            implementation(libs.ktor.client.curl)
+        nativeMain.dependencies {
+            implementation(libs.cryptography.openssl3.prebuilt)
         }
-        macosMain.dependencies {
-            implementation(libs.ktor.client.darwin)
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

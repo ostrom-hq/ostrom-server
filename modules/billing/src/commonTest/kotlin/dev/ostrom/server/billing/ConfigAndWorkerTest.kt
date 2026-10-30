@@ -54,22 +54,31 @@ class ConfigAndWorkerTest {
         assertEquals(listOf("whsec_a", "whsec_b"), config.webhookSecrets)
         assertEquals("http://localhost:12111", config.stripeApiBase)
         assertEquals("http://localhost:5173", config.consoleUrl)
-        val direct = BillingConfig.load(MapConfigSource(mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_live_x", "OSTROM_STRIPE_WEBHOOK_SECRET" to "whsec_x")))
+        val direct = BillingConfig.load(
+            MapConfigSource(
+                mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_live_x", "OSTROM_STRIPE_WEBHOOK_SECRET" to "whsec_x")
+            )
+        )
         assertEquals("sk_live_x", direct.stripeSecretKey)
     }
 
     @Test
     fun aKeyWithoutWebhookSecretFailsAtStartup() {
-        assertFailsWith<InvalidConfigException> { BillingConfig.load(MapConfigSource(mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x"))) }
         assertFailsWith<InvalidConfigException> {
-            BillingConfig.load(MapConfigSource(mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x", "OSTROM_STRIPE_WEBHOOK_SECRET_FILE" to "/e"))) { "  " }
+            BillingConfig.load(MapConfigSource(mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x")))
+        }
+        assertFailsWith<InvalidConfigException> {
+            val source = mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x", "OSTROM_STRIPE_WEBHOOK_SECRET_FILE" to "/e")
+            BillingConfig.load(MapConfigSource(source)) { "  " }
         }
     }
 
     @Test
     fun aMissingSecretFileFailsAtStartup() {
         assertFailsWith<InvalidConfigException> {
-            BillingConfig.load(MapConfigSource(mapOf("OSTROM_STRIPE_SECRET_KEY_FILE" to "/nonexistent/ostrom-stripe.key")))
+            BillingConfig.load(
+                MapConfigSource(mapOf("OSTROM_STRIPE_SECRET_KEY_FILE" to "/nonexistent/ostrom-stripe.key"))
+            )
         }
     }
 
@@ -80,7 +89,7 @@ class ConfigAndWorkerTest {
         val process = object : ProcessOutboxUseCase {
             override suspend fun invoke(limit: Int): Int {
                 calls++
-                if (calls == 1) throw IllegalStateException("database down")
+                if (calls == 1) error("database down")
                 return 0
             }
         }

@@ -40,7 +40,13 @@ interface StripeGateway {
     suspend fun getSubscription(subscriptionId: String): StripeSubscription
 
     /** Moves the subscription item to another price. [quantity] is null for a metered price. */
-    suspend fun changePrice(subscriptionId: String, itemId: String, priceId: String, quantity: Int?, proration: Proration)
+    suspend fun changePrice(
+        subscriptionId: String,
+        itemId: String,
+        priceId: String,
+        quantity: Int?,
+        proration: Proration,
+    )
 
     /** Schedules the end of the subscription at the period end, or cancels that schedule. */
     suspend fun setCancelAtPeriodEnd(subscriptionId: String, cancel: Boolean)
@@ -56,6 +62,9 @@ interface StripeGateway {
 }
 
 /** Billing's storage. Every table is keyed by organization. */
+// One port for the module's tables (billing, active people, usage, alerts, events, outbox), read and written by the
+// same use cases; splitting it would only spread one transaction boundary over several ports.
+@Suppress("TooManyFunctions")
 interface BillingRepository {
     /** Reads an organization's billing. */
     suspend fun get(orgId: Uuid): OrgBilling?
@@ -104,22 +113,6 @@ interface BillingRepository {
 
     /** Records a failed attempt; the task is retried at [retryAt]. */
     suspend fun failTask(id: Uuid, retryAt: Instant)
-}
-
-/** Who may see and change an organization's billing. Bound by the orgs module, which knows members and roles. */
-interface BillingAccessPolicy {
-    /** @throws BillingAccessDeniedException When [subjectId] is not a member of [orgId] (answered 404). */
-    suspend fun requireMember(subjectId: String, orgId: Uuid)
-
-    /** @throws BillingAccessDeniedException When [subjectId] is not an owner or billing admin of [orgId]. */
-    suspend fun requireBillingAdmin(subjectId: String, orgId: Uuid)
-}
-
-/** Refuses everyone until the orgs module binds the real policy, so no billing route is open by mistake. */
-class DenyingBillingAccessPolicy : BillingAccessPolicy {
-    override suspend fun requireMember(subjectId: String, orgId: Uuid) = throw BillingAccessDeniedException()
-
-    override suspend fun requireBillingAdmin(subjectId: String, orgId: Uuid) = throw BillingAccessDeniedException()
 }
 
 /** The self-hosted license. The `ee/` license module binds the verifying implementation. */

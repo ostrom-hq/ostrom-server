@@ -27,6 +27,8 @@ enum class SubscriptionStatus(val stripe: String) {
      */
     val grantsPlan: Boolean get() = this == ACTIVE || this == TRIALING || this == PAST_DUE
 
+    /** Reading it back. */
+
     companion object {
         /** Reads Stripe's name, [UNKNOWN] for a status this version does not know. */
         fun fromStripe(value: String): SubscriptionStatus = entries.firstOrNull { it.stripe == value } ?: UNKNOWN
@@ -100,7 +102,7 @@ data class OrgBilling(
  */
 data class Usage(val periodStart: Instant, val agentSeconds: Long, val sessions: Long) {
     /** Whole hours used, rounded down. */
-    val agentHours: Long get() = agentSeconds / 3600
+    val agentHours: Long get() = agentSeconds / SECONDS_PER_HOUR
 }
 
 /**
@@ -237,6 +239,8 @@ enum class OutboxKind(val key: String) {
     /** Raise the yearly quantity to the active people (true-up), invoiced now with proration. */
     TRUE_UP("true_up"),
     ;
+
+    /** Reading it back. */
 
     companion object {
         /** Reads a stored key. */
