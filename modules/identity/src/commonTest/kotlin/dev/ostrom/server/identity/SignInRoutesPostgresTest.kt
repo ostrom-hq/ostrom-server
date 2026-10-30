@@ -19,7 +19,7 @@ import dev.ostrom.server.identity.presentation.ProfileResponse
 import dev.ostrom.server.identity.presentation.ProvidersResponse
 import dev.ostrom.server.identity.presentation.SignedInResponse
 import dev.ostrom.server.identity.presentation.VerifyMagicLinkRequest
-import dev.ostrom.server.kernel.auth.CSRF_HEADER
+import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.testing.serverTest
@@ -30,6 +30,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -39,6 +40,7 @@ import io.ktor.http.parseServerSetCookieHeader
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -117,7 +119,13 @@ class SignInRoutesPostgresTest {
         assertEquals(HttpStatusCode.Found, callback.status)
         assertEquals("http://localhost:5173/repos", callback.headers[HttpHeaders.Location])
         assertEquals("", callback.cookie(OAUTH_STATE_COOKIE)?.value, "The state cookie is cleared")
-        val session = assertNotNull(callback.cookie(SESSION_COOKIE)).value
+        val sessionCookie = assertNotNull(callback.cookie(SESSION_COOKIE))
+        val csrfCookie = assertNotNull(callback.cookie(CSRF_COOKIE))
+        // S2-08: the session is HttpOnly, its CSRF token readable by the console, both Lax for the whole API.
+        assertTrue(sessionCookie.httpOnly && !csrfCookie.httpOnly)
+        assertEquals(listOf("Lax", "Lax"), listOf(sessionCookie, csrfCookie).map { it.extensions["SameSite"] })
+        assertEquals(listOf("/", "/"), listOf(sessionCookie.path, csrfCookie.path))
+        val session = sessionCookie.value
         val profile = browser.get("/api/v1/auth/me") {
             header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session")
         }.body<ProfileResponse>()
@@ -214,6 +222,8 @@ class SignInRoutesPostgresTest {
         }
         assertEquals(HttpStatusCode.OK, verified.status)
         val signedIn = verified.body<SignedInResponse>()
+        val secret = assertNotNull(verified.cookie(SESSION_COOKIE)).value
+        assertFalse(secret in verified.bodyAsText(), "No session in the body")
         assertEquals("/welcome", signedIn.redirect)
         val session = assertNotNull(verified.cookie(SESSION_COOKIE)).value
         val profile = server.client.get("/api/v1/auth/me") {
@@ -221,10 +231,8 @@ class SignInRoutesPostgresTest {
         }.body<ProfileResponse>()
         assertEquals("ada@example.com", profile.primaryEmail)
         assertEquals(signedIn.csrfToken, profile.csrfToken)
-        val logout = server.client.post("/api/v1/auth/logout") {
-            header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session")
-            header(CSRF_HEADER, signedIn.csrfToken)
-        }
+        assertEquals(signedIn.csrfToken, assertNotNull(verified.cookie(CSRF_COOKIE)).value)
+        val logout = server.client.post("/api/v1/auth/logout") { browserSession(session, signedIn.csrfToken) }
         assertEquals(HttpStatusCode.NoContent, logout.status)
 
         val reused = server.client.post("/api/v1/auth/email/verify") {
