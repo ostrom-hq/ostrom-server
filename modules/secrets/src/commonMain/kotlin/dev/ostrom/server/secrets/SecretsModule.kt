@@ -14,6 +14,8 @@ import dev.ostrom.server.secrets.domain.ListSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.FindSecretUseCase
 import dev.ostrom.server.secrets.domain.FindSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCase
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.RotateSecretUseCase
 import dev.ostrom.server.secrets.domain.RotateSecretUseCaseImpl
@@ -47,6 +49,7 @@ object SecretsModule : ServerModule {
         single<DeleteSecretUseCase> { DeleteSecretUseCaseImpl(get()) }
         single<RevealSecretsUseCase> { RevealSecretsUseCaseImpl(get(), get()) }
         single<FindSecretUseCase> { FindSecretUseCaseImpl(get()) }
+        single<SecretDirectoryUseCase> { SecretDirectoryUseCaseImpl(get()) }
         single { SecretsRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get(), get()) }
     }
 
