@@ -48,7 +48,7 @@ class KtorInferenceResponder(private val call: ApplicationCall, private val cloc
     override suspend fun stream(status: Int, headers: List<Pair<String, String>>, body: suspend (ByteSink) -> Unit) {
         val (types, others) = headers.partition { it.first == CONTENT_TYPE }
         others.forEach { (name, value) -> call.response.header(name, value) }
-        val type = types.firstOrNull()?.second?.let(::contentTypeOrNull) ?: ContentType.Application.Json
+        val type = types.firstOrNull()?.let { contentTypeOrNull(it.second) } ?: ContentType.Application.Json
         // The body is written by this coroutine and read by the engine from a channel, so the call returns only once
         // the provider's answer is read to its end (and metered); a writer block may run after the respond returns.
         coroutineScope {

@@ -126,6 +126,12 @@ class RelayInferenceTest {
         assertEquals(500, unpriced.status)
         val failed = records.last()
         assertEquals("provider_error", failed.outcome)
+        relay(FakeUpstream(UpstreamAnswer(199, emptyMap(), source("{}".encodeToByteArray()))))(
+            Gw.memberA,
+            call(),
+            RecordingResponder(),
+        )
+        assertEquals("provider_error", records.last().outcome, "Below 200 is no success either")
         assertNull(failed.usage)
         assertEquals(0L, failed.costMicros)
         assertEquals(false, failed.priced)

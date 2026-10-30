@@ -113,20 +113,26 @@ class RelayInferenceUseCaseImpl(
         }
 
         private suspend fun send(plan: InferencePlan.Ready, tries: Int): CallState? {
-            val state = CallState(this, plan.model, plan.provider, plan.lease?.account?.id)
+            val state = CallState(this, plan.model, plan.provider, plan.lease?.let { it.account.id })
+            // No `finally`: the compiler copies it per exit, and each copy needs its own test.
             val retry = try {
                 upstream.exchange(plan.request) { answer -> relay(plan, answer, tries, state) }
             } catch (cancelled: CancellationException) {
+                release(plan)
                 state.outcome = "cancelled"
                 record(state)
                 throw cancelled
             } catch (_: Exception) {
+                release(plan)
                 failed(state)
-                false
-            } finally {
-                plan.lease?.let { withContext(NonCancellable) { it.release() } }
+                return state
             }
+            release(plan)
             return state.takeUnless { retry }
+        }
+
+        private suspend fun release(plan: InferencePlan.Ready) {
+            plan.lease?.let { withContext(NonCancellable) { it.release() } }
         }
 
         /** The provider failed: a 502 if the agent got nothing yet, otherwise the answer is cut. */

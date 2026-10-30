@@ -88,9 +88,6 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
         if (value == null) bindNull(name, String::class) else bind(name, value)
 
     private companion object {
-        val MODELS = ListSerializer(String.serializer())
-        val BY_MEMBER = MapSerializer(String.serializer(), ListSerializer(String.serializer()))
-
         // One row whatever was set: the org's id, joined to each table.
         const val FOR_CALL =
             "WITH org AS (SELECT CAST(:org_id AS UUID) AS id) " +
@@ -115,3 +112,6 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
                 "default_model = EXCLUDED.default_model, by_member = EXCLUDED.by_member"
     }
 }
+
+private val MODELS = ListSerializer(String.serializer())
+private val BY_MEMBER = MapSerializer(String.serializer(), ListSerializer(String.serializer()))

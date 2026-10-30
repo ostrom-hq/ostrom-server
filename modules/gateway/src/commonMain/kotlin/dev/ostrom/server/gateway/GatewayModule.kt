@@ -28,7 +28,6 @@ import dev.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
 import dev.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import dev.ostrom.server.gateway.presentation.gatewayRoutes
 import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -57,7 +56,7 @@ object GatewayModule : ServerModule {
     private const val SOCKET_TIMEOUT_MS = 300_000L
 
     override val koinModule: Module = module {
-        single { GatewayConfig.from(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
+        single { GatewayConfig.from(get<ConfigSource>()) }
         single(HTTP_CLIENT) {
             HttpClient {
                 followRedirects = false

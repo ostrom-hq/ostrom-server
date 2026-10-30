@@ -125,6 +125,8 @@ class GatewayParsingTest {
             data: ["usage"]
             data: {"type":"message_delta","usage":{"output_tokens":512}}
             data: {"type":"message_delta","usage":{"output_tokens":-3,"input_tokens":1e999}}
+            data: {"type":"message_delta","usage":{"output_tokens":100000001}}
+            data: {"type":"message_start","message":{"id":"m"},"usage":{}}
             d
         """.trimIndent().encodeToByteArray()
         // Fed in small slices: lines cross chunks.
@@ -159,6 +161,11 @@ class GatewayParsingTest {
         chatNoOutput.acceptBody("""{"usage":{"prompt_tokens":8}}""".encodeToByteArray())
         chatNoOutput.acceptBody("""{"choices":[]}""".encodeToByteArray())
         assertEquals(TokenUsage(input = 8), chatNoOutput.usage)
+        val noCached = UsageMeter(WireProtocol.CHAT)
+        noCached.acceptBody(
+            """{"usage":{"prompt_tokens":8,"prompt_tokens_details":{},"completion_tokens":1}}""".encodeToByteArray(),
+        )
+        assertEquals(TokenUsage(input = 8, output = 1), noCached.usage, "Details without a cached count")
     }
 
     @Test
@@ -166,7 +173,9 @@ class GatewayParsingTest {
         val meter = UsageMeter(WireProtocol.CHAT)
         val long = ("data: {\"usage\":{\"prompt_tokens\":1},\"pad\":\"" + "x".repeat(9 * 1024 * 1024) + "\"}\n")
             .encodeToByteArray()
-        meter.accept(long, long.size)
+        // Fed in two slices: the second goes on dropping the line the first outgrew.
+        meter.accept(long, long.size - 10)
+        meter.accept(long.copyOfRange(long.size - 10, long.size), 10)
         assertNull(meter.usage, "A line over 8 MiB is never parsed")
         val next = "data: {\"usage\":{\"prompt_tokens\":2}}\n".encodeToByteArray()
         meter.accept(next, next.size)

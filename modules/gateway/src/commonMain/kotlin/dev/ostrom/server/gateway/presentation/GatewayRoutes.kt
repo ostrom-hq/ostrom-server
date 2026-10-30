@@ -162,5 +162,6 @@ private fun ApplicationCall.inferenceToken(): String? {
     val bearer = request.headers[HttpHeaders.Authorization]
         ?.takeIf { it.startsWith(BEARER, ignoreCase = true) }
         ?.substring(BEARER.length)
-    return (request.headers["x-api-key"] ?: bearer)?.trim()?.takeIf { it.isNotEmpty() }
+    // An empty token is refused by the authenticator like any unknown one.
+    return (request.headers["x-api-key"] ?: bearer)?.trim()
 }

@@ -129,6 +129,10 @@ class InferencePlannerTest {
         )
         assertEquals(UpstreamRequests.DEFAULT_ANTHROPIC_VERSION, already.request.headers.toMap()["anthropic-version"])
         assertEquals("""{"model":"claude-opus-5"}""", already.request.body, "Nothing to rewrite without metadata")
+        already.lease?.release()
+        val plain = """{"model":"claude-opus-5","metadata":{"user_id":"plain"}}"""
+        val kept = assertIs<InferencePlan.Ready>(plan(WireProtocol.MESSAGES, plain))
+        assertEquals(plain, kept.request.body, "Metadata naming no account is left as it is")
     }
 
     @Test
