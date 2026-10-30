@@ -31,12 +31,14 @@ class TestDatabase private constructor(
      * [bypassRowLevelSecurity] the role has `BYPASSRLS`, the case the server refuses. The role is dropped afterwards.
      *
      * @param bypassRowLevelSecurity Whether the role bypasses row-level security.
+     * @param poolSize The connections of the role's pool; 1 makes every query run on the same session.
      * @param block The test, given the role's name and a pool connected as the role.
      *
      * @return What [block] returns.
      */
     suspend fun <T> withRole(
         bypassRowLevelSecurity: Boolean = false,
+        poolSize: Int = ROLE_POOL_SIZE,
         block: suspend (role: String, driver: Driver) -> T,
     ): T {
         val role = "ostrom_test_role_" + Uuid.random().toHexString()
@@ -47,7 +49,7 @@ class TestDatabase private constructor(
         ).getOrThrow()
         try {
             driver.execute("GRANT USAGE ON SCHEMA public TO $role").getOrThrow()
-            val connected = connectPostgres(DatabaseConfig(url, role, password, ROLE_POOL_SIZE))
+            val connected = connectPostgres(DatabaseConfig(url, role, password, poolSize))
             try {
                 return block(role, connected)
             } finally {

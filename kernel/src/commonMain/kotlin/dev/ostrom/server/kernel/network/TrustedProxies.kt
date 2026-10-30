@@ -4,6 +4,7 @@ package dev.ostrom.server.kernel.network
 import dev.ostrom.server.kernel.config.InvalidConfigException
 
 private const val BYTE_BITS = 8
+private val PREFIX = Regex("[0-9]{1,3}")
 
 /**
  * An IP network, `address/prefix` (`10.0.0.0/8`, `fd00::/8`); a bare address is a network of one.
@@ -38,7 +39,7 @@ class IpNetwork private constructor(private val bytes: ByteArray, private val pr
         fun parse(text: String): IpNetwork? {
             val address = parseIpAddress(text.substringBefore('/')) ?: return null
             val bits = address.size * BYTE_BITS
-            val prefix = if ('/' in text) text.substringAfter('/').toIntOrNull() else bits
+            val prefix = if ('/' in text) text.substringAfter('/').takeIf(PREFIX::matches)?.toInt() else bits
             return prefix?.takeIf { it in 0..bits }?.let { IpNetwork(address, it) }
         }
     }
@@ -58,18 +59,20 @@ class TrustedProxies(private val networks: List<IpNetwork>) {
     /**
      * The client's address. When the peer is a trusted proxy, the `X-Forwarded-For` hops are read from the right
      * (the hop the proxy itself appended) and the first address that is not a trusted proxy is the client: what a
-     * client writes to the left of it is never believed. A malformed hop stops the walk at the last address read.
+     * client writes to the left of it is never believed. A malformed hop (a host name, a port) stops the walk at the
+     * last address read, a trusted proxy's, so that clients behind a proxy writing ports share its address.
      *
      * @param peer The socket's peer address.
      * @param forwardedFor The `X-Forwarded-For` header values, in order.
      *
-     * @return The client's address as written in its hop, or [peer].
+     * @return The client's address in canonical form ([formatIpAddress]), or [peer] as the socket gives it.
      */
     fun clientAddress(peer: String, forwardedFor: List<String>): String {
         if (!isTrusted(peer)) return peer
         val hops = forwardedFor.flatMap { it.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }
-        val readable = hops.asReversed().takeWhile { parseIpAddress(it) != null }
-        return readable.firstOrNull { !isTrusted(it) } ?: readable.lastOrNull() ?: peer
+        val readable = hops.asReversed().map(::parseIpAddress).takeWhile { it != null }.filterNotNull()
+        val client = readable.firstOrNull { address -> networks.none { address in it } } ?: readable.lastOrNull()
+        return client?.let(::formatIpAddress) ?: peer
     }
 
     private fun isTrusted(address: String): Boolean {

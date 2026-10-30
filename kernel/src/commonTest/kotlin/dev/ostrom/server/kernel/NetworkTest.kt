@@ -4,6 +4,7 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.network.IpNetwork
 import dev.ostrom.server.kernel.network.TrustedProxies
+import dev.ostrom.server.kernel.network.formatIpAddress
 import dev.ostrom.server.kernel.network.parseIpAddress
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -92,8 +93,24 @@ class NetworkTest {
 
     @Test
     fun refusesWhatIsNotANetwork() {
-        listOf("10.0.0.0/33", "::/129", "10.0.0.0/-1", "10.0.0.0/", "10.0.0.0/x", "/8", "proxy.local/8")
+        listOf("10.0.0.0/33", "::/129", "10.0.0.0/-1", "10.0.0.0/+8", "10.0.0.0/", "10.0.0.0/x", "/8", "proxy.local/8")
             .forEach { assertNull(IpNetwork.parse(it), it) }
+    }
+
+    @Test
+    fun writesAddressesInCanonicalForm() {
+        mapOf(
+            "203.0.113.7" to "203.0.113.7",
+            "::" to "::",
+            "::1" to "::1",
+            "2001:DB8:0:0:0:0:0:1" to "2001:db8::1",
+            "1:0:0:2:0:0:0:3" to "1:0:0:2::3",
+            "1:0:0:2:0:0:3:4" to "1::2:0:0:3:4",
+            "1:0:2:3:4:5:6:7" to "1:0:2:3:4:5:6:7",
+            "1:2:3:4:5:6:7:8" to "1:2:3:4:5:6:7:8",
+            "fe80:0:0:0:0:0:0:0" to "fe80::",
+            "::ffff:198.51.100.1" to "198.51.100.1",
+        ).forEach { (written, canonical) -> assertEquals(canonical, formatIpAddress(ip(written)), written) }
     }
 
     private val proxies = TrustedProxies.parse("10.0.0.0/8, fd00::/8")
@@ -112,6 +129,13 @@ class NetworkTest {
         assertEquals("198.51.100.1", proxies.clientAddress("10.0.0.5", listOf("1.1.1.1, 198.51.100.1")))
         assertEquals("198.51.100.1", proxies.clientAddress("10.0.0.5", listOf("1.1.1.1", "198.51.100.1, 10.0.0.9")))
         assertEquals("2001:db8::7", proxies.clientAddress("fd00::2", listOf("2001:db8::7")))
+    }
+
+    @Test
+    fun theClientAddressIsCanonicalSoThatOneClientIsOneKey() {
+        assertEquals("2001:db8::7", proxies.clientAddress("10.0.0.5", listOf("[2001:DB8:0:0::7]")))
+        assertEquals("198.51.100.1", proxies.clientAddress("10.0.0.5", listOf("::ffff:198.51.100.1")))
+        assertEquals("10.0.0.9", proxies.clientAddress("10.0.0.5", listOf("198.51.100.1:5000, 10.0.0.9")))
     }
 
     @Test

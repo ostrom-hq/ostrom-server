@@ -87,17 +87,22 @@ jobs:
           APP_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
         run: |
           psql -h localhost -U ostrom -d ostrom_test -v ON_ERROR_STOP=1 -f ci/database-roles.sql
-          run() { docker run --rm --network host "$@"; }
-          echo "Serving before migrating is refused (exit 1):"
-          code=0; run -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci || code=$?; test "$code" -eq 1
-          run -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
-          run -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate   # idempotent
-          echo "Serving as a superuser is refused (exit 1):"
-          code=0; run -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom ostrom-server:ci || code=$?
-          test "$code" -eq 1
-          echo "A test account is refused without OSTROM_ALLOW_TEST_ACCOUNTS (exit 2):"
-          code=0; run -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci seed-test-account qa@ostrom.test || code=$?
-          test "$code" -eq 2
+          # Runs the image, expects exit code $1 and the text $2 in its output.
+          expect() {
+            local code="$1" text="$2"; shift 2
+            local status=0 out
+            out=$(docker run --rm --network host "$@" 2>&1) || status=$?
+            echo "$out"
+            test "$status" -eq "$code" && grep -q "$text" <<<"$out"
+          }
+          expect 1 MigrationsNotAppliedException -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci
+          expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
+          expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
+          expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom \
+            ostrom-server:ci
+          expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL="$OWNER_URL" ostrom-server:ci
+          expect 2 OSTROM_ALLOW_TEST_ACCOUNTS -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci \
+            seed-test-account qa@ostrom.test
           docker run -d --name ostrom --network host -e OSTROM_DATABASE_URL="$APP_URL" \
             -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 ostrom-server:ci
           for i in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done

@@ -7,14 +7,15 @@ import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
+import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asStringOrNull
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /**
@@ -41,7 +42,8 @@ class TenancyPostgresTest {
     private fun asServingRole(block: suspend (owner: Driver, serving: Driver) -> Unit) = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            database.withRole { role, serving ->
+            // One connection: every query of the test runs on the connection the previous one used.
+            database.withRole(poolSize = 1) { role, serving ->
                 createNotes(database.driver, role)
                 block(database.driver, serving)
             }
@@ -68,7 +70,7 @@ class TenancyPostgresTest {
         assertEquals(1L, serving.withOrganization(alpha) { it.count() })
         assertEquals(1L, serving.withOrganization(beta) { it.count() })
         assertEquals(2L, owner.count(), "The owner, a superuser in tests, sees both")
-        assertFailsWith<Throwable>("A row of another organization is refused") {
+        assertFailsWith<SQLError>("A row of another organization is refused") {
             serving.withOrganization(alpha) { it.insert(beta, "planted") }
         }
         val moved = serving.withOrganization(alpha) {
@@ -82,7 +84,7 @@ class TenancyPostgresTest {
     fun withoutAnOrganizationNoRowIsVisible() = asServingRole { _, serving ->
         serving.withOrganization(alpha) { it.insert(alpha, "alpha's") }
         assertEquals(0L, serving.count(), "Fail closed: no organization, no row")
-        assertFailsWith<Throwable> { serving.insert(alpha, "outside") }
+        assertFailsWith<SQLError> { serving.insert(alpha, "outside") }
     }
 
     @Test
@@ -112,7 +114,11 @@ class TenancyPostgresTest {
             "DROP POLICY notes_org ON notes",
             "CREATE OR REPLACE FUNCTION leak() RETURNS int LANGUAGE sql AS 'SELECT 1'",
             "CREATE TABLE planted (id int)",
-        ).forEach { sql -> assertFailsWith<Throwable>(sql) { serving.execute(sql).getOrThrow() } }
+        ).forEach { sql ->
+            val error = assertFailsWith<SQLError>(sql) { serving.execute(sql).getOrThrow() }
+            val message = error.message.orEmpty()
+            assertTrue("must be owner" in message || "permission denied" in message, "$sql: $message")
+        }
     }
 
     @Test
@@ -129,6 +135,12 @@ class TenancyPostgresTest {
             database.withRole(bypassRowLevelSecurity = true) { _, bypassing ->
                 val error = assertFailsWith<UnsafeDatabaseRoleException> { bypassing.requireRowLevelSecurity() }
                 assertNull(error.cause)
+            }
+            database.withRole { role, owning ->
+                // A serving role that owns a table could disable its row-level security.
+                database.driver.execute("CREATE TABLE owned (id int)").getOrThrow()
+                database.driver.execute("ALTER TABLE owned OWNER TO $role").getOrThrow()
+                assertFailsWith<UnsafeDatabaseRoleException> { owning.requireRowLevelSecurity() }
             }
         } finally {
             database.close()

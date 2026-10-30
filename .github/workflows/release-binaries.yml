@@ -20,11 +20,12 @@ concurrency:
   group: release-binaries-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 jobs:
+  # The build never holds a token that can write: Gradle and its dependencies run with read access only.
   binaries:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
-      contents: write # attach the binaries to the release
+      contents: read
       packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
@@ -63,7 +64,25 @@ jobs:
             tar -czf "dist/release/ostrom-server-$TAG-linux-$arch.tar.gz" -C dist "ostrom-server-$TAG-linux-$arch"
           done
           (cd dist/release && sha256sum ./*.tar.gz > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: dist/release/
+          retention-days: 7
+  attach:
+    needs: binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # attach the binaries to the release
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
       - name: Attach to the release
-        run: gh release upload "$TAG" dist/release/* --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ github.token }}

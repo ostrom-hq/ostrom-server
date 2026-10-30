@@ -242,7 +242,7 @@ class ConfigTest {
         assertEquals("198.51.100.1", config.trustedProxies.clientAddress("10.0.0.5", listOf("198.51.100.1")))
         assertEquals(Duration.ZERO, config.drainDelay)
         assertFailsWith<InvalidConfigException> {
-            ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_DELAY_SECONDS" to "61")))
+            ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_DELAY_SECONDS" to "16")))
         }
         assertFailsWith<InvalidConfigException> {
             ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_TRUSTED_PROXIES" to "everyone")))

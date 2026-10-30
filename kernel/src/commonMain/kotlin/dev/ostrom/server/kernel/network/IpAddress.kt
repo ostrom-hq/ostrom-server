@@ -64,3 +64,32 @@ private fun words(text: String): List<Int>? {
 
 private fun ByteArray.word(at: Int): Int =
     (this[at].toInt() and BYTE_MASK shl BYTE_BITS) or (this[at + 1].toInt() and BYTE_MASK)
+
+/**
+ * Writes an address in its canonical form, so that one client is always one key: IPv4 dotted, IPv6 in lower case
+ * with the longest run of two or more zero words written `::` (the first on a tie, RFC 5952).
+ *
+ * @param bytes The 4 or 16 bytes of [parseIpAddress].
+ *
+ * @return The address.
+ */
+fun formatIpAddress(bytes: ByteArray): String = if (bytes.size == IPV4_BYTES) {
+    bytes.joinToString(".") { (it.toInt() and BYTE_MASK).toString() }
+} else {
+    formatIpv6(bytes)
+}
+
+private fun formatIpv6(bytes: ByteArray): String {
+    val words = List(IPV6_WORDS) { bytes.word(it * 2) }
+    val runs = words.indices
+        .filter { words[it] == 0 && (it == 0 || words[it - 1] != 0) }
+        .map { start -> start to (start until IPV6_WORDS).takeWhile { words[it] == 0 }.count() }
+    val hex = words.map { it.toString(HEX) }
+    val longest = runs.maxByOrNull { it.second }?.takeIf { it.second > 1 }
+    return if (longest == null) {
+        hex.joinToString(":")
+    } else {
+        val (start, length) = longest
+        hex.subList(0, start).joinToString(":") + "::" + hex.subList(start + length, IPV6_WORDS).joinToString(":")
+    }
+}

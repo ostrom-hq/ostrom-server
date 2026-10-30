@@ -6,7 +6,6 @@ import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.module.ServerModule
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asString
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.test.runTest

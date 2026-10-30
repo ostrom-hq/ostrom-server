@@ -68,8 +68,6 @@ fun main(args: Array<String>) {
  */
 @OptIn(ExperimentalForeignApi::class)
 private fun serve() {
-    // First, before any thread starts: from now on SIGTERM and SIGINT only write to the signal pipe.
-    check(ostrom_install_signal_handlers() == 0) { "The SIGTERM and SIGINT handlers could not be installed." }
     val (source, config) = loadConfig()
     val logger = JsonLogger(config.logLevel)
     if (source["OSTROM_DATABASE_MIGRATION_URL"] != null) {
@@ -99,6 +97,8 @@ private fun serve() {
             "server starting",
             mapOf("version" to SERVER_VERSION, "host" to config.host, "port" to config.port, "key_id" to signer.keyId),
         )
+        // From now on SIGTERM and SIGINT only write to the signal pipe; before, they stop a hung start at once.
+        check(ostrom_install_signal_handlers() == 0) { "The SIGTERM and SIGINT handlers could not be installed." }
         val engine = embeddedServer(CIO, port = config.port, host = config.host) { configureHttp(server, modules) }
             .start(wait = false)
         val signal = ostrom_await_signal()
@@ -141,6 +141,11 @@ private fun migrate() {
 /** Creates a QA account and prints it as one JSON line on stdout. */
 private fun seed(email: String) {
     val (source, config) = loadConfig()
+    try {
+        requireTestAccountsAllowed(source, email)
+    } catch (error: UsageException) {
+        usage(error)
+    }
     val logger = JsonLogger(config.logLevel)
     val modules = serverModules()
     var driver: Driver? = null

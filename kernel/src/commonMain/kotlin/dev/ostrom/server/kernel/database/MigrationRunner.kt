@@ -5,8 +5,6 @@ import dev.ostrom.server.kernel.logging.Logger
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asString
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asStringOrNull
 import io.github.smyrgeorge.sqlx4k.impl.migrate.MigrationFile
 
 /**

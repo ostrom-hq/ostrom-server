@@ -47,6 +47,25 @@ fun parseCommand(args: List<String>): Command = when {
 }
 
 /**
+ * Refuses a test account before anything connects: unless `OSTROM_ALLOW_TEST_ACCOUNTS=true`, or for what is not an
+ * e-mail address.
+ *
+ * @param source The configuration.
+ * @param email The account's e-mail address.
+ *
+ * @throws UsageException When test accounts are not allowed or the e-mail is not one.
+ */
+fun requireTestAccountsAllowed(source: ConfigSource, email: String) {
+    val refusal = when {
+        source["OSTROM_ALLOW_TEST_ACCOUNTS"] != "true" ->
+            "Test accounts are refused unless OSTROM_ALLOW_TEST_ACCOUNTS=true: never in production."
+        !EMAIL.matches(email) -> "'$email' is not an e-mail address."
+        else -> null
+    }
+    if (refusal != null) throw UsageException(refusal)
+}
+
+/**
  * Creates a QA account through the module that binds [TestAccountSeeder] and returns it as one JSON line, the token
  * included: the command's output is for the test harness that asked for it, never a log.
  *
@@ -59,13 +78,7 @@ fun parseCommand(args: List<String>): Command = when {
  * @throws UsageException When test accounts are not allowed, the e-mail is not one, or no module creates accounts.
  */
 suspend fun seedTestAccount(koin: Koin, source: ConfigSource, email: String): String {
-    val refusal = when {
-        source["OSTROM_ALLOW_TEST_ACCOUNTS"] != "true" ->
-            "Test accounts are refused unless OSTROM_ALLOW_TEST_ACCOUNTS=true: never in production."
-        !EMAIL.matches(email) -> "'$email' is not an e-mail address."
-        else -> null
-    }
-    if (refusal != null) throw UsageException(refusal)
+    requireTestAccountsAllowed(source, email)
     val seeder = koin.getOrNull<TestAccountSeeder>()
         ?: throw UsageException("No module creates test accounts yet: the identity module binds TestAccountSeeder.")
     return OstromJson.encodeToString(seeder.seed(email))
