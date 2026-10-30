@@ -100,9 +100,9 @@ class CloudSessionsPostgresTest {
             fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
         }
         for (table in listOf("runners_sessions", "runners_usage")) {
-            assertEquals(1, count(ORG_A, table), table)
+            assertEquals(1L, count(ORG_A, table), table)
             // No WHERE org_id: the policy alone hides organization A's rows.
-            assertEquals(0, count(ORG_B, table), table)
+            assertEquals(0L, count(ORG_B, table), table)
         }
         // A write for another organization is refused.
         assertFailsWith<Exception> {
@@ -120,7 +120,7 @@ class CloudSessionsPostgresTest {
             fetchAll(Statement.create("SELECT COUNT(*) AS n FROM runners_sessions")).getOrThrow().first()
                 .get("n").asLong()
         }
-        assertEquals(0, unset)
+        assertEquals(0L, unset)
     }
 
     @Test
