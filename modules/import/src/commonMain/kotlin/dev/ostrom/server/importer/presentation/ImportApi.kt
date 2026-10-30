@@ -40,14 +40,14 @@ data class TeamCodeMemberDto(val id: String, val username: String)
  * A command run by the MCP host.
  *
  * @property launcher `npm` or `pypi`.
- * @property packageName The pinned package (`package` in JSON).
+ * @property packageName The pinned package: the first argument of TeamCode's `args`, like `McpStdioSpec.packageName`.
  * @property args Its arguments.
  * @property secretEnv Its secret variables, values in clear (sent once, over TLS).
  */
 @Serializable
 data class TeamCodeStdioDto(
     val launcher: String,
-    @kotlinx.serialization.SerialName("package") val packageName: String,
+    val packageName: String,
     val args: List<String> = emptyList(),
     val secretEnv: Map<String, String> = emptyMap(),
 )
