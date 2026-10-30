@@ -122,7 +122,7 @@ class Runner(
         }
     }
 
-    private suspend fun relay(current: Current): Nothing = coroutineScope {
+    private suspend fun relay(current: Current) = coroutineScope {
         // Ends by cancellation only, when the heartbeat returns.
         while (true) {
             val link = try {
