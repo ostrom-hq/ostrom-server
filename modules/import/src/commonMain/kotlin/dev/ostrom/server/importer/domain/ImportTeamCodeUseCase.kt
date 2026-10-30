@@ -54,7 +54,7 @@ class ImportTeamCodeUseCaseImpl(secrets: SecretPorts, mcp: McpPorts, private val
     ): ImportReport {
         caller.requireAdmin()
         val plan = TeamCodeImportPlanner.plan(export, memberMap)
-        if (dryRun) return ImportReport(planned(plan, export) + plan.skipped)
+        if (dryRun) return ImportReport(planned(plan, export))
         val items = mutableListOf(mcpImporter.prefix(caller))
         val servers = mutableMapOf<String, McpServer>()
         for (planned in plan.servers) {
@@ -175,6 +175,8 @@ class ImportTeamCodeUseCaseImpl(secrets: SecretPorts, mcp: McpPorts, private val
         items += plan.assignments.map {
             ImportItem(ImportKind.ASSIGNMENT, "${it.server.name}/${it.memberId}", ImportAction.PLANNED)
         }
+        // In the order the real import reports them: what the plan skips comes before the accounts.
+        items += plan.skipped
         items += export.accounts.map {
             val action = if (accounts == null) ImportAction.SKIPPED else ImportAction.PLANNED
             ImportItem(ImportKind.ACCOUNT, "${it.provider}/${it.label}", action, NO_SHARING.takeIf { accounts == null })
