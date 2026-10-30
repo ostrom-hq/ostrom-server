@@ -93,6 +93,10 @@ class DockerRuntimeDriverTest {
         assertEquals("no", host["RestartPolicy"]!!.jsonObject["Name"]!!.jsonPrimitive.content)
         assertEquals(hex, container["Labels"]!!.jsonObject["ostrom.run/session"]!!.jsonPrimitive.content)
         assertEquals("restricted", container["Labels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
+
+        driver.startExecution(spec.copy(prompt = null))
+        val silent = body(2)["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertFalse(silent.any { it.startsWith("OSTROM_AGENT_PROMPT") })
     }
 
     @Test

@@ -54,44 +54,42 @@ data class RunnersConfig(
             return RunnersConfig(
                 driver = driver,
                 serverUrl = serverUrl,
-                runnerImage = source.nonBlank("OSTROM_RUNNERS_IMAGE") ?: DEFAULT_RUNNER_IMAGE,
+                runnerImage = source["OSTROM_RUNNERS_IMAGE"] ?: DEFAULT_RUNNER_IMAGE,
                 kubernetes = KubernetesSettings(
                     apiUrl = source["OSTROM_RUNNERS_KUBERNETES_API_URL"] ?: KubernetesSettings.IN_CLUSTER_API_URL,
                     namespace = source["OSTROM_RUNNERS_KUBERNETES_NAMESPACE"] ?: "ostrom",
                     tokenFile = source["OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE"]
                         ?: KubernetesSettings.IN_CLUSTER_TOKEN_FILE,
                     caFile = source["OSTROM_RUNNERS_KUBERNETES_CA_FILE"] ?: KubernetesSettings.IN_CLUSTER_CA_FILE,
-                    storageClass = source.nonBlank("OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS"),
+                    storageClass = source["OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS"],
                     workspaceSize = source["OSTROM_RUNNERS_WORKSPACE_SIZE"] ?: "10Gi",
-                    imagePullSecret = source.nonBlank("OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET"),
-                    priorityClass = source.nonBlank("OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS"),
-                    serverSelector = serverSelector(source["OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR"].orEmpty()),
+                    imagePullSecret = source["OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET"],
+                    priorityClass = source["OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS"],
+                    serverSelector = serverSelector(source["OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR"]),
                 ),
                 docker = DockerSettings(
                     apiUrl = source["OSTROM_RUNNERS_DOCKER_API_URL"] ?: "http://127.0.0.1:2375",
-                    network = source.nonBlank("OSTROM_RUNNERS_DOCKER_NETWORK"),
+                    network = source["OSTROM_RUNNERS_DOCKER_NETWORK"],
                 ),
                 allowedOrgs = allowedOrgs(source["OSTROM_RUNNERS_ALLOWED_ORGS"].orEmpty()),
             )
         }
 
-        /** `key=value` labels separated by commas; the chart's server labels when blank. */
-        private fun serverSelector(raw: String): Map<String, String> {
-            if (raw.isBlank()) return KubernetesSettings.DEFAULT_SERVER_SELECTOR
+        /** `key=value` labels separated by commas; the chart's server labels when unset. */
+        private fun serverSelector(raw: String?): Map<String, String> {
+            if (raw == null) return KubernetesSettings.DEFAULT_SERVER_SELECTOR
             return raw.split(',').associate { entry ->
-                val (key, value) = LABEL.matchEntire(entry.trim())?.destructured ?: throw InvalidConfigException(
+                val match = LABEL.matchEntire(entry.trim()) ?: throw InvalidConfigException(
                     "OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR must be key=value labels separated by commas.",
                 )
-                key to value
+                match.groupValues[1] to match.groupValues[2]
             }
         }
 
         private val LABEL = Regex("([A-Za-z0-9./_-]+)=([A-Za-z0-9._-]+)")
 
-        private fun ConfigSource.nonBlank(key: String): String? = this[key]?.takeIf { it.isNotBlank() }
-
         private fun driverKind(raw: String?): DriverKind = when (raw) {
-            null, "", "none" -> DriverKind.NONE
+            null, "none" -> DriverKind.NONE
             "kubernetes" -> DriverKind.KUBERNETES
             "docker" -> DriverKind.DOCKER
             else -> throw InvalidConfigException("OSTROM_RUNNERS_DRIVER must be none, kubernetes or docker, not $raw.")

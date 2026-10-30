@@ -22,8 +22,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -76,8 +74,7 @@ class DockerRuntimeDriver(
         val response = call(HttpMethod.Get, "/containers/${RuntimeNames.execution(session.id, session.epoch)}/json")
         if (response.status == HttpStatusCode.NotFound) return ExecutionStatus.MISSING
         response.requireSuccess("inspect container")
-        val state = Json.parseToJsonElement(response.bodyAsText()).jsonObject["State"]?.jsonObject
-        return when (state?.get("Status")?.jsonPrimitive?.content) {
+        return when (Json.parseToJsonElement(response.bodyAsText()).textAt("State", "Status")) {
             "running", "paused", "restarting" -> ExecutionStatus.RUNNING
             "exited", "dead" -> ExecutionStatus.ENDED
             else -> ExecutionStatus.PENDING
@@ -89,7 +86,8 @@ class DockerRuntimeDriver(
         val listed = call(HttpMethod.Get, "/containers/json", parameters = mapOf("all" to "true", "filters" to filters))
         listed.requireSuccess("list containers")
         val ids = Json.parseToJsonElement(listed.bodyAsText()).jsonArray
-            .mapNotNull { it.jsonObject["Id"]?.jsonPrimitive?.content }
+            .map { it.textAt("Id") }
+            .filterNotNull()
         for (id in ids) {
             val grace = mapOf("t" to KubernetesRuntimeDriver.GRACE_SECONDS.toString())
             val stopped = call(HttpMethod.Post, "/containers/$id/stop", parameters = grace)
