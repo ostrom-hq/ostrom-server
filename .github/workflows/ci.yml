@@ -96,21 +96,48 @@ jobs:
         run: |
           docker build -t ostrom-server:ci .
           docker images ostrom-server:ci --format '{{.Size}}'
-      - name: Smoke test of the image (/health, /api/v1/instance)
+      # As deployed: the owner migrates, the server serves as a role that owns nothing (ci/database-roles.sql).
+      - name: Smoke test of the image (roles, migrate, /ready, /api/v1/instance, graceful SIGTERM)
+        env:
+          PGPASSWORD: ostrom
+          OWNER_URL: postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom
+          APP_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
         run: |
-          docker run -d --name ostrom --network host \
-            -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom_test \
+          psql -h localhost -U ostrom -d ostrom_test -v ON_ERROR_STOP=1 -f ci/database-roles.sql
+          # Runs the image, expects exit code $1 and the text $2 in its output.
+          expect() {
+            local code="$1" text="$2"; shift 2
+            local status=0 out
+            out=$(docker run --rm --network host "$@" 2>&1) || status=$?
+            echo "$out"
+            test "$status" -eq "$code" && grep -q "$text" <<<"$out"
+          }
+          expect 1 MigrationsNotAppliedException -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci
+          expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
+          expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
+          expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom \
             ostrom-server:ci
-          for i in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
+          expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL="$OWNER_URL" ostrom-server:ci
+          expect 2 OSTROM_ALLOW_TEST_ACCOUNTS -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci \
+            seed-test-account qa@ostrom.test
+          docker run -d --name ostrom --network host -e OSTROM_DATABASE_URL="$APP_URL" \
+            -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 ostrom-server:ci
+          for i in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done
           echo
+          curl -fsS localhost:8080/ready | grep '"status":"ready"'
           curl -fsS localhost:8080/health | grep '"status":"ok"'
           curl -fsS localhost:8080/api/v1/instance | grep '"algorithm":"ed25519"'
+          docker stop -t 30 ostrom
           docker logs ostrom
+          docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"'
+          docker logs ostrom 2>&1 | grep '"msg":"server stopped"'
+          test "$(docker inspect -f '{{.State.ExitCode}}' ostrom)" -eq 0
       - name: Smoke test of the license check (an invalid key fails the start, without logging the key)
+        env:
+          APP_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
         run: |
           set +e
-          docker run --name ostrom-bad-license --network host \
-            -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom_test \
+          docker run --name ostrom-bad-license --network host -e OSTROM_DATABASE_URL="$APP_URL" \
             -e OSTROM_PORT=8081 -e OSTROM_LICENSE_KEY=ostrom-license.v1.not-a-license \
             ostrom-server:ci > license.log 2>&1
           status=$?
