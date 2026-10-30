@@ -1,0 +1,227 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.kernel
+
+import dev.ostrom.server.kernel.config.DatabaseConfig
+import dev.ostrom.server.kernel.config.EnvironmentConfigSource
+import dev.ostrom.server.kernel.config.InvalidConfigException
+import dev.ostrom.server.kernel.config.LayeredConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
+import dev.ostrom.server.kernel.config.ServerConfig
+import dev.ostrom.server.kernel.config.parseConfigFile
+import dev.ostrom.server.kernel.config.readConfigFile
+import dev.ostrom.server.kernel.logging.LogLevel
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.files.SystemTemporaryDirectory
+import kotlinx.io.writeString
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.uuid.Uuid
+
+class ConfigTest {
+    private val database = mapOf(
+        "OSTROM_DATABASE_URL" to "postgresql://localhost:5432/ostrom",
+        "OSTROM_DATABASE_USER" to "ostrom",
+        "OSTROM_DATABASE_PASSWORD" to "secret",
+    )
+
+    @Test
+    fun parsesKeyValueLinesCommentsAndQuotes() {
+        val values = parseConfigFile(
+            """
+            # comment
+            OSTROM_PORT=9090
+
+            OSTROM_HOST = "127.0.0.1"
+            OSTROM_LOG_LEVEL='debug'
+            ONE_CHAR=a
+            HALF_QUOTED="open
+            MIXED_QUOTES="mixed'
+            PLAIN=two words
+            """.trimIndent(),
+        )
+        assertEquals(
+            mapOf(
+                "OSTROM_PORT" to "9090",
+                "OSTROM_HOST" to "127.0.0.1",
+                "OSTROM_LOG_LEVEL" to "debug",
+                "ONE_CHAR" to "a",
+                "HALF_QUOTED" to "\"open",
+                "MIXED_QUOTES" to "\"mixed'",
+                "PLAIN" to "two words",
+            ),
+            values,
+        )
+    }
+
+    @Test
+    fun rejectsALineWithoutAKey() {
+        val missingEquals = assertFailsWith<InvalidConfigException> { parseConfigFile("OSTROM_PORT") }
+        assertEquals("Line 1 of the configuration file is not KEY=value.", missingEquals.message)
+        assertFailsWith<InvalidConfigException> { parseConfigFile("# ok\n=8080") }
+    }
+
+    @Test
+    fun appliesDefaults() {
+        val config = ServerConfig.from(MapConfigSource(database))
+        assertEquals("0.0.0.0", config.host)
+        assertEquals(8080, config.port)
+        assertEquals(10, config.database.maxConnections)
+        assertEquals(LogLevel.INFO, config.logLevel)
+        assertEquals("data/instance-key.pem", config.signingKeyFile)
+    }
+
+    @Test
+    fun readsEveryKey() {
+        val config = ServerConfig.from(
+            MapConfigSource(
+                database + mapOf(
+                    "OSTROM_HOST" to "127.0.0.1",
+                    "OSTROM_PORT" to "9090",
+                    "OSTROM_DATABASE_MAX_CONNECTIONS" to "4",
+                    "OSTROM_SIGNING_KEY_FILE" to "/var/run/ostrom/key.pem",
+                    "OSTROM_LOG_LEVEL" to "Debug",
+                ),
+            ),
+        )
+        assertEquals(
+            ServerConfig(
+                host = "127.0.0.1",
+                port = 9090,
+                database = DatabaseConfig("postgresql://localhost:5432/ostrom", "ostrom", "secret", 4),
+                signingKeyFile = "/var/run/ostrom/key.pem",
+                logLevel = LogLevel.DEBUG,
+            ),
+            config,
+        )
+    }
+
+    @Test
+    fun aBlankValueCountsAsUnset() {
+        assertEquals(8080, ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to " "))).port)
+    }
+
+    @Test
+    fun environmentWinsOverFile() {
+        val environment = MapConfigSource(database + ("OSTROM_PORT" to "7000"))
+        val file = MapConfigSource(mapOf("OSTROM_PORT" to "9000", "OSTROM_LOG_LEVEL" to "warn"))
+        val config = ServerConfig.from(LayeredConfigSource(listOf(environment, file)))
+        assertEquals(7000, config.port)
+        assertEquals(LogLevel.WARN, config.logLevel)
+    }
+
+    @Test
+    fun loadsTheEnvironmentAlone() {
+        assertEquals(8080, ServerConfig.load(MapConfigSource(database)).port)
+    }
+
+    @Test
+    fun loadsTheFileNamedByTheEnvironment() {
+        val path = Path(SystemTemporaryDirectory, "ostrom-config-${Uuid.random().toHexString()}.env")
+        try {
+            SystemFileSystem.sink(path).buffered().use { it.writeString("OSTROM_PORT=9191\nOSTROM_HOST=10.0.0.1\n") }
+            val environment = MapConfigSource(
+                database + mapOf("OSTROM_CONFIG_FILE" to path.toString(), "OSTROM_HOST" to "::"),
+            )
+            val config = ServerConfig.load(environment)
+            assertEquals(9191, config.port)
+            assertEquals("::", config.host)
+        } finally {
+            SystemFileSystem.delete(path, mustExist = false)
+        }
+    }
+
+    @Test
+    fun aMissingConfigurationFileFailsTheStart() {
+        val error = assertFailsWith<InvalidConfigException> { readConfigFile("/nonexistent/ostrom.env") }
+        assertEquals("Configuration file /nonexistent/ostrom.env does not exist.", error.message)
+    }
+
+    @Test
+    fun readsTheProcessEnvironment() {
+        val environment = EnvironmentConfigSource()
+        assertNotNull(environment["PATH"], "PATH is set in every test process")
+        assertEquals(environment["PATH"], ServerConfig.source()["PATH"], "The process source reads the environment")
+        assertNull(environment["OSTROM_SURELY_UNSET_${Uuid.random().toHexString()}"])
+    }
+
+    @Test
+    fun requiresTheDatabase() {
+        val error = assertFailsWith<InvalidConfigException> { ServerConfig.from(MapConfigSource(emptyMap())) }
+        assertEquals("OSTROM_DATABASE_URL is required.", error.message)
+    }
+
+    @Test
+    fun takesTheCredentialsFromTheUrl() {
+        val config = DatabaseConfig.of("postgresql://ostrom:pa55@localhost:5432/ostrom_test", null, null, 3)
+        assertEquals(DatabaseConfig("postgresql://localhost:5432/ostrom_test", "ostrom", "pa55", 3), config)
+    }
+
+    @Test
+    fun explicitCredentialsWinOverTheUrl() {
+        val config = DatabaseConfig.of("postgres://ostrom:pa55@db/ostrom", "admin", "other", 1)
+        assertEquals(DatabaseConfig("postgres://db/ostrom", "admin", "other", 1), config)
+    }
+
+    @Test
+    fun requiresAUserAndAPassword() {
+        val noUser = assertFailsWith<InvalidConfigException> {
+            DatabaseConfig.of("postgresql://db/ostrom", null, "x", 1)
+        }
+        assertEquals("The database user is required: in the URL or OSTROM_DATABASE_USER.", noUser.message)
+        val noPassword = assertFailsWith<InvalidConfigException> {
+            DatabaseConfig.of("postgresql://u@db/ostrom", null, null, 1)
+        }
+        assertEquals("The database password is required: in the URL or OSTROM_DATABASE_PASSWORD.", noPassword.message)
+    }
+
+    @Test
+    fun rejectsAnUrlThatIsNotPostgresWithADatabase() {
+        assertFailsWith<InvalidConfigException> { DatabaseConfig.of("mysql://db/ostrom", "u", "p", 1) }
+        assertFailsWith<InvalidConfigException> { DatabaseConfig.of("postgresql://db", "u", "p", 1) }
+        assertFailsWith<InvalidConfigException> {
+            DatabaseConfig.of("postgresql://db/ostrom?sslmode=require", "u", "p", 1)
+        }
+    }
+
+    @Test
+    fun rejectsPercentEncodedCredentials() {
+        assertFailsWith<InvalidConfigException> { DatabaseConfig.of("postgresql://us%40er:p@db/ostrom", null, null, 1) }
+        assertFailsWith<InvalidConfigException> {
+            DatabaseConfig.of("postgresql://user:p%40ss@db/ostrom", null, null, 1)
+        }
+    }
+
+    @Test
+    fun rejectsAnInvalidPortOrLevel() {
+        val outOfRange = assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "0")))
+        }
+        assertEquals("OSTROM_PORT must be between 1 and 65535.", outOfRange.message)
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "65536")))
+        }
+        val notANumber = assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "http")))
+        }
+        assertEquals("OSTROM_PORT must be an integer.", notANumber.message)
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_LOG_LEVEL" to "loud")))
+        }
+    }
+
+    @Test
+    fun neverPrintsThePassword() {
+        val printed = ServerConfig.from(MapConfigSource(database)).toString()
+        assertFalse("secret" in printed)
+        assertEquals(
+            "DatabaseConfig(url=postgresql://localhost:5432/ostrom, username=ostrom, password=***, maxConnections=10)",
+            ServerConfig.from(MapConfigSource(database)).database.toString(),
+        )
+    }
+}

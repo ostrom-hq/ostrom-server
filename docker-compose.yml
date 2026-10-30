@@ -1,0 +1,8 @@
+# Local development only: the PostgreSQL the server and the database tests use.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
