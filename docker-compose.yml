@@ -1,4 +1,7 @@
-# Local development only: the PostgreSQL the server and the database tests use.
+# Local development only: the PostgreSQL the server and the database tests use. At its first start it creates the
+# deployment's roles and the `ostrom` database (ci/database-roles.sql): migrate with
+# OSTROM_DATABASE_MIGRATION_URL=postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom, then serve with
+# OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom.
 services:
   postgres:
     image: postgres:17
@@ -6,3 +9,5 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
+    volumes:
+      - ./ci/database-roles.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro
