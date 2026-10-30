@@ -426,6 +426,24 @@ class GatesPostgresTest {
         repository.transaction { insertGate(gate) }
         assertEquals(gate, repository.get(orgA, gate.id))
         assertEquals(null, repository.get(orgB, gate.id))
+
+        // Joining writes the askers only: a status or a decision in the joiner's stale copy is never written back.
+        val joiner = gate.copy(
+            askedBy = gate.askedBy + "rev-c",
+            askedVia = gate.askedVia + AskedVia.CLI,
+            sessionIds = gate.sessionIds + "s-2",
+            launchIds = gate.launchIds + "launch-2",
+            status = GateStatus.PENDING,
+            decidedBy = null,
+        )
+        repository.transaction { addAskers(joiner) }
+        val joined = gate.copy(
+            askedBy = joiner.askedBy,
+            askedVia = joiner.askedVia,
+            sessionIds = joiner.sessionIds,
+            launchIds = joiner.launchIds,
+        )
+        assertEquals(joined, repository.get(orgA, gate.id))
     }
 
     @Test

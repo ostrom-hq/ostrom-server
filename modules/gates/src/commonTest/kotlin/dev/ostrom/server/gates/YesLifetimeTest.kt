@@ -58,4 +58,15 @@ class YesLifetimeTest {
         assertFalse(gate.copy(decidedAt = null).yesExpired(later))
         assertFalse(gate.copy(status = GateStatus.PENDING).yesExpired(later))
     }
+
+    @Test
+    fun onlyAReservationWithItsDateLapses() = runTest {
+        val bench = GateBench()
+        val gate = bench.open(bench.pushRequest()).gate.copy(status = GateStatus.RESERVED, reservedAt = bench.clock.now)
+        val later = bench.clock.now + Gate.RESERVATION_LIFETIME
+        assertTrue(gate.reservationLapsed(later))
+        assertFalse(gate.reservationLapsed(later - 1.seconds))
+        assertFalse(gate.copy(reservedAt = null).reservationLapsed(later))
+        assertFalse(gate.copy(status = GateStatus.APPROVED).reservationLapsed(later))
+    }
 }
