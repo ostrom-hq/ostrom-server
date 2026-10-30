@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The runner: the process of a cloud session's pod. It opens a PTY running the agent (after cloning the
 // repository), relays it to the server's terminal WebSocket, and heartbeats the execution. Native, no JVM.
 plugins {
