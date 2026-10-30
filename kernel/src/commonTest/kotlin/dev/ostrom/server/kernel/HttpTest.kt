@@ -54,6 +54,7 @@ class HttpTest {
 
         override fun routes(route: Route, koin: Koin) {
             route.get("/probe/missing") { throw OstromException(ErrorKind.NOT_FOUND, "Probe not found.") }
+            route.get("/probe/subclass") { throw ProbeGoneException() }
             route.get("/probe/crash") { throw IllegalStateException("database password is hunter2") }
             route.authenticated {
                 get("/probe/me") { call.respondText(call.requirePrincipal().subjectId) }
@@ -106,6 +107,13 @@ class HttpTest {
     }
 
     @Test
+    fun domainErrorSubclassKeepsItsKindAndMessage() = httpTest {
+        val response = client.get("/probe/subclass")
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertEquals("Probe gone.", response.error().error.message)
+    }
+
+    @Test
     fun unexpectedErrorIsA500WithoutItsCause() = httpTest {
         val response = client.get("/probe/crash")
         assertEquals(HttpStatusCode.InternalServerError, response.status)
@@ -141,3 +149,6 @@ class HttpTest {
         assertEquals("user-1", accepted.bodyAsText())
     }
 }
+
+/** A domain error declared the way modules declare theirs: a subclass. */
+private class ProbeGoneException : OstromException(ErrorKind.NOT_FOUND, "Probe gone.")

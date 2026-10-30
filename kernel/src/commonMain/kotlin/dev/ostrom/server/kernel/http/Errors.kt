@@ -72,8 +72,19 @@ fun Application.configureErrors(logger: Logger) {
             }
         }
         exception<Throwable> { call, cause ->
-            logger.error("unexpected failure", mapOf("request_id" to call.callId), cause)
-            call.respondError(ErrorKind.INTERNAL, "Internal error.")
+            // On Kotlin/Native, StatusPages only matches a handler by the exact class: a subclass of OstromException
+            // (every domain error) or of a Ktor exception lands here and is routed by type.
+            when (cause) {
+                is CancellationException -> throw cause
+                is OstromException -> call.respondError(cause.kind, cause.message ?: cause.kind.code)
+                is BadRequestException -> call.respondError(ErrorKind.INVALID_REQUEST, "The request is malformed.")
+                is NotFoundException -> call.respondError(ErrorKind.NOT_FOUND, "Not found.")
+                is PayloadTooLargeException -> call.respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
+                else -> {
+                    logger.error("unexpected failure", mapOf("request_id" to call.callId), cause)
+                    call.respondError(ErrorKind.INTERNAL, "Internal error.")
+                }
+            }
         }
         status(HttpStatusCode.NotFound) { call, _ ->
             call.respondError(ErrorKind.NOT_FOUND, "Not found.")
