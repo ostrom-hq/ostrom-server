@@ -11,6 +11,7 @@ import io.ktor.server.application.install
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.NotFoundException
 import io.ktor.server.plugins.PayloadTooLargeException
+import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
@@ -25,6 +26,7 @@ val ErrorKind.httpStatus: HttpStatusCode
         ErrorKind.NOT_FOUND -> HttpStatusCode.NotFound
         ErrorKind.CONFLICT -> HttpStatusCode.Conflict
         ErrorKind.PAYLOAD_TOO_LARGE -> HttpStatusCode.PayloadTooLarge
+        ErrorKind.UNSUPPORTED_MEDIA_TYPE -> HttpStatusCode.UnsupportedMediaType
         ErrorKind.RATE_LIMITED -> HttpStatusCode.TooManyRequests
         ErrorKind.UNAVAILABLE -> HttpStatusCode.ServiceUnavailable
         ErrorKind.INTERNAL -> HttpStatusCode.InternalServerError
@@ -43,7 +45,7 @@ internal suspend fun ApplicationCall.respondError(kind: ErrorKind, message: Stri
 
 /**
  * Installs the uniform error answers: an [OstromException] keeps its kind and message, a malformed request is a
- * 400, a unique-constraint violation a 409, an unknown route a 404, and anything else a 500 whose cause is logged
+ * 400, a body that is not JSON a 415, a unique-constraint violation a 409, an unknown route a 404, and anything else a 500 whose cause is logged
  * but never sent to the client. Cancellation is never turned into an answer.
  *
  * @param logger Where unexpected failures are logged.
@@ -54,7 +56,11 @@ fun Application.configureErrors(logger: Logger) {
         exception<OstromException> { call, cause ->
             call.respondError(cause.kind, cause.message ?: cause.kind.code)
         }
-        exception<BadRequestException> { call, _ ->
+        exception<UnsupportedMediaTypeException> { call, _ ->
+            call.respondError(ErrorKind.UNSUPPORTED_MEDIA_TYPE, "The request body must be JSON.")
+        }
+        exception<BadRequestException> { call, cause ->
+            logger.debug("malformed request", mapOf("request_id" to call.callId, "cause" to (cause.cause ?: cause).message))
             call.respondError(ErrorKind.INVALID_REQUEST, "The request is malformed.")
         }
         exception<NotFoundException> { call, _ ->
