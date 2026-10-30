@@ -103,7 +103,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
                 .bind("org_id", assignment.orgId)
                 .bind("server_id", assignment.serverId)
                 .bindNullable("member_id", assignment.memberId, Uuid::class)
-                .bindNullable("tools", assignment.policy.tools?.let { json.encodeToString(TOOLS, it) }, String::class)
+                .bindNullable("tools", assignment.policy.tools?.let { json.encodeToString(toolSet, it) }, String::class)
                 .bindNullable("credential", assignment.credentialSecretId, Uuid::class)
                 .bind("assigned_at", assignment.assignedAt),
         ).getOrThrow()
@@ -162,7 +162,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
                 .bind(
                     "conditions",
                     json.encodeToString(
-                        CONDITIONS,
+                        conditionList,
                         policy.conditions.map {
                             StoredCondition(it.path, it.operator.name, it.value)
                         },
@@ -194,7 +194,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
             orgId = row.get("org_id").asUuid(),
             serverId = row.get("server_id").asUuid(),
             tool = row.get("tool").asString(),
-            conditions = json.decodeFromString(CONDITIONS, row.get("conditions").asString()).map {
+            conditions = json.decodeFromString(conditionList, row.get("conditions").asString()).map {
                 ArgumentCondition(it.path, ConditionOperator.valueOf(it.operator), it.value)
             },
             effect = PolicyEffect.valueOf(row.get("effect").asString()),
@@ -356,7 +356,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         orgId = get("a_org_id").asUuid(),
         serverId = get("a_server_id").asUuid(),
         memberId = get("a_member_id").asUuidOrNull(),
-        policy = ToolPolicy(get("a_tools").asStringOrNull()?.let { json.decodeFromString(TOOLS, it) }),
+        policy = ToolPolicy(get("a_tools").asStringOrNull()?.let { json.decodeFromString(toolSet, it) }),
         credentialSecretId = get("a_credential").asUuidOrNull(),
         assignedAt = get("a_assigned_at").asInstant(),
     )
@@ -391,10 +391,12 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
     @Serializable
     private data class StoredCondition(val path: String, val operator: String, val value: String? = null)
 
+    // Instance properties, not companion ones: a private companion's accessors are synthetic code no test reaches.
+    private val json = Json { ignoreUnknownKeys = true }
+    private val toolSet = SetSerializer(String.serializer())
+    private val conditionList = ListSerializer(StoredCondition.serializer())
+
     private companion object {
-        val json = Json { ignoreUnknownKeys = true }
-        val TOOLS = SetSerializer(String.serializer())
-        val CONDITIONS = ListSerializer(StoredCondition.serializer())
         const val SERVER_COLUMNS =
             "s.id AS s_id, s.org_id AS s_org_id, s.name AS s_name, s.transport AS s_transport, s.url AS s_url, " +
                 "s.credential_secret_id AS s_credential, s.credential_header AS s_header, s.stdio AS s_stdio, " +

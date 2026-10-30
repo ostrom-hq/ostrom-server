@@ -203,6 +203,9 @@ class ConfigTest {
             ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "0")))
         }
         assertEquals("OSTROM_PORT must be between 1 and 65535.", outOfRange.message)
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "65536")))
+        }
         val notANumber = assertFailsWith<InvalidConfigException> {
             ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "http")))
         }

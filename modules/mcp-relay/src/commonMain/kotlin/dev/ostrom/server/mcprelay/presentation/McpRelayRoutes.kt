@@ -29,6 +29,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.route
+import io.ktor.server.util.getOrFail
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
@@ -87,7 +88,7 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
         }
         val payload = request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed()))
         val existing = listServers(caller).firstOrNull { it.name == params.name }
-        val server = existing?.let { updateServer(caller, it.id, payload) } ?: createServer(caller, payload)
+        val server = if (existing == null) createServer(caller, payload) else updateServer(caller, existing.id, payload)
         call.respond(server.toDto(directory.namesById(caller.orgId, server.secretIds())))
     }
     delete<McpApi.Servers.Name> { params ->
@@ -169,7 +170,7 @@ private fun Route.journalRoutes(dependencies: McpRelayRoutesDependencies) = with
         }
         val limit = params.limit.coerceIn(1, MAX_CALLS_PAGE)
         val calls = listCalls(caller, before, limit, params.server, member)
-        val next = calls.takeIf { it.size == limit }?.last()?.startedAt?.toString()
+        val next = if (calls.size == limit) calls.last().startedAt.toString() else null
         call.respond(McpCallsPage(calls.map { it.toDto() }, next))
     }
     get<McpApi.Usage> { params ->
@@ -199,10 +200,16 @@ private fun Route.endpointRoutes(dependencies: McpRelayRoutesDependencies) = wit
             } catch (_: SerializationException) {
                 throw OstromException(ErrorKind.INVALID_REQUEST, "The MCP message is not JSON.")
             }
-            val answer = relay(caller, call.parameters["server"].orEmpty(), message)
+            val answer = relay(caller, call.parameters.getOrFail("server"), message)
             val status = HttpStatusCode.fromValue(answer.status)
-            answer.body?.let { call.respondText(it.toString(), ContentType.Application.Json, status) }
-                ?: call.respond(status)
+            val body = answer.body
+            if (body ==
+                null
+            ) {
+                call.respond(status)
+            } else {
+                call.respondText(body.toString(), ContentType.Application.Json, status)
+            }
         }
         routeGet { call.respond(HttpStatusCode.MethodNotAllowed) }
         routeDelete { call.respond(HttpStatusCode.MethodNotAllowed) }
@@ -211,7 +218,9 @@ private fun Route.endpointRoutes(dependencies: McpRelayRoutesDependencies) = wit
 
 private const val MAX_CALLS_PAGE = 200
 
-private suspend fun McpRelayRoutesDependencies.serverId(caller: Caller, name: String): Uuid =
-    listServers(caller).firstOrNull { it.name == name }?.id ?: throw McpServerNotFoundException()
+private suspend fun McpRelayRoutesDependencies.serverId(caller: Caller, name: String): Uuid {
+    val server = listServers(caller).firstOrNull { it.name == name } ?: throw McpServerNotFoundException()
+    return server.id
+}
 
 private fun String.toMemberId(): Uuid? = if (this == "all") null else toIdOr(::McpServerNotFoundException)
