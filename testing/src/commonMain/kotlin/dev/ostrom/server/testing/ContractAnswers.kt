@@ -50,13 +50,14 @@ fun Application.recordContractAnswers(environment: ConfigSource) {
         createApplicationPlugin("ContractAnswers") {
             on(ResponseBodyReadyForSend) { call, content ->
                 val status = content.status ?: call.response.status() ?: HttpStatusCode.OK
-                val body = (content as? OutgoingContent.ByteArrayContent)?.bytes()?.decodeToString()
+                val bytes = (content as? OutgoingContent.ByteArrayContent)?.bytes()
+                val type = content.contentType
                 val line = buildJsonObject {
                     put("method", JsonPrimitive(call.request.httpMethod.value))
                     put("path", JsonPrimitive(call.request.path()))
                     put("status", JsonPrimitive(status.value))
-                    put("contentType", content.contentType?.let { JsonPrimitive(it.toString()) } ?: JsonNull)
-                    put("body", body?.let(::JsonPrimitive) ?: JsonNull)
+                    put("contentType", if (type == null) JsonNull else JsonPrimitive(type.toString()))
+                    put("body", if (bytes == null) JsonNull else JsonPrimitive(bytes.decodeToString()))
                 }
                 writing.withLock {
                     SystemFileSystem.sink(file, append = true).buffered().use { it.writeString("$line\n") }

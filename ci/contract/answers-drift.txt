@@ -70,3 +70,10 @@ inferenceChatCompletions 502  the provider failed; not in the contract (CORE-CON
 inferenceResponses 401  OpenAI error format (CORE-CONTRAT: provider formats)
 inferenceModels 200  OpenAI list format, `object` not in the contract (CORE-CONTRAT: add it)
 inferenceModels 401  OpenAI error format (CORE-CONTRAT: provider formats)
+
+# Found once the orgs tests ran again (ostrom-server#69)
+createInvitationLink 201  invitation.email omitted when null (a link) (kernel explicitNulls, to assign)
+listInvitations 200  items[].email omitted when null (kernel explicitNulls, to assign)
+createOrg 402  the free team already taken; the contract lists no 402 (CORE-CONTRAT: add it)
+inviteOrgMembers 402  seat limit of the plan; the contract lists no 402 (CORE-CONTRAT: add it)
+getArtifactLinkContent 404  text/plain on the content origin; the contract says ApiError JSON (CORE-CONTRAT: describe the plain 404)
