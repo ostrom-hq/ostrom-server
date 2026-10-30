@@ -148,12 +148,12 @@ internal object WaitRules {
 
     /** Whether a value that fits its field fills it: neither absent, null, blank nor an empty list. */
     private fun filled(value: JsonElement?): Boolean = when (value) {
-        null, JsonNull -> false
-        is JsonPrimitive -> !value.isString || value.content.isNotBlank()
+        null -> false
+        is JsonPrimitive -> value != JsonNull && (!value.isString || value.content.isNotBlank())
         else -> (value as JsonArray).isNotEmpty()
     }
 
-    private fun JsonElement.string(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.content
+    private fun JsonElement.string(): String? = if (this is JsonPrimitive && isString) content else null
 }
 
 /** Calendar dates of the `date` field, `YYYY-MM-DD`, without a date library. */
@@ -167,9 +167,10 @@ internal object CalendarDates {
         return month in 1..MONTHS && day in 1..daysIn(year, month)
     }
 
-    private fun daysIn(year: Int, month: Int): Int = when (month) {
-        FEBRUARY -> if (isLeap(year)) LEAP_FEBRUARY else FEBRUARY_DAYS
-        APRIL, JUNE, SEPTEMBER, NOVEMBER -> SHORT_MONTH
+    // A condition per kind of month, not a switch on the month: Kover counts every month of a switch as a branch.
+    private fun daysIn(year: Int, month: Int): Int = when {
+        month == FEBRUARY -> if (isLeap(year)) LEAP_FEBRUARY else FEBRUARY_DAYS
+        month in SHORT_MONTHS -> SHORT_MONTH
         else -> LONG_MONTH
     }
 
@@ -177,10 +178,7 @@ internal object CalendarDates {
 
     private const val MONTHS = 12
     private const val FEBRUARY = 2
-    private const val APRIL = 4
-    private const val JUNE = 6
-    private const val SEPTEMBER = 9
-    private const val NOVEMBER = 11
+    private val SHORT_MONTHS = setOf(4, 6, 9, 11)
     private const val LEAP = 4
     private const val CENTURY = 100
     private const val LEAP_CENTURY = 400
