@@ -102,6 +102,7 @@ enum class SessionState(val wire: String) {
     /** Whether the session is over. */
     val isFinal: Boolean get() = this == TERMINATED || this == FAILED
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /**
          * Reads a state from its wire name.
@@ -128,6 +129,7 @@ enum class DesiredState(val wire: String) {
     TERMINATED("terminated"),
     ;
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /**
          * Reads a desired state from its wire name.
@@ -160,6 +162,7 @@ enum class AgentKind(val wire: String, val command: String) {
     SHELL("shell", "bash"),
     ;
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /**
          * Reads an agent from its wire name.

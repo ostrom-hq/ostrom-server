@@ -126,9 +126,9 @@ class CloudSessionsPostgresTest {
     @Test
     fun theRunningCapHoldsUnderConcurrentCreations() = serverTest(listOf(RunnersModule)) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
-        val results = coroutineScope { (
-            1..12,
-        ).map { async { repository.createWithinCap(session(createdAt = t0), 5) } }.awaitAll() }
+        val results = coroutineScope {
+            (1..12).map { async { repository.createWithinCap(session(createdAt = t0), 5) } }.awaitAll()
+        }
         assertEquals(5, results.count { it })
     }
 
@@ -141,7 +141,7 @@ class CloudSessionsPostgresTest {
 
         assertEquals(ResumeOutcome.AtCap, repository.resumeWithinCap(ORG_A, paused.id, 1, t0))
         val resumed = repository.resumeWithinCap(ORG_A, paused.id, 2, t0)
-        assertEquals(DesiredState.RUNNING, (resumed as ResumeOutcome.Resumed).session.desiredStatus)
+        assertEquals(DesiredState.RUNNING, (resumed as ResumeOutcome.Resumed).session.desiredState)
         assertEquals(ResumeOutcome.NotFound, repository.resumeWithinCap(ORG_B, paused.id, 2, t0))
         assertNull(repository.setDesiredState(ORG_B, paused.id, DesiredState.PAUSED, t0))
     }
@@ -153,7 +153,7 @@ class CloudSessionsPostgresTest {
         repository.createWithinCap(over, 5)
         assertEquals(
             DesiredState.TERMINATED,
-            repository.setDesiredState(ORG_A, over.id, DesiredState.RUNNING, t0)?.desiredStatus,
+            repository.setDesiredState(ORG_A, over.id, DesiredState.RUNNING, t0)?.desiredState,
         )
     }
 
@@ -201,9 +201,9 @@ class CloudSessionsPostgresTest {
     @Test
     fun listPagesByKeyset() = serverTest(listOf(RunnersModule)) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
-        val sessions = (
-            0 until 3,
-        ).map { index -> session(createdAt = t0 + index.seconds).also { repository.createWithinCap(it, 10) } }
+        val sessions = (0 until 3).map { index ->
+            session(createdAt = t0 + index.seconds).also { repository.createWithinCap(it, 10) }
+        }
         repository.createWithinCap(session(ownerId = "bob", createdAt = t0), 10)
 
         assertEquals(sessions.reversed().map { it.id }, repository.list(ORG_A, "alice", null, 10).map { it.id })

@@ -122,6 +122,7 @@ class RunnerHeartbeatUseCaseImpl(
         return if (stopping) RunnerInstruction.STOP else RunnerInstruction.RUN
     }
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** How often a runner sends a heartbeat. */
         val HEARTBEAT_INTERVAL = 15.seconds
