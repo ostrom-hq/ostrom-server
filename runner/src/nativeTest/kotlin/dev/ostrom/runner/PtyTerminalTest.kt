@@ -46,6 +46,24 @@ class PtyTerminalTest {
     }
 
     @Test
+    fun theSessionScriptStartsTheAgentWithItsModelAndFirstMessage() = runBlocking {
+        withTimeout(20.seconds) {
+            val agent = environment + mapOf(
+                "OSTROM_AGENT_COMMAND" to "echo",
+                "OSTROM_AGENT_MODEL" to "m-1",
+                "OSTROM_AGENT_PROMPT" to "fix it",
+                "OSTROM_WORKSPACE" to "/tmp",
+                "HOME" to "/tmp/ostrom-runner-test-home",
+            )
+            val terminal = PtyTerminal.start(SessionScript.FIRST, agent, "/tmp")
+            assertTrue("--model m-1 fix it" in terminal.readUntil("--model m-1 fix it"))
+            assertTrue("The agent exited" in terminal.readUntil("The agent exited"))
+            terminal.terminate()
+            terminal.close()
+        }
+    }
+
+    @Test
     fun aMissingDirectoryEndsTheChildAtOnce() = runBlocking {
         withTimeout(20.seconds) {
             val terminal = PtyTerminal.start("echo never", environment, "/no/such/directory")
