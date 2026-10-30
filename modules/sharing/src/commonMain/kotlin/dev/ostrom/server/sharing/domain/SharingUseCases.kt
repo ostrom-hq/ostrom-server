@@ -196,7 +196,8 @@ class UpdateSharedAccountUseCaseImpl(private val repository: SharedAccountReposi
     override suspend fun invoke(caller: Caller, id: Uuid, payload: UpdateAccountPayload): SharedAccount {
         val account = repository.writable(caller, id)
         payload.label?.let(SharingRules::requireLabel)
-        val limits = payload.limits?.invoke(account.limits) ?: account.limits
+        val patch = payload.limits
+        val limits = if (patch == null) account.limits else patch(account.limits)
         SharingRules.requireLimits(limits)
         payload.priority?.let(SharingRules::requirePriority)
         // RECONNECT_REQUIRED is left only by sharing again: pausing and resuming must not revive dead tokens (the

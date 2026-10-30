@@ -93,7 +93,14 @@ class SharingInfrastructureTest {
             refresher(HttpStatusCode.Unauthorized, dead).refresh(AccountProvider.CLAUDE, old),
         )
         // Any other refusal is not the owner's token dying: the account must not be retired for it.
-        for (body in listOf("{}", """{"error":"invalid_request"}""", """{"error":"invalid_client"}""", "nope", "[1]")) {
+        for (body in listOf(
+            "{}",
+            """{"error":"invalid_request"}""",
+            """{"error":"invalid_client"}""",
+            "nope",
+            "[1]",
+            "{",
+        )) {
             assertEquals(
                 RefreshResult.Unavailable,
                 refresher(HttpStatusCode.BadRequest, body).refresh(AccountProvider.CLAUDE, old),

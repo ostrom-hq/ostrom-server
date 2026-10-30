@@ -162,7 +162,7 @@ class SharedAccountPool(
         val budget = account.limits.monthlyBudgetMicros
         return when {
             cooling != null -> Standing.Closed(cooling)
-            full.isNotEmpty() -> Standing.Closed(full.maxOf { it.endsAt })
+            full.isNotEmpty() -> Standing.Closed(full.map(QuotaWindow::endsAt).max())
             budget != null && spend.spentMicros(account.id, monthStart) >= budget -> Standing.Closed(null)
             else -> Standing.Open(current.maxOfOrNull { it.utilization } ?: 0.0)
         }
@@ -174,7 +174,7 @@ class SharedAccountPool(
             val free = open.filter { (account, _) -> (inFlight[account.id] ?: 0) < account.limits.maxConcurrent }
             val remembered = if (sessionKey == null) null else affinity[sessionKey]
             val sticky = if (remembered != null && remembered.second > now) remembered.first else null
-            val pick = free.firstOrNull { it.first.id == sticky }?.first ?: free.minWithOrNull(ORDER)?.first
+            val pick = (free.firstOrNull { it.first.id == sticky } ?: free.minWithOrNull(ORDER))?.first
             if (pick != null) {
                 inFlight[pick.id] = (inFlight[pick.id] ?: 0) + 1
                 if (sessionKey != null) remember(sessionKey, pick.id, now)
