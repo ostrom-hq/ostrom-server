@@ -44,7 +44,8 @@ class GetApprovalQueueUseCaseImpl(
         val orgId = actor.orgId
         val pending = repository.approvals(orgId, person, RequestStatus.PENDING, PENDING_LIMIT)
         // One inbox read per answered status (the inbox index), merged newest first.
-        val recent = ANSWERED.flatMap { repository.approvals(orgId, person, it, RECENT_LIMIT) }
+        val answered = listOf(RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CLOSED)
+        val recent = answered.flatMap { repository.approvals(orgId, person, it, RECENT_LIMIT) }
             .sortedByDescending { it.request.createdAt }
             .take(RECENT_LIMIT)
         val approvers = repository.approversOf(orgId, (pending + recent).map { it.gate.id }.distinct())
@@ -58,6 +59,5 @@ class GetApprovalQueueUseCaseImpl(
     private companion object {
         const val PENDING_LIMIT = 100
         const val RECENT_LIMIT = 8
-        val ANSWERED = listOf(RequestStatus.APPROVED, RequestStatus.REJECTED, RequestStatus.CLOSED)
     }
 }
