@@ -2,7 +2,6 @@
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.server.kernel.logging.LogLevel
-import dev.ostrom.server.kernel.logging.Logger
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.hooks.ResponseSent
@@ -12,15 +11,6 @@ import io.ktor.server.request.path
 import io.ktor.util.AttributeKey
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
-
-/**
- * Configuration of [RequestLogging].
- *
- * @property logger Where request lines go; set by [configureHttp].
- */
-class RequestLoggingConfig {
-    lateinit var logger: Logger
-}
 
 private val requestStart = AttributeKey<TimeSource.Monotonic.ValueTimeMark>("ostrom.request.start")
 

@@ -1,11 +1,10 @@
 # CI of ostrom-server, after ostrom-core's reference template (docs/conventions/.github/workflows/build.yml,
-# CONVENTIONS section 11). Pull requests and main run on Linux only; macosArm64 is a development target, built on
-# version tags only.
+# CONVENTIONS section 11). Pull requests and main, Linux only. Not on version tags: releases are built by the release
+# workflow without these caches, which a tag build must never restore (zizmor cache-poisoning).
 name: Build
 on:
   push:
     branches: [main]
-    tags: ['[0-9]*']
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
