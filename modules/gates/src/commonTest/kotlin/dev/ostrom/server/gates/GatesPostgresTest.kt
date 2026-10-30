@@ -32,6 +32,7 @@ import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.testing.TestServer
@@ -75,7 +76,21 @@ class GatesPostgresTest {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
-                    "user" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
+                    "user" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.ALL_USER),
+                        PrincipalChannel.BROWSER,
+                    )
+                    "app" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.ANSWER),
+                        PrincipalChannel.MOBILE_APP,
+                    )
+                    // A personal token of the CLI: a person's, with every scope, yet readable by the agent (S2-31).
+                    "cli" ->
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER, GateScopes.ANSWER))
                     "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
                     "reader" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
                     "device" -> AuthenticatedPrincipal(token, PrincipalKind.DEVICE, setOf(GateScopes.ANSWER))
@@ -89,7 +104,7 @@ class GatesPostgresTest {
                     val (kind, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
-                        "user", "reader" -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        "user", "reader", "app", "cli" -> GateActor(id, orgId, ActorKind.USER, personId = id)
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
                     }
@@ -464,6 +479,17 @@ class GatesPostgresTest {
         assertEquals(answered, repository.requestsOf(orgA, gateId).single { it.approverId == "rev-d" })
         assertEquals(answered, repository.approval(orgA, answered.id)?.request)
         assertNull(repository.approval(orgB, answered.id))
+    }
+
+    @Test
+    fun s231OnlyABrowserSessionOrTheAppAfterBiometricsSaysYes() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val cli = server.answer("cli:a:rev-b", opened, "rev-b")
+        assertEquals(HttpStatusCode.Forbidden, cli.status, "a person's API token, even with every scope")
+        assertTrue(cli.bodyAsText().contains("A yes is given in the browser or in the app."))
+        val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
+        assertEquals("pending", still.gate.status)
+        assertEquals(HttpStatusCode.OK, server.answer("app:a:rev-b", opened, "rev-b").status, "the app, unlocked")
     }
 
     @Test
