@@ -12,7 +12,7 @@ interface MigrationRunner {
     /**
      * Applies the migrations a module has not applied yet, and verifies the checksums of those it has.
      *
-     * @param module The module name (lower-case letters, digits, `-` or `_`).
+     * @param module The module name (lower-case letters, digits and `-`).
      * @param migrations The module's migrations.
      *
      * @throws io.github.smyrgeorge.sqlx4k.SQLError When a migration fails or an applied one was edited.
@@ -44,7 +44,11 @@ class MigrationRunnerImpl(
             afterFileMigration = { migration, duration ->
                 logger.info(
                     "migration applied",
-                    mapOf("module" to module, "version" to migration.version, "duration_ms" to duration.inWholeMilliseconds),
+                    mapOf(
+                        "module" to module,
+                        "version" to migration.version,
+                        "duration_ms" to duration.inWholeMilliseconds,
+                    ),
                 )
             },
         ).getOrThrow()
@@ -55,6 +59,7 @@ class MigrationRunnerImpl(
     }
 
     private companion object {
-        val MODULE_NAME = Regex("[a-z][a-z0-9_-]{0,40}")
+        // No `_`: `a-b` and `a_b` would share the table `_migrations_a_b`.
+        val MODULE_NAME = Regex("[a-z][a-z0-9-]{0,40}")
     }
 }
