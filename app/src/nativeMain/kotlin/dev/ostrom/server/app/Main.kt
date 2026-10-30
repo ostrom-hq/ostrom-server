@@ -97,10 +97,11 @@ private fun serve() {
             "server starting",
             mapOf("version" to SERVER_VERSION, "host" to config.host, "port" to config.port, "key_id" to signer.keyId),
         )
-        // From now on SIGTERM and SIGINT only write to the signal pipe; before, they stop a hung start at once.
-        check(ostrom_install_signal_handlers() == 0) { "The SIGTERM and SIGINT handlers could not be installed." }
         val engine = embeddedServer(CIO, port = config.port, host = config.host) { configureHttp(server, modules) }
             .start(wait = false)
+        // After the start: Ktor's POSIX shutdown hook calls signal() as the application starts and would replace these
+        // handlers. From now on SIGTERM and SIGINT only write to the signal pipe; before, they end a start at once.
+        check(ostrom_install_signal_handlers() == 0) { "The SIGTERM and SIGINT handlers could not be installed." }
         val signal = ostrom_await_signal()
         val name = if (signal == SIGTERM) "SIGTERM" else "SIGINT"
         logger.info("server draining", mapOf("signal" to name, "delay_s" to config.drainDelay.inWholeSeconds))
