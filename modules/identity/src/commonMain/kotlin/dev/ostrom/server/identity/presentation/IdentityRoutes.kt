@@ -8,6 +8,7 @@ import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.TokenNotFoundException
 import dev.ostrom.server.identity.domain.isBrowserSession
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
@@ -77,7 +78,8 @@ private fun Route.deviceLoginRoutes(dependencies: IdentityRoutesDependencies) = 
 private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with(dependencies) {
     get<MeApi> {
         val principal = call.requireScope("profile:read")
-        val session = call.request.cookies[SESSION_COOKIE]?.takeIf { principal.isBrowserSession }
+        val cookie = call.request.cookies[config.sessionCookiePrefix + SESSION_COOKIE]
+        val session = cookie?.takeIf { principal.isBrowserSession }
         val csrf = session?.let { hasher.csrfToken(it) }
         call.respond(getProfile(principal.userId()).toProfileResponse(csrf))
     }
@@ -96,12 +98,15 @@ private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with
         } else {
             revokeToken(userId, credential)
         }
+        // After the revocation: a listener that fails cannot keep the credential alive (S2-08, APP 06:10).
+        signOutListeners.forEach { it.signedOut(principal.subjectId, principal.credentialId) }
         call.respond(HttpStatusCode.NoContent)
     }
     post<AuthApi.Logout.Everywhere> {
         val principal = call.requireBrowserSession()
         endWebSession.everywhere(principal.userId())
         call.clearSessionCookie(config)
+        signOutListeners.forEach { it.signedOut(principal.subjectId, null) }
         call.respond(HttpStatusCode.NoContent)
     }
 }
@@ -148,45 +153,55 @@ private fun Route.deviceAnswerRoutes(dependencies: IdentityRoutesDependencies) =
 }
 
 /**
- * Sets the session cookie after a sign-in: HttpOnly (no script reads it), Secure when the API is served over HTTPS,
- * SameSite=Lax (sent on the console's own requests and top-level navigations, not on another site's forms), for
- * the whole API, until the session expires.
+ * Sets the session cookies after a sign-in (audit S2-08): [SESSION_COOKIE], HttpOnly (no script reads it), and
+ * [CSRF_COOKIE], readable by the console's script, which copies it into the `X-CSRF-Token` header of every request
+ * that changes state. Both are Secure when the API is served over HTTPS, SameSite=Lax (sent on the console's own
+ * requests and top-level navigations, not on another site's forms), for the whole API, until the session expires. The
+ * session's secret is never in a response body. Over HTTPS both names carry the `__Host-` prefix (S2-12).
  *
  * @param started The session.
  * @param config Where the API is served.
  */
 fun ApplicationCall.setSessionCookie(started: StartedSession, config: IdentityConfig) {
-    response.cookies.append(
-        Cookie(
-            name = SESSION_COOKIE,
-            value = started.secret,
-            maxAge = (started.session.expiresAt - started.session.createdAt).inWholeSeconds.toInt(),
-            path = "/",
-            secure = config.secureCookies,
-            httpOnly = true,
-            extensions = mapOf("SameSite" to "Lax"),
-        ),
-    )
+    sessionCookies(started, config).forEach(response.cookies::append)
 }
 
 /**
- * Removes the session cookie (sign-out).
+ * Expires both session cookies (sign-out).
  *
  * @param config Where the API is served.
  */
 fun ApplicationCall.clearSessionCookie(config: IdentityConfig) {
-    response.cookies.append(
-        Cookie(
-            name = SESSION_COOKIE,
-            value = "",
-            maxAge = 0,
-            path = "/",
-            secure = config.secureCookies,
-            httpOnly = true,
-            extensions = mapOf("SameSite" to "Lax"),
-        ),
+    sessionCookies(null, config).forEach(response.cookies::append)
+}
+
+/**
+ * The two session cookies, named `__Host-ostrom_session` and `__Host-ostrom_csrf` over HTTPS (Secure, `Path=/`, no
+ * `Domain`: audit S2-12), without the prefix on a plain-HTTP development server.
+ *
+ * @param started The session, or null to expire both.
+ * @param config Where the API is served.
+ *
+ * @return The session cookie, then the CSRF cookie.
+ */
+internal fun sessionCookies(started: StartedSession?, config: IdentityConfig): List<Cookie> {
+    val prefix = config.sessionCookiePrefix
+    val maxAge = started?.let { (it.session.expiresAt - it.session.createdAt).inWholeSeconds.toInt() } ?: 0
+    return listOf(
+        sessionCookie(prefix + SESSION_COOKIE, started?.secret.orEmpty(), maxAge, config, httpOnly = true),
+        sessionCookie(prefix + CSRF_COOKIE, started?.csrfToken.orEmpty(), maxAge, config, httpOnly = false),
     )
 }
+
+private fun sessionCookie(name: String, value: String, maxAge: Int, config: IdentityConfig, httpOnly: Boolean) = Cookie(
+    name = name,
+    value = value,
+    maxAge = maxAge,
+    path = "/",
+    secure = config.secureCookies,
+    httpOnly = httpOnly,
+    extensions = mapOf("SameSite" to "Lax"),
+)
 
 /**
  * The principal, refused unless it is a user's browser session: managing tokens and approving a CLI login are

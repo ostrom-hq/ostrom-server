@@ -362,6 +362,19 @@ class StripeEventsUsageAndLimitsTest {
         assertFailsWith<IllegalArgumentException> { world.usage(world.org, 0, -1) }
     }
 
+    @Test
+    fun theUsageOfTheCurrentPeriodIsReadWithoutChangingIt() = runTest {
+        val world = World()
+        assertEquals(0L, world.readUsage(world.org).agentSeconds)
+        world.usage(world.org, 90L, 1)
+        world.usage(world.org, 30L, 0)
+        val usage = world.readUsage(world.org)
+        assertEquals(120L, usage.agentSeconds)
+        assertEquals(1L, usage.sessions)
+        assertEquals(MONTH, usage.periodStart)
+        assertEquals(120L, world.readUsage(world.org).agentSeconds)
+    }
+
     // Entitlements ------------------------------------------------------------------------------------------------
 
     @Test

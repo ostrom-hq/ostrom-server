@@ -61,10 +61,8 @@ class IdentityRoutesPostgresTest {
     /** A poll that gives no token: its status and its error type. */
     private suspend fun HttpResponse.refusal(): Pair<Int, String> = status.value to body<ApiError>().error.type
 
-    private fun HttpRequestBuilder.session(started: StartedSession, csrf: Boolean = true) {
-        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}")
-        if (csrf) header(CSRF_HEADER, started.csrfToken)
-    }
+    private fun HttpRequestBuilder.session(started: StartedSession, csrf: Boolean = true) =
+        browserSession(started.secret, started.csrfToken.takeIf { csrf })
 
     private fun HttpRequestBuilder.json(body: Any) {
         contentType(ContentType.Application.Json)
