@@ -122,6 +122,8 @@ internal fun inputs(
     now = NOW,
 )
 
-internal suspend fun compiled(inputs: CompileInputs) = PackageCompiler.compile(inputs) { digest ->
+// The workflows given are compiled as they are (the prototype's `opts.workflows`); [PackageCompilerTest] covers the
+// choice by repository.
+internal suspend fun compiled(inputs: CompileInputs) = PackageCompiler.compile(inputs, inputs.workflows) { digest ->
     HarnessStamp("h202610300845-${digest.take(8)}", null)
 }

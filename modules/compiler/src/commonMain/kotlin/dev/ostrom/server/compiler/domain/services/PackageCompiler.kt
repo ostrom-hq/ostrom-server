@@ -177,12 +177,18 @@ object PackageCompiler {
      * Compiles the package body of a repository.
      *
      * @param inputs The organization's sources.
+     * @param workflows The workflows to compile: by default those that apply to the repository ([workflowsFor]); a
+     *   caller that already chose them passes them as they are, as the prototype's `opts.workflows`.
      * @param stamp The version of the harness with this digest (an earlier one, or a new one).
      * @return The body.
      */
-    suspend fun compile(inputs: CompileInputs, stamp: suspend (digest: String) -> HarnessStamp): CompiledBody {
+    suspend fun compile(
+        inputs: CompileInputs,
+        workflows: List<WorkflowDoc> = workflowsFor(inputs),
+        stamp: suspend (digest: String) -> HarnessStamp,
+    ): CompiledBody {
         val repo = inputs.repo
-        val docs = workflowsFor(inputs).sortedWith(compareBy(JsText.localeOrder) { it.workflow.id })
+        val docs = workflows.sortedWith(compareBy(JsText.localeOrder) { it.workflow.id })
         val catalog = GatesCatalog(inputs.workflows.map { it.workflow }, inputs.prodApprover).catalog(repo)
         val state = CompileState(inputs, catalog)
         docs.forEach { state.add(it.workflow) }
