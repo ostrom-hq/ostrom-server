@@ -3,33 +3,53 @@ package dev.ostrom.server.mcprelay.presentation
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
-/** `/v1/orgs/{orgId}/mcp`: the org's MCP relay, for admins. To move to ostrom-core with the API contract. */
+/**
+ * `/api/v1/mcp`: the MCP relay of the caller's org (from the token), as in ostrom-core's `openapi.yaml`.
+ * Assignments, argument policies and settings are additions to the contract (proposed in ostrom-core).
+ */
 @Serializable
-@Resource("/v1/orgs/{orgId}/mcp")
-class OrgMcpApi(val orgId: String) {
-    /** `/servers`: the org's servers. */
+@Resource("/api/v1/mcp")
+class McpApi {
+    /**
+     * `/api/v1/mcp/servers`: every server of the org (admins), or with `mine=true` the servers the caller reaches
+     * (what `ostrom claude` connects; members always get these).
+     *
+     * @property mine Only the caller's servers.
+     */
     @Serializable
     @Resource("servers")
-    class Servers(val parent: OrgMcpApi) {
-        /** `/servers/{id}`: one server. */
+    class Servers(val parent: McpApi = McpApi(), val mine: Boolean = false) {
+        /**
+         * `/api/v1/mcp/servers/{name}`: one server.
+         *
+         * @property name Its name.
+         */
         @Serializable
-        @Resource("{id}")
-        class Id(val parent: Servers, val id: String) {
-            /** `/servers/{id}/assignments`: who reaches it, with which tools. */
+        @Resource("{name}")
+        class Name(val parent: Servers = Servers(), val name: String) {
+            /** `…/assignments`: who reaches it, with which tools. */
             @Serializable
             @Resource("assignments")
-            class Assignments(val parent: Id) {
-                /** `/assignments/{member}`: one member's, or `all` for the org-wide one. */
+            class Assignments(val parent: Name) {
+                /**
+                 * `…/assignments/{member}`: one member's assignment, or `all` for the whole org.
+                 *
+                 * @property member A member id, or `all`.
+                 */
                 @Serializable
                 @Resource("{member}")
                 class Member(val parent: Assignments, val member: String)
             }
 
-            /** `/servers/{id}/policies`: argument policies. */
+            /** `…/policies`: argument policies. */
             @Serializable
             @Resource("policies")
-            class Policies(val parent: Id) {
-                /** `/policies/{policyId}`: one policy. */
+            class Policies(val parent: Name) {
+                /**
+                 * One policy.
+                 *
+                 * @property policyId Its id.
+                 */
                 @Serializable
                 @Resource("{policyId}")
                 class PolicyId(val parent: Policies, val policyId: String)
@@ -37,37 +57,42 @@ class OrgMcpApi(val orgId: String) {
         }
     }
 
-    /** `/settings`: the agent prefix. */
+    /** `/api/v1/mcp/settings`: the tool name prefix agents see. */
     @Serializable
     @Resource("settings")
-    class Settings(val parent: OrgMcpApi)
+    class Settings(val parent: McpApi = McpApi())
 
     /**
-     * `/calls`: the journal, newest first.
+     * `/api/v1/mcp/calls`: the journal, newest first.
      *
+     * @property server Only this server.
+     * @property dev Only this member (admins).
      * @property before Keyset cursor (ISO 8601).
-     * @property limit Page size, 1 to 200.
+     * @property limit Page size (1 to 200).
      */
     @Serializable
     @Resource("calls")
-    class Calls(val parent: OrgMcpApi, val before: String? = null, val limit: Int = 50)
+    class Calls(val parent: McpApi = McpApi(), val server: String? = null, val dev: String? = null, val before: String? = null, val limit: Int = 50)
 
     /**
-     * `/usage`: totals per member and server.
+     * `/api/v1/mcp/usage`: calls by server and by tool.
      *
-     * @property days Period, 1 to 30 days.
+     * @property days The window (1 to 30).
      */
     @Serializable
     @Resource("usage")
-    class Usage(val parent: OrgMcpApi, val days: Int = 7)
+    class Usage(val parent: McpApi = McpApi(), val days: Int = 7)
 }
 
-/** `GET /v1/mcp/servers`: the servers the agent's member reaches (what `ostrom claude` connects). */
-@Serializable
-@Resource("/v1/mcp/servers")
-class MemberMcpServersApi
-
-/** A stdio command. */
+/**
+ * A stdio command (an addition to the contract's `McpServer`).
+ *
+ * @property launcher `npx`, `uvx`, ...
+ * @property packageName The package.
+ * @property args Arguments; `${NAME}` names a secret variable.
+ * @property env Visible variables.
+ * @property secretEnv Secret variables: variable name to org secret name.
+ */
 @Serializable
 data class StdioSpecDto(
     val launcher: String,
@@ -77,59 +102,83 @@ data class StdioSpecDto(
     val secretEnv: Map<String, String> = emptyMap(),
 )
 
-/** Declares or changes a server. */
+/**
+ * A server (contract `McpServer`, with additions). Credentials are named, never sent.
+ *
+ * @property name Unique in the org.
+ * @property url The HTTP endpoint; for a stdio server `stdio:<launcher>:<package>`; in a member's list, the relay path.
+ * @property transport `http` or `stdio`.
+ * @property secretNames The org secrets it uses: for HTTP, the credential.
+ * @property tools The tools the caller reaches, in a member's list; absent for every tool.
+ * @property enabled Always true.
+ * @property scope `shared` (one credential for the org) or `per-member` (each member's own).
+ * @property agentName The name the agent sees (`<prefix>-<name>`), in a member's list.
+ * @property path The relay endpoint, in a member's list.
+ * @property credentialHeader The header carrying the credential, when not `Authorization: Bearer`.
+ * @property stdio The command of a stdio server.
+ * @property version Bumped at each change.
+ * @property createdAt Creation time.
+ */
 @Serializable
-data class McpServerRequest(
+data class McpServerDto(
     val name: String,
+    val url: String = "",
     val transport: String,
-    val url: String? = null,
-    val credentialSecretId: String? = null,
+    val secretNames: List<String> = emptyList(),
+    val tools: List<String>? = null,
+    val enabled: Boolean = true,
+    val scope: String = "shared",
+    val agentName: String? = null,
+    val path: String? = null,
     val credentialHeader: String? = null,
     val stdio: StdioSpecDto? = null,
-    val sharing: String = "SHARED",
+    val version: Int? = null,
+    val createdAt: String? = null,
 )
 
-/** A server as admins see it: secret ids, never values. */
+/**
+ * A page of servers.
+ *
+ * @property items The servers, by name.
+ * @property next Never set: an org has at most a hundred servers.
+ */
 @Serializable
-data class McpServerResponse(
-    val id: String,
-    val name: String,
-    val transport: String,
-    val url: String? = null,
-    val credentialSecretId: String? = null,
-    val credentialHeader: String? = null,
-    val stdio: StdioSpecDto? = null,
-    val sharing: String,
-    val version: Int,
-    val createdAt: String,
-)
-
-/** The org's servers. */
-@Serializable
-data class McpServersResponse(val servers: List<McpServerResponse>)
+data class McpServersPage(val items: List<McpServerDto>, val next: String? = null)
 
 /**
  * Assigns a server.
  *
- * @property tools The allowlist, or null for every tool.
- * @property credentialSecretId The member's own credential (per-member servers).
+ * @property tools The allowed tools, or absent for every tool.
+ * @property credentialSecret The member's personal secret holding its own credential (per-member servers).
  */
 @Serializable
-data class McpAssignmentRequest(val tools: List<String>? = null, val credentialSecretId: String? = null)
+data class McpAssignmentRequest(val tools: List<String>? = null, val credentialSecret: String? = null)
 
-/** An assignment. */
+/**
+ * An assignment.
+ *
+ * @property server The server.
+ * @property member The member, absent for the whole org.
+ * @property tools The allowed tools, absent for every tool.
+ * @property credentialSecret The member's credential secret.
+ * @property assignedAt When.
+ */
 @Serializable
 data class McpAssignmentResponse(
-    val serverId: String,
-    val memberId: String? = null,
+    val server: String,
+    val member: String? = null,
     val tools: List<String>? = null,
-    val credentialSecretId: String? = null,
+    val credentialSecret: String? = null,
     val assignedAt: String,
 )
 
-/** A server's assignments. */
+/**
+ * A server's assignments.
+ *
+ * @property items The assignments.
+ */
 @Serializable
-data class McpAssignmentsResponse(val assignments: List<McpAssignmentResponse>)
+data class McpAssignmentsPage(val items: List<McpAssignmentResponse>)
 
 /** A policy condition. */
 @Serializable
@@ -163,29 +212,52 @@ data class ArgumentPoliciesResponse(val policies: List<ArgumentPolicyResponse>)
 @Serializable
 data class McpSettingsDto(val agentPrefix: String)
 
-/** A journal row: outcomes only. */
+/**
+ * A journal row (contract `McpCall`, with additions): outcomes only, never arguments or results.
+ *
+ * @property id The call.
+ * @property at When it started.
+ * @property server The server name at the time.
+ * @property tool The tool, or `tools/list` for a listing.
+ * @property dev The member.
+ * @property durationMs How long it took.
+ * @property ok Whether it succeeded.
+ * @property outcome `OK`, `DENIED`, `UPSTREAM_ERROR`, ...
+ * @property responseBytes The upstream answer size.
+ * @property policyId The argument policy that refused it.
+ */
 @Serializable
-data class McpCallResponse(
+data class McpCallDto(
     val id: String,
-    val memberId: String,
+    val at: String,
     val server: String,
-    val operation: String,
-    val tool: String? = null,
-    val outcome: String,
-    val startedAt: String,
+    val tool: String,
+    val dev: String,
     val durationMs: Long,
+    val ok: Boolean,
+    val outcome: String,
     val responseBytes: Long,
     val policyId: String? = null,
 )
 
-/** A journal page. */
+/**
+ * A journal page.
+ *
+ * @property items The calls, newest first.
+ * @property next The cursor of the next page.
+ */
 @Serializable
-data class McpCallsResponse(val calls: List<McpCallResponse>, val next: String? = null)
+data class McpCallsPage(val items: List<McpCallDto>, val next: String? = null)
 
-/** Usage of a member on a server. */
+/**
+ * Usage of a member on a server (an addition to the contract's usage).
+ *
+ * @property dev The member.
+ * @property server The server.
+ */
 @Serializable
-data class McpUsageResponse(
-    val memberId: String,
+data class McpUsageRow(
+    val dev: String,
     val server: String,
     val calls: Long,
     val lists: Long,
@@ -195,28 +267,12 @@ data class McpUsageResponse(
     val durationMs: Long,
 )
 
-/** Usage totals. */
-@Serializable
-data class McpUsagesResponse(val usage: List<McpUsageResponse>)
-
 /**
- * A server as the agent reaches it.
+ * Usage over the window (contract `getMcpUsage`).
  *
- * @property name The endpoint name.
- * @property agentName The name to give the agent (`<prefix>-<name>`): tools are `mcp__<agentName>__<tool>`.
- * @property path The relay path to POST to.
- * @property transport `http` or `stdio` (informative: the agent always speaks HTTP to the relay).
- * @property tools The allowlist, or null for every tool.
+ * @property byServer Tool calls by server.
+ * @property byTool Tool calls by `server/tool`.
+ * @property rows Details by member and server.
  */
 @Serializable
-data class MemberMcpServerResponse(
-    val name: String,
-    val agentName: String,
-    val path: String,
-    val transport: String,
-    val tools: List<String>? = null,
-)
-
-/** The member's servers. */
-@Serializable
-data class MemberMcpServersResponse(val servers: List<MemberMcpServerResponse>)
+data class McpUsageResponse(val byServer: Map<String, Long>, val byTool: Map<String, Long>, val rows: List<McpUsageRow>)

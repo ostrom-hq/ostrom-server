@@ -24,7 +24,10 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -80,7 +83,7 @@ class UpstreamsTest {
     }
 
     @Test
-    fun httpListsEveryPageWithTheCredentialAndClosesTheSession() = runTest {
+    fun httpListsEveryPageWithTheCredentialAndClosesTheSession() = realTime {
         var page = 0
         val upstream = HttpMcpUpstream(client { request, body ->
             mcp(request, body) {
@@ -99,7 +102,7 @@ class UpstreamsTest {
     }
 
     @Test
-    fun httpCallsAToolOverServerSentEventsWithACustomHeader() = runTest {
+    fun httpCallsAToolOverServerSentEventsWithACustomHeader() = realTime {
         val upstream = HttpMcpUpstream(client { request, body ->
             if (body?.get("method")?.jsonPrimitive?.content == "tools/call") {
                 val id = body["id"].toString()
@@ -123,7 +126,7 @@ class UpstreamsTest {
     }
 
     @Test
-    fun httpFailuresBecomeOutcomes() = runTest {
+    fun httpFailuresBecomeOutcomes() = realTime {
         suspend fun outcome(maxBytes: Int = 1 shl 20, answer: suspend MockRequestHandleScope.(HttpRequestData, JsonObject?) -> HttpResponseData) =
             (HttpMcpUpstream(client(answer), UpstreamAddressGuard(), maxBytes).callTool(httpTarget(), "t", JsonObject(emptyMap()), 200.milliseconds)
                 as UpstreamResult.Failure)
@@ -179,7 +182,7 @@ class UpstreamsTest {
     )
 
     @Test
-    fun theHostRunsStdioServersOverProtocolOne() = runTest {
+    fun theHostRunsStdioServersOverProtocolOne() = realTime {
         val upstream = HostMcpUpstream(client { _, body ->
             val op = body!!["op"]!!.jsonPrimitive.content
             val result = if (op == "list") """{"tools":[{"name":"discord_send"}]}""" else """{"content":[]}"""
@@ -202,7 +205,7 @@ class UpstreamsTest {
     }
 
     @Test
-    fun hostErrorsBecomeOutcomesAndAListingIsRetriedOnce() = runTest {
+    fun hostErrorsBecomeOutcomesAndAListingIsRetriedOnce() = realTime {
         fun host(code: String?, status: HttpStatusCode = HttpStatusCode.OK) = HostMcpUpstream(client { _, _ ->
             if (code == null) respond("{}", status) else respond("""{"error":{"code":"$code","message":"m"},"cold":false,"state":"x"}""", status)
         }, McpHostConfig("http://h", "t"))
@@ -233,7 +236,7 @@ class UpstreamsTest {
     }
 
     @Test
-    fun eachTransportGoesToItsUpstream() = runTest {
+    fun eachTransportGoesToItsUpstream() = realTime {
         val http = FakeUpstream()
         val stdio = FakeUpstream()
         TransportMcpUpstream(http, stdio).listTools(httpTarget(), 1.seconds)
@@ -245,3 +248,9 @@ class UpstreamsTest {
         assertIs<UpstreamResult.Failure>(TransportMcpUpstream(http, null).listTools(stdioTarget(), 1.seconds))
     }
 }
+
+/**
+ * Runs a test on real time: the upstreams bound each request with a timeout, and the virtual time of `runTest` would
+ * fire it while the mock engine answers on another dispatcher.
+ */
+fun realTime(block: suspend CoroutineScope.() -> Unit) = runTest { withContext(Dispatchers.Default) { block() } }

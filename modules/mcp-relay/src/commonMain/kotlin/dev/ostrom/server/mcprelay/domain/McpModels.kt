@@ -170,6 +170,7 @@ data class McpCall(
  * @property denied Calls refused by a tool or argument policy.
  * @property bytes Upstream bytes.
  * @property durationMillis Total time.
+ * @property tool The tool called, null for listings.
  */
 data class McpUsage(
     val memberId: Uuid,
@@ -180,6 +181,7 @@ data class McpUsage(
     val denied: Long,
     val bytes: Long,
     val durationMillis: Long,
+    val tool: String? = null,
 )
 
 /**

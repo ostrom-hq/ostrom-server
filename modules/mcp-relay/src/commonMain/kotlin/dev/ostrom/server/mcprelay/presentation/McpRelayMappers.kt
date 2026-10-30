@@ -7,6 +7,8 @@ import dev.ostrom.server.mcprelay.domain.ConditionOperator
 import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import dev.ostrom.server.mcprelay.domain.McpAssignment
 import dev.ostrom.server.mcprelay.domain.McpCall
+import dev.ostrom.server.mcprelay.domain.McpOutcome
+import dev.ostrom.server.mcprelay.domain.McpSecretNotFoundException
 import dev.ostrom.server.mcprelay.domain.McpServer
 import dev.ostrom.server.mcprelay.domain.McpServerPayload
 import dev.ostrom.server.mcprelay.domain.McpSharing
@@ -18,12 +20,16 @@ import dev.ostrom.server.mcprelay.domain.StdioLauncher
 import dev.ostrom.server.mcprelay.domain.StdioSpec
 import kotlin.uuid.Uuid
 
-/** Maps a request to the domain, refusing unknown enum values and malformed ids as a 400. */
-fun McpServerRequest.toPayload() = McpServerPayload(
+/**
+ * Maps a server to the domain.
+ *
+ * @param secretIds The ids of the org secrets it names, by name.
+ */
+fun McpServerDto.toPayload(secretIds: Map<String, Uuid>) = McpServerPayload(
     name = name,
     transport = enumOf<McpTransport>(transport, "transport"),
-    url = url,
-    credentialSecretId = credentialSecretId?.let { uuidOf(it, "credentialSecretId") },
+    url = url.takeIf { enumOf<McpTransport>(transport, "transport") == McpTransport.HTTP && it.isNotEmpty() },
+    credentialSecretId = credentialName()?.let { secretIds[it] ?: throw McpSecretNotFoundException() },
     credentialHeader = credentialHeader,
     stdio = stdio?.let {
         StdioSpec(
@@ -31,32 +37,50 @@ fun McpServerRequest.toPayload() = McpServerPayload(
             packageName = it.packageName,
             args = it.args,
             env = it.env,
-            secretEnv = it.secretEnv.mapValues { (_, id) -> uuidOf(id, "secretEnv") },
+            secretEnv = it.secretEnv.mapValues { (_, name) -> secretIds[name] ?: throw McpSecretNotFoundException() },
         )
     },
-    sharing = enumOf<McpSharing>(sharing, "sharing"),
+    sharing = when (scope) {
+        "shared" -> McpSharing.SHARED
+        "per-member" -> McpSharing.PER_MEMBER
+        else -> throw InvalidMcpServerException("scope must be shared or per-member.")
+    },
 )
 
-/** Maps a server to the API. */
-fun McpServer.toResponse() = McpServerResponse(
-    id = id.toString(),
+/** The credential of an HTTP server: its first secret name. */
+fun McpServerDto.credentialName(): String? = if (transport.equals("http", ignoreCase = true)) secretNames.firstOrNull() else null
+
+/** Every secret name a server uses. */
+fun McpServerDto.secretNamesUsed(): List<String> = listOfNotNull(credentialName()) + stdio?.secretEnv?.values.orEmpty()
+
+/** Every secret id a server uses. */
+fun McpServer.secretIds(): List<Uuid> = listOfNotNull(credentialSecretId) + stdio?.secretEnv?.values.orEmpty()
+
+/**
+ * Maps a server to the API.
+ *
+ * @param names Secret names by id.
+ */
+fun McpServer.toDto(names: Map<Uuid, String>) = McpServerDto(
     name = name,
-    transport = transport.name,
-    url = url,
-    credentialSecretId = credentialSecretId?.toString(),
+    url = url ?: stdio?.let { "stdio:${it.launcher.wire}:${it.packageName}" }.orEmpty(),
+    transport = transport.name.lowercase(),
+    secretNames = secretIds().mapNotNull { names[it] }.distinct(),
+    scope = if (sharing == McpSharing.SHARED) "shared" else "per-member",
     credentialHeader = credentialHeader,
-    stdio = stdio?.let { StdioSpecDto(it.launcher.name, it.packageName, it.args, it.env, it.secretEnv.mapValues { (_, id) -> id.toString() }) },
-    sharing = sharing.name,
+    stdio = stdio?.let { spec ->
+        StdioSpecDto(spec.launcher.name.lowercase(), spec.packageName, spec.args, spec.env, spec.secretEnv.mapNotNull { (key, id) -> names[id]?.let { key to it } }.toMap())
+    },
     version = version,
     createdAt = createdAt.toString(),
 )
 
 /** Maps an assignment to the API. */
-fun McpAssignment.toResponse() = McpAssignmentResponse(
-    serverId = serverId.toString(),
-    memberId = memberId?.toString(),
+fun McpAssignment.toResponse(server: String, credentialName: String?) = McpAssignmentResponse(
+    server = server,
+    member = memberId?.toString(),
     tools = policy.tools?.sorted(),
-    credentialSecretId = credentialSecretId?.toString(),
+    credentialSecret = credentialName,
     assignedAt = assignedAt.toString(),
 )
 
@@ -89,27 +113,47 @@ fun ArgumentPolicy.toResponse() = ArgumentPolicyResponse(
 )
 
 /** Maps a journal row to the API. */
-fun McpCall.toResponse() = McpCallResponse(
+fun McpCall.toDto() = McpCallDto(
     id = id.toString(),
-    memberId = memberId.toString(),
+    at = startedAt.toString(),
     server = serverName,
-    operation = operation.name,
-    tool = tool,
-    outcome = outcome.name,
-    startedAt = startedAt.toString(),
+    tool = tool ?: "tools/list",
+    dev = memberId.toString(),
     durationMs = durationMillis,
+    ok = outcome == McpOutcome.OK,
+    outcome = outcome.name,
     responseBytes = responseBytes,
     policyId = policyId?.toString(),
 )
 
-/** Maps usage to the API. */
-fun McpUsage.toResponse() = McpUsageResponse(memberId.toString(), serverName, calls, lists, errors, denied, bytes, durationMillis)
+/** Totals usage rows by server and by tool, with details by member and server. */
+fun List<McpUsage>.toResponse() = McpUsageResponse(
+    byServer = groupBy { it.serverName }.mapValues { (_, rows) -> rows.sumOf { it.calls } },
+    byTool = filter { it.tool != null }.groupBy { "${it.serverName}/${it.tool}" }.mapValues { (_, rows) -> rows.sumOf { it.calls } },
+    rows = groupBy { it.memberId to it.serverName }.map { (key, rows) ->
+        McpUsageRow(
+            dev = key.first.toString(),
+            server = key.second,
+            calls = rows.sumOf { it.calls },
+            lists = rows.sumOf { it.lists },
+            errors = rows.sumOf { it.errors },
+            denied = rows.sumOf { it.denied },
+            bytes = rows.sumOf { it.bytes },
+            durationMs = rows.sumOf { it.durationMillis },
+        )
+    },
+)
 
 /** Maps a member's server to the API. */
-fun MemberServer.toResponse() = MemberMcpServerResponse(name, agentName, "/v1/mcp/$name", transport.name.lowercase(), tools?.sorted())
+fun MemberServer.toDto() = McpServerDto(
+    name = name,
+    url = "/api/v1/mcp/$name",
+    transport = transport.name.lowercase(),
+    tools = tools?.sorted(),
+    agentName = agentName,
+    path = "/api/v1/mcp/$name",
+)
 
 private inline fun <reified T : Enum<T>> enumOf(value: String, field: String): T =
     enumValues<T>().firstOrNull { it.name.equals(value, ignoreCase = true) }
-        ?: throw InvalidMcpServerException("$field must be one of ${enumValues<T>().joinToString { it.name }}.")
-
-private fun uuidOf(value: String, field: String): Uuid = Uuid.parseOrNull(value) ?: throw InvalidMcpServerException("$field is not an id.")
+        ?: throw InvalidMcpServerException("$field must be one of ${enumValues<T>().joinToString { it.name.lowercase() }}.")

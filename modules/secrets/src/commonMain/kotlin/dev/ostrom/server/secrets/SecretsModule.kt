@@ -11,7 +11,11 @@ import dev.ostrom.server.secrets.domain.DeleteSecretUseCase
 import dev.ostrom.server.secrets.domain.DeleteSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.ListSecretsUseCase
 import dev.ostrom.server.secrets.domain.ListSecretsUseCaseImpl
+import dev.ostrom.server.secrets.domain.FindSecretUseCase
+import dev.ostrom.server.secrets.domain.FindSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCase
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.RotateSecretUseCase
 import dev.ostrom.server.secrets.domain.RotateSecretUseCaseImpl
@@ -44,7 +48,9 @@ object SecretsModule : ServerModule {
         single<RotateSecretUseCase> { RotateSecretUseCaseImpl(get(), get(), get()) }
         single<DeleteSecretUseCase> { DeleteSecretUseCaseImpl(get()) }
         single<RevealSecretsUseCase> { RevealSecretsUseCaseImpl(get(), get()) }
-        single { SecretsRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get()) }
+        single<FindSecretUseCase> { FindSecretUseCaseImpl(get()) }
+        single<SecretDirectoryUseCase> { SecretDirectoryUseCaseImpl(get()) }
+        single { SecretsRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = SecretsMigrations
