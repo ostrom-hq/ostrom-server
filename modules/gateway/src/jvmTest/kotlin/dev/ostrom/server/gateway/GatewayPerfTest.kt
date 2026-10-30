@@ -18,8 +18,9 @@ import kotlin.time.Duration.Companion.nanoseconds
 
 /**
  * The gateway's own cost on a call: planning a 100 KB conversation (scan, policy, key) and metering a 100 KB stream
- * stay under a millisecond at the median. Measured on the JVM (the native test binaries are debug builds), in CPU time of
- * the test thread: the CI runner shares its two cores with the other modules' tests, whose load is not the gateway's.
+ * stay under a millisecond at the median. Measured on the JVM (the native test binaries are debug builds), in CPU
+ * time of the test thread: the CI runner shares its two cores with the other modules' tests, whose load is not the
+ * gateway's.
  */
 class GatewayPerfTest {
     private val text = "Explain \\\"this\\\" code: {x: [1, 2]}. ".repeat(20)
