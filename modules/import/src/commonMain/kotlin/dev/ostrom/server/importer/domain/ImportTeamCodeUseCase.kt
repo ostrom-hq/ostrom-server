@@ -82,9 +82,8 @@ class ImportTeamCodeUseCaseImpl(
         val importer = accounts
         when {
             importer == null -> items += ImportItem(ImportKind.ACCOUNT, name, ImportAction.SKIPPED, NO_SHARING)
-            dryRun -> items += ImportItem(ImportKind.ACCOUNT, name, ImportAction.PLANNED)
             else -> guarded(items, ImportKind.ACCOUNT, name) {
-                items += ImportItem(ImportKind.ACCOUNT, name, importer.import(caller, account))
+                items += ImportItem(ImportKind.ACCOUNT, name, importer.import(caller, account, dryRun))
             }
         }
     }
