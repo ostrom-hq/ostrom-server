@@ -49,7 +49,7 @@
     "returnUrl": "https://app.ostrom.run/settings/billing"
   },
   "webhook": {
-    "url": "https://api.ostrom.run/v1/billing/stripe/webhook",
+    "url": "https://api.ostrom.run/webhooks/stripe",
     "events": [
       "checkout.session.completed",
       "checkout.session.async_payment_succeeded",
