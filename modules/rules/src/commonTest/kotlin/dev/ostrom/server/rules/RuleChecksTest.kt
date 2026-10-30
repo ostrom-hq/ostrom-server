@@ -49,6 +49,8 @@ class RuleChecksTest {
         assertEquals("2027-01-28", RuleChecks.reviewBy("2027-01-28"))
         assertFailsWith<InvalidRuleException> { RuleChecks.reviewBy("28/01/2027") }
         assertFailsWith<InvalidRuleException> { RuleChecks.reviewBy("2027-13-01") }
+        assertFailsWith<InvalidRuleException> { RuleChecks.reviewBy("2026-02-31") }
+        assertEquals("2028-02-29", RuleChecks.reviewBy("2028-02-29"))
     }
 
     @Test
