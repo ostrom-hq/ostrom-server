@@ -109,7 +109,6 @@ class PostgresWorkflowsRepository(private val driver: Driver) : WorkflowsReposit
     private companion object {
         const val MAX_ROWS = 1000
         const val WORKFLOW_COLUMNS = "doc, version, updated_by, updated_at"
-        val json = Json { ignoreUnknownKeys = true }
 
         fun ResultSet.Row.toWorkflow() = StoredWorkflow(
             doc = CompilerDocs.workflow(json.parseToJsonElement(get("doc").asString()).jsonObject),
@@ -119,3 +118,6 @@ class PostgresWorkflowsRepository(private val driver: Driver) : WorkflowsReposit
         )
     }
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val json = Json { ignoreUnknownKeys = true }
