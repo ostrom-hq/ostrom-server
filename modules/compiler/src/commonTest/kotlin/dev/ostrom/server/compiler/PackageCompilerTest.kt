@@ -29,10 +29,14 @@ class PackageCompilerTest {
         val named = workflow("b", listOf(node("s", STEP, label = "Ship acme-api")))
         val db = action("db", listOf("ACME-API"), listOf("x"))
         val declared = workflow("c", listOf(node("g", GATE, actions = listOf(db))))
-        val other = workflow("d", listOf(node("s", STEP, label = "Ship the web")), domain = "web")
-        val short = workflow("e", listOf(node("s", STEP, label = "api")))
-        val all = listOf(viaGate, named, declared, other, short)
-        assertEquals(listOf("a", "b", "c"), PackageCompiler.workflowsFor(inputs(all)).map { it.workflow.id })
+        // The catalog keeps one gate per action: the second workflow declaring the repository applies all the same.
+        val declaredToo = workflow("f", listOf(node("g", GATE, actions = listOf(db))))
+        val web = node("s", STEP, label = "Ship the web", detail = "Then the CDN.")
+        val other = workflow("d", listOf(web, node("g", GATE)), domain = "web")
+        val elsewhere = node("g", GATE, actions = listOf(action("db", listOf("acme-web"), listOf("x"))))
+        val short = workflow("e", listOf(node("s", STEP, label = "api"), elsewhere))
+        val all = listOf(viaGate, named, declared, other, short, declaredToo)
+        assertEquals(listOf("a", "b", "c", "f"), PackageCompiler.workflowsFor(inputs(all)).map { it.workflow.id })
         assertEquals(all.map { it.id }, PackageCompiler.workflowsFor(inputs(all, repo = null)).map { it.workflow.id })
     }
 

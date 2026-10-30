@@ -24,6 +24,7 @@ import dev.ostrom.server.compiler.domain.services.Trigger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class NodeRulesTest {
@@ -176,6 +177,21 @@ class NodeRulesTest {
         )
         val (shadow) = produced(triggered, status = WorkflowStatus.PROPOSED)
         assertEquals("proposed workflow: logged, never run", shadow[1].note)
+    }
+
+    @Test
+    fun aDismissedSuggestionLeavesNoNote() {
+        val check = node(
+            "c",
+            CHECK,
+            label = "x",
+            run = NodeRun(command = "make"),
+            suggested = NodeSuggestions(on = texts("deploy"), dismissed = listOf("on")),
+        )
+        val gate = node("g", GATE, suggested = NodeSuggestions(actions = texts("merge"), dismissed = listOf("actions")))
+        val (checked, gated) = produced(check, gate)
+        assertEquals("no trigger found: set \"Runs before\"", checked[0].note, "the fallback, not the dismissed one")
+        assertNull(gated[0].note)
     }
 
     @Test
