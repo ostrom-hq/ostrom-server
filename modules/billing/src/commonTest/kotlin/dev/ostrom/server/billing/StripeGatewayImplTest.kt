@@ -285,7 +285,8 @@ class StripeGatewayImplTest {
         val harness = Harness(
             200 to """{"id":"sub_1","customer":"cus_1","status":"active","current_period_start":10,
                 "current_period_end":20,"items":{"data":[{"id":"si_1"}]}}""",
-            200 to """{"id":"sub_1","customer":"cus_1","status":"incomplete","items":{"data":[]}}""",
+            200 to """{"id":"sub_1","customer":"cus_1","status":"incomplete","cancel_at_period_end":true,
+                "items":{"data":[]}}""",
         )
         val withItem = harness.gateway.getSubscription("sub_1")
         assertEquals("si_1", withItem.itemId)
@@ -293,10 +294,10 @@ class StripeGatewayImplTest {
         assertEquals(Instant.fromEpochSeconds(10), withItem.currentPeriodStart)
         assertEquals(Instant.fromEpochSeconds(20), withItem.currentPeriodEnd)
         val noPeriod = harness.gateway.getSubscription("sub_1")
+        assertTrue(noPeriod.cancelAtPeriodEnd, "cancel_at_period_end: true")
         assertNull(noPeriod.itemId)
         assertNull(noPeriod.currentPeriodStart)
         assertNull(noPeriod.currentPeriodEnd)
-        assertFalse(noPeriod.cancelAtPeriodEnd)
     }
 
     @Test

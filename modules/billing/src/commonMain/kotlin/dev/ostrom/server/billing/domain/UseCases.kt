@@ -76,7 +76,7 @@ class GetPlanLimitsUseCaseImpl(
         if (!settings.stripeEnabled) return selfHostedLimits(licenses.current())
         val billing = repository.get(orgId)
         val period = billingPeriod(billing, clock.now())
-        val plan = billing?.effectivePlan ?: Plan.FREE
+        val plan = if (billing == null) Plan.FREE else billing.effectivePlan
         val people = maxOf(repository.countActivePeople(orgId, period.start), billing?.committedPeople ?: 0)
         return PlanCatalog.limits(plan, people)
     }
@@ -207,13 +207,13 @@ class SyncSubscriptionUseCaseImpl(
 ) : SyncSubscriptionUseCase {
     override suspend fun invoke(billing: OrgBilling, subscriptionId: String): OrgBilling {
         val subscription = stripe.getSubscription(subscriptionId)
-        val planAndInterval = PlanCatalog.fromLookupKey(subscription.priceLookupKey)
-        val interval = planAndInterval?.second ?: billing.interval
+        val (plan, interval) = PlanCatalog.fromLookupKey(subscription.priceLookupKey)
+            ?: (billing.plan to billing.interval)
         val synced = billing.copy(
             stripeCustomerId = subscription.customerId,
             stripeSubscriptionId = subscription.id,
             subscriptionItemId = subscription.itemId,
-            plan = planAndInterval?.first ?: billing.plan,
+            plan = plan,
             interval = interval,
             status = subscription.status,
             currentPeriodStart = subscription.currentPeriodStart,
@@ -465,8 +465,9 @@ private suspend fun queueActivity(
     at: Instant,
 ) {
     val periodKey = period.start.epochSeconds
-    when (billing.interval) {
-        BillingInterval.MONTH -> repository.enqueue(
+    // A `when` on the nullable enum would compile a default branch no value reaches.
+    when {
+        billing.interval == BillingInterval.MONTH -> repository.enqueue(
             OutboxTask(
                 Uuid.random(),
                 billing.orgId,
@@ -476,9 +477,8 @@ private suspend fun queueActivity(
                 0,
             ),
         )
-        BillingInterval.YEAR -> if (
-            repository.countActivePeople(billing.orgId, period.start) > billing.committedPeople
-        ) {
+        billing.interval == BillingInterval.YEAR &&
+            repository.countActivePeople(billing.orgId, period.start) > billing.committedPeople -> {
             repository.enqueue(
                 OutboxTask(
                     Uuid.random(),
@@ -490,7 +490,6 @@ private suspend fun queueActivity(
                 ),
             )
         }
-        null -> Unit
     }
 }
 
@@ -590,7 +589,7 @@ class CheckEntitlementUseCaseImpl(
 /** How a limit message names the plan and says where to go: the billing page on Ostrom Cloud, sales otherwise. */
 private class LimitWords(billing: OrgBilling?, settings: BillingSettings) {
     val planName = if (settings.stripeEnabled) {
-        "The ${(billing?.effectivePlan ?: Plan.FREE).displayName} plan"
+        "The ${(if (billing == null) Plan.FREE else billing.effectivePlan).displayName} plan"
     } else {
         "This instance's license"
     }

@@ -84,7 +84,7 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
                 .bind("period_end", billing.currentPeriodEnd)
                 .bind("cancel", billing.cancelAtPeriodEnd)
                 .bind("committed", billing.committedPeople)
-                .bind("issue_kind", billing.paymentIssue?.kind?.key)
+                .bind("issue_kind", billing.paymentIssue?.let { it.kind.key })
                 .bind("issue_url", billing.paymentIssue?.hostedInvoiceUrl)
                 .bind("issue_at", billing.paymentIssue?.at)
                 .bind("updated_at", billing.updatedAt),
@@ -151,7 +151,9 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
             Statement.create(
                 "SELECT agent_seconds, sessions FROM billing_usage WHERE org_id = :org_id AND period_start = :period",
             ).bind("org_id", orgId).bind("period", periodStart),
-        ).getOrThrow().firstOrNull()?.toUsage(periodStart) ?: Usage(periodStart, 0, 0)
+        ).getOrThrow().firstOrNull().let { row ->
+            if (row == null) Usage(periodStart, 0, 0) else row.toUsage(periodStart)
+        }
     }
 
     override suspend fun recordAlert(orgId: Uuid, periodStart: Instant, percent: Int, at: Instant): Boolean =
