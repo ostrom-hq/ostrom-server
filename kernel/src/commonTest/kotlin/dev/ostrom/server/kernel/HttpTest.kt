@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -176,6 +177,13 @@ class HttpTest {
         assertEquals(HttpStatusCode.OK, response.status)
         val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
         assertEquals(HealthResponse("ok", "0.1.0-dev", mapOf("database" to "ok")), health)
+    }
+
+    @Test
+    fun healthIsAlsoServedAtItsContractPath() = httpTest {
+        val response = client.get("/api/v1/health")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("ok", OstromJson.decodeFromString<HealthResponse>(response.bodyAsText()).status)
     }
 
     @Test
