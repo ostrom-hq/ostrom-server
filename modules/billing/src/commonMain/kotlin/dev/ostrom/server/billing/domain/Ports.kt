@@ -25,7 +25,13 @@ enum class Proration(val stripe: String) {
 
 /** The Stripe calls of billing. Implemented over Stripe's HTTP API in the infrastructure; faked in tests. */
 interface StripeGateway {
-    /** Creates the customer of an organization. @return Its id. */
+    /**
+     * Creates the customer of an organization, once: a second call within 24 hours returns the same customer. Call
+     * it with the same [name] and [email] each time (Stripe refuses the same key with other parameters), and only when
+     * no customer is stored.
+     *
+     * @return Its id.
+     */
     suspend fun createCustomer(orgId: Uuid, name: String?, email: String?): String
 
     /** Resolves a price from its lookup key (cached). @throws BillingNotConfiguredException When it does not exist. */

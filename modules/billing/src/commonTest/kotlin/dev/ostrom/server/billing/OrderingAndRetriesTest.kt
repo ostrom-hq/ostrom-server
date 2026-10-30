@@ -68,6 +68,37 @@ class OrderingAndRetriesTest {
     }
 
     @Test
+    fun anOlderFailureDeliveredLateDoesNotReplaceANewerOneNorNotify() = runTest {
+        val world = World()
+        val issue = PaymentIssue(PaymentIssueKind.ACTION_REQUIRED, "https://pay/2", NOW)
+        world.repository.save(world.subscribe().copy(paymentIssue = issue))
+        world.events(world.event("invoice.payment_failed").copy(created = NOW - 1.hours))
+        assertEquals(issue, world.repository.get(world.org)?.paymentIssue)
+        assertEquals(emptyList(), world.notifier.issues)
+    }
+
+    @Test
+    fun anEndedSubscriptionLeavesNothingToPay() = runTest {
+        for (status in listOf(SubscriptionStatus.CANCELED, SubscriptionStatus.INCOMPLETE_EXPIRED)) {
+            val world = World()
+            val issue = PaymentIssue(PaymentIssueKind.FAILED, "https://pay", NOW)
+            val billing = world.subscribe().copy(paymentIssue = issue)
+            world.stripe.subscription = stripeSubscription(status = status)
+            assertEquals(null, world.sync(billing, "sub_1").paymentIssue, status.stripe)
+        }
+    }
+
+    @Test
+    fun aCompletedPurchaseStartsWithoutTheIssueOfAnEarlierSubscription() = runTest {
+        val world = World()
+        val stale = PaymentIssue(PaymentIssueKind.FAILED, "https://pay/old", NOW - 1.hours)
+        world.repository.save(world.subscribe().copy(status = SubscriptionStatus.UNPAID, paymentIssue = stale))
+        world.stripe.subscription = stripeSubscription().copy(id = "sub_2")
+        world.events(world.event("checkout.session.completed").copy(subscriptionId = "sub_2"))
+        assertEquals(null, world.repository.get(world.org)?.paymentIssue)
+    }
+
+    @Test
     fun aPriceThatIsNotOursIsReported() = runTest {
         val world = World()
         val billing = world.subscribe()

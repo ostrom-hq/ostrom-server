@@ -81,7 +81,8 @@ interface SyncSubscriptionUseCase {
 
 /**
  * [SyncSubscriptionUseCase]. A price that is not ours keeps the previous plan and is reported to [onUnknownPrice].
- * The payment issue is left as it was: only the invoice events set or clear it, since an active subscription can
+ * The payment issue is left as it was, unless the subscription ended (canceled, or its first payment expired):
+ * then nothing is left to pay for. Otherwise only the invoice events set or clear it, since an active subscription can
  * still have an invoice that failed or waits for the customer.
  */
 class SyncSubscriptionUseCaseImpl(
@@ -95,6 +96,8 @@ class SyncSubscriptionUseCaseImpl(
         val known = PlanCatalog.fromLookupKey(subscription.priceLookupKey)
         if (known == null) onUnknownPrice(subscription.id, subscription.priceLookupKey)
         val (plan, interval) = known ?: (billing.plan to billing.interval)
+        val ended = subscription.status == SubscriptionStatus.CANCELED ||
+            subscription.status == SubscriptionStatus.INCOMPLETE_EXPIRED
         val synced = billing.copy(
             stripeCustomerId = subscription.customerId,
             stripeSubscriptionId = subscription.id,
@@ -106,6 +109,7 @@ class SyncSubscriptionUseCaseImpl(
             currentPeriodEnd = subscription.currentPeriodEnd,
             cancelAtPeriodEnd = subscription.cancelAtPeriodEnd,
             committedPeople = if (interval == BillingInterval.YEAR) subscription.quantity ?: 0 else 0,
+            paymentIssue = if (ended) null else billing.paymentIssue,
             updatedAt = clock.now(),
         )
         repository.save(synced)

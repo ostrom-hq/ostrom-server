@@ -48,8 +48,9 @@ class HandleStripeEventUseCaseImpl(
     private suspend fun apply(event: StripeEvent, billing: OrgBilling, subscriptionId: String): EventOutcome =
         when (event.type) {
             "checkout.session.completed", "checkout.session.async_payment_succeeded" -> {
+                // A purchase that went through starts clean: an issue left by an earlier subscription is not its own.
                 val synced = sync(
-                    billing.copy(stripeCustomerId = event.customerId ?: billing.stripeCustomerId),
+                    billing.copy(stripeCustomerId = event.customerId ?: billing.stripeCustomerId, paymentIssue = null),
                     subscriptionId,
                 )
                 backfill(synced)
@@ -72,9 +73,15 @@ class HandleStripeEventUseCaseImpl(
             "invoice.payment_failed", "invoice.payment_action_required" -> {
                 val failed = event.type == "invoice.payment_failed"
                 val kind = if (failed) PaymentIssueKind.FAILED else PaymentIssueKind.ACTION_REQUIRED
-                val issue = PaymentIssue(kind, event.hostedInvoiceUrl, event.created)
-                sync(billing.copy(paymentIssue = issue), subscriptionId)
-                notifier.paymentIssue(billing.orgId, issue)
+                val current = billing.paymentIssue
+                if (current != null && current.at > event.created) {
+                    // An older failure delivered late does not replace, or notify over, a newer one.
+                    sync(billing, subscriptionId)
+                } else {
+                    val issue = PaymentIssue(kind, event.hostedInvoiceUrl, event.created)
+                    sync(billing.copy(paymentIssue = issue), subscriptionId)
+                    notifier.paymentIssue(billing.orgId, issue)
+                }
                 EventOutcome.PROCESSED
             }
             else -> EventOutcome.IGNORED
