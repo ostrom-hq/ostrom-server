@@ -52,13 +52,14 @@ fun Profile.toMeResponse(
         )
     },
     organization = current?.let { (_, org) ->
-        MeOrganizationResponse(org.id.toString(), org.name, org.avatarUrl, GITHUB_APP_CONNECTION)
+        val connection = GITHUB_APP_CONNECTION.takeIf { org.linkedToGitHub }
+        MeOrganizationResponse(org.id.toString(), org.name, org.avatarUrl, connection)
     },
     capabilities = scopes.sorted(),
     csrfToken = csrfToken,
 )
 
-// The only way the server connects an organization to GitHub (the contract's `GitHubConnection`).
+// How the server connects an organization to GitHub (the contract's `GitHubConnection`); none when it is not linked.
 private const val GITHUB_APP_CONNECTION = "github-app"
 
 // How the server knows the person: GitHub when linked (Ostrom works on GitHub), otherwise their first way in.

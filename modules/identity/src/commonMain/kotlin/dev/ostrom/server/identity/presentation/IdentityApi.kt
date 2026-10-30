@@ -301,10 +301,15 @@ data class MeMemberResponse(
  * @property id The id.
  * @property name The name.
  * @property avatarUrl Its picture (the linked GitHub organization's), or empty.
- * @property connectedVia `github-app`: the only way the server connects an organization to GitHub.
+ * @property connectedVia `github-app` when it is linked to a GitHub organization; absent when it is linked to none.
  */
 @Serializable
-data class MeOrganizationResponse(val id: String, val name: String, val avatarUrl: String, val connectedVia: String)
+data class MeOrganizationResponse(
+    val id: String,
+    val name: String,
+    val avatarUrl: String,
+    val connectedVia: String? = null,
+)
 
 /**
  * A token, without its secret.

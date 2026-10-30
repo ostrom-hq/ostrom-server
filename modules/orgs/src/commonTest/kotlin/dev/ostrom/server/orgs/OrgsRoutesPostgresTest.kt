@@ -147,7 +147,10 @@ class OrgsRoutesPostgresTest {
             val avatar = "https://avatars.githubusercontent.com/u/42"
             assertEquals(MeOrganizationResponse(beta.id.toString(), "Beta", avatar, "github-app"), profile.organization)
             assertEquals(beta.id.toString(), profile.dev.organizationId)
-            assertEquals("member", me(alpha.id.toString()).body<MeResponse>().member?.role)
+            val inAlpha = me(alpha.id.toString()).body<MeResponse>()
+            assertEquals("member", inAlpha.member?.role)
+            // Alpha is linked to no GitHub organization: no avatar, and no connection rather than a false one.
+            assertEquals(MeOrganizationResponse(alpha.id.toString(), "Alpha", "", null), inAlpha.organization)
             // Not a membership, not an id, or no header: 200 without a member, never a 404 or a 409.
             listOf(foreign.id.toString(), "not-an-id", null).forEach { org ->
                 val ignored = me(org)

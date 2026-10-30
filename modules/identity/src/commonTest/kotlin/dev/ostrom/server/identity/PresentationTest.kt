@@ -89,7 +89,7 @@ class PresentationTest {
         val known = Uuid.random()
         val unknown = Uuid.random()
         val member = Uuid.random()
-        val acme = OrgProfile(known, "acme", "Acme", "https://avatars.githubusercontent.com/u/7")
+        val acme = OrgProfile(known, "acme", "Acme", "https://avatars.githubusercontent.com/u/7", linkedToGitHub = true)
         val resolver = object : PrincipalOrgResolver {
             override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
                 principal.namedOrg?.let(Uuid::parseOrNull)?.takeIf { it != Uuid.NIL }?.let {
@@ -118,6 +118,10 @@ class PresentationTest {
         )
         val pictured = Profile(user.copy(avatarUrl = "https://a.test/ada.png"), emptyList(), emptyList())
         assertEquals("https://a.test/ada.png", pictured.toMeResponse(emptySet(), null, current).member?.avatarUrl)
+        // An organization linked to no GitHub organization says no connection rather than a false one.
+        val unlinked = current?.let { (member, org) -> member to org.copy(avatarUrl = "", linkedToGitHub = false) }
+        val alone = pictured.toMeResponse(emptySet(), null, unlinked).organization
+        assertEquals(MeOrganizationResponse(known.toString(), "Acme", "", null), alone)
     }
 
     @Test

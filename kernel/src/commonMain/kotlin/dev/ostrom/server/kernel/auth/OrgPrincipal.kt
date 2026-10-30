@@ -57,8 +57,15 @@ interface PrincipalOrgResolver {
  * @property slug The short name.
  * @property name The name.
  * @property avatarUrl Its picture (the linked GitHub organization's), or empty.
+ * @property linkedToGitHub Whether it is linked to a GitHub organization.
  */
-data class OrgProfile(val id: Uuid, val slug: String, val name: String, val avatarUrl: String)
+data class OrgProfile(
+    val id: Uuid,
+    val slug: String,
+    val name: String,
+    val avatarUrl: String,
+    val linkedToGitHub: Boolean,
+)
 
 /** Resolves no one: the default until the identity and orgs modules bind theirs. */
 class RejectingPrincipalOrgResolver : PrincipalOrgResolver {
