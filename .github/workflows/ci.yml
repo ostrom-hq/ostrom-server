@@ -64,6 +64,8 @@ jobs:
       - name: Docker image
         run: |
           cp app/build/bin/linuxX64/releaseExecutable/ostrom-server.kexe ostrom-server
+          ls -lh ostrom-server app/build/bin/linuxArm64/releaseExecutable/ostrom-server.kexe
+          ldd ostrom-server
           docker build -t ostrom-server:ci .
           docker images ostrom-server:ci --format '{{.Size}}'
 
