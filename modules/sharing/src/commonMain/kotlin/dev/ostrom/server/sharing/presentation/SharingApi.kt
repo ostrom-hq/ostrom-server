@@ -3,15 +3,27 @@ package dev.ostrom.server.sharing.presentation
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
-/** `/v1/orgs/{orgId}/accounts`: the org's shared personal accounts. To move to ostrom-core with the API contract. */
+/**
+ * `/api/v1/accounts`: the shared subscription accounts of the caller's org (from the token), as in ostrom-core's
+ * `openapi.yaml` (`listSharedAccounts`, `enrollSharedAccount`).
+ */
 @Serializable
-@Resource("/v1/orgs/{orgId}/accounts")
-class AccountsApi(val orgId: String) {
-    /** `/accounts/{id}`: one account. */
+@Resource("/api/v1/accounts")
+class AccountsApi {
+    /**
+     * `/api/v1/accounts/{id}`: one account (`updateSharedAccount`, `removeSharedAccount`).
+     *
+     * @property id The account.
+     */
     @Serializable
     @Resource("{id}")
-    class Id(val parent: AccountsApi, val id: String)
+    class Id(val parent: AccountsApi = AccountsApi(), val id: String)
 }
+
+/** `/api/v1/capacity`: what the shared accounts have left (`getCapacity`). */
+@Serializable
+@Resource("/api/v1/capacity")
+class CapacityApi
 
 /** Per-account limits. */
 @Serializable
@@ -42,7 +54,8 @@ data class ShareAccountRequest(
 data class UpdateAccountRequest(
     val label: String? = null,
     val priority: Int? = null,
-    val disabled: Boolean? = null,
+    val paused: Boolean? = null,
+    val sharedWith: List<String>? = null,
     val limits: AccountLimitsDto? = null,
 )
 
@@ -50,7 +63,15 @@ data class UpdateAccountRequest(
 @Serializable
 data class QuotaWindowDto(val window: String, val utilization: Double, val resetsAt: String? = null, val observedAt: String)
 
-/** An account, tokens never included; identity fields only for admins and its owner. */
+/**
+ * An account (contract `SharedAccount`, with additions), tokens never included; identity fields only for admins and
+ * its owner.
+ *
+ * @property owner The member who shared it (empty for another member's account).
+ * @property sharedWith The members allowed to use it; empty for the whole org.
+ * @property paused Whether it is switched off.
+ * @property status `ready`, `reconnect_required` or `disabled`.
+ */
 @Serializable
 data class SharedAccountResponse(
     val id: String,
@@ -58,7 +79,9 @@ data class SharedAccountResponse(
     val label: String,
     val email: String? = null,
     val providerAccountId: String? = null,
-    val ownerMemberId: String? = null,
+    val owner: String = "",
+    val sharedWith: List<String> = emptyList(),
+    val paused: Boolean = false,
     val mine: Boolean,
     val priority: Int,
     val status: String,
@@ -72,4 +95,25 @@ data class SharedAccountResponse(
 
 /** The org's accounts. */
 @Serializable
-data class SharedAccountsResponse(val accounts: List<SharedAccountResponse>)
+data class SharedAccountsResponse(val items: List<SharedAccountResponse>, val next: String? = null)
+
+/**
+ * The pool of one provider.
+ *
+ * @property provider `claude` or `codex`.
+ * @property accounts Accounts of the pool.
+ * @property ready Accounts that can serve now.
+ * @property inFlight Requests in flight.
+ */
+@Serializable
+data class CapacityPoolDto(val provider: String, val accounts: Int, val ready: Int, val inFlight: Int)
+
+/**
+ * What the shared accounts have left (contract `Capacity`).
+ *
+ * @property accounts Each account, as the caller may see it.
+ * @property pools Totals by provider.
+ * @property computedAt When.
+ */
+@Serializable
+data class CapacityResponse(val accounts: List<SharedAccountResponse>, val pools: List<CapacityPoolDto>, val computedAt: String)

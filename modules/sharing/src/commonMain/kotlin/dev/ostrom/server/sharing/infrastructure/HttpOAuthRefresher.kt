@@ -22,6 +22,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -31,14 +32,16 @@ import kotlin.time.Duration.Companion.seconds
  * @param client The HTTP client.
  * @param clock The time.
  * @param endpoints Token endpoint per provider (tests point them at a fake).
+ * @param timeout How long a refresh may take.
  */
 class HttpOAuthRefresher(
     private val client: HttpClient,
     private val clock: Clock,
     private val endpoints: Map<AccountProvider, String> = ENDPOINTS,
+    private val timeout: Duration = 15.seconds,
 ) : OAuthRefresher {
     override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials): RefreshResult = try {
-        withTimeoutOrNull(15.seconds) {
+        withTimeoutOrNull(timeout) {
             client.preparePost(endpoints.getValue(provider)) {
                 contentType(ContentType.Application.Json)
                 setBody(

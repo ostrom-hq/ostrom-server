@@ -12,7 +12,10 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -22,6 +25,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -39,10 +43,11 @@ class SharingInfrastructureTest {
             },
         ),
         clock,
+        timeout = 300.milliseconds,
     )
 
     @Test
-    fun aRefreshUsesThePublicClientOfEachProvider() = runTest {
+    fun aRefreshUsesThePublicClientOfEachProvider() = realTime {
         val renewed = refresher(HttpStatusCode.OK, """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":28800}""")
             .refresh(AccountProvider.CLAUDE, old)
         val credentials = assertIs<RefreshResult.Renewed>(renewed).credentials
@@ -63,7 +68,7 @@ class SharingInfrastructureTest {
     }
 
     @Test
-    fun refusalsAndFailuresAreClassified() = runTest {
+    fun refusalsAndFailuresAreClassified() = realTime {
         assertEquals(RefreshResult.Revoked, refresher(HttpStatusCode.BadRequest, "{}").refresh(AccountProvider.CLAUDE, old))
         assertEquals(RefreshResult.Revoked, refresher(HttpStatusCode.Unauthorized, "{}").refresh(AccountProvider.CLAUDE, old))
         assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.ServiceUnavailable, "{}").refresh(AccountProvider.CLAUDE, old))
@@ -72,7 +77,7 @@ class SharingInfrastructureTest {
         assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.OK, """{"access_token":"a"}""").refresh(AccountProvider.CLAUDE, old))
         assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.OK, """{"access_token":"","expires_in":5}""").refresh(AccountProvider.CLAUDE, old))
         assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.OK, "{}", hang = true).refresh(AccountProvider.CLAUDE, old))
-        val down = HttpOAuthRefresher(HttpClient(MockEngine { error("connection refused") }), clock)
+        val down = HttpOAuthRefresher(HttpClient(MockEngine { error("connection refused") }), clock, timeout = 300.milliseconds)
         assertEquals(RefreshResult.Unavailable, down.refresh(AccountProvider.CODEX, old))
     }
 
@@ -136,3 +141,6 @@ class SharingInfrastructureTest {
         assertEquals("AccountCredentials([REDACTED])", old.toString())
     }
 }
+
+/** Runs a test on real time: the refresher bounds each request, and `runTest`'s virtual time would fire it early. */
+fun realTime(block: suspend CoroutineScope.() -> Unit) = runTest { withContext(Dispatchers.Default) { block() } }

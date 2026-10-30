@@ -60,7 +60,7 @@ object SharingModule : ServerModule {
         }
         single<UpdateSharedAccountUseCase> { UpdateSharedAccountUseCaseImpl(get()) }
         single<RemoveSharedAccountUseCase> { RemoveSharedAccountUseCaseImpl(get()) }
-        single { SharingRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get()) }
+        single { SharingRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = SharingMigrations

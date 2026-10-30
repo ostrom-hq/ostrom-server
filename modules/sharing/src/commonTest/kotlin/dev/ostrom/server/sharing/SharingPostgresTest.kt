@@ -12,6 +12,8 @@ import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.LeaseResult
 import dev.ostrom.server.sharing.domain.SharedAccountPool
 import dev.ostrom.server.sharing.presentation.AccountLimitsDto
+import dev.ostrom.server.sharing.presentation.CapacityPoolDto
+import dev.ostrom.server.sharing.presentation.CapacityResponse
 import dev.ostrom.server.sharing.presentation.ShareAccountRequest
 import dev.ostrom.server.sharing.presentation.SharedAccountResponse
 import dev.ostrom.server.sharing.presentation.SharedAccountsResponse
@@ -59,7 +61,7 @@ class SharingPostgresTest {
         }
     }
 
-    private val base = "/v1/orgs/${Sharing.orgA}/accounts"
+    private val base = "/api/v1/accounts"
 
     private suspend fun TestServer.shareAs(token: String, id: String = "acct-uuid-1", label: String = "Lyes Max 20x"): HttpResponse =
         client.post(base) {
@@ -96,14 +98,20 @@ class SharingPostgresTest {
             leased.observe(200, mapOf("anthropic-ratelimit-unified-5h-utilization" to "0.25"))
             leased.release()
 
-            val seenByOther = client.get(base) { bearerAuth("other-a") }.body<SharedAccountsResponse>().accounts.single()
+            val seenByOther = client.get(base) { bearerAuth("other-a") }.body<SharedAccountsResponse>().items.single()
             assertEquals("Account 1", seenByOther.label)
             assertEquals(null, seenByOther.email)
             assertEquals(null, seenByOther.providerAccountId)
+            assertEquals("", seenByOther.owner)
             assertEquals(listOf("five_hour"), seenByOther.windows.map { it.window })
-            val seenByAdmin = client.get(base) { bearerAuth("admin-a") }.body<SharedAccountsResponse>().accounts.single()
+            val seenByAdmin = client.get(base) { bearerAuth("admin-a") }.body<SharedAccountsResponse>().items.single()
             assertEquals("Lyes Max 20x", seenByAdmin.label)
+            assertEquals(Sharing.memberA.memberId.toString(), seenByAdmin.owner)
+            assertEquals("ready", seenByAdmin.status)
             assertEquals(4, seenByAdmin.limits.maxConcurrent)
+            val capacity = client.get("/api/v1/capacity") { bearerAuth("other-a") }.body<CapacityResponse>()
+            assertEquals(listOf(CapacityPoolDto("claude", 1, 1, 0)), capacity.pools)
+            assertEquals("Account 1", capacity.accounts.single().label)
         }
     }
 
@@ -115,16 +123,43 @@ class SharingPostgresTest {
             val byOther = client.patch(path) {
                 bearerAuth("other-a")
                 contentType(ContentType.Application.Json)
-                setBody(UpdateAccountRequest(disabled = true))
+                setBody(UpdateAccountRequest(paused = true))
             }
             assertEquals(HttpStatusCode.NotFound, byOther.status)
             assertEquals(HttpStatusCode.Conflict, shareAs("other-a").status, "Another member cannot take it over")
             val off = client.patch(path) {
                 bearerAuth("member-a")
                 contentType(ContentType.Application.Json)
-                setBody(UpdateAccountRequest(disabled = true, priority = 5))
+                setBody(UpdateAccountRequest(paused = true, priority = 5))
             }.body<SharedAccountResponse>()
-            assertEquals("DISABLED", off.status)
+            assertEquals("disabled", off.status)
+            assertTrue(off.paused)
+            val restricted = client.patch(path) {
+                bearerAuth("member-a")
+                contentType(ContentType.Application.Json)
+                setBody(UpdateAccountRequest(sharedWith = listOf(Sharing.otherA.memberId.toString())))
+            }.body<SharedAccountResponse>()
+            assertEquals(listOf(Sharing.otherA.memberId.toString()), restricted.sharedWith)
+            assertEquals(4, restricted.limits.maxConcurrent, "Other limits kept")
+            val badMembers = client.patch(path) {
+                bearerAuth("member-a")
+                contentType(ContentType.Application.Json)
+                setBody(UpdateAccountRequest(sharedWith = listOf("nope")))
+            }
+            assertEquals(HttpStatusCode.BadRequest, badMembers.status)
+            val open = client.patch(path) {
+                bearerAuth("admin-a")
+                contentType(ContentType.Application.Json)
+                setBody(UpdateAccountRequest(sharedWith = emptyList(), limits = AccountLimitsDto(maxConcurrent = 2)))
+            }.body<SharedAccountResponse>()
+            assertEquals(emptyList(), open.sharedWith)
+            assertEquals(2, open.limits.maxConcurrent)
+            val notVisible = client.patch(path) {
+                bearerAuth("other-a")
+                contentType(ContentType.Application.Json)
+                setBody(UpdateAccountRequest(sharedWith = emptyList()))
+            }
+            assertEquals(HttpStatusCode.NotFound, notVisible.status)
             assertIs<LeaseResult.Refused>(koin.get<SharedAccountPool>().lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
             assertEquals(HttpStatusCode.NoContent, client.delete(path) { bearerAuth("admin-a") }.status)
             assertEquals(HttpStatusCode.NotFound, client.delete(path) { bearerAuth("admin-a") }.status)
@@ -136,10 +171,9 @@ class SharingPostgresTest {
     fun anotherOrgNeitherSeesNorUsesTheAccount() = serverTest(listOf(SecretsModule, SharingModule), overrides) { server ->
         with(server) {
             val account = shareAs("member-a").body<SharedAccountResponse>()
-            assertEquals(HttpStatusCode.NotFound, client.get(base) { bearerAuth("admin-b") }.status)
-            val orgB = "/v1/orgs/${Sharing.orgB}/accounts"
-            assertEquals(emptyList(), client.get(orgB) { bearerAuth("admin-b") }.body<SharedAccountsResponse>().accounts)
-            assertEquals(HttpStatusCode.NotFound, client.delete("$orgB/${account.id}") { bearerAuth("admin-b") }.status)
+            assertEquals(emptyList(), client.get(base) { bearerAuth("admin-b") }.body<SharedAccountsResponse>().items)
+            assertEquals(emptyList(), client.get("/api/v1/capacity") { bearerAuth("admin-b") }.body<CapacityResponse>().accounts)
+            assertEquals(HttpStatusCode.NotFound, client.delete("$base/${account.id}") { bearerAuth("admin-b") }.status)
             assertIs<LeaseResult.Refused>(koin.get<SharedAccountPool>().lease(Sharing.orgB, Sharing.adminB.memberId, AccountProvider.CLAUDE, null))
         }
     }
