@@ -49,6 +49,7 @@ val GatesMigrations: List<SchemaMigration> = listOf(
         );
         CREATE INDEX gates_requests_by_gate ON gates_requests (gate_id, position);
         CREATE INDEX gates_requests_inbox ON gates_requests (org_id, approver_id, status, created_at DESC);
+        CREATE INDEX gates_requests_recent ON gates_requests (org_id, created_at DESC);
         ALTER TABLE gates_gates ENABLE ROW LEVEL SECURITY;
         ALTER TABLE gates_gates FORCE ROW LEVEL SECURITY;
         CREATE POLICY gates_gates_org ON gates_gates

@@ -2,8 +2,10 @@ package dev.ostrom.server.gates.fakes
 
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.repositories.GatesTransaction
@@ -52,11 +54,13 @@ class InMemoryGatesRepository : GatesRepository {
     override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
         requests.values.filter { it.gateId == gateId && it.orgId == orgId }
 
-    override suspend fun pendingFor(orgId: Uuid, approverId: String, limit: Int): List<ApprovalRequest> =
+    override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? =
+        requests[id]?.takeIf { it.orgId == orgId }?.let { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
+
+    override suspend fun approvals(orgId: Uuid, approverId: String?, status: RequestStatus?, limit: Int): List<ApprovalView> =
         requests.values.filter {
-            it.orgId == orgId && it.approverId == approverId &&
-                it.status == dev.ostrom.server.gates.domain.models.RequestStatus.PENDING
-        }.reversed().take(limit)
+            it.orgId == orgId && (approverId == null || it.approverId == approverId) && (status == null || it.status == status)
+        }.reversed().take(limit).mapNotNull { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
 
     private inner class Tx : GatesTransaction {
         override suspend fun lockKey(orgId: Uuid, key: String) {

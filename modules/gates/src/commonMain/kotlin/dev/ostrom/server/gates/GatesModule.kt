@@ -14,10 +14,12 @@ import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCase
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCase
+import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCase
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCaseImpl
-import dev.ostrom.server.gates.domain.usecases.ListPendingRequestsUseCase
-import dev.ostrom.server.gates.domain.usecases.ListPendingRequestsUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCase
+import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.OpenGateUseCase
 import dev.ostrom.server.gates.domain.usecases.OpenGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCase
@@ -53,24 +55,37 @@ object GatesModule : ServerModule {
     override val koinModule: Module = module {
         single<GatesRepository> { PostgresGatesRepository(get()) }
         single<GateDigester> { Sha256GateDigester() }
-        single<GatePolicies> { DefaultGatePolicies() }
-        single<GateSessions> { UnavailableGateSessions() }
-        single<GateNodeResolver> { NoGateNodes() }
-        single<PullRequestHeads> { UnknownPullRequestHeads() }
-        single<GateReceiptSigner> { UnavailableGateReceiptSigner() }
-        single<GateNotifier> { SilentGateNotifier() }
-        single<GateActorResolver> { NoGateActors() }
         single<EnsureGateReceiptUseCase> { EnsureGateReceiptUseCaseImpl(get(), get(), get()) }
         single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get(), get()) }
         single<AskGateUseCase> { AskGateUseCaseImpl(get(), get(), get(), get()) }
         single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<UseGateUseCase> { UseGateUseCaseImpl(get(), get()) }
         single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get()) }
-        single<ListPendingRequestsUseCase> { ListPendingRequestsUseCaseImpl(get()) }
-        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single<ListApprovalsUseCase> { ListApprovalsUseCaseImpl(get()) }
+        single<GetApprovalUseCase> { GetApprovalUseCaseImpl(get()) }
+        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = GatesMigrations
+
+    /**
+     * Binds the fail-closed default of each port no loaded module bound. Koin refuses two modules binding the same
+     * type, so the defaults are not in [koinModule]: the owner of a port (identity, sessions, receipts, compiler,
+     * integrations-github, notifications) binds it in its own module, and this fills the rest.
+     */
+    override suspend fun initialize(koin: Koin) {
+        koin.loadModules(listOf(defaultPorts(koin)))
+    }
+
+    internal fun defaultPorts(koin: Koin): Module = module {
+        if (koin.getOrNull<GatePolicies>() == null) single<GatePolicies> { DefaultGatePolicies() }
+        if (koin.getOrNull<GateSessions>() == null) single<GateSessions> { UnavailableGateSessions() }
+        if (koin.getOrNull<GateNodeResolver>() == null) single<GateNodeResolver> { NoGateNodes() }
+        if (koin.getOrNull<PullRequestHeads>() == null) single<PullRequestHeads> { UnknownPullRequestHeads() }
+        if (koin.getOrNull<GateReceiptSigner>() == null) single<GateReceiptSigner> { UnavailableGateReceiptSigner() }
+        if (koin.getOrNull<GateNotifier>() == null) single<GateNotifier> { SilentGateNotifier() }
+        if (koin.getOrNull<GateActorResolver>() == null) single<GateActorResolver> { NoGateActors() }
+    }
 
     override fun routes(route: Route, koin: Koin) {
         route.gatesRoutes(koin.get())

@@ -1,12 +1,13 @@
 package dev.ostrom.server.gates.domain.usecases
 
 import dev.ostrom.server.gates.domain.models.ActorKind
-import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNotFoundException
 import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.models.NotYourGateException
 import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
+import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import kotlin.uuid.Uuid
@@ -45,33 +46,63 @@ class GetGateUseCaseImpl(
     }
 }
 
-/** The approver's inbox: the requests waiting for their answer. */
-interface ListPendingRequestsUseCase {
+/** The approvals a person reads: their inbox, or the organization's recent approvals (the console). */
+interface ListApprovalsUseCase {
     /**
-     * Lists the caller's pending requests, newest first.
+     * Lists approvals with their gates, newest first.
      *
      * @param actor A signed-in person.
+     * @param mine True for the caller's approvals only.
+     * @param status Only this status, or any when null.
      * @param limit At most this many, capped at 100.
-     * @return The requests.
+     * @return The approvals.
      * @throws OnlyPeopleAnswerException When the caller is not a person.
      */
-    suspend operator fun invoke(actor: GateActor, limit: Int): List<ApprovalRequest>
+    suspend operator fun invoke(actor: GateActor, mine: Boolean, status: RequestStatus?, limit: Int): List<ApprovalView>
 }
 
 /**
- * [ListPendingRequestsUseCase] on the repository.
+ * [ListApprovalsUseCase] on the repository.
  *
  * @param repository The gates.
  */
-class ListPendingRequestsUseCaseImpl(
+class ListApprovalsUseCaseImpl(
     private val repository: GatesRepository,
-) : ListPendingRequestsUseCase {
-    override suspend fun invoke(actor: GateActor, limit: Int): List<ApprovalRequest> {
+) : ListApprovalsUseCase {
+    override suspend fun invoke(actor: GateActor, mine: Boolean, status: RequestStatus?, limit: Int): List<ApprovalView> {
         if (actor.kind != ActorKind.USER) throw OnlyPeopleAnswerException()
-        return repository.pendingFor(actor.orgId, actor.id, limit.coerceIn(1, MAX_LIMIT))
+        return repository.approvals(actor.orgId, actor.id.takeIf { mine }, status, limit.coerceIn(1, MAX_LIMIT))
     }
 
     private companion object {
         const val MAX_LIMIT = 100
+    }
+}
+
+/** One approval with what it shows: the yes page, the console, the app. */
+interface GetApprovalUseCase {
+    /**
+     * Reads an approval.
+     *
+     * @param actor A signed-in person of the organization.
+     * @param approvalId The approval.
+     * @return The approval and its gate.
+     * @throws OnlyPeopleAnswerException When the caller is not a person.
+     * @throws GateNotFoundException When absent or another organization's.
+     */
+    suspend operator fun invoke(actor: GateActor, approvalId: Uuid): ApprovalView
+}
+
+/**
+ * [GetApprovalUseCase] on the repository.
+ *
+ * @param repository The gates.
+ */
+class GetApprovalUseCaseImpl(
+    private val repository: GatesRepository,
+) : GetApprovalUseCase {
+    override suspend fun invoke(actor: GateActor, approvalId: Uuid): ApprovalView {
+        if (actor.kind != ActorKind.USER) throw OnlyPeopleAnswerException()
+        return repository.approval(actor.orgId, approvalId) ?: throw GateNotFoundException()
     }
 }

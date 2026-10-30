@@ -82,3 +82,14 @@ data class GateView(
     val requests: List<ApprovalRequest>,
     val waitingFor: List<String>,
 )
+
+/**
+ * An approval request with its gate, as the approver's screens read it.
+ *
+ * @property request The request.
+ * @property gate Its gate.
+ */
+data class ApprovalView(
+    val request: ApprovalRequest,
+    val gate: Gate,
+)

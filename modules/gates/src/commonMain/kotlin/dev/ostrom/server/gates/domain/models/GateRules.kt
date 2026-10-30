@@ -205,3 +205,32 @@ object SelfApproval {
         data class Refused(val others: List<String>) : Verdict
     }
 }
+
+/** What the server reads in a command itself, never trusting the hook's reading of it (audit A6, CORRECTIFS-3). */
+object GateCommands {
+    // Another repository (GIT_DIR, --git-dir, --work-tree), another config (GIT_CONFIG_*, --config-env), another remote
+    // or URL (`-c remote.*`, `-c url.*`…): what git sends is no longer what the hook read. The prototype's expression.
+    private val redirect = Regex(
+        "\\bGIT_(DIR|WORK_TREE|CONFIG\\w*|NAMESPACE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|INDEX_FILE)=" +
+            "|--git-dir\\b|--work-tree\\b|--namespace\\b|--config-env\\b" +
+            "|(^|\\s)-c\\s*[\"']?(remote|url|branch|push|core|include|includeIf)\\.",
+        RegexOption.IGNORE_CASE,
+    )
+    private val push = Regex("\\bgit\\b[^\\n;&|]*\\bpush\\b")
+
+    /**
+     * Tells whether a command changes where git reads or sends.
+     *
+     * @param command The command.
+     * @return True when the yes could not be tied to what git really sends.
+     */
+    fun redirected(command: String): Boolean = redirect.containsMatchIn(command)
+
+    /**
+     * Tells whether a command runs `git … push`.
+     *
+     * @param command The command.
+     * @return True for a push.
+     */
+    fun mentionsPush(command: String): Boolean = push.containsMatchIn(command)
+}

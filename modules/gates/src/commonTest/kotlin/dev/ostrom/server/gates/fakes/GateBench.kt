@@ -13,8 +13,9 @@ import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.usecases.AnswerGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCaseImpl
-import dev.ostrom.server.gates.domain.usecases.ListPendingRequestsUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.OpenGate
 import dev.ostrom.server.gates.domain.usecases.OpenGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
@@ -34,7 +35,8 @@ class GateBench {
     val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock, logger)
     val use = UseGateUseCaseImpl(repository, clock)
     val get = GetGateUseCaseImpl(repository, policies, receipts)
-    val pending = ListPendingRequestsUseCaseImpl(repository)
+    val approvals = ListApprovalsUseCaseImpl(repository)
+    val approval = GetApprovalUseCaseImpl(repository)
 
     /** The gate node "Merge into main" of the workflow `ship`. */
     fun node(vararg approvers: String, enforced: Boolean = true) =

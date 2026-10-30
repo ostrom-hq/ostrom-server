@@ -17,15 +17,17 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
-import dev.ostrom.server.gates.presentation.AnswerDto
-import dev.ostrom.server.gates.presentation.AnswerRequest
-import dev.ostrom.server.gates.presentation.ApprovalsResponse
-import dev.ostrom.server.gates.presentation.ChannelDto
+import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
+import dev.ostrom.server.gates.presentation.AnswerApprovalResponse
+import dev.ostrom.server.gates.presentation.Approval
+import dev.ostrom.server.gates.presentation.ApprovalAnswer
+import dev.ostrom.server.gates.presentation.ApprovalsPage
 import dev.ostrom.server.gates.presentation.GateActorResolver
+import dev.ostrom.server.gates.presentation.GateAskRequest
 import dev.ostrom.server.gates.presentation.GateResponse
-import dev.ostrom.server.gates.presentation.OpenGateRequest
-import dev.ostrom.server.gates.presentation.PushDto
-import dev.ostrom.server.gates.presentation.PushRefDto
+import dev.ostrom.server.gates.presentation.GatePushRef
+import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
+import dev.ostrom.server.gates.presentation.GatePush as PushDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -65,7 +67,7 @@ class GatesPostgresTest {
     private val overrides = module {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) = AuthenticatedPrincipal(token, PrincipalKind.USER)
+                override suspend fun authenticate(token: String) = AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
             }
         }
         single<GateActorResolver> {
@@ -125,129 +127,171 @@ class GatesPostgresTest {
             }
         }
 
-    private fun push(commit: String = sha, force: Boolean = false, diff: String = "+ok") = OpenGateRequest(
+    private fun push(commit: String = sha, force: Boolean = false, diff: String = "+ok") = GateAskRequest(
         sessionId = session.toString(),
         repo = "ostrom-hq/gate-demo",
-        actionClass = "push-main",
+        cls = "push-main",
         command = "git push origin main",
-        push = PushDto("git@github.com:ostrom-hq/gate-demo.git", listOf(PushRefDto("refs/heads/main", commit)), force),
-        commits = listOf(commit),
+        dev = "someone-else",
+        push = PushDto("git@github.com:ostrom-hq/gate-demo.git", listOf(GatePushRef("refs/heads/main", commit)), force),
         diff = diff,
     )
 
-    private suspend fun TestServer.answer(token: String, gate: GateResponse, approver: String, yes: Boolean = true) =
-        call(
+    // The approvals of a gate, read the way the console reads them: the organization's list.
+    private suspend fun TestServer.approvalsOf(gate: GateResponse): List<Approval> =
+        call("user:a:rev-b", "/api/v1/approvals?limit=100").body<ApprovalsPage>().items.filter { it.group == gate.gate.id }
+
+    private suspend fun TestServer.answer(token: String, gate: GateResponse, approver: String, yes: Boolean = true): HttpResponse {
+        val approval = approvalsOf(gate).first { it.requestedFrom == approver }
+        return call(
             token,
-            "/v1/approvals/${gate.requests.first { it.approver == approver }.id}/answer",
-            AnswerRequest(if (yes) AnswerDto.YES else AnswerDto.NO, gate.shownDigest, ChannelDto.MOBILE),
+            "/api/v1/approvals/${approval.id}/answer",
+            AnswerApprovalRequest(if (yes) ApprovalAnswer.APPROVE else ApprovalAnswer.REJECT, approval.shownDigest),
         )
+    }
 
     @Test
     fun aPushWaitsForAnotherApproverThenRunsOnce() = gatesTest { server ->
         val agent = "agent:a:$session"
-        val opened = server.call(agent, "/v1/gates", push()).body<GateResponse>()
-        assertEquals("pending", opened.status)
-        assertEquals(listOf("lyes", "rev-b", "rev-c"), opened.requests.map { it.approver })
+        val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        assertEquals("pending", opened.gate.status)
+        assertEquals("enforced", opened.gate.mode)
+        assertEquals("lyes", opened.gate.dev, "The asker is the credential's person, never the body's `dev`")
         assertEquals(listOf("rev-b", "rev-c"), opened.waitingFor)
-        assertTrue(opened.evidence.any { it.label == "Diff" && it.value == "+ok" })
+        assertEquals("Merge into main", opened.gate.gate?.label)
+        val approvals = server.approvalsOf(opened)
+        assertEquals(listOf("lyes", "rev-b", "rev-c"), approvals.map { it.requestedFrom }.sorted())
+        assertTrue(approvals.all { it.evidence.contains(dev.ostrom.server.gates.presentation.Evidence("Diff", "+ok")) })
+        assertEquals(listOf(sha), approvals.first().commits)
 
         val self = server.answer("user:a:lyes", opened, "lyes")
         assertEquals(HttpStatusCode.Forbidden, self.status, "The asker never approves while someone else can")
         assertTrue(self.bodyAsText().contains("rev-b or rev-c must say yes"))
-        val admin = server.call(
-            "user:a:admin",
-            "/v1/approvals/${opened.requests[1].id}/answer",
-            AnswerRequest(AnswerDto.YES, opened.shownDigest),
-        )
+        val revB = approvals.first { it.requestedFrom == "rev-b" }
+        val admin = server.call("user:a:admin", "/api/v1/approvals/${revB.id}/answer", AnswerApprovalRequest(ApprovalAnswer.APPROVE, revB.shownDigest))
         assertEquals(HttpStatusCode.Forbidden, admin.status, "An admin never answers in an approver's place")
-        val device = server.answer("device:a:rev-b", opened, "rev-b")
-        assertEquals(HttpStatusCode.Forbidden, device.status, "A device token never says yes")
-        val stale = server.call(
-            "user:a:rev-b",
-            "/v1/approvals/${opened.requests[1].id}/answer",
-            AnswerRequest(AnswerDto.YES, "not what was shown"),
-        )
-        assertEquals(HttpStatusCode.Conflict, stale.status)
+        assertEquals(HttpStatusCode.Forbidden, server.answer("device:a:rev-b", opened, "rev-b").status, "A device never says yes")
+        assertEquals(HttpStatusCode.Forbidden, server.answer(agent, opened, "rev-b").status, "The agent never says yes")
+        val stale = server.call("user:a:rev-b", "/api/v1/approvals/${revB.id}/answer", AnswerApprovalRequest(ApprovalAnswer.APPROVE, "x"))
+        assertEquals(HttpStatusCode.Conflict, stale.status, "A yes names what was shown")
 
-        val approved = server.answer("user:a:rev-b", opened, "rev-b").body<GateResponse>()
-        assertEquals("approved", approved.status)
-        assertEquals(listOf("closed", "approved", "closed"), approved.requests.map { it.status })
-        assertEquals("rcpt_${opened.id}", approved.receiptId)
+        val answered = server.answer("user:a:rev-b", opened, "rev-b").body<AnswerApprovalResponse>()
+        assertEquals("approved", answered.approval.status)
+        val approved = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
+        assertEquals("approved", approved.gate.status)
+        assertEquals("rev-b", approved.gate.decidedBy)
+        assertEquals("rcpt_${opened.gate.id}", approved.gate.receiptId)
+        assertEquals(revB.id, approved.gate.approvalId, "The caller's own approval")
+        assertEquals(
+            mapOf("lyes" to "expired", "rev-b" to "approved", "rev-c" to "expired"),
+            server.approvalsOf(opened).associate { it.requestedFrom to it.status },
+        )
         assertEquals(HttpStatusCode.Conflict, server.answer("user:a:rev-c", opened, "rev-c").status)
 
-        assertEquals("reserved", server.call(agent, "/v1/gates/${opened.id}/reserve", post = true).body<GateResponse>().status)
-        assertEquals(HttpStatusCode.Conflict, server.call(agent, "/v1/gates/${opened.id}/reserve", post = true).status)
-        assertEquals("consumed", server.call(agent, "/v1/gates/${opened.id}/consume", post = true).body<GateResponse>().status)
+        assertEquals("approved", server.call(agent, "/api/v1/gates/${opened.gate.id}/reserve", post = true).body<GateResponse>().gate.status)
+        assertEquals(HttpStatusCode.Conflict, server.call(agent, "/api/v1/gates/${opened.gate.id}/reserve", post = true).status)
+        assertEquals("approved", server.call(agent, "/api/v1/gates/${opened.gate.id}/release", post = true).body<GateResponse>().gate.status)
+        assertEquals("consumed", server.call(agent, "/api/v1/gates/${opened.gate.id}/consume", post = true).body<GateResponse>().gate.status)
+        assertEquals(HttpStatusCode.Conflict, server.call(agent, "/api/v1/gates/${opened.gate.id}/consume", post = true).status)
 
-        val again = server.call(agent, "/v1/gates", push()).body<GateResponse>()
-        assertTrue(again.id != opened.id && again.status == "pending", "One yes covers one action")
+        val again = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        assertTrue(again.gate.id != opened.gate.id && again.gate.status == "pending", "One yes covers one action")
     }
 
     @Test
     fun aForcePushOrAnotherDiffIsNotTheApprovedPush() = gatesTest { server ->
         val agent = "agent:a:$session"
-        val opened = server.call(agent, "/v1/gates", push()).body<GateResponse>()
-        server.answer("user:a:rev-b", opened, "rev-b")
+        val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status)
 
-        val forced = server.call(agent, "/v1/gates", push(force = true)).body<GateResponse>()
-        val otherDiff = server.call(agent, "/v1/gates", push(diff = "+evil")).body<GateResponse>()
-        val newCommit = server.call(agent, "/v1/gates", push(commit = nextSha)).body<GateResponse>()
-        val same = server.call(agent, "/v1/gates", push()).body<GateResponse>()
+        val forced = server.call(agent, "/api/v1/gates", push(force = true)).body<GateResponse>()
+        val otherDiff = server.call(agent, "/api/v1/gates", push(diff = "+evil")).body<GateResponse>()
+        val newCommit = server.call(agent, "/api/v1/gates", push(commit = nextSha)).body<GateResponse>()
+        val same = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
 
-        assertEquals(listOf("pending", "pending", "pending"), listOf(forced, otherDiff, newCommit).map { it.status })
-        assertEquals(opened.id, same.id)
-        assertEquals("approved", same.status)
+        assertEquals(listOf("pending", "pending", "pending"), listOf(forced, otherDiff, newCommit).map { it.gate.status })
+        assertEquals(opened.gate.id, same.gate.id)
+        assertEquals("approved", same.gate.status)
+        assertEquals(true, forced.gate.push?.force)
     }
 
     @Test
     fun aMergeIsBoundToTheHeadReadFromGitHub() = gatesTest { server ->
-        val merge = OpenGateRequest(
+        val merge = GateAskRequest(
             sessionId = session.toString(),
             repo = "ostrom-hq/gate-demo",
-            actionClass = "merge",
+            cls = "merge",
             command = "gh pr merge 6 --merge",
-            pullRequest = 6,
+            pr = PullRequestDto("#6", "f".repeat(40), "develop"),
         )
-        val opened = server.call("agent:a:$session", "/v1/gates", merge).body<GateResponse>()
-        assertEquals("#6@$sha->main", opened.pullRequest)
-        assertEquals(listOf(sha), opened.commits)
+        val opened = server.call("agent:a:$session", "/api/v1/gates", merge).body<GateResponse>()
+        assertEquals(PullRequestDto("6", sha, "main"), opened.gate.pr, "Head and base come from GitHub, not the body")
 
-        val unknown = server.call("agent:a:$session", "/v1/gates", merge.copy(pullRequest = 7, command = "gh pr merge 7"))
+        val unknown = server.call("agent:a:$session", "/api/v1/gates", merge.copy(pr = PullRequestDto("7", sha), command = "gh pr merge 7"))
             .body<GateResponse>()
-        assertEquals(null, unknown.pullRequest, "Unknown on GitHub: bound to the command in this session")
+        assertEquals(null, unknown.gate.pr, "Unknown on GitHub: bound to the command in this session")
+        val malformed = server.call("agent:a:$session", "/api/v1/gates", merge.copy(pr = PullRequestDto("six", sha)))
+        assertEquals(HttpStatusCode.BadRequest, malformed.status)
     }
 
     @Test
-    fun aRedirectedPushAsksNobody() = gatesTest { server ->
-        val response = server.call("agent:a:$session", "/v1/gates", push().copy(redirected = true))
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        val inbox = server.call("user:a:rev-b", "/v1/approvals").body<ApprovalsResponse>()
-        assertTrue(inbox.requests.isEmpty())
+    fun aRedirectedOrOutdatedPushAsksNobody() = gatesTest { server ->
+        val redirected = push().copy(command = "git -c remote.origin.pushurl=evil push origin main")
+        assertEquals(HttpStatusCode.BadRequest, server.call("agent:a:$session", "/api/v1/gates", redirected).status)
+        val outdated = server.call("agent:a:$session", "/api/v1/gates", push().copy(push = null))
+        assertEquals(HttpStatusCode.BadRequest, outdated.status)
+        assertTrue(outdated.bodyAsText().contains("launcher is out of date"))
+        assertTrue(server.call("user:a:rev-b", "/api/v1/approvals?mine=true").body<ApprovalsPage>().items.isEmpty())
     }
 
     @Test
     fun theFirstOfTwoSimultaneousYesWins() = gatesTest { server ->
-        val opened = server.call("agent:a:$session", "/v1/gates", push()).body<GateResponse>()
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val approvals = server.approvalsOf(opened)
         val statuses = coroutineScope {
             listOf("rev-b", "rev-c").map { approver ->
-                async { server.answer("user:a:$approver", opened, approver).status }
+                val approval = approvals.first { it.requestedFrom == approver }
+                async {
+                    server.call(
+                        "user:a:$approver",
+                        "/api/v1/approvals/${approval.id}/answer",
+                        AnswerApprovalRequest(ApprovalAnswer.APPROVE, approval.shownDigest),
+                    ).status
+                }
             }.awaitAll()
         }
-        assertEquals(listOf(HttpStatusCode.Conflict, HttpStatusCode.OK), statuses.sortedBy { it.value }.reversed())
+        assertEquals(listOf(HttpStatusCode.OK, HttpStatusCode.Conflict), statuses.sortedBy { it.value })
+    }
+
+    @Test
+    fun theFirstOfTwoSimultaneousConsumesWins() = gatesTest { server ->
+        val agent = "agent:a:$session"
+        val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        server.answer("user:a:rev-b", opened, "rev-b")
+        val statuses = coroutineScope {
+            List(4) { async { server.call(agent, "/api/v1/gates/${opened.gate.id}/consume", post = true).status } }.awaitAll()
+        }
+        assertEquals(listOf(HttpStatusCode.OK, HttpStatusCode.Conflict, HttpStatusCode.Conflict, HttpStatusCode.Conflict), statuses.sortedBy { it.value })
     }
 
     @Test
     fun anotherOrganizationSeesNothing() = gatesTest { server ->
-        val opened = server.call("agent:a:$session", "/v1/gates", push()).body<GateResponse>()
-        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "/v1/gates/${opened.id}").status)
-        assertEquals(HttpStatusCode.NotFound, server.answer("user:b:rev-b", opened, "rev-b").status)
-        assertTrue(server.call("user:b:rev-b", "/v1/approvals").body<ApprovalsResponse>().requests.isEmpty())
-        assertEquals(1, server.call("user:a:rev-b", "/v1/approvals").body<ApprovalsResponse>().requests.size)
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val approval = server.approvalsOf(opened).first { it.requestedFrom == "rev-b" }
+        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "/api/v1/gates/${opened.gate.id}").status)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "/api/v1/approvals/${approval.id}").status)
+        val answer = AnswerApprovalRequest(ApprovalAnswer.APPROVE, approval.shownDigest)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "/api/v1/approvals/${approval.id}/answer", answer).status)
+        assertEquals(HttpStatusCode.NotFound, server.call("agent:b:$session", "/api/v1/gates/${opened.gate.id}/consume", post = true).status)
+        assertTrue(server.call("user:b:rev-b", "/api/v1/approvals").body<ApprovalsPage>().items.isEmpty())
+        assertEquals(approval, server.call("user:a:rev-b", "/api/v1/approvals/${approval.id}").body<Approval>())
+        assertEquals(1, server.call("user:a:rev-b", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>().items.size)
+        assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/approvals?status=maybe").status)
     }
 
     @Test
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = gatesTest { server ->
-        server.call("agent:a:$session", "/v1/gates", push()).body<GateResponse>()
+        server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
         server.driver.execute(
             "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
@@ -323,10 +367,11 @@ class GatesPostgresTest {
 
     @Test
     fun withoutATokenEveryRouteAnswers401() = gatesTest { server ->
-        assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/v1/approvals").status)
-        assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/v1/gates", push()).status)
-        assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/v1/approvals").status)
-        assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/v1/gates/not-a-uuid").status)
-        assertEquals(HttpStatusCode.NotFound, server.call("agent:a:$session", "/v1/gates/${Uuid.random()}/explode", post = true).status)
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/approvals").status)
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/gates", push()).status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/approvals").status)
+        assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/gates/not-a-uuid").status)
+        assertEquals(HttpStatusCode.BadRequest, server.call("agent:a:$session", "/api/v1/gates", push().copy(sessionId = "x")).status)
+        assertEquals(HttpStatusCode.NotFound, server.call("agent:a:$session", "/api/v1/gates/${Uuid.random()}/explode", post = true).status)
     }
 }

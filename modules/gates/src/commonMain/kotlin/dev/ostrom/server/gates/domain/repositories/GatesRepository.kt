@@ -1,7 +1,9 @@
 package dev.ostrom.server.gates.domain.repositories
 
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.Gate
+import dev.ostrom.server.gates.domain.models.RequestStatus
 import kotlin.uuid.Uuid
 
 /**
@@ -37,14 +39,24 @@ interface GatesRepository {
     suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest>
 
     /**
-     * Lists the requests still waiting for an approver, newest first, by keyset.
+     * Reads one request with its gate.
      *
      * @param orgId The organization.
-     * @param approverId The approver.
+     * @param id The request.
+     * @return The request and its gate, or null when absent or another organization's.
+     */
+    suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView?
+
+    /**
+     * Lists requests with their gates, newest first.
+     *
+     * @param orgId The organization.
+     * @param approverId Only this approver's, or everyone's when null.
+     * @param status Only this status, or any when null.
      * @param limit At most this many (bounded by the caller).
      * @return The requests.
      */
-    suspend fun pendingFor(orgId: Uuid, approverId: String, limit: Int): List<ApprovalRequest>
+    suspend fun approvals(orgId: Uuid, approverId: String?, status: RequestStatus?, limit: Int): List<ApprovalView>
 }
 
 /** The reads and writes of one transaction. Locking reads hold their rows until the transaction ends. */

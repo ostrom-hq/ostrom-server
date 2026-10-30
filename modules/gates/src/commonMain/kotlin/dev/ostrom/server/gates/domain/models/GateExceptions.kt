@@ -59,5 +59,13 @@ class RedirectedPushException : OstromException(
         "`git push <remote> <branch>` from the repository, as its own command.",
 )
 
+/** A hook from before 29/10 asks a yes for a push without the commits it sends: the yes could not be tied to them. */
+class OutdatedLauncherException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "This Ostrom launcher is out of date: it asks a yes for a push without sending which commits the push sends, so " +
+        "the yes could not be tied to them, and no yes was asked. Update the launcher (`ostrom`, and the hooks " +
+        "written by `ostrom sync`), then run the same push again.",
+)
+
 /** A field of the request is out of bounds (too long, malformed SHA, too many refs). */
 class InvalidGateRequestException(reason: String) : OstromException(ErrorKind.INVALID_REQUEST, reason)

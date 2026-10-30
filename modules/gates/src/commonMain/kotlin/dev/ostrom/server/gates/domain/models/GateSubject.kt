@@ -13,6 +13,9 @@ package dev.ostrom.server.gates.domain.models
  * @property pullRequest The pull request a merge targets, its head and base read from GitHub by the server.
  * @property commits The commits shown to the approvers, oldest first.
  * @property diffDigest The digest of the diff shown with a push: another diff asks another yes.
+ * @property tool The agent tool that runs the action (`Bash`, `mcp__github__merge_pull_request`…); shown, not keyed.
+ * @property harnessVersion The launcher or plugin version that asked; shown, not keyed.
+ * @property runId The workflow run that asked, when a run did; shown, not keyed.
  */
 data class GateSubject(
     val repo: String?,
@@ -24,6 +27,9 @@ data class GateSubject(
     val pullRequest: GatePullRequest? = null,
     val commits: List<String> = emptyList(),
     val diffDigest: String? = null,
+    val tool: String = "",
+    val harnessVersion: String? = null,
+    val runId: String? = null,
 )
 
 /**

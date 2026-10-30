@@ -230,12 +230,32 @@ class AnswerGateUseCaseTest {
     fun theInboxListsOnlyTheCallersPendingRequests() = runTest {
         val bench = GateBench()
         val first = bench.open(bench.pushRequest())
-        bench.open(bench.pushRequest(sha = dev.ostrom.server.gates.fakes.SHA_B))
+        val second = bench.open(bench.pushRequest(sha = dev.ostrom.server.gates.fakes.SHA_B))
         bench.answer(first, "rev-b")
+        val pending = RequestStatus.PENDING
 
-        assertEquals(1, bench.pending(user("rev-b"), 500).size)
-        assertEquals(1, bench.pending(user("rev-b"), 0).size, "The limit is at least one")
-        assertEquals(1, bench.pending(user("lyes"), 10).size, "The closed request is not pending")
-        assertFailsWith<OnlyPeopleAnswerException> { bench.pending(device(), 10) }
+        assertEquals(listOf(second.gate), bench.approvals(user("rev-b"), true, pending, 500).map { it.gate })
+        assertEquals(1, bench.approvals(user("rev-b"), true, pending, 0).size, "The limit is at least one")
+        assertEquals(1, bench.approvals(user("lyes"), true, pending, 10).size, "The closed request is not pending")
+        assertEquals(4, bench.approvals(user("lyes"), false, null, 10).size, "Without `mine`: the organization's")
+        assertEquals(
+            listOf(RequestStatus.CLOSED),
+            bench.approvals(user("lyes"), true, RequestStatus.CLOSED, 10).map { it.request.status },
+        )
+        assertTrue(bench.approvals(user("rev-b").copy(orgId = OTHER_ORG), false, null, 10).isEmpty())
+        assertFailsWith<OnlyPeopleAnswerException> { bench.approvals(device(), true, pending, 10) }
+    }
+
+    @Test
+    fun anApprovalIsReadWithItsGate() = runTest {
+        val bench = GateBench()
+        val view = bench.open(bench.pushRequest())
+        val request = view.requests.last()
+
+        assertEquals(view.gate, bench.approval(user("rev-b"), request.id).gate)
+        assertEquals(request, bench.approval(user("lyes"), request.id).request)
+        assertFailsWith<GateNotFoundException> { bench.approval(user("rev-b").copy(orgId = OTHER_ORG), request.id) }
+        assertFailsWith<GateNotFoundException> { bench.approval(user("rev-b"), Uuid.random()) }
+        assertFailsWith<OnlyPeopleAnswerException> { bench.approval(agent(), request.id) }
     }
 }

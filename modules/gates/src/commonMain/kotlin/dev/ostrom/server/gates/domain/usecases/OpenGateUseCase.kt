@@ -186,7 +186,7 @@ class OpenGateUseCaseImpl(
         subject.push?.let { push ->
             ensure(push.refs.isNotEmpty() && push.refs.size <= MAX_REFS) { "A push names 1 to $MAX_REFS refs." }
             ensure(push.remote.length <= MAX_REF) { "The remote is too long." }
-            ensure(push.refs.all { it.ref.isNotBlank() && it.ref.length <= MAX_REF && isSha(it.sha) }) {
+            ensure(push.refs.all { it.ref.isNotBlank() && it.ref.length <= MAX_REF && (it.sha.isEmpty() || isSha(it.sha)) }) {
                 "Invalid push ref."
             }
         }

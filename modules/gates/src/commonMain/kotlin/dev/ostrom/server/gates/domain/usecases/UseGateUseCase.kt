@@ -19,7 +19,11 @@ enum class GateUse {
      */
     RESERVE,
 
-    /** After the action ran (PostToolUse): the yes is used up; the same action again asks a new yes. */
+    /**
+     * After the action ran (PostToolUse): the yes is used up; the same action again asks a new yes. A hook that did not
+     * reserve consumes the approved yes directly (contract `consumeGate`), still exactly once. Nothing to use on a
+     * shadow or ungated gate: it is returned as it is.
+     */
     CONSUME,
 
     /** The action did not run after all (the agent's own permission check refused it): the yes is approved again. */
@@ -63,9 +67,13 @@ class UseGateUseCaseImpl(
                 if (gate.status != GateStatus.APPROVED) throw GateNotUsableException(reserveRefusal(gate))
                 gate.copy(status = GateStatus.RESERVED, reservedBy = session, reservedAt = clock.now())
             }
-            GateUse.CONSUME -> {
-                heldBy(gate, session)
-                gate.copy(status = GateStatus.CONSUMED, consumedAt = clock.now())
+            GateUse.CONSUME -> when {
+                gate.status == GateStatus.SHADOW || gate.status == GateStatus.UNGATED -> return@transaction gate
+                gate.status == GateStatus.APPROVED -> gate.copy(status = GateStatus.CONSUMED, consumedAt = clock.now())
+                else -> {
+                    heldBy(gate, session)
+                    gate.copy(status = GateStatus.CONSUMED, consumedAt = clock.now())
+                }
             }
             GateUse.RELEASE -> {
                 heldBy(gate, session)
@@ -77,9 +85,14 @@ class UseGateUseCaseImpl(
     }
 
     private fun heldBy(gate: Gate, session: Uuid) {
-        if (gate.status != GateStatus.RESERVED || gate.reservedBy != session) {
-            throw GateNotUsableException("This yes is not reserved by your session: reserve it before the action.")
-        }
+        if (gate.status == GateStatus.RESERVED && gate.reservedBy == session) return
+        throw GateNotUsableException(
+            if (gate.status == GateStatus.APPROVED) {
+                "This yes is not reserved by your session: reserve it before the action."
+            } else {
+                reserveRefusal(gate)
+            },
+        )
     }
 
     private fun reserveRefusal(gate: Gate): String = when (gate.status) {

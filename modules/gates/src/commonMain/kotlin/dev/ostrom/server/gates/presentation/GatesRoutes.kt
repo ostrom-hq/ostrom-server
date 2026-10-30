@@ -2,19 +2,16 @@ package dev.ostrom.server.gates.presentation
 
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
-import dev.ostrom.server.gates.domain.models.ApprovalRequest
-import dev.ostrom.server.gates.domain.models.AskedVia
+import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.GateActor
-import dev.ostrom.server.gates.domain.models.GatePush
-import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
-import dev.ostrom.server.gates.domain.models.PushRef
+import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.usecases.AnswerGateUseCase
-import dev.ostrom.server.gates.domain.usecases.AskGate
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
 import dev.ostrom.server.gates.domain.usecases.GateUse
+import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCase
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCase
-import dev.ostrom.server.gates.domain.usecases.ListPendingRequestsUseCase
+import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCase
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCase
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.authenticated
@@ -26,6 +23,7 @@ import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.RoutingContext
 import kotlin.uuid.Uuid
 
 /** Turns the authenticated principal into a gate actor (the identity module binds the real one). */
@@ -44,22 +42,25 @@ interface GateActorResolver {
  *
  * @property actors Resolves callers.
  * @property ask Opens a gate for a hook.
- * @property get Reads a gate.
+ * @property gate Reads a gate.
  * @property use Reserves, consumes or releases a yes.
- * @property answer Answers a request.
- * @property pending The caller's inbox.
+ * @property answer Answers an approval.
+ * @property approvals Lists approvals.
+ * @property approval Reads an approval.
  */
 data class GatesRoutesDependencies(
     val actors: GateActorResolver,
     val ask: AskGateUseCase,
-    val get: GetGateUseCase,
+    val gate: GetGateUseCase,
     val use: UseGateUseCase,
     val answer: AnswerGateUseCase,
-    val pending: ListPendingRequestsUseCase,
+    val approvals: ListApprovalsUseCase,
+    val approval: GetApprovalUseCase,
 )
 
 /**
- * The gates routes. Every route is authenticated; the organization always comes from the credential.
+ * The gates and approvals routes of the contract. Every route is authenticated; the organization and the person
+ * always come from the credential, never from the body.
  *
  * @param dependencies The use cases.
  */
@@ -67,37 +68,41 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
     authenticated {
         post<GatesApi> {
             val actor = actors.actorOf(call.requirePrincipal())
-            val body = call.receive<OpenGateRequest>()
-            call.respond(ask(actor, body.toAskGate()).toGateResponse())
+            call.respond(ask(actor, call.receive<GateAskRequest>().toAskGate()).toResponse(actor))
         }
         get<GatesApi.Id> { params ->
             val actor = actors.actorOf(call.requirePrincipal())
-            call.respond(get(actor, params.id.toUuid()).toGateResponse())
+            call.respond(gate(actor, params.id.toUuid()).toResponse(actor))
         }
-        post<GatesApi.Id.Use> { params ->
-            val actor = actors.actorOf(call.requirePrincipal())
-            val move = GateUse.entries.firstOrNull { it.name.equals(params.use, ignoreCase = true) }
-                ?: throw OstromException(ErrorKind.NOT_FOUND, "Unknown gate action.")
-            use(actor, params.parent.id.toUuid(), move)
-            call.respond(get(actor, params.parent.id.toUuid()).toGateResponse())
-        }
+        post<GatesApi.Id.Reserve> { params -> respondUse(dependencies, params.parent.id, GateUse.RESERVE) }
+        post<GatesApi.Id.Consume> { params -> respondUse(dependencies, params.parent.id, GateUse.CONSUME) }
+        post<GatesApi.Id.Release> { params -> respondUse(dependencies, params.parent.id, GateUse.RELEASE) }
         get<ApprovalsApi> { params ->
             val actor = actors.actorOf(call.requirePrincipal())
-            call.respond(ApprovalsResponse(pending(actor, params.limit).map { it.toResponse() }))
+            val status = params.status?.let { statusOf(it) }
+            val items = approvals(actor, params.mine == true, status, params.limit ?: DEFAULT_PAGE)
+            call.respond(ApprovalsPage(items.map { it.toApproval() }))
         }
-        post<ApprovalsApi.Answer> { params ->
+        get<ApprovalsApi.Id> { params ->
+            call.respond(approval(actors.actorOf(call.requirePrincipal()), params.id.toUuid()).toApproval())
+        }
+        post<ApprovalsApi.Id.Answer> { params ->
             val actor = actors.actorOf(call.requirePrincipal())
-            val body = call.receive<AnswerRequest>()
-            val view = answer(
-                actor,
-                params.id.toUuid(),
-                if (body.answer == AnswerDto.YES) Answer.YES else Answer.NO,
-                body.shownDigest,
-                AnswerChannel.valueOf(body.channel.name),
-            )
-            call.respond(view.toGateResponse())
+            val body = call.receive<AnswerApprovalRequest>()
+            val id = params.parent.id.toUuid()
+            val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO
+            val view = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
+            val request = view.requests.first { it.id == id }
+            call.respond(AnswerApprovalResponse(ApprovalView(request, view.gate).toApproval()))
         }
     }
+}
+
+private suspend fun RoutingContext.respondUse(dependencies: GatesRoutesDependencies, id: String, move: GateUse) {
+    val actor = dependencies.actors.actorOf(call.requirePrincipal())
+    val gateId = id.toUuid()
+    dependencies.use(actor, gateId, move)
+    call.respond(dependencies.gate(actor, gateId).toResponse(actor))
 }
 
 private suspend fun GateActorResolver.actorOf(principal: AuthenticatedPrincipal): GateActor =
@@ -105,50 +110,12 @@ private suspend fun GateActorResolver.actorOf(principal: AuthenticatedPrincipal)
 
 private fun String.toUuid(): Uuid = Uuid.parseOrNull(this) ?: throw InvalidGateRequestException("Malformed id.")
 
-/** Maps the hook's request; the path is the hook unless the MCP tool asks. */
-internal fun OpenGateRequest.toAskGate() = AskGate(
-    sessionId = sessionId?.toUuid(),
-    repo = repo,
-    realRepo = realRepo,
-    actionClass = actionClass,
-    command = command,
-    push = push?.let { dto -> GatePush(dto.remote, dto.refs.map { PushRef(it.ref, it.sha) }, dto.force) },
-    pullRequest = pullRequest,
-    commits = commits,
-    diff = diff,
-    redirected = redirected,
-    via = AskedVia.HOOK,
-)
+private fun statusOf(value: String): RequestStatus = when (value.lowercase()) {
+    "pending" -> RequestStatus.PENDING
+    "approved" -> RequestStatus.APPROVED
+    "rejected" -> RequestStatus.REJECTED
+    "expired" -> RequestStatus.CLOSED
+    else -> throw InvalidGateRequestException("Unknown approval status.")
+}
 
-/** Maps a gate for the clients. */
-internal fun GateView.toGateResponse() = GateResponse(
-    id = gate.id.toString(),
-    label = gate.label,
-    mode = gate.mode.name.lowercase(),
-    status = gate.status.name.lowercase(),
-    repo = gate.subject.repo,
-    actionClass = gate.subject.actionClass,
-    commits = gate.subject.commits,
-    pullRequest = gate.subject.pullRequest?.let { "#${it.number}@${it.headSha}->${it.base}" },
-    askedBy = gate.askedBy,
-    askedVia = gate.askedVia.map { it.name.lowercase() }.sorted(),
-    waitingFor = waitingFor,
-    shownDigest = gate.shownDigest,
-    evidence = gate.evidence.map { EvidenceDto(it.label, it.value) },
-    requests = requests.map { it.toResponse() },
-    decidedBy = gate.decidedBy,
-    decidedAt = gate.decidedAt?.toString(),
-    selfApproved = gate.selfApproved,
-    receiptId = gate.receiptId,
-    createdAt = gate.createdAt.toString(),
-)
-
-/** Maps a request for the clients. */
-internal fun ApprovalRequest.toResponse() = ApprovalRequestResponse(
-    id = id.toString(),
-    gateId = gateId.toString(),
-    approver = approverId,
-    status = status.name.lowercase(),
-    answeredAt = answeredAt?.toString(),
-    channel = channel?.name?.lowercase(),
-)
+private const val DEFAULT_PAGE = 50

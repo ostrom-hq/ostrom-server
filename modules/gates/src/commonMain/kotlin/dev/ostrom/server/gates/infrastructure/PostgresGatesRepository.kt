@@ -2,6 +2,7 @@ package dev.ostrom.server.gates.infrastructure
 
 import dev.ostrom.server.gates.domain.models.AnswerChannel
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
 import dev.ostrom.server.gates.domain.models.Gate
@@ -52,18 +53,48 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         Tx(this).requestsOf(orgId, gateId)
     }
 
-    override suspend fun pendingFor(orgId: Uuid, approverId: String, limit: Int): List<ApprovalRequest> =
-        driver.transaction {
-            Tx(this).run {
-                scoped(orgId)
-                fetch(
-                    Statement.create(
-                        "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE org_id = :org AND approver_id = :approver " +
-                            "AND status = 'PENDING' ORDER BY created_at DESC LIMIT :limit",
-                    ).bind("org", orgId).bind("approver", approverId).bind("limit", limit),
-                ).map { it.toRequest() }
+    override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? = driver.transaction {
+        Tx(this).run {
+            request(orgId, id)?.let { request ->
+                selectGate(orgId, request.gateId, lock = false)?.let { ApprovalView(request, it) }
             }
         }
+    }
+
+    override suspend fun approvals(
+        orgId: Uuid,
+        approverId: String?,
+        status: RequestStatus?,
+        limit: Int,
+    ): List<ApprovalView> = driver.transaction {
+        Tx(this).run {
+            scoped(orgId)
+            val filters = buildString {
+                append("org_id = :org")
+                if (approverId != null) append(" AND approver_id = :approver")
+                if (status != null) append(" AND status = :status")
+            }
+            val page = Statement.create(
+                "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE $filters ORDER BY created_at DESC, id DESC LIMIT :limit",
+            ).bind("org", orgId).bind("limit", limit)
+            approverId?.let { page.bind("approver", it) }
+            status?.let { page.bind("status", it.name) }
+            val requests = fetch(page).map { it.toRequest() }
+            val gateIds = requests.map { it.gateId }.distinct()
+            // One read for every gate of the page (at most `limit` ids, each bound): no query per request.
+            val gates = if (gateIds.isEmpty()) {
+                emptyMap()
+            } else {
+                val names = gateIds.indices.joinToString(", ") { ":g$it" }
+                val statement = Statement.create("SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id IN ($names)")
+                    .bind("org", orgId)
+                gateIds.forEachIndexed { index, gateId -> statement.bind("g$index", gateId) }
+                fetch(statement).map { it.toGate() }.associateBy { it.id }
+            }
+            // Every request has its gate (foreign key, gates are never deleted).
+            requests.map { ApprovalView(it, gates.getValue(it.gateId)) }
+        }
+    }
 
     private class Tx(private val executor: QueryExecutor) : GatesTransaction {
         private var org: Uuid? = null
@@ -269,6 +300,9 @@ internal data class SubjectRecord(
     val pullRequest: PullRequestRecord? = null,
     val commits: List<String> = emptyList(),
     val diffDigest: String? = null,
+    val tool: String = "",
+    val harnessVersion: String? = null,
+    val runId: String? = null,
 ) {
     fun toSubject() = GateSubject(
         repo = repo,
@@ -280,6 +314,9 @@ internal data class SubjectRecord(
         pullRequest = pullRequest?.let { GatePullRequest(it.number, it.headSha, it.base) },
         commits = commits,
         diffDigest = diffDigest,
+        tool = tool,
+        harnessVersion = harnessVersion,
+        runId = runId,
     )
 
     companion object {
@@ -295,6 +332,9 @@ internal data class SubjectRecord(
             pullRequest = subject.pullRequest?.let { PullRequestRecord(it.number, it.headSha, it.base) },
             commits = subject.commits,
             diffDigest = subject.diffDigest,
+            tool = subject.tool,
+            harnessVersion = subject.harnessVersion,
+            runId = subject.runId,
         )
     }
 }
@@ -319,11 +359,25 @@ internal data class NodeRecord(
     val name: String,
     val approvers: List<String>,
     val enforced: Boolean,
+    val workflowName: String,
+    val workflowStatus: String,
+    val basis: String,
+    val reason: String,
 ) {
-    fun toNode() = GateNode(workflowId, nodeId, name, approvers, enforced)
+    fun toNode() = GateNode(workflowId, nodeId, name, approvers, enforced, workflowName, workflowStatus, basis, reason)
 
     companion object {
-        fun of(node: GateNode) = NodeRecord(node.workflowId, node.nodeId, node.name, node.approvers, node.enforced)
+        fun of(node: GateNode) = NodeRecord(
+            node.workflowId,
+            node.nodeId,
+            node.name,
+            node.approvers,
+            node.enforced,
+            node.workflowName,
+            node.workflowStatus,
+            node.basis,
+            node.reason,
+        )
     }
 }
 

@@ -65,6 +65,10 @@ data class Gate(
  * @property name The gate's name, shown to the approvers.
  * @property approvers The users who may say yes, in the declared order.
  * @property enforced False while the workflow is only proposed: the gate records without blocking (shadow).
+ * @property workflowName The workflow's name.
+ * @property workflowStatus The workflow's status (`proposed`, `accepted`, `edited`).
+ * @property basis `declared` when the gate names the action, `guessed` when the catalog matched it.
+ * @property reason Where the approvers come from, shown with the gate.
  */
 data class GateNode(
     val workflowId: String,
@@ -72,6 +76,10 @@ data class GateNode(
     val name: String,
     val approvers: List<String>,
     val enforced: Boolean,
+    val workflowName: String = workflowId,
+    val workflowStatus: String = if (enforced) "accepted" else "proposed",
+    val basis: String = "declared",
+    val reason: String = "",
 )
 
 /**
