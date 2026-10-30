@@ -7,6 +7,10 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.EnvironmentConfigSource
+import dev.ostrom.server.kernel.config.LayeredConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
@@ -30,6 +34,12 @@ val PEOPLE = listOf(OLGA, MIA, CAROL)
 fun reportsOverrides(clock: Clock) = module {
     single<Clock> { clock }
     single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
+    // The compiler signs its packages for the public address.
+    single<ConfigSource> {
+        LayeredConfigSource(
+            listOf(MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to "https://ostrom.example/")), EnvironmentConfigSource()),
+        )
+    }
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
@@ -158,4 +168,24 @@ suspend fun TestServer.gate(seed: SeedGate) = with(seed) {
             *common, "by" to decidedBy, "decided" to decidedAt,
         )
     }
+}
+
+/** A signed decision of the compiler about [subject] (a `workflow` or another [kind]). */
+data class SeedDecision(
+    val org: Uuid,
+    val id: String,
+    val kind: String,
+    val subject: String,
+    val by: String,
+    val at: Instant,
+)
+
+/** Writes a decision, its time kept as text like the compiler does. */
+suspend fun TestServer.decision(seed: SeedDecision) = with(seed) {
+    sql(
+        org,
+        "INSERT INTO compiler_decisions (org_id, id, subject_kind, subject_id, decided_by, decided_at) " +
+            "VALUES (:org, :id, :kind, :subject, :by, :at)",
+        "org" to org, "id" to id, "kind" to kind, "subject" to subject, "by" to by, "at" to at.toString(),
+    )
 }

@@ -2,6 +2,7 @@
 package dev.ostrom.server.reports
 
 import dev.ostrom.server.budgets.BudgetsModule
+import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.instance.InstanceModule
@@ -28,11 +29,11 @@ import kotlin.uuid.Uuid
  * The reports' reads under `EXPLAIN ANALYZE`, in a transaction scoped to the organization like the repository's, over
  * tables where the organization is a small part of the rows: the ledger, the sessions and the gates are each read
  * through an index, never a scan of the table. The plans are written to `build/reports/explain/reports.txt`, uploaded
- * with the CI's reports.
+ * with the CI's reports. The workflow decisions are a handful per organization: their plan is written, not asserted.
  */
 class ReportsQueryPlansTest {
     private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule,
+        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
         SecretsModule, UsageModule, BudgetsModule, ReportsModule,
     )
 

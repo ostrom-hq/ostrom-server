@@ -52,6 +52,7 @@ private fun ActivityItem.summary(): String = when (kind) {
     ActivityKind.SESSION_ENDED -> "$subject's $actor session ended" + inRepo()
     ActivityKind.GATE_REQUESTED -> "$actor asked for a yes: $subject"
     ActivityKind.GATE_DECIDED -> "$actor ${if (outcome == "rejected") "said no to" else "said yes to"}: $subject"
+    ActivityKind.WORKFLOW_CHANGED -> "$actor changed the workflow $subject"
 }
 
 private fun ActivityItem.inRepo(): String = if (repo == null) "" else " in $repo"

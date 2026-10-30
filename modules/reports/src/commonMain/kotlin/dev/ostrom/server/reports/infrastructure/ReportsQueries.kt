@@ -44,7 +44,7 @@ internal object ReportsQueries {
      * A page of the activity, newest first by (`at`, `item_id`): each source gives its newest `:limit` rows in that
      * very order (its index gives the time, the id only breaks ties), then the union keeps the newest `:limit`. Params
      * `:org_id`, `:limit`, `:before_at` and `:before_id` if [cursor], `:repo` if [repo]. With a repository, only
-     * sessions concern it: gates have none.
+     * sessions concern it: gates and workflows have none.
      *
      * @param cursor Whether the page starts before a position.
      * @param repo Whether only one repository's sessions.
@@ -57,6 +57,8 @@ internal object ReportsQueries {
         val ended = "CONCAT('session.ended:', s.id)"
         val asked = "CONCAT('gate.requested:', CAST(g.id AS TEXT))"
         val decided = "CONCAT('gate.decided:', CAST(g.id AS TEXT))"
+        val changed = "CONCAT('workflow.changed:', d.id)"
+        val decidedAt = "CAST(d.decided_at AS TIMESTAMPTZ)"
         // The askers are a JSON array, the first one opened the gate.
         val firstAsker = "COALESCE(CAST(g.asked_by AS JSONB) ->> 0, '')"
         val endedBefore = before("s.ended_at", ended)
@@ -84,6 +86,11 @@ internal object ReportsQueries {
                 CAST(g.id AS TEXT) FROM gates_gates g
                 WHERE g.org_id = :org_id AND g.decided_at IS NOT NULL AND g.decided_by IS NOT NULL$decidedBefore
                 ORDER BY g.decided_at DESC, $decided DESC LIMIT :limit)
+            UNION ALL
+            (SELECT $changed, $decidedAt, 'workflow.changed', d.decided_by, d.subject_id, NULL, NULL, NULL, NULL,
+                NULL FROM compiler_decisions d
+                WHERE d.org_id = :org_id AND d.subject_kind = 'workflow'${before(decidedAt, changed)}
+                ORDER BY $decidedAt DESC, $changed DESC LIMIT :limit)
         """
         val sources = if (repo) sessions else sessions + others
         return """
