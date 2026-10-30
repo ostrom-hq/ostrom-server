@@ -1,24 +1,36 @@
 name: Demo stack
 
 # The local demo stack of ostrom-helm (compose/demo: Mailpit, a fake GitHub, cloud sessions on Docker, Stripe's test
-# mode), run with the REAL images: this repository's server image of the commit (or `edge`), its cloud session image,
-# and the console built from ostrom-web main. Then the customer's journey from outside (compose/demo/journey.mjs),
-# whose report becomes the job summary. It proves on a runner what the demo shows on a laptop; the film is made there.
-# This repository's token reads its own GHCR packages, which ostrom-helm's and ostrom-e2e's cannot yet.
-# Off the org's one-`ci`-job rule on purpose: it never runs on a pull request unless the pull request changes this file.
+# mode), run with the REAL images: this repository's server image (the one Image just published, or `edge`), its cloud
+# session image, and the console built from ostrom-web main. Then the customer's journey from outside
+# (compose/demo/journey.mjs), whose report becomes the job summary. It proves on a runner what the demo shows on a
+# laptop; the film is made there. This repository's token reads its own GHCR packages, which ostrom-helm's and
+# ostrom-e2e's cannot yet. Called by Image on main after each publication; off the org's one-`ci`-job rule on purpose:
+# on a pull request it runs only when the pull request changes this file.
 on:
-  workflow_run:
-    workflows: [Image]
-    types: [completed]
-    branches: [main]
+  workflow_call:
+    inputs:
+      server_image:
+        type: string
+        default: ""
+      helm_ref:
+        type: string
+        default: main
+    secrets:
+      DEPLOY_KEY_HELM:
+        required: true
+      DEPLOY_KEY_WEB:
+        required: true
+      STRIPE_TEST_KEY:
+        required: false
   workflow_dispatch:
     inputs:
+      server_image:
+        description: Server image (empty = edge)
+        default: ""
       helm_ref:
         description: ostrom-helm ref holding compose/demo
         default: main
-      server_image:
-        description: Server image (empty = the Image run's commit, or edge)
-        default: ""
   pull_request:
     paths: [.github/workflows/demo-stack.yml]
 
@@ -31,16 +43,16 @@ permissions:
 
 jobs:
   demo:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
       packages: read
     env:
+      # A pull request changing this workflow runs it against the ostrom-helm branch that adds compose/demo.
       HELM_REF: ${{ inputs.helm_ref || 'feat/compose-demo' }}
-      SERVER_IMAGE_INPUT: ${{ inputs.server_image }}
-      RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+      SERVER_IMAGE: ${{ inputs.server_image || 'ghcr.io/ostrom-hq/ostrom-server:edge' }}
+      RUNNER_IMAGE: ghcr.io/ostrom-hq/ostrom-runner:latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,30 +68,26 @@ jobs:
           path: web
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: 24 }
+        with:
+          node-version: 24
+          package-manager-cache: false
       - name: Images
+        id: images
         env:
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
-          if [ -n "$SERVER_IMAGE_INPUT" ]; then server="$SERVER_IMAGE_INPUT"
-          elif [ -n "$RUN_SHA" ]; then server="ghcr.io/ostrom-hq/ostrom-server:sha-${RUN_SHA::7}"
-          else server=ghcr.io/ostrom-hq/ostrom-server:edge; fi
-          docker pull -q "$server"
-          docker pull -q ghcr.io/ostrom-hq/ostrom-runner:latest
-          server_digest=$(docker inspect -f '{{index .RepoDigests 0}}' "$server")
-          runner_digest=$(docker inspect -f '{{index .RepoDigests 0}}' ghcr.io/ostrom-hq/ostrom-runner:latest)
+          docker pull -q "$SERVER_IMAGE"
+          docker pull -q "$RUNNER_IMAGE"
+          server=$(docker inspect -f '{{index .RepoDigests 0}}' "$SERVER_IMAGE")
+          runner=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
           docker build -q -t ostrom-web:demo web > /dev/null
-          {
-            echo "OSTROM_SERVER_IMAGE=$server_digest"
-            echo "OSTROM_RUNNER_IMAGE=$runner_digest"
-            echo "OSTROM_WEB_IMAGE=ostrom-web:demo"
-          } >> "$GITHUB_ENV"
+          { echo "server=$server"; echo "runner=$runner"; } >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
-            echo "- server: \`$server_digest\`"
-            echo "- cloud session: \`$runner_digest\`"
+            echo "- server: \`$server\`"
+            echo "- cloud session: \`$runner\`"
             echo "- console: ostrom-web main $(git -C web rev-parse --short HEAD), built here"
             echo "- ostrom-helm $(git -C helm rev-parse --short HEAD) ($HELM_REF)"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -90,12 +98,18 @@ jobs:
           if [ -n "$STRIPE_TEST_KEY" ]; then
             umask 077
             printf %s "$STRIPE_TEST_KEY" > "$RUNNER_TEMP/stripe-test.key"
-            echo "OSTROM_DEMO_STRIPE_KEY_FILE=$RUNNER_TEMP/stripe-test.key" >> "$GITHUB_ENV"
           fi
       - name: The demo's names resolve to this machine
         run: echo "127.0.0.1 api.localhost app.localhost mail.localhost" | sudo tee -a /etc/hosts > /dev/null
       - name: Up
-        run: helm/compose/demo/demo.sh up
+        env:
+          OSTROM_SERVER_IMAGE: ${{ steps.images.outputs.server }}
+          OSTROM_RUNNER_IMAGE: ${{ steps.images.outputs.runner }}
+          OSTROM_WEB_IMAGE: ostrom-web:demo
+        run: |
+          # Stripe's test mode only when the key is there.
+          if [ -s "$RUNNER_TEMP/stripe-test.key" ]; then export OSTROM_DEMO_STRIPE_KEY_FILE="$RUNNER_TEMP/stripe-test.key"; fi
+          helm/compose/demo/demo.sh up
       - name: The customer's journey
         working-directory: helm/compose
         env:
