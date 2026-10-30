@@ -23,12 +23,13 @@ import kotlin.uuid.Uuid
 
 /**
  * [WaitsRepository] on PostgreSQL (table `automations_waits` of [AutomationsMigrations]). The question is JSON; the
- * first answer wins because a wait is only ever resolved or cancelled `WHERE status = 'open'`.
+ * first answer wins because a wait is only ever resolved or cancelled `WHERE status = 'open'`. Every query runs
+ * confined to its organization ([inTenant], S2-01).
  *
  * @param driver The database.
  */
 internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository {
-    override suspend fun createWithinLimit(wait: Wait, maxOpen: Int): CreateOutcome = driver.transaction {
+    override suspend fun createWithinLimit(wait: Wait, maxOpen: Int): CreateOutcome = driver.inTenant(wait.orgId) {
         // Serialize the count and the insert of one scope, so that two concurrent asks never both pass the limit.
         val scope = wait.sessionId?.let { "session:$it" } ?: "member:${wait.createdBy}"
         fetchAll(
@@ -51,7 +52,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             ).bind("session_id", wait.sessionId)
         }
         val open = fetchAll(count.bind("org_id", wait.orgId)).getOrThrow().first().get("n").asInt()
-        if (open >= maxOpen) return@transaction CreateOutcome.AT_LIMIT
+        if (open >= maxOpen) return@inTenant CreateOutcome.AT_LIMIT
         val inserted = fetchAll(
             Statement.create(
                 """
@@ -75,7 +76,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         if (inserted.isEmpty()) CreateOutcome.DUPLICATE else CreateOutcome.CREATED
     }
 
-    override suspend fun findByIdempotencyKey(orgId: Uuid, createdBy: String, key: String): Wait? = driver.fetchAll(
+    override suspend fun findByIdempotencyKey(orgId: Uuid, createdBy: String, key: String): Wait? = driver.fetchInOrg(
+        orgId,
         Statement.create(
             """
             SELECT $COLUMNS FROM automations_waits WHERE org_id = :org_id AND created_by = :created_by AND
@@ -84,7 +86,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         ).bind("org_id", orgId).bind("created_by", createdBy).bind("key", key),
     ).getOrThrow().firstOrNull()?.toWait()
 
-    override suspend fun get(orgId: Uuid, id: Uuid): Wait? = driver.fetchAll(
+    override suspend fun get(orgId: Uuid, id: Uuid): Wait? = driver.fetchInOrg(
+        orgId,
         Statement.create("""SELECT $COLUMNS FROM automations_waits WHERE id = :id AND org_id = :org_id""")
             .bind("id", id).bind("org_id", orgId),
     ).getOrThrow().firstOrNull()?.toWait()
@@ -115,10 +118,11 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             .bind("run_id", filter.runId)
             .bind("limit", limit)
         if (before != null) statement.bind("before", before)
-        return driver.fetchAll(statement).getOrThrow().map { it.toWait() }
+        return driver.fetchInOrg(filter.orgId, statement).getOrThrow().map { it.toWait() }
     }
 
-    override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait? = driver.fetchAll(
+    override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait? = driver.fetchInOrg(
+        orgId,
         Statement.create(
             """
             UPDATE automations_waits SET status = 'resolved', answer_action = :action, answer_values = :values,
@@ -133,7 +137,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             .bind("org_id", orgId),
     ).getOrThrow().firstOrNull()?.toWait()
 
-    override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? = driver.fetchAll(
+    override suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait? = driver.fetchInOrg(
+        orgId,
         Statement.create(
             """
             UPDATE automations_waits SET status = 'cancelled', resolved_at = :now WHERE id = :id AND org_id =

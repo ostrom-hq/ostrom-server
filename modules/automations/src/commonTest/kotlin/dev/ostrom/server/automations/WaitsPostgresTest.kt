@@ -24,11 +24,14 @@ import dev.ostrom.server.automations.fakes.RecordingEvents
 import dev.ostrom.server.automations.fakes.alice
 import dev.ostrom.server.automations.fakes.bob
 import dev.ostrom.server.automations.fakes.testIdentities
+import dev.ostrom.server.automations.infrastructure.inTenant
 import dev.ostrom.server.automations.presentation.AnswerWaitRequest
 import dev.ostrom.server.automations.presentation.CreateWaitRequest
 import dev.ostrom.server.automations.presentation.WaitResponse
 import dev.ostrom.server.automations.presentation.WaitsResponse
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -194,6 +197,35 @@ class WaitsPostgresTest {
             assertEquals(listOf(wait.id), rest.body<WaitsResponse>().items.map { it.id })
             assertEquals(listOf("created", "resolved", "created", "cancelled"), events.seen.map { it.first })
         }
+    }
+
+    @Test
+    fun anotherOrganizationsWaitsAreNeitherSeenNorWritten() = serverTest(listOf(AutomationsModule)) { server ->
+        val repository = server.koin.get<WaitsRepository>()
+        assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(), 10))
+        suspend fun count(org: Uuid) = server.driver.inTenant(org) {
+            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM automations_waits")).getOrThrow().first().get("n")
+                .asLong()
+        }
+        assertEquals(1L, count(ORG_A))
+        // No WHERE org_id: the policy alone hides organization A's waits.
+        assertEquals(0L, count(ORG_B))
+        // A write for another organization is refused.
+        assertFailsWith<Exception> {
+            server.driver.inTenant(ORG_B) {
+                execute(
+                    Statement.create(
+                        "INSERT INTO automations_waits (id, org_id, kind, status, assignee, created_by, question, " +
+                            "created_at) VALUES (:id, :org, 'k', 'open', 'a', 'b', '{}', now())",
+                    ).bind("id", Uuid.random()).bind("org", ORG_A),
+                ).getOrThrow()
+            }
+        }
+        // B's update reaches none of A's waits.
+        val touched = server.driver.inTenant(ORG_B) {
+            execute(Statement.create("UPDATE automations_waits SET status = 'cancelled'")).getOrThrow()
+        }
+        assertEquals(0L, touched)
     }
 
     @Test
