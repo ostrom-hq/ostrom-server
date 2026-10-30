@@ -1,5 +1,7 @@
 package dev.ostrom.server.kernel.module
 
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
@@ -19,10 +21,18 @@ import kotlin.time.Clock
  * @param driver The database.
  * @param signer The instance signing key.
  * @param clock The clock use cases read; tests inject a fixed one.
+ * @param config Where modules read their own configuration keys (`OSTROM_<MODULE>_…`); empty in tests by default.
  *
  * @return The module.
  */
-fun kernelModule(logger: Logger, driver: Driver, signer: InstanceSigner, clock: Clock = Clock.System): Module = module {
+fun kernelModule(
+    logger: Logger,
+    driver: Driver,
+    signer: InstanceSigner,
+    clock: Clock = Clock.System,
+    config: ConfigSource = MapConfigSource(emptyMap()),
+): Module = module {
+    single { config }
     single { logger }
     single { driver }
     single { signer }

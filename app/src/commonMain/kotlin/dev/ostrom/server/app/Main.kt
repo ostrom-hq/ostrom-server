@@ -28,8 +28,14 @@ import kotlin.system.exitProcess
  * one structured log line.
  */
 fun main() {
+    val source = try {
+        ServerConfig.source()
+    } catch (error: InvalidConfigException) {
+        JsonLogger(LogLevel.ERROR).error("invalid configuration", mapOf("reason" to error.message))
+        exitProcess(2)
+    }
     val config = try {
-        ServerConfig.load()
+        ServerConfig.from(source)
     } catch (error: InvalidConfigException) {
         JsonLogger(LogLevel.ERROR).error("invalid configuration", mapOf("reason" to error.message))
         exitProcess(2)
@@ -42,7 +48,7 @@ fun main() {
     try {
         val database = connectPostgres(config.database).also { driver = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val server = serverKoin(kernelModule(logger, database, signer), modules).also { koin = it }
+        val server = serverKoin(kernelModule(logger, database, signer, config = source), modules).also { koin = it }
         runBlocking {
             val migrations = server.get<MigrationRunner>()
             modules.forEach { migrations.migrate(it.name, it.migrations) }

@@ -53,10 +53,20 @@ data class ServerConfig(
          *
          * @throws InvalidConfigException When a required value is missing or a value is invalid.
          */
-        fun load(): ServerConfig {
+        fun load(): ServerConfig = from(source())
+
+        /**
+         * The configuration source of the process: the environment, then the file named by `OSTROM_CONFIG_FILE`.
+         * Modules read their own keys from it (bound in Koin by the kernel).
+         *
+         * @return The source.
+         *
+         * @throws InvalidConfigException When the configuration file is missing or malformed.
+         */
+        fun source(): ConfigSource {
             val environment = EnvironmentConfigSource()
             val file = environment["OSTROM_CONFIG_FILE"]?.let { MapConfigSource(readConfigFile(it)) }
-            return from(LayeredConfigSource(listOfNotNull(environment, file)))
+            return LayeredConfigSource(listOfNotNull(environment, file))
         }
 
         private fun ConfigSource.required(key: String): String =
