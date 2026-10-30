@@ -17,14 +17,14 @@ private val requestStart = AttributeKey<TimeSource.Monotonic.ValueTimeMark>("ost
 /**
  * One structured line per answered request: method, route template ([routeTemplate]: never the concrete path, which
  * can hold an artifact ticket or a public link's slug, nor the query string, which may carry a token; S2-45), status,
- * duration and request id. The health route is logged at DEBUG so probes do not flood the logs.
+ * duration and request id. The probes (`/health`, `/ready`) are logged at DEBUG so as not to flood the logs.
  */
 val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingConfig) {
     val logger = pluginConfig.logger
     onCall { call -> call.attributes.put(requestStart, TimeSource.Monotonic.markNow()) }
     on(ResponseSent) { call ->
         logger.log(
-            if (call.request.path() in HEALTH_PATHS) LogLevel.DEBUG else LogLevel.INFO,
+            if (call.request.path() in PROBE_PATHS) LogLevel.DEBUG else LogLevel.INFO,
             "request served",
             requestFields(
                 method = call.request.httpMethod.value,

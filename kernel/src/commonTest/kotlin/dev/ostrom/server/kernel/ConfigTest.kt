@@ -10,6 +10,7 @@ import dev.ostrom.server.kernel.config.ServerConfig
 import dev.ostrom.server.kernel.config.parseConfigFile
 import dev.ostrom.server.kernel.config.readConfigFile
 import dev.ostrom.server.kernel.logging.LogLevel
+import dev.ostrom.server.kernel.network.TrustedProxies
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -21,6 +22,9 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 class ConfigTest {
@@ -222,6 +226,54 @@ class ConfigTest {
         assertEquals(
             "DatabaseConfig(url=postgresql://localhost:5432/ostrom, username=ostrom, password=***, maxConnections=10)",
             ServerConfig.from(MapConfigSource(database)).database.toString(),
+        )
+    }
+
+    @Test
+    fun readsTheTrustedProxiesAndTheDrainDelay() {
+        val defaults = ServerConfig.from(MapConfigSource(database))
+        assertSame(TrustedProxies.NONE, defaults.trustedProxies)
+        assertEquals(5.seconds, defaults.drainDelay)
+        val config = ServerConfig.from(
+            MapConfigSource(
+                database + mapOf("OSTROM_TRUSTED_PROXIES" to "10.0.0.0/8", "OSTROM_SHUTDOWN_DELAY_SECONDS" to "0"),
+            ),
+        )
+        assertEquals("198.51.100.1", config.trustedProxies.clientAddress("10.0.0.5", listOf("198.51.100.1")))
+        assertEquals(Duration.ZERO, config.drainDelay)
+        val longest = ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_DELAY_SECONDS" to "10")))
+        assertEquals(10.seconds, longest.drainDelay)
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_DELAY_SECONDS" to "11")))
+        }
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_TRUSTED_PROXIES" to "everyone")))
+        }
+    }
+
+    @Test
+    fun readsTheMigrationConnectionFromItsOwnKeysOnly() {
+        val config = ServerConfig.migrationDatabase(
+            MapConfigSource(
+                database + mapOf(
+                    "OSTROM_DATABASE_MIGRATION_URL" to "postgresql://owner:hunter2@db:5432/ostrom",
+                    "OSTROM_DATABASE_MIGRATION_PASSWORD" to "explicit",
+                ),
+            ),
+        )
+        assertEquals(DatabaseConfig("postgresql://db:5432/ostrom", "owner", "explicit", 2), config)
+        val missing = assertFailsWith<InvalidConfigException> {
+            ServerConfig.migrationDatabase(MapConfigSource(database))
+        }
+        assertEquals("OSTROM_DATABASE_MIGRATION_URL is required to migrate.", missing.message)
+        val noUser = assertFailsWith<InvalidConfigException> {
+            ServerConfig.migrationDatabase(
+                MapConfigSource(database + mapOf("OSTROM_DATABASE_MIGRATION_URL" to "postgresql://db:5432/ostrom")),
+            )
+        }
+        assertEquals(
+            "The database user is required: in the URL or OSTROM_DATABASE_MIGRATION_USER.",
+            noUser.message,
         )
     }
 }
