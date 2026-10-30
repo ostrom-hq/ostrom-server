@@ -108,8 +108,8 @@ class AskWaitUseCaseImpl(
         const val HUMAN_REQUEST = "human_request"
         const val MAX_OPEN = 20
         const val MAX_OPEN_ALONE = 100
-        val KEY = Regex("[\\x21-\\x7e]{1,200}")
-        val REFERENCE = Regex("[A-Za-z0-9._:-]{1,200}")
+        private val KEY = Regex("[\\x21-\\x7e]{1,200}")
+        private val REFERENCE = Regex("[A-Za-z0-9._:-]{1,200}")
     }
 }
 

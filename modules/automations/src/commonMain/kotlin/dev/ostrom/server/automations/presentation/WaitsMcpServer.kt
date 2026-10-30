@@ -158,20 +158,20 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
     private data class WaitArguments(val wait: String)
 
     private companion object {
-        val JSON = Json { ignoreUnknownKeys = true }
+        private val JSON = Json { ignoreUnknownKeys = true }
         const val PARSE_ERROR = -32700
         const val INVALID_REQUEST = -32600
         const val METHOD_NOT_FOUND = -32601
         const val INVALID_PARAMS = -32602
         const val MAX_ECHO = 64
-        val VERSIONS = listOf("2025-06-18", "2025-03-26", "2024-11-05")
-        val TOOL_NAMES = setOf("ask_human", "list_waits", "get_wait", "cancel_wait")
+        private val VERSIONS = listOf("2025-06-18", "2025-03-26", "2024-11-05")
+        private val TOOL_NAMES = setOf("ask_human", "list_waits", "get_wait", "cancel_wait")
 
         const val INSTRUCTIONS = "When you need an answer, a decision, an approval or a setup only a person can " +
             "give, call ask_human with typed fields instead of guessing, then end your turn. The person answers " +
             "from Waiting for you; you never answer a wait yourself."
 
-        val TOOLS: JsonArray = buildJsonArray {
+        private val TOOLS: JsonArray = buildJsonArray {
             add(tool("ask_human", "Ask the session's owner (or another member) and wait for the answer.", ASK_SCHEMA))
             add(tool("list_waits", "This session's waits (open by default).", LIST_SCHEMA))
             add(tool("get_wait", "One of this session's waits, with its answer.", WAIT_SCHEMA))
