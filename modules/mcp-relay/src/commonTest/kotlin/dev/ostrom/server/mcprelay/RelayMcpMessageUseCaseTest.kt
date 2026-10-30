@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay
 
 import dev.ostrom.server.mcprelay.domain.ApprovalRequester

@@ -2,7 +2,6 @@
 package dev.ostrom.server.mcprelay
 
 import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.logging.Logger
@@ -125,7 +124,7 @@ object McpRelayModule : ServerModule {
     val HTTP_CLIENT = named("mcpRelayHttpClient")
 
     override val koinModule: Module = module {
-        single { McpRelayConfig.from(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
+        single { McpRelayConfig.from(get()) }
         single(HTTP_CLIENT) {
             HttpClient {
                 followRedirects = false

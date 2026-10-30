@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -595,4 +596,20 @@ class McpRelayPostgresTest {
                 )
             }
         }
+
+    @Test
+    fun withoutIdentityEveryRouteIsRefused() {
+        val bare = module {
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
+            single<TokenAuthenticator> {
+                object : TokenAuthenticator {
+                    override suspend fun authenticate(token: String) =
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
+                }
+            }
+        }
+        serverTest(listOf(SecretsModule, McpRelayModule), bare) { server ->
+            assertEquals(HttpStatusCode.NotFound, server.client.get("$admin/servers") { bearerAuth("anyone") }.status)
+        }
+    }
 }
