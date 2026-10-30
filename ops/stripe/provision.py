@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
 """Creates or updates everything Ostrom's billing needs in a Stripe account, idempotently.
 
 Run it once per environment, again after any change of `catalog.json`: it reads what exists, changes only what
