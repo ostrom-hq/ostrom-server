@@ -167,7 +167,7 @@ class SlackPostgresTest {
             """"container":{"channel_id":"D-U0REVB","message_ts":"ts-1"}}"""
         val body = "payload=" + payload.encodeURLParameter()
         val ts = Clock.System.now().epochSeconds.toString()
-        return client.post("/api/v1/slack/interactions") {
+        return client.post("/webhooks/slack") {
             header("X-Slack-Request-Timestamp", ts)
             header("X-Slack-Signature", signature ?: slackSign(secret, ts, body.encodeToByteArray()))
             contentType(ContentType.Application.FormUrlEncoded)

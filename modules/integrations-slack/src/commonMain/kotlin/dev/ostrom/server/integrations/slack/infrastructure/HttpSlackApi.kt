@@ -60,13 +60,15 @@ class HttpSlackApi(
     private suspend fun call(method: String, body: JsonObject): Answer {
         val bot = token ?: throw SlackCallException("Slack is not configured on this server.")
         val response = send(method, bot, body)
-        val answer = try {
-            json.decodeFromString<Answer>(response.bodyAsText())
-        } catch (error: SerializationException) {
-            throw SlackCallException("Slack answered $method unexpectedly (${response.status.value}).", error)
-        }
+        val answer = decode(method, response)
         if (!answer.ok) throw SlackCallException("Slack refused $method (${answer.error ?: response.status.value}).")
         return answer
+    }
+
+    private suspend fun decode(method: String, response: HttpResponse): Answer = try {
+        json.decodeFromString<Answer>(response.bodyAsText())
+    } catch (error: SerializationException) {
+        throw SlackCallException("Slack answered $method unexpectedly (${response.status.value}).", error)
     }
 
     private suspend fun send(method: String, bot: String, body: JsonObject): HttpResponse = try {
@@ -91,8 +93,7 @@ class HttpSlackApi(
         val channel: Channel? = null,
         val ts: String? = null,
     )
-
-    private companion object {
-        val json = Json { ignoreUnknownKeys = true }
-    }
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val json = Json { ignoreUnknownKeys = true }

@@ -68,7 +68,9 @@ class SlackLinksUseCaseImpl(
 
     private companion object {
         const val MAX_ID = 200
-        val TEAM = Regex("T[A-Z0-9]{2,30}")
-        val USER = Regex("[UW][A-Z0-9]{2,30}")
     }
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val TEAM = Regex("T[A-Z0-9]{2,30}")
+private val USER = Regex("[UW][A-Z0-9]{2,30}")

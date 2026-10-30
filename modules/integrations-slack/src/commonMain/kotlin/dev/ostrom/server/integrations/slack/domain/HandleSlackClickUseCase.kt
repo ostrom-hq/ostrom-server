@@ -60,11 +60,14 @@ class HandleSlackClickUseCaseImpl(
         val actor = GateActor(link.personId, link.orgId, ActorKind.USER, personId = link.personId)
         return try {
             val approval = approvals(actor, click.requestId)
-            if (!SlackRisk.answerable(approval.gate)) return refuse(click, IN_OSTROM, SlackClickOutcome.NOT_ON_SLACK)
-            val choice = if (click.yes) Answer.YES else Answer.NO
-            // The decision updates every message of the gate (SlackGateChannel.decided).
-            answer(actor, click.requestId, choice, click.shownDigest, AnswerChannel.SLACK)
-            SlackClickOutcome.ANSWERED
+            if (SlackRisk.answerable(approval.gate)) {
+                val choice = if (click.yes) Answer.YES else Answer.NO
+                // The decision updates every message of the gate (SlackGateChannel.decided).
+                answer(actor, click.requestId, choice, click.shownDigest, AnswerChannel.SLACK)
+                SlackClickOutcome.ANSWERED
+            } else {
+                refuse(click, IN_OSTROM, SlackClickOutcome.NOT_ON_SLACK)
+            }
         } catch (refused: OstromException) {
             logger.info("slack answer refused", mapOf("request_id" to click.requestId, "kind" to refused.kind.name))
             val why = "Ostrom did not take this answer (${refused.kind.name.lowercase()})."

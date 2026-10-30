@@ -4,9 +4,9 @@ package dev.ostrom.server.integrations.slack.presentation
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
-/** `/api/v1/slack/interactions`: the clicks of Slack's buttons, signed with the app's signing secret. */
+/** `/webhooks/slack`: the clicks of Slack's buttons, signed with the app's signing secret. */
 @Serializable
-@Resource("/api/v1/slack/interactions")
+@Resource("/webhooks/slack")
 class SlackInteractionsPath
 
 /** `/api/v1/slack/links`: who of the organization is reached on Slack. */
