@@ -18,7 +18,8 @@ import kotlin.uuid.Uuid
  * @property repository The repository cloned into the workspace at the first start, if any.
  * @property state Where the session is.
  * @property desiredState Where the owner wants it.
- * @property phase A detail of [state] for humans (`starting_runner`, `idle_timeout`…); clients tolerate unknown values.
+ * @property phase A detail of [state] for humans (`starting_runner`, `idle_timeout`…); clients tolerate unknown
+ *   values.
  * @property epoch The number of the current (or last) execution; 0 before the first one.
  * @property generation Incremented by every write, for compare-and-set.
  * @property failure Why the session failed, or why its last start or run stopped.

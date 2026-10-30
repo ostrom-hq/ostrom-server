@@ -98,7 +98,8 @@ class KubernetesRuntimeDriver(
     }
 
     override suspend fun executionStatus(session: CloudSession): ExecutionStatus {
-        val response = call(HttpMethod.Get, "$base/api/v1/namespaces/$namespace/pods/${RuntimeNames.execution(session.id, session.epoch)}")
+        val pod = RuntimeNames.execution(session.id, session.epoch)
+        val response = call(HttpMethod.Get, "$base/api/v1/namespaces/$namespace/pods/$pod")
         if (response.status == HttpStatusCode.NotFound) return ExecutionStatus.MISSING
         response.requireSuccess("read pod")
         val pod = Json.parseToJsonElement(response.bodyAsText()).jsonObject
@@ -110,7 +111,8 @@ class KubernetesRuntimeDriver(
         for (kind in listOf("pods", "secrets")) {
             val parameters = mapOf("labelSelector" to selector) +
                 if (kind == "pods") mapOf("gracePeriodSeconds" to GRACE_SECONDS.toString()) else emptyMap()
-            call(HttpMethod.Delete, "$base/api/v1/namespaces/$namespace/$kind", parameters = parameters).requireSuccess("delete $kind")
+            call(HttpMethod.Delete, "$base/api/v1/namespaces/$namespace/$kind", parameters = parameters)
+                .requireSuccess("delete $kind")
         }
     }
 
@@ -136,9 +138,8 @@ class KubernetesRuntimeDriver(
                 current.requireSuccess("read network policy")
                 val version = Json.parseToJsonElement(current.bodyAsText()).jsonObject["metadata"]?.jsonObject
                     ?.get("resourceVersion")?.jsonPrimitive?.content
-                val replaced = JsonObject(
-                    policy + ("metadata" to JsonObject(policy.getValue("metadata").jsonObject + ("resourceVersion" to JsonPrimitive(version)))),
-                )
+                val metadata = policy.getValue("metadata").jsonObject + ("resourceVersion" to JsonPrimitive(version))
+                val replaced = JsonObject(policy + ("metadata" to JsonObject(metadata)))
                 call(HttpMethod.Put, "$path/$name", replaced).requireSuccess("replace network policy")
             } else {
                 created.requireSuccess("create network policy")
@@ -147,20 +148,27 @@ class KubernetesRuntimeDriver(
         policiesApplied = true
     }
 
+    // A manifest reads top to bottom like the YAML it stands for: splitting it would scatter one object.
+    @Suppress("LongMethod")
     private fun podManifest(spec: ExecutionSpec, name: String): JsonObject = buildJsonObject {
         put("apiVersion", "v1")
         put("kind", "Pod")
         putJsonObject("metadata") {
             put("name", name)
-            put("labels", JsonObject(labels(spec.sessionId, spec.epoch) + (EGRESS_LABEL to JsonPrimitive(egress(spec)))))
-            if (spec.limits.restrictedEgress) putJsonObject("annotations") { put("kubernetes.io/egress-bandwidth", RESTRICTED_BANDWIDTH) }
+            val egressLabel = EGRESS_LABEL to JsonPrimitive(egress(spec))
+            put("labels", JsonObject(labels(spec.sessionId, spec.epoch) + egressLabel))
+            if (spec.limits.restrictedEgress) {
+                putJsonObject("annotations") { put("kubernetes.io/egress-bandwidth", RESTRICTED_BANDWIDTH) }
+            }
         }
         putJsonObject("spec") {
             put("restartPolicy", "Never")
             put("automountServiceAccountToken", false)
             put("enableServiceLinks", false)
             put("terminationGracePeriodSeconds", GRACE_SECONDS)
-            settings.imagePullSecret?.let { secret -> putJsonArray("imagePullSecrets") { add(buildJsonObject { put("name", secret) }) } }
+            settings.imagePullSecret?.let { secret ->
+                putJsonArray("imagePullSecrets") { add(buildJsonObject { put("name", secret) }) }
+            }
             putJsonObject("securityContext") {
                 put("runAsNonRoot", true)
                 put("runAsUser", RUNNER_UID)
@@ -192,7 +200,13 @@ class KubernetesRuntimeDriver(
                         }
                         putJsonArray("volumeMounts") {
                             add(buildJsonObject { put("name", "workspace"); put("mountPath", WORKSPACE) })
-                            add(buildJsonObject { put("name", "runner-token"); put("mountPath", TOKEN_DIRECTORY); put("readOnly", true) })
+                            add(
+                                buildJsonObject {
+                                    put("name", "runner-token")
+                                    put("mountPath", TOKEN_DIRECTORY)
+                                    put("readOnly", true)
+                                },
+                            )
                         }
                     },
                 )
@@ -201,7 +215,9 @@ class KubernetesRuntimeDriver(
                 add(
                     buildJsonObject {
                         put("name", "workspace")
-                        putJsonObject("persistentVolumeClaim") { put("claimName", RuntimeNames.workspace(spec.sessionId)) }
+                        putJsonObject("persistentVolumeClaim") {
+                            put("claimName", RuntimeNames.workspace(spec.sessionId))
+                        }
                     },
                 )
                 add(
@@ -226,7 +242,9 @@ class KubernetesRuntimeDriver(
     private suspend fun create(path: String, body: JsonObject) {
         val response = call(HttpMethod.Post, "$base$path", body)
         // Creating what exists is a success: every step can be repeated after a crash.
-        if (response.status != HttpStatusCode.Conflict) response.requireSuccess("create ${body["kind"]?.jsonPrimitive?.content}")
+        if (response.status != HttpStatusCode.Conflict) {
+            response.requireSuccess("create ${body["kind"]?.jsonPrimitive?.content}")
+        }
     }
 
     private suspend fun call(
@@ -305,7 +323,8 @@ class KubernetesRuntimeDriver(
  * @param step What the driver was doing.
  * @param status The HTTP status.
  */
-class KubernetesApiException(step: String, status: HttpStatusCode) : Exception("Kubernetes API: $step answered ${status.value}.")
+class KubernetesApiException(step: String, status: HttpStatusCode) :
+    Exception("Kubernetes API: $step answered ${status.value}.")
 
 private fun HttpResponse.requireSuccess(step: String) {
     if (!status.isSuccess()) throw KubernetesApiException(step, status)

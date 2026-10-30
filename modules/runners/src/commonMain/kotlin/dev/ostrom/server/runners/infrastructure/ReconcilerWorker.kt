@@ -56,7 +56,11 @@ class ReconcilerWorker(
             } catch (error: Exception) {
                 logger.error(
                     "cloud session step failed",
-                    mapOf("session_id" to session.id, "state" to session.state.wire, "error" to error::class.simpleName),
+                    mapOf(
+                        "session_id" to session.id,
+                        "state" to session.state.wire,
+                        "error" to error::class.simpleName,
+                    ),
                 )
                 clock.now() + RETRY_DELAY
             }

@@ -14,13 +14,22 @@ kotlin {
             api(libs.ktor.server.auth)
             api(libs.ktor.server.call.id)
             api(libs.ktor.serialization.json)
+            api(libs.koin.core)
             api(libs.sqlx4k.postgres)
             api(libs.kotlinx.io)
             implementation(libs.cryptography.core)
-            implementation(libs.cryptography.openssl)
+        }
+        nativeMain.dependencies {
+            implementation(libs.cryptography.openssl3.prebuilt)
+        }
+        // The JVM target only runs the tests and Kover (never shipped): the JDK provides Ed25519 there.
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
+            implementation(project(":testing"))
             implementation(libs.ktor.server.test.host)
+            implementation(libs.ktor.client.content.negotiation)
         }
     }
 }

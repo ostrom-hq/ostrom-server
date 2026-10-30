@@ -162,7 +162,8 @@ class TerminalRelay(
      *
      * @return Whether a runner took it.
      */
-    suspend fun resize(sessionId: Uuid, columns: Int, rows: Int): Boolean = toRunner(sessionId, RunnerBound.Resize(columns, rows))
+    suspend fun resize(sessionId: Uuid, columns: Int, rows: Int): Boolean =
+        toRunner(sessionId, RunnerBound.Resize(columns, rows))
 
     /**
      * The number of rooms, runners and clients, for tests and metrics.

@@ -1,5 +1,7 @@
 package dev.ostrom.server.testing
 
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.configureHttp
@@ -7,6 +9,7 @@ import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.kernel.module.kernelModule
+import dev.ostrom.server.kernel.module.serverKoin
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.ktor.client.HttpClient
@@ -16,7 +19,6 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import org.koin.core.Koin
 import org.koin.core.module.Module
-import org.koin.dsl.koinApplication
 
 /**
  * What a server test can use.
@@ -43,25 +45,34 @@ fun serverTest(
     modules: List<ServerModule>,
     overrides: Module? = null,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
+) = serverTest(modules, overrides, EnvironmentConfigSource(), block)
+
+/**
+ * [serverTest] with the test database configuration read from [environment] (the skipped case is tested so).
+ */
+internal fun serverTest(
+    modules: List<ServerModule>,
+    overrides: Module?,
+    environment: ConfigSource,
+    block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) = testApplication {
-    val database = TestDatabase.create() ?: return@testApplication
-    val signer = Ed25519InstanceSigner.generate()
-    val koin = koinApplication {
-        allowOverride(true)
-        modules(
-            listOf(kernelModule(JsonLogger(LogLevel.WARN), database.driver, signer)) +
-                modules.map { it.koinModule } + listOfNotNull(overrides),
-        )
-    }.koin
+    val database = TestDatabase.create(environment) ?: return@testApplication
+    var started: Koin? = null
     try {
+        val signer = Ed25519InstanceSigner.generate()
+        val koin = serverKoin(kernelModule(JsonLogger(LogLevel.WARN), database.driver, signer), modules, overrides)
+        started = koin
         val migrations = koin.get<MigrationRunner>()
         modules.forEach { migrations.migrate(it.name, it.migrations) }
         modules.forEach { it.initialize(koin) }
         application { configureHttp(koin, modules) }
+        // Started now, not lazily at the first request: a test that never calls the client would otherwise start
+        // the application after the finally below has closed Koin.
+        startApplication()
         val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
         block(TestServer(koin, database.driver, client))
     } finally {
-        koin.close()
+        started?.close()
         database.close()
     }
 }

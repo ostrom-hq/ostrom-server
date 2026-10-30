@@ -1,14 +1,11 @@
 package dev.ostrom.server.runners
 
-import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.PrincipalKind
-import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.DesiredState
 import dev.ostrom.server.runners.domain.RunnerTokens
 import dev.ostrom.server.runners.domain.SessionState
-import dev.ostrom.server.runners.fakes.ORG_A
-import dev.ostrom.server.runners.fakes.ORG_B
+import dev.ostrom.server.runners.fakes.ALICE
+import dev.ostrom.server.runners.fakes.testIdentities
 import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.presentation.TerminalCloseCodes
 import dev.ostrom.server.runners.presentation.TerminalControl
@@ -29,7 +26,6 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
-import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -38,18 +34,7 @@ import kotlin.uuid.Uuid
 
 /** The terminal WebSockets against a real server and database. */
 class TerminalRoutesTest {
-    private val identities = module {
-        single<TokenAuthenticator> {
-            object : TokenAuthenticator {
-                override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
-                    "alice" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("org:$ORG_A"))
-                    "carol" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("org:$ORG_B"))
-                    "reader" -> AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("org:$ORG_A", "cloud:read"))
-                    else -> null
-                }
-            }
-        }
-    }
+    private val identities = testIdentities
 
     private val t0 = Instant.parse("2026-10-30T10:00:00Z")
 
@@ -63,7 +48,7 @@ class TerminalRoutesTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val tokens = server.koin.get<RunnerTokens>()
         val token = tokens.mint()
-        val running = session(state = SessionState.RUNNING, createdAt = t0).copy(epoch = 2, runnerTokenHash = tokens.hash(token))
+        val running = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0).copy(epoch = 2, runnerTokenHash = tokens.hash(token))
         repository.createWithinCap(running, 5)
         val ws: HttpClient = createClient { install(WebSockets) }
 
@@ -96,7 +81,7 @@ class TerminalRoutesTest {
 
     @Test
     fun aBrowserOpensTheTerminalWithASingleUseTicket() = serverTest(listOf(RunnersModule), identities) { server ->
-        val live = session(state = SessionState.RUNNING, createdAt = t0)
+        val live = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0)
         server.koin.get<CloudSessionsRepository>().createWithinCap(live, 5)
         val ticket = server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("alice") }.body<TerminalTicketResponse>()
         val ws = createClient { install(WebSockets) }
@@ -115,8 +100,8 @@ class TerminalRoutesTest {
     @Test
     fun theTerminalRefusesStrangersAndOverSessions() = serverTest(listOf(RunnersModule), identities) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
-        val live = session(state = SessionState.RUNNING, createdAt = t0)
-        val over = session(state = SessionState.TERMINATED, desired = DesiredState.TERMINATED, createdAt = t0)
+        val live = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0)
+        val over = session(ownerId = ALICE.toString(), state = SessionState.TERMINATED, desired = DesiredState.TERMINATED, createdAt = t0)
         repository.createWithinCap(live, 5)
         repository.createWithinCap(over, 5)
         val ws = createClient { install(WebSockets) }
@@ -140,7 +125,7 @@ class TerminalRoutesTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val tokens = server.koin.get<RunnerTokens>()
         val token = tokens.mint()
-        val running = session(state = SessionState.RUNNING, createdAt = t0).copy(epoch = 2, runnerTokenHash = tokens.hash(token))
+        val running = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0).copy(epoch = 2, runnerTokenHash = tokens.hash(token))
         repository.createWithinCap(running, 5)
         val ws = createClient { install(WebSockets) }
 
