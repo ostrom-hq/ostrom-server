@@ -99,8 +99,9 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
                     .bind("org_id", artifact.orgId),
             ).getOrThrow()
             execute(
-                Statement.create("""UPDATE artifacts_routes SET link_slug = :slug WHERE artifact_id = :id""")
-                    .bind("slug", artifact.linkSlug).bind("id", artifact.id),
+                Statement.create(
+                    """UPDATE artifacts_routes SET link_slug = :slug WHERE artifact_id = :id AND org_id = :org_id""",
+                ).bind("slug", artifact.linkSlug).bind("id", artifact.id).bind("org_id", artifact.orgId),
             ).getOrThrow()
         }
     }
