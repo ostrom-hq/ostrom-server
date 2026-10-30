@@ -66,8 +66,8 @@ class IdentityPostgresTest {
         users.link(bob.id, github("2"), UserEmail("bob@example.com", false), now)
         assertEquals(listOf(UserEmail("bob@example.com", true)), users.listEmails(bob.id), "Verified stays verified")
         assertEquals(listOf("github", "google"), users.listIssuers(bob.id))
-        // Linking an identity of another user changes nothing.
-        users.link(bob.id, github("1"), null, now)
+        // Linking an identity of another user changes nothing and fails, so the caller retries.
+        assertFailsWith<DuplicateIdentityException> { users.link(bob.id, github("1"), null, now) }
         assertEquals(ada, users.findByIdentity("github", "1"))
     }
 

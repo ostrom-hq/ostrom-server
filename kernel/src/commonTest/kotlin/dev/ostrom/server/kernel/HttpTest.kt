@@ -54,6 +54,7 @@ class HttpTest {
 
         override fun routes(route: Route, koin: Koin) {
             route.get("/probe/missing") { throw OstromException(ErrorKind.NOT_FOUND, "Probe not found.") }
+            route.get("/probe/subclass") { throw ProbeConflictException() }
             route.get("/probe/crash") { throw IllegalStateException("database password is hunter2") }
             route.authenticated {
                 get("/probe/me") { call.respondText(call.requirePrincipal().subjectId) }
@@ -103,6 +104,16 @@ class HttpTest {
         val response = client.get("/probe/missing")
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertEquals("Probe not found.", response.error().error.message)
+    }
+
+    private class ProbeConflictException : OstromException(ErrorKind.CONFLICT, "Probe already exists.")
+
+    @Test
+    fun aModuleErrorSubclassKeepsItsKindAndMessage() = httpTest {
+        // Kotlin/Native's StatusPages matches exact classes only: a subclass must still keep its kind.
+        val response = client.get("/probe/subclass")
+        assertEquals(HttpStatusCode.Conflict, response.status)
+        assertEquals("Probe already exists.", response.error().error.message)
     }
 
     @Test

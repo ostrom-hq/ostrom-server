@@ -73,9 +73,10 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
     ).getOrThrow().map { it.get("issuer").asString() }
 
     private suspend fun insertIdentity(executor: QueryExecutor, userId: Uuid, identity: VerifiedIdentity, at: Instant) {
-        // A known identity of the same user only refreshes its last use; of another user, it changes nothing (the
-        // use case found it first, so this only happens in a race, which the caller resolves).
-        executor.execute(
+        // A known identity of the same user only refreshes its last use. Of another user, nothing is written and the
+        // call fails: the use case found it free a moment ago, so another sign-in took it in between (a race), and the
+        // caller retries, which then finds it. Writing nothing silently would leave a user without a way in.
+        val written = executor.execute(
             Statement.create(
                 "INSERT INTO identity_identities (issuer, subject, user_id, email, created_at, last_used_at) " +
                     "VALUES (:issuer, :subject, :user, :email, :at, :at) " +
@@ -84,6 +85,7 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
             ).bind("issuer", identity.issuer).bind("subject", identity.subject).bind("user", userId)
                 .bind("email", identity.email).bind("at", at),
         ).getOrThrow()
+        if (written == 0L) throw DuplicateIdentityException()
     }
 
     private suspend fun upsertEmail(executor: QueryExecutor, userId: Uuid, email: UserEmail, at: Instant) {
