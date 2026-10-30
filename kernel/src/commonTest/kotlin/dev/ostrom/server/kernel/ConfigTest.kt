@@ -146,6 +146,7 @@ class ConfigTest {
     fun readsTheProcessEnvironment() {
         val environment = EnvironmentConfigSource()
         assertNotNull(environment["PATH"], "PATH is set in every test process")
+        assertEquals(environment["PATH"], ServerConfig.source()["PATH"], "The process source reads the environment")
         assertNull(environment["OSTROM_SURELY_UNSET_${Uuid.random().toHexString()}"])
     }
 
