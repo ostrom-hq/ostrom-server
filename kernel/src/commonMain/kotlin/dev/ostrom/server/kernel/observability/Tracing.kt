@@ -36,25 +36,43 @@ private const val OTHER_METHOD = "_OTHER"
 private val HTTP_METHODS = setOf("GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH")
 
 private val routeKey = AttributeKey<String>("ostrom.route")
+private val routeTemplatesRecorded = AttributeKey<Unit>("ostrom.route.recorded")
 private val spanKey = AttributeKey<SpanContext>("ostrom.span")
 
 /** The span context of the request, for logs that want to link to their trace; null for `/health` and in tests. */
 val ApplicationCall.spanContext: SpanContext? get() = attributes.getOrNull(spanKey)
 
 /**
+ * The route template of the request (`/a/{id}/{ticket}/{path...}`), [UNMATCHED_ROUTE] when no route matched: what logs,
+ * spans and metrics carry, never the concrete path, which may hold an artifact ticket or a share slug.
+ */
+val ApplicationCall.httpRoute: String get() = attributes.getOrNull(routeKey) ?: UNMATCHED_ROUTE
+
+/**
+ * Records the route template of every routed call, for [httpRoute]. Installed once, by whichever of the request logs
+ * and the telemetry asks first, so that the logs have it with telemetry off.
+ */
+fun Application.recordRouteTemplates() {
+    if (attributes.contains(routeTemplatesRecorded)) return
+    attributes.put(routeTemplatesRecorded, Unit)
+    monitor.subscribe(RoutingRoot.RoutingCallStarted) { call ->
+        call.attributes.put(routeKey, routeTemplate(call.route))
+    }
+}
+
+/**
  * Traces and measures every request: a SERVER span continuing the caller's `traceparent` (the CLI sends one), named
  * `METHOD /route/{template}` once routing matched, carried in the coroutine context so that a module's own spans and
  * model calls nest under it; the trace is returned in `traceresponse`. `/health` is measured but never traced (probes
  * would fill the traces). The span records the route template, method and status, never the path, the query or a
- * header value. Telemetry never fails a request: exporting is a non-blocking queue (CONVENTIONS 16.4).
+ * header value: a path may carry an artifact ticket or a share slug. Telemetry never fails a request: exporting is a
+ * non-blocking queue (CONVENTIONS 16.4).
  *
  * @param telemetry Where spans go.
  * @param metrics Where request durations go.
  */
 fun Application.installTelemetry(telemetry: Telemetry, metrics: OstromMetrics) {
-    monitor.subscribe(RoutingRoot.RoutingCallStarted) { call ->
-        call.attributes.put(routeKey, routeTemplate(call.route))
-    }
+    recordRouteTemplates()
     intercept(ApplicationCallPipeline.Monitoring) {
         val started = TimeSource.Monotonic.markNow()
         val method = knownMethod(call.request.httpMethod.value)
@@ -88,7 +106,7 @@ private fun ApplicationCall.endRequest(
     ending: Ending,
     started: TimeSource.Monotonic.ValueTimeMark,
 ) {
-    val route = attributes.getOrNull(routeKey) ?: UNMATCHED_ROUTE
+    val route = httpRoute
     val status = response.status()?.value ?: ending.status
     try {
         metrics.requestServed(method, route, status, started.elapsedNow())

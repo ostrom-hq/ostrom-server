@@ -366,7 +366,7 @@ class HttpTest {
         assertEquals(
             mapOf(
                 "method" to "GET",
-                "path" to "/x",
+                "route" to "/x",
                 "status" to null,
                 "duration_ms" to null,
                 "request_id" to null,

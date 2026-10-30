@@ -140,7 +140,7 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) 
 
 Inject `Logger` and log events with constant messages and named fields:
 `logger.info("org created", mapOf("org_id" to org.id))`. Never log a token, a secret, a password or a request body.
-Every request is already logged once by the kernel (method, path, status, duration, request id).
+Every request is already logged once by the kernel (method, route template — never the path, which may carry a ticket or a slug — status, duration, request id).
 
 ## 7. Tests
 

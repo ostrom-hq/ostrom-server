@@ -140,6 +140,19 @@ class TracingTest {
     }
 
     @Test
+    fun aTicketInTheUrlReachesNoSpanNorLog() = withServer {
+        client.get("/probe/tkt_SECRET1?ticket=tkt_SECRET2")
+        client.get("/nowhere/tkt_SECRET3")
+
+        val spans = telemetry.spans.flatMap { span -> listOf(span.name) + span.attributes.entries.map { "$it" } }
+        val logs = telemetry.logs.flatMap { record -> listOf(record.body) + record.attributes.entries.map { "$it" } }
+        val leaks = (spans + logs + lines).filter { "SECRET" in it }
+        assertTrue(leaks.isEmpty(), "the URL leaked into: $leaks")
+        val routes = telemetry.logs.filter { it.body == "request served" }.map { it.attributes["route"] }
+        assertEquals(listOf(AttributeValue.Text("/probe/{id}"), AttributeValue.Text(UNMATCHED_ROUTE)), routes)
+    }
+
+    @Test
     fun healthIsMeasuredButNeverTraced() = withServer {
         val response = client.get("/health")
 

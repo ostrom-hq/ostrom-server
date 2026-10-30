@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.kernel.observability.OstromMetrics
 import dev.ostrom.server.kernel.observability.installTelemetry
+import dev.ostrom.server.kernel.observability.recordRouteTemplates
 import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -40,6 +41,7 @@ const val SERVER_VERSION: String = "0.1.0-dev"
  */
 fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     val logger = koin.get<Logger>()
+    recordRouteTemplates()
     koin.getOrNull<Telemetry>()?.let { installTelemetry(it, koin.get<OstromMetrics>()) }
     install(ContentNegotiation) { json(OstromJson) }
     install(Resources)
