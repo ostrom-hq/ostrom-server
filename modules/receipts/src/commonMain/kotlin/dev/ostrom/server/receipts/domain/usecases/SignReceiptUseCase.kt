@@ -75,7 +75,6 @@ class SignReceiptUseCaseImpl(
     private fun ensure(condition: Boolean, reason: () -> String) {
         if (!condition) throw InvalidReceiptException(reason())
     }
-
 }
 
 /**
