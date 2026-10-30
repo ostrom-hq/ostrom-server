@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -108,7 +109,11 @@ class HttpTest {
                 throw SQLError(SQLError.Code.Database, kind = SQLError.Kind.UniqueViolation)
             }
             route.get("/probe/deadlock") {
-                throw SQLError(SQLError.Code.Database, "deadlock", kind = SQLError.Kind.Deadlock)
+                throw SQLError(
+                    SQLError.Code.Database,
+                    "Key (email)=(alice@example.com) is locked",
+                    kind = SQLError.Kind.Deadlock,
+                )
             }
             route.get("/probe/cancelled") { throw CancellationException("client gone") }
             route.get("/probe/unprotected-me") { call.respondText(call.requirePrincipal().subjectId) }
@@ -134,7 +139,7 @@ class HttpTest {
         }
     }
 
-    private fun httpTest(health: List<HealthCheck>? = null, block: suspend ApplicationTestBuilder.() -> Unit) =
+    private fun probeServer(health: List<HealthCheck>? = null, block: suspend ApplicationTestBuilder.() -> Unit) =
         testApplication {
             val koin = koinApplication {
                 modules(
@@ -167,7 +172,7 @@ class HttpTest {
     }
 
     @Test
-    fun healthIsOkWhenEveryCheckPasses() = httpTest {
+    fun healthIsOkWhenEveryCheckPasses() = probeServer {
         val response = client.get("/health")
         assertEquals(HttpStatusCode.OK, response.status)
         val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
@@ -175,8 +180,15 @@ class HttpTest {
     }
 
     @Test
+    fun healthIsAlsoServedAtItsContractPath() = probeServer {
+        val response = client.get("/api/v1/health")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("ok", OstromJson.decodeFromString<HealthResponse>(response.bodyAsText()).status)
+    }
+
+    @Test
     fun healthIs503WhenACheckIsDownOrFails() =
-        httpTest(listOf(FixedHealthCheck("database", false), ThrowingHealthCheck())) {
+        probeServer(listOf(FixedHealthCheck("database", false), ThrowingHealthCheck())) {
             val response = client.get("/health")
             assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
             val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
@@ -185,7 +197,7 @@ class HttpTest {
         }
 
     @Test
-    fun aCancelledHealthCheckIsNotReportedAsAnError() = httpTest(listOf(FixedHealthCheck("database", null))) {
+    fun aCancelledHealthCheckIsNotReportedAsAnError() = probeServer(listOf(FixedHealthCheck("database", null))) {
         val status = try {
             client.get("/health").status
         } catch (expected: Exception) {
@@ -196,7 +208,7 @@ class HttpTest {
     }
 
     @Test
-    fun aCancelledCallIsNotAnsweredAsAnError() = httpTest {
+    fun aCancelledCallIsNotAnsweredAsAnError() = probeServer {
         val status = try {
             client.get("/probe/cancelled").status
         } catch (expected: Exception) {
@@ -207,42 +219,42 @@ class HttpTest {
     }
 
     @Test
-    fun unknownRouteIsAJson404() = httpTest {
+    fun unknownRouteIsAJson404() = probeServer {
         val response = client.get("/nowhere")
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertEquals("not_found", response.error().error.type)
     }
 
     @Test
-    fun wrongMethodIsAJson405() = httpTest {
+    fun wrongMethodIsAJson405() = probeServer {
         val response = client.post("/health")
         assertEquals(HttpStatusCode.MethodNotAllowed, response.status)
         assertEquals("method_not_allowed", response.error().error.type)
     }
 
     @Test
-    fun domainErrorKeepsItsKindAndMessage() = httpTest {
+    fun domainErrorKeepsItsKindAndMessage() = probeServer {
         val response = client.get("/probe/missing")
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertEquals("""{"error":{"type":"not_found","message":"Probe not found."}}""", response.bodyAsText())
     }
 
     @Test
-    fun domainErrorSubclassKeepsItsKindAndMessage() = httpTest {
+    fun domainErrorSubclassKeepsItsKindAndMessage() = probeServer {
         val response = client.get("/probe/subclass")
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertEquals("Probe gone.", response.error().error.message)
     }
 
     @Test
-    fun aPlanLimitIsA402() = httpTest {
+    fun aPlanLimitIsA402() = probeServer {
         val response = client.get("/probe/quota")
         assertEquals(HttpStatusCode.PaymentRequired, response.status)
         assertEquals("payment_required", response.error().error.type)
     }
 
     @Test
-    fun ktorRefusalsKeepTheirStatus() = httpTest {
+    fun ktorRefusalsKeepTheirStatus() = probeServer {
         val gone = client.get("/probe/gone")
         assertEquals(HttpStatusCode.NotFound, gone.status)
         assertEquals("Not found.", gone.error().error.message)
@@ -252,7 +264,7 @@ class HttpTest {
     }
 
     @Test
-    fun aBodyThatIsNotJsonIsA415AndMalformedJsonA400() = httpTest {
+    fun aBodyThatIsNotJsonIsA415AndMalformedJsonA400() = probeServer {
         val text = client.post("/probe/echo") {
             contentType(ContentType.Text.Plain)
             setBody("name")
@@ -277,23 +289,28 @@ class HttpTest {
     }
 
     @Test
-    fun aUniqueViolationIsA409AndAnyOtherDatabaseFailureA500() = httpTest {
+    fun aUniqueViolationIsA409AndAnyOtherDatabaseFailureA500() = probeServer {
         val duplicate = client.get("/probe/duplicate")
         assertEquals(HttpStatusCode.Conflict, duplicate.status)
         assertEquals("conflict", duplicate.error().error.type)
 
         val deadlock = client.get("/probe/deadlock")
         assertEquals(HttpStatusCode.InternalServerError, deadlock.status)
-        assertTrue(logged("database failure"))
+        val line = lines.single { "database failure" in it }
+        assertTrue("\"error\":\"SQLError\"" in line, line)
+        assertTrue("\"sql_kind\":\"Deadlock\"" in line, line)
+        assertFalse("alice@example.com" in line, "A database error message quotes row values: never logged")
     }
 
     @Test
-    fun unexpectedErrorIsA500WithoutItsCause() = httpTest {
+    fun unexpectedErrorIsA500WithoutItsCause() = probeServer {
         val response = client.get("/probe/crash")
         assertEquals(HttpStatusCode.InternalServerError, response.status)
         assertFalse("hunter2" in response.bodyAsText())
         assertEquals("internal_error", response.error().error.type)
-        assertTrue(logged("unexpected failure"))
+        val line = lines.single { "unexpected failure" in it }
+        assertTrue("\"error\":\"IllegalStateException\"" in line, line)
+        assertFalse("hunter2" in line, "An unexpected error's message is never logged")
     }
 
     @Test
@@ -315,7 +332,7 @@ class HttpTest {
     }
 
     @Test
-    fun requestIdIsEchoedOrReplaced() = httpTest {
+    fun requestIdIsEchoedOrReplaced() = probeServer {
         val kept = client.get("/probe/missing") { header(HttpHeaders.XRequestId, "req-123") }
         assertEquals("req-123", kept.headers[HttpHeaders.XRequestId])
         val replaced = client.get("/health") { header(HttpHeaders.XRequestId, "bad id") }
@@ -333,7 +350,7 @@ class HttpTest {
     }
 
     @Test
-    fun everyRequestIsLoggedOnceWithoutItsQuery() = httpTest {
+    fun everyRequestIsLoggedOnceWithoutItsQuery() = probeServer {
         client.get("/probe/missing?token=abc")
         client.get("/health")
         val requestLines = requestLines(2)
@@ -353,7 +370,7 @@ class HttpTest {
     }
 
     @Test
-    fun protectedRouteRequiresAValidBearerToken() = httpTest {
+    fun protectedRouteRequiresAValidBearerToken() = probeServer {
         val missing = client.get("/probe/me")
         assertEquals(HttpStatusCode.Unauthorized, missing.status)
         assertEquals("unauthorized", missing.error().error.type)
@@ -371,12 +388,12 @@ class HttpTest {
     }
 
     @Test
-    fun aPrincipalOutsideAnAuthenticatedRouteIsA401() = httpTest {
+    fun aPrincipalOutsideAnAuthenticatedRouteIsA401() = probeServer {
         assertEquals(HttpStatusCode.Unauthorized, client.get("/probe/unprotected-me").status)
     }
 
     @Test
-    fun anOrgRouteResolvesTheMemberOrHidesTheOrg() = httpTest {
+    fun anOrgRouteResolvesTheMemberOrHidesTheOrg() = probeServer {
         val member = client.get("/probe/orgs/$ORG") { bearerAuth("good-token") }
         assertEquals("$MEMBER APPROVER", member.bodyAsText())
 

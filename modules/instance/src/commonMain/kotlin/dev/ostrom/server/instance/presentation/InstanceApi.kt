@@ -1,14 +1,15 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.instance.presentation
 
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
-/** `GET /v1/instance`: the instance and its current signing key. To move to ostrom-core with the API contract. */
+/** `GET /api/v1/instance`: the instance and its current signing key. To move to ostrom-core with the API contract. */
 @Serializable
-@Resource("/v1/instance")
+@Resource("/api/v1/instance")
 class InstanceApi {
     /**
-     * `GET /v1/instance/keys`: every signing key the instance has used.
+     * `GET /api/v1/instance/keys`: every signing key the instance has used.
      *
      * @property parent The instance resource.
      */

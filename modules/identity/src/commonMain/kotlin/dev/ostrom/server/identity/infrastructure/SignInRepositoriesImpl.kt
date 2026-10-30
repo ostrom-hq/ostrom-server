@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -22,12 +23,14 @@ class OAuthAttemptsRepositoryImpl(private val driver: Driver) : OAuthAttemptsRep
     override suspend fun create(attempt: OAuthAttempt, stateHash: String) {
         driver.execute(
             Statement.create(
-                "INSERT INTO identity_oauth_attempts (id, state_hash, provider, connection_id, code_verifier, nonce, " +
-                    "redirect_path, created_at, expires_at) VALUES (:id, :state, :provider, :connection, :verifier, :nonce, " +
-                    ":redirect, :created, :expires)",
+                "INSERT INTO identity_oauth_attempts (id, state_hash, provider, connection_id, code_verifier, " +
+                    "nonce, redirect_path, created_at, expires_at, link_user_id) VALUES (:id, :state, :provider, " +
+                    ":connection, :verifier, :nonce, :redirect, :created, :expires, :link)",
             ).bind("id", attempt.id).bind("state", stateHash).bind("provider", attempt.provider.key)
-                .bind("connection", attempt.connectionId).bind("verifier", attempt.codeVerifier).bind("nonce", attempt.nonce)
-                .bind("redirect", attempt.redirectPath).bind("created", attempt.createdAt).bind("expires", attempt.expiresAt),
+                .bind("connection", attempt.connectionId).bind("verifier", attempt.codeVerifier)
+                .bind("nonce", attempt.nonce)
+                .bind("redirect", attempt.redirectPath).bind("created", attempt.createdAt)
+                .bind("expires", attempt.expiresAt).bind("link", attempt.linkUserId),
         ).getOrThrow()
     }
 
@@ -35,7 +38,8 @@ class OAuthAttemptsRepositoryImpl(private val driver: Driver) : OAuthAttemptsRep
         // One statement marks it used and returns it: two callbacks with the same state cannot both get it.
         Statement.create(
             "UPDATE identity_oauth_attempts SET used_at = :now WHERE state_hash = :state AND used_at IS NULL " +
-                "AND expires_at > :now RETURNING id, provider, connection_id, code_verifier, nonce, redirect_path, created_at, expires_at",
+                "AND expires_at > :now RETURNING id, provider, connection_id, code_verifier, nonce, redirect_path, " +
+                "created_at, expires_at, link_user_id",
         ).bind("state", stateHash).bind("now", now),
     ).getOrThrow().firstOrNull()?.toAttempt()
 
@@ -48,6 +52,7 @@ class OAuthAttemptsRepositoryImpl(private val driver: Driver) : OAuthAttemptsRep
         redirectPath = get("redirect_path").asString(),
         createdAt = get("created_at").asInstant(),
         expiresAt = get("expires_at").asInstant(),
+        linkUserId = get("link_user_id").asUuidOrNull(),
     )
 }
 

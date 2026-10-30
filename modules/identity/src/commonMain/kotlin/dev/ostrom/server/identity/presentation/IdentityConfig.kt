@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -36,6 +37,7 @@ data class IdentityConfig(
      */
     fun magicLinkUrl(token: String): String = "$consoleUrl/auth/email#token=$token"
 
+    /** Reads the configuration from the environment. */
     companion object {
         /**
          * Reads the configuration.

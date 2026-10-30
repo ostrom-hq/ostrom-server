@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -17,7 +18,6 @@ import io.ktor.http.parameters
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -67,7 +67,12 @@ class GitHubOAuthProvider(
             parameters.append("allow_signup", "true")
         }.buildString()
 
-    override suspend fun identity(code: String, codeVerifier: String, nonce: String, redirectUri: String): VerifiedIdentity {
+    override suspend fun identity(
+        code: String,
+        codeVerifier: String,
+        nonce: String,
+        redirectUri: String,
+    ): VerifiedIdentity {
         val token = providerCall {
             http.submitForm(
                 "$webUrl/login/oauth/access_token",
@@ -127,8 +132,15 @@ class GitHubOAuthProvider(
  * @property issuers The `iss` values its ID tokens may carry (Google uses two spellings).
  * @property authorizationEndpoint The consent page.
  * @property tokenEndpoint The code exchange.
+ * @property extraParameters Added to the consent page URL (`prompt=select_account` for Google).
  */
-data class OidcEndpoints(val issuers: Set<String>, val authorizationEndpoint: String, val tokenEndpoint: String) {
+data class OidcEndpoints(
+    val issuers: Set<String>,
+    val authorizationEndpoint: String,
+    val tokenEndpoint: String,
+    val extraParameters: Map<String, String> = emptyMap(),
+) {
+    /** The endpoints of the well-known providers. */
     companion object {
         /** Google's endpoints. */
         val GOOGLE = OidcEndpoints(
@@ -153,7 +165,6 @@ data class OidcEndpoints(val issuers: Set<String>, val authorizationEndpoint: St
  * @param http The HTTP client.
  * @param clock The clock, for the token's expiry.
  * @param connectionId For an organization's SSO, its connection; null for Google.
- * @param extraParameters Added to the consent page URL (`prompt=select_account` for Google).
  */
 class OidcProvider(
     override val provider: IdentityProvider,
@@ -162,7 +173,6 @@ class OidcProvider(
     private val http: HttpClient,
     private val clock: Clock,
     private val connectionId: Uuid? = null,
-    private val extraParameters: Map<String, String> = emptyMap(),
 ) : OAuthProvider {
     override fun authorizationUrl(state: String, codeChallenge: String, nonce: String, redirectUri: String): String =
         URLBuilder(endpoints.authorizationEndpoint).apply {
@@ -174,10 +184,15 @@ class OidcProvider(
             parameters.append("nonce", nonce)
             parameters.append("code_challenge", codeChallenge)
             parameters.append("code_challenge_method", "S256")
-            extraParameters.forEach { (name, value) -> parameters.append(name, value) }
+            endpoints.extraParameters.forEach { (name, value) -> parameters.append(name, value) }
         }.buildString()
 
-    override suspend fun identity(code: String, codeVerifier: String, nonce: String, redirectUri: String): VerifiedIdentity {
+    override suspend fun identity(
+        code: String,
+        codeVerifier: String,
+        nonce: String,
+        redirectUri: String,
+    ): VerifiedIdentity {
         val token = providerCall {
             http.submitForm(
                 endpoints.tokenEndpoint,
@@ -196,8 +211,10 @@ class OidcProvider(
         when {
             claims.iss !in endpoints.issuers -> throw ProviderRejectedException("unexpected issuer.")
             !claims.audiences.contains(client.clientId) -> throw ProviderRejectedException("token for another client.")
-            claims.azp != null && claims.azp != client.clientId -> throw ProviderRejectedException("token for another client.")
-            claims.exp == null || Instant.fromEpochSeconds(claims.exp) <= clock.now() -> throw ProviderRejectedException("expired token.")
+            claims.azp != null && claims.azp != client.clientId ->
+                throw ProviderRejectedException("token for another client.")
+            claims.exp == null || Instant.fromEpochSeconds(claims.exp) <= clock.now() ->
+                throw ProviderRejectedException("expired token.")
             claims.nonce != nonce -> throw ProviderRejectedException("nonce mismatch.")
             claims.sub.isNullOrEmpty() -> throw ProviderRejectedException("no subject.")
         }
@@ -209,20 +226,19 @@ class OidcProvider(
             displayName = claims.name,
             avatarUrl = claims.picture,
             connectionId = connectionId,
+            hostedDomain = claims.hd,
         )
     }
 
     private fun parseClaims(idToken: String): IdTokenClaims {
         val parts = idToken.split('.')
-        if (parts.size != JWT_PARTS) throw ProviderRejectedException("malformed ID token.")
-        val payload = try {
-            Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT_OPTIONAL).decode(parts[1]).decodeToString()
-        } catch (error: IllegalArgumentException) {
-            throw ProviderRejectedException("malformed ID token.")
-        }
+        // A wrong number of parts, bad base64 and bad JSON (a SerializationException) are all IllegalArgumentException.
         return try {
+            require(parts.size == JWT_PARTS) { "Not a JWT." }
+            val base64 = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT_OPTIONAL)
+            val payload = base64.decode(parts[1]).decodeToString()
             ProviderJson.decodeFromString<IdTokenClaims>(payload)
-        } catch (error: SerializationException) {
+        } catch (_: IllegalArgumentException) {
             throw ProviderRejectedException("malformed ID token.")
         }
     }
@@ -245,6 +261,7 @@ class OidcProvider(
         @SerialName("email_verified") val emailVerified: Boolean? = null,
         val name: String? = null,
         val picture: String? = null,
+        val hd: String? = null,
     ) {
         /** `aud` is a string or an array of strings. */
         val audiences: List<String>
@@ -270,7 +287,7 @@ internal suspend fun <T> providerCall(block: suspend () -> T): T = try {
     throw error
 } catch (error: ProviderRejectedException) {
     throw error
-} catch (error: Exception) {
+} catch (_: Exception) {
     throw ProviderRejectedException("the provider could not be reached or answered something unexpected.")
 }
 
@@ -279,4 +296,13 @@ internal suspend inline fun <reified T> HttpResponse.decode(): T {
     val body = bodyAsText()
     if (!status.isSuccess()) throw ProviderRejectedException("HTTP ${status.value}.")
     return ProviderJson.decodeFromString<T>(body)
+}
+
+/**
+ * Closes the module's HTTP client when Koin stops (its `onClose`, which may hand over null).
+ *
+ * @param client The client, if it was created.
+ */
+internal fun closeHttpClient(client: HttpClient?) {
+    client?.close()
 }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
 import io.ktor.resources.Resource
@@ -116,7 +117,12 @@ class SignInApi {
          */
         @Serializable
         @Resource("callback")
-        class Callback(val parent: Provider, val code: String? = null, val state: String? = null, val error: String? = null)
+        class Callback(
+            val parent: Provider,
+            val code: String? = null,
+            val state: String? = null,
+            val error: String? = null,
+        )
     }
 
     /**

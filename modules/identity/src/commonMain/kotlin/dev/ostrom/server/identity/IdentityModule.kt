@@ -1,7 +1,15 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
+import dev.ostrom.server.identity.domain.GitHubTokenVerifier
+import dev.ostrom.server.identity.domain.IssueCliTokenUseCase
+import dev.ostrom.server.identity.domain.IssueCliTokenUseCaseImpl
+import dev.ostrom.server.identity.domain.LauncherLoginUseCase
+import dev.ostrom.server.identity.domain.LauncherLoginUseCaseImpl
+import dev.ostrom.server.identity.domain.LinkIdentityUseCase
+import dev.ostrom.server.identity.domain.LinkIdentityUseCaseImpl
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.MagicLinksRepository
 import dev.ostrom.server.identity.domain.MailSender
@@ -10,15 +18,19 @@ import dev.ostrom.server.identity.domain.OAuthProvider
 import dev.ostrom.server.identity.domain.RequestMagicLinkUseCase
 import dev.ostrom.server.identity.domain.RequestMagicLinkUseCaseImpl
 import dev.ostrom.server.identity.domain.SignInMethods
+import dev.ostrom.server.identity.domain.SignInServices
 import dev.ostrom.server.identity.domain.StartOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.StartOAuthSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
 import dev.ostrom.server.identity.infrastructure.DirectoryMailSender
 import dev.ostrom.server.identity.infrastructure.GitHubOAuthProvider
+import dev.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import dev.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
+import dev.ostrom.server.identity.infrastructure.OidcEndpoints
 import dev.ostrom.server.identity.infrastructure.OidcProvider
+import dev.ostrom.server.identity.infrastructure.closeHttpClient
 import dev.ostrom.server.identity.infrastructure.ResendMailSender
 import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import dev.ostrom.server.identity.infrastructure.magicLinkMail
@@ -88,6 +100,7 @@ import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 import kotlin.time.Clock
 
 /**
@@ -116,6 +129,7 @@ object IdentityModule : ServerModule {
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
         single<TokenAuthenticator> { CredentialAuthenticatorImpl(get(), get(), get(), get()) }
         single<ResolveUserUseCase> { ResolveUserUseCaseImpl(get(), get(), get()) }
+        single<LinkIdentityUseCase> { LinkIdentityUseCaseImpl(get(), get(), get()) }
         single<GetProfileUseCase> { GetProfileUseCaseImpl(get()) }
         single<StartWebSessionUseCase> { StartWebSessionUseCaseImpl(get(), get(), get(), get()) }
         single<EndWebSessionUseCase> { EndWebSessionUseCaseImpl(get(), get(), get()) }
@@ -126,7 +140,9 @@ object IdentityModule : ServerModule {
         single<RotateTokenUseCase> { RotateTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<IssueAgentTokenUseCase> { IssueAgentTokenUseCaseImpl(get(), get(), get(), get()) }
         single<RevokeAgentTokensUseCase> { RevokeAgentTokensUseCaseImpl(get(), get()) }
-        single<StartDeviceAuthorizationUseCase> { StartDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<StartDeviceAuthorizationUseCase> {
+            StartDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get())
+        }
         single<GetDeviceAuthorizationUseCase> { GetDeviceAuthorizationUseCaseImpl(get(), get(), get()) }
         single<AnswerDeviceAuthorizationUseCase> { AnswerDeviceAuthorizationUseCaseImpl(get(), get(), get(), get()) }
         single<PollDeviceAuthorizationUseCase> { PollDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get()) }
@@ -139,25 +155,26 @@ object IdentityModule : ServerModule {
                     requestTimeoutMillis = HTTP_TIMEOUT_MS
                 }
             }
-        } onClose { it?.close() }
+        } onClose ::closeHttpClient
         single { signInMethods(get(), get(HTTP), get()) }
         single<MailSender> { mailSender(get(), get(HTTP), get()) }
         single<OAuthAttemptsRepository> { OAuthAttemptsRepositoryImpl(get()) }
         single<MagicLinksRepository> { MagicLinksRepositoryImpl(get()) }
-        single<StartOAuthSignInUseCase> {
-            val config = get<IdentityConfig>()
-            StartOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get(), config::callbackUrl)
-        }
-        single<CompleteOAuthSignInUseCase> {
-            val config = get<IdentityConfig>()
-            CompleteOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get(), config::callbackUrl)
-        }
+        single<StartOAuthSignInUseCase> { StartOAuthSignInUseCaseImpl(get(), get(), get()) }
+        single { SignInServices(get(), get(), get(), get(), get<IdentityConfig>()::callbackUrl) }
+        single<CompleteOAuthSignInUseCase> { CompleteOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<RequestMagicLinkUseCase> {
             val config = get<IdentityConfig>()
-            RequestMagicLinkUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), ::magicLinkMail, config::magicLinkUrl)
+            RequestMagicLinkUseCaseImpl(get(), get(), get(), get(), ::magicLinkMail, config::magicLinkUrl)
         }
         single<VerifyMagicLinkUseCase> { VerifyMagicLinkUseCaseImpl(get(), get(), get(), get(), get()) }
-        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single<GitHubTokenVerifier> {
+            val config = get<SignInConfig>()
+            GitHubTokenVerifierImpl(config.github, get(HTTP), config.githubApiUrl)
+        }
+        single<IssueCliTokenUseCase> { IssueCliTokenUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<LauncherLoginUseCase> { LauncherLoginUseCaseImpl(get(), get(), get(), get()) }
+        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
         single {
             IdentityRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
@@ -177,16 +194,22 @@ object IdentityModule : ServerModule {
 
     private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {
         val oauth = buildMap<IdentityProvider, OAuthProvider> {
-            config.github?.let { put(IdentityProvider.GITHUB, GitHubOAuthProvider(it, http, config.githubWebUrl, config.githubApiUrl)) }
+            config.github?.let {
+                put(IdentityProvider.GITHUB, GitHubOAuthProvider(it, http, config.githubWebUrl, config.githubApiUrl))
+            }
             config.google?.let {
                 put(
                     IdentityProvider.GOOGLE,
-                    OidcProvider(IdentityProvider.GOOGLE, config.googleEndpoints, it, http, clock, extraParameters = mapOf("prompt" to "select_account")),
+                    OidcProvider(IdentityProvider.GOOGLE, config.googleEndpoints.withAccountPicker(), it, http, clock),
                 )
             }
         }
         return SignInMethods(oauth, email = config.resendApiKey != null || config.mailDirectory != null)
     }
+
+    /** Google's consent page lets the person pick an account instead of reusing the last one silently. */
+    private fun OidcEndpoints.withAccountPicker() =
+        copy(extraParameters = extraParameters + ("prompt" to "select_account"))
 
     private fun mailSender(config: SignInConfig, http: HttpClient, clock: Clock): MailSender = when {
         config.resendApiKey != null -> ResendMailSender(http, config.resendApiKey, config.mailFrom)

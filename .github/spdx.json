@@ -1,0 +1,14 @@
+{
+  "default": "AGPL-3.0-only",
+  "rules": [
+    {
+      "prefix": "ee/",
+      "license": "LicenseRef-Ostrom-Enterprise"
+    }
+  ],
+  "allowed": [
+    "LicenseRef-Ostrom-Enterprise"
+  ],
+  "exclude": [],
+  "scope": "all"
+}

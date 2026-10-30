@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.auth
 
 /**
@@ -66,8 +67,11 @@ interface TokenAuthenticator {
      *
      * @return The principal, or null when the session is unknown, expired, revoked or the CSRF token is wrong.
      */
-    suspend fun authenticateSession(sessionToken: String, csrfToken: String?, requireCsrf: Boolean): AuthenticatedPrincipal? =
-        null
+    suspend fun authenticateSession(
+        sessionToken: String,
+        csrfToken: String?,
+        requireCsrf: Boolean,
+    ): AuthenticatedPrincipal? = null
 }
 
 /** The cookie that carries a browser session (HttpOnly, Secure, SameSite=Lax; set by the identity module). */

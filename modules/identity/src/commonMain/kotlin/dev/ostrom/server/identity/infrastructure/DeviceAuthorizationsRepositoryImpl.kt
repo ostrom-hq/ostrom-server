@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.ApiToken
@@ -43,13 +44,15 @@ class DeviceAuthorizationsRepositoryImpl(private val driver: Driver) : DeviceAut
         ).bind("code", userCode).bind("now", now),
     ).getOrThrow().firstOrNull()?.toAuthorization()
 
-    override suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant): Boolean = driver.execute(
-        Statement.create(
-            "UPDATE identity_device_authorizations SET status = :status, user_id = :user " +
-                "WHERE id = :id AND status = 'PENDING' AND expires_at > :now",
-        ).bind("status", if (approved) DeviceAuthorizationStatus.APPROVED.name else DeviceAuthorizationStatus.DENIED.name)
-            .bind("user", userId).bind("id", id).bind("now", now),
-    ).getOrThrow() == 1L
+    override suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant): Boolean {
+        val status = if (approved) DeviceAuthorizationStatus.APPROVED else DeviceAuthorizationStatus.DENIED
+        return driver.execute(
+            Statement.create(
+                "UPDATE identity_device_authorizations SET status = :status, user_id = :user " +
+                    "WHERE id = :id AND status = 'PENDING' AND expires_at > :now",
+            ).bind("status", status.name).bind("user", userId).bind("id", id).bind("now", now),
+        ).getOrThrow() == 1L
+    }
 
     override suspend fun markPolled(id: Uuid, at: Instant) {
         driver.execute(

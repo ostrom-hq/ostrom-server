@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -51,6 +53,9 @@ class IdentityRoutesPostgresTest {
         return user to koin.get<StartWebSessionUseCase>()(user.id)
     }
 
+    private suspend fun TestServer.pollDevice(deviceCode: String): DeviceTokenResponse =
+        client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(deviceCode)) }.body<DeviceTokenResponse>()
+
     private fun HttpRequestBuilder.session(started: StartedSession, csrf: Boolean = true) {
         header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}")
         if (csrf) header(CSRF_HEADER, started.csrfToken)
@@ -66,8 +71,14 @@ class IdentityRoutesPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me").status)
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/tokens").status)
         assertEquals(HttpStatusCode.Unauthorized, server.client.post("/api/v1/auth/logout").status)
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { bearerAuth("osp_forged") }.status)
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=oss_forged") }.status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            server.client.get("/api/v1/auth/me") { bearerAuth("osp_forged") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            server.client.get("/api/v1/auth/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=oss_forged") }.status,
+        )
     }
 
     @Test
@@ -114,7 +125,10 @@ class IdentityRoutesPostgresTest {
         assertEquals("personal", token.token.kind)
 
         // The token reads what its scopes allow, never the token management.
-        assertEquals(user.id.toString(), server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.body<ProfileResponse>().id)
+        assertEquals(
+            user.id.toString(),
+            server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.body<ProfileResponse>().id,
+        )
         assertNull(server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.body<ProfileResponse>().csrfToken)
         assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/tokens") { bearerAuth(token.secret) }.status)
 
@@ -124,16 +138,35 @@ class IdentityRoutesPostgresTest {
         val rotated = server.client.post("/api/v1/tokens/${token.token.id}/rotate") { session(started) }
         assertEquals(HttpStatusCode.Created, rotated.status)
         val replacement = rotated.body<CreatedTokenResponse>()
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.status,
+        )
         assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/auth/me") { bearerAuth(replacement.secret) }.status)
 
-        assertEquals(HttpStatusCode.NoContent, server.client.delete("/api/v1/tokens/${replacement.token.id}") { session(started) }.status)
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { bearerAuth(replacement.secret) }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.delete("/api/v1/tokens/${replacement.token.id}") { session(started) }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.delete("/api/v1/tokens/not-a-uuid") { session(started) }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/tokens/not-a-uuid/rotate") { session(started) }.status)
+        assertEquals(
+            HttpStatusCode.NoContent,
+            server.client.delete("/api/v1/tokens/${replacement.token.id}") { session(started) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            server.client.get("/api/v1/auth/me") { bearerAuth(replacement.secret) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.delete("/api/v1/tokens/${replacement.token.id}") { session(started) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.delete("/api/v1/tokens/not-a-uuid") { session(started) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.post("/api/v1/tokens/not-a-uuid/rotate") { session(started) }.status,
+        )
 
-        val actions = server.client.get("/api/v1/auth/me/audit?limit=2") { session(started) }.body<AuditEventsResponse>()
+        val actions =
+            server.client.get("/api/v1/auth/me/audit?limit=2") { session(started) }.body<AuditEventsResponse>()
         assertEquals(listOf("token.revoked", "token.rotated"), actions.events.map { it.action })
         assertNotNull(actions.nextBefore)
     }
@@ -147,8 +180,14 @@ class IdentityRoutesPostgresTest {
             json(CreateTokenRequest("t", listOf("profile:read")))
         }.body<CreatedTokenResponse>()
 
-        assertEquals(HttpStatusCode.NotFound, server.client.delete("/api/v1/tokens/${token.token.id}") { session(bob) }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/tokens/${token.token.id}/rotate") { session(bob) }.status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.delete("/api/v1/tokens/${token.token.id}") { session(bob) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.post("/api/v1/tokens/${token.token.id}/rotate") { session(bob) }.status,
+        )
         assertEquals(emptyList(), server.client.get("/api/v1/tokens") { session(bob) }.body<TokensResponse>().tokens)
     }
 
@@ -156,7 +195,8 @@ class IdentityRoutesPostgresTest {
     fun invalidTokenRequestsAre400() = serverTest(listOf(IdentityModule)) { server ->
         val (_, started) = server.signIn()
 
-        val badScopes = server.client.post("/api/v1/tokens") { session(started); json(CreateTokenRequest("t", emptyList())) }
+        val badScopes =
+            server.client.post("/api/v1/tokens") { session(started); json(CreateTokenRequest("t", emptyList())) }
         assertEquals(HttpStatusCode.BadRequest, badScopes.status)
         val malformed = server.client.post("/api/v1/tokens") {
             session(started)
@@ -173,10 +213,16 @@ class IdentityRoutesPostgresTest {
 
         assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/auth/me") { bearerAuth(agent.secret) }.status)
         assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/tokens") { bearerAuth(agent.secret) }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.post("/api/v1/auth/logout") { bearerAuth(agent.secret) }.status)
         assertEquals(
             HttpStatusCode.Forbidden,
-            server.client.post("/api/v1/tokens") { bearerAuth(agent.secret); json(CreateTokenRequest("t", listOf("orgs:write"))) }.status,
+            server.client.post("/api/v1/auth/logout") { bearerAuth(agent.secret) }.status,
+        )
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.post("/api/v1/tokens") {
+                bearerAuth(agent.secret)
+                json(CreateTokenRequest("t", listOf("orgs:write")))
+            }.status,
         )
     }
 
@@ -184,44 +230,66 @@ class IdentityRoutesPostgresTest {
     fun theCliLogsInWithTheDeviceFlowAndLogsOut() = serverTest(listOf(IdentityModule)) { server ->
         val (user, started) = server.signIn()
 
-        val codes = server.client.post("/api/v1/auth/device") { json(DeviceCodeRequest("laptop")) }.body<DeviceCodeResponse>()
+        val codes =
+            server.client.post("/api/v1/auth/device") { json(DeviceCodeRequest("laptop")) }.body<DeviceCodeResponse>()
         assertEquals("http://localhost:5173/device", codes.verificationUri)
         assertEquals("http://localhost:5173/device?code=${codes.userCode}", codes.verificationUriComplete)
         assertEquals(600L, codes.expiresIn)
         assertEquals(5L, codes.interval)
-        val pending = server.client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(codes.deviceCode)) }.body<DeviceTokenResponse>()
+        val pending = server.pollDevice(codes.deviceCode)
         assertEquals("pending", pending.status)
-        val tooFast = server.client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(codes.deviceCode)) }.body<DeviceTokenResponse>()
+        val tooFast = server.pollDevice(codes.deviceCode)
         assertEquals("slow_down", tooFast.status)
         assertEquals(10L, tooFast.interval)
 
         val shown = server.client.get("/api/v1/auth/device?userCode=${codes.userCode}") { session(started) }
         assertEquals("laptop", shown.body<DeviceAuthorizationResponse>().clientName)
         assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/auth/device") { session(started) }.status)
-        val answered = server.client.post("/api/v1/auth/device/answer") { session(started); json(AnswerDeviceRequest(codes.userCode, true)) }
+        val answered = server.client.post("/api/v1/auth/device/answer") {
+            session(started)
+            json(AnswerDeviceRequest(codes.userCode, true))
+        }
         assertEquals(HttpStatusCode.NoContent, answered.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/auth/device/answer") { session(started); json(AnswerDeviceRequest(codes.userCode, true)) }.status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.post("/api/v1/auth/device/answer") {
+                session(started)
+                json(AnswerDeviceRequest(codes.userCode, true))
+            }.status,
+        )
 
         // The CLI polled twice in a row: the next poll after the interval gets the token. The test does not wait:
         // a poll that comes too soon after an approval still gets it (only pending polls are slowed down).
-        val approved = server.client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(codes.deviceCode)) }.body<DeviceTokenResponse>()
+        val approved = server.pollDevice(codes.deviceCode)
         assertEquals("approved", approved.status)
         val secret = assertNotNull(approved.accessToken)
         assertTrue(secret.startsWith("osc_"))
-        assertEquals(user.id.toString(), server.client.get("/api/v1/auth/me") { bearerAuth(secret) }.body<ProfileResponse>().id)
-        assertEquals("expired", server.client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(codes.deviceCode)) }.body<DeviceTokenResponse>().status)
-        assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest("unknown")) }.status)
+        assertEquals(
+            user.id.toString(),
+            server.client.get("/api/v1/auth/me") { bearerAuth(secret) }.body<ProfileResponse>().id,
+        )
+        assertEquals("expired", server.pollDevice(codes.deviceCode).status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest("unknown")) }.status,
+        )
 
         // The CLI token cannot approve another login: that needs the browser.
         // A CLI may start without a body (the contract's `POST /api/v1/auth/device`).
         val other = server.client.post("/api/v1/auth/device").body<DeviceCodeResponse>()
         assertEquals(
             HttpStatusCode.Forbidden,
-            server.client.post("/api/v1/auth/device/answer") { bearerAuth(secret); json(AnswerDeviceRequest(other.userCode, true)) }.status,
+            server.client.post("/api/v1/auth/device/answer") {
+                bearerAuth(secret)
+                json(AnswerDeviceRequest(other.userCode, true))
+            }.status,
         )
-        val denied = server.client.post("/api/v1/auth/device/answer") { session(started); json(AnswerDeviceRequest(other.userCode, false)) }
+        val denied = server.client.post("/api/v1/auth/device/answer") {
+            session(started)
+            json(AnswerDeviceRequest(other.userCode, false))
+        }
         assertEquals(HttpStatusCode.NoContent, denied.status)
-        assertEquals("denied", server.client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(other.deviceCode)) }.body<DeviceTokenResponse>().status)
+        assertEquals("denied", server.pollDevice(other.deviceCode).status)
 
         // `ostrom logout` revokes the CLI token.
         assertEquals(HttpStatusCode.NoContent, server.client.post("/api/v1/auth/logout") { bearerAuth(secret) }.status)
@@ -242,7 +310,10 @@ class IdentityRoutesPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { session(started) }.status)
         assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/auth/me") { session(second) }.status)
 
-        assertEquals(HttpStatusCode.NoContent, server.client.post("/api/v1/auth/logout/everywhere") { session(second) }.status)
+        assertEquals(
+            HttpStatusCode.NoContent,
+            server.client.post("/api/v1/auth/logout/everywhere") { session(second) }.status,
+        )
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { session(third) }.status)
     }
 

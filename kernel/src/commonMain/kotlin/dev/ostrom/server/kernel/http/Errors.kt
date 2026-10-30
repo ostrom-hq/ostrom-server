@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -9,9 +10,9 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
 import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.ContentTransformationException
 import io.ktor.server.plugins.NotFoundException
 import io.ktor.server.plugins.PayloadTooLargeException
-import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
@@ -73,7 +74,10 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
     val fields = mapOf("request_id" to callId)
     when (cause) {
         is OstromException -> respondError(cause.kind, cause.message)
-        is UnsupportedMediaTypeException ->
+        is PayloadTooLargeException -> respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
+        // No converter for the request's Content-Type: `receive` throws CannotTransformContentToTypeException, a
+        // sibling of UnsupportedMediaTypeException under this base (PayloadTooLargeException too, matched above).
+        is ContentTransformationException ->
             respondError(ErrorKind.UNSUPPORTED_MEDIA_TYPE, "The request body must be JSON.")
         is BadRequestException -> {
             // Never the cause's message: a deserialization error quotes the request body.
@@ -81,15 +85,15 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
             respondError(ErrorKind.INVALID_REQUEST, "The request is malformed.")
         }
         is NotFoundException -> respondError(ErrorKind.NOT_FOUND, "Not found.")
-        is PayloadTooLargeException -> respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
         is SQLError -> if (cause.kind == SQLError.Kind.UniqueViolation) {
             respondError(ErrorKind.CONFLICT, "The resource already exists.")
         } else {
-            logger.error("database failure", fields, cause)
+            // Never the message: PostgreSQL quotes row values in it (AGENTS.md rule 9).
+            logger.error("database failure", fields + mapOf("error" to "SQLError", "sql_kind" to cause.kind.name))
             respondError(ErrorKind.INTERNAL, "Internal error.")
         }
         else -> {
-            logger.error("unexpected failure", fields, cause)
+            logger.error("unexpected failure", fields + mapOf("error" to cause::class.simpleName))
             respondError(ErrorKind.INTERNAL, "Internal error.")
         }
     }

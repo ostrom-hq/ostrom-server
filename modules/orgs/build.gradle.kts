@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Module orgs: organizations, members and roles, invitations, the free-plan guard, and the PrincipalOrgResolver.
 plugins {
     id("ostrom.native-module")

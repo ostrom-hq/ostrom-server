@@ -1,7 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
+import dev.ostrom.server.identity.domain.AccountLinkRequiredException
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
+import dev.ostrom.server.identity.domain.IdentityTakenException
 import dev.ostrom.server.identity.domain.InvalidSignInStateException
+import dev.ostrom.server.identity.domain.LauncherLoginUseCase
 import dev.ostrom.server.identity.domain.OAUTH_STATE_LIFETIME
 import dev.ostrom.server.identity.domain.ProviderNotConfiguredException
 import dev.ostrom.server.identity.domain.ProviderRejectedException
@@ -10,6 +14,7 @@ import dev.ostrom.server.identity.domain.RequestMagicLinkUseCase
 import dev.ostrom.server.identity.domain.SignInMethods
 import dev.ostrom.server.identity.domain.StartOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
+import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.Cookie
 import io.ktor.http.HttpStatusCode
@@ -36,6 +41,7 @@ private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
  * @property completeOAuth Completes it.
  * @property requestMagicLink E-mails a sign-in link.
  * @property verifyMagicLink Signs in with it.
+ * @property launcherLogin Exchanges a GitHub token of Ostrom's app for a CLI token.
  */
 data class SignInRoutesDependencies(
     val config: IdentityConfig,
@@ -44,12 +50,14 @@ data class SignInRoutesDependencies(
     val completeOAuth: CompleteOAuthSignInUseCase,
     val requestMagicLink: RequestMagicLinkUseCase,
     val verifyMagicLink: VerifyMagicLinkUseCase,
+    val launcherLogin: LauncherLoginUseCase,
 )
 
 /**
  * The sign-in routes. GitHub and Google are browser navigations: their failures send the browser back to the
- * console's login page with an `error` code (`unavailable`, `rate_limited`, `access_denied`, `expired`, `refused`)
- * instead of a JSON error.
+ * console's login page with an `error` code (`unavailable`, `rate_limited`, `access_denied`, `expired`, `refused`,
+ * `link_required` when the provider names the address of another account, `identity_taken` when a link meets an
+ * identity of another account) instead of a JSON error.
  *
  * @param dependencies The use cases.
  */
@@ -87,6 +95,22 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
         call.setSessionCookie(signedIn.session, config)
         call.respond(SignedInResponse(signedIn.redirectPath, signedIn.session.csrfToken))
     }
+    post<LauncherApi.Login, LauncherLoginRequest> { _, request ->
+        val login = launcherLogin(request.githubToken, request.via, call.request.origin.remoteAddress)
+        val token = login.token
+        call.respond(LauncherLoginResponse(login.user.login, token.secret, token.token.expiresAt.toString()))
+    }
+    authenticated {
+        post<ProviderLinkApi> { params ->
+            // A browser session only (and its CSRF token): a token on the developer's machine never adds a way in.
+            val principal = call.requireBrowserSession()
+            val source = call.request.origin.remoteAddress
+            val started = startOAuth(params.parent.provider, params.redirect, source, principal.userId())
+            val lifetime = OAUTH_STATE_LIFETIME.inWholeSeconds.toInt()
+            call.response.cookies.append(stateCookie(started.state, lifetime, config))
+            call.respond(LinkStartedResponse(started.authorizationUrl))
+        }
+    }
 }
 
 private fun stateCookie(value: String, maxAge: Int, config: IdentityConfig) = Cookie(
@@ -106,6 +130,8 @@ private suspend fun ApplicationCall.redirectToLogin(config: IdentityConfig, erro
         is RateLimitedException -> "rate_limited"
         is InvalidSignInStateException -> "expired"
         is ProviderRejectedException -> "refused"
+        is AccountLinkRequiredException -> "link_required"
+        is IdentityTakenException -> "identity_taken"
         else -> throw error
     }
     redirectToLogin(config, code)

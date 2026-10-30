@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
 import kotlin.time.Clock
@@ -22,6 +23,15 @@ const val USER_CODE_ALPHABET = "BCDFGHJKMNPQRSTVWXZ"
 
 /** How many letters a user code has. */
 const val USER_CODE_LETTERS = 8
+
+/** Device logins one address may start per [DEVICE_RATE_WINDOW]. */
+private const val DEVICE_STARTS_PER_WINDOW = 10
+
+/** Device codes one user may look up, or answer, per [DEVICE_RATE_WINDOW]. */
+private const val DEVICE_ANSWERS_PER_WINDOW = 20
+
+/** The window of the device login rate limits. */
+private val DEVICE_RATE_WINDOW = 10.minutes
 
 /** Starts an `ostrom login` (RFC 8628 device authorization request). */
 interface StartDeviceAuthorizationUseCase {
@@ -55,7 +65,8 @@ class StartDeviceAuthorizationUseCaseImpl(
     private val clock: Clock,
 ) : StartDeviceAuthorizationUseCase {
     override suspend fun invoke(clientName: String?, source: String): StartedDeviceAuthorization {
-        if (!limiter.tryAcquire("device-start:$source", 10, 10.minutes)) throw RateLimitedException()
+        val allowed = limiter.tryAcquire("device-start:$source", DEVICE_STARTS_PER_WINDOW, DEVICE_RATE_WINDOW)
+        if (!allowed) throw RateLimitedException()
         val now = clock.nowMillis()
         val name = clientName?.trim()?.filter { !it.isISOControl() }?.take(MAX_CLIENT_NAME)?.takeIf { it.isNotEmpty() }
             ?: DEFAULT_CLIENT_NAME
@@ -109,7 +120,8 @@ class GetDeviceAuthorizationUseCaseImpl(
     private val clock: Clock,
 ) : GetDeviceAuthorizationUseCase {
     override suspend fun invoke(userId: Uuid, userCode: String): DeviceAuthorization {
-        if (!limiter.tryAcquire("device-lookup:$userId", 20, 10.minutes)) throw RateLimitedException()
+        val allowed = limiter.tryAcquire("device-lookup:$userId", DEVICE_ANSWERS_PER_WINDOW, DEVICE_RATE_WINDOW)
+        if (!allowed) throw RateLimitedException()
         val code = normalizeUserCode(userCode) ?: throw DeviceCodeNotFoundException()
         return authorizations.findPendingByUserCode(code, clock.now()) ?: throw DeviceCodeNotFoundException()
     }
@@ -145,7 +157,8 @@ class AnswerDeviceAuthorizationUseCaseImpl(
     private val clock: Clock,
 ) : AnswerDeviceAuthorizationUseCase {
     override suspend fun invoke(userId: Uuid, userCode: String, approve: Boolean) {
-        if (!limiter.tryAcquire("device-answer:$userId", 20, 10.minutes)) throw RateLimitedException()
+        val allowed = limiter.tryAcquire("device-answer:$userId", DEVICE_ANSWERS_PER_WINDOW, DEVICE_RATE_WINDOW)
+        if (!allowed) throw RateLimitedException()
         val code = normalizeUserCode(userCode) ?: throw DeviceCodeNotFoundException()
         val now = clock.nowMillis()
         val pending = authorizations.findPendingByUserCode(code, now) ?: throw DeviceCodeNotFoundException()
@@ -213,7 +226,8 @@ class PollDeviceAuthorizationUseCaseImpl(
 ) : PollDeviceAuthorizationUseCase {
     override suspend fun invoke(deviceCode: String): DevicePollResult {
         if (deviceCode.isEmpty() || deviceCode.length > MAX_CODE) throw DeviceCodeNotFoundException()
-        val authorization = authorizations.findByDeviceCodeHash(hasher.hash(deviceCode)) ?: throw DeviceCodeNotFoundException()
+        val authorization = authorizations.findByDeviceCodeHash(hasher.hash(deviceCode))
+            ?: throw DeviceCodeNotFoundException()
         val now = clock.nowMillis()
         if (authorization.status == DeviceAuthorizationStatus.CONSUMED || authorization.expiresAt <= now) {
             return DevicePollResult.Expired
@@ -230,10 +244,15 @@ class PollDeviceAuthorizationUseCaseImpl(
     private suspend fun approve(authorization: DeviceAuthorization, now: kotlin.time.Instant): DevicePollResult {
         val userId = checkNotNull(authorization.userId) { "An approved device authorization has no user." }
         val issued = issue(secrets, TokenKind.CLI) { id, hint ->
-            ApiToken(id, userId, null, authorization.clientName, TokenKind.CLI, CLI_SCOPES, hint, null, now, now + CLI_TOKEN_LIFETIME, null, null)
+            val expiresAt = now + CLI_TOKEN_LIFETIME
+            val name = authorization.clientName
+            ApiToken(id, userId, null, name, TokenKind.CLI, CLI_SCOPES, hint, null, now, expiresAt, null, null)
         }
-        if (!authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))) return DevicePollResult.Expired
-        audit.record(AuditEntry(null, userId, "token.created", "token", issued.token.id.toString(), mapOf("kind" to "cli")))
+        if (!authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))) {
+            return DevicePollResult.Expired
+        }
+        val tokenId = issued.token.id.toString()
+        audit.record(AuditEntry(null, userId, "token.created", "token", tokenId, mapOf("kind" to "cli")))
         return DevicePollResult.Approved(issued)
     }
 

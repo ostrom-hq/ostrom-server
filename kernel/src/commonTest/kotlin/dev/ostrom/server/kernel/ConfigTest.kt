@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.config.DatabaseConfig
@@ -145,6 +146,7 @@ class ConfigTest {
     fun readsTheProcessEnvironment() {
         val environment = EnvironmentConfigSource()
         assertNotNull(environment["PATH"], "PATH is set in every test process")
+        assertEquals(environment["PATH"], ServerConfig.source()["PATH"], "The process source reads the environment")
         assertNull(environment["OSTROM_SURELY_UNSET_${Uuid.random().toHexString()}"])
     }
 
@@ -201,6 +203,9 @@ class ConfigTest {
             ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "0")))
         }
         assertEquals("OSTROM_PORT must be between 1 and 65535.", outOfRange.message)
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "65536")))
+        }
         val notANumber = assertFailsWith<InvalidConfigException> {
             ServerConfig.from(MapConfigSource(database + ("OSTROM_PORT" to "http")))
         }
