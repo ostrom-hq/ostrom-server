@@ -78,10 +78,17 @@ class LicenseVerifierImpl(
         if (maxPeople != null && maxPeople < 1) invalid("maxPeople")
         if (features.any(String::isBlank)) invalid("features")
         if (instanceId != null && instanceId.isBlank()) invalid("instanceId")
+        checkTierAndBinding()
         val issued = instant(issuedAt) ?: invalid("issuedAt")
         val expires = instant(expiresAt) ?: invalid("expiresAt")
         if (expires <= issued) invalid("expiresAt")
-        return License(licenseId, customer, issued, expires, maxPeople, features.toSet(), instanceId, keyId)
+        return License(licenseId, customer, issued, expires, maxPeople, features.toSet(), instanceId, trial, keyId)
+    }
+
+    /** The tier is known, and a license that is not a trial is bound to an instance. */
+    private fun LicensePayload.checkTierAndBinding() {
+        if (tier != ENTERPRISE_TIER) throw MalformedLicenseException("its tier is invalid.")
+        if (!trial && instanceId == null) throw MalformedLicenseException(UNBOUND_REASON)
     }
 
     private fun instant(value: String): Instant? = try {
@@ -93,6 +100,9 @@ class LicenseVerifierImpl(
 
 // File-level rather than in a companion: a private companion's constructor is a line no test can reach (Kover).
 private const val PREFIX = "ostrom-license.v1."
+private const val ENTERPRISE_TIER = "enterprise"
+private const val UNBOUND_REASON = "it is not bound to an instance: a sold enterprise license must carry the id of " +
+    "the instance it is for. Send your instance id (GET /api/v1/instance) to sales@ostrom.run to have it re-issued."
 private const val MAX_LENGTH = 8_192
 private const val SIGNATURE_SIZE = 64
 private const val KEY_ID_LENGTH = 16

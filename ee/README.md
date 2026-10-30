@@ -41,7 +41,7 @@ it; billing reads `features` (`sso`, `policies`, `retention`), `maxPeople` and `
 | Valid key | Logged once: `license_id`, `customer`, `expires_at`, `max_people`, `features`, `key_id` (never the key) |
 | Expired, within 14 days | Still valid; a warning at every start, with `grace_ends_at` |
 | Grace period ends while running | Features off from that moment, one warning, no restart needed |
-| Malformed, bad signature, unknown signing key, more than 14 days expired, not yet valid (5 min of clock skew allowed), bound to another instance | **The server refuses to start**, with the reason: an operator who set a key wants to know |
+| Malformed, bad signature, unknown signing key, more than 14 days expired, not yet valid (5 min of clock skew allowed), bound to another instance, a sold license not bound to any | **The server refuses to start**, with the reason: an operator who set a key wants to know |
 
 ### Format
 
@@ -54,11 +54,19 @@ never over a re-serialization. The payload is compact JSON:
 
 ```json
 {"licenseId":"lic_…","customer":"Acme Corp","issuedAt":"2026-10-30T00:00:00Z","expiresAt":"2027-10-30T00:00:00Z",
- "maxPeople":50,"features":["policies","retention","sso"],"keyId":"5cceefe10dca26f3","instanceId":"…"}
+ "maxPeople":50,"features":["policies","retention","sso"],"keyId":"5cceefe10dca26f3","tier":"enterprise","trial":false,"instanceId":"…"}
 ```
 
-- `maxPeople`: `null` for unlimited. `instanceId` (optional): the `id` of `GET /v1/instance`; the license then only
-  works on that instance. `keyId`: 16 hex of SHA-256 of the signing public key's SPKI DER, to pick the pinned key.
+- `maxPeople`: `null` for unlimited. `keyId`: 16 hex of SHA-256 of the signing public key's SPKI DER, to pick the
+  pinned key.
+- `tier` (optional, `enterprise` when absent): the only tier today; any other value is refused. `trial` (optional,
+  `false` when absent): a trial license.
+- `instanceId` (optional in the format): the `id` of `GET /v1/instance`; the license then only works on that instance,
+  and the server refuses to start on another one, with the instance id to send to sales@ostrom.run to have it
+  re-issued. **Required for a license that is not a trial**: a sold Enterprise license without it is refused. A trial
+  needs none, and is checked like any other when it has one.
+- Signing: `sign.py --payload license.json --instance-id <id>` for a sold license, `--trial` for a trial (without
+  `--trial`, `--instance-id` is required). The instance id, the tier and the trial flag are never read from the file.
 - A field v1 does not define is refused (it could be a restriction a newer issuer added): a new field means `v2`.
 - Bounded: a key longer than 8 192 characters is refused before decoding.
 

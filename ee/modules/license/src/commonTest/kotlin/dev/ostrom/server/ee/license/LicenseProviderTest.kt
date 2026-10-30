@@ -116,6 +116,13 @@ class LicenseProviderTest {
     }
 
     @Test
+    fun aSoldLicenseFromSignPyIsAcceptedOnItsInstance() = runTest {
+        val license = provider(SIGN_PY_BOUND_FIXTURE).load()
+        assertEquals(instance.id.toString(), license?.instanceId)
+        assertEquals(1, instance.calls)
+    }
+
+    @Test
     fun aLicenseBoundToAnotherInstanceFailsTheLoad() = runTest {
         val key = TestSigningKey.generate()
         val verifier = LicenseVerifierImpl(listOf(key.publicKey))
@@ -123,7 +130,9 @@ class LicenseProviderTest {
             provider(key.license("instanceId" to q("11111111-1111-1111-1111-111111111111")), verifier).load()
         }
         assertEquals(
-            "The license is for instance 11111111-1111-1111-1111-111111111111, not this instance (${instance.id}).",
+            "The license is for instance 11111111-1111-1111-1111-111111111111, not this instance (${instance.id}). " +
+                "To have it re-issued for this instance, send this instance id (GET /api/v1/instance) " +
+                "to sales@ostrom.run.",
             error.message,
         )
     }

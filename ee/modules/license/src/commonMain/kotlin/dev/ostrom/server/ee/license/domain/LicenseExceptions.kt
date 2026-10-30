@@ -28,6 +28,9 @@ class ExpiredLicenseException(expiresAt: Instant, graceEndsAt: Instant) :
 class NotYetValidLicenseException(issuedAt: Instant) :
     LicenseException("The license is not valid before $issuedAt; check the server's clock.")
 
-/** The license is bound to another instance. */
+/** The license is bound to another instance; the message says how to get it re-issued. */
 class LicenseInstanceMismatchException(licensed: String, actual: String) :
-    LicenseException("The license is for instance $licensed, not this instance ($actual).")
+    LicenseException(
+        "The license is for instance $licensed, not this instance ($actual). " +
+            "To have it re-issued for this instance, send this instance id (GET /api/v1/instance) to sales@ostrom.run.",
+    )

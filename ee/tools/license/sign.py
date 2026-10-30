@@ -8,7 +8,12 @@ public keys compiled into `ee/modules/license` (`PinnedLicenseKeys.kt`); see `ee
 
     sign.py --generate-keypair                 # writes the private key (0600), prints the public key only
     sign.py --print-public-key                 # the public key and key id of the private key
-    sign.py --payload license.json             # prints the license key ("-" reads the payload from stdin)
+    sign.py --payload license.json --instance-id ID   # a sold license, bound to the buyer's instance
+    sign.py --payload license.json --trial            # a trial: not bound, `trial: true` in the payload
+                                                      # (payload: "-" reads it from stdin)
+
+A sold (non-trial) Enterprise license must be bound to an instance: --instance-id is required without --trial, and the
+server refuses an unbound one. The customer reads their instance id from GET /api/v1/instance.
 
 The private key defaults to ~/.config/ostrom/license-signing-ed25519.pem (`--key` to change). It is never printed,
 never logged and never committed. Needs the `cryptography` package (Ed25519 is not in the standard library).
@@ -35,7 +40,8 @@ PREFIX = "ostrom-license.v1."
 DEFAULT_KEY = os.path.join("~", ".config", "ostrom", "license-signing-ed25519.pem")
 # Fixed width, so two instants compare as strings in time order.
 INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
-ALLOWED_FIELDS = {"licenseId", "customer", "issuedAt", "expiresAt", "maxPeople", "features", "instanceId"}
+ALLOWED_FIELDS = {"licenseId", "customer", "issuedAt", "expiresAt", "maxPeople", "features"}
+TIER = "enterprise"
 
 
 class LicenseToolError(Exception):
@@ -106,8 +112,14 @@ def parse_instant(value: Any, name: str) -> str:
     return value
 
 
-def normalize_payload(raw: Any, signing_key_id: str, now: Callable[[], dt.datetime]) -> dict:
-    """Validates the operator's payload and returns it in the field order the server documents."""
+def normalize_payload(
+    raw: Any, signing_key_id: str, now: Callable[[], dt.datetime], instance_id: Optional[str], trial: bool
+) -> dict:
+    """Validates the operator's payload and returns it in the field order the server documents.
+
+    The instance id and the trial flag come from the command line, never from the file: a license sold to one
+    instance cannot be made by editing a payload that was written for another.
+    """
     if not isinstance(raw, dict):
         raise LicenseToolError("The payload must be a JSON object.")
     unknown = sorted(set(raw) - ALLOWED_FIELDS)
@@ -130,8 +142,7 @@ def normalize_payload(raw: Any, signing_key_id: str, now: Callable[[], dt.dateti
     features = raw.get("features", [])
     if not isinstance(features, list) or not all(isinstance(f, str) and f.strip() for f in features):
         raise LicenseToolError("features must be a list of non-empty strings.")
-    instance_id = raw.get("instanceId")
-    if instance_id is not None and (not isinstance(instance_id, str) or not instance_id.strip()):
+    if instance_id is not None and not instance_id.strip():
         raise LicenseToolError("instanceId must be a non-empty string when set.")
     payload = {
         "licenseId": license_id,
@@ -141,6 +152,8 @@ def normalize_payload(raw: Any, signing_key_id: str, now: Callable[[], dt.dateti
         "maxPeople": max_people,
         "features": sorted(set(features)),
         "keyId": signing_key_id,
+        "tier": TIER,
+        "trial": trial,
     }
     if instance_id is not None:
         payload["instanceId"] = instance_id
@@ -175,8 +188,17 @@ def main(
     mode.add_argument("--generate-keypair", action="store_true", help="create the private key (0600)")
     mode.add_argument("--print-public-key", action="store_true", help="print the public key and key id")
     mode.add_argument("--payload", metavar="FILE", help="sign this JSON payload ('-' for stdin)")
+    parser.add_argument("--instance-id", metavar="ID", help="the instance the license is bound to (GET /api/v1/instance)")
+    parser.add_argument("--trial", action="store_true", help="a trial license: not bound to an instance")
     parser.add_argument("--key", default=DEFAULT_KEY, help=f"the private key (default {DEFAULT_KEY})")
     args = parser.parse_args(argv)
+    if args.payload and not args.trial and args.instance_id is None:
+        parser.error(
+            "--instance-id is required unless --trial: a sold Enterprise license is bound to the buyer's instance "
+            "(they read its id from GET /api/v1/instance)."
+        )
+    if (args.instance_id is not None or args.trial) and not args.payload:
+        parser.error("--instance-id and --trial only apply to --payload.")
     path = os.path.expanduser(args.key)
     try:
         if args.generate_keypair:
@@ -195,7 +217,7 @@ def main(
                 raw = json.loads(text)
             except json.JSONDecodeError as error:
                 raise LicenseToolError(f"The payload is not JSON: {error.msg}.") from None
-            payload = normalize_payload(raw, key_id(public_key_der(private_key)), now)
+            payload = normalize_payload(raw, key_id(public_key_der(private_key)), now, args.instance_id, args.trial)
             print(sign_license(payload, private_key), file=stdout)
     except LicenseToolError as error:
         print(f"error: {error}", file=stderr)

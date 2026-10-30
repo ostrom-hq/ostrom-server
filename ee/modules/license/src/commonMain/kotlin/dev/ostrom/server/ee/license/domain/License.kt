@@ -29,6 +29,7 @@ val LICENSE_CLOCK_SKEW: Duration = 5.minutes
  * @property maxPeople The licensed people, null for unlimited.
  * @property features The licensed features (`sso`, `policies`, `retention`…).
  * @property instanceId The only instance (`/v1/instance` id) the license is valid on, null for any instance.
+ * @property trial Whether this is a trial: a trial may be unbound, a sold license never is (the verifier refuses it).
  * @property keyId The id of the pinned key that signed it.
  */
 data class License(
@@ -39,6 +40,7 @@ data class License(
     val maxPeople: Int?,
     val features: Set<String>,
     val instanceId: String?,
+    val trial: Boolean,
     val keyId: String,
 ) {
     /** The end of the grace period: from then on the license grants nothing. */

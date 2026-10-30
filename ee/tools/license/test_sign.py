@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
 import io
 import json
@@ -86,7 +87,7 @@ class SignToolTest(unittest.TestCase):
 
     def test_a_signed_license_verifies_with_the_public_key(self) -> None:
         out = self.generate()
-        code, license_key, err = self.run_tool("--payload", self.payload_file(PAYLOAD))
+        code, license_key, err = self.run_tool("--payload", self.payload_file(PAYLOAD), "--instance-id", "6f1c2c47")
         self.assertEqual(0, code, err)
         prefix, version, payload, signature = license_key.strip().split(".")
         self.assertEqual(("ostrom-license", "v1"), (prefix, version))
@@ -101,6 +102,9 @@ class SignToolTest(unittest.TestCase):
                 "maxPeople": 50,
                 "features": ["retention", "sso"],
                 "keyId": key_id,
+                "tier": "enterprise",
+                "trial": False,
+                "instanceId": "6f1c2c47",
             },
             json.loads(data),
         )
@@ -112,8 +116,8 @@ class SignToolTest(unittest.TestCase):
 
     def test_defaults_and_instance_binding(self) -> None:
         self.generate()
-        payload = {"customer": "Acme", "expiresAt": "2027-01-01T00:00:00Z", "instanceId": "6f1c2c47"}
-        code, license_key, err = self.run_tool("--payload", "-", stdin=json.dumps(payload))
+        payload = {"customer": "Acme", "expiresAt": "2027-01-01T00:00:00Z"}
+        code, license_key, err = self.run_tool("--payload", "-", "--instance-id", "6f1c2c47", stdin=json.dumps(payload))
         self.assertEqual(0, code, err)
         decoded = json.loads(b64url_decode(license_key.strip().split(".")[2]))
         self.assertEqual("2026-10-30T09:30:00Z", decoded["issuedAt"])
@@ -121,6 +125,42 @@ class SignToolTest(unittest.TestCase):
         self.assertEqual([], decoded["features"])
         self.assertIsNone(decoded["maxPeople"])
         self.assertEqual("6f1c2c47", decoded["instanceId"])
+        self.assertEqual(("enterprise", False), (decoded["tier"], decoded["trial"]))
+
+    def test_a_trial_is_not_bound_to_an_instance(self) -> None:
+        self.generate()
+        payload = {"customer": "Acme", "expiresAt": "2027-01-01T00:00:00Z"}
+        code, license_key, err = self.run_tool("--payload", "-", "--trial", stdin=json.dumps(payload))
+        self.assertEqual(0, code, err)
+        decoded = json.loads(b64url_decode(license_key.strip().split(".")[2]))
+        self.assertEqual(("enterprise", True), (decoded["tier"], decoded["trial"]))
+        self.assertNotIn("instanceId", decoded)
+
+    def test_a_trial_may_still_be_bound(self) -> None:
+        self.generate()
+        payload = {"customer": "Acme", "expiresAt": "2027-01-01T00:00:00Z"}
+        code, license_key, err = self.run_tool(
+            "--payload", "-", "--trial", "--instance-id", "abc", stdin=json.dumps(payload)
+        )
+        self.assertEqual(0, code, err)
+        decoded = json.loads(b64url_decode(license_key.strip().split(".")[2]))
+        self.assertEqual((True, "abc"), (decoded["trial"], decoded["instanceId"]))
+
+    def test_a_sold_license_needs_an_instance_id(self) -> None:
+        self.generate()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as raised:
+            self.run_tool("--payload", "-", stdin=json.dumps(PAYLOAD))
+        self.assertEqual(2, raised.exception.code)
+        self.assertIn("--instance-id is required unless --trial", err.getvalue())
+
+    def test_instance_id_and_trial_only_apply_to_a_payload(self) -> None:
+        for flag in (["--instance-id", "abc"], ["--trial"]):
+            with self.subTest(flag=flag):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                    self.run_tool("--print-public-key", *flag)
+                self.assertIn("only apply to --payload", err.getvalue())
 
     def test_invalid_payloads_are_refused(self) -> None:
         self.generate()
@@ -140,18 +180,25 @@ class SignToolTest(unittest.TestCase):
             json.dumps({**PAYLOAD, "maxPeople": "5"}): "maxPeople must be a positive integer",
             json.dumps({**PAYLOAD, "features": "sso"}): "features must be a list",
             json.dumps({**PAYLOAD, "features": ["sso", ""]}): "features must be a list",
-            json.dumps({**PAYLOAD, "instanceId": " "}): "instanceId must be a non-empty string",
-            json.dumps({**PAYLOAD, "instanceId": 3}): "instanceId must be a non-empty string",
+            json.dumps({**PAYLOAD, "instanceId": "abc"}): "Unknown payload fields: instanceId.",
+            json.dumps({**PAYLOAD, "trial": True}): "Unknown payload fields: trial.",
+            json.dumps({**PAYLOAD, "tier": "team"}): "Unknown payload fields: tier.",
         }
         for text, message in cases.items():
             with self.subTest(text=text):
-                code, out, err = self.run_tool("--payload", "-", stdin=text)
+                code, out, err = self.run_tool("--payload", "-", "--instance-id", "abc", stdin=text)
                 self.assertEqual((2, ""), (code, out))
                 self.assertIn(message, err)
 
+    def test_a_blank_instance_id_is_refused(self) -> None:
+        self.generate()
+        code, out, err = self.run_tool("--payload", "-", "--instance-id", " ", stdin=json.dumps(PAYLOAD))
+        self.assertEqual((2, ""), (code, out))
+        self.assertIn("instanceId must be a non-empty string", err)
+
     def test_a_missing_payload_file_is_refused(self) -> None:
         self.generate()
-        code, _, err = self.run_tool("--payload", os.path.join(self.directory.name, "absent.json"))
+        code, _, err = self.run_tool("--payload", os.path.join(self.directory.name, "absent.json"), "--trial")
         self.assertEqual(2, code)
         self.assertIn("Cannot read", err)
 
@@ -184,7 +231,7 @@ class SignToolTest(unittest.TestCase):
         out = io.StringIO()
         self.generate()
         code = sign.main(
-            ["--key", self.key, "--payload", "-"],
+            ["--key", self.key, "--payload", "-", "--trial"],
             stdin=io.StringIO(json.dumps({"customer": "Acme", "expiresAt": "2999-01-01T00:00:00Z"})),
             stdout=out,
             stderr=io.StringIO(),

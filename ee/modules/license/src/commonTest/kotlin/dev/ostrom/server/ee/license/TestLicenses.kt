@@ -17,19 +17,32 @@ import kotlin.uuid.Uuid
 val NOW: Instant = Instant.parse("2026-11-01T12:00:00Z")
 
 /**
- * A license key signed by `ee/tools/license/sign.py` with a test key whose private part was never committed:
- * proves the tool and the verifier agree on the format, byte for byte. Payload: licenseId `lic_fixture_0001`,
- * customer `Acme Test Corp`, 2026-10-30 to 2027-10-30, 50 people, `policies`, `retention`, `sso`.
+ * A trial license key signed by `ee/tools/license/sign.py --trial` with a test key whose private part was never
+ * committed: proves the tool and the verifier agree on the format, byte for byte. Payload: licenseId
+ * `lic_fixture_0001`, customer `Acme Test Corp`, tier `enterprise`, trial, 2026-10-30 to 2027-10-30, 50 people,
+ * `policies`, `retention`, `sso`, not bound to an instance.
  */
 const val SIGN_PY_FIXTURE: String =
-    "ostrom-license.v1.eyJsaWNlbnNlSWQiOiJsaWNfZml4dHVyZV8wMDAxIiwiY3VzdG9tZXIiOiJBY21lIFRlc3QgQ29yc" +
-        "CIsImlzc3VlZEF0IjoiMjAyNi0xMC0zMFQwMDowMDowMFoiLCJleHBpcmVzQXQiOiIyMDI3LTEwLTMwVDAwOjAwOjAwWi" +
-        "IsIm1heFBlb3BsZSI6NTAsImZlYXR1cmVzIjpbInBvbGljaWVzIiwicmV0ZW50aW9uIiwic3NvIl0sImtleUlkIjoiNTlm" +
-        "NzI5MTE0Mjc3OGI2NyJ9.uINISf0w8COxVvld0I5hJE6ZgTeJD83OBr0qSi5hOSx2k7VdRPGLPQwvxcGgVXDE4wevxpY9m" +
-        "hv8Hbd9UuMnAA"
+    "ostrom-license.v1.eyJsaWNlbnNlSWQiOiJsaWNfZml4dHVyZV8wMDAxIiwiY3VzdG9tZXIiOiJBY21lIFRlc3QgQ29ycC" +
+        "IsImlzc3VlZEF0IjoiMjAyNi0xMC0zMFQwMDowMDowMFoiLCJleHBpcmVzQXQiOiIyMDI3LTEwLTMwVDAwOjAwOjAwWiIsIm" +
+        "1heFBlb3BsZSI6NTAsImZlYXR1cmVzIjpbInBvbGljaWVzIiwicmV0ZW50aW9uIiwic3NvIl0sImtleUlkIjoiNDU4MjA0NT" +
+        "U4ODBiM2EyNiIsInRpZXIiOiJlbnRlcnByaXNlIiwidHJpYWwiOnRydWV9.ATg9Z-E9xDfNSVBZyLyUoHQ4-hCb-DOZM0rzA" +
+        "rDoGEsd6QpfPcds1C_6Md-lpHfe1FUSkzDxuxDbirZlgE_fCg"
 
-/** The public key of the test key that signed [SIGN_PY_FIXTURE] (key id `59f7291142778b67`). */
-const val SIGN_PY_TEST_PUBLIC_KEY: String = "MCowBQYDK2VwAyEA72fzt/scG+u4l462ShyW9A8NJW3wn+ONM9N74cHVATU="
+/**
+ * The same license sold (not a trial), signed by `sign.py --instance-id` for the instance [FakeInstance] answers
+ * with, `6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d10`.
+ */
+const val SIGN_PY_BOUND_FIXTURE: String =
+    "ostrom-license.v1.eyJsaWNlbnNlSWQiOiJsaWNfZml4dHVyZV8wMDAxIiwiY3VzdG9tZXIiOiJBY21lIFRlc3QgQ29ycC" +
+        "IsImlzc3VlZEF0IjoiMjAyNi0xMC0zMFQwMDowMDowMFoiLCJleHBpcmVzQXQiOiIyMDI3LTEwLTMwVDAwOjAwOjAwWiIsIm" +
+        "1heFBlb3BsZSI6NTAsImZlYXR1cmVzIjpbInBvbGljaWVzIiwicmV0ZW50aW9uIiwic3NvIl0sImtleUlkIjoiNDU4MjA0NT" +
+        "U4ODBiM2EyNiIsInRpZXIiOiJlbnRlcnByaXNlIiwidHJpYWwiOmZhbHNlLCJpbnN0YW5jZUlkIjoiNmYxYzJjNDctM2I3ZS" +
+        "00YTUxLTlhMzktMmY0ZjBmOGMxZDEwIn0.6Xx7fUNblWENSLdBvhEZ6wil7ptqlDHnw_KC4vgo1luWXa2Cmkcof7nOzP5Eo1" +
+        "tVUi2D64_ZSsqzzkFPc-l5Cg"
+
+/** The public key of the test key that signed both fixtures (key id `45820455880b3a26`). */
+const val SIGN_PY_TEST_PUBLIC_KEY: String = "MCowBQYDK2VwAyEAaB+fciKRCJnv58vRl/8/rEAo3DTMXxhtxkqRueKMIjw="
 
 private val urlSafe = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
 
@@ -52,7 +65,7 @@ class TestSigningKey private constructor(
 ) {
     /**
      * A v1 payload as sign.py writes it, signed by this key. Each change replaces a field's raw JSON; a null value
-     * leaves the field out, an unknown name adds it.
+     * leaves the field out, an unknown name adds it. The default is an enterprise trial without an instance.
      */
     fun payload(vararg changes: Pair<String, String?>): String {
         val fields = linkedMapOf<String, String?>(
@@ -63,6 +76,9 @@ class TestSigningKey private constructor(
             "maxPeople" to "50",
             "features" to "[\"sso\",\"policies\",\"retention\"]",
             "keyId" to q(keyId),
+            "tier" to q("enterprise"),
+            // A trial, so that a test not about the instance needs no instance; sold licenses override it.
+            "trial" to "true",
         )
         changes.forEach { (name, json) -> fields[name] = json }
         return fields.entries.filter { it.value != null }.joinToString(",", "{", "}") { "${q(it.key)}:${it.value}" }

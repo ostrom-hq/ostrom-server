@@ -35,11 +35,19 @@ class LicenseVerifierTest {
                 maxPeople = 50,
                 features = setOf("policies", "retention", "sso"),
                 instanceId = null,
-                keyId = "59f7291142778b67",
+                trial = true,
+                keyId = "45820455880b3a26",
             ),
             license,
         )
         assertEquals(Instant.parse("2027-11-13T00:00:00Z"), license.graceEndsAt, "14 days of grace")
+    }
+
+    @Test
+    fun aSoldLicenseSignedBySignPyCarriesItsInstance() = runTest {
+        val license = fixtureVerifier.verify(SIGN_PY_BOUND_FIXTURE, NOW)
+        assertEquals(FakeInstance().id.toString(), license.instanceId)
+        assertEquals(false, license.trial)
     }
 
     @Test
@@ -48,7 +56,7 @@ class LicenseVerifierTest {
         // The default verifier trusts the production key only: the test key's licenses are unknown to it.
         val error = assertFailsWith<UnknownLicenseKeyException> { LicenseVerifierImpl().verify(SIGN_PY_FIXTURE, NOW) }
         assertEquals(
-            "The license key was signed by an unknown key (59f7291142778b67); this build does not trust it.",
+            "The license key was signed by an unknown key (45820455880b3a26); this build does not trust it.",
             error.message,
         )
         // The production key's id is 5cceefe10dca26f3: a forgery claiming it reaches the signature check, and fails.
@@ -66,6 +74,58 @@ class LicenseVerifierTest {
         assertEquals("abc", license.instanceId)
         assertEquals(key.keyId, license.keyId)
         assertEquals(setOf("sso"), license.toGrant().features)
+    }
+
+    @Test
+    fun aTrialLicenseNeedsNoInstance() = runTest {
+        val key = TestSigningKey.generate()
+        val verifier = LicenseVerifierImpl(listOf(key.publicKey))
+        val trial = verifier.verify(key.license("trial" to "true", "instanceId" to null), NOW)
+        assertEquals(true, trial.trial)
+        assertNull(trial.instanceId)
+    }
+
+    @Test
+    fun aTrialBoundToAnInstanceKeepsItsInstance() = runTest {
+        val key = TestSigningKey.generate()
+        val verifier = LicenseVerifierImpl(listOf(key.publicKey))
+        assertEquals("abc", verifier.verify(key.license("trial" to "true", "instanceId" to q("abc")), NOW).instanceId)
+        assertEquals(
+            "its instanceId is invalid.",
+            malformed(verifier, key.license("trial" to "true", "instanceId" to q(" "))),
+            "a trial's instance is checked like any other",
+        )
+    }
+
+    @Test
+    fun aSoldEnterpriseLicenseMustBeBoundToAnInstance() = runTest {
+        val key = TestSigningKey.generate()
+        val verifier = LicenseVerifierImpl(listOf(key.publicKey))
+        val bound = verifier.verify(key.license("trial" to "false", "instanceId" to q("abc")), NOW)
+        assertEquals(false, bound.trial)
+        assertEquals("abc", bound.instanceId)
+        val expected = "it is not bound to an instance: a sold enterprise license must carry the id of the instance " +
+            "it is for. Send your instance id (GET /api/v1/instance) to sales@ostrom.run to have it re-issued."
+        assertEquals(expected, malformed(verifier, key.license("trial" to "false", "instanceId" to null)))
+        val noFlag = malformed(verifier, key.license("trial" to null, "instanceId" to null))
+        assertEquals(expected, noFlag, "trial defaults to false")
+    }
+
+    @Test
+    fun theTierAndTheTrialFlagDefaultToANonTrialEnterprise() = runTest {
+        val key = TestSigningKey.generate()
+        val license = LicenseVerifierImpl(listOf(key.publicKey))
+            .verify(key.license("tier" to null, "trial" to null, "instanceId" to q("abc")), NOW)
+        assertEquals(false, license.trial)
+    }
+
+    @Test
+    fun anUnknownTierIsRefused() = runTest {
+        val key = TestSigningKey.generate()
+        val verifier = LicenseVerifierImpl(listOf(key.publicKey))
+        assertEquals("its tier is invalid.", malformed(verifier, key.license("tier" to q("team"))))
+        assertEquals("its tier is invalid.", malformed(verifier, key.license("tier" to q("Enterprise"))))
+        assertEquals("its tier is invalid.", malformed(verifier, key.license("tier" to q(""))))
     }
 
     @Test

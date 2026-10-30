@@ -15,7 +15,12 @@ import kotlinx.serialization.json.Json
  * @property maxPeople The licensed people, null for unlimited.
  * @property features The licensed features.
  * @property keyId The id of the key that signed the payload (16 hex of SHA-256 of its SPKI DER).
- * @property instanceId The only instance the license is valid on, absent for any instance.
+ * @property instanceId The only instance the license is valid on. Optional in the format, but required for a license
+ *   that is not a [trial]: the verifier refuses a sold enterprise license without it.
+ * @property tier The license's tier, optional so that payloads written before it existed stay readable. The only
+ *   tier today is `enterprise`; any other value is refused.
+ * @property trial Whether this is a trial license, optional and `false` when absent. A trial need not be bound to an
+ *   instance; if it is, the binding is checked like any other.
  */
 @Serializable
 internal data class LicensePayload(
@@ -27,6 +32,8 @@ internal data class LicensePayload(
     val features: List<String> = emptyList(),
     val keyId: String,
     val instanceId: String? = null,
+    val tier: String = "enterprise",
+    val trial: Boolean = false,
 )
 
 /**
