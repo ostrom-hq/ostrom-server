@@ -240,3 +240,30 @@ private suspend fun SecretsRepository.requireWritable(caller: Caller, id: Uuid):
     }
     return secret
 }
+
+/**
+ * Translates between secret names (what the API and its clients use) and ids (what other modules store, so a
+ * rotation or a rename keeps their reference). Holds no value.
+ */
+interface SecretDirectoryUseCase {
+    /**
+     * Ids of secrets by name.
+     *
+     * @param ownerMemberId The member for personal secrets, null for org secrets.
+     *
+     * @return The id of each name found.
+     */
+    suspend fun idsByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): Map<String, Uuid>
+
+    /** Names of secrets by id; a missing id is absent. */
+    suspend fun namesById(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, String>
+}
+
+/** [SecretDirectoryUseCase] on the repository. */
+class SecretDirectoryUseCaseImpl(private val repository: SecretsRepository) : SecretDirectoryUseCase {
+    override suspend fun idsByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): Map<String, Uuid> =
+        names.distinct().mapNotNull { name -> repository.findByName(orgId, ownerMemberId, name)?.let { name to it.id } }.toMap()
+
+    override suspend fun namesById(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, String> =
+        if (ids.isEmpty()) emptyMap() else repository.getMany(orgId, ids.distinct()).associate { it.secret.id to it.secret.name }
+}

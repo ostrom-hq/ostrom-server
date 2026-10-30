@@ -6,6 +6,7 @@ import dev.ostrom.server.secrets.domain.CreateSecretPayload
 import dev.ostrom.server.secrets.domain.CreateSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.DeleteSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.FindSecretUseCaseImpl
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import dev.ostrom.server.secrets.domain.InvalidSecretException
 import dev.ostrom.server.secrets.domain.ListSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.MemberRole
@@ -112,6 +113,11 @@ class SecretUseCasesTest {
         assertFailsWith<SecretNotFoundException> { find(otherMember, "TOKEN", personal = true) }
         assertEquals(mapOf("TOKEN" to "org-value-1"), reveal.byName(org, listOf("TOKEN", "TOKEN", "MISSING")).mapValues { it.value.reveal() })
         assertEquals(emptyMap(), reveal.byName(org, emptyList()))
+        val directory = SecretDirectoryUseCaseImpl(repository)
+        assertEquals(mapOf("TOKEN" to orgSecret.id), directory.idsByName(org, null, listOf("TOKEN", "MISSING")))
+        assertEquals(mapOf("TOKEN" to mine.id), directory.idsByName(org, member.memberId, listOf("TOKEN")))
+        assertEquals(mapOf(orgSecret.id to "TOKEN"), directory.namesById(org, listOf(orgSecret.id, Uuid.random())))
+        assertEquals(emptyMap(), directory.namesById(org, emptyList()))
         cipher.broken = true
         assertFailsWith<SecretUnreadableException> { reveal.byName(org, listOf("TOKEN")) }
     }
