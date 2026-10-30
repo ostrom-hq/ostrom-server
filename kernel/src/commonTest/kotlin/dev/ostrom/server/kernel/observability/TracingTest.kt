@@ -29,6 +29,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.delay
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -40,6 +41,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 
 class TracingTest {
     private val telemetry = RecordingTelemetry()
@@ -143,14 +145,28 @@ class TracingTest {
     fun aTicketInTheUrlReachesNoSpanNorLog() = withServer {
         client.get("/probe/tkt_SECRET1?ticket=tkt_SECRET2")
         client.get("/nowhere/tkt_SECRET3")
+        val routes = servedRoutes(atLeast = 2)
 
         val spans = telemetry.spans.flatMap { span -> listOf(span.name) + span.attributes.entries.map { "$it" } }
         val logs = telemetry.logs.flatMap { record -> listOf(record.body) + record.attributes.entries.map { "$it" } }
         val leaks = (spans + logs + lines).filter { "SECRET" in it }
         assertTrue(leaks.isEmpty(), "the URL leaked into: $leaks")
-        val routes = telemetry.logs.filter { it.body == "request served" }.map { it.attributes["route"] }
-        assertEquals(listOf(AttributeValue.Text("/probe/{id}"), AttributeValue.Text(UNMATCHED_ROUTE)), routes)
+        assertEquals(AttributeValue.Text("/probe/{id}"), routes.first())
+        assertEquals(setOf(AttributeValue.Text(UNMATCHED_ROUTE)), routes.drop(1).toSet())
     }
+
+    /** The routes of the request lines, which are written after the answer is sent: waits for them, within a second. */
+    private suspend fun servedRoutes(atLeast: Int): List<AttributeValue?> {
+        repeat(50) {
+            val routes = routesServed()
+            if (routes.size >= atLeast) return routes
+            delay(20.milliseconds)
+        }
+        return routesServed()
+    }
+
+    private fun routesServed(): List<AttributeValue?> =
+        telemetry.logs.filter { it.body == "request served" }.map { it.attributes["route"] }
 
     @Test
     fun healthIsMeasuredButNeverTraced() = withServer {
