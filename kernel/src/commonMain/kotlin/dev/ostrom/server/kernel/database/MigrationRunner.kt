@@ -58,9 +58,7 @@ class MigrationRunnerImpl(
             mapOf("module" to module, "total" to results.total, "applied" to results.applied),
         )
     }
-
-    private companion object {
-        // No `_`: `a-b` and `a_b` would share the table `_migrations_a_b`.
-        val MODULE_NAME = Regex("[a-z][a-z0-9-]{0,40}")
-    }
 }
+
+// No `_`: `a-b` and `a_b` would share the table `_migrations_a_b`.
+private val MODULE_NAME = Regex("[a-z][a-z0-9-]{0,40}")

@@ -74,8 +74,9 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
     val fields = mapOf("request_id" to callId)
     when (cause) {
         is OstromException -> respondError(cause.kind, cause.message)
+        is PayloadTooLargeException -> respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
         // No converter for the request's Content-Type: `receive` throws CannotTransformContentToTypeException, a
-        // sibling of UnsupportedMediaTypeException under this base.
+        // sibling of UnsupportedMediaTypeException under this base (PayloadTooLargeException too, matched above).
         is ContentTransformationException ->
             respondError(ErrorKind.UNSUPPORTED_MEDIA_TYPE, "The request body must be JSON.")
         is BadRequestException -> {
@@ -84,7 +85,6 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
             respondError(ErrorKind.INVALID_REQUEST, "The request is malformed.")
         }
         is NotFoundException -> respondError(ErrorKind.NOT_FOUND, "Not found.")
-        is PayloadTooLargeException -> respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
         is SQLError -> if (cause.kind == SQLError.Kind.UniqueViolation) {
             respondError(ErrorKind.CONFLICT, "The resource already exists.")
         } else {
