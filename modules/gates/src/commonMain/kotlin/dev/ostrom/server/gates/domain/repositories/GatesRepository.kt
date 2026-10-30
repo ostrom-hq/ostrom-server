@@ -1,0 +1,125 @@
+package dev.ostrom.server.gates.domain.repositories
+
+import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.Gate
+import kotlin.uuid.Uuid
+
+/**
+ * Storage of gates and their approval requests. Every decision runs in [transaction], with the rows it changes
+ * locked: two approvers answering at the same instant, or two tool calls reserving the same yes, are serialized,
+ * and only the first wins.
+ */
+interface GatesRepository {
+    /**
+     * Runs [block] in one database transaction; an exception rolls everything back.
+     *
+     * @param block The work, with locking reads and writes.
+     * @return What [block] returns.
+     */
+    suspend fun <T> transaction(block: suspend GatesTransaction.() -> T): T
+
+    /**
+     * Reads a gate.
+     *
+     * @param orgId The caller's organization.
+     * @param id The gate.
+     * @return The gate, or null when absent or another organization's.
+     */
+    suspend fun get(orgId: Uuid, id: Uuid): Gate?
+
+    /**
+     * Reads a gate's requests, in the approvers' order.
+     *
+     * @param orgId The organization.
+     * @param gateId The gate.
+     * @return The requests.
+     */
+    suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest>
+
+    /**
+     * Lists the requests still waiting for an approver, newest first, by keyset.
+     *
+     * @param orgId The organization.
+     * @param approverId The approver.
+     * @param limit At most this many (bounded by the caller).
+     * @return The requests.
+     */
+    suspend fun pendingFor(orgId: Uuid, approverId: String, limit: Int): List<ApprovalRequest>
+}
+
+/** The reads and writes of one transaction. Locking reads hold their rows until the transaction ends. */
+interface GatesTransaction {
+    /**
+     * Serializes every transaction on the same key (a PostgreSQL advisory lock): two hooks asking for the same action
+     * at once create one gate.
+     *
+     * @param orgId The organization.
+     * @param key The gate key.
+     */
+    suspend fun lockKey(orgId: Uuid, key: String)
+
+    /**
+     * Lists the gates opened for a key, newest first.
+     *
+     * @param orgId The organization.
+     * @param key The key.
+     * @param limit At most this many.
+     * @return The gates.
+     */
+    suspend fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate>
+
+    /**
+     * Reads a gate and locks it.
+     *
+     * @param orgId The organization.
+     * @param id The gate.
+     * @return The gate, or null.
+     */
+    suspend fun lockGate(orgId: Uuid, id: Uuid): Gate?
+
+    /**
+     * Reads a request (not locked: its gate is the lock).
+     *
+     * @param orgId The organization.
+     * @param id The request.
+     * @return The request, or null.
+     */
+    suspend fun request(orgId: Uuid, id: Uuid): ApprovalRequest?
+
+    /**
+     * Reads a gate's requests.
+     *
+     * @param orgId The organization.
+     * @param gateId The gate.
+     * @return The requests, in the approvers' order.
+     */
+    suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest>
+
+    /**
+     * Stores a new gate.
+     *
+     * @param gate The gate.
+     */
+    suspend fun insertGate(gate: Gate)
+
+    /**
+     * Replaces a gate.
+     *
+     * @param gate The gate as it is now.
+     */
+    suspend fun updateGate(gate: Gate)
+
+    /**
+     * Stores new requests.
+     *
+     * @param requests The requests.
+     */
+    suspend fun insertRequests(requests: List<ApprovalRequest>)
+
+    /**
+     * Replaces requests.
+     *
+     * @param requests The requests as they are now.
+     */
+    suspend fun updateRequests(requests: List<ApprovalRequest>)
+}
