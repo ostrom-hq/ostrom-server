@@ -60,6 +60,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -316,6 +317,22 @@ class CompilerPostgresTest {
             .first { it.getValue("class").jsonPrimitive.content == "push-main" }
         assertEquals("release", push.getValue("gate").jsonObject.getValue("workflowId").jsonPrimitive.content)
         assertEquals(1, (catalog.getValue("gates") as JsonArray).size)
+
+        // S2-20: the hooks trust the same catalogue only signed by the instance, for this repository, for minutes.
+        val signedPath = "/api/v1/gates/catalog/signed?repo=acme-api"
+        val policy = server.call("agent:a:l1", signedPath).body<JsonObject>()
+        val signed = policy.getValue("payload").jsonPrimitive.content
+        val signature = Base64.decode(policy.getValue("signature").jsonPrimitive.content)
+        assertTrue(server.koin.get<InstanceSigner>().verify(signed.encodeToByteArray(), signature))
+        val body = Json.parseToJsonElement(signed).jsonObject
+        assertEquals("acme-api", body.getValue("repo").jsonPrimitive.content)
+        assertEquals(catalog.getValue("actions"), body.getValue("actions"))
+        val otherOrg = server.call("agent:b:l1", signedPath).body<JsonObject>().getValue("payload").jsonPrimitive
+        val otherGates = Json.parseToJsonElement(otherOrg.content).jsonObject.getValue("gates").jsonArray
+        assertTrue(otherGates.isEmpty(), "org B's own policy")
+        assertEquals(HttpStatusCode.BadRequest, server.call("agent:a:l1", "/api/v1/gates/catalog/signed").status)
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, signedPath).status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("gates:a:x", signedPath).status)
 
         val resolver = server.koin.get<GateNodeResolver>()
         val gate = assertNotNull(resolver.resolve(orgA, "acme-api", "push-main"))
