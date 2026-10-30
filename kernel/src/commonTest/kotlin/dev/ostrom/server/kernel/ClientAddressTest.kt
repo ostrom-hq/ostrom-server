@@ -26,8 +26,17 @@ import io.ktor.client.engine.cio.CIO as ClientCIO
  * peer address, so this test runs CIO on a free port of the loopback.
  */
 class ClientAddressTest {
-    /** Asks `/origin`, the address the server sees for the call, as a client sending [forwardedFor]. */
-    private fun behindAProxy(proxies: TrustedProxies, block: suspend (suspend (String?) -> String) -> Unit) = runTest {
+    /** A client of `/origin`, the address the server sees for the call. */
+    private class Asker(private val client: HttpClient, private val port: Int) {
+        /** Asks `/origin` sending [forwardedFor] as `X-Forwarded-For` and each [connectingIp] as `CF-Connecting-IP`. */
+        suspend fun ask(forwardedFor: String?, vararg connectingIp: String): String =
+            client.get("http://127.0.0.1:$port/origin") {
+                forwardedFor?.let { header("X-Forwarded-For", it) }
+                connectingIp.forEach { header("CF-Connecting-IP", it) }
+            }.bodyAsText()
+    }
+
+    private fun behindAProxy(proxies: TrustedProxies, block: suspend Asker.() -> Unit) = runTest {
         // On the real clock: the sockets are real.
         withContext(Dispatchers.Default) {
             val server = embeddedServer(CIO, port = 0, host = "127.0.0.1") {
@@ -36,12 +45,7 @@ class ClientAddressTest {
             }.startSuspend(wait = false)
             val client = HttpClient(ClientCIO)
             try {
-                val port = server.engine.resolvedConnectors().single().port
-                block { forwardedFor ->
-                    client.get("http://127.0.0.1:$port/origin") {
-                        forwardedFor?.let { header("X-Forwarded-For", it) }
-                    }.bodyAsText()
-                }
+                Asker(client, server.engine.resolvedConnectors().single().port).block()
             } finally {
                 client.close()
                 server.stopSuspend(0, 1_000)
@@ -50,7 +54,7 @@ class ClientAddressTest {
     }
 
     @Test
-    fun twoClientsBehindATrustedProxyAreTwoAddresses() = behindAProxy(TrustedProxies.parse("127.0.0.1/32")) { ask ->
+    fun twoClientsBehindATrustedProxyAreTwoAddresses() = behindAProxy(TrustedProxies.parse("127.0.0.1/32")) {
         assertEquals("203.0.113.7", ask("203.0.113.7"))
         assertEquals("198.51.100.9", ask("198.51.100.9"))
         // What a client writes itself is to the left of what the proxy appends: it is never believed.
@@ -59,12 +63,26 @@ class ClientAddressTest {
     }
 
     @Test
-    fun anUntrustedPeerIsTheClientWhateverItForwards() = behindAProxy(TrustedProxies.parse("10.0.0.0/8")) { ask ->
+    fun anUntrustedPeerIsTheClientWhateverItForwards() = behindAProxy(TrustedProxies.parse("10.0.0.0/8")) {
         assertEquals("127.0.0.1", ask("203.0.113.7"))
     }
 
     @Test
-    fun withoutTrustedProxiesTheHeaderIsIgnored() = behindAProxy(TrustedProxies.NONE) { ask ->
+    fun withoutTrustedProxiesTheHeaderIsIgnored() = behindAProxy(TrustedProxies.NONE) {
         assertEquals("127.0.0.1", ask("203.0.113.7"))
     }
+
+    @Test
+    fun behindATrustedProxyTheClientAddressHeaderWins() =
+        behindAProxy(TrustedProxies.parse("127.0.0.1/32", "CF-Connecting-IP")) {
+            assertEquals("203.0.113.7", ask("10.9.9.9", "203.0.113.7"))
+            assertEquals("198.51.100.9", ask("198.51.100.9"), "Without the header, X-Forwarded-For")
+            assertEquals("198.51.100.9", ask("198.51.100.9", "6.6.6.6", "203.0.113.7"), "Two values: X-Forwarded-For")
+        }
+
+    @Test
+    fun fromAnUntrustedPeerTheClientAddressHeaderIsIgnored() =
+        behindAProxy(TrustedProxies.parse("10.0.0.0/8", "CF-Connecting-IP")) {
+            assertEquals("127.0.0.1", ask("198.51.100.9", "203.0.113.7"))
+        }
 }

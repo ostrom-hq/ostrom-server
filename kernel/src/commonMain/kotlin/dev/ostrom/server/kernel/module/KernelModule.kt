@@ -41,7 +41,7 @@ fun kernelModule(
     single { signer }
     single { clock }
     // Validated at start by ServerConfig.from: read again here so that tests set it through the ConfigSource.
-    single { TrustedProxies.parse(config["OSTROM_TRUSTED_PROXIES"]) }
+    single { TrustedProxies.parse(config["OSTROM_TRUSTED_PROXIES"], config["OSTROM_CLIENT_ADDRESS_HEADER"]) }
     single { Readiness() }
     single<MigrationRunner> { MigrationRunnerImpl(get(), get()) }
     single<HealthCheck>(named("database")) { DatabaseHealthCheck(get()) }

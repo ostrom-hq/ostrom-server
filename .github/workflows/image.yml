@@ -120,7 +120,7 @@ jobs:
       - name: The arm64 image starts too (QEMU)
         run: |
           docker buildx build ctx/arm64 --platform linux/arm64 --load -t ostrom-server:smoke-arm64
-          # No database configured: the binary must load (libcrypt.so.1 of the right architecture) and refuse its config.
+          # No database configured: the binary must load (libcrypt.so.1 and libz.so.1 of the right architecture) and refuse its config.
           out=$(docker run --rm --platform linux/arm64 ostrom-server:smoke-arm64 2>&1 || true)
           echo "$out"
           echo "$out" | grep -q 'OSTROM_DATABASE_URL' || { echo "arm64 binary did not start"; exit 1; }

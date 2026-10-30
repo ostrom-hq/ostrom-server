@@ -27,8 +27,8 @@ class LicenseConfig(val licenseKey: String?) {
          *
          * @return The configuration.
          *
-         * @throws InvalidConfigException When the key file is missing or empty: an operator who set it expects a
-         *   license.
+         * @throws InvalidConfigException When the key file is missing, empty or larger than 16 KiB: an operator who
+         *   set it expects a license.
          */
         fun load(source: ConfigSource, readFile: (String) -> String = ::readLicenseFile): LicenseConfig {
             val direct = source["OSTROM_LICENSE_KEY"]
@@ -45,8 +45,16 @@ class LicenseConfig(val licenseKey: String?) {
     }
 }
 
+/** A license key is at most 8 192 characters: a larger file is not one (a log, a device), and is not read whole. */
+internal const val MAX_LICENSE_FILE_BYTES = 16 * 1024
+
 private fun readLicenseFile(path: String): String {
     val file = Path(path)
     if (!SystemFileSystem.exists(file)) throw InvalidConfigException("License key file $path does not exist.")
-    return SystemFileSystem.source(file).buffered().use { it.readString() }
+    return SystemFileSystem.source(file).buffered().use { source ->
+        if (source.request(MAX_LICENSE_FILE_BYTES + 1L)) {
+            throw InvalidConfigException("License key file $path is larger than 16 KiB: it is not a license key.")
+        }
+        source.readString()
+    }
 }
