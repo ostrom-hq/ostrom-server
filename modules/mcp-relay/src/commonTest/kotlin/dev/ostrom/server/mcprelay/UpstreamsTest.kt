@@ -348,6 +348,13 @@ class UpstreamsTest {
         assertFalse(UpstreamAddressGuard(allowPrivate = true).allows("http://10.0.0.5/mcp"))
     }
 
+    @Test
+    fun anIpv6BelowGlobalUnicastIsRefusedAndAMinusSignMakesAName() {
+        val guard = UpstreamAddressGuard()
+        assertFalse(guard.allows("https://[1000::1]/"), "Below 2000::/3")
+        assertTrue(guard.allows("https://1.2.3.-1/"), "inet_aton reads no negative octet: a name, left to DNS")
+    }
+
     private fun stdioTarget() = UpstreamTarget(
         server = Relay.server(transport = McpTransport.STDIO).copy(
             stdio = StdioSpec(
