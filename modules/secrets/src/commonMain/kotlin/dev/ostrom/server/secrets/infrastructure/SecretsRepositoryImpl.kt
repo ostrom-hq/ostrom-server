@@ -22,7 +22,8 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
     override suspend fun create(stored: StoredSecret): Boolean {
         val secret = stored.secret
         val statement = Statement.create(
-            "INSERT INTO secrets_entries (id, org_id, name, owner_member_id, envelope, version, created_at, updated_at, updated_by) " +
+            "INSERT INTO secrets_entries " +
+                "(id, org_id, name, owner_member_id, envelope, version, created_at, updated_at, updated_by) " +
                 "VALUES (:id, :org_id, :name, :owner, :envelope, :version, :created_at, :updated_at, :updated_by) " +
                 "ON CONFLICT (org_id, name, owner_member_id) DO NOTHING",
         )
@@ -35,10 +36,11 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
             .bind("created_at", secret.createdAt)
             .bind("updated_at", secret.updatedAt)
             .bind("updated_by", secret.updatedBy)
-        return driver.execute(statement).getOrThrow() == 1L
+        return driver.executeInOrg(secret.orgId, statement).getOrThrow() == 1L
     }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): StoredSecret? = driver.fetchAll(
+    override suspend fun get(orgId: Uuid, id: Uuid): StoredSecret? = driver.fetchInOrg(
+        orgId,
         Statement.create("SELECT $COLUMNS, envelope FROM secrets_entries WHERE org_id = :org_id AND id = :id")
             .bind("org_id", orgId)
             .bind("id", id),
@@ -46,7 +48,8 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
 
     override suspend fun getMany(orgId: Uuid, ids: Collection<Uuid>): List<StoredSecret> {
         if (ids.isEmpty()) return emptyList()
-        return driver.fetchAll(
+        return driver.fetchInOrg(
+            orgId,
             Statement.create("SELECT $COLUMNS, envelope FROM secrets_entries WHERE org_id = :org_id AND id IN :ids")
                 .bind("org_id", orgId)
                 .bind("ids", ids.toList()),
@@ -63,42 +66,50 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
             .bind("after", afterName ?: "")
             .bind("limit", limit)
         if (memberId != null) statement.bind("member", memberId)
-        return driver.fetchAll(statement).getOrThrow().map { it.toSecret() }
+        return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toSecret() }
     }
 
-    override suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant, updatedBy: Uuid): Secret? = driver.fetchAll(
-        Statement.create(
-            "UPDATE secrets_entries SET envelope = :envelope, version = version + 1, updated_at = :updated_at, updated_by = :updated_by " +
-                "WHERE org_id = :org_id AND id = :id RETURNING $COLUMNS",
-        )
-            .bind("envelope", envelope)
-            .bind("updated_at", updatedAt)
-            .bind("updated_by", updatedBy)
-            .bind("org_id", orgId)
-            .bind("id", id),
-    ).getOrThrow().firstOrNull()?.toSecret()
+    override suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant, updatedBy: Uuid): Secret? =
+        driver.fetchInOrg(
+            orgId,
+            Statement.create(
+                "UPDATE secrets_entries SET envelope = :envelope, version = version + 1, " +
+                    "updated_at = :updated_at, updated_by = :updated_by " +
+                    "WHERE org_id = :org_id AND id = :id RETURNING $COLUMNS",
+            )
+                .bind("envelope", envelope)
+                .bind("updated_at", updatedAt)
+                .bind("updated_by", updatedBy)
+                .bind("org_id", orgId)
+                .bind("id", id),
+        ).getOrThrow().firstOrNull()?.toSecret()
 
     override suspend fun findByName(orgId: Uuid, ownerMemberId: Uuid?, name: String): Secret? {
         val owner = if (ownerMemberId == null) "owner_member_id IS NULL" else "owner_member_id = :owner"
-        val statement = Statement.create("SELECT $COLUMNS FROM secrets_entries WHERE org_id = :org_id AND name = :name AND $owner")
+        val statement = Statement.create(
+            "SELECT $COLUMNS FROM secrets_entries WHERE org_id = :org_id AND name = :name AND $owner",
+        )
             .bind("org_id", orgId)
             .bind("name", name)
         if (ownerMemberId != null) statement.bind("owner", ownerMemberId)
-        return driver.fetchAll(statement).getOrThrow().firstOrNull()?.toSecret()
+        return driver.fetchInOrg(orgId, statement).getOrThrow().firstOrNull()?.toSecret()
     }
 
     override suspend fun getOrgSecretsByName(orgId: Uuid, names: Collection<String>): List<StoredSecret> {
         if (names.isEmpty()) return emptyList()
-        return driver.fetchAll(
+        return driver.fetchInOrg(
+            orgId,
             Statement.create(
-                "SELECT $COLUMNS, envelope FROM secrets_entries WHERE org_id = :org_id AND owner_member_id IS NULL AND name IN :names",
+                "SELECT $COLUMNS, envelope FROM secrets_entries " +
+                    "WHERE org_id = :org_id AND owner_member_id IS NULL AND name IN :names",
             )
                 .bind("org_id", orgId)
                 .bind("names", names.toList()),
         ).getOrThrow().map { StoredSecret(it.toSecret(), it.get("envelope").asString()) }
     }
 
-    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.execute(
+    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.executeInOrg(
+        orgId,
         Statement.create("DELETE FROM secrets_entries WHERE org_id = :org_id AND id = :id")
             .bind("org_id", orgId)
             .bind("id", id),
