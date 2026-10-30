@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.artifacts.infrastructure
 
+import dev.ostrom.server.kernel.database.ROUTER_ROLE
+import dev.ostrom.server.kernel.database.ROUTER_ROLE_SQL
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.kernel.database.routedTableSql
+import dev.ostrom.server.kernel.database.routerFunctionsSql
+
+/** Hands the cross-organization functions of version 2 over to [ROUTER_ROLE]. */
+private val ROUTE_FUNCTIONS_OWNER = routerFunctionsSql("artifacts_route_by_id(UUID)", "artifacts_route_by_slug(TEXT)")
 
 /**
  * The schema of the artifacts module; its tables start with `artifacts_`, and each is confined by row-level security
- * to the organization of the transaction (S2-01), except `artifacts_routes`: the one table read across
- * organizations, by the content origin (an artifact found by its signed id or its public link). It holds no customer
- * content, only an artifact's id, organization and link slug.
+ * to the organization of the transaction (S2-01, S2-51). `artifacts_routes` (an artifact's id, organization and link
+ * slug) is also reached across organizations, only through the narrow `SECURITY DEFINER` functions of version 2, owned
+ * by [ROUTER_ROLE]: the content origin finds an artifact by its signed id or its public link.
  */
 val ArtifactsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -65,6 +72,21 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("artifacts_blobs")}
             ${tenantTableSql("artifacts_members")}
             GRANT SELECT, INSERT, UPDATE ON artifacts_routes TO $TENANT_ROLE;
+        """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 2,
+        name = "confine_artifact_routes",
+        sql = """
+            $ROUTER_ROLE_SQL
+            ${routedTableSql("artifacts_routes", "SELECT")}
+            CREATE FUNCTION artifacts_route_by_id(p_artifact_id UUID) RETURNS TABLE (artifact_id UUID, org_id UUID)
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                AS $$ SELECT r.artifact_id, r.org_id FROM artifacts_routes r WHERE r.artifact_id = p_artifact_id $$;
+            CREATE FUNCTION artifacts_route_by_slug(p_slug TEXT) RETURNS TABLE (artifact_id UUID, org_id UUID)
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                AS $$ SELECT r.artifact_id, r.org_id FROM artifacts_routes r WHERE r.link_slug = p_slug $$;
+            $ROUTE_FUNCTIONS_OWNER
         """.trimIndent(),
     ),
 )

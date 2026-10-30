@@ -23,6 +23,7 @@ import dev.ostrom.server.runners.presentation.RunnerHeartbeatResponse
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
@@ -47,6 +48,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -103,7 +105,7 @@ class CloudSessionsPostgresTest {
         suspend fun count(org: Uuid, table: String) = server.driver.inTenant(org) {
             fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
         }
-        for (table in listOf("runners_sessions", "runners_usage")) {
+        for (table in listOf("runners_sessions", "runners_usage", "runners_session_routes")) {
             assertEquals(1L, count(ORG_A, table), table)
             // No WHERE org_id: the policy alone hides organization A's rows.
             assertEquals(0L, count(ORG_B, table), table)
@@ -125,6 +127,29 @@ class CloudSessionsPostgresTest {
                 .get("n").asLong()
         }
         assertEquals(0L, unset)
+        // S2-51: the routes are reached across organizations only through the router's functions, by key.
+        suspend fun lookup(sql: String) = server.driver.transaction {
+            execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
+            fetchAll(Statement.create(sql)).getOrThrow().map { it.get("org_id").asUuid() }
+        }
+        assertEquals(emptyList(), lookup("SELECT org_id FROM runners_session_routes"), "No organization: no route")
+        assertEquals(listOf(ORG_A), lookup("SELECT org_id FROM runners_route_by_session('${ofA.id}')"))
+        assertEquals(emptyList(), lookup("SELECT org_id FROM runners_route_by_session('${Uuid.random()}')"))
+        assertEquals(emptyList(), lookup("SELECT org_id FROM runners_route_by_session(NULL)"))
+        assertEquals(emptyList(), lookup("SELECT org_id FROM runners_route_by_token(NULL)"), "No token: no session")
+        assertEquals(emptyList(), lookup("SELECT org_id FROM runners_route_by_token('hash(forged)')"))
+        val claimed = lookup(
+            "SELECT org_id FROM runners_claim_due('probe', '${t0 + 5.minutes}', '${t0 + 1.minutes}', 10)",
+        )
+        assertEquals(listOf(ORG_A), claimed, "The reconciler claims due sessions of every organization")
+        server.driver.transaction {
+            execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
+            fetchAll("SELECT runners_release('${ofA.id}', 'probe', false, '$t0')").getOrThrow()
+        }
+        val owner = server.driver.fetchAll(
+            "SELECT reconcile_owner FROM runners_session_routes WHERE session_id = '${ofA.id}'",
+        ).getOrThrow().single().get("reconcile_owner").asStringOrNull()
+        assertNull(owner, "Released")
     }
 
     @Test

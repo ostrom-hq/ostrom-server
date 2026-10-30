@@ -4,7 +4,11 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
+import dev.ostrom.server.kernel.database.ROUTER_ROLE
+import dev.ostrom.server.kernel.database.ROUTER_ROLE_SQL
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.kernel.database.routedTableSql
+import dev.ostrom.server.kernel.database.routerFunctionsSql
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
 import dev.ostrom.server.kernel.http.HealthCheck
 import dev.ostrom.server.kernel.logging.JsonLogger
@@ -114,5 +118,53 @@ class KernelPostgresTest {
     @Test
     fun aDatabaseThatDoesNotAnswerInTimeIsDown() = databaseTest { database, _ ->
         assertFalse(DatabaseHealthCheck(database.driver, timeout = Duration.ZERO).isUp())
+    }
+
+    @Test
+    fun aRoutedTableIsConfinedAndOnlyTheRoutersFunctionsCrossOrganizations() = databaseTest { database, runner ->
+        // S2-51: a routing table under row-level security; the one cross-organization lookup is a narrow function.
+        val routes = SchemaMigration(
+            1,
+            "create_probe_routes",
+            """
+            CREATE TABLE probe_routes (id UUID PRIMARY KEY, org_id UUID NOT NULL, slug TEXT UNIQUE);
+            $ROUTER_ROLE_SQL
+            ${routedTableSql("probe_routes", "SELECT")}
+            CREATE FUNCTION probe_route(p_slug TEXT) RETURNS TABLE (id UUID, org_id UUID)
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                AS $$ SELECT r.id, r.org_id FROM probe_routes r WHERE r.slug = p_slug $$;
+            ${routerFunctionsSql("probe_route(TEXT)")}
+            DO $$ BEGIN CREATE ROLE ostrom_probe_serving NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+            GRANT SELECT, INSERT ON probe_routes TO ostrom_probe_serving;
+            INSERT INTO probe_routes VALUES ('$ROUTE_A', '$ORG_A', 'slug-a'), ('$ROUTE_B', '$ORG_B', 'slug-b');
+            """.trimIndent(),
+        )
+        runner.migrate("probe", listOf(routes))
+        val driver = database.driver
+        val owner = driver.fetchAll("SELECT pg_get_userbyid(proowner) AS o FROM pg_proc WHERE proname = 'probe_route'")
+            .getOrThrow().single().get("o").asString()
+        assertEquals(ROUTER_ROLE, owner)
+
+        // The CI user is a superuser, which bypasses row-level security: the proof runs as a plain role.
+        suspend fun asServing(org: String?, sql: String) = driver.transaction {
+            execute("SET LOCAL ROLE ostrom_probe_serving").getOrThrow()
+            org?.let { execute("SELECT set_config('ostrom.org_id', '$it', true)").getOrThrow() }
+            fetchAll(sql).getOrThrow().map { row -> row.get("org_id").asString() }
+        }
+        assertEquals(emptyList(), asServing(null, "SELECT org_id FROM probe_routes"), "No organization: no row")
+        assertEquals(listOf("$ORG_B"), asServing("$ORG_B", "SELECT org_id FROM probe_routes"), "Its own row only")
+        assertEquals(listOf("$ORG_A"), asServing(null, "SELECT org_id FROM probe_route('slug-a')"))
+        assertEquals(emptyList(), asServing(null, "SELECT org_id FROM probe_route('slug-c')"), "A wrong key: nothing")
+        assertEquals(emptyList(), asServing(null, "SELECT org_id FROM probe_route(NULL)"), "No key: nothing")
+        assertFails("Organization B cannot write a row of organization A") {
+            asServing("$ORG_B", "INSERT INTO probe_routes VALUES (gen_random_uuid(), '$ORG_A', 'x') RETURNING org_id")
+        }
+    }
+
+    private companion object {
+        const val ORG_A = "0f0e0d0c-0b0a-0908-0706-050403020100"
+        const val ORG_B = "1f1e1d1c-1b1a-1918-1716-151413121110"
+        const val ROUTE_A = "00010203-0405-0607-0809-0a0b0c0d0e0f"
+        const val ROUTE_B = "10111213-1415-1617-1819-1a1b1c1d1e1f"
     }
 }

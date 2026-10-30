@@ -33,6 +33,7 @@ import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -138,7 +139,14 @@ class ArtifactsPostgresTest {
         suspend fun count(org: Uuid, table: String) = server.driver.inTenant(org) {
             fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
         }
-        for (table in listOf("artifacts_artifacts", "artifacts_versions", "artifacts_blobs", "artifacts_members")) {
+        val tables = listOf(
+            "artifacts_artifacts",
+            "artifacts_versions",
+            "artifacts_blobs",
+            "artifacts_members",
+            "artifacts_routes",
+        )
+        for (table in tables) {
             assertEquals(1L, count(ORG_A, table), table)
             // No WHERE org_id: the policy alone hides organization A's rows.
             assertEquals(0L, count(ORG_B, table), table)
@@ -158,6 +166,18 @@ class ArtifactsPostgresTest {
         }
         assertEquals(emptyList(), repository.members(ORG_B, mine.id))
         assertNull(repository.blob(ORG_B, mine.id, "sha-a"))
+        // S2-51: the routes are reached across organizations only through the router's functions, by key.
+        suspend fun lookup(sql: String) = server.driver.transaction {
+            execute("SET LOCAL ROLE ostrom_tenant").getOrThrow()
+            fetchAll(Statement.create(sql)).getOrThrow().map { it.get("org_id").asUuid() }
+        }
+        assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_routes"), "No organization: no route")
+        assertEquals(listOf(ORG_A), lookup("SELECT org_id FROM artifacts_route_by_id('${mine.id}')"))
+        assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_route_by_id('${Uuid.random()}')"))
+        assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_route_by_id(NULL)"))
+        assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_route_by_slug(NULL)"), "No slug: no artifact")
+        assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_route_by_slug('not-a-slug')"))
+        assertEquals(ORG_A, repository.getById(mine.id)?.orgId)
     }
 
     @Test

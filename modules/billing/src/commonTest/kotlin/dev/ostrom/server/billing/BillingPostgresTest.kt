@@ -33,6 +33,7 @@ import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -48,6 +49,7 @@ import io.ktor.http.contentType
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -173,6 +175,33 @@ class BillingPostgresTest {
                 )
             }
             assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
+
+            // S2-51: the customers and the outbox are confined too, reached across organizations only by key.
+            repository.enqueue(OutboxTask(Uuid.random(), ORG_A, OutboxKind.entries.first(), "evt_a", NOW, 0))
+            server.driver.execute(
+                "GRANT SELECT, INSERT ON billing_customers, billing_outbox TO ostrom_billing_rls_probe",
+            ).getOrThrow()
+            suspend fun asProbe(org: Uuid?, sql: String) = server.driver.transaction {
+                execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
+                org?.let {
+                    fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
+                        .getOrThrow()
+                }
+                fetchAll(sql).getOrThrow().map { it.get("org_id").asUuid() }
+            }
+            for (table in listOf("billing_customers", "billing_outbox")) {
+                assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM $table"), table)
+                assertEquals(emptyList(), asProbe(ORG_B, "SELECT org_id FROM $table"), table)
+                assertEquals(listOf(ORG_A), asProbe(ORG_A, "SELECT org_id FROM $table"), table)
+            }
+            assertFails("Org B cannot write a customer of org A") {
+                asProbe(ORG_B, "INSERT INTO billing_customers VALUES ('cus_x', '$ORG_A') RETURNING org_id")
+            }
+            assertEquals(listOf(ORG_A), asProbe(null, "SELECT org_id FROM billing_org_of_customer('cus_a')"))
+            assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM billing_org_of_customer('cus_unknown')"))
+            assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM billing_org_of_customer(NULL)"))
+            val claimed = asProbe(null, "SELECT org_id FROM billing_claim_outbox('$NOW', '$NOW', 10)")
+            assertEquals(listOf(ORG_A), claimed, "The worker claims the due tasks of every organization")
         }
 
     @Test
