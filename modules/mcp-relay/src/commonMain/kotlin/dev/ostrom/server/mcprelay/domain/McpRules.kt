@@ -181,6 +181,10 @@ object McpRules {
                 condition.operator in valueless || (value != null && value.length <= MAX_VALUE),
                 "This condition needs a value of at most $MAX_VALUE characters.",
             )
+            rule(
+                condition.operator != ConditionOperator.MATCHES || SafePattern.isSafe(value.orEmpty()),
+                "A pattern may not repeat a repeated group nor refer back to a group (it could run for minutes).",
+            )
         }
     }
 
