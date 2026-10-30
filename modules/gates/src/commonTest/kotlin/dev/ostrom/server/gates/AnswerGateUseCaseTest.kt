@@ -56,7 +56,7 @@ class AnswerGateUseCaseTest {
             val refused = assertFailsWith<StepUpRequiredException> { yes(stale) }
             assertEquals(ErrorKind.FORBIDDEN, refused.kind)
         }
-        assertEquals(GateStatus.PENDING, bench.repository.gates.single().status, "nothing written")
+        assertEquals(GateStatus.PENDING, bench.repository.gates.values.single().status, "nothing written")
         assertEquals(GateStatus.APPROVED, yes(bench.clock.now - StepUp.WITHIN).gate.status)
 
         val other = bench.open(bench.pushRequest(sha = "b".repeat(40)))
