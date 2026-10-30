@@ -4,8 +4,11 @@ package dev.ostrom.server.billing.domain
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
-/** What happened to an event. */
-enum class EventOutcome { PROCESSED, DUPLICATE, IGNORED }
+/**
+ * What happened to an event. [IGNORED_UNKNOWN_ORG]: it named an organization that does not exist, and nothing was
+ * created for it (BILL-001).
+ */
+enum class EventOutcome { PROCESSED, DUPLICATE, IGNORED, IGNORED_UNKNOWN_ORG }
 
 /** Applies a verified Stripe event, once. */
 interface HandleStripeEventUseCase {
@@ -23,6 +26,7 @@ class HandleStripeEventUseCaseImpl(
     private val sync: SyncSubscriptionUseCase,
     private val notifier: BillingNotifier,
     private val backfill: BackfillActivePeopleUseCase,
+    private val metrics: BillingMetrics,
     private val clock: Clock,
 ) : HandleStripeEventUseCase {
     override suspend fun invoke(event: StripeEvent): EventOutcome {
@@ -33,7 +37,12 @@ class HandleStripeEventUseCaseImpl(
     }
 
     private suspend fun apply(event: StripeEvent): EventOutcome {
-        val billing = findBilling(event)
+        val billing = event.customerId?.let { repository.findByCustomer(it) }
+            ?: event.orgId?.let { orgId ->
+                // An organization gets its billing row when it opens a checkout, before Stripe knows it: an event
+                // naming an organization without one names no organization of this instance.
+                parseUuid(orgId)?.let { repository.get(it) } ?: return unknownOrganization(event)
+            }
         val stored = billing?.stripeSubscriptionId
         val subscriptionId = event.subscriptionId ?: stored
         return when {
@@ -87,14 +96,9 @@ class HandleStripeEventUseCaseImpl(
             else -> EventOutcome.IGNORED
         }
 
-    private suspend fun findBilling(event: StripeEvent): OrgBilling? {
-        val known = event.customerId?.let { repository.findByCustomer(it) }
-        val orgId = event.orgId?.let(::parseUuid)
-        return when {
-            known != null -> known
-            orgId != null -> repository.get(orgId) ?: OrgBilling(orgId = orgId, updatedAt = clock.now())
-            else -> null
-        }
+    private fun unknownOrganization(event: StripeEvent): EventOutcome {
+        metrics.stripeEventForUnknownOrganization(event.id, event.type)
+        return EventOutcome.IGNORED_UNKNOWN_ORG
     }
 }
 

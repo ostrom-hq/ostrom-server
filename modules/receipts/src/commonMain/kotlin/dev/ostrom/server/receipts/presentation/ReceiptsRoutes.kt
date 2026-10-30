@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.receipts.presentation
+
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.requireOrgPrincipal
+import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.receipts.domain.models.ReceiptQuery
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.resources.get
+import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
+import kotlin.uuid.Uuid
+
+/**
+ * The receipts routes of the contract: the keys are public (anyone verifies offline); the receipts are read by the
+ * people of their organization only, with a receipts scope (S2-47), the organization coming from the credential.
+ *
+ * @param dependencies The use cases.
+ */
+fun Route.receiptsRoutes(dependencies: ReceiptsRoutesDependencies) = with(dependencies) {
+    get<ReceiptsApi.Keys> {
+        call.respond(ReceiptKeysResponse(listKeys().map { PublicKeyResponse(it.kid, it.algorithm, it.publicKeyPem) }))
+    }
+    authenticated {
+        get<ReceiptsApi> { params ->
+            val orgId = call.reader(orgs)
+            val limit = (params.limit ?: ReceiptQuery.DEFAULT_PAGE).coerceIn(1, ReceiptQuery.MAX_PAGE)
+            val items = listReceipts(orgId, ReceiptQuery(params.subjectKind, params.subjectId, params.before, limit))
+            // A full page may have a next one: its cursor is the last receipt of this one.
+            val next = if (items.size == limit) items.last().id else null
+            call.respond(ReceiptsPage(items.map { it.body }, next))
+        }
+        get<ReceiptsApi.Id> { params ->
+            call.respond(getReceipt(call.reader(orgs), params.id))
+        }
+        get<ReceiptsApi.Id.Verify> { params ->
+            val outcome = verifyReceipt(call.reader(orgs), params.parent.id)
+            call.respond(VerificationResponse(outcome.ok, outcome.digest, outcome.kid, outcome.reason))
+        }
+    }
+}
+
+// S2-47: a person with the receipts scope, then their organization.
+private suspend fun ApplicationCall.reader(orgs: PrincipalOrgResolver): Uuid {
+    requirePrincipal().requireReceiptReader()
+    return requireOrgPrincipal(orgs, null).orgId
+}
