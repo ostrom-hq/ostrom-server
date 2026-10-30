@@ -80,6 +80,9 @@ val OrgsMigrations = listOf(
 - **Every table starts with the module name** (`orgs_…`, `instance_…`).
 - An applied migration is never edited (its checksum is verified at each start and the server refuses to start);
   add a new version instead.
+- PostgreSQL 15 or later: unique indexes use `NULLS NOT DISTINCT`, and the first start creates the `ostrom_tenant`
+  role of row-level security, so the server's database user needs `CREATEROLE` (or an administrator creates the role
+  first).
 - Plain PostgreSQL. Statements are split on `;`. **No `::type` casts** (write `CAST(x AS type)`): the driver reads
   `:name` as a named parameter.
 - Modules migrate in the order of `serverModules()`: a module whose tables reference another module's tables comes
@@ -185,6 +188,8 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | Pool size |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `OSTROM_SECRETS_KEY` | — | The secrets key, base64 of 32 bytes (AES-256-GCM); wins over the file. Losing it loses every stored secret |
+| `OSTROM_SECRETS_KEY_FILE` | `data/secrets.key` | File of the secrets key, created with mode 0600 at first start when `OSTROM_SECRETS_KEY` is unset; keep it on a persistent volume |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP/HTTP base URL (Grafana Cloud OTLP gateway, any collector); nothing is exported without it |
 | `OTEL_EXPORTER_OTLP_HEADERS` | — | `Authorization=Basic%20…` for Grafana Cloud (keep it in a Secret) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | The only protocol written; any other value stops the start |

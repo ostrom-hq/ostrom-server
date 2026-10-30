@@ -18,7 +18,7 @@ goes through the same short path. This guide takes ten minutes to read and saves
 - **Security problems are never reported in public**: see [SECURITY.md](SECURITY.md).
 - For anything larger than a bug fix, open a [discussion](https://github.com/ostrom-hq/ostrom-server/discussions) or an
   issue first, so we agree on the direction before you write code.
-- Read the engineering conventions shared by every Ostrom repository, [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md). They bind humans and
+- Read the engineering conventions shared by every Ostrom repository, [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md), and the short version for this repository in [`AGENTS.md`](AGENTS.md). They bind humans and
   agents alike.
 
 ## Set up your machine
@@ -54,7 +54,7 @@ A bug fix starts with a test that fails without the fix.
 - The pull request title follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
   `feat(gates): bind an approval to the commits it showed`, `fix(cli): …`, `docs: …`. Allowed types: `feat`, `fix`,
   `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `style`, `revert`. A breaking change adds `!` after the type and
-  explains the migration in the body. The `pr-title` check verifies it.
+  explains the migration in the body. The `community` check verifies it.
 - We squash merge: the pull request title becomes the commit on `main`, and the changelog line.
 - Fill the pull request template: what changes for a person, how you tested it.
 - Every check must be green. Nobody, maintainers included, merges around a red check.
@@ -69,14 +69,14 @@ git commit -s -m "fix(cli): keep the exit code of the agent"
 ```
 
 This adds `Signed-off-by: Your Name <you@example.com>` to the message. Forgot it? `git rebase --signoff main` then
-push with `--force-with-lease`. The `dco` check verifies every commit of a pull request from a contributor
+push with `--force-with-lease`. The `community` check verifies every commit of a pull request from a contributor
 without write access; maintainers signed it once for all.
 
-Contributions are made under the [GNU AGPL v3.0](LICENSE) (inbound = outbound).
+Contributions to `ee/` are made under the [Ostrom Enterprise License](ee/LICENSE); everything else under the [GNU AGPL v3.0](LICENSE).
 
 ## License headers
 
-Every source file starts with its SPDX identifier, checked in CI by the `spdx` job:
+Every source file starts with its SPDX identifier, checked in CI by the `community` job:
 
 ```text
 // SPDX-License-Identifier: AGPL-3.0-only
