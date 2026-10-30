@@ -42,6 +42,6 @@ internal class AutomationScheduler(
     }
 
     private companion object {
-        val DEFAULT_INTERVAL = 20.seconds
+        private val DEFAULT_INTERVAL = 20.seconds
     }
 }

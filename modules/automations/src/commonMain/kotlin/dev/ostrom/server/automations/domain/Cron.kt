@@ -71,7 +71,7 @@ class CronSchedule private constructor(
     /** Constants and readers of the enclosing type. */
     companion object {
         /** The least time between two slots. */
-        val MIN_SPACING = 5.minutes
+        private val MIN_SPACING = 5.minutes
 
         private const val DAYS_IN_WEEK = 7
 

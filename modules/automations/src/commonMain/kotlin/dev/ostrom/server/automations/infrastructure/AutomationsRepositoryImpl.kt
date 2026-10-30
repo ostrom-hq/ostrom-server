@@ -119,7 +119,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
             Statement.create(
                 """DELETE FROM automations_automations WHERE id = :id AND org_id = :org_id RETURNING id""",
             ).bind("id", id).bind("org_id", orgId),
-        ).getOrThrow().isNotEmpty()
+        ).getOrThrow().any()
     }
 
     override suspend fun insertRun(run: AutomationRun): AutomationRun = driver.inTenant(run.orgId) { storeRun(run) }
@@ -353,7 +353,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
     )
 
     private companion object {
-        val PROBLEMS = ListSerializer(PayloadProblem.serializer())
+        private val PROBLEMS = ListSerializer(PayloadProblem.serializer())
 
         const val COLUMNS = """
             id, org_id, owner, name, trigger_kind, definition, enabled, version, secret_generation,

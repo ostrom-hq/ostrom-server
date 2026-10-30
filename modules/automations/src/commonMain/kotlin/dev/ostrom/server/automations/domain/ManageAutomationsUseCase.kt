@@ -169,7 +169,7 @@ class ManageAutomationsUseCaseImpl(
         const val MAX_PER_MEMBER = 20
 
         /** How long the former secret is accepted after a rotation. */
-        val PREVIOUS_SECRET_GRACE = 10.minutes
+        private val PREVIOUS_SECRET_GRACE = 10.minutes
 
         /** `?owner=all`: every member's (an administrator). */
         const val ALL_OWNERS = "all"

@@ -311,13 +311,13 @@ class RunAutomationsUseCaseImpl(
         const val MAX_PER_MINUTE = 30
 
         /** How long the history keeps a run. */
-        val HISTORY = 14.days
+        private val HISTORY = 14.days
 
         /** How long a run may stay queued before it is marked failed. */
-        val QUEUE_TIMEOUT = 30.minutes
+        private val QUEUE_TIMEOUT = 30.minutes
 
         /** A slot found later than this is a missed one, ruled by the catch-up. */
-        val LATE = 2.minutes
+        private val LATE = 2.minutes
 
         private const val MAX_SKEW_SECONDS = 300L
         private const val SECONDS_PER_MINUTE = 60
