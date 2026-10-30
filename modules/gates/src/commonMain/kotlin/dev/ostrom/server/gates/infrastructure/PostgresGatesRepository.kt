@@ -457,15 +457,18 @@ internal data class EvidenceRecord(val label: String, val value: String)
 
 /**
  * The read of [PostgresGatesRepository.approversOf]: the approvers of [count] gates, `:org` and `:g0`…`:g<count-1>`
- * bound, at most [APPROVERS_PER_GATE] each as when a gate's requests are read. Shared with its plan test.
+ * bound, at most [APPROVERS_PER_GATE] each as when a gate's requests are read. The cap is per gate, never one limit
+ * for all of them: a gate with many requests cannot push the next gates out of the result. Shared with its plan test.
  *
  * @param count How many gate ids are bound.
  * @return The statement's text.
  */
 internal fun approversSql(count: Int): String {
     val names = (0 until count).joinToString(", ") { ":g$it" }
-    return "SELECT gate_id, approver_id FROM gates_requests WHERE org_id = :org AND gate_id IN ($names) " +
-        "ORDER BY gate_id, position LIMIT ${count * APPROVERS_PER_GATE}"
+    return "SELECT gate_id, approver_id FROM (SELECT gate_id, approver_id, position, " +
+        "row_number() OVER (PARTITION BY gate_id ORDER BY position) AS rank FROM gates_requests " +
+        "WHERE org_id = :org AND gate_id IN ($names)) ranked " +
+        "WHERE rank <= $APPROVERS_PER_GATE ORDER BY gate_id, position"
 }
 
 /** How many requests a gate's read returns at most. */
