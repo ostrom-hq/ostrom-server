@@ -106,7 +106,9 @@ object BillingModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = BillingMigrations
 
-    override fun routes(route: Route, koin: Koin) = route.billingRoutes(koin.get())
+    override fun routes(route: Route, koin: Koin) {
+        route.billingRoutes(koin.get())
+    }
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         if (!koin.get<BillingSettings>().stripeEnabled) return
