@@ -75,7 +75,20 @@ class StripeGatewayImplTest {
         )
         assertEquals(STRIPE_API_VERSION, sent.headers.getValue("Stripe-Version"))
         assertEquals("2026-09-30.endive", STRIPE_API_VERSION)
-        assertEquals("idem-1", sent.headers.getValue("Idempotency-Key"))
+        assertEquals("ostrom-customer-$ORG", sent.headers.getValue("Idempotency-Key"), "One customer per organization")
+    }
+
+    @Test
+    fun writesOtherThanACustomerCarryTheGeneratedKey() = runTest {
+        val harness = Harness(200 to """{"id":"sub_1"}""")
+        harness.gateway.setCancelAtPeriodEnd("sub_1", true)
+        assertEquals("idem-1", harness.sent.single().headers.getValue("Idempotency-Key"))
+    }
+
+    @Test
+    fun aSubscriptionWithoutCustomerIsRefused() = runTest {
+        val harness = Harness(200 to """{"id":"sub_1","status":"active"}""")
+        assertFailsWith<IllegalArgumentException> { harness.gateway.getSubscription("sub_1") }
     }
 
     @Test
@@ -322,8 +335,8 @@ class StripeGatewayImplTest {
             }),
             StripeConfig("sk_test_123"),
         )
-        gateway.createCustomer(ORG, null, null)
-        gateway.createCustomer(ORG, null, null)
+        gateway.setCancelAtPeriodEnd("sub_1", true)
+        gateway.setCancelAtPeriodEnd("sub_1", true)
         assertEquals(2, keys.toSet().size)
         assertTrue(keys.all { Uuid.parse(it).toString() == it })
     }

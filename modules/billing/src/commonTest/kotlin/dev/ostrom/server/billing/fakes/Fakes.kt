@@ -57,6 +57,11 @@ class FakeBillingRepository : BillingRepository {
         accounts[billing.orgId] = billing
     }
 
+    override suspend fun raiseCommittedPeople(orgId: Uuid, people: Int, at: Instant) {
+        val billing = accounts.getValue(orgId)
+        accounts[orgId] = billing.copy(committedPeople = maxOf(billing.committedPeople, people), updatedAt = at)
+    }
+
     override suspend fun isEventProcessed(eventId: String): Boolean = eventId in events
 
     override suspend fun markEventProcessed(eventId: String, type: String, at: Instant) {
@@ -109,8 +114,10 @@ class FakeBillingRepository : BillingRepository {
         if (tasks.none { it.identifier == task.identifier }) tasks += task
     }
 
-    override suspend fun dueTasks(now: Instant, limit: Int): List<OutboxTask> =
-        tasks.filter { it.id !in done && (retries[it.id] ?: it.at) <= now }.take(limit)
+    override suspend fun claimDueTasks(now: Instant, leaseUntil: Instant, limit: Int): List<OutboxTask> =
+        tasks.filter { it.id !in done && (retries[it.id] ?: it.at) <= now }.take(limit).onEach {
+            retries[it.id] = leaseUntil
+        }
 
     override suspend fun completeTask(id: Uuid, at: Instant) {
         done += id
@@ -132,6 +139,9 @@ class FakeStripeGateway : StripeGateway {
     val meterEvents = mutableListOf<Triple<String, String, Instant>>()
     var invoices = listOf<Invoice>()
     var customers = 0
+
+    /** Runs while Stripe sets a quantity: a test saves what a concurrent webhook would. */
+    var whileSettingQuantity: suspend () -> Unit = {}
 
     private fun record(call: String) {
         calls += call
@@ -181,6 +191,7 @@ class FakeStripeGateway : StripeGateway {
 
     override suspend fun setQuantity(subscriptionId: String, itemId: String, quantity: Int) {
         record("setQuantity $subscriptionId $itemId $quantity")
+        whileSettingQuantity()
     }
 
     override suspend fun recordActivePerson(customerId: String, identifier: String, at: Instant) {

@@ -7,6 +7,7 @@ import dev.ostrom.server.billing.domain.EventOutcome
 import dev.ostrom.server.billing.domain.LicenseGrant
 import dev.ostrom.server.billing.domain.OrgBilling
 import dev.ostrom.server.billing.domain.OutboxKind
+import dev.ostrom.server.billing.domain.OutboxTask
 import dev.ostrom.server.billing.domain.PaymentIssue
 import dev.ostrom.server.billing.domain.PaymentIssueKind
 import dev.ostrom.server.billing.domain.Plan
@@ -25,6 +26,7 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 class StripeEventsUsageAndLimitsTest {
     // Webhook events ----------------------------------------------------------------------------------------------
@@ -262,13 +264,23 @@ class StripeEventsUsageAndLimitsTest {
     }
 
     @Test
-    fun aTaskOfAnOrganizationThatStoppedPayingIsDropped() = runTest {
+    fun aPersonActiveBeforeTheSubscriptionEndedStillReachesItsLastInvoice() = runTest {
         val world = World()
         world.subscribe()
         world.activity(world.org, "alice", NOW)
         world.repository.save(world.repository.get(world.org)!!.copy(status = SubscriptionStatus.CANCELED))
         assertEquals(1, world.outbox(10))
-        assertTrue(world.stripe.meterEvents.isEmpty())
+        assertEquals("cus_1", world.stripe.meterEvents.single().first)
+    }
+
+    @Test
+    fun aTrueUpOfAnOrganizationThatStoppedPayingIsDropped() = runTest {
+        val world = World()
+        world.subscribe(interval = BillingInterval.YEAR, committed = 1)
+        world.repository.save(world.repository.get(world.org)!!.copy(status = SubscriptionStatus.CANCELED))
+        world.repository.enqueue(OutboxTask(Uuid.random(), world.org, OutboxKind.TRUE_UP, "t-1", NOW, 0))
+        assertEquals(1, world.outbox(10))
+        assertTrue(world.stripe.calls.none { it.startsWith("setQuantity") })
     }
 
     @Test

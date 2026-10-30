@@ -49,7 +49,8 @@ internal class World(stripeEnabled: Boolean = true) {
     val overview = GetBillingOverviewUseCaseImpl(repository, limits, settings, clock)
     val checkout = StartCheckoutUseCaseImpl(repository, stripe, settings, clock)
     val portal = OpenCustomerPortalUseCaseImpl(repository, stripe, settings)
-    val sync = SyncSubscriptionUseCaseImpl(repository, stripe, clock)
+    val unknownPrices = mutableListOf<Pair<String, String?>>()
+    val sync = SyncSubscriptionUseCaseImpl(repository, stripe, clock) { id, key -> unknownPrices += id to key }
     val changePlan = ChangePlanUseCaseImpl(repository, stripe, sync, settings, clock)
     val cancellation = SetCancellationUseCaseImpl(repository, stripe, sync, settings)
     val invoices = ListInvoicesUseCaseImpl(repository, stripe)

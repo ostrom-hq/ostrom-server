@@ -343,12 +343,13 @@ class UseCasesTest {
     }
 
     @Test
-    fun anActiveSubscriptionClearsThePaymentIssueAndAPastDueOneKeepsIt() = runTest {
+    fun aSyncLeavesThePaymentIssueToTheInvoiceEvents() = runTest {
         val world = World()
-        val issue = PaymentIssue(PaymentIssueKind.FAILED, "https://pay", NOW)
+        val issue = PaymentIssue(PaymentIssueKind.ACTION_REQUIRED, "https://pay", NOW)
         val billing = world.subscribe().copy(paymentIssue = issue)
-        assertNull(world.sync(billing, "sub_1").paymentIssue)
+        assertEquals(issue, world.sync(billing, "sub_1").paymentIssue, "Active, with an invoice waiting for 3DS")
         world.stripe.subscription = stripeSubscription(status = SubscriptionStatus.PAST_DUE)
         assertEquals(issue, world.sync(billing, "sub_1").paymentIssue)
+        assertNull(world.sync(billing.copy(paymentIssue = null), "sub_1").paymentIssue)
     }
 }

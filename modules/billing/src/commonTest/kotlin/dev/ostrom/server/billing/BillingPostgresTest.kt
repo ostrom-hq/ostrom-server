@@ -52,6 +52,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -202,6 +203,17 @@ class BillingPostgresTest {
         repository.save(full.copy(paymentIssue = null, status = SubscriptionStatus.ACTIVE))
         assertNull(repository.get(ORG_A)?.paymentIssue)
         assertNull(repository.findByCustomer("cus_unknown"))
+        val later = NOW + 1.minutes
+        repository.raiseCommittedPeople(ORG_A, 9, later)
+        val raised = full.copy(
+            paymentIssue = null,
+            status = SubscriptionStatus.ACTIVE,
+            committedPeople = 9,
+            updatedAt = later,
+        )
+        assertEquals(raised, repository.get(ORG_A), "Only the committed people and the time change")
+        repository.raiseCommittedPeople(ORG_A, 3, later)
+        assertEquals(9, repository.get(ORG_A)?.committedPeople, "Never lowered")
     }
 
     @Test
@@ -230,13 +242,15 @@ class BillingPostgresTest {
         val task = OutboxTask(Uuid.random(), ORG_A, OutboxKind.ACTIVE_PERSON, "ostrom-a-1-alice", NOW, 0)
         repository.enqueue(task)
         repository.enqueue(task.copy(id = Uuid.random()))
-        assertEquals(listOf(task), repository.dueTasks(NOW, 10))
-        assertEquals(emptyList(), repository.dueTasks(NOW - 1.minutes, 10))
+        assertEquals(emptyList(), repository.claimDueTasks(NOW - 1.minutes, NOW, 10), "Not due yet")
+        assertEquals(listOf(task), repository.claimDueTasks(NOW, NOW + 10.minutes, 10))
+        assertEquals(emptyList(), repository.claimDueTasks(NOW, NOW + 10.minutes, 10), "Claimed by another worker")
+        assertEquals(listOf(task), repository.claimDueTasks(NOW + 10.minutes, NOW + 20.minutes, 10), "Lease over")
         repository.failTask(task.id, NOW + 1.minutes)
-        assertEquals(emptyList(), repository.dueTasks(NOW, 10))
-        assertEquals(1, repository.dueTasks(NOW + 1.minutes, 10).single().attempts)
+        assertEquals(emptyList(), repository.claimDueTasks(NOW, NOW + 10.minutes, 10))
+        assertEquals(1, repository.claimDueTasks(NOW + 1.minutes, NOW + 2.minutes, 10).single().attempts)
         repository.completeTask(task.id, NOW)
-        assertEquals(emptyList(), repository.dueTasks(NOW + 1.minutes, 10))
+        assertEquals(emptyList(), repository.claimDueTasks(NOW + 1.days, NOW + 2.days, 10))
     }
 
     @Test

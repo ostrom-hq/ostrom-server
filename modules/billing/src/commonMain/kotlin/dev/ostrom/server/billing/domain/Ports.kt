@@ -76,6 +76,12 @@ interface BillingRepository {
     /** Creates or replaces an organization's billing. */
     suspend fun save(billing: OrgBilling)
 
+    /**
+     * Raises the people a yearly subscription is committed to, never lowers them, without touching the rest of the
+     * row: a webhook may have saved a newer state since the caller read it.
+     */
+    suspend fun raiseCommittedPeople(orgId: Uuid, people: Int, at: Instant)
+
     /** Whether a Stripe event was already processed. */
     suspend fun isEventProcessed(eventId: String): Boolean
 
@@ -106,8 +112,11 @@ interface BillingRepository {
     /** Queues a task for the worker; a task with the same identifier is queued once. */
     suspend fun enqueue(task: OutboxTask)
 
-    /** Takes due tasks, oldest first. */
-    suspend fun dueTasks(now: Instant, limit: Int): List<OutboxTask>
+    /**
+     * Takes due tasks, oldest first, and hides them from other workers until [leaseUntil]. A task neither completed
+     * nor failed by then (its worker died) is taken again; sending it twice is harmless, its identifier counts it once.
+     */
+    suspend fun claimDueTasks(now: Instant, leaseUntil: Instant, limit: Int): List<OutboxTask>
 
     /** Marks a task done. */
     suspend fun completeTask(id: Uuid, at: Instant)
