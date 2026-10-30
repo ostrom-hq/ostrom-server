@@ -163,6 +163,14 @@ jobs:
         run: ./gradlew :app:linkReleaseExecutableLinuxArm64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The swap file takes the root disk the images need (run 41029912954: "no space left on device" pulling the
+      # collector): give it back once the links are done.
+      - name: Release the swap of the native links
+        if: ${{ !cancelled() }}
+        run: |
+          sudo swapoff /native-link.swap || true
+          sudo rm -f /native-link.swap
+          df -h /
       - name: Docker image
         run: |
           docker build -t ostrom-server:ci .
