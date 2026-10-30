@@ -23,7 +23,8 @@ internal object AutomationRules {
     private val MODEL = Regex("[A-Za-z0-9._:/-]{1,100}")
     private val EFFORT = Regex("[a-z]{1,20}")
     private val VARIABLE = Regex("[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*")
-    private val RESERVED = listOf("run.", "automation.")
+    /** Names under these prefixes are the ones the run itself provides. */
+    private val RESERVED = Regex("^(run|automation)\\.")
 
     /**
      * Checks a definition.
@@ -117,7 +118,7 @@ internal object AutomationRules {
     }
 
     private fun checkVariable(variable: AutomationVariable) {
-        requireAutomation(VARIABLE.matches(variable.name) && RESERVED.none { variable.name.startsWith(it) }) {
+        requireAutomation(VARIABLE.matches(variable.name) && !RESERVED.containsMatchIn(variable.name)) {
             "Invalid variable name: ${variable.name}."
         }
         PayloadPaths.parse(variable.path)

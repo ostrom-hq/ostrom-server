@@ -72,10 +72,10 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
     override suspend fun get(orgId: Uuid, id: Uuid): Automation? = driver.inTenant(orgId) { select(id) }
 
     override suspend fun getById(id: Uuid): Automation? {
-        val orgId = driver.fetchAll(
+        val route = driver.fetchAll(
             Statement.create("""SELECT org_id FROM automations_routes WHERE automation_id = :id""").bind("id", id),
-        ).getOrThrow().firstOrNull()?.let { it.get("org_id").asUuid() } ?: return null
-        return get(orgId, id)
+        ).getOrThrow().firstOrNull() ?: return null
+        return get(route.get("org_id").asUuid(), id)
     }
 
     override suspend fun list(orgId: Uuid, owner: String?, before: Uuid?, limit: Int): List<Automation> {
