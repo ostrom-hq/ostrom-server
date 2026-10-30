@@ -61,18 +61,27 @@ class HostMcpUpstream(
         val first = operate(target, "list", null, null, deadline)
         val answer = if (first is HostAnswer.Retryable) operate(target, "list", null, null, deadline) else first
         return when (answer) {
-            is HostAnswer.Result -> UpstreamResult.Ok((answer.value["tools"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty(), answer.bytes)
+            is HostAnswer.Result -> UpstreamResult.Ok(
+                (answer.value["tools"] as? JsonArray)?.mapNotNull {
+                    it as? JsonObject
+                }.orEmpty(),
+                answer.bytes,
+            )
             is HostAnswer.Failed -> answer.failure
             is HostAnswer.Retryable -> answer.failure
         }
     }
 
-    override suspend fun callTool(target: UpstreamTarget, tool: String, arguments: JsonObject, deadline: Duration): UpstreamResult<JsonObject> =
-        when (val answer = operate(target, "call", tool, arguments, deadline)) {
-            is HostAnswer.Result -> UpstreamResult.Ok(answer.value, answer.bytes)
-            is HostAnswer.Failed -> answer.failure
-            is HostAnswer.Retryable -> answer.failure
-        }
+    override suspend fun callTool(
+        target: UpstreamTarget,
+        tool: String,
+        arguments: JsonObject,
+        deadline: Duration,
+    ): UpstreamResult<JsonObject> = when (val answer = operate(target, "call", tool, arguments, deadline)) {
+        is HostAnswer.Result -> UpstreamResult.Ok(answer.value, answer.bytes)
+        is HostAnswer.Failed -> answer.failure
+        is HostAnswer.Retryable -> answer.failure
+    }
 
     private sealed interface HostAnswer {
         data class Result(val value: JsonObject, val bytes: Long) : HostAnswer
@@ -80,8 +89,18 @@ class HostMcpUpstream(
         data class Retryable(val failure: UpstreamResult.Failure) : HostAnswer
     }
 
-    private suspend fun operate(target: UpstreamTarget, op: String, tool: String?, arguments: JsonObject?, deadline: Duration): HostAnswer {
-        val spec = target.server.stdio ?: return HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server has no command."))
+    private suspend fun operate(
+        target: UpstreamTarget,
+        op: String,
+        tool: String?,
+        arguments: JsonObject?,
+        deadline: Duration,
+    ): HostAnswer {
+        val spec =
+            target.server.stdio
+                ?: return HostAnswer.Failed(
+                    UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server has no command."),
+                )
         val body = buildJsonObject {
             put("key", processKey(target.processKey))
             putJsonObject("spec") {
@@ -106,7 +125,9 @@ class HostMcpUpstream(
                     contentType(ContentType.Application.Json)
                     setBody(body.toString())
                 }.execute { response ->
-                    val bytes = response.bodyAsChannel().readRemaining(maxResponseBytes.toLong() + HOST_ENVELOPE).readByteArray()
+                    val bytes = response.bodyAsChannel().readRemaining(
+                        maxResponseBytes.toLong() + HOST_ENVELOPE,
+                    ).readByteArray()
                     val json = try {
                         Json.parseToJsonElement(bytes.decodeToString()) as? JsonObject
                     } catch (_: SerializationException) {
@@ -115,8 +136,13 @@ class HostMcpUpstream(
                     val error = json?.get("error") as? JsonObject
                     val result = json?.get("result") as? JsonObject
                     when {
-                        error != null -> hostError((error["code"] as? JsonPrimitive)?.content, (error["message"] as? JsonPrimitive)?.content)
-                        response.status.value != 200 -> HostAnswer.Retryable(failure("The MCP host is unreachable (HTTP ${response.status.value})."))
+                        error != null -> hostError(
+                            (error["code"] as? JsonPrimitive)?.content,
+                            (error["message"] as? JsonPrimitive)?.content,
+                        )
+                        response.status.value != 200 -> HostAnswer.Retryable(
+                            failure("The MCP host is unreachable (HTTP ${response.status.value})."),
+                        )
                         result != null -> HostAnswer.Result(result, bytes.size.toLong())
                         else -> HostAnswer.Failed(failure("The MCP host sent an invalid answer."))
                     }
@@ -133,10 +159,28 @@ class HostMcpUpstream(
         val text = message?.take(1000) ?: "unknown error"
         return when (code) {
             "timeout" -> HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.TIMEOUT, text))
-            "too_large" -> HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.TOO_LARGE, "The MCP server's response exceeds the relay limit."))
-            "tool_error" -> HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.TOOL_ERROR, "The MCP server returned an error: $text"))
-            "crashed", "shutting_down" -> HostAnswer.Retryable(failure(if (code == "shutting_down") "The MCP host is restarting. Retry shortly." else text))
-            "unauthorized", "unsupported_protocol" -> HostAnswer.Failed(failure("The MCP host refused the relay: deploy the server and its MCP host with the same token and protocol."))
+            "too_large" -> HostAnswer.Failed(
+                UpstreamResult.Failure(McpOutcome.TOO_LARGE, "The MCP server's response exceeds the relay limit."),
+            )
+            "tool_error" -> HostAnswer.Failed(
+                UpstreamResult.Failure(McpOutcome.TOOL_ERROR, "The MCP server returned an error: $text"),
+            )
+            "crashed", "shutting_down" -> HostAnswer.Retryable(
+                failure(
+                    if (code ==
+                        "shutting_down"
+                    ) {
+                        "The MCP host is restarting. Retry shortly."
+                    } else {
+                        text
+                    },
+                ),
+            )
+            "unauthorized", "unsupported_protocol" -> HostAnswer.Failed(
+                failure(
+                    "The MCP host refused the relay: deploy the server and its MCP host with the same token and protocol.",
+                ),
+            )
             else -> HostAnswer.Failed(failure(text))
         }
     }

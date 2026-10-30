@@ -10,14 +10,15 @@ kotlin {
             implementation(project(":kernel"))
             implementation(project(":modules:secrets"))
             implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.engine.defaults)
             implementation(libs.cryptography.core)
-            implementation(libs.cryptography.openssl)
         }
-        linuxMain.dependencies {
-            implementation(libs.ktor.client.curl)
+        nativeMain.dependencies {
+            implementation(libs.cryptography.openssl3.prebuilt)
         }
-        macosMain.dependencies {
-            implementation(libs.ktor.client.darwin)
+        // The JVM target only runs the tests and Kover (never shipped): the JDK provides SHA-256 there.
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

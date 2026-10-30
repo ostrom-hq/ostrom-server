@@ -26,7 +26,12 @@ class UpstreamAddressGuard(private val allowPrivate: Boolean = false) {
         if (parsed.protocol.name != "https") return false
         if (allowPrivate) return true
         val host = parsed.host.lowercase().removePrefix("[").removeSuffix("]").trimEnd('.')
-        if (host.isEmpty() || host == "localhost" || INTERNAL_SUFFIXES.any { host == it.drop(1) || host.endsWith(it) }) return false
+        if (host.isEmpty() ||
+            host == "localhost" ||
+            INTERNAL_SUFFIXES.any { host == it.drop(1) || host.endsWith(it) }
+        ) {
+            return false
+        }
         ipv4(host)?.let { return isPublicIpv4(it) }
         if (':' in host) return isPublicIpv6(host)
         return '.' in host
@@ -35,12 +40,18 @@ class UpstreamAddressGuard(private val allowPrivate: Boolean = false) {
     private fun ipv4(host: String): IntArray? {
         val parts = host.split('.')
         if (parts.size != 4) return null
-        val octets = parts.map { part -> part.toIntOrNull()?.takeIf { it in 0..255 && part.length in 1..3 } ?: return null }
+        val octets = parts.map { part ->
+            part.toIntOrNull()?.takeIf { it in 0..255 && part.length in 1..3 }
+                ?: return null
+        }
         return octets.toIntArray()
     }
 
     private fun isPublicIpv4(o: IntArray): Boolean = !(
-        o[0] == 0 || o[0] == 10 || o[0] == 127 || o[0] >= 224 ||
+        o[0] == 0 ||
+            o[0] == 10 ||
+            o[0] == 127 ||
+            o[0] >= 224 ||
             (o[0] == 100 && o[1] in 64..127) ||
             (o[0] == 169 && o[1] == 254) ||
             (o[0] == 172 && o[1] in 16..31) ||

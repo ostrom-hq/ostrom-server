@@ -70,7 +70,13 @@ interface McpRelayRepository {
     suspend fun record(call: McpCall)
 
     /** The org's journal, newest first, before [before] (keyset), at most [limit], of one server or member when given. */
-    suspend fun listCalls(orgId: Uuid, before: Instant?, limit: Int, server: String? = null, memberId: Uuid? = null): List<McpCall>
+    suspend fun listCalls(
+        orgId: Uuid,
+        before: Instant?,
+        limit: Int,
+        server: String? = null,
+        memberId: Uuid? = null,
+    ): List<McpCall>
 
     /** Totals per member and server since [since]; only [memberId]'s when set. */
     suspend fun usage(orgId: Uuid, since: Instant, memberId: Uuid?): List<McpUsage>

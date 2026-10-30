@@ -3,6 +3,10 @@ package dev.ostrom.server.mcprelay
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.mcprelay.domain.McpCall
+import dev.ostrom.server.mcprelay.domain.McpOperation
+import dev.ostrom.server.mcprelay.domain.McpOutcome
+import dev.ostrom.server.mcprelay.domain.McpRelayRepository
 import dev.ostrom.server.mcprelay.presentation.ArgumentConditionDto
 import dev.ostrom.server.mcprelay.presentation.ArgumentPolicyRequest
 import dev.ostrom.server.mcprelay.presentation.McpAssignmentRequest
@@ -15,11 +19,15 @@ import dev.ostrom.server.mcprelay.presentation.StdioSpecDto
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
+import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.secrets.infrastructure.executeInOrg
+import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.secrets.presentation.SecretWriteRequest
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.mock.MockEngine
@@ -38,26 +46,42 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentType
 import io.ktor.http.content.TextContent
+import io.ktor.http.contentType
 import io.ktor.http.headersOf
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
-import kotlin.uuid.Uuid
 
 /**
  * Real PostgreSQL and real HTTP on the relay side; the upstream MCP server is a fake answering the Streamable HTTP
  * protocol behind the relay's HTTP client.
  */
 class McpRelayPostgresTest {
-    private val byToken = mapOf("admin-a" to Relay.adminA, "member-a" to Relay.memberA, "other-a" to Relay.otherA, "admin-b" to Relay.adminB)
+    private val byToken = mapOf(
+        "admin-a" to Relay.adminA,
+        "member-a" to Relay.memberA,
+        "other-a" to Relay.otherA,
+        "admin-b" to Relay.adminB,
+        "agent-a" to Relay.memberA,
+        "device-a" to Relay.memberA,
+        "cli-a" to Relay.adminA,
+    )
+
+    /** Browser sessions by default; an agent, a device, and a console token that may only read. */
+    private val principals = mapOf(
+        "agent-a" to AuthenticatedPrincipal("agent-a", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
+        "device-a" to AuthenticatedPrincipal("device-a", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
+        "cli-a" to AuthenticatedPrincipal("cli-a", PrincipalKind.USER, setOf(RelayScopes.MCP_READ)),
+    )
 
     /** What the fake upstream received: method, authorization, and the tool called. */
     private val upstreamSeen = mutableListOf<Triple<String, String?, String?>>()
@@ -67,7 +91,12 @@ class McpRelayPostgresTest {
             if (request.method == HttpMethod.Delete) return@MockEngine respond("", HttpStatusCode.OK)
             val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
             val method = body["method"]!!.jsonPrimitive.content
-            upstreamSeen += Triple(method, request.headers[HttpHeaders.Authorization], body["params"]?.jsonObject?.get("name")?.jsonPrimitive?.content)
+            upstreamSeen +=
+                Triple(
+                    method,
+                    request.headers[HttpHeaders.Authorization],
+                    body["params"]?.jsonObject?.get("name")?.jsonPrimitive?.content,
+                )
             val id = body["id"]
             val result = when (method) {
                 "initialize" -> """{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}"""
@@ -75,7 +104,11 @@ class McpRelayPostgresTest {
                 "tools/call" -> """{"content":[{"type":"text","text":"3 lines, token upstream_grafana_token"}]}"""
                 else -> return@MockEngine respond("", HttpStatusCode.Accepted)
             }
-            respond("""{"jsonrpc":"2.0","id":$id,"result":$result}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            respond(
+                """{"jsonrpc":"2.0","id":$id,"result":$result}""",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "application/json"),
+            )
         },
     ) {
         followRedirects = false
@@ -86,7 +119,8 @@ class McpRelayPostgresTest {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) = byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()) }
+                override suspend fun authenticate(token: String) = principals[token]
+                    ?: byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER)) }
             }
         }
         single<CallerResolver> {
@@ -100,13 +134,17 @@ class McpRelayPostgresTest {
 
     private val admin = "/api/v1/mcp"
 
-    private suspend fun TestServer.rpc(server: String, token: String, body: String, origin: String? = null): HttpResponse =
-        client.post("/api/v1/mcp/$server") {
-            bearerAuth(token)
-            contentType(ContentType.Application.Json)
-            origin?.let { header(HttpHeaders.Origin, it) }
-            setBody(body)
-        }
+    private suspend fun TestServer.rpc(
+        server: String,
+        token: String,
+        body: String,
+        origin: String? = null,
+    ): HttpResponse = client.post("/api/v1/mcp/$server") {
+        bearerAuth(token)
+        contentType(ContentType.Application.Json)
+        origin?.let { header(HttpHeaders.Origin, it) }
+        setBody(body)
+    }
 
     private suspend fun TestServer.grafana(token: String = "admin-a"): McpServerDto {
         client.post("/api/v1/secrets") {
@@ -117,7 +155,14 @@ class McpRelayPostgresTest {
         val created = client.post("$admin/servers") {
             bearerAuth(token)
             contentType(ContentType.Application.Json)
-            setBody(McpServerDto("grafana", "https://mcp.grafana.example.com/mcp", "http", secretNames = listOf("GRAFANA_TOKEN")))
+            setBody(
+                McpServerDto(
+                    "grafana",
+                    "https://mcp.grafana.example.com/mcp",
+                    "http",
+                    secretNames = listOf("GRAFANA_TOKEN"),
+                ),
+            )
         }
         assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
         return created.body()
@@ -133,117 +178,226 @@ class McpRelayPostgresTest {
     }
 
     @Test
-    fun aMemberReachesOnlyItsAssignedToolsThroughTheRelay() = serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
-        with(server) {
-            val grafana = grafana()
-            assign(grafana, Relay.memberA.memberId.toString(), listOf("query_loki_logs"))
-            val prefix = client.put("$admin/settings") {
-                bearerAuth("admin-a")
-                contentType(ContentType.Application.Json)
-                setBody(McpSettingsDto("teamcode"))
+    fun aMemberReachesOnlyItsAssignedToolsThroughTheRelay() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                val grafana = grafana()
+                assign(grafana, Relay.memberA.memberId.toString(), listOf("query_loki_logs"))
+                val prefix = client.put("$admin/settings") {
+                    bearerAuth("admin-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(McpSettingsDto("teamcode"))
+                }
+                assertEquals(HttpStatusCode.OK, prefix.status)
+
+                val mine = client.get("$admin/servers?mine=true") { bearerAuth("member-a") }.body<McpServersPage>()
+                assertEquals(listOf("teamcode-grafana"), mine.items.map { it.agentName })
+                assertEquals("/api/v1/mcp/grafana", mine.items.single().path)
+                assertEquals(listOf("query_loki_logs"), mine.items.single().tools)
+                assertEquals(
+                    emptyList(),
+                    client.get("$admin/servers") {
+                        bearerAuth("other-a")
+                    }.body<McpServersPage>().items,
+                    "Members get their own",
+                )
+                val all = client.get("$admin/servers") { bearerAuth("admin-a") }.body<McpServersPage>().items.single()
+                assertEquals(listOf("GRAFANA_TOKEN"), all.secretNames)
+                assertEquals("https://mcp.grafana.example.com/mcp", all.url)
+
+                val initialized =
+                    rpc(
+                        "grafana",
+                        "member-a",
+                        """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}""",
+                    )
+                assertEquals(HttpStatusCode.OK, initialized.status)
+                assertEquals(
+                    HttpStatusCode.Accepted,
+                    rpc("grafana", "member-a", """{"jsonrpc":"2.0","method":"notifications/initialized"}""").status,
+                )
+
+                val listed = Json.parseToJsonElement(
+                    rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""").bodyAsText(),
+                )
+                val names = listed.jsonObject["result"]!!.jsonObject["tools"]!!.jsonArray.map {
+                    it.jsonObject["name"]!!.jsonPrimitive.content
+                }
+                assertEquals(listOf("query_loki_logs"), names)
+
+                val called =
+                    rpc(
+                        "grafana",
+                        "member-a",
+                        """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"query_loki_logs","arguments":{"q":"x"}}}""",
+                    )
+                val text = called.bodyAsText()
+                assertTrue("3 lines" in text)
+                assertFalse("upstream_grafana_token" in text, "The credential never reaches the agent")
+                assertTrue(upstreamSeen.all { it.second == "Bearer upstream_grafana_token" }, "Injected server-side")
+
+                val refused =
+                    rpc(
+                        "grafana",
+                        "member-a",
+                        """{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"update_dashboard"}}""",
+                    )
+                assertTrue("-32602" in refused.bodyAsText())
+                assertFalse(upstreamSeen.any { it.third == "update_dashboard" })
+
+                val calls = client.get("$admin/calls") { bearerAuth("admin-a") }.body<McpCallsPage>().items
+                assertEquals(listOf("DENIED", "OK", "OK"), calls.map { it.outcome })
+                assertEquals(listOf(false, true, true), calls.map { it.ok })
+                assertEquals(listOf("update_dashboard", "query_loki_logs", "tools/list"), calls.map { it.tool })
+                assertEquals(
+                    1,
+                    client.get("$admin/calls?server=grafana&dev=${Relay.memberA.memberId}&limit=1") {
+                        bearerAuth("admin-a")
+                    }.body<McpCallsPage>().items.size,
+                )
+                assertEquals(
+                    emptyList(),
+                    client.get("$admin/calls") {
+                        bearerAuth("other-a")
+                    }.body<McpCallsPage>().items,
+                    "A member reads only their calls",
+                )
+                assertEquals(
+                    HttpStatusCode.BadRequest,
+                    client.get("$admin/calls?dev=nope") {
+                        bearerAuth("admin-a")
+                    }.status,
+                )
+                val usage = client.get("$admin/usage") { bearerAuth("member-a") }.body<McpUsageResponse>()
+                assertEquals(mapOf("grafana" to 2L), usage.byServer)
+                assertEquals(mapOf("grafana/query_loki_logs" to 1L, "grafana/update_dashboard" to 1L), usage.byTool)
+                assertEquals(1L, usage.rows.single().lists)
+                assertEquals(1L, usage.rows.single().denied)
+                assertEquals(
+                    3L,
+                    driver.fetchAll(
+                        "SELECT COUNT(*) AS n FROM mcp_relay_calls",
+                    ).getOrThrow().single().get("n").asString().toLong(),
+                )
             }
-            assertEquals(HttpStatusCode.OK, prefix.status)
-
-            val mine = client.get("$admin/servers?mine=true") { bearerAuth("member-a") }.body<McpServersPage>()
-            assertEquals(listOf("teamcode-grafana"), mine.items.map { it.agentName })
-            assertEquals("/api/v1/mcp/grafana", mine.items.single().path)
-            assertEquals(listOf("query_loki_logs"), mine.items.single().tools)
-            assertEquals(emptyList(), client.get("$admin/servers") { bearerAuth("other-a") }.body<McpServersPage>().items, "Members get their own")
-            val all = client.get("$admin/servers") { bearerAuth("admin-a") }.body<McpServersPage>().items.single()
-            assertEquals(listOf("GRAFANA_TOKEN"), all.secretNames)
-            assertEquals("https://mcp.grafana.example.com/mcp", all.url)
-
-            val initialized = rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}""")
-            assertEquals(HttpStatusCode.OK, initialized.status)
-            assertEquals(HttpStatusCode.Accepted, rpc("grafana", "member-a", """{"jsonrpc":"2.0","method":"notifications/initialized"}""").status)
-
-            val listed = Json.parseToJsonElement(rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""").bodyAsText())
-            val names = listed.jsonObject["result"]!!.jsonObject["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
-            assertEquals(listOf("query_loki_logs"), names)
-
-            val called = rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"query_loki_logs","arguments":{"q":"x"}}}""")
-            val text = called.bodyAsText()
-            assertTrue("3 lines" in text)
-            assertFalse("upstream_grafana_token" in text, "The credential never reaches the agent")
-            assertTrue(upstreamSeen.all { it.second == "Bearer upstream_grafana_token" }, "Injected server-side")
-
-            val refused = rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"update_dashboard"}}""")
-            assertTrue("-32602" in refused.bodyAsText())
-            assertFalse(upstreamSeen.any { it.third == "update_dashboard" })
-
-            val calls = client.get("$admin/calls") { bearerAuth("admin-a") }.body<McpCallsPage>().items
-            assertEquals(listOf("DENIED", "OK", "OK"), calls.map { it.outcome })
-            assertEquals(listOf(false, true, true), calls.map { it.ok })
-            assertEquals(listOf("update_dashboard", "query_loki_logs", "tools/list"), calls.map { it.tool })
-            assertEquals(1, client.get("$admin/calls?server=grafana&dev=${Relay.memberA.memberId}&limit=1") { bearerAuth("admin-a") }.body<McpCallsPage>().items.size)
-            assertEquals(emptyList(), client.get("$admin/calls") { bearerAuth("other-a") }.body<McpCallsPage>().items, "A member reads only their calls")
-            assertEquals(HttpStatusCode.BadRequest, client.get("$admin/calls?dev=nope") { bearerAuth("admin-a") }.status)
-            val usage = client.get("$admin/usage") { bearerAuth("member-a") }.body<McpUsageResponse>()
-            assertEquals(mapOf("grafana" to 2L), usage.byServer)
-            assertEquals(mapOf("grafana/query_loki_logs" to 1L, "grafana/update_dashboard" to 1L), usage.byTool)
-            assertEquals(1L, usage.rows.single().lists)
-            assertEquals(1L, usage.rows.single().denied)
-            assertEquals(3L, driver.fetchAll("SELECT COUNT(*) AS n FROM mcp_relay_calls").getOrThrow().single().get("n").asString().toLong())
         }
-    }
 
     @Test
-    fun argumentPoliciesStopACallBeforeTheUpstream() = serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
-        with(server) {
-            val grafana = grafana()
-            assign(grafana, "all", null)
-            val policy = client.post("$admin/servers/grafana/policies") {
-                bearerAuth("admin-a")
-                contentType(ContentType.Application.Json)
-                setBody(ArgumentPolicyRequest("*", listOf(ArgumentConditionDto("datasource", "matches", "^prod")), "deny", "Production is read by humans."))
+    fun argumentPoliciesStopACallBeforeTheUpstream() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                val grafana = grafana()
+                assign(grafana, "all", null)
+                val policy = client.post("$admin/servers/grafana/policies") {
+                    bearerAuth("admin-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(
+                        ArgumentPolicyRequest(
+                            "*",
+                            listOf(ArgumentConditionDto("datasource", "matches", "^prod")),
+                            "deny",
+                            "Production is read by humans.",
+                        ),
+                    )
+                }
+                assertEquals(HttpStatusCode.Created, policy.status, policy.bodyAsText())
+                val refused =
+                    rpc(
+                        "grafana",
+                        "member-a",
+                        """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query_loki_logs","arguments":{"datasource":"PROD-loki"}}}""",
+                    )
+                assertTrue("Production is read by humans." in refused.bodyAsText())
+                assertFalse(upstreamSeen.any { it.first == "tools/call" })
+                val allowed =
+                    rpc(
+                        "grafana",
+                        "member-a",
+                        """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"query_loki_logs","arguments":{"datasource":"staging"}}}""",
+                    )
+                assertTrue("3 lines" in allowed.bodyAsText())
+                val badRegex = client.post("$admin/servers/grafana/policies") {
+                    bearerAuth("admin-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(ArgumentPolicyRequest("*", listOf(ArgumentConditionDto("a", "matches", "(")), "deny", "x"))
+                }
+                assertEquals(HttpStatusCode.BadRequest, badRegex.status)
             }
-            assertEquals(HttpStatusCode.Created, policy.status, policy.bodyAsText())
-            val refused = rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query_loki_logs","arguments":{"datasource":"PROD-loki"}}}""")
-            assertTrue("Production is read by humans." in refused.bodyAsText())
-            assertFalse(upstreamSeen.any { it.first == "tools/call" })
-            val allowed = rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"query_loki_logs","arguments":{"datasource":"staging"}}}""")
-            assertTrue("3 lines" in allowed.bodyAsText())
-            val badRegex = client.post("$admin/servers/grafana/policies") {
-                bearerAuth("admin-a")
-                contentType(ContentType.Application.Json)
-                setBody(ArgumentPolicyRequest("*", listOf(ArgumentConditionDto("a", "matches", "(")), "deny", "x"))
-            }
-            assertEquals(HttpStatusCode.BadRequest, badRegex.status)
         }
-    }
 
     @Test
-    fun anotherOrgNeitherSeesNorReachesTheServer() = serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
-        with(server) {
-            grafana()
-            assertEquals(emptyList(), client.get("$admin/servers") { bearerAuth("admin-b") }.body<McpServersPage>().items)
-            assertEquals(emptyList(), client.get("$admin/servers?mine=true") { bearerAuth("admin-b") }.body<McpServersPage>().items)
-            assertEquals(HttpStatusCode.NotFound, client.delete("$admin/servers/grafana") { bearerAuth("admin-b") }.status)
-            assertEquals(emptyList(), client.get("$admin/calls") { bearerAuth("admin-b") }.body<McpCallsPage>().items)
-            assertEquals(HttpStatusCode.NotFound, rpc("grafana", "admin-b", """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""").status)
-            assertTrue(upstreamSeen.isEmpty())
+    fun anotherOrgNeitherSeesNorReachesTheServer() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                grafana()
+                assertEquals(
+                    emptyList(),
+                    client.get("$admin/servers") {
+                        bearerAuth("admin-b")
+                    }.body<McpServersPage>().items,
+                )
+                assertEquals(
+                    emptyList(),
+                    client.get("$admin/servers?mine=true") {
+                        bearerAuth("admin-b")
+                    }.body<McpServersPage>().items,
+                )
+                assertEquals(
+                    HttpStatusCode.NotFound,
+                    client.delete("$admin/servers/grafana") {
+                        bearerAuth("admin-b")
+                    }.status,
+                )
+                assertEquals(
+                    emptyList(),
+                    client.get("$admin/calls") {
+                        bearerAuth("admin-b")
+                    }.body<McpCallsPage>().items,
+                )
+                assertEquals(
+                    HttpStatusCode.NotFound,
+                    rpc("grafana", "admin-b", """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""").status,
+                )
+                assertTrue(upstreamSeen.isEmpty())
+            }
         }
-    }
 
     @Test
-    fun theEndpointRefusesBrowsersOtherVerbsAndBadInput() = serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
-        with(server) {
-            val grafana = grafana()
-            assign(grafana, "all", null)
-            assertEquals(HttpStatusCode.Forbidden, rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":1,"method":"ping"}""", origin = "https://evil.example").status)
-            assertEquals(HttpStatusCode.MethodNotAllowed, client.get("/api/v1/mcp/grafana") { bearerAuth("member-a") }.status)
-            assertEquals(HttpStatusCode.BadRequest, rpc("grafana", "member-a", "not json").status)
-            assertEquals(HttpStatusCode.BadRequest, rpc("grafana", "member-a", """[{"jsonrpc":"2.0","id":1,"method":"ping"}]""").status)
-            val oldProtocol = client.post("/api/v1/mcp/grafana") {
-                bearerAuth("member-a")
-                header("MCP-Protocol-Version", "2024-11-05")
-                contentType(ContentType.Application.Json)
-                setBody("""{"jsonrpc":"2.0","id":1,"method":"ping"}""")
+    fun theEndpointRefusesBrowsersOtherVerbsAndBadInput() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                val grafana = grafana()
+                assign(grafana, "all", null)
+                assertEquals(
+                    HttpStatusCode.Forbidden,
+                    rpc(
+                        "grafana",
+                        "member-a",
+                        """{"jsonrpc":"2.0","id":1,"method":"ping"}""",
+                        origin = "https://evil.example",
+                    ).status,
+                )
+                assertEquals(
+                    HttpStatusCode.MethodNotAllowed,
+                    client.get("/api/v1/mcp/grafana") {
+                        bearerAuth("member-a")
+                    }.status,
+                )
+                assertEquals(HttpStatusCode.BadRequest, rpc("grafana", "member-a", "not json").status)
+                assertEquals(
+                    HttpStatusCode.BadRequest,
+                    rpc("grafana", "member-a", """[{"jsonrpc":"2.0","id":1,"method":"ping"}]""").status,
+                )
+                val oldProtocol = client.post("/api/v1/mcp/grafana") {
+                    bearerAuth("member-a")
+                    header("MCP-Protocol-Version", "2024-11-05")
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"jsonrpc":"2.0","id":1,"method":"ping"}""")
+                }
+                assertEquals(HttpStatusCode.BadRequest, oldProtocol.status)
+                assertEquals(HttpStatusCode.Unauthorized, client.post("/api/v1/mcp/grafana") { setBody("{}") }.status)
             }
-            assertEquals(HttpStatusCode.BadRequest, oldProtocol.status)
-            assertEquals(HttpStatusCode.Unauthorized, client.post("/api/v1/mcp/grafana") { setBody("{}") }.status)
         }
-    }
 
     @Test
     fun adminRoutesCheckRolesAndInput() = serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
@@ -289,7 +443,14 @@ class McpRelayPostgresTest {
             val saved = client.put("$admin/servers/grafana") {
                 bearerAuth("admin-a")
                 contentType(ContentType.Application.Json)
-                setBody(McpServerDto("grafana", "https://grafana2.example.com/mcp", "http", secretNames = listOf("GRAFANA_TOKEN")))
+                setBody(
+                    McpServerDto(
+                        "grafana",
+                        "https://grafana2.example.com/mcp",
+                        "http",
+                        secretNames = listOf("GRAFANA_TOKEN"),
+                    ),
+                )
             }.body<McpServerDto>()
             assertEquals(2, saved.version)
             val created = client.put("$admin/servers/sentry") {
@@ -310,16 +471,130 @@ class McpRelayPostgresTest {
                 setBody(McpAssignmentRequest(credentialSecret = "MINE"))
             }
             assertEquals(HttpStatusCode.BadRequest, perMember.status)
-            assertEquals(HttpStatusCode.NotFound, client.get("$admin/servers/nope/assignments") { bearerAuth("admin-a") }.status)
-            assertEquals(HttpStatusCode.OK, client.get("$admin/servers/grafana/assignments") { bearerAuth("admin-a") }.status)
-            assertEquals(HttpStatusCode.OK, client.get("$admin/servers/grafana/policies") { bearerAuth("admin-a") }.status)
+            assertEquals(
+                HttpStatusCode.NotFound,
+                client.get("$admin/servers/nope/assignments") {
+                    bearerAuth("admin-a")
+                }.status,
+            )
+            assertEquals(
+                HttpStatusCode.OK,
+                client.get("$admin/servers/grafana/assignments") {
+                    bearerAuth("admin-a")
+                }.status,
+            )
+            assertEquals(
+                HttpStatusCode.OK,
+                client.get("$admin/servers/grafana/policies") {
+                    bearerAuth("admin-a")
+                }.status,
+            )
             client.delete("$admin/servers/sentry") { bearerAuth("admin-a") }
             val deleted = client.request("$admin/servers/grafana") {
                 method = HttpMethod.Delete
                 bearerAuth("admin-a")
             }
             assertEquals(HttpStatusCode.NoContent, deleted.status)
-            assertEquals(emptyList(), client.get("$admin/servers") { bearerAuth("admin-a") }.body<McpServersPage>().items)
+            assertEquals(
+                emptyList(),
+                client.get("$admin/servers") {
+                    bearerAuth("admin-a")
+                }.body<McpServersPage>().items,
+            )
         }
     }
+
+    @Test
+    fun consoleRoutesRefuseAgentsAndDevicesAndCheckScopes() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                val grafana = grafana()
+                assign(grafana, "all", null)
+                val console = listOf("$admin/settings", "$admin/calls", "$admin/usage", "$admin/servers/grafana/assignments")
+                for (token in listOf("agent-a", "device-a")) {
+                    for (path in console) {
+                        assertEquals(HttpStatusCode.Forbidden, client.get(path) { bearerAuth(token) }.status, "$token $path")
+                    }
+                    val created = client.post("$admin/servers") {
+                        bearerAuth(token)
+                        contentType(ContentType.Application.Json)
+                        setBody(McpServerDto("other", "https://mcp.other.example.com/mcp", "http"))
+                    }
+                    assertEquals(HttpStatusCode.Forbidden, created.status, token)
+                    assertEquals(HttpStatusCode.Forbidden, client.delete("$admin/servers/grafana") { bearerAuth(token) }.status)
+                }
+                val listed = client.get("$admin/servers") { bearerAuth("agent-a") }.body<McpServersPage>()
+                assertEquals(listOf("grafana"), listed.items.map { it.name }, "An agent lists the servers it reaches")
+                assertEquals(HttpStatusCode.Forbidden, client.get("$admin/servers") { bearerAuth("device-a") }.status)
+                val tools = rpc("grafana", "agent-a", """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")
+                assertEquals(HttpStatusCode.OK, tools.status, "An agent calls the relay")
+                val byDevice = rpc("grafana", "device-a", """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")
+                assertEquals(HttpStatusCode.Forbidden, byDevice.status)
+
+                val full = client.get("$admin/servers") { bearerAuth("cli-a") }.body<McpServersPage>()
+                assertEquals(listOf("GRAFANA_TOKEN"), full.items.single().secretNames, "mcp:read reads the console list")
+                val write = client.put("$admin/settings") {
+                    bearerAuth("cli-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(McpSettingsDto("ostrom"))
+                }
+                assertEquals(HttpStatusCode.Forbidden, write.status, "mcp:read does not change")
+                val asAgent = client.get("$admin/servers") { bearerAuth("agent-a") }.body<McpServersPage>()
+                assertEquals(emptyList(), asAgent.items.single().secretNames, "An agent never sees secret names")
+            }
+        }
+
+    @Test
+    fun rowLevelSecurityConfinesEveryTableAndRetentionOnlyDeletesOldCalls() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                val grafana = grafana()
+                assign(grafana, Relay.memberA.memberId.toString(), null)
+                client.post("$admin/servers/grafana/policies") {
+                    bearerAuth("admin-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(ArgumentPolicyRequest("*", listOf(ArgumentConditionDto("a", "equals", "b")), "deny", "x"))
+                }
+                client.put("$admin/settings") {
+                    bearerAuth("admin-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(McpSettingsDto("teamcode"))
+                }
+                rpc("grafana", "member-a", """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")
+                val tables = listOf(
+                    "mcp_relay_servers",
+                    "mcp_relay_assignments",
+                    "mcp_relay_policies",
+                    "mcp_relay_settings",
+                    "mcp_relay_calls",
+                )
+                for (table in tables) {
+                    val all = Statement.create("SELECT org_id FROM $table")
+                    assertEquals(1, driver.fetchInOrg(Relay.adminA.orgId, all).getOrThrow().size, table)
+                    assertEquals(0, driver.fetchInOrg(Relay.adminB.orgId, all).getOrThrow().size, "$table: no leak")
+                    val stolen = Statement.create("DELETE FROM $table")
+                    assertEquals(0L, driver.executeInOrg(Relay.adminB.orgId, stolen).getOrThrow(), table)
+                }
+                val repository = koin.get<McpRelayRepository>()
+                val old = McpCall(
+                    id = Uuid.random(),
+                    orgId = Relay.adminB.orgId,
+                    memberId = Relay.adminB.memberId,
+                    serverId = Uuid.random(),
+                    serverName = "old",
+                    operation = McpOperation.LIST,
+                    tool = null,
+                    outcome = McpOutcome.OK,
+                    startedAt = Instant.parse("2020-01-01T00:00:00Z"),
+                    durationMillis = 1,
+                    responseBytes = 1,
+                )
+                repository.record(old)
+                assertEquals(1L, repository.purgeCalls(Instant.parse("2021-01-01T00:00:00Z")), "Old calls of any org")
+                val left = Statement.create("SELECT id FROM mcp_relay_calls")
+                assertEquals(1, driver.fetchInOrg(Relay.adminA.orgId, left).getOrThrow().size, "Recent calls stay")
+                assertEquals(1, driver.fetchInOrg(Relay.adminA.orgId, Statement.create("SELECT id FROM mcp_relay_servers"))
+                    .getOrThrow().size, "Retention touches nothing else")
+            }
+        }
 }

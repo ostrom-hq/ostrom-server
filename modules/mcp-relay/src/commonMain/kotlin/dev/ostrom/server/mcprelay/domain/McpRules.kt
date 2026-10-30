@@ -21,12 +21,25 @@ object McpRules {
     private val toolName = Regex("[A-Za-z0-9_.-]{1,128}")
     private val prefix = Regex("[a-z0-9][a-z0-9_-]{0,31}")
     private val variable = Regex("[A-Z][A-Z0-9_]{0,63}")
-    private val npmPackage = Regex("(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.+-]+)?")
+    private val npmPackage =
+        Regex("(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@\\d+\\.\\d+\\.\\d+([-+][0-9A-Za-z.+-]+)?")
     private val pypiPackage = Regex("[A-Za-z0-9][A-Za-z0-9._-]*(\\[[A-Za-z0-9,._-]+])?==\\d+(\\.\\d+)*([a-z0-9.+-]*)")
     private val headerName = Regex("[A-Za-z0-9-]{1,64}")
-    private val forbiddenHeaders = setOf("host", "cookie", "content-length", "content-type", "mcp-session-id", "mcp-protocol-version", "transfer-encoding", "connection")
-    private val reservedPrefixes = listOf("LD_", "OSTROM_", "TEAMCODE_", "NPM_CONFIG_", "UV_", "PIP_", "NODE_", "PYTHON", "COREPACK_", "SSL", "CURL_", "DYLD_")
-    private val reservedNames = setOf("PATH", "HOME", "TMPDIR", "LANG", "SHELL", "USER", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "GLIBC_TUNABLES", "REQUESTS_CA_BUNDLE")
+    private val forbiddenHeaders =
+        setOf(
+            "host",
+            "cookie",
+            "content-length",
+            "content-type",
+            "mcp-session-id",
+            "mcp-protocol-version",
+            "transfer-encoding",
+            "connection",
+        )
+    private val reservedPrefixes =
+        listOf("LD_", "OSTROM_", "TEAMCODE_", "NPM_CONFIG_", "UV_", "PIP_", "NODE_", "PYTHON", "COREPACK_", "SSL", "CURL_", "DYLD_")
+    private val reservedNames =
+        setOf("PATH", "HOME", "TMPDIR", "LANG", "SHELL", "USER", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "GLIBC_TUNABLES", "REQUESTS_CA_BUNDLE")
 
     /** Whether a tool name is one the relay serves (upstream tools with other names are skipped). */
     fun isToolName(name: String): Boolean = toolName.matches(name)
@@ -38,15 +51,24 @@ object McpRules {
      */
     fun requireServer(server: McpServer) {
         if (!serverName.matches(server.name) || server.name in RESERVED_NAMES) {
-            invalid("A server name is 1 to 64 characters of a-z 0-9 . _ - and starts with a letter or digit (not `servers`).")
+            invalid(
+                "A server name is 1 to 64 characters of a-z 0-9 . _ - and starts with a letter or digit (not `servers`).",
+            )
         }
         server.credentialHeader?.let {
-            if (!headerName.matches(it) || it.lowercase() in forbiddenHeaders) invalid("The credential header is not allowed.")
+            if (!headerName.matches(it) ||
+                it.lowercase() in forbiddenHeaders
+            ) {
+                invalid("The credential header is not allowed.")
+            }
         }
         when (server.transport) {
             McpTransport.HTTP -> {
                 val url = server.url ?: invalid("An HTTP server needs its URL.")
-                if (!url.startsWith("https://") || url.length > 2048 || url.any { it.isWhitespace() || it.isISOControl() }) {
+                if (!url.startsWith("https://") ||
+                    url.length > 2048 ||
+                    url.any { it.isWhitespace() || it.isISOControl() }
+                ) {
                     invalid("An HTTP server URL starts with https:// and has at most 2048 characters.")
                 }
                 if (server.stdio != null) invalid("An HTTP server has no command.")
@@ -78,10 +100,19 @@ object McpRules {
                 invalid("The variable $name is not allowed.")
             }
         }
-        if (spec.env.values.any { it.length > 1024 || '\u0000' in it }) invalid("A variable value has at most 1024 characters, without NUL.")
+        if (spec.env.values.any {
+                it.length > 1024 || '\u0000' in it
+            }
+        ) {
+            invalid("A variable value has at most 1024 characters, without NUL.")
+        }
         if (spec.secretEnv.size > 16) invalid("At most 16 secret variables.")
         for (reference in Regex("\\$\\{([A-Z0-9_]+)}").findAll(spec.args.joinToString(" "))) {
-            if (reference.groupValues[1] !in spec.secretEnv) invalid("\${${reference.groupValues[1]}} must name a secret variable.")
+            if (reference.groupValues[1] !in
+                spec.secretEnv
+            ) {
+                invalid("\${${reference.groupValues[1]}} must name a secret variable.")
+            }
         }
     }
 
@@ -92,7 +123,11 @@ object McpRules {
      */
     fun requirePolicy(policy: ToolPolicy) {
         val tools = policy.tools ?: return
-        if (tools.size > MAX_TOOLS || tools.any { !isToolName(it) }) invalid("An allowlist has at most 256 valid tool names.")
+        if (tools.size > MAX_TOOLS ||
+            tools.any { !isToolName(it) }
+        ) {
+            invalid("An allowlist has at most 256 valid tool names.")
+        }
     }
 
     /**
@@ -101,13 +136,29 @@ object McpRules {
      * @throws InvalidMcpServerException On the first broken rule.
      */
     fun requireArgumentPolicy(policy: ArgumentPolicy) {
-        if (policy.tool != ArgumentPolicy.ANY_TOOL && !isToolName(policy.tool)) invalid("The policy names an invalid tool.")
+        if (policy.tool != ArgumentPolicy.ANY_TOOL &&
+            !isToolName(policy.tool)
+        ) {
+            invalid("The policy names an invalid tool.")
+        }
         if (policy.conditions.size > 16) invalid("At most 16 conditions per policy.")
-        if (policy.message.isBlank() || policy.message.length > 500) invalid("A policy explains itself in 1 to 500 characters.")
+        if (policy.message.isBlank() ||
+            policy.message.length > 500
+        ) {
+            invalid("A policy explains itself in 1 to 500 characters.")
+        }
         for (condition in policy.conditions) {
-            if (condition.path.isBlank() || condition.path.length > 256) invalid("A condition path has 1 to 256 characters.")
+            if (condition.path.isBlank() ||
+                condition.path.length > 256
+            ) {
+                invalid("A condition path has 1 to 256 characters.")
+            }
             val needsValue = condition.operator !in setOf(ConditionOperator.EXISTS, ConditionOperator.ABSENT)
-            if (needsValue && (condition.value == null || condition.value.length > 1024)) invalid("This condition needs a value of at most 1024 characters.")
+            if (needsValue &&
+                (condition.value == null || condition.value.length > 1024)
+            ) {
+                invalid("This condition needs a value of at most 1024 characters.")
+            }
         }
     }
 
@@ -117,7 +168,12 @@ object McpRules {
      * @throws InvalidMcpServerException When it is not 1 to 32 characters of a-z 0-9 _ -.
      */
     fun requirePrefix(value: String) {
-        if (!prefix.matches(value)) invalid("The prefix is 1 to 32 characters of a-z 0-9 _ - and starts with a letter or digit.")
+        if (!prefix.matches(
+                value,
+            )
+        ) {
+            invalid("The prefix is 1 to 32 characters of a-z 0-9 _ - and starts with a letter or digit.")
+        }
     }
 
     /**
@@ -144,4 +200,8 @@ class McpServerNameTakenException : OstromException(ErrorKind.CONFLICT, "An MCP 
 class McpSecretNotFoundException : OstromException(ErrorKind.INVALID_REQUEST, "The credential names an unknown secret.")
 
 /** A stdio server is declared but no MCP host is configured. */
-class McpHostDisabledException : OstromException(ErrorKind.CONFLICT, "No MCP host is configured on this server (OSTROM_MCP_HOST_URL), so it cannot run a stdio server.")
+class McpHostDisabledException :
+    OstromException(
+        ErrorKind.CONFLICT,
+        "No MCP host is configured on this server (OSTROM_MCP_HOST_URL), so it cannot run a stdio server.",
+    )

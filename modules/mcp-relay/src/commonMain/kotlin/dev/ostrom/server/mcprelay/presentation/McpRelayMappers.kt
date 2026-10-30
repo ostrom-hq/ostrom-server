@@ -48,7 +48,8 @@ fun McpServerDto.toPayload(secretIds: Map<String, Uuid>) = McpServerPayload(
 )
 
 /** The credential of an HTTP server: its first secret name. */
-fun McpServerDto.credentialName(): String? = if (transport.equals("http", ignoreCase = true)) secretNames.firstOrNull() else null
+fun McpServerDto.credentialName(): String? =
+    if (transport.equals("http", ignoreCase = true)) secretNames.firstOrNull() else null
 
 /** Every secret name a server uses. */
 fun McpServerDto.secretNamesUsed(): List<String> = listOfNotNull(credentialName()) + stdio?.secretEnv?.values.orEmpty()
@@ -69,7 +70,18 @@ fun McpServer.toDto(names: Map<Uuid, String>) = McpServerDto(
     scope = if (sharing == McpSharing.SHARED) "shared" else "per-member",
     credentialHeader = credentialHeader,
     stdio = stdio?.let { spec ->
-        StdioSpecDto(spec.launcher.name.lowercase(), spec.packageName, spec.args, spec.env, spec.secretEnv.mapNotNull { (key, id) -> names[id]?.let { key to it } }.toMap())
+        StdioSpecDto(
+            spec.launcher.name.lowercase(),
+            spec.packageName,
+            spec.args,
+            spec.env,
+            spec.secretEnv.mapNotNull { (key, id) ->
+                names[id]?.let {
+                    key to
+                        it
+                }
+            }.toMap(),
+        )
     },
     version = version,
     createdAt = createdAt.toString(),
@@ -129,7 +141,9 @@ fun McpCall.toDto() = McpCallDto(
 /** Totals usage rows by server and by tool, with details by member and server. */
 fun List<McpUsage>.toResponse() = McpUsageResponse(
     byServer = groupBy { it.serverName }.mapValues { (_, rows) -> rows.sumOf { it.calls } },
-    byTool = filter { it.tool != null }.groupBy { "${it.serverName}/${it.tool}" }.mapValues { (_, rows) -> rows.sumOf { it.calls } },
+    byTool = filter {
+        it.tool != null
+    }.groupBy { "${it.serverName}/${it.tool}" }.mapValues { (_, rows) -> rows.sumOf { it.calls } },
     rows = groupBy { it.memberId to it.serverName }.map { (key, rows) ->
         McpUsageRow(
             dev = key.first.toString(),
@@ -156,4 +170,8 @@ fun MemberServer.toDto() = McpServerDto(
 
 private inline fun <reified T : Enum<T>> enumOf(value: String, field: String): T =
     enumValues<T>().firstOrNull { it.name.equals(value, ignoreCase = true) }
-        ?: throw InvalidMcpServerException("$field must be one of ${enumValues<T>().joinToString { it.name.lowercase() }}.")
+        ?: throw InvalidMcpServerException(
+            "$field must be one of ${enumValues<T>().joinToString {
+                it.name.lowercase()
+            }}.",
+        )

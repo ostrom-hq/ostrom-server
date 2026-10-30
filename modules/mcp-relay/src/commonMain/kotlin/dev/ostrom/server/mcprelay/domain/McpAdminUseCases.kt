@@ -114,7 +114,9 @@ class McpServerAdministration(
         McpRules.requireServer(server)
         if (server.transport == McpTransport.STDIO && !host.isConfigured()) throw McpHostDisabledException()
         if (server.sharing == McpSharing.PER_MEMBER && server.credentialSecretId != null) {
-            throw InvalidMcpServerException("A per-member server takes each member's credential at assignment, not a shared one.")
+            throw InvalidMcpServerException(
+                "A per-member server takes each member's credential at assignment, not a shared one.",
+            )
         }
         val referenced = listOfNotNull(server.credentialSecretId) + server.stdio?.secretEnv?.values.orEmpty()
         requireSecrets(revealSecrets, caller, referenced)
@@ -137,12 +139,14 @@ class McpServerAdministration(
 
 /** [CreateMcpServerUseCase] through [McpServerAdministration]. */
 class CreateMcpServerUseCaseImpl(private val administration: McpServerAdministration) : CreateMcpServerUseCase {
-    override suspend fun invoke(caller: Caller, payload: McpServerPayload): McpServer = administration.create(caller, payload)
+    override suspend fun invoke(caller: Caller, payload: McpServerPayload): McpServer =
+        administration.create(caller, payload)
 }
 
 /** [UpdateMcpServerUseCase] through [McpServerAdministration]. */
 class UpdateMcpServerUseCaseImpl(private val administration: McpServerAdministration) : UpdateMcpServerUseCase {
-    override suspend fun invoke(caller: Caller, id: Uuid, payload: McpServerPayload): McpServer = administration.update(caller, id, payload)
+    override suspend fun invoke(caller: Caller, id: Uuid, payload: McpServerPayload): McpServer =
+        administration.update(caller, id, payload)
 }
 
 /** [DeleteMcpServerUseCase] through [McpServerAdministration]. */
@@ -164,7 +168,13 @@ interface AssignMcpServerUseCase {
      * @param policy The tools allowed.
      * @param credentialSecretId The member's own credential, for a per-member server.
      */
-    suspend operator fun invoke(caller: Caller, serverId: Uuid, memberId: Uuid?, policy: ToolPolicy, credentialSecretId: Uuid?): McpAssignment
+    suspend operator fun invoke(
+        caller: Caller,
+        serverId: Uuid,
+        memberId: Uuid?,
+        policy: ToolPolicy,
+        credentialSecretId: Uuid?,
+    ): McpAssignment
 }
 
 /**
@@ -179,7 +189,13 @@ class AssignMcpServerUseCaseImpl(
     private val revealSecrets: RevealSecretsUseCase,
     private val clock: Clock,
 ) : AssignMcpServerUseCase {
-    override suspend fun invoke(caller: Caller, serverId: Uuid, memberId: Uuid?, policy: ToolPolicy, credentialSecretId: Uuid?): McpAssignment {
+    override suspend fun invoke(
+        caller: Caller,
+        serverId: Uuid,
+        memberId: Uuid?,
+        policy: ToolPolicy,
+        credentialSecretId: Uuid?,
+    ): McpAssignment {
         caller.requireAdmin()
         val server = repository.getServer(caller.orgId, serverId) ?: throw McpServerNotFoundException()
         McpRules.requirePolicy(policy)
@@ -244,17 +260,25 @@ interface CreateArgumentPolicyUseCase {
 }
 
 /** [CreateArgumentPolicyUseCase] on the repository. */
-class CreateArgumentPolicyUseCaseImpl(
-    private val repository: McpRelayRepository,
-    private val clock: Clock,
-) : CreateArgumentPolicyUseCase {
+class CreateArgumentPolicyUseCaseImpl(private val repository: McpRelayRepository, private val clock: Clock) :
+    CreateArgumentPolicyUseCase {
     override suspend fun invoke(caller: Caller, serverId: Uuid, payload: ArgumentPolicyPayload): ArgumentPolicy {
         caller.requireAdmin()
         repository.getServer(caller.orgId, serverId) ?: throw McpServerNotFoundException()
         if (repository.listPolicies(caller.orgId, serverId).size >= McpRules.MAX_POLICIES) {
             throw InvalidMcpServerException("A server has at most ${McpRules.MAX_POLICIES} policies.")
         }
-        val policy = ArgumentPolicy(Uuid.random(), caller.orgId, serverId, payload.tool, payload.conditions, payload.effect, payload.message, clock.now())
+        val policy =
+            ArgumentPolicy(
+                Uuid.random(),
+                caller.orgId,
+                serverId,
+                payload.tool,
+                payload.conditions,
+                payload.effect,
+                payload.message,
+                clock.now(),
+            )
         McpRules.requireArgumentPolicy(policy)
         repository.createPolicy(policy)
         return policy
@@ -320,12 +344,24 @@ class PutMcpSettingsUseCaseImpl(private val repository: McpRelayRepository) : Pu
 /** Reads the journal, newest first: admins read every member's calls, a member only their own. */
 interface ListMcpCallsUseCase {
     /** Reads a page, of one server or member when given. */
-    suspend operator fun invoke(caller: Caller, before: Instant?, limit: Int, server: String? = null, memberId: Uuid? = null): List<McpCall>
+    suspend operator fun invoke(
+        caller: Caller,
+        before: Instant?,
+        limit: Int,
+        server: String? = null,
+        memberId: Uuid? = null,
+    ): List<McpCall>
 }
 
 /** [ListMcpCallsUseCase] on the repository. */
 class ListMcpCallsUseCaseImpl(private val repository: McpRelayRepository) : ListMcpCallsUseCase {
-    override suspend fun invoke(caller: Caller, before: Instant?, limit: Int, server: String?, memberId: Uuid?): List<McpCall> {
+    override suspend fun invoke(
+        caller: Caller,
+        before: Instant?,
+        limit: Int,
+        server: String?,
+        memberId: Uuid?,
+    ): List<McpCall> {
         val member = if (caller.role.isAdmin) memberId else caller.memberId
         return repository.listCalls(caller.orgId, before, limit.coerceIn(1, 200), server, member)
     }
@@ -339,8 +375,11 @@ interface McpUsageUseCase {
 
 /** [McpUsageUseCase] on the repository. */
 class McpUsageUseCaseImpl(private val repository: McpRelayRepository, private val clock: Clock) : McpUsageUseCase {
-    override suspend fun invoke(caller: Caller, days: Int): List<McpUsage> =
-        repository.usage(caller.orgId, clock.now() - days.coerceIn(1, 30).days, if (caller.role.isAdmin) null else caller.memberId)
+    override suspend fun invoke(caller: Caller, days: Int): List<McpUsage> = repository.usage(
+        caller.orgId,
+        clock.now() - days.coerceIn(1, 30).days,
+        if (caller.role.isAdmin) null else caller.memberId,
+    )
 }
 
 private suspend fun requireSecrets(revealSecrets: RevealSecretsUseCase, caller: Caller, ids: List<Uuid>) {

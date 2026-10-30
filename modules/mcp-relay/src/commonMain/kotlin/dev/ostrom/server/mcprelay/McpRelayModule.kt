@@ -57,7 +57,7 @@ import dev.ostrom.server.mcprelay.infrastructure.UpstreamAddressGuard
 import dev.ostrom.server.mcprelay.presentation.McpRelayRoutesDependencies
 import dev.ostrom.server.mcprelay.presentation.mcpRelayRoutes
 import dev.ostrom.server.secrets.domain.CallerResolver
-import dev.ostrom.server.secrets.domain.UnresolvedCallerResolver
+import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.client.HttpClient
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CancellationException
@@ -90,10 +90,15 @@ data class McpRelayConfig(val host: McpHostConfig?, val allowPrivateUpstreams: B
         fun from(source: ConfigSource): McpRelayConfig {
             val url = source["OSTROM_MCP_HOST_URL"]?.takeIf { it.isNotBlank() }
             val token = source["OSTROM_MCP_HOST_TOKEN"]?.takeIf { it.isNotBlank() }
-            if ((url == null) != (token == null)) throw InvalidConfigException("OSTROM_MCP_HOST_URL and OSTROM_MCP_HOST_TOKEN go together.")
+            if ((url == null) !=
+                (token == null)
+            ) {
+                throw InvalidConfigException("OSTROM_MCP_HOST_URL and OSTROM_MCP_HOST_TOKEN go together.")
+            }
             fun millis(key: String, default: Long): Long {
                 val value = source[key] ?: return default
-                return value.toLongOrNull()?.takeIf { it in 1_000..600_000 } ?: throw InvalidConfigException("$key is 1000 to 600000 ms.")
+                return value.toLongOrNull()?.takeIf { it in 1_000..600_000 }
+                    ?: throw InvalidConfigException("$key is 1000 to 600000 ms.")
             }
             return McpRelayConfig(
                 host = if (url != null && token != null) McpHostConfig(url, token) else null,
@@ -162,7 +167,7 @@ object McpRelayModule : ServerModule {
         }
         single {
             McpRelayRoutesDependencies(
-                getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(),
+                getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
             )
         }

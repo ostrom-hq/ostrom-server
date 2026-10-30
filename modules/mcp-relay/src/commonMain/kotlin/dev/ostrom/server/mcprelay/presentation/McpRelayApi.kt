@@ -72,7 +72,13 @@ class McpApi {
      */
     @Serializable
     @Resource("calls")
-    class Calls(val parent: McpApi = McpApi(), val server: String? = null, val dev: String? = null, val before: String? = null, val limit: Int = 50)
+    class Calls(
+        val parent: McpApi = McpApi(),
+        val server: String? = null,
+        val dev: String? = null,
+        val before: String? = null,
+        val limit: Int = 50,
+    )
 
     /**
      * `/api/v1/mcp/usage`: calls by server and by tool.

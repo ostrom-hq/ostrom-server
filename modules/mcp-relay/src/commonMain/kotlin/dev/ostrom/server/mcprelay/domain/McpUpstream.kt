@@ -65,7 +65,12 @@ interface McpUpstream {
      *
      * @return The `CallToolResult`.
      */
-    suspend fun callTool(target: UpstreamTarget, tool: String, arguments: JsonObject, deadline: Duration): UpstreamResult<JsonObject>
+    suspend fun callTool(
+        target: UpstreamTarget,
+        tool: String,
+        arguments: JsonObject,
+        deadline: Duration,
+    ): UpstreamResult<JsonObject>
 }
 
 /**

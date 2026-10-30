@@ -44,7 +44,12 @@ class ListMemberServersUseCaseImpl(private val repository: McpRelayRepository) :
         val agentNames = servers.groupBy { McpRules.agentName(prefix, it.server.name) }
         // Two servers that would get the same agent name (`a.b` and `a_b`) are both left out rather than one hidden.
         return servers.filter { agentNames.getValue(McpRules.agentName(prefix, it.server.name)).size == 1 }.map {
-            MemberServer(it.server.name, McpRules.agentName(prefix, it.server.name), it.server.transport, it.assignment.policy.tools)
+            MemberServer(
+                it.server.name,
+                McpRules.agentName(prefix, it.server.name),
+                it.server.transport,
+                it.assignment.policy.tools,
+            )
         }
     }
 }
@@ -103,10 +108,21 @@ class RelayMcpMessageUseCaseImpl(
     private val clock: Clock,
 ) : RelayMcpMessageUseCase {
     override suspend fun invoke(caller: Caller, serverName: String, message: JsonElement): RelayAnswer {
-        val request = message as? JsonObject ?: return error(400, JsonNull, INVALID_REQUEST, "One JSON-RPC message per request; batches are not supported.")
+        val request =
+            message as? JsonObject
+                ?: return error(
+                    400,
+                    JsonNull,
+                    INVALID_REQUEST,
+                    "One JSON-RPC message per request; batches are not supported.",
+                )
         val id = request["id"] ?: JsonNull
         val method = (request["method"] as? JsonPrimitive)?.takeIf { it.isString }?.content
-        if ((request["jsonrpc"] as? JsonPrimitive)?.content != "2.0") return error(400, id, INVALID_REQUEST, "Not a JSON-RPC 2.0 message.")
+        if ((request["jsonrpc"] as? JsonPrimitive)?.content !=
+            "2.0"
+        ) {
+            return error(400, id, INVALID_REQUEST, "Not a JSON-RPC 2.0 message.")
+        }
         val effective = repository.effectiveServer(caller.orgId, caller.memberId, serverName)
             ?: return error(404, id, INVALID_REQUEST, "Unknown MCP server.")
         // A notification (no id) or a client response to the server: nothing to answer.
@@ -134,9 +150,12 @@ class RelayMcpMessageUseCaseImpl(
     }
 
     private suspend fun listTools(caller: Caller, effective: EffectiveServer): JsonObject {
-        val outcome = operate(caller, effective, McpOperation.LIST, null, { tools, secrets -> tools.map { it.scrubbed(secrets) as JsonObject } }) { target ->
-            upstream.listTools(target, deadlines.list)
-        }
+        val outcome =
+            operate(caller, effective, McpOperation.LIST, null, { tools, secrets ->
+                tools.map { it.scrubbed(secrets) as JsonObject }
+            }) { target ->
+                upstream.listTools(target, deadlines.list)
+            }
         val tools = (outcome as? UpstreamResult.Ok)?.value.orEmpty()
             .filter { tool ->
                 val name = (tool["name"] as? JsonPrimitive)?.content
@@ -146,7 +165,12 @@ class RelayMcpMessageUseCaseImpl(
         return buildJsonObject { put("tools", JsonArray(tools)) }
     }
 
-    private suspend fun callTool(caller: Caller, effective: EffectiveServer, id: JsonElement, params: JsonObject): RelayAnswer {
+    private suspend fun callTool(
+        caller: Caller,
+        effective: EffectiveServer,
+        id: JsonElement,
+        params: JsonObject,
+    ): RelayAnswer {
         val tool = (params["name"] as? JsonPrimitive)?.takeIf { it.isString }?.content
         val arguments = params["arguments"] as? JsonObject ?: JsonObject(emptyMap())
         if (tool == null || !McpRules.isToolName(tool) || !effective.assignment.policy.allows(tool)) {
@@ -159,16 +183,20 @@ class RelayMcpMessageUseCaseImpl(
                 PolicyEffect.DENY -> "Refused by the organization's policy: ${policy.message}"
                 PolicyEffect.REQUIRE_APPROVAL -> {
                     val link = approvals.request(caller, effective.server, tool, arguments, policy)
-                    "This call needs a human approval: ${policy.message}" + (link?.let { " Approve it here, then retry: $it" } ?: "")
+                    "This call needs a human approval: ${policy.message}" +
+                        (link?.let { " Approve it here, then retry: $it" } ?: "")
                 }
             }
             val outcome = if (policy.effect == PolicyEffect.DENY) McpOutcome.DENIED else McpOutcome.APPROVAL_REQUIRED
             journal(caller, effective, McpOperation.CALL, tool, outcome, clock.now(), 0, policy.id)
             return result(id, toolError(text))
         }
-        val outcome = operate(caller, effective, McpOperation.CALL, tool, { value, secrets -> value.scrubbed(secrets) as JsonObject }) { target ->
-            upstream.callTool(target, tool, arguments, deadlines.call)
-        }
+        val outcome =
+            operate(caller, effective, McpOperation.CALL, tool, { value, secrets ->
+                value.scrubbed(secrets) as JsonObject
+            }) { target ->
+                upstream.callTool(target, tool, arguments, deadlines.call)
+            }
         return when (outcome) {
             is UpstreamResult.Ok -> result(id, outcome.value)
             is UpstreamResult.Failure -> result(id, toolError(outcome.message))
@@ -188,7 +216,10 @@ class RelayMcpMessageUseCaseImpl(
         val server = effective.server
         if (!limiter.acquire(caller.orgId, caller.memberId, server.id)) {
             journal(caller, effective, operation, tool, McpOutcome.RATE_LIMITED, started, 0)
-            return UpstreamResult.Failure(McpOutcome.RATE_LIMITED, "Too many MCP operations on ${server.name} right now. Retry shortly.")
+            return UpstreamResult.Failure(
+                McpOutcome.RATE_LIMITED,
+                "Too many MCP operations on ${server.name} right now. Retry shortly.",
+            )
         }
         var outcome = McpOutcome.CANCELLED
         var bytes = 0L
@@ -196,7 +227,14 @@ class RelayMcpMessageUseCaseImpl(
             val target = target(caller, effective)
             return when (val answer = block(target)) {
                 is UpstreamResult.Ok -> {
-                    outcome = if ((answer.value as? JsonObject)?.get("isError") == JsonPrimitive(true)) McpOutcome.TOOL_ERROR else McpOutcome.OK
+                    outcome =
+                        if ((answer.value as? JsonObject)?.get("isError") ==
+                            JsonPrimitive(true)
+                        ) {
+                            McpOutcome.TOOL_ERROR
+                        } else {
+                            McpOutcome.OK
+                        }
                     bytes = answer.bytes
                     UpstreamResult.Ok(scrub(answer.value, target.secretValues), answer.bytes)
                 }
@@ -211,7 +249,10 @@ class RelayMcpMessageUseCaseImpl(
             // An upstream adapter answers failures as results; anything else (a credential that no longer decrypts)
             // is still the agent's tool error, never a 500 that drops the conversation.
             outcome = McpOutcome.UPSTREAM_ERROR
-            return UpstreamResult.Failure(outcome, "The MCP server could not be reached with its configured credentials.")
+            return UpstreamResult.Failure(
+                outcome,
+                "The MCP server could not be reached with its configured credentials.",
+            )
         } finally {
             withContext(NonCancellable) {
                 limiter.release(caller.orgId, caller.memberId, server.id)
@@ -232,7 +273,12 @@ class RelayMcpMessageUseCaseImpl(
         return UpstreamTarget(
             server = server,
             credential = credentialId?.let { values[it] },
-            secretEnv = server.stdio?.secretEnv.orEmpty().mapNotNull { (name, secretId) -> values[secretId]?.let { name to it } }.toMap(),
+            secretEnv = server.stdio?.secretEnv.orEmpty().mapNotNull { (name, secretId) ->
+                values[secretId]?.let {
+                    name to
+                        it
+                }
+            }.toMap(),
             processKey = processKey,
         )
     }
@@ -272,24 +318,40 @@ class RelayMcpMessageUseCaseImpl(
     }
 
     private fun toolError(text: String) = buildJsonObject {
-        put("content", buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", text) }) })
+        put(
+            "content",
+            buildJsonArray {
+                add(
+                    buildJsonObject {
+                        put("type", "text")
+                        put("text", text)
+                    },
+                )
+            },
+        )
         put("isError", true)
     }
 
-    private fun result(id: JsonElement, value: JsonObject) = RelayAnswer(200, buildJsonObject {
-        put("jsonrpc", "2.0")
-        put("id", id)
-        put("result", value)
-    })
+    private fun result(id: JsonElement, value: JsonObject) = RelayAnswer(
+        200,
+        buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", id)
+            put("result", value)
+        },
+    )
 
-    private fun error(status: Int, id: JsonElement, code: Int, text: String) = RelayAnswer(status, buildJsonObject {
-        put("jsonrpc", "2.0")
-        put("id", id)
-        putJsonObject("error") {
-            put("code", code)
-            put("message", text)
-        }
-    })
+    private fun error(status: Int, id: JsonElement, code: Int, text: String) = RelayAnswer(
+        status,
+        buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", id)
+            putJsonObject("error") {
+                put("code", code)
+                put("message", text)
+            }
+        },
+    )
 
     companion object {
         /** The protocol revisions the relay speaks, newest first. */

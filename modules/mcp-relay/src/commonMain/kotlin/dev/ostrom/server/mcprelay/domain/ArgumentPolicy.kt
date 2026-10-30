@@ -29,7 +29,13 @@ enum class ConditionOperator { EQUALS, NOT_EQUALS, MATCHES, PREFIX, CONTAINS, EX
  *   [ConditionOperator.EXISTS] and [ConditionOperator.ABSENT].
  */
 data class ArgumentCondition(val path: String, val operator: ConditionOperator, val value: String? = null) {
-    private val regex: Regex? = if (operator == ConditionOperator.MATCHES) Regex(requireNotNull(value), RegexOption.IGNORE_CASE) else null
+    private val regex: Regex? = if (operator ==
+        ConditionOperator.MATCHES
+    ) {
+        Regex(requireNotNull(value), RegexOption.IGNORE_CASE)
+    } else {
+        null
+    }
 
     /**
      * Tests the condition.

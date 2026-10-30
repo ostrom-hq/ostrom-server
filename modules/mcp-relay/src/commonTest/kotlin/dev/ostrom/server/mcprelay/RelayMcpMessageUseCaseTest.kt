@@ -49,14 +49,23 @@ class RelayMcpMessageUseCaseTest {
     private var approvals: ApprovalRequester = NoApprovalRequester()
     private var limits = McpLimits()
 
-    private fun relay() = RelayMcpMessageUseCaseImpl(repository, reveal, upstream, approvals, McpCallLimiter(limits, clock), RelayDeadlines(), clock)
+    private fun relay() = RelayMcpMessageUseCaseImpl(
+        repository,
+        reveal,
+        upstream,
+        approvals,
+        McpCallLimiter(limits, clock),
+        RelayDeadlines(),
+        clock,
+    )
 
-    private fun message(method: String?, params: JsonObject? = null, id: JsonElement? = JsonPrimitive(1)): JsonObject = buildJsonObject {
-        put("jsonrpc", "2.0")
-        if (id != null) put("id", id)
-        if (method != null) put("method", method)
-        if (params != null) put("params", params)
-    }
+    private fun message(method: String?, params: JsonObject? = null, id: JsonElement? = JsonPrimitive(1)): JsonObject =
+        buildJsonObject {
+            put("jsonrpc", "2.0")
+            if (id != null) put("id", id)
+            if (method != null) put("method", method)
+            if (params != null) put("params", params)
+        }
 
     private fun callParams(tool: String, arguments: JsonObject = JsonObject(emptyMap())) = buildJsonObject {
         put("name", tool)
@@ -81,7 +90,14 @@ class RelayMcpMessageUseCaseTest {
         val batch = relay()(Relay.memberA, "grafana", JsonArray(listOf(message("ping"))))
         assertEquals(400, batch.status)
         assertEquals(-32600, batch.body!!.jsonObject["error"]!!.jsonObject["code"]!!.jsonPrimitive.content.toInt())
-        val noVersion = relay()(Relay.memberA, "grafana", buildJsonObject { put("id", 1); put("method", "ping") })
+        val noVersion = relay()(
+            Relay.memberA,
+            "grafana",
+            buildJsonObject {
+                put("id", 1)
+                put("method", "ping")
+            },
+        )
         assertEquals(400, noVersion.status)
         assertEquals(JsonPrimitive(1), noVersion.body!!.jsonObject["id"])
     }
@@ -99,7 +115,11 @@ class RelayMcpMessageUseCaseTest {
     fun notificationsAndClientResponsesAreAccepted() = runTest {
         grafana()
         assertEquals(202, relay()(Relay.memberA, "grafana", message("notifications/initialized", id = null)).status)
-        val response = buildJsonObject { put("jsonrpc", "2.0"); put("id", 3); put("result", JsonObject(emptyMap())) }
+        val response = buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", 3)
+            put("result", JsonObject(emptyMap()))
+        }
         val answer = relay()(Relay.memberA, "grafana", response)
         assertEquals(202, answer.status)
         assertNull(answer.body)
@@ -108,12 +128,35 @@ class RelayMcpMessageUseCaseTest {
     @Test
     fun initializeNegotiatesTheProtocolAndPingAnswers() = runTest {
         grafana()
-        val asked = relay()(Relay.memberA, "grafana", message("initialize", buildJsonObject { put("protocolVersion", "2025-06-18") }))
+        val asked =
+            relay()(
+                Relay.memberA,
+                "grafana",
+                message(
+                    "initialize",
+                    buildJsonObject {
+                        put("protocolVersion", "2025-06-18")
+                    },
+                ),
+            )
         val result = asked.body!!.jsonObject["result"]!!.jsonObject
         assertEquals("2025-06-18", result["protocolVersion"]!!.jsonPrimitive.content)
         assertEquals("ostrom-grafana", result["serverInfo"]!!.jsonObject["name"]!!.jsonPrimitive.content)
-        val unknown = relay()(Relay.memberA, "grafana", message("initialize", buildJsonObject { put("protocolVersion", "1999-01-01") }))
-        assertEquals("2025-11-25", unknown.body!!.jsonObject["result"]!!.jsonObject["protocolVersion"]!!.jsonPrimitive.content)
+        val unknown =
+            relay()(
+                Relay.memberA,
+                "grafana",
+                message(
+                    "initialize",
+                    buildJsonObject {
+                        put("protocolVersion", "1999-01-01")
+                    },
+                ),
+            )
+        assertEquals(
+            "2025-11-25",
+            unknown.body!!.jsonObject["result"]!!.jsonObject["protocolVersion"]!!.jsonPrimitive.content,
+        )
         val ping = relay()(Relay.memberA, "grafana", message("ping", id = JsonPrimitive("p")))
         assertEquals(JsonObject(emptyMap()), ping.body!!.jsonObject["result"])
         assertEquals(JsonPrimitive("p"), ping.body!!.jsonObject["id"])
@@ -126,11 +169,21 @@ class RelayMcpMessageUseCaseTest {
     fun onlyAssignedToolsAreListed() = runTest {
         grafana(tools = setOf("query_loki_logs", "search_dashboards"))
         upstream.tools = UpstreamResult.Ok(
-            listOf(tool("query_loki_logs"), tool("update_dashboard"), tool("search_dashboards"), tool("bad name"), buildJsonObject { put("x", 1) }),
+            listOf(
+                tool("query_loki_logs"),
+                tool("update_dashboard"),
+                tool("search_dashboards"),
+                tool("bad name"),
+                buildJsonObject {
+                    put("x", 1)
+                },
+            ),
             123,
         )
         val answer = relay()(Relay.memberA, "grafana", message("tools/list"))
-        val names = answer.body!!.jsonObject["result"]!!.jsonObject["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
+        val names = answer.body!!.jsonObject["result"]!!.jsonObject["tools"]!!.jsonArray.map {
+            it.jsonObject["name"]!!.jsonPrimitive.content
+        }
         assertEquals(listOf("query_loki_logs", "search_dashboards"), names)
         val journaled = repository.journal.single()
         assertEquals(McpOperation.LIST, journaled.operation)
@@ -170,7 +223,10 @@ class RelayMcpMessageUseCaseTest {
         repository.assign(server, null)
         upstream.call = UpstreamResult.Ok(
             buildJsonObject {
-                put("content", Json.parseToJsonElement("""[{"type":"text","text":"token glsa_secret_token_1 leaked"}]"""))
+                put(
+                    "content",
+                    Json.parseToJsonElement("""[{"type":"text","text":"token glsa_secret_token_1 leaked"}]"""),
+                )
             },
             40,
         )
@@ -242,8 +298,19 @@ class RelayMcpMessageUseCaseTest {
     @Test
     fun aDenyingPolicyWinsAndIsJournaledWithItsId() = runTest {
         val server = grafana()
-        val deny = policy(server, PolicyEffect.DENY, "No production deletes.", ArgumentCondition("env", ConditionOperator.EQUALS, "prod"))
-        policy(server, PolicyEffect.REQUIRE_APPROVAL, "Ask first.", ArgumentCondition("env", ConditionOperator.EXISTS, null))
+        val deny =
+            policy(
+                server,
+                PolicyEffect.DENY,
+                "No production deletes.",
+                ArgumentCondition("env", ConditionOperator.EQUALS, "prod"),
+            )
+        policy(
+            server,
+            PolicyEffect.REQUIRE_APPROVAL,
+            "Ask first.",
+            ArgumentCondition("env", ConditionOperator.EXISTS, null),
+        )
         val prod = buildJsonObject { put("env", "prod") }
         val answer = relay()(Relay.memberA, "grafana", message("tools/call", callParams("delete", prod)))
         assertEquals("Refused by the organization's policy: No production deletes.", text(answer.body))
@@ -255,20 +322,60 @@ class RelayMcpMessageUseCaseTest {
     @Test
     fun anApprovalPolicyOpensAGate() = runTest {
         val server = grafana()
-        policy(server, PolicyEffect.REQUIRE_APPROVAL, "Ask first.", ArgumentCondition("env", ConditionOperator.EXISTS, null))
+        policy(
+            server,
+            PolicyEffect.REQUIRE_APPROVAL,
+            "Ask first.",
+            ArgumentCondition("env", ConditionOperator.EXISTS, null),
+        )
         val seen = mutableListOf<String>()
         approvals = object : ApprovalRequester {
-            override suspend fun request(caller: Caller, server: McpServer, tool: String, arguments: JsonObject, policy: ArgumentPolicy): String? {
+            override suspend fun request(
+                caller: Caller,
+                server: McpServer,
+                tool: String,
+                arguments: JsonObject,
+                policy: ArgumentPolicy,
+            ): String? {
                 seen += tool
                 return "https://app.ostrom.run/gates/1"
             }
         }
-        val answer = relay()(Relay.memberA, "grafana", message("tools/call", callParams("delete", buildJsonObject { put("env", "dev") })))
-        assertEquals("This call needs a human approval: Ask first. Approve it here, then retry: https://app.ostrom.run/gates/1", text(answer.body))
+        val answer =
+            relay()(
+                Relay.memberA,
+                "grafana",
+                message(
+                    "tools/call",
+                    callParams(
+                        "delete",
+                        buildJsonObject {
+                            put("env", "dev")
+                        },
+                    ),
+                ),
+            )
+        assertEquals(
+            "This call needs a human approval: Ask first. Approve it here, then retry: https://app.ostrom.run/gates/1",
+            text(answer.body),
+        )
         assertEquals(listOf("delete"), seen)
         assertEquals(McpOutcome.APPROVAL_REQUIRED, repository.journal.single().outcome)
         approvals = NoApprovalRequester()
-        val noGate = relay()(Relay.memberA, "grafana", message("tools/call", callParams("delete", buildJsonObject { put("env", "dev") })))
+        val noGate =
+            relay()(
+                Relay.memberA,
+                "grafana",
+                message(
+                    "tools/call",
+                    callParams(
+                        "delete",
+                        buildJsonObject {
+                            put("env", "dev")
+                        },
+                    ),
+                ),
+            )
         assertEquals("This call needs a human approval: Ask first.", text(noGate.body))
     }
 
@@ -309,7 +416,10 @@ class RelayMcpMessageUseCaseTest {
         grafana()
         repository.failJournal = true
         assertEquals(200, relay()(Relay.memberA, "grafana", message("tools/call", callParams("x"))).status)
-        assertEquals(200, relay()(Relay.memberA, "grafana", message("tools/call", callParams("unassigned is fine too"))).status)
+        assertEquals(
+            200,
+            relay()(Relay.memberA, "grafana", message("tools/call", callParams("unassigned is fine too"))).status,
+        )
     }
 
     @Test
@@ -338,8 +448,14 @@ class RelayMcpMessageUseCaseTest {
         assertEquals(listOf("ostrom-c"), ListMemberServersUseCaseImpl(repository)(Relay.memberA).map { it.agentName })
     }
 
-    private fun policy(server: McpServer, effect: PolicyEffect, text: String, vararg conditions: ArgumentCondition): ArgumentPolicy {
-        val policy = ArgumentPolicy(Uuid.random(), server.orgId, server.id, "*", conditions.toList(), effect, text, clock.now())
+    private fun policy(
+        server: McpServer,
+        effect: PolicyEffect,
+        text: String,
+        vararg conditions: ArgumentCondition,
+    ): ArgumentPolicy {
+        val policy =
+            ArgumentPolicy(Uuid.random(), server.orgId, server.id, "*", conditions.toList(), effect, text, clock.now())
         repository.policies += policy
         clock.advance()
         return policy

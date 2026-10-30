@@ -18,8 +18,12 @@ class TransportMcpUpstream(private val http: McpUpstream, private val host: McpU
     override suspend fun listTools(target: UpstreamTarget, deadline: Duration): UpstreamResult<List<JsonObject>> =
         upstream(target)?.listTools(target, deadline) ?: NO_HOST
 
-    override suspend fun callTool(target: UpstreamTarget, tool: String, arguments: JsonObject, deadline: Duration): UpstreamResult<JsonObject> =
-        upstream(target)?.callTool(target, tool, arguments, deadline) ?: NO_HOST
+    override suspend fun callTool(
+        target: UpstreamTarget,
+        tool: String,
+        arguments: JsonObject,
+        deadline: Duration,
+    ): UpstreamResult<JsonObject> = upstream(target)?.callTool(target, tool, arguments, deadline) ?: NO_HOST
 
     private fun upstream(target: UpstreamTarget): McpUpstream? = when (target.server.transport) {
         McpTransport.HTTP -> http
