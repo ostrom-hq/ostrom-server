@@ -15,7 +15,8 @@ import kotlin.time.Duration.Companion.seconds
  * @property database How to reach PostgreSQL.
  * @property signingKeyFile The PEM file (PKCS#8) of the instance's Ed25519 key, created on first start if missing.
  * @property logLevel The lowest level written to the logs.
- * @property trustedProxies The reverse proxies whose `X-Forwarded-For` is believed (`OSTROM_TRUSTED_PROXIES`).
+ * @property trustedProxies The reverse proxies whose `X-Forwarded-For` is believed (`OSTROM_TRUSTED_PROXIES`), and
+ *   their client address header (`OSTROM_CLIENT_ADDRESS_HEADER`).
  * @property drainDelay How long the server keeps serving, `/ready` at 503, between SIGTERM and stopping the engine
  *   (`OSTROM_SHUTDOWN_DELAY_SECONDS`, 0 to 10), so the load balancer stops sending it requests first. With the 15 s
  *   the engine then gives requests in flight, a stop takes at most 25 s, leaving 5 s of the Helm chart's 30 s grace
@@ -64,7 +65,10 @@ data class ServerConfig(
             ),
             signingKeyFile = source["OSTROM_SIGNING_KEY_FILE"] ?: "data/instance-key.pem",
             logLevel = logLevel(source["OSTROM_LOG_LEVEL"]),
-            trustedProxies = TrustedProxies.parse(source["OSTROM_TRUSTED_PROXIES"]),
+            trustedProxies = TrustedProxies.parse(
+                source["OSTROM_TRUSTED_PROXIES"],
+                source["OSTROM_CLIENT_ADDRESS_HEADER"],
+            ),
             drainDelay = source.int(
                 "OSTROM_SHUTDOWN_DELAY_SECONDS",
                 DEFAULT_DRAIN_DELAY_SECONDS,
