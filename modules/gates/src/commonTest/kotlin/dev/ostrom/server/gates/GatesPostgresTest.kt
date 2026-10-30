@@ -315,17 +315,16 @@ class GatesPostgresTest {
     }
 
     @Test
-    fun theFirstOfTwoSimultaneousConsumesWins() = gatesTest { server ->
+    fun aHundredSimultaneousConsumesUseTheYesOnce() = gatesTest { server ->
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         server.answer("user:a:rev-b", opened, "rev-b")
         val statuses = coroutineScope {
-            List(4) { async { server.move(agent, opened, "consume").status } }.awaitAll()
+            List(100) { async { server.move(agent, opened, "consume").status } }.awaitAll()
         }
-        assertEquals(
-            listOf(HttpStatusCode.OK, HttpStatusCode.Conflict, HttpStatusCode.Conflict, HttpStatusCode.Conflict),
-            statuses.sortedBy { it.value },
-        )
+        val counted = statuses.groupingBy { it }.eachCount()
+        assertEquals(mapOf(HttpStatusCode.OK to 1, HttpStatusCode.Conflict to 99), counted, "one yes, one use")
+        assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "consume").status, "and never again")
     }
 
     @Test
