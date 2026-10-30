@@ -95,7 +95,8 @@ class SharedAccountPool(
      * @param sessionKey The agent session, for affinity, if known.
      */
     suspend fun lease(orgId: Uuid, memberId: Uuid, provider: AccountProvider, sessionKey: String?): LeaseResult {
-        val request = Request(orgId, memberId, provider, sessionKey)
+        // The agent names its session: scoped to the member, so one org's or member's ids never meet another's.
+        val request = Request(orgId, memberId, provider, sessionKey?.let { "$orgId:$memberId:$it" })
         val tried = mutableSetOf<Uuid>()
         // Each turn either answers or adds one account to `tried`: the loop ends within the org's account count.
         while (true) {
@@ -182,13 +183,11 @@ class SharedAccountPool(
         }
 
     private fun remember(sessionKey: String, accountId: Uuid, now: Instant) {
+        // Insertion order is use order (removed then put back): over the bound, the session used longest ago goes, in
+        // constant time under the pool's lock, whoever floods the map with new sessions.
+        affinity.remove(sessionKey)
         affinity[sessionKey] = accountId to now + AFFINITY
-        if (affinity.size > MAX_AFFINITY) {
-            affinity.entries.removeAll { it.value.second <= now }
-            // Still full of live sessions: forget them all (they only lose their prompt cache) rather than scan the
-            // whole map under the pool's lock at every new session.
-            if (affinity.size > MAX_AFFINITY) affinity.clear()
-        }
+        if (affinity.size > MAX_AFFINITY) affinity.remove(affinity.keys.first())
     }
 
     private suspend fun serve(account: SharedAccount, tried: MutableSet<Uuid>): LeaseResult? {
