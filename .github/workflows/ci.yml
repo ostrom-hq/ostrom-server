@@ -76,7 +76,7 @@ jobs:
         run: |
           (cd .ostrom-core && ./gradlew --no-daemon -PostromCoreVersion=0.1.13 -Postrom.nativeTargets=linuxX64 \
             :api:publishToMavenLocal :receipts:publishToMavenLocal)
-          M="compiler gates receipts sessions integrations-github"
+          M="compiler gates receipts sessions integrations-github integrations-slack"
           T=""; for m in $M; do T="$T :modules:$m:detekt :modules:$m:jvmTest :modules:$m:koverVerify :modules:$m:koverXmlReport :modules:$m:linuxX64Test"; done
           ./gradlew $T --continue
       - name: Kover reports (probe)
