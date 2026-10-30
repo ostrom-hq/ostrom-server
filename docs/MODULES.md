@@ -142,7 +142,10 @@ Every request is already logged once by the kernel (method, path, status, durati
 - Tests live in `commonTest` and run twice: on the **JVM** (`jvmTest`, a test-only target never shipped) where Kover
   requires **100 % of the lines and branches** of the module (`koverVerify`), and **natively** (`linuxX64Test`), which
   proves the real binary's behaviour. Native-only code (`nativeMain`) stays thin. Each module's own tests must cover
-  it: another module's tests do not count.
+  it: another module's tests do not count. `@Serializable` classes are left out of the measure (a plugin-written
+  branch in them cannot be reached): keep them free of logic, and test their JSON through the routes.
+- A test that waits on real I/O with a timeout (`withTimeout`, the database health check) runs on
+  `withContext(Dispatchers.Default)` inside `runTest`: `runTest`'s virtual clock would fire the timeout at once.
 - **TDD**: the failing test first, for every behaviour ported from the prototype (`~/git/ostrom/mvp/server`, reuse its
   test cases).
 - **Unit tests** (use cases): hand-written fakes (`InMemoryOrgsRepository`); MockK does not exist on Kotlin/Native.
