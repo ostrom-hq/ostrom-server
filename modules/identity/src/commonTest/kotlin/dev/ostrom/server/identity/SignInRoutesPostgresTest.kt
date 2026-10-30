@@ -140,6 +140,19 @@ class SignInRoutesPostgresTest {
     }
 
     @Test
+    fun signingInAgainBeforeAYesAsksTheProviderToo() = serverTest(listOf(IdentityModule), overrides) {
+        val browser = createClient { followRedirects = false }
+
+        suspend fun consentPage(query: String) =
+            Url(assertNotNull(browser.get("/api/v1/auth/github/start$query").headers[HttpHeaders.Location]))
+        val again = consentPage("?reauth=true")
+        val first = consentPage("")
+
+        assertEquals("true", again.parameters["reauth"])
+        assertEquals("false", first.parameters["reauth"])
+    }
+
+    @Test
     fun aStartPastTheRateLimitSendsBackToTheLoginPage() = serverTest(
         listOf(IdentityModule),
         module {
