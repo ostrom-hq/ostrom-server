@@ -24,5 +24,10 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.ktor.client.mock)
         }
+        // The terminal link against a real WebSocket server: Ktor's test host has WebSockets on the JVM only.
+        jvmTest.dependencies {
+            implementation(libs.ktor.server.test.host)
+            implementation(libs.ktor.server.websockets)
+        }
     }
 }

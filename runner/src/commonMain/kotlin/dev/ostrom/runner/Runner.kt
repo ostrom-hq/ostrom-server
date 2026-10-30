@@ -7,7 +7,6 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
@@ -46,8 +45,11 @@ class Runner(
 ) {
     private val output = Channel<ByteArray>(outputBuffer, BufferOverflow.DROP_OLDEST)
 
-    @Volatile
-    private var terminal: Terminal? = null
+    /** The terminal in use: the first one, then each shell started after it ended. */
+    private class Current(terminal: Terminal) {
+        @Volatile
+        var terminal: Terminal = terminal
+    }
 
     @Volatile
     private var lastOutputAt: Instant? = null
@@ -57,35 +59,35 @@ class Runner(
      *
      * @return The exit code: 0 after a stop, 1 when the execution ended under it.
      */
-    suspend fun run(): Int = try {
-        coroutineScope {
-            val agentEnvironment = SessionScript.environment(environment, config)
-            val first = terminals.start(SessionScript.FIRST, agentEnvironment, config.workspace)
-            terminal = first
-            val terminalJob = launch { superviseTerminal(first, agentEnvironment) }
-            val linkJob = launch { relay() }
-            val code = heartbeat()
-            linkJob.cancel()
-            terminalJob.cancel()
-            code
+    suspend fun run(): Int {
+        val agentEnvironment = SessionScript.environment(environment, config)
+        val current = Current(terminals.start(SessionScript.FIRST, agentEnvironment, config.workspace))
+        return try {
+            coroutineScope {
+                val terminalJob = launch { superviseTerminal(current, agentEnvironment) }
+                val linkJob = launch { relay(current) }
+                val code = heartbeat(current)
+                linkJob.cancel()
+                terminalJob.cancel()
+                code
+            }
+        } finally {
+            current.terminal.close()
         }
-    } finally {
-        terminal?.close()
     }
 
-    private suspend fun heartbeat(): Int {
+    private fun lastOutput(): String? = lastOutputAt?.toString()
+
+    private suspend fun heartbeat(current: Current): Int {
         while (true) {
             val instruction = try {
-                server.heartbeat(
-                    ready = terminal != null,
-                    stopped = false,
-                    lastModelRequestAt = lastOutputAt?.toString(),
-                )
+                // Ready from the first beat: the terminal is started before the runner reports.
+                server.heartbeat(ready = true, stopped = false, lastModelRequestAt = lastOutput())
             } catch (error: CancellationException) {
                 throw error
             } catch (error: ExecutionEndedException) {
                 log("execution ended: ${error.message}")
-                terminal?.terminate()
+                current.terminal.terminate()
                 return 1
             } catch (error: Exception) {
                 log("heartbeat failed: ${error::class.simpleName}")
@@ -93,9 +95,9 @@ class Runner(
             }
             if (instruction == Instruction.STOP) {
                 log("stopping")
-                terminal?.terminate()
+                current.terminal.terminate()
                 try {
-                    server.heartbeat(ready = true, stopped = true, lastModelRequestAt = lastOutputAt?.toString())
+                    server.heartbeat(ready = true, stopped = true, lastModelRequestAt = lastOutput())
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
@@ -107,23 +109,22 @@ class Runner(
         }
     }
 
-    private suspend fun superviseTerminal(first: Terminal, agentEnvironment: Map<String, String>) {
-        var current = first
+    private suspend fun superviseTerminal(current: Current, agentEnvironment: Map<String, String>) {
         while (true) {
             while (true) {
-                val bytes = current.read() ?: break
+                val bytes = current.terminal.read() ?: break
                 lastOutputAt = clock.now()
                 output.send(bytes)
             }
-            current.close()
+            current.terminal.close()
             log("terminal ended, starting a shell")
-            current = terminals.start(SessionScript.AGAIN, agentEnvironment, config.workspace)
-            terminal = current
+            current.terminal = terminals.start(SessionScript.AGAIN, agentEnvironment, config.workspace)
         }
     }
 
-    private suspend fun relay() = coroutineScope {
-        while (isActive) {
+    private suspend fun relay(current: Current): Nothing = coroutineScope {
+        // Ends by cancellation only, when the heartbeat returns.
+        while (true) {
             val link = try {
                 server.openTerminal()
             } catch (error: CancellationException) {
@@ -135,11 +136,11 @@ class Runner(
             }
             try {
                 coroutineScope {
-                    val sender = launch { for (bytes in output) link.send(bytes) }
+                    val sender = launch { while (true) link.send(output.receive()) }
                     for (frame in link.incoming) {
                         when (frame) {
-                            is ServerFrame.Input -> terminal?.write(frame.bytes)
-                            is ServerFrame.Resize -> terminal?.resize(frame.columns, frame.rows)
+                            is ServerFrame.Input -> current.terminal.write(frame.bytes)
+                            is ServerFrame.Resize -> current.terminal.resize(frame.columns, frame.rows)
                         }
                     }
                     sender.cancel()

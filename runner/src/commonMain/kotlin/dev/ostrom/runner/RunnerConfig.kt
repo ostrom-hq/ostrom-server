@@ -71,13 +71,13 @@ data class RunnerConfig(
                 },
                 epoch = requireNotNull(required("OSTROM_EPOCH").toLongOrNull()) { "OSTROM_EPOCH is not a number." },
                 agentCommand = required("OSTROM_AGENT_COMMAND"),
-                repositoryUrl = environment["OSTROM_REPOSITORY_URL"]?.takeIf { it.isNotBlank() },
-                repositoryRef = environment["OSTROM_REPOSITORY_REF"]?.takeIf { it.isNotBlank() },
+                repositoryUrl = optional("OSTROM_REPOSITORY_URL"),
+                repositoryRef = optional("OSTROM_REPOSITORY_REF"),
                 token = token,
-                workspace = environment["OSTROM_WORKSPACE"]?.takeIf { it.isNotBlank() } ?: DEFAULT_WORKSPACE,
-                model = environment["OSTROM_AGENT_MODEL"]?.takeIf { it.isNotBlank() },
+                workspace = optional("OSTROM_WORKSPACE") ?: DEFAULT_WORKSPACE,
+                model = optional("OSTROM_AGENT_MODEL"),
                 prompt = optional("OSTROM_AGENT_PROMPT")
-                    ?: optional("OSTROM_AGENT_PROMPT_FILE")?.let(readFile)?.takeIf { it.isNotBlank() },
+                    ?: optional("OSTROM_AGENT_PROMPT_FILE")?.let { readFile(it).takeIf(String::isNotBlank) },
             )
         }
 

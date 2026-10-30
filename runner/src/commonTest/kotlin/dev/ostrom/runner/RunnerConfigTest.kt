@@ -8,6 +8,8 @@ import io.ktor.client.engine.mock.toByteArray
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.Frame
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -62,6 +64,14 @@ class RunnerConfigTest {
         assertEquals("Fix the tests", prompted.prompt)
         assertEquals("m", prompted.model)
         assertEquals("hi", RunnerConfig.from(base + ("OSTROM_AGENT_PROMPT" to "hi")) { "t" }.prompt)
+        // Blank values and an empty prompt file read as unset.
+        val blank = RunnerConfig.from(
+            base + ("OSTROM_AGENT_PROMPT_FILE" to "/run/ostrom/prompt") + ("OSTROM_WORKSPACE" to " ") +
+                ("OSTROM_REPOSITORY_URL" to " "),
+        ) { if (it.endsWith("prompt")) " \n" else "t" }
+        assertNull(blank.prompt)
+        assertNull(blank.repositoryUrl)
+        assertEquals("/workspace", blank.workspace)
         assertFalse("Fix" in prompted.toString())
         val environment = SessionScript.environment(
             base + ("OSTROM_AGENT_PROMPT_FILE" to "/run/ostrom/prompt"),
@@ -103,6 +113,7 @@ class RunnerConfigTest {
             "/h",
             SessionScript.environment(base + ("HOME" to "/h") + ("LANG" to "fr_FR.UTF-8"), config)["HOME"],
         )
+        assertEquals("/workspace/.home", SessionScript.environment(base + ("HOME" to " "), config)["HOME"])
         assertTrue("git clone" in SessionScript.FIRST && "exec bash -l" in SessionScript.AGAIN)
     }
 
@@ -150,5 +161,24 @@ class RunnerConfigTest {
         assertNull(HttpServerApi.parse("""{"type":"other"}"""))
         assertNull(HttpServerApi.parse("not json"))
         assertNull(HttpServerApi.parse("""{"type":"resize"}"""))
+    }
+
+    @Test
+    fun binaryFramesAreKeystrokesAndOtherFramesNothing() {
+        val input = HttpServerApi.read(Frame.Binary(true, "ls".encodeToByteArray()))
+        assertEquals("ls", (input as ServerFrame.Input).bytes.decodeToString())
+        val resize = HttpServerApi.read(Frame.Text("""{"type":"resize","columns":80,"rows":24}"""))
+        assertEquals(ServerFrame.Resize(80, 24), resize)
+        assertNull(HttpServerApi.read(Frame.Ping(ByteArray(0))))
+    }
+
+    @Test
+    fun onlyARefusedTokenOrAnotherExecutionEndsTheRunner() {
+        assertNull(HttpServerApi.ended(null))
+        assertNull(HttpServerApi.ended(CloseReason(CloseReason.Codes.NORMAL, "bye")))
+        assertNull(HttpServerApi.ended(CloseReason(4408.toShort(), "too slow")))
+        val newer = HttpServerApi.ended(CloseReason(4409.toShort(), "newer"))
+        assertEquals("The server closed the terminal (4409).", newer?.message)
+        assertTrue(HttpServerApi.ended(CloseReason(4401.toShort(), "token")) is ExecutionEndedException)
     }
 }

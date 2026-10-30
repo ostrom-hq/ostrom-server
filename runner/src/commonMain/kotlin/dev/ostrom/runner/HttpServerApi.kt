@@ -11,6 +11,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
@@ -20,7 +21,6 @@ import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.produce
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
@@ -90,17 +90,10 @@ class HttpServerApi(
         scope: CoroutineScope,
     ) : TerminalLink {
         override val incoming: ReceiveChannel<ServerFrame> = scope.produce {
-            for (frame in session.incoming) {
-                when (frame) {
-                    is Frame.Binary -> send(ServerFrame.Input(frame.readBytes()))
-                    is Frame.Text -> parse(frame.readText())?.let { send(it) }
-                    else -> Unit
-                }
-            }
-            val reason = session.closeReason.await()
-            if (reason != null && reason.code in ENDED_CODES) {
-                throw ExecutionEndedException("The server closed the terminal (${reason.code}).")
-            }
+            for (frame in session.incoming) read(frame)?.let { send(it) }
+            // The end closes the channel with its cause instead of being thrown: thrown, it would also fail the
+            // scope it runs in, the runner's own, and kill the process instead of letting it exit with its code.
+            channel.close(ended(session.closeReason.await()))
         }
 
         override suspend fun send(bytes: ByteArray) = session.send(Frame.Binary(true, bytes))
@@ -121,6 +114,30 @@ class HttpServerApi(
         private val ENDED_CODES = setOf(TOKEN_REFUSED, ANOTHER_EXECUTION)
 
         /**
+         * Reads a frame from the server: binary frames are keystrokes, text frames controls.
+         *
+         * @param frame The frame.
+         *
+         * @return The frame, or null when it is not one the runner acts on.
+         */
+        fun read(frame: Frame): ServerFrame? = when (frame) {
+            is Frame.Binary -> ServerFrame.Input(frame.readBytes())
+            is Frame.Text -> parse(frame.readText())
+            else -> null
+        }
+
+        /**
+         * Whether the server closed the terminal because this execution is over.
+         *
+         * @param reason The close reason, null when the connection dropped without one.
+         *
+         * @return The end, for a refused token or another execution; null when the link may be opened again.
+         */
+        fun ended(reason: CloseReason?): ExecutionEndedException? = reason
+            ?.takeIf { it.code in ENDED_CODES }
+            ?.let { ExecutionEndedException("The server closed the terminal (${it.code}).") }
+
+        /**
          * Reads a text frame from the server.
          *
          * @param text The frame.
@@ -131,9 +148,8 @@ class HttpServerApi(
             when (val control = JSON.decodeFromString(Control.serializer(), text)) {
                 is Control.Resize -> ServerFrame.Resize(control.columns, control.rows)
             }
-        } catch (_: SerializationException) {
-            null
         } catch (_: IllegalArgumentException) {
+            // SerializationException included: it extends IllegalArgumentException.
             null
         }
     }

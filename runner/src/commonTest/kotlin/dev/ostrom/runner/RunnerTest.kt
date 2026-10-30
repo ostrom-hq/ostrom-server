@@ -57,8 +57,10 @@ class RunnerTest {
         val instructions = Channel<Result<Instruction>>(Channel.UNLIMITED)
         val beats = mutableListOf<Triple<Boolean, Boolean, String?>>()
         val links = Channel<Result<TerminalLink>>(Channel.UNLIMITED)
+        var lastFails = false
         override suspend fun heartbeat(ready: Boolean, stopped: Boolean, lastModelRequestAt: String?): Instruction {
             beats += Triple(ready, stopped, lastModelRequestAt)
+            check(!(stopped && lastFails)) { "down" }
             if (stopped) return Instruction.STOP
             return instructions.receive().getOrThrow()
         }
@@ -154,6 +156,17 @@ class RunnerTest {
         assertTrue(second.closed)
         server.instructions.send(Result.success(Instruction.STOP))
         assertEquals(0, done.await())
+    }
+
+    @Test
+    fun aFailedLastHeartbeatIsLoggedAndTheRunnerStillStops() = runTest {
+        val server = FakeServer().apply { lastFails = true }
+        val logs = mutableListOf<String>()
+        val runner = Runner(config, server, { script, _, _ -> FakeTerminal(script) }, emptyMap(), clock, { logs += it })
+        server.instructions.send(Result.success(Instruction.STOP))
+
+        assertEquals(0, runner.run())
+        assertTrue(logs.any { it.startsWith("last heartbeat failed") })
     }
 
     private fun CoroutineScope.launchRunner(runner: Runner, done: CompletableDeferred<Int>) =
