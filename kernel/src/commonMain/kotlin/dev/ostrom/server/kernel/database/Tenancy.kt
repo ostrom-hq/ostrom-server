@@ -31,8 +31,8 @@ const val TENANT_SETTING = "ostrom.org_id"
  * GRANT SELECT, INSERT, UPDATE, DELETE ON orgs_members TO ostrom_tenant;
  * ```
  *
- * The serving role owns no table (S2-01), so the policies bind it whether the table is `FORCE`d or not: work that is not
- * one organization's (listing the organizations of a user) goes through a `SECURITY DEFINER` function
+ * The serving role owns no table (S2-01), so the policies bind it whether the table is `FORCE`d or not: work that is
+ * not one organization's (listing the organizations of a user) goes through a `SECURITY DEFINER` function
  * (docs/tenancy.md), never through the serving role without an organization, which sees no row.
  *
  * @param orgId The organization the queries are confined to.
