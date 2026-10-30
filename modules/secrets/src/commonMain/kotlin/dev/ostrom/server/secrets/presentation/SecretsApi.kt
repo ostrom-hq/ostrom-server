@@ -1,74 +1,75 @@
 package dev.ostrom.server.secrets.presentation
 
+import dev.ostrom.server.secrets.domain.InvalidSecretException
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
 /**
- * `/v1/orgs/{orgId}/secrets`: the org's secrets, names only. To move to ostrom-core with the API contract.
+ * `/api/v1/secrets`: the secrets of the caller's org (from the token), names only (contract `listSecrets`,
+ * `createSecret`).
  *
- * @property orgId The org.
  * @property after Keyset cursor: names after this one.
  * @property limit Page size (1 to 200, default 50).
  */
 @Serializable
-@Resource("/v1/orgs/{orgId}/secrets")
-class SecretsApi(val orgId: String, val after: String? = null, val limit: Int = 50) {
+@Resource("/api/v1/secrets")
+class SecretsApi(val after: String? = null, val limit: Int = 50) {
     /**
-     * `/v1/orgs/{orgId}/secrets/{id}`: one secret.
+     * `/api/v1/secrets/{name}`: one secret (contract `rotateSecret`, `deleteSecret`).
      *
      * @property parent The collection.
-     * @property id The secret.
+     * @property name The secret's name.
+     * @property scope `org` (default) or `personal`, for a delete.
      */
     @Serializable
-    @Resource("{id}")
-    class Id(val parent: SecretsApi, val id: String)
+    @Resource("{name}")
+    class Name(val parent: SecretsApi = SecretsApi(), val name: String, val scope: String? = null)
 }
 
 /**
- * Creates a secret.
+ * Creates or rotates a secret (contract `SecretWrite`).
  *
  * @property name The name, unique per owner.
  * @property value The value; never returned.
- * @property personal True for a secret of the caller only (any member); false for an org secret (admins).
+ * @property scope `org` (default; admins) or `personal` (the caller's own; any member).
  */
 @Serializable
-data class CreateSecretRequest(val name: String, val value: String, val personal: Boolean = false)
+data class SecretWriteRequest(val name: String, val value: String, val scope: String? = null)
 
 /**
- * Replaces a secret's value.
+ * A secret as clients see it, never its value (contract `Secret`).
  *
- * @property value The new value.
- */
-@Serializable
-data class RotateSecretRequest(val value: String)
-
-/**
- * A secret as clients see it: never its value.
- *
- * @property id The id.
  * @property name The name.
- * @property personal Whether it belongs to one member.
- * @property ownerMemberId The member it belongs to, when personal.
- * @property version The version, bumped at each rotation.
+ * @property scope `org` or `personal`.
  * @property createdAt Creation time (ISO 8601).
  * @property updatedAt Last change of its value (ISO 8601).
+ * @property updatedBy The member who last wrote it.
+ * @property version Bumped at each rotation.
+ * @property owner The member a personal secret belongs to.
  */
 @Serializable
 data class SecretResponse(
-    val id: String,
     val name: String,
-    val personal: Boolean,
-    val ownerMemberId: String? = null,
-    val version: Int,
+    val scope: String,
     val createdAt: String,
     val updatedAt: String,
+    val updatedBy: String,
+    val version: Int,
+    val owner: String? = null,
 )
 
 /**
  * A page of secrets.
  *
- * @property secrets The secrets, by name.
- * @property next The cursor of the next page, or null on the last one.
+ * @property items The secrets, by name.
+ * @property next The cursor of the next page, absent on the last one.
  */
 @Serializable
-data class SecretsPageResponse(val secrets: List<SecretResponse>, val next: String? = null)
+data class SecretsPageResponse(val items: List<SecretResponse>, val next: String? = null)
+
+/** The `scope` of the API: true for `personal`, false for `org` or absent. */
+fun personalScope(scope: String?): Boolean = when (scope) {
+    null, "org" -> false
+    "personal" -> true
+    else -> throw InvalidSecretException("The scope is org or personal.")
+}

@@ -15,6 +15,7 @@ import kotlin.uuid.Uuid
  * @property ownerMemberId The member a personal secret belongs to, or null for an org secret.
  * @property version Bumped at each rotation, so a consumer can tell a rotated value apart.
  * @property createdAt When it was created.
+ * @property updatedBy The member who last wrote its value.
  * @property updatedAt When its value last changed.
  */
 data class Secret(
@@ -25,6 +26,7 @@ data class Secret(
     val version: Int,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val updatedBy: Uuid,
 )
 
 /**

@@ -21,13 +21,13 @@ object TestCallers {
     val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
     private val byToken = mapOf("admin-a" to adminA, "member-a" to memberA, "admin-b" to adminB)
 
-    /** Koin overrides: the fake token authenticator and caller resolver, and a fixed secrets key. */
+    /** Koin overrides (`stranger` is a valid token of nobody's org): the fake token authenticator and caller resolver, and a fixed secrets key. */
     val overrides: Module = module {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) =
-                    byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()) }
+                    (byToken[token] ?: token.takeIf { it == "stranger" })?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()) }
             }
         }
         single<CallerResolver> {

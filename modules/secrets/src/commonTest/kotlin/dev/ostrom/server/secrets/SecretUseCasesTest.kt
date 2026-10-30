@@ -5,6 +5,7 @@ import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CreateSecretPayload
 import dev.ostrom.server.secrets.domain.CreateSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.DeleteSecretUseCaseImpl
+import dev.ostrom.server.secrets.domain.FindSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.InvalidSecretException
 import dev.ostrom.server.secrets.domain.ListSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.MemberRole
@@ -96,6 +97,23 @@ class SecretUseCasesTest {
 
         assertEquals(2, rotated.version)
         assertEquals("second-value", reveal(org, listOf(secret.id))[secret.id]?.reveal())
+        assertEquals(admin.memberId, rotated.updatedBy)
+    }
+
+    @Test
+    fun secretsAreFoundAndRevealedByName() = runTest {
+        val orgSecret = create(admin, CreateSecretPayload("TOKEN", SecretValue("org-value-1"), false))
+        val mine = create(member, CreateSecretPayload("TOKEN", SecretValue("my-value-12"), true))
+        val find = FindSecretUseCaseImpl(repository)
+
+        assertEquals(orgSecret.id, find(member, "TOKEN", personal = false).id)
+        assertEquals(mine.id, find(member, "TOKEN", personal = true).id)
+        assertEquals(member.memberId, mine.updatedBy)
+        assertFailsWith<SecretNotFoundException> { find(otherMember, "TOKEN", personal = true) }
+        assertEquals(mapOf("TOKEN" to "org-value-1"), reveal.byName(org, listOf("TOKEN", "TOKEN", "MISSING")).mapValues { it.value.reveal() })
+        assertEquals(emptyMap(), reveal.byName(org, emptyList()))
+        cipher.broken = true
+        assertFailsWith<SecretUnreadableException> { reveal.byName(org, listOf("TOKEN")) }
     }
 
     @Test
@@ -177,13 +195,19 @@ class InMemorySecretsRepository : SecretsRepository {
             .sortedBy { it.name }
             .take(limit)
 
-    override suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant): Secret? {
+    override suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant, updatedBy: Uuid): Secret? {
         if (vanishOnWrite) return null
         val current = get(orgId, id) ?: return null
-        val next = current.secret.copy(version = current.secret.version + 1, updatedAt = updatedAt)
+        val next = current.secret.copy(version = current.secret.version + 1, updatedAt = updatedAt, updatedBy = updatedBy)
         rows[id] = StoredSecret(next, envelope)
         return next
     }
+
+    override suspend fun findByName(orgId: Uuid, ownerMemberId: Uuid?, name: String): Secret? =
+        rows.values.map { it.secret }.firstOrNull { it.orgId == orgId && it.ownerMemberId == ownerMemberId && it.name == name }
+
+    override suspend fun getOrgSecretsByName(orgId: Uuid, names: Collection<String>): List<StoredSecret> =
+        rows.values.filter { it.secret.orgId == orgId && it.secret.ownerMemberId == null && it.secret.name in names }
 
     override suspend fun delete(orgId: Uuid, id: Uuid): Boolean {
         if (vanishOnWrite) return false
