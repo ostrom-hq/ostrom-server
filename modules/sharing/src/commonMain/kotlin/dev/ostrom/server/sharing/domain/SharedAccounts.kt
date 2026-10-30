@@ -73,8 +73,8 @@ data class AccountLimits(
  * @property limits Its limits.
  * @property cooldownUntil Set after a provider refusal (429): no request before it.
  * @property createdAt When it was shared.
- * @property version Bumped by every write to its row (a share, an edit, a refresh, a status or a cool-down): a
- *   conditional write names the version it read, so it never overwrites a change made in between.
+ * @property version Bumped by every share, edit and status change of its row (not by the pool's refreshes and
+ *   cool-downs): a conditional write names the version it read, so it never overwrites a change made in between.
  */
 data class SharedAccount(
     val id: Uuid,

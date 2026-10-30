@@ -4,6 +4,7 @@ package dev.ostrom.server.importer.domain
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.secrets.domain.Caller
+import dev.ostrom.server.sharing.domain.AccountChangedException
 import dev.ostrom.server.sharing.domain.AccountCredentials
 import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.AccountStatus
@@ -169,7 +170,7 @@ class SharedAccountImporter(
 
         private suspend fun write(change: Change): Known = when (change) {
             is Change.Create -> Known(share(caller, change.payload))
-            is Change.Revive -> Known(share(caller, renewed(change.payload)))
+            is Change.Revive -> Known(revived(change))
             is Change.TurnOff -> Known(
                 update(
                     caller,
@@ -177,6 +178,23 @@ class SharedAccountImporter(
                     UpdateAccountPayload(disabled = true, ifVersion = change.known.version),
                 ),
             )
+        }
+
+        /**
+         * Shares [change] again with TeamCode's tokens renewed. Renewing rotated TeamCode's pair, so the renewed one is
+         * the only one left: when the account changed meanwhile but still waits for a reconnection (an edit), it is
+         * stored at the new version, with the account's new label and email; otherwise (reconnected, deleted) the
+         * change is refused and the account is left as it is.
+         */
+        private suspend fun revived(change: Change.Revive): SharedAccount {
+            val renewed = renewed(change.payload)
+            return try {
+                share(caller, renewed)
+            } catch (changed: AccountChangedException) {
+                val now = list(caller).firstOrNull { it.account.id == change.known.id }?.account
+                    ?.takeIf { it.status == AccountStatus.RECONNECT_REQUIRED } ?: throw changed
+                share(caller, renewed.copy(label = now.label, email = now.email, ifVersion = now.version))
+            }
         }
     }
 

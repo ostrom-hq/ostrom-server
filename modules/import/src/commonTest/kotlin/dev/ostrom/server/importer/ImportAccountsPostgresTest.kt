@@ -16,6 +16,8 @@ import dev.ostrom.server.importer.infrastructure.IdentityImportAudit
 import dev.ostrom.server.importer.presentation.ImportItemDto
 import dev.ostrom.server.importer.presentation.TeamCodeAccountDto
 import dev.ostrom.server.importer.presentation.TeamCodeImportRequest
+import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.sharing.SharingModule
 import dev.ostrom.server.sharing.domain.AccountProvider
@@ -25,6 +27,7 @@ import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
 import dev.ostrom.server.sharing.domain.NoAccountSpendReader
 import dev.ostrom.server.sharing.domain.OAuthRefresher
+import dev.ostrom.server.sharing.domain.RemoveSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.ShareAccountPayload
 import dev.ostrom.server.sharing.domain.ShareAccountUseCase
 import dev.ostrom.server.sharing.domain.SharedAccount
@@ -264,19 +267,7 @@ class ImportAccountsPostgresTest {
                 // Right after the run reads the org's accounts, claude-1's owner reconnects it and an admin renames
                 // claude-2.
                 koin.get<RacingList>().afterRead = {
-                    val tokens = "owner-claude-1-token"
-                    koin.get<ShareAccountUseCase>()(
-                        adminA,
-                        ShareAccountPayload(
-                            AccountProvider.CLAUDE,
-                            "Lyes claude-1",
-                            null,
-                            "claude-1",
-                            "access-$tokens",
-                            "refresh-$tokens",
-                            Instant.parse("2026-11-01T00:00:00Z"),
-                        ),
-                    )
+                    koin.get<ShareAccountUseCase>()(adminA, owners("claude-1"))
                     koin.get<UpdateSharedAccountUseCase>()(adminA, claude2, UpdateAccountPayload(label = "Renamed"))
                 }
                 val changed = "The account changed meanwhile: nothing was overwritten. Try again."
@@ -297,6 +288,91 @@ class ImportAccountsPostgresTest {
             }
         }
     }
+
+    @Test
+    fun aChangeMadeWhileTheTokensRenewKeepsTheRenewedPairOnlyOnAnAccountStillWaiting() =
+        serverTest(modules, withAudit(RecordingAuditLog())) { server ->
+            with(server) {
+                accountLines(
+                    account("claude", "claude-1"),
+                    account("claude", "claude-2"),
+                    account("claude", "claude-3"),
+                )
+                reconnectRequired("claude-1", "claude-2", "claude-3")
+                val shared = accounts()
+                // While each pair renews: an admin renames claude-1, claude-2's owner reconnects it, claude-3 is
+                // removed. Renewing rotated TeamCode's pair, so only claude-1, still waiting, can take the new one.
+                (koin.get<OAuthRefresher>() as TeamCodeRefresher).meanwhile = { token ->
+                    val id = token.removePrefix("access-").substringBefore("-token")
+                    val account = shared.getValue(id).id
+                    when (id) {
+                        "claude-1" -> koin.get<UpdateSharedAccountUseCase>()(
+                            adminA,
+                            account,
+                            UpdateAccountPayload(label = "Renamed"),
+                        )
+                        "claude-2" -> koin.get<ShareAccountUseCase>()(adminA, owners("claude-2"))
+                        else -> koin.get<RemoveSharedAccountUseCase>()(adminA, account)
+                    }
+                }
+                val changed = "The account changed meanwhile: nothing was overwritten. Try again."
+                assertEquals(
+                    listOf(
+                        line("account", "claude/Lyes claude-1", UPDATED),
+                        line("account", "claude/Lyes claude-2", SKIPPED, changed),
+                        line("account", "claude/Lyes claude-3", SKIPPED, changed),
+                    ),
+                    accountLines(
+                        account("claude", "claude-1", run = 2),
+                        account("claude", "claude-2", run = 2),
+                        account("claude", "claude-3", run = 2),
+                        cutover = true,
+                    ),
+                )
+                val now = accounts()
+                assertEquals("Renamed", now.getValue("claude-1").label, "The admin's edit stays")
+                assertEquals(AccountStatus.READY, now.getValue("claude-1").status)
+                assertEquals("renewed-access-claude-1-token-2", accessToken("claude-1"), "The renewed pair is kept")
+                assertEquals("access-owner-claude-2-token", accessToken("claude-2"), "The owner's reconnection stays")
+                assertEquals(setOf("claude-1", "claude-2"), now.keys, "A removed account is never shared again")
+            }
+        }
+
+    @Test
+    fun accountsTheRunCannotReadAreSkippedAndWhatTheImportWroteStaysReported() {
+        val unreadable = module {
+            single<ListSharedAccountsUseCase> {
+                object : ListSharedAccountsUseCase {
+                    override suspend fun invoke(caller: Caller): List<SharedAccountView> =
+                        throw OstromException(ErrorKind.UNAVAILABLE, "Unreadable.")
+                }
+            }
+        }
+        serverTest(modules, module { includes(importOverrides(), unreadable) }) { server ->
+            with(server) {
+                val report = report(Importing.team())
+                assertEquals(
+                    listOf(
+                        line("account", "claude/Lyes", SKIPPED, "Unreadable."),
+                        line("account", "codex/Lyes", SKIPPED, "Unreadable."),
+                    ),
+                    report.items.filter { it.kind == "account" },
+                )
+                assertEquals(setOf("grafana", "grafana.ro", "discord"), servers().keys, "Written before, still there")
+            }
+        }
+    }
+
+    /** claude-[id]'s owner signing in again. */
+    private fun owners(id: String) = ShareAccountPayload(
+        AccountProvider.CLAUDE,
+        "Lyes $id",
+        null,
+        id,
+        "access-owner-$id-token",
+        "refresh-owner-$id-token",
+        Instant.parse("2026-11-01T00:00:00Z"),
+    )
 
     /** Records the audit entries it is given. */
     private class RecordingAuditLog : AuditLog {

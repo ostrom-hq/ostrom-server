@@ -160,14 +160,15 @@ data class TeamCodeImportRequest(
  *
  * @property kind `setting`, `secret`, `server`, `policy`, `assignment` or `account`.
  * @property name Its name.
- * @property action `planned`, `created`, `updated`, `unchanged` or `skipped`.
+ * @property action `planned`, `created`, `updated`, `unchanged`, `skipped` or `revive_at_cutover` (a shared account
+ *   left waiting for a reconnection until the cutover run).
  * @property reason Why it was skipped.
  */
 @Serializable
 data class ImportItemDto(val kind: String, val name: String, val action: String, val reason: String? = null)
 
 /**
- * The import report.
+ * The import report. A `revive_at_cutover` line counts in none of the totals: read it from [items].
  *
  * @property items One line per item.
  * @property created How many were created.

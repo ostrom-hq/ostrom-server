@@ -321,7 +321,7 @@ class SharingPostgresTest {
     }
 
     @Test
-    fun everyWriteBumpsTheVersionAndAConditionalWriteNeverOverwritesALaterOne() =
+    fun sharesEditsAndStatusesBumpTheVersionAndAConditionalWriteNeverOverwritesALaterOne() =
         serverTest(modules, overrides) { server ->
             with(server) {
                 val id = Uuid.parse(shareAs("member-a").body<SharedAccountResponse>().id)
@@ -330,19 +330,25 @@ class SharingPostgresTest {
                 assertEquals(1L, read.version)
                 repository.setCooldown(Sharing.orgA, id, Clock.System.now())
                 repository.putEnvelope(Sharing.orgA, id, repository.envelope(Sharing.orgA, id)!!)
-                assertEquals(3L, repository.get(Sharing.orgA, id)!!.version, "A cool-down and a refresh are writes too")
+                assertEquals(1L, repository.get(Sharing.orgA, id)!!.version, "The pool's routine writes do not count")
+                repository.setStatus(Sharing.orgA, id, AccountStatus.READY)
                 assertNull(
                     repository.update(read.copy(label = "Stale"), expectedVersion = 1),
                     "Never over a later write",
                 )
-                assertEquals(4L, repository.update(read.copy(label = "Fresh"), expectedVersion = 3)!!.version)
+                assertEquals(3L, repository.update(read.copy(label = "Fresh"), expectedVersion = 2)!!.version)
                 val envelope = repository.envelope(Sharing.orgA, id)!!
-                assertFailsWith<AccountChangedException> { repository.upsert(read, envelope, expectedVersion = 3) }
+                assertFailsWith<AccountChangedException> { repository.upsert(read, envelope, expectedVersion = 2) }
                 assertFailsWith<AccountChangedException>("Not new any more") {
                     repository.upsert(read, envelope, expectedVersion = 0)
                 }
                 assertEquals("Fresh", repository.get(Sharing.orgA, id)!!.label, "Nothing overwritten")
-                assertEquals(5L, repository.upsert(read, envelope, expectedVersion = 4).version)
+                assertEquals(4L, repository.upsert(read, envelope, expectedVersion = 3).version)
+                assertTrue(repository.delete(Sharing.orgA, id))
+                assertFailsWith<AccountChangedException>("Deleted meanwhile: never inserted again") {
+                    repository.upsert(read, envelope, expectedVersion = 4)
+                }
+                assertNull(repository.get(Sharing.orgA, id))
             }
         }
 

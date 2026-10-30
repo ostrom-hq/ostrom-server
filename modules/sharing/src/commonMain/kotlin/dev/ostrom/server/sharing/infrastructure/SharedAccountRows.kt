@@ -30,13 +30,21 @@ internal const val ACCOUNT_COLUMNS: String =
 
 private val MEMBERS = SetSerializer(String.serializer())
 
-/** Sets one column of one account (bumping its version), confined to [orgId]; [value] binds `:value`. */
-internal suspend fun Driver.setColumn(orgId: Uuid, id: Uuid, assignment: String, value: Statement.() -> Statement) {
+/**
+ * Sets one column of one account, confined to [orgId]; [value] binds `:value`. [bump] bumps its version: a status
+ * change does, the pool's routine writes (a refresh, a cool-down) do not, so they never fail a conditional write.
+ */
+internal suspend fun Driver.setColumn(
+    orgId: Uuid,
+    id: Uuid,
+    assignment: String,
+    bump: Boolean,
+    value: Statement.() -> Statement,
+) {
+    val version = if (bump) ", version = version + 1" else ""
     executeInOrg(
         orgId,
-        Statement.create(
-            "UPDATE sharing_accounts SET $assignment, version = version + 1 WHERE org_id = :org_id AND id = :id",
-        )
+        Statement.create("UPDATE sharing_accounts SET $assignment$version WHERE org_id = :org_id AND id = :id")
             .bind("org_id", orgId)
             .bind("id", id)
             .value(),

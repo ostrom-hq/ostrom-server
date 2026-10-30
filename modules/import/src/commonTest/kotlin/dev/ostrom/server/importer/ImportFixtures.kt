@@ -174,8 +174,12 @@ class TeamCodeRefresher : OAuthRefresher {
     /** How many refreshes were asked: none while TeamCode runs. */
     var calls = 0
 
+    /** Runs while a pair renews, given its access token: a change made meanwhile. */
+    var meanwhile: suspend (String) -> Unit = {}
+
     override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials): RefreshResult {
         calls++
+        meanwhile(credentials.accessToken)
         return when {
             "refused" in credentials.refreshToken -> RefreshResult.Revoked
             "offline" in credentials.refreshToken -> RefreshResult.Unavailable

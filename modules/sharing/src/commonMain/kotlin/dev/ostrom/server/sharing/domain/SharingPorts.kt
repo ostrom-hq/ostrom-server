@@ -11,7 +11,7 @@ interface SharedAccountRepository {
      * returns the stored row.
      *
      * @param expectedVersion Writes only if the org's row of that provider account is still at this version (0: only
-     *   if it has none); null writes whatever it is.
+     *   if it has none; above 0, never if it was deleted meanwhile); null writes whatever it is.
      *
      * @throws AccountOwnedByAnotherMemberException When another member owns that provider account meanwhile.
      * @throws AccountChangedException When [expectedVersion] is set and the row is no longer at it.

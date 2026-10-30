@@ -22,9 +22,20 @@ import kotlin.uuid.Uuid
  */
 class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRepository {
     override suspend fun upsert(account: SharedAccount, envelope: String, expectedVersion: Long?): SharedAccount {
+        // At a version above 0 the row must still exist: a plain update, so a row deleted meanwhile is never inserted
+        // again.
+        val statement = if (expectedVersion != null && expectedVersion > 0) {
+            Statement.create(SHARE_AGAIN).bind("expected", expectedVersion)
+        } else {
+            Statement.create(UPSERT)
+                .bind("priority", account.priority)
+                .bindLimits(account.limits)
+                .bind("created_at", account.createdAt)
+                .bindNullable("expected", expectedVersion, Long::class)
+        }
         val row = driver.fetchInOrg(
             account.orgId,
-            Statement.create(UPSERT)
+            statement
                 .bind("id", account.id)
                 .bind("org_id", account.orgId)
                 .bind("provider", account.provider.name)
@@ -32,12 +43,8 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
                 .bindNullable("email", account.email, String::class)
                 .bind("provider_account_id", account.providerAccountId)
                 .bindNullable("owner", account.ownerMemberId, Uuid::class)
-                .bind("priority", account.priority)
                 .bind("status", account.status.name)
-                .bindLimits(account.limits)
-                .bind("envelope", envelope)
-                .bind("created_at", account.createdAt)
-                .bindNullable("expected", expectedVersion, Long::class),
+                .bind("envelope", envelope),
         ).getOrThrow().singleOrNull()
             ?: throw if (expectedVersion == null) AccountOwnedByAnotherMemberException() else AccountChangedException()
         return row.toAccount()
@@ -101,21 +108,28 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
     ).getOrThrow().firstOrNull()?.let { it.get("envelope").asString() }
 
     override suspend fun putEnvelope(orgId: Uuid, id: Uuid, envelope: String) {
-        driver.setColumn(orgId, id, "envelope = :value") { bind("value", envelope) }
+        driver.setColumn(orgId, id, "envelope = :value", bump = false) { bind("value", envelope) }
     }
 
     override suspend fun setStatus(orgId: Uuid, id: Uuid, status: AccountStatus) {
-        driver.setColumn(orgId, id, "status = :value") { bind("value", status.name) }
+        driver.setColumn(orgId, id, "status = :value", bump = true) { bind("value", status.name) }
     }
 
     override suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant) {
-        driver.setColumn(orgId, id, "cooldown_until = :value") { bind("value", until) }
+        driver.setColumn(orgId, id, "cooldown_until = :value", bump = false) { bind("value", until) }
     }
 
     private companion object {
         // Sharing again keeps the limits. Two shares racing on a new account both insert: the second keeps the first
         // row's id, so its envelope (sealed for its own id) would not open; the first's stays. An account another
         // member owns is never taken over, nor a row past the expected version (no row comes back).
+        const val SHARE_AGAIN =
+            "UPDATE sharing_accounts SET label = :label, email = :email, status = :status, cooldown_until = NULL, " +
+                "envelope = :envelope, version = version + 1 " +
+                "WHERE org_id = :org_id AND provider = :provider AND provider_account_id = :provider_account_id " +
+                "AND id = :id AND version = :expected " +
+                "AND (owner_member_id IS NULL OR owner_member_id = :owner) " +
+                "RETURNING $ACCOUNT_COLUMNS"
         const val UPSERT =
             "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, " +
                 "owner_member_id, priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, " +
