@@ -195,7 +195,7 @@ class ImportPostgresTest {
         val grafana = servers.getValue("grafana")
         assertNull(grafana.credentialHeader, "TeamCode's Authorization is Ostrom's Bearer")
         val token = koin.get<RevealSecretsUseCase>()(adminA.orgId, listOfNotNull(grafana.credentialSecretId))
-        assertEquals(listOf(SecretValue("g-token")), token.values.toList())
+        assertEquals(listOf(SecretValue("g-token-1234")), token.values.toList())
         val discord = servers.getValue("discord")
         assertEquals("X-Discord-Token", discord.credentialHeader)
         assertEquals(McpSharing.PER_MEMBER, discord.sharing)
@@ -261,7 +261,7 @@ class ImportPostgresTest {
             val grafanaA = koin.get<ListMcpServersUseCase>()(adminA).single { it.name == "grafana" }
             assertEquals("https://g.example.com/mcp", grafanaA.url, "Org B's import left org A's server alone")
             val tokenA = koin.get<RevealSecretsUseCase>()(adminA.orgId, listOfNotNull(grafanaA.credentialSecretId))
-            assertEquals(listOf(SecretValue("g-token")), tokenA.values.toList())
+            assertEquals(listOf(SecretValue("g-token-1234")), tokenA.values.toList())
         }
     }
 

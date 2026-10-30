@@ -30,7 +30,7 @@ object Importing {
      * allowlist), Discord per member, MySQL as a stdio command, and a shared Claude account.
      */
     fun team(
-        grafanaToken: String = "g-token",
+        grafanaToken: String = "g-token-1234",
         grafanaUrl: String = "https://g.example.com/mcp",
         readOnly: List<String> = listOf("query_loki_logs"),
     ) = TeamCodeImportRequest(
@@ -75,15 +75,15 @@ object Importing {
                     "mcp-mysql==1.2.0",
                     listOf("--read-only"),
                     mapOf(
-                        "MYSQL_DSN" to "dsn",
+                        "MYSQL_DSN" to "mysql-dsn-value",
                     ),
                 ),
             ),
         ),
         assignments = listOf(
             TeamCodeAssignmentDto("m1", "v-full"),
-            TeamCodeAssignmentDto("m2", "v-full", memberSecret = "stray"),
-            TeamCodeAssignmentDto("m1", "v-discord", memberSecret = "d-lyes"),
+            TeamCodeAssignmentDto("m2", "v-full", memberSecret = "stray-secret"),
+            TeamCodeAssignmentDto("m1", "v-discord", memberSecret = "d-lyes-token"),
             TeamCodeAssignmentDto("m2", "v-discord"),
             TeamCodeAssignmentDto("m2", "v-ro"),
             TeamCodeAssignmentDto("m3", "v-ro"),
