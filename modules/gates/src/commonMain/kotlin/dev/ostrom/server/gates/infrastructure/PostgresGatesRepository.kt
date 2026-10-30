@@ -57,7 +57,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         Tx(this).run {
             scoped(orgId)
             // Served by the GIN index on the session ids (migration 2).
-            fetch(
+            executor.rows(
                 Statement.create(
                     "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org " +
                         "AND CAST(session_ids AS JSONB) @> jsonb_build_array(CAST(:session AS TEXT)) " +
