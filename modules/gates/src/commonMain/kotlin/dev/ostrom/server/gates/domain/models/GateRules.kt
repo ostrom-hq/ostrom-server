@@ -28,7 +28,7 @@ object GateKeys {
      * @return The canonical text to hash.
      */
     fun keyPreimage(orgId: String, subject: GateSubject, node: GateNode?): String {
-        val nodeRef = node?.let { JsonPrimitive("${it.workflowId}/${it.nodeId}") } ?: JsonNull
+        val nodeRef = text(node?.let { "${it.workflowId}/${it.nodeId}" })
         val fields = linkedMapOf<String, kotlinx.serialization.json.JsonElement>(
             "org" to JsonPrimitive(orgId),
             "repo" to text(subject.repo),
@@ -79,19 +79,13 @@ object GateKeys {
             "command" to JsonPrimitive(normalizeCommand(subject.command)),
             "commits" to JsonArray(subject.commits.map(::JsonPrimitive)),
             "diff" to text(subject.diffDigest),
-            "pr" to (
-                subject.pullRequest?.let {
-                    JsonPrimitive("#${it.number}@${it.headSha}->${it.base}")
-                } ?: JsonNull
-                ),
-            "push" to (
+            "pr" to text(subject.pullRequest?.let { "#${it.number}@${it.headSha}->${it.base}" }),
+            "push" to text(
                 subject.push?.let { push ->
-                    JsonPrimitive(
-                        push.refs.joinToString(",") { "${it.ref}=${it.sha}" } +
-                            "@" + push.remote + if (push.force) " force" else "",
-                    )
-                } ?: JsonNull
-                ),
+                    push.refs.joinToString(",") { "${it.ref}=${it.sha}" } + "@" + push.remote +
+                        if (push.force) " force" else ""
+                },
+            ),
             "evidence" to JsonArray(evidence.map { JsonPrimitive("${it.label}: ${it.value}") }),
         )
         return JsonObject(fields).toString()
@@ -106,7 +100,9 @@ object GateKeys {
     fun normalizeCommand(command: String): String = command.trim().split(WHITESPACE).filter { it.isNotEmpty() }
         .joinToString(" ")
 
-    private fun text(value: String?) = value?.let(::JsonPrimitive) ?: JsonNull
+    // Kover sees no unreachable branch in an if, where `?.let(...) ?: JsonNull` has one.
+    private fun text(value: String?): kotlinx.serialization.json.JsonElement =
+        if (value == null) JsonNull else JsonPrimitive(value)
 
     private val WHITESPACE = Regex("\\s+")
 }

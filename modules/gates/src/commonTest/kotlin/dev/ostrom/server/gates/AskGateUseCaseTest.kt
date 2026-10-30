@@ -151,6 +151,18 @@ class AskGateUseCaseTest {
     }
 
     @Test
+    fun aCommandOutsideTheSessionsRepositoryShowsOnlyWhereItRuns() = runTest {
+        val bench = GateBench()
+        val ask = pushAsk(realRepo = "evil/fork").copy(repo = "  ", tool = "mcp__git__push")
+        val view = ask(bench)(agent(), ask)
+        assertNull(view.gate.subject.repo, "a blank repository is none")
+        assertEquals("evil/fork", view.gate.subject.realRepo)
+        assertEquals("mcp__git__push", view.gate.subject.tool)
+        assertEquals(Evidence("Repository", "evil/fork"), view.gate.evidence.single { it.label == "Repository" })
+        assertTrue(view.gate.evidence.none { it.label == "Session repository" }, "no session repository to compare")
+    }
+
+    @Test
     fun theSameRepositoryTwiceIsNotAnotherRepository() = runTest {
         val bench = GateBench()
         assertNull(ask(bench)(agent(), pushAsk(realRepo = "ostrom-hq/gate-demo")).gate.subject.realRepo)

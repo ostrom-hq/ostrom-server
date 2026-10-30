@@ -212,7 +212,6 @@ class OpenGateUseCaseImpl(
     private data class Opened(val gate: Gate, val requests: List<ApprovalRequest>, val created: Boolean)
 
     private companion object {
-        val LIVE = setOf(GateStatus.PENDING, GateStatus.APPROVED, GateStatus.RESERVED)
         const val SAME_KEY_LIMIT = 20
         const val MAX_SESSION_ID = 128
         const val MAX_COMMAND = 8_000
@@ -224,6 +223,9 @@ class OpenGateUseCaseImpl(
         const val MAX_REF = 200
     }
 }
+
+// Top-level, not in the companion: a private companion property has a getter nothing calls.
+private val LIVE = setOf(GateStatus.PENDING, GateStatus.APPROVED, GateStatus.RESERVED)
 
 /**
  * True for a full commit id (SHA-1 or SHA-256, lower-case hex).

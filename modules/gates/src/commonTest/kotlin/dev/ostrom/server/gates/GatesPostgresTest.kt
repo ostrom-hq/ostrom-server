@@ -2,6 +2,8 @@
 package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.models.ActorKind
+import dev.ostrom.server.gates.domain.models.AnswerChannel
+import dev.ostrom.server.gates.domain.models.ApprovalRequest
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
 import dev.ostrom.server.gates.domain.models.Gate
@@ -13,6 +15,7 @@ import dev.ostrom.server.gates.domain.models.GatePush
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.PushRef
+import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -25,8 +28,6 @@ import dev.ostrom.server.gates.presentation.Approval
 import dev.ostrom.server.gates.presentation.ApprovalAnswer
 import dev.ostrom.server.gates.presentation.ApprovalsPage
 import dev.ostrom.server.gates.presentation.GateAskRequest
-import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
-import dev.ostrom.server.gates.presentation.GatePush as PushDto
 import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.gates.presentation.GateScopes
@@ -53,9 +54,12 @@ import kotlinx.coroutines.coroutineScope
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
+import dev.ostrom.server.gates.presentation.GatePush as PushDto
 
 /** The gates against a real PostgreSQL and real HTTP: every parcours of a gate, and the isolation of organizations. */
 class GatesPostgresTest {
@@ -419,6 +423,48 @@ class GatesPostgresTest {
         repository.transaction { insertGate(gate) }
         assertEquals(gate, repository.get(orgA, gate.id))
         assertEquals(null, repository.get(orgB, gate.id))
+    }
+
+    @Test
+    fun aNoClosesTheGateAndTheListFiltersByStatus() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val no = server.answer("user:a:rev-b", opened, "rev-b", yes = false)
+        assertEquals(HttpStatusCode.OK, no.status)
+        assertEquals("rejected", no.body<AnswerApprovalResponse>().approval.status)
+        val closed = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
+        assertEquals("rejected", closed.gate.status)
+
+        suspend fun listed(status: String) =
+            server.call("user:a:rev-b", "/api/v1/approvals?status=$status&limit=100").body<ApprovalsPage>().items
+                .filter { it.group == opened.gate.id }
+        assertEquals(listOf("rev-b"), listed("rejected").map { it.requestedFrom })
+        assertEquals(listOf("lyes", "rev-c"), listed("EXPIRED").map { it.requestedFrom }.sorted())
+        assertTrue(listed("pending").isEmpty() && listed("approved").isEmpty())
+        val unknown = server.call("user:a:rev-b", "/api/v1/approvals?status=maybe")
+        assertEquals(HttpStatusCode.BadRequest, unknown.status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a", "/api/v1/approvals").status, "no organization")
+    }
+
+    @Test
+    fun anAnsweredRequestKeepsItsChannelAndTime() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val repository = server.koin.get<GatesRepository>()
+        val gateId = Uuid.parse(opened.gate.id)
+        val at = Instant.parse("2026-10-30T02:00:00Z")
+        val answered = ApprovalRequest(
+            id = Uuid.random(),
+            gateId = gateId,
+            orgId = orgA,
+            approverId = "rev-d",
+            status = RequestStatus.APPROVED,
+            answeredAt = at,
+            channel = AnswerChannel.SLACK,
+            createdAt = at,
+        )
+        repository.transaction { insertRequests(listOf(answered)) }
+        assertEquals(answered, repository.requestsOf(orgA, gateId).single { it.approverId == "rev-d" })
+        assertEquals(answered, repository.approval(orgA, answered.id)?.request)
+        assertNull(repository.approval(orgB, answered.id))
     }
 
     @Test

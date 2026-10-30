@@ -55,8 +55,9 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? = driver.transaction {
         Tx(this).run {
+            // The foreign key keeps a request's gate: read as the one gate it must be.
             request(orgId, id)?.let { request ->
-                executor.selectGate(orgId, request.gateId, lock = false)?.let { ApprovalView(request, it) }
+                ApprovalView(request, listOfNotNull(executor.selectGate(orgId, request.gateId, lock = false)).single())
             }
         }
     }
