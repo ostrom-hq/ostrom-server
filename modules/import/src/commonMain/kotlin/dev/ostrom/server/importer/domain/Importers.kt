@@ -91,11 +91,14 @@ internal class SecretImporter(
      */
     suspend fun upsert(write: SecretWrite): Pair<Uuid, ImportItem> {
         val existing = found[write.key]
-        val (id, action) = when {
-            existing != null && values[existing.id] == write.value -> existing.id to ImportAction.UNCHANGED
-            dryRun -> (existing?.id ?: PENDING) to ImportAction.PLANNED
-            existing == null -> create(write) to ImportAction.CREATED
-            else -> secrets.rotate(write.owner, existing.id, write.value).id to ImportAction.UPDATED
+        val (id, action) = if (existing == null) {
+            if (dryRun) PENDING to ImportAction.PLANNED else create(write) to ImportAction.CREATED
+        } else {
+            when {
+                values[existing.id] == write.value -> existing.id to ImportAction.UNCHANGED
+                dryRun -> existing.id to ImportAction.PLANNED
+                else -> secrets.rotate(write.owner, existing.id, write.value).id to ImportAction.UPDATED
+            }
         }
         values[id] = write.value
         return id to ImportItem(ImportKind.SECRET, write.label, action)
@@ -232,8 +235,12 @@ internal class McpImporter(
         record(ImportRecord(ImportRecordKind.SERVER, planned.source.id, planned.name, server.id))
         byName[planned.name] = server
         assignments[server.id] = mutableListOf()
-        return deny(caller, server, planned.deniedTools)?.let { skippedServer(planned, it) }
-            ?: ServerOutcome(lines(planned, ImportAction.CREATED) { ImportAction.CREATED }, true, server)
+        val refused = deny(caller, server, planned.deniedTools)
+        return if (refused == null) {
+            ServerOutcome(lines(planned, ImportAction.CREATED) { ImportAction.CREATED }, true, server)
+        } else {
+            skippedServer(planned, refused)
+        }
     }
 
     private suspend fun update(

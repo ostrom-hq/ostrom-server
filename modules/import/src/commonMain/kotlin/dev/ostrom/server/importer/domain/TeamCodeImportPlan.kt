@@ -39,7 +39,7 @@ data class PlannedServer(
     /** The secret names it writes, so that two servers never write, and rotate, the same secret. */
     val secretNames: List<String>
         get() = listOfNotNull(secretName.takeIf { sharedCredential != null || carriesMemberCredential }) +
-            source.stdio?.secretEnv?.keys.orEmpty().map(::variableSecretName)
+            source.stdio?.let { stdio -> stdio.secretEnv.keys.map(::variableSecretName) }.orEmpty()
 
     /** The tools the members may call, or null for every tool (a deny list becomes argument policies). */
     val allowedTools: Set<String>? get() = source.tools.toSet().takeIf { source.toolMode == ToolMode.ALLOW }
@@ -170,7 +170,10 @@ object TeamCodeImportPlanner {
                 conflicts[server.source.id] = collision(clash, claims.getValue(clash))
             }
         }
-        return servers.map { server -> conflicts[server.source.id]?.let { server.copy(conflict = it) } ?: server }
+        return servers.map { server ->
+            val conflict = conflicts[server.source.id]
+            if (conflict == null) server else server.copy(conflict = conflict)
+        }
     }
 
     private fun collision(clash: Claim, other: PlannedServer): String = if (clash.secret) {

@@ -23,14 +23,18 @@ import dev.ostrom.server.mcprelay.domain.McpSharing
 import dev.ostrom.server.mcprelay.domain.PolicyEffect
 import dev.ostrom.server.secrets.domain.FindSecretUseCase
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
+import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.domain.SecretNotFoundException
 import dev.ostrom.server.secrets.domain.SecretValue
+import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.ktor.client.request.post
 import io.ktor.http.HttpStatusCode
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -259,6 +263,12 @@ class ImportPostgresTest {
             assertEquals(6, driver.fetchInOrg(adminB.orgId, unfiltered).getOrThrow().size)
         }
     }
+
+    @Test
+    fun withoutIdentityBoundTheRouteStillLoadsAndRefusesStrangers() =
+        serverTest(modules, module { single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) } }) { server ->
+            assertEquals(HttpStatusCode.Unauthorized, server.client.post("/api/v1/import/teamcode").status)
+        }
 
     @Test
     fun sharedAccountsGoThroughTheSharingModuleWhenItIsInstalled() {
