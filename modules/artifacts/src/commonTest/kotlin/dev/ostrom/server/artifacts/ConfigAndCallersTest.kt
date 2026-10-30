@@ -51,9 +51,15 @@ class ConfigAndCallersTest {
             assertFailsWith<InvalidConfigException>(it) { config("OSTROM_ARTIFACTS_CONTENT_ORIGIN" to it) }
         }
         assertFailsWith<InvalidConfigException> {
-            config("OSTROM_ARTIFACTS_VIEWER_URL" to "https://x.io/artifacts", "OSTROM_ARTIFACTS_CONTENT_ORIGIN" to "https://x.io")
+            config(
+                "OSTROM_ARTIFACTS_VIEWER_URL" to "https://x.io/artifacts",
+                "OSTROM_ARTIFACTS_CONTENT_ORIGIN" to "https://x.io",
+            )
         }
-        assertEquals("artifacts.example.com", ArtifactsConfig.contentHost(ArtifactLocations("/a", "https://artifacts.example.com:8443")))
+        assertEquals(
+            "artifacts.example.com",
+            ArtifactsConfig.contentHost(ArtifactLocations("/a", "https://artifacts.example.com:8443")),
+        )
         assertNull(ArtifactsConfig.contentHost(ArtifactLocations("/a", null)))
     }
 
@@ -79,7 +85,10 @@ class ConfigAndCallersTest {
 
     @Test
     fun scopesAndMembershipMakeTheCaller() = runTest {
-        fun principal(kind: PrincipalKind, vararg scopes: String) = AuthenticatedPrincipal("alice", kind, scopes.toSet())
+        fun principal(
+            kind: PrincipalKind,
+            vararg scopes: String,
+        ) = AuthenticatedPrincipal("alice", kind, scopes.toSet())
         val caller = TestOrgResolver.artifactCallerOf(principal(PrincipalKind.SERVICE, ARTIFACTS_WRITE), ARTIFACTS_READ)
         assertEquals(ORG_A, caller.orgId)
         assertEquals(ALICE.toString(), caller.memberId)

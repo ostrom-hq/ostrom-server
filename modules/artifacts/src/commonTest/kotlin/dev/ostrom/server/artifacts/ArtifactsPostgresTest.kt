@@ -84,7 +84,9 @@ class ArtifactsPostgresTest {
         assertNull(repository.blob(mine.id, "sha-z"))
 
         val second = version(mine, 2, "a.txt" to "sha-a", "b.txt" to "sha-b")
-        val updated = assertNotNull(repository.addVersion(ORG_A, second, mapOf("sha-b" to byteArrayOf(9)), t0 + 1.minutes))
+        val updated = assertNotNull(
+            repository.addVersion(ORG_A, second, mapOf("sha-b" to byteArrayOf(9)), t0 + 1.minutes),
+        )
         assertEquals(2, updated.latestVersion)
         assertEquals(t0 + 1.minutes, updated.updatedAt)
         assertNull(repository.addVersion(ORG_A, second, emptyMap(), t0))
@@ -120,7 +122,12 @@ class ArtifactsPostgresTest {
         val shared = artifact()
         val team = artifact(access = ArtifactAccess.TEAM).copy(updatedAt = t0 + 1.minutes)
         val elsewhere = artifact(org = ORG_B, access = ArtifactAccess.TEAM)
-        listOf(personal, shared, team, elsewhere).forEach { repository.create(it, version(it, 1, "a" to "s"), emptyMap()) }
+        listOf(
+            personal,
+            shared,
+            team,
+            elsewhere,
+        ).forEach { repository.create(it, version(it, 1, "a" to "s"), emptyMap()) }
         repository.setMember(ORG_A, shared.id, BOB.toString(), share = true)
 
         assertEquals(setOf(team.id, shared.id), repository.listReadable(bob, null, 10).map { it.id }.toSet())
@@ -179,7 +186,16 @@ class ArtifactsPostgresTest {
             client.get("/api/v1/artifacts/${created.id}/versions/x/file") { bearerAuth("alice") }.status,
         )
 
-        assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts/${created.id}") { bearerAuth("bob") }.status)
+    }
+
+    @Test
+    fun theApiSharesListsAndDeletes() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        val client = server.client
+        val created = client.publish("alice", "Report", "personal", "<h1>v1</h1>").body<ArtifactResponse>()
+        assertEquals(
+            HttpStatusCode.NotFound,
+            client.get("/api/v1/artifacts/${created.id}") { bearerAuth("bob") }.status,
+        )
         val share = client.put("/api/v1/artifacts/${created.id}/members/$BOB") { bearerAuth("alice") }
         assertEquals(HttpStatusCode.NoContent, share.status)
         assertEquals(HttpStatusCode.OK, client.get("/api/v1/artifacts/${created.id}") { bearerAuth("bob") }.status)
@@ -190,7 +206,10 @@ class ArtifactsPostgresTest {
             HttpStatusCode.NoContent,
             client.delete("/api/v1/artifacts/${created.id}/members/$BOB") { bearerAuth("alice") }.status,
         )
-        assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts/${created.id}") { bearerAuth("bob") }.status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            client.get("/api/v1/artifacts/${created.id}") { bearerAuth("bob") }.status,
+        )
 
         val linked = client.patch("/api/v1/artifacts/${created.id}") {
             bearerAuth("alice")
@@ -207,8 +226,14 @@ class ArtifactsPostgresTest {
         assertEquals(emptyList(), rest.items)
         assertNull(rest.next)
 
-        assertEquals(HttpStatusCode.NoContent, client.delete("/api/v1/artifacts/${created.id}") { bearerAuth("alice") }.status)
-        assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts/${created.id}") { bearerAuth("alice") }.status)
+        assertEquals(
+            HttpStatusCode.NoContent,
+            client.delete("/api/v1/artifacts/${created.id}") { bearerAuth("alice") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            client.get("/api/v1/artifacts/${created.id}") { bearerAuth("alice") }.status,
+        )
     }
 
     @Test
@@ -221,7 +246,10 @@ class ArtifactsPostgresTest {
         assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts") { bearerAuth("nobody") }.status)
         assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts/${team.id}") { bearerAuth("carol") }.status)
         assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/artifacts/not-a-uuid") { bearerAuth("alice") }.status)
-        assertEquals(HttpStatusCode.BadRequest, client.get("/api/v1/artifacts?before=nope") { bearerAuth("alice") }.status)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            client.get("/api/v1/artifacts?before=nope") { bearerAuth("alice") }.status,
+        )
         assertEquals(HttpStatusCode.BadRequest, client.publish("alice", "Bad", "public", "x").status)
         val secret = client.publish("alice", "Leak", "team", "key: sk-ant-" + "a".repeat(30))
         assertEquals(HttpStatusCode.BadRequest, secret.status)
@@ -232,11 +260,17 @@ class ArtifactsPostgresTest {
             setBody(PublishVersionRequest(listOf(FileDto("index.html", "mine now"))))
         }
         assertEquals(HttpStatusCode.Forbidden, forbidden.status)
-        assertEquals(HttpStatusCode.Forbidden, client.delete("/api/v1/artifacts/${team.id}") { bearerAuth("bob") }.status)
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            client.delete("/api/v1/artifacts/${team.id}") { bearerAuth("bob") }.status,
+        )
         val listed = client.get("/api/v1/artifacts") { bearerAuth("bob") }.body<ArtifactsResponse>()
         assertEquals(listOf(team.id), listed.items.map { it.id })
         assertNull(listed.next)
-        assertEquals(HttpStatusCode.NoContent, client.delete("/api/v1/artifacts/${team.id}") { bearerAuth("dave") }.status)
+        assertEquals(
+            HttpStatusCode.NoContent,
+            client.delete("/api/v1/artifacts/${team.id}") { bearerAuth("dave") }.status,
+        )
     }
 
     @Test

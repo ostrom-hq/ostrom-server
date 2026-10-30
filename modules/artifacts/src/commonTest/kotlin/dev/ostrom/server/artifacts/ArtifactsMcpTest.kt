@@ -63,14 +63,19 @@ class ArtifactsMcpTest {
 
         val notification = client.rpc("""{"jsonrpc":"2.0","method":"notifications/initialized"}""")
         assertEquals(HttpStatusCode.Accepted, notification.status)
-        assertTrue("\"result\":{}" in client.rpc("""{"jsonrpc":"2.0","id":4,"method":"ping"}""").bodyAsText())
-        val tools = Json.parseToJsonElement(client.rpc("""{"jsonrpc":"2.0","id":5,"method":"tools/list"}""").bodyAsText())
-            .jsonObject.getValue("result").jsonObject.getValue("tools").jsonArray
-        assertEquals(listOf("publish", "list", "read", "share"), tools.map { it.jsonObject.getValue("name").jsonPrimitive.content })
+        val ping = client.rpc("""{"jsonrpc":"2.0","id":4,"method":"ping"}""").bodyAsText()
+        assertTrue("\"result\":{}" in ping)
+        val list = client.rpc("""{"jsonrpc":"2.0","id":5,"method":"tools/list"}""").bodyAsText()
+        val tools = Json.parseToJsonElement(list).jsonObject.getValue("result").jsonObject.getValue("tools").jsonArray
+        assertEquals(
+            listOf("publish", "list", "read", "share"),
+            tools.map { it.jsonObject.getValue("name").jsonPrimitive.content },
+        )
 
         assertEquals(-32700, Json.parseToJsonElement(client.rpc("{nope").bodyAsText()).jsonObject.errorCode())
         assertEquals(-32600, Json.parseToJsonElement(client.rpc("[1]").bodyAsText()).jsonObject.errorCode())
-        assertEquals(-32600, Json.parseToJsonElement(client.rpc("""{"id":9}""").bodyAsText()).jsonObject.errorCode())
+        val noMethod = client.rpc("""{"id":9}""").bodyAsText()
+        assertEquals(-32600, Json.parseToJsonElement(noMethod).jsonObject.errorCode())
         val unknown = client.rpc("""{"jsonrpc":"2.0","id":6,"method":"resources/list"}""").bodyAsText()
         assertEquals(-32601, Json.parseToJsonElement(unknown).jsonObject.errorCode())
         val noTool = client.rpc("""{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{}}""").bodyAsText()
@@ -79,48 +84,72 @@ class ArtifactsMcpTest {
         assertEquals(HttpStatusCode.Unauthorized, client.post("/api/v1/artifacts/mcp").status)
     }
 
+    private fun file(path: String, content: String, base64: Boolean = false): String {
+        val encoding = if (base64) ""","encoding":"base64"""" else ""
+        return """{"path":"$path","content":"$content"$encoding}"""
+    }
+
+    private fun publishing(title: String?, vararg files: String, access: String? = null, artifact: String? = null) =
+        buildString {
+            append("""{"files":[${files.joinToString(",")}]""")
+            title?.let { append(""","title":"$it"""") }
+            access?.let { append(""","access":"$it"""") }
+            artifact?.let { append(""","artifact":"$it"""") }
+            append("}")
+        }
+
+    private fun JsonObject.artifactId(): String = text().substringAfter("Artifact id: ").trim()
+
     @Test
-    fun anAgentPublishesListsReadsAndShares() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+    fun anAgentPublishesListsAndReads() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
         val client = server.client
-        val files = """[{"path":"index.html","content":"<h1>Plan</h1>"},{"path":"a.png","content":"AQID","encoding":"base64"}]"""
-        val published = client.call("publish", """{"title":"Plan","files":$files}""")
+        val published = client.call(
+            "publish",
+            publishing("Plan", file("index.html", "<h1>Plan</h1>"), file("a.png", "AQID", base64 = true)),
+        )
         val text = published.text()
         assertTrue(text.startsWith("Published \"Plan\" (version 1, personal)"), text)
-        val id = text.substringAfter("Artifact id: ").trim()
+        val id = published.artifactId()
 
-        val again = client.call("publish", """{"artifact":"$id","files":[{"path":"index.html","content":"<h1>v2</h1>"}]}""")
+        val again = client.call("publish", publishing(null, file("index.html", "<h1>v2</h1>"), artifact = id))
         assertTrue(again.text().startsWith("Published version 2 of $id"), again.text())
 
         assertTrue(id in client.call("list", "{}").text())
         assertEquals("No artifacts yet.", client.call("list", "{}", token = "carol").text())
         assertEquals("<h1>v2</h1>", client.call("read", """{"artifact":"$id"}""").text())
-        assertEquals("A binary file of 3 bytes.", client.call("read", """{"artifact":"$id","version":1,"path":"a.png"}""").text())
-        val zero = client.call("publish", """{"title":"Bin","files":[{"path":"d.dat","content":"AAE=","encoding":"base64"}]}""")
-        val binary = zero.text().substringAfter("Artifact id: ").trim()
-        assertEquals("A binary file of 2 bytes.", client.call("read", """{"artifact":"$binary","path":"d.dat"}""").text())
-        val font = client.call("publish", """{"title":"Font","files":[{"path":"f.woff2","content":"abc"}]}""")
-        val fontId = font.text().substringAfter("Artifact id: ").trim()
-        assertEquals("A binary file of 3 bytes.", client.call("read", """{"artifact":"$fontId","path":"f.woff2"}""").text())
+        val png = client.call("read", """{"artifact":"$id","version":1,"path":"a.png"}""")
+        assertEquals("A binary file of 3 bytes.", png.text())
+        val binary = client.call("publish", publishing("Bin", file("d.dat", "AAE=", base64 = true))).artifactId()
+        val data = client.call("read", """{"artifact":"$binary","path":"d.dat"}""")
+        assertEquals("A binary file of 2 bytes.", data.text())
+        val font = client.call("publish", publishing("Font", file("f.woff2", "abc"))).artifactId()
+        val woff = client.call("read", """{"artifact":"$font","path":"f.woff2"}""")
+        assertEquals("A binary file of 3 bytes.", woff.text())
+        assertTrue(client.call("read", """{"artifact":"not-an-id"}""").isError())
+        assertEquals(-32602, client.call("read", """{"artifact":"$id","version":"one"}""").errorCode())
+    }
 
+    @Test
+    fun anAgentSharesAndIsRefusedWhatItMayNotDo() = serverTest(listOf(ArtifactsModule), testIdentities) { server ->
+        val client = server.client
+        val id = client.call("publish", publishing("Plan", file("index.html", "<h1>Plan</h1>"))).artifactId()
         val shared = client.call("share", """{"artifact":"$id","access":"link"}""")
         assertTrue("Public link: http://artifacts.test/l/" in shared.text(), shared.text())
-        val member = client.call("share", """{"artifact":"$id","member":"00000000-0000-0000-0000-000000000b0b"}""")
+        val bob = "00000000-0000-0000-0000-000000000b0b"
+        val member = client.call("share", """{"artifact":"$id","member":"$bob"}""")
         assertTrue(member.text().startsWith("\"Plan\" is link"))
-        val removed = client.call("share", """{"artifact":"$id","access":"team","member":"00000000-0000-0000-0000-000000000b0b","remove":true}""")
+        val removed = client.call("share", """{"artifact":"$id","access":"team","member":"$bob","remove":true}""")
         assertTrue(removed.text().startsWith("\"Plan\" is team"))
         assertTrue("Public link" !in removed.text())
 
-        val refused = client.call("publish", """{"artifact":"$id","files":[{"path":"index.html","content":"x"}]}""", "bob")
+        val refused = client.call("publish", publishing(null, file("index.html", "x"), artifact = id), "bob")
         assertTrue(refused.isError())
         assertEquals("Only the artifact's owner changes it.", refused.text())
-        val readOnly = client.call("publish", """{"title":"x","files":[{"path":"a.txt","content":"x"}]}""", "reader")
-        assertTrue(readOnly.isError())
+        assertTrue(client.call("publish", publishing("x", file("a.txt", "x")), "reader").isError())
         assertEquals(-32602, client.call("publish", """{"title":"x"}""").errorCode())
-        assertEquals(-32602, client.call("read", """{"artifact":"$id","version":"one"}""").errorCode())
-        assertTrue(client.call("publish", """{"files":[{"path":"a.txt","content":"%","encoding":"base64"}]}""").isError())
-        assertTrue(client.call("publish", """{"files":[{"path":"a.txt","content":"x"}]}""").isError())
-        val team = client.call("publish", """{"title":"T","access":"team","files":[{"path":"a.txt","content":"x"}]}""")
+        assertTrue(client.call("publish", publishing(null, file("a.txt", "%", base64 = true))).isError())
+        assertTrue(client.call("publish", publishing(null, file("a.txt", "x"))).isError())
+        val team = client.call("publish", publishing("T", file("a.txt", "x"), access = "team"))
         assertTrue(team.text().startsWith("Published \"T\" (version 1, team)"), team.text())
-        assertTrue(client.call("read", """{"artifact":"not-an-id"}""").isError())
     }
 }
