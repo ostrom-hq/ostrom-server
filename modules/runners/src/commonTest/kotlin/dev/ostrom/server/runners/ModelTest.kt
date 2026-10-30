@@ -51,7 +51,10 @@ class ModelTest {
         assertFalse(SessionStateMachine.canMove(SessionState.PAUSED, SessionState.RUNNING))
         assertFalse(SessionStateMachine.canMove(SessionState.FAILED, SessionState.RESUMING))
         SessionStateMachine.requireTransition(SessionState.PAUSING, SessionState.RUNNING)
-        assertFailsWith<IllegalStateException> { SessionStateMachine.requireTransition(SessionState.RUNNING, SessionState.CREATING) }
+        assertFailsWith<IllegalStateException> { SessionStateMachine.requireTransition(
+            SessionState.RUNNING,
+            SessionState.CREATING,
+        ) }
     }
 
     @Test
@@ -62,7 +65,10 @@ class ModelTest {
         assertFailsWith<IllegalArgumentException> { SessionState.fromWire("sleeping") }
         assertFailsWith<IllegalArgumentException> { DesiredState.fromWire("sleeping") }
         assertNull(AgentKind.fromWire("cursor"))
-        assertEquals(listOf(SessionState.CREATING, SessionState.RUNNING, SessionState.PAUSING, SessionState.RESUMING), SessionState.entries.filter { it.holdsExecution })
+        assertEquals(
+            listOf(SessionState.CREATING, SessionState.RUNNING, SessionState.PAUSING, SessionState.RESUMING),
+            SessionState.entries.filter { it.holdsExecution },
+        )
         assertEquals(listOf(SessionState.TERMINATED, SessionState.FAILED), SessionState.entries.filter { it.isFinal })
         assertEquals("bash", AgentKind.SHELL.command)
     }
@@ -82,7 +88,15 @@ class ModelTest {
 
     @Test
     fun anExecutionSpecNeverPrintsItsToken() {
-        val spec = ExecutionSpec(Uuid.random(), ORG_A, 1, AgentKind.CLAUDE, null, "ostrom_runner_secret", CloudPlan.FREE.sessionLimits())
+        val spec = ExecutionSpec(
+            Uuid.random(),
+            ORG_A,
+            1,
+            AgentKind.CLAUDE,
+            null,
+            "ostrom_runner_secret",
+            CloudPlan.FREE.sessionLimits(),
+        )
         assertFalse("secret" in spec.toString())
         val withPrompt = spec.copy(prompt = "private words")
         assertFalse("private" in withPrompt.toString())
@@ -148,7 +162,10 @@ class ModelTest {
         assertNull(config.kubernetes.imagePullSecret)
         assertEquals("http://127.0.0.1:2375", config.docker.apiUrl)
         assertNull(config.docker.network)
-        assertEquals(RunnersConfig.DriverKind.NONE, RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "none"))).driver)
+        assertEquals(
+            RunnersConfig.DriverKind.NONE,
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "none"))).driver,
+        )
     }
 
     @Test
@@ -185,16 +202,24 @@ class ModelTest {
         assertEquals("ostrom", config.docker.network)
         assertEquals(
             RunnersConfig.DriverKind.DOCKER,
-            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "https://x"))).driver,
+            RunnersConfig.from(
+                MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "https://x")),
+            ).driver,
         )
     }
 
     @Test
     fun theConfigurationRefusesAnUnknownDriverOrAMissingServerUrl() {
-        assertFailsWith<InvalidConfigException> { RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "nomad"))) }
-        assertFailsWith<InvalidConfigException> { RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker"))) }
+        assertFailsWith<InvalidConfigException> { RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "nomad")),
+        ) }
+        assertFailsWith<InvalidConfigException> { RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker")),
+        ) }
         assertFailsWith<InvalidConfigException> {
-            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "ftp://x")))
+            RunnersConfig.from(
+                MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "ftp://x")),
+            )
         }
     }
 
@@ -203,7 +228,9 @@ class ModelTest {
         assertEquals(AllowedOrgs.NONE, RunnersConfig.from(MapConfigSource(emptyMap())).allowedOrgs)
         val everyone = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to " * "))).allowedOrgs
         assertTrue(ORG_B in everyone)
-        val listed = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to "$ORG_A, ,"))).allowedOrgs
+        val listed = RunnersConfig.from(
+            MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to "$ORG_A, ,")),
+        ).allowedOrgs
         assertTrue(ORG_A in listed)
         assertFalse(ORG_B in listed)
         assertFailsWith<InvalidConfigException> {
