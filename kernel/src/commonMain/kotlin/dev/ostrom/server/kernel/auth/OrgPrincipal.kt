@@ -44,7 +44,8 @@ interface PrincipalOrgResolver {
      *
      * @param orgId The organization.
      *
-     * @return Its short name and name, or null when it is unknown (always, until the orgs module binds its resolver).
+     * @return Its short name, name and picture, or null when it is unknown (always, until the orgs module binds its
+     *   resolver).
      */
     suspend fun profile(orgId: Uuid): OrgProfile? = null
 }
@@ -55,8 +56,9 @@ interface PrincipalOrgResolver {
  * @property id The id.
  * @property slug The short name.
  * @property name The name.
+ * @property avatarUrl Its picture (the linked GitHub organization's), or empty.
  */
-data class OrgProfile(val id: Uuid, val slug: String, val name: String)
+data class OrgProfile(val id: Uuid, val slug: String, val name: String, val avatarUrl: String)
 
 /** Resolves no one: the default until the identity and orgs modules bind theirs. */
 class RejectingPrincipalOrgResolver : PrincipalOrgResolver {

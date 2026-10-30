@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
 // The identity API. These classes move to ostrom-core (the API contract) once it is published (docs/MODULES.md);
 // the routes are described in ostrom-core/api/openapi.yaml.
 
-/** `GET /api/v1/auth/me`: the signed-in user. */
+/** `GET /api/v1/auth/me`: the caller, in the contract's `Me` shape. */
 @Serializable
 @Resource("/api/v1/auth/me")
 class MeApi {
@@ -21,6 +21,14 @@ class MeApi {
     @Serializable
     @Resource("audit")
     class Audit(val parent: MeApi = MeApi(), val before: Long? = null, val limit: Int = 50)
+    /**
+     * `GET /api/v1/auth/me/account`: the signed-in user's account (e-mails, ways in), for the account settings.
+     *
+     * @property parent The user resource.
+     */
+    @Serializable
+    @Resource("account")
+    class Account(val parent: MeApi = MeApi())
 }
 
 /** Sign-in, sign-out and the CLI's device login. */
@@ -215,7 +223,7 @@ class TokensApi {
 data class EmailResponse(val email: String, val verified: Boolean)
 
 /**
- * The signed-in user.
+ * The signed-in user's account (`GET /api/v1/auth/me/account`).
  *
  * @property id The user id.
  * @property login The handle, unique on the instance.
@@ -225,12 +233,9 @@ data class EmailResponse(val email: String, val verified: Boolean)
  * @property createdAt When the account was created (ISO 8601).
  * @property emails Every e-mail of the user.
  * @property providers How the user signs in (`github`, `google`, `email`, `oidc:<connection>`).
- * @property csrfToken For a browser session, the token to send in `X-CSRF-Token` on state-changing requests.
- * @property member With `Ostrom-Org` naming one of the caller's organizations, their membership there.
- * @property organization With `Ostrom-Org` naming one of the caller's organizations, that organization.
  */
 @Serializable
-data class ProfileResponse(
+data class AccountResponse(
     val id: String,
     val login: String,
     val displayName: String,
@@ -239,29 +244,67 @@ data class ProfileResponse(
     val createdAt: String,
     val emails: List<EmailResponse>,
     val providers: List<String>,
-    val csrfToken: String? = null,
-    val member: MeMemberResponse? = null,
-    val organization: MeOrganizationResponse? = null,
 )
 
 /**
- * The caller's membership in the organization `Ostrom-Org` names (the contract's `Me.member`).
+ * The caller (`GET /api/v1/auth/me`, the contract's `Me`), what the console and the app read first.
+ *
+ * @property dev The person behind the request.
+ * @property member With `Ostrom-Org` naming one of the caller's organizations, their membership there.
+ * @property organization With `Ostrom-Org` naming one of the caller's organizations, that organization.
+ * @property capabilities What the credential may do: its scopes, sorted (`user:*` for a browser session).
+ * @property csrfToken For a browser session, the token to send in `X-CSRF-Token` on state-changing requests.
+ */
+@Serializable
+data class MeResponse(
+    val dev: MeDevResponse,
+    val member: MeMemberResponse? = null,
+    val organization: MeOrganizationResponse? = null,
+    val capabilities: List<String>,
+    val csrfToken: String? = null,
+)
+
+/**
+ * The person behind the request (the contract's `Dev`).
+ *
+ * @property login Their handle.
+ * @property verified Always true: the server only knows people a provider or an e-mail link verified.
+ * @property via How the server knows them: `github` when linked, otherwise their first way in.
+ * @property organizationId The organization `Ostrom-Org` resolved to, if any.
+ */
+@Serializable
+data class MeDevResponse(val login: String, val verified: Boolean, val via: String, val organizationId: String? = null)
+
+/**
+ * The caller's membership in the organization `Ostrom-Org` names (the contract's `Member`).
  *
  * @property id The member id (`OrgPrincipal.memberId`).
+ * @property login The member's handle.
+ * @property name The member's name.
+ * @property avatarUrl The member's picture, or empty.
+ * @property email The member's main e-mail, if any.
  * @property role `owner`, `admin`, `member`, `approver` or `billing`.
  */
 @Serializable
-data class MeMemberResponse(val id: String, val role: String)
+data class MeMemberResponse(
+    val id: String,
+    val login: String,
+    val name: String,
+    val avatarUrl: String,
+    val email: String?,
+    val role: String,
+)
 
 /**
- * The organization `Ostrom-Org` names (the contract's `Me.organization`).
+ * The organization `Ostrom-Org` names (the contract's `Organization`).
  *
  * @property id The id.
- * @property slug The short name.
  * @property name The name.
+ * @property avatarUrl Its picture (the linked GitHub organization's), or empty.
+ * @property connectedVia `github-app`: the only way the server connects an organization to GitHub.
  */
 @Serializable
-data class MeOrganizationResponse(val id: String, val slug: String, val name: String)
+data class MeOrganizationResponse(val id: String, val name: String, val avatarUrl: String, val connectedVia: String)
 
 /**
  * A token, without its secret.

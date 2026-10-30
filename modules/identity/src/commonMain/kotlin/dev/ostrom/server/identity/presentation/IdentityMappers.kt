@@ -5,19 +5,14 @@ import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.AuditEvent
 import dev.ostrom.server.identity.domain.DEVICE_POLL_INTERVAL
 import dev.ostrom.server.identity.domain.DevicePollResult
+import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.IssuedToken
 import dev.ostrom.server.identity.domain.Profile
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgProfile
 
-/**
- * Maps the profile.
- *
- * @param csrfToken Only for a browser session.
- * @param current The member and organization the request named in `Ostrom-Org`, if any.
- */
-fun Profile.toProfileResponse(
-    csrfToken: String?,
-    current: Pair<MeMemberResponse, MeOrganizationResponse>?,
-) = ProfileResponse(
+/** Maps the account: the profile with its e-mails and ways in. */
+fun Profile.toAccountResponse() = AccountResponse(
     id = user.id.toString(),
     login = user.login,
     displayName = user.displayName,
@@ -26,10 +21,51 @@ fun Profile.toProfileResponse(
     createdAt = user.createdAt.toString(),
     emails = emails.map { EmailResponse(it.email, it.verified) },
     providers = issuers,
-    csrfToken = csrfToken,
-    member = current?.first,
-    organization = current?.second,
 )
+
+/**
+ * Maps the caller to the contract's `Me`.
+ *
+ * @param scopes What the credential may do.
+ * @param csrfToken Only for a browser session.
+ * @param current The membership and organization the request named in `Ostrom-Org`, if any.
+ */
+fun Profile.toMeResponse(
+    scopes: Set<String>,
+    csrfToken: String?,
+    current: Pair<OrgPrincipal, OrgProfile>?,
+) = MeResponse(
+    dev = MeDevResponse(
+        login = user.login,
+        verified = true,
+        via = via(),
+        organizationId = current?.let { it.second.id.toString() },
+    ),
+    member = current?.let { (member, _) ->
+        MeMemberResponse(
+            member.memberId.toString(),
+            user.login,
+            user.displayName,
+            user.avatarUrl.orEmpty(),
+            user.primaryEmail,
+            member.role.name.lowercase(),
+        )
+    },
+    organization = current?.let { (_, org) ->
+        MeOrganizationResponse(org.id.toString(), org.name, org.avatarUrl, GITHUB_APP_CONNECTION)
+    },
+    capabilities = scopes.sorted(),
+    csrfToken = csrfToken,
+)
+
+// The only way the server connects an organization to GitHub (the contract's `GitHubConnection`).
+private const val GITHUB_APP_CONNECTION = "github-app"
+
+// How the server knows the person: GitHub when linked (Ostrom works on GitHub), otherwise their first way in.
+private fun Profile.via(): String {
+    val github = IdentityProvider.GITHUB.key
+    return if (github in issuers) github else issuers.firstOrNull() ?: IdentityProvider.EMAIL.key
+}
 
 /** Maps a token, without its secret. */
 fun ApiToken.toTokenResponse() = TokenResponse(

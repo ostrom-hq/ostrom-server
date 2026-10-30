@@ -7,13 +7,16 @@ import dev.ostrom.server.identity.domain.Profile
 import dev.ostrom.server.identity.domain.SessionRequiredException
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.trimmedOrNull
+import dev.ostrom.server.identity.presentation.MeDevResponse
 import dev.ostrom.server.identity.presentation.MeMemberResponse
 import dev.ostrom.server.identity.presentation.MeOrganizationResponse
+import dev.ostrom.server.identity.presentation.MeResponse
 import dev.ostrom.server.identity.presentation.credentialUuid
 import dev.ostrom.server.identity.presentation.currentOrganization
 import dev.ostrom.server.identity.presentation.toAuditEventResponse
+import dev.ostrom.server.identity.presentation.toAccountResponse
 import dev.ostrom.server.identity.presentation.toAuditEventsResponse
-import dev.ostrom.server.identity.presentation.toProfileResponse
+import dev.ostrom.server.identity.presentation.toMeResponse
 import dev.ostrom.server.identity.presentation.userId
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
@@ -86,29 +89,49 @@ class PresentationTest {
         val known = Uuid.random()
         val unknown = Uuid.random()
         val member = Uuid.random()
+        val acme = OrgProfile(known, "acme", "Acme", "https://avatars.githubusercontent.com/u/7")
         val resolver = object : PrincipalOrgResolver {
             override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
                 principal.namedOrg?.let(Uuid::parseOrNull)?.takeIf { it != Uuid.NIL }?.let {
                     OrgPrincipal(it, member, OrgRole.ADMIN)
                 }
 
-            override suspend fun profile(orgId: Uuid): OrgProfile? =
-                OrgProfile(orgId, "acme", "Acme").takeIf { orgId == known }
+            override suspend fun profile(orgId: Uuid): OrgProfile? = acme.takeIf { orgId == known }
         }
         val caller = AuthenticatedPrincipal(Uuid.random().toString(), PrincipalKind.USER, setOf("user:*"))
 
         val current = resolver.currentOrganization(caller.copy(namedOrg = known.toString()))
-        assertEquals(
-            MeMemberResponse(member.toString(), "admin") to MeOrganizationResponse(known.toString(), "acme", "Acme"),
-            current,
-        )
+        assertEquals(OrgPrincipal(known, member, OrgRole.ADMIN) to acme, current)
         assertNull(resolver.currentOrganization(caller.copy(namedOrg = unknown.toString())), "No profile")
         assertNull(resolver.currentOrganization(caller.copy(namedOrg = Uuid.NIL.toString())), "No membership")
 
+        val user = User(Uuid.random(), "ada", "Ada", "ada@acme.test", null, Instant.fromEpochSeconds(0))
+        val me = Profile(user, emptyList(), listOf("google", "github")).toMeResponse(setOf("b", "a"), null, current)
+        assertEquals(
+            MeResponse(
+                dev = MeDevResponse("ada", verified = true, via = "github", organizationId = known.toString()),
+                member = MeMemberResponse(member.toString(), "ada", "Ada", "", "ada@acme.test", "admin"),
+                organization = MeOrganizationResponse(known.toString(), "Acme", acme.avatarUrl, "github-app"),
+                capabilities = listOf("a", "b"),
+            ),
+            me,
+        )
+        val pictured = Profile(user.copy(avatarUrl = "https://a.test/ada.png"), emptyList(), emptyList())
+        assertEquals("https://a.test/ada.png", pictured.toMeResponse(emptySet(), null, current).member?.avatarUrl)
+    }
+
+    @Test
+    fun meSaysHowTheServerKnowsThePersonGitHubFirst() {
         val user = User(Uuid.random(), "ada", "Ada", null, null, Instant.fromEpochSeconds(0))
-        val profile = Profile(user, emptyList(), emptyList()).toProfileResponse(null, current)
-        assertEquals("admin", profile.member?.role)
-        assertEquals("acme", profile.organization?.slug)
+        fun via(vararg issuers: String) = Profile(user, emptyList(), issuers.toList()).toMeResponse(
+            emptySet(),
+            "csrf",
+            null,
+        ).dev.via
+        assertEquals("github", via("email", "github"))
+        assertEquals("google", via("google", "oidc:okta"))
+        assertEquals("email", via(), "No way in recorded: the e-mail link")
+        val account = Profile(user, emptyList(), listOf("github")).toAccountResponse()
+        assertEquals(listOf("github"), account.providers)
     }
 }
-

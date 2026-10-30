@@ -48,7 +48,7 @@ class MembershipOrgResolver(
     }
 
     override suspend fun profile(orgId: Uuid): OrgProfile? =
-        orgs.get(orgId)?.let { OrgProfile(it.id, it.slug, it.name) }
+        orgs.get(orgId)?.let { OrgProfile(it.id, it.slug, it.name, it.avatarUrl) }
 
     private suspend fun onlyMembership(userId: Uuid): Member? {
         val memberships = orgs.listOfUser(userId)

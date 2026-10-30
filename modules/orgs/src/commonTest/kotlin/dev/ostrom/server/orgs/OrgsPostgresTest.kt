@@ -347,7 +347,7 @@ class OrgsPostgresTest {
             val person = AuthenticatedPrincipal(ada.id.toString(), PrincipalKind.USER, setOf("user:*"))
             fun named(org: Org) = person.copy(namedOrg = org.id.toString())
 
-            assertEquals(OrgProfile(acme.id, "acme", "ACME"), resolver.profile(acme.id))
+            assertEquals(OrgProfile(acme.id, "acme", "ACME", ""), resolver.profile(acme.id))
             assertNull(resolver.profile(Uuid.random()))
             // One membership: nothing to name.
             assertEquals(OrgPrincipal(acme.id, acmeOwner.id, OrgRole.OWNER), resolver.resolve(person, null))
