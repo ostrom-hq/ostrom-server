@@ -19,7 +19,7 @@ Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked b
 3. Interfaces `XxxRepository`, `XxxUseCase`, `XxxService`; implementations `XxxImpl` (never `IXxx`). One per file, grouped by feature.
 4. Business rules live in use cases (`suspend operator fun invoke`), never in routes or CLI commands. Constructor injection; Koin wired only in the composition root, no `koin-ktor` plugin.
 5. Ktor: typed `@Resource` classes from ostrom-core, one `Route.xxxRoutes(XxxRoutesDependencies)` per feature, mappers as extension functions.
-6. Expected refusals are domain exceptions mapped once in StatusPages to 400/401/403/404/409/402 with a stable `ApiError` key; 500 only for the unforeseen, never echoing its message (ENG-007).
+6. Expected refusals are domain exceptions extending one `OstromException(kind)` base, routed by type in the single StatusPages `Throwable` handler (on Kotlin/Native StatusPages matches exact classes only) to 400/401/403/404/409/402 with a stable `ApiError` key; 500 only for the unforeseen, never echoing its message (ENG-007).
 7. **Never swallow `CancellationException`**: rethrow it before any broad catch, no `runCatching` around suspend code, cleanup in `withContext(NonCancellable)`. `scripts/check-conventions.py` fails the build otherwise (INF-019).
 8. Contract changes are additive: new fields optional, removal only after the optional phase; every sealed subclass has a stable `@SerialName` (ENG-009).
 9. Never log credentials, tokens, prompts, response bodies or raw provider errors.
