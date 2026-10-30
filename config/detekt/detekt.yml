@@ -1,0 +1,87 @@
+# detekt overrides for Ostrom (docs/CONVENTIONS.md section 8). Used with `buildUponDefaultConfig = true`: only the
+# differences from detekt 1.23.8's defaults are listed. Derived from the ControlResell fleet configuration
+# (controlresell-ci/detekt/detekt.yml, ENG-043) and flareon's. No baseline: every finding fails the build.
+
+build:
+  maxIssues: 0
+
+config:
+  validation: true
+  warningsAsErrors: false
+
+coroutines:
+  active: true
+  GlobalCoroutineUsage:
+    active: true
+  InjectDispatcher:
+    active: true
+    dispatcherNames: ['IO', 'Default', 'Unconfined']
+  SleepInsteadOfDelay:
+    active: true
+  SuspendFunWithFlowReturnType:
+    active: true
+  # Needs type resolution, which detekt 1.23 cannot provide for libraries built with Kotlin 2.2+: the cancellation rule
+  # is enforced by scripts/check-conventions.py and by review (INF-019).
+  SuspendFunSwallowedCancellation:
+    active: false
+  RedundantSuspendModifier:
+    active: false
+
+comments:
+  active: true
+  UndocumentedPublicClass:
+    active: true
+    excludes: ['**/test/**', '**/commonTest/**', '**/jvmTest/**', '**/nativeTest/**', '**/linuxTest/**', '**/macosTest/**', '**/mingwTest/**', '**/posixTest/**']
+  UndocumentedPublicFunction:
+    active: true
+    excludes: ['**/test/**', '**/commonTest/**', '**/jvmTest/**', '**/nativeTest/**', '**/linuxTest/**', '**/macosTest/**', '**/mingwTest/**', '**/posixTest/**']
+
+empty-blocks:
+  EmptyCatchBlock:
+    active: true
+    allowedExceptionNameRegex: '_|(ignore|expected).*'
+
+exceptions:
+  PrintStackTrace:
+    active: true
+  SwallowedException:
+    active: true
+    allowedExceptionNameRegex: '_|(ignore|expected).*'
+  # Off: the cancellation-safe broad catch of CONVENTIONS.md section 4.1 (`catch (error: Exception)` after the
+  # CancellationException rethrow) is the required form, and scripts/check-conventions.py enforces it.
+  TooGenericExceptionCaught:
+    active: false
+  TooGenericExceptionThrown:
+    active: true
+
+style:
+  ForbiddenComment:
+    active: true
+    comments:
+      - reason: 'Fix it before merging.'
+        value: 'FIXME:'
+      - reason: 'Fix it before merging.'
+        value: 'STOPSHIP:'
+      - reason: 'Do the change, or write it in the pull request.'
+        value: 'TODO:'
+  MagicNumber:
+    active: true
+    excludes: ['**/commonTest/**', '**/jvmTest/**', '**/nativeTest/**', '**/linuxTest/**', '**/macosTest/**', '**/mingwTest/**', '**/posixTest/**', '**/*.kts']
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreNamedArgument: true
+  MaxLineLength:
+    active: true
+    maxLineLength: 120
+    excludeCommentStatements: false
+    excludeRawStrings: true
+  UnsafeCallOnNullableType:
+    active: true
+  WildcardImport:
+    active: false
+
+naming:
+  FunctionNaming:
+    active: true
+    # Tests are lowerCamelCase sentences (teamcode); Compose-style PascalCase factories are not used in Ostrom.
+    functionPattern: '[a-z][a-zA-Z0-9]*'

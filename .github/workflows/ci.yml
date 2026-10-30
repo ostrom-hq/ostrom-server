@@ -1,99 +1,104 @@
-name: CI
-
+# CI of ostrom-server, after ostrom-core's reference template (docs/conventions/.github/workflows/build.yml,
+# CONVENTIONS section 11). Pull requests and main run on Linux only; macosArm64 is a development target, built on
+# version tags only.
+name: Build
 on:
-  pull_request:
   push:
     branches: [main]
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
+    tags: ['[0-9]*']
+  pull_request:
+  workflow_dispatch:
+env:
+  KOTLIN_VERSION: '2.4.21'
 permissions:
   contents: read
-  packages: read
-
+  packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  build:
+  linux:
+    timeout-minutes: 40
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
     services:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
+          POSTGRES_USER: ostrom
+          POSTGRES_PASSWORD: ostrom
+          POSTGRES_DB: ostrom_test
+        ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
+          --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      # Database tests run against this service and fail (instead of being skipped) if it is missing.
-      OSTROM_TEST_DATABASE_URL: postgresql://localhost:5432/postgres
-      OSTROM_TEST_DATABASE_USER: postgres
-      OSTROM_TEST_DATABASE_PASSWORD: postgres
-      OSTROM_TEST_DATABASE_REQUIRED: "true"
-      # Reads ostrom-core from GitHub Packages once the server depends on it.
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OSTROM_TEST_DATABASE_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom_test
+      # Database tests fail instead of being skipped when the service is missing: CI never passes by skipping them.
+      OSTROM_TEST_DATABASE_REQUIRED: 'true'
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: 21
-
-      - name: Cache Kotlin/Native toolchain
-        uses: actions/cache@v4
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+      # The Kotlin/Native toolchain and its dependencies (~1 GB) are not in the Gradle cache.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.konan
-          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
-          restore-keys: konan-${{ runner.os }}-
-
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Native tests (linuxX64, with PostgreSQL)
-        timeout-minutes: 30
-        run: ./gradlew linuxX64Test --continue
-
-      - name: Server binaries (linuxX64, linuxArm64)
-        run: ./gradlew :app:linkReleaseExecutableLinuxX64 :app:linkReleaseExecutableLinuxArm64
-
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ env.KOTLIN_VERSION }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: konan-${{ runner.os }}-${{ runner.arch }}-${{ env.KOTLIN_VERSION }}-
+      - name: Never serve a test task from the cache (ENG-032)
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/always-run-tests.init.gradle.kts <<'KTS'
+          allprojects {
+              tasks.withType<AbstractTestTask>().configureEach {
+                  outputs.cacheIf { false }
+                  outputs.upToDateWhen { false }
+              }
+          }
+          KTS
+      - run: python3 scripts/check-conventions.py
+      - name: detekt, JVM tests with Kover 100 %, native tests (linuxX64), all with PostgreSQL
+        run: ./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test --continue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
+        run: |
+          ci/build-linux.sh
+          ./gradlew :app:linkReleaseExecutableLinuxArm64
+          ldd dist/ostrom-server
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Docker image
         run: |
-          cp app/build/bin/linuxX64/releaseExecutable/ostrom-server.kexe ostrom-server
-          ls -lh ostrom-server app/build/bin/linuxArm64/releaseExecutable/ostrom-server.kexe
-          ldd ostrom-server
           docker build -t ostrom-server:ci .
           docker images ostrom-server:ci --format '{{.Size}}'
-
       - name: Smoke test of the image (/health, /v1/instance)
         run: |
           docker run -d --name ostrom --network host \
-            -e OSTROM_DATABASE_URL=postgresql://localhost:5432/postgres \
-            -e OSTROM_DATABASE_USER=postgres -e OSTROM_DATABASE_PASSWORD=postgres \
+            -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom_test \
             ostrom-server:ci
           for i in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
           echo
           curl -fsS localhost:8080/health | grep '"status":"ok"'
           curl -fsS localhost:8080/v1/instance | grep '"algorithm":"ed25519"'
           docker logs ostrom
-
       - name: Server logs on failure
         if: failure()
         run: docker logs ostrom || true
-
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ostrom-server-linux
           path: |
-            app/build/bin/linuxX64/releaseExecutable/ostrom-server.kexe
+            dist/ostrom-server
             app/build/bin/linuxArm64/releaseExecutable/ostrom-server.kexe
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
-          name: test-reports
-          path: '**/build/reports/tests/'
+          name: reports
+          path: '**/build/reports/**'
+          retention-days: 7
