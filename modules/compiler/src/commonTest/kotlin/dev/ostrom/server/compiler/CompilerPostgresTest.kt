@@ -65,6 +65,7 @@ import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
@@ -349,7 +350,11 @@ class CompilerPostgresTest {
         assertEquals("lead", lead.approver)
         assertEquals(listOf("release"), lead.gates.map { it.workflowId })
         assertTrue("push-main" in lead.gates.single().actions)
-        assertTrue(graph.unanswered.isEmpty() && "commit" in graph.ungated)
+        assertTrue(graph.unanswered.isEmpty())
+        val ungated = catalog.getValue("actions").jsonArray.map { it.jsonObject }
+            .filter { it["gate"] == null || it["gate"] is JsonNull }
+            .map { it.getValue("class").jsonPrimitive.content }
+        assertEquals(ungated.distinct().sorted(), graph.ungated, "the catalogue's actions without a gate")
         val elsewhere = server.call("user:b:lead", graphPath).body<ApproversGraphResponse>()
         assertTrue(elsewhere.approvers.isEmpty(), "org B sees nobody of org A")
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, graphPath).status)
