@@ -29,14 +29,12 @@ import kotlin.uuid.Uuid
 class PostgresCompilerRepository(
     private val driver: Driver,
 ) : CompilerRepository, WorkflowsRepository by PostgresWorkflowsRepository(driver) {
-    private suspend fun <T> scoped(orgId: Uuid, block: suspend CompilerTx.() -> T): T = driver.inOrg(orgId, block)
-
-    override suspend fun harness(orgId: Uuid, repo: String?, digest: String): HarnessStamp? = scoped(orgId) {
+    override suspend fun harness(orgId: Uuid, repo: String?, digest: String): HarnessStamp? = driver.inOrg(orgId) {
         harnesses(orgId, repo, digest).firstOrNull()
     }
 
     override suspend fun saveHarness(orgId: Uuid, repo: String?, digest: String, stamp: HarnessStamp): HarnessStamp =
-        scoped(orgId) {
+        driver.inOrg(orgId) {
             execute(
                 Statement.create(
                     "INSERT INTO compiler_harnesses (org_id, repo_key, digest, version, receipt_id) " +
@@ -47,7 +45,7 @@ class PostgresCompilerRepository(
             harnesses(orgId, repo, digest).first()
         }
 
-    override suspend fun findPackage(orgId: Uuid, digest: String): StoredPackage? = scoped(orgId) {
+    override suspend fun findPackage(orgId: Uuid, digest: String): StoredPackage? = driver.inOrg(orgId) {
         fetch(
             Statement.create(
                 "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org " +
@@ -56,7 +54,7 @@ class PostgresCompilerRepository(
         ).firstOrNull()?.toPackage()
     }
 
-    override suspend fun packages(orgId: Uuid, repo: String?): List<StoredPackage> = scoped(orgId) {
+    override suspend fun packages(orgId: Uuid, repo: String?): List<StoredPackage> = driver.inOrg(orgId) {
         val statement = Statement.create(
             "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org" +
                 (if (repo == null) "" else " AND repo = :repo") +
@@ -66,7 +64,7 @@ class PostgresCompilerRepository(
         fetch(statement).map { it.toPackage() }
     }
 
-    override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage = scoped(orgId) {
+    override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage = driver.inOrg(orgId) {
         execute(
             bindPackage(
                 Statement.create(
@@ -86,7 +84,7 @@ class PostgresCompilerRepository(
     }
 
     override suspend fun updatePackage(orgId: Uuid, stored: StoredPackage) {
-        scoped(orgId) {
+        driver.inOrg(orgId) {
             execute(
                 Statement.create(
                     "UPDATE compiler_packages SET envelope = :envelope, revoked = :revoked, " +
@@ -102,7 +100,7 @@ class PostgresCompilerRepository(
         }
     }
 
-    override suspend fun pin(orgId: Uuid, repo: String?): PackagePin? = scoped(orgId) {
+    override suspend fun pin(orgId: Uuid, repo: String?): PackagePin? = driver.inOrg(orgId) {
         fetch(
             Statement.create(
                 "SELECT content_digest, pinned_by, pinned_at FROM compiler_pins " +
@@ -118,7 +116,7 @@ class PostgresCompilerRepository(
     }
 
     override suspend fun setPin(orgId: Uuid, repo: String?, pin: PackagePin?) {
-        scoped(orgId) {
+        driver.inOrg(orgId) {
             val statement = if (pin == null) {
                 Statement.create("DELETE FROM compiler_pins WHERE org_id = :org AND repo_key = :repo")
             } else {
@@ -134,7 +132,7 @@ class PostgresCompilerRepository(
     }
 
     override suspend fun audit(orgId: Uuid, line: PackageAudit) {
-        scoped(orgId) {
+        driver.inOrg(orgId) {
             execute(
                 Statement.create(
                     "INSERT INTO compiler_audit (org_id, id, at, event, actor, subject, meta) " +
@@ -145,7 +143,7 @@ class PostgresCompilerRepository(
         }
     }
 
-    override suspend fun auditLog(orgId: Uuid, limit: Int): List<PackageAudit> = scoped(orgId) {
+    override suspend fun auditLog(orgId: Uuid, limit: Int): List<PackageAudit> = driver.inOrg(orgId) {
         fetch(
             Statement.create(
                 "SELECT id, at, event, actor, subject, meta FROM compiler_audit WHERE org_id = :org " +
@@ -163,22 +161,12 @@ class PostgresCompilerRepository(
         }
     }
 
-    private suspend fun CompilerTx.harnesses(orgId: Uuid, repo: String?, digest: String): List<HarnessStamp> = fetch(
-        Statement.create(
-            "SELECT version, receipt_id FROM compiler_harnesses " +
-                "WHERE org_id = :org AND repo_key = :repo AND digest = :digest",
-        ).bind("org", orgId).bind("repo", keyOf(repo)).bind("digest", digest),
-    ).map { HarnessStamp(it.get("version").asString(), it.get("receipt_id").asStringOrNull()) }
-
     private companion object {
         const val MAX_ROWS = 1000
         const val PACKAGE_COLUMNS = "content_digest, digest, version, repo, compiled_at, envelope, counts, revoked, " +
             "revoked_by, revoke_reason"
         val json = Json { ignoreUnknownKeys = true }
         val counts = MapSerializer(String.serializer(), Int.serializer())
-
-        // The organization's own pin and harnesses live under `*`, as in the prototype.
-        fun keyOf(repo: String?): String = repo ?: "*"
 
         fun ResultSet.Row.toPackage() = StoredPackage(
             envelope = json.decodeFromString(PackageEnvelope.serializer(), get("envelope").asString())
@@ -203,3 +191,13 @@ class PostgresCompilerRepository(
             .bind("revoke_reason", stored.revokeReason)
     }
 }
+
+private suspend fun CompilerTx.harnesses(orgId: Uuid, repo: String?, digest: String): List<HarnessStamp> = fetch(
+    Statement.create(
+        "SELECT version, receipt_id FROM compiler_harnesses " +
+            "WHERE org_id = :org AND repo_key = :repo AND digest = :digest",
+    ).bind("org", orgId).bind("repo", keyOf(repo)).bind("digest", digest),
+).map { HarnessStamp(it.get("version").asString(), it.get("receipt_id").asStringOrNull()) }
+
+// The organization's own pin and harnesses live under `*`, as in the prototype.
+private fun keyOf(repo: String?): String = repo ?: "*"
