@@ -28,6 +28,9 @@ val MOBILE_CODE_LIFETIME: Duration = 60.seconds
 /** How long the app's token lasts before the person signs in again on the phone. */
 val MOBILE_TOKEN_LIFETIME: Duration = 30.days
 
+/** The longest code or unlock key accepted: the server's secrets are far shorter, anything longer is not one. */
+internal const val MAX_MOBILE_SECRET_LENGTH = 128
+
 /** An S256 challenge is the unpadded base64url of 32 bytes: exactly 43 characters. */
 private val CHALLENGE_PATTERN = Regex("[A-Za-z0-9_-]{43}")
 

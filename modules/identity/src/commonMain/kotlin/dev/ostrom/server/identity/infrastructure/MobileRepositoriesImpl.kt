@@ -26,8 +26,8 @@ class MobileCodesRepositoryImpl(private val driver: Driver) : MobileCodesReposit
     override suspend fun create(code: MobileCode, codeHash: String) {
         driver.execute(
             Statement.create(
-                "INSERT INTO identity_mobile_codes (id, code_hash, user_id, code_challenge, redirect_uri, created_at, " +
-                    "expires_at) VALUES (:id, :hash, :user, :challenge, :uri, :created, :expires)",
+                "INSERT INTO identity_mobile_codes (id, code_hash, user_id, code_challenge, redirect_uri, " +
+                    "created_at, expires_at) VALUES (:id, :hash, :user, :challenge, :uri, :created, :expires)",
             ).bind("id", code.id).bind("hash", codeHash).bind("user", code.userId)
                 .bind("challenge", code.codeChallenge).bind("uri", code.redirectUri)
                 .bind("created", code.createdAt).bind("expires", code.expiresAt),

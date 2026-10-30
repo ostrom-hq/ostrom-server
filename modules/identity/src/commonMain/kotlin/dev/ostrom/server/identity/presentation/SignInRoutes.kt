@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
+import dev.ostrom.server.identity.domain.APP_REDIRECT_URI
 import dev.ostrom.server.identity.domain.AccountLinkRequiredException
 import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCase
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
@@ -22,6 +23,7 @@ import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.Cookie
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLBuilder
+import io.ktor.http.formUrlEncode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
 import io.ktor.server.resources.get
@@ -134,7 +136,8 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
 
 /**
  * Ends a sign-in the phone app started, when the provider's state is the one of the mobile cookie: the in-app browser
- * goes to the app's deep link with the code or the error, or to the console's login page when the attempt is unknown.
+ * goes to the app's deep link with the code or the error. When the attempt is unknown (expired, used), the error goes
+ * to [APP_REDIRECT_URI] without a state: the only deep link there is, so the in-app browser always closes.
  *
  * @param params The callback's parameters.
  * @param completeMobile Completes the app's sign-in.
@@ -156,7 +159,7 @@ private suspend fun ApplicationCall.answeredTheApp(
             val back = completeMobile(params.parent.provider, state, mobileState, params.code, params.error)
             respondRedirect(back.toUrl())
         } catch (error: OstromException) {
-            redirectToLogin(config, error)
+            respondRedirect(APP_REDIRECT_URI + "?" + listOf("error" to signInError(error)).formUrlEncode())
         }
     }
     return theApps
@@ -173,17 +176,24 @@ private fun stateCookie(value: String, maxAge: Int, config: IdentityConfig, name
     extensions = mapOf("SameSite" to "Lax"),
 )
 
-private suspend fun ApplicationCall.redirectToLogin(config: IdentityConfig, error: OstromException) {
-    val code = when (error) {
-        is ProviderNotConfiguredException -> "unavailable"
-        is RateLimitedException -> "rate_limited"
-        is InvalidSignInStateException -> "expired"
-        is ProviderRejectedException -> "refused"
-        is AccountLinkRequiredException -> "link_required"
-        is IdentityTakenException -> "identity_taken"
-        else -> throw error
-    }
-    redirectToLogin(config, code)
+private suspend fun ApplicationCall.redirectToLogin(config: IdentityConfig, error: OstromException) =
+    redirectToLogin(config, signInError(error))
+
+/**
+ * The `error` a failed sign-in shows, on the console's login page or in the app.
+ *
+ * @param error The refusal.
+ *
+ * @return Its stable key.
+ */
+private fun signInError(error: OstromException): String = when (error) {
+    is ProviderNotConfiguredException -> "unavailable"
+    is RateLimitedException -> "rate_limited"
+    is InvalidSignInStateException -> "expired"
+    is ProviderRejectedException -> "refused"
+    is AccountLinkRequiredException -> "link_required"
+    is IdentityTakenException -> "identity_taken"
+    else -> throw error
 }
 
 private suspend fun ApplicationCall.redirectToLogin(config: IdentityConfig, code: String) {

@@ -9,6 +9,7 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /** How long a browser session lasts, whatever its use: the user signs in again after that. */
 val SESSION_LIFETIME: Duration = 30.days
@@ -65,6 +66,28 @@ const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
 val MOBILE_SCOPES: Set<String> = setOf(
     "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", NOTIFICATIONS_WRITE_SCOPE,
 )
+
+/**
+ * How long after the phone's biometric unlock the app's token may say yes (S2-54): the step-up window of a yes. The
+ * identity module withholds [ANSWER_SCOPE] outside it, so no gate route can accept a yes from a token lifted from the
+ * phone's keychain without its biometrics, whatever it checks itself.
+ */
+val MOBILE_UNLOCK_WINDOW: Duration = 5.minutes
+
+/**
+ * The scopes the app's token grants now: [MOBILE_SCOPES] at most, and [ANSWER_SCOPE] only within
+ * [MOBILE_UNLOCK_WINDOW] of the phone's last biometric unlock.
+ *
+ * @param stored The app's token.
+ * @param now The current time.
+ *
+ * @return The scopes.
+ */
+fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
+    val granted = grantedScopes(TokenKind.MOBILE, stored.scopes)
+    val unlocked = stored.authenticatedAt?.let { now - it <= MOBILE_UNLOCK_WINDOW } == true
+    return if (unlocked) granted else granted - ANSWER_SCOPE
+}
 
 /**
  * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written

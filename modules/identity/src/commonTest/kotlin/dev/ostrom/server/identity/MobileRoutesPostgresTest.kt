@@ -101,6 +101,9 @@ class MobileRoutesPostgresTest {
         setBody(MobileTokenRequest(code, codeVerifier, uri))
     }
 
+    private suspend fun HttpClient.preferences(token: String) =
+        get("/api/v1/me/notifications") { bearerAuth(token) }.body<NotificationPreferencesBody>()
+
     private fun ApplicationTestBuilder.browser() = createClient {
         followRedirects = false
         install(ContentNegotiation) { json(OstromJson) }
@@ -188,7 +191,7 @@ class MobileRoutesPostgresTest {
         assertEquals("access_denied", denied.parameters["error"])
         assertEquals("app-1", denied.parameters["state"])
 
-        // The same state again: the attempt is spent, the in-app browser shows the console's login error.
+        // The same state again: the attempt is spent, the in-app browser still closes on the app's deep link.
         val start = phone.startMobile()
         val state = Url(assertNotNull(start.headers[HttpHeaders.Location])).parameters["state"]
         phone.get("/api/v1/auth/github/callback?code=good&state=$state") {
@@ -197,7 +200,7 @@ class MobileRoutesPostgresTest {
         val replay = phone.get("/api/v1/auth/github/callback?code=good&state=$state") {
             header(HttpHeaders.Cookie, "$MOBILE_OAUTH_STATE_COOKIE=$state")
         }
-        assertEquals("http://localhost:5173/login?error=expired", replay.headers[HttpHeaders.Location])
+        assertEquals("ostrom://auth/callback?error=expired", replay.headers[HttpHeaders.Location])
 
         // A mobile cookie of another sign-in does not turn a browser callback into a mobile one.
         val other = phone.get("/api/v1/auth/github/callback?code=good&state=$state") {
@@ -261,7 +264,7 @@ class MobileRoutesPostgresTest {
             .body<MobileTokenResponse>().token
 
         val defaults = NotificationPreferencesBody(requests = true, decisions = true, spending = false)
-        assertEquals(defaults, phone.get("/api/v1/me/notifications") { bearerAuth(ada) }.body<NotificationPreferencesBody>())
+        assertEquals(defaults, phone.preferences(ada))
 
         val chosen = NotificationPreferencesBody(false, true, true, QuietHoursBody("22:00", "07:00", "Europe/Paris"))
         val put = phone.put("/api/v1/me/notifications") {
@@ -271,10 +274,10 @@ class MobileRoutesPostgresTest {
         }
         assertEquals(HttpStatusCode.OK, put.status)
         assertEquals(chosen, put.body<NotificationPreferencesBody>())
-        assertEquals(chosen, phone.get("/api/v1/me/notifications") { bearerAuth(ada) }.body<NotificationPreferencesBody>())
+        assertEquals(chosen, phone.preferences(ada))
         assertEquals(
             defaults,
-            phone.get("/api/v1/me/notifications") { bearerAuth(grace) }.body<NotificationPreferencesBody>(),
+            phone.preferences(grace),
             "Another person does not see them",
         )
 
@@ -284,6 +287,6 @@ class MobileRoutesPostgresTest {
             setBody(chosen.copy(quietHours = QuietHoursBody("22:00", "22:00", "UTC")))
         }
         assertEquals(HttpStatusCode.BadRequest, invalid.status)
-        assertEquals(chosen, phone.get("/api/v1/me/notifications") { bearerAuth(ada) }.body<NotificationPreferencesBody>())
+        assertEquals(chosen, phone.preferences(ada))
     }
 }

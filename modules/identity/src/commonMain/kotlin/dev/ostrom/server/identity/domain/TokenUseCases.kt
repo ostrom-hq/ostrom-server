@@ -7,8 +7,13 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** The token kinds a user sees and manages in the console. */
-val USER_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.PERSONAL, TokenKind.CLI)
+/**
+ * The token kinds a user sees, revokes and is capped on in the console: a lost phone's token is revoked there.
+ */
+val USER_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.PERSONAL, TokenKind.CLI, TokenKind.MOBILE)
+
+/** The token kinds a user rotates: the app's token keeps its unlock key, so a phone signs in again instead. */
+val ROTATABLE_TOKEN_KINDS: Set<TokenKind> = setOf(TokenKind.PERSONAL, TokenKind.CLI)
 
 /** How many characters of a secret are shown to recognize it (after its prefix). */
 private const val HINT_LENGTH = 12
@@ -202,9 +207,9 @@ class RotateTokenUseCaseImpl(
         return issued
     }
 
-    /** A live personal or CLI token: an agent token, a revoked or an expired one is never rotated. */
+    /** A live personal or CLI token: an agent or app token, a revoked or an expired one is never rotated. */
     private fun ApiToken.isRotatableAt(now: Instant): Boolean =
-        kind in USER_TOKEN_KINDS && revokedAt == null && expiresAt?.let { it <= now } != true
+        kind in ROTATABLE_TOKEN_KINDS && revokedAt == null && expiresAt?.let { it <= now } != true
 }
 
 /**

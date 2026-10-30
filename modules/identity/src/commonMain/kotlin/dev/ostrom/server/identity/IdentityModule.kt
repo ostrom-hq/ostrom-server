@@ -18,8 +18,6 @@ import dev.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
 import dev.ostrom.server.identity.infrastructure.MobileCodesRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.MobileTokensRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.NotificationPreferencesRepositoryImpl
-import dev.ostrom.server.identity.presentation.MobileRoutesDependencies
-import dev.ostrom.server.identity.presentation.mobileRoutes
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.CreateSignInLinkUseCase
 import dev.ostrom.server.identity.domain.CreateSignInLinkUseCaseImpl
@@ -60,7 +58,9 @@ import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import dev.ostrom.server.identity.infrastructure.magicLinkMail
 import dev.ostrom.server.identity.presentation.SessionRoutesDependencies
 import dev.ostrom.server.identity.presentation.SignInConfig
+import dev.ostrom.server.identity.presentation.MobileRoutesDependencies
 import dev.ostrom.server.identity.presentation.SignInRoutesDependencies
+import dev.ostrom.server.identity.presentation.mobileRoutes
 import dev.ostrom.server.identity.presentation.signInRoutes
 import dev.ostrom.server.identity.presentation.sessionRoutes
 import dev.ostrom.server.identity.presentation.noStoreOnIdentityRoutes
@@ -214,8 +214,8 @@ object IdentityModule : ServerModule {
         single<MobileTokensRepository> { MobileTokensRepositoryImpl(get()) }
         single<NotificationPreferencesRepository> { NotificationPreferencesRepositoryImpl(get()) }
         single<CompleteMobileSignInUseCase> { CompleteMobileSignInUseCaseImpl(get(), get(), get(), get(), get()) }
-        single<ExchangeMobileCodeUseCase> { ExchangeMobileCodeUseCaseImpl(get(), get(), get(), get(), get()) }
-        single<UnlockMobileAppUseCase> { UnlockMobileAppUseCaseImpl(get(), get(), get()) }
+        single<ExchangeMobileCodeUseCase> { ExchangeMobileCodeUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<UnlockMobileAppUseCase> { UnlockMobileAppUseCaseImpl(get(), get(), get(), get(), get()) }
         single<GetNotificationPreferencesUseCase> { GetNotificationPreferencesUseCaseImpl(get()) }
         single<SetNotificationPreferencesUseCase> { SetNotificationPreferencesUseCaseImpl(get(), get()) }
         single { MobileRoutesDependencies(get(), get(), get(), get()) }

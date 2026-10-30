@@ -17,17 +17,23 @@ import dev.ostrom.server.identity.domain.LinkIdentityUseCaseImpl
 import dev.ostrom.server.identity.domain.MOBILE_ACCESS_DENIED
 import dev.ostrom.server.identity.domain.MOBILE_LINK_REQUIRED
 import dev.ostrom.server.identity.domain.MOBILE_REFUSED
+import dev.ostrom.server.identity.domain.ListTokensUseCaseImpl
+import dev.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
 import dev.ostrom.server.identity.domain.MOBILE_SCOPES
 import dev.ostrom.server.identity.domain.MobileCallback
 import dev.ostrom.server.identity.domain.MobileClient
 import dev.ostrom.server.identity.domain.MobileUnlockRefusedException
 import dev.ostrom.server.identity.domain.RateLimitedException
 import dev.ostrom.server.identity.domain.ResolveUserUseCaseImpl
+import dev.ostrom.server.identity.domain.RevokeTokenUseCaseImpl
+import dev.ostrom.server.identity.domain.RotateTokenUseCaseImpl
 import dev.ostrom.server.identity.domain.SignInMethods
 import dev.ostrom.server.identity.domain.SignInServices
 import dev.ostrom.server.identity.domain.StartOAuthSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import dev.ostrom.server.identity.domain.TokenKind
+import dev.ostrom.server.identity.domain.TokenNotFoundException
+import dev.ostrom.server.identity.domain.TooManyTokensException
 import dev.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.domain.grantedScopes
@@ -57,6 +63,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
@@ -85,8 +92,8 @@ class MobileSignInTest {
         methods, attempts, services, resolve, LinkIdentityUseCaseImpl(users, RecordingAuditLog(), clock),
         StartWebSessionUseCaseImpl(InMemoryWebSessionsRepository(), generator, hasher, clock),
     )
-    private val exchange = ExchangeMobileCodeUseCaseImpl(codes, mobileTokens, users, services, audit)
-    private val unlock = UnlockMobileAppUseCaseImpl(mobileTokens, hasher, clock)
+    private val exchange = ExchangeMobileCodeUseCaseImpl(codes, mobileTokens, apiTokens, users, services, audit)
+    private val unlock = UnlockMobileAppUseCaseImpl(mobileTokens, hasher, limiter, audit, clock)
     private val authenticator =
         CredentialAuthenticatorImpl(apiTokens, InMemoryWebSessionsRepository(), hasher, clock, emptySet(), "")
 
@@ -271,13 +278,60 @@ class MobileSignInTest {
         assertEquals(PrincipalKind.USER, before.kind)
         assertEquals(PrincipalChannel.MOBILE_APP, before.channel)
         assertEquals(token.userId.toString(), before.subjectId)
-        assertEquals(MOBILE_SCOPES, before.scopes)
+        assertEquals(MOBILE_SCOPES - ANSWER_SCOPE, before.scopes, "No yes before the first unlock")
         assertNull(before.orgId)
         assertNull(before.authenticatedAt)
 
         clock.now += 1.days
         assertEquals(clock.now, unlock(token.userId, token.id, issued.unlockKey))
-        assertEquals(clock.now, authenticator.authenticate(issued.token.secret)?.authenticatedAt)
+        val unlocked = assertNotNull(authenticator.authenticate(issued.token.secret))
+        assertEquals(clock.now, unlocked.authenticatedAt)
+        assertEquals(MOBILE_SCOPES, unlocked.scopes)
+        assertEquals("token.unlocked", audit.entries.last().action)
+        assertEquals(listOf("mobile-unlock:${token.id}"), limiter.keys.filter { it.startsWith("mobile-unlock") })
+
+        clock.now += 5.minutes
+        assertTrue(ANSWER_SCOPE in assertNotNull(authenticator.authenticate(issued.token.secret)).scopes)
+        clock.now += 1.seconds
+        val stale = assertNotNull(authenticator.authenticate(issued.token.secret))
+        assertEquals(MOBILE_SCOPES - ANSWER_SCOPE, stale.scopes, "Five minutes after the unlock, no yes any more")
+    }
+
+    @Test
+    fun unlocksAreRateLimitedPerToken() = runTest {
+        limiter.allow = false
+
+        assertFailsWith<RateLimitedException> { unlock(Uuid.random(), Uuid.random(), "key") }
+    }
+
+    @Test
+    fun theAppTokenIsListedAndRevokedInTheConsoleButNeverRotated() = runTest {
+        val state = startMobile()
+        val code = assertNotNull(completeMobile("github", state, state, "good", null).code)
+        val issued = exchange(code, verifier, APP_REDIRECT_URI, "ip").token
+        val token = issued.token
+
+        assertEquals(listOf(token.id), ListTokensUseCaseImpl(apiTokens, clock)(token.userId).map { it.id })
+        assertFailsWith<TokenNotFoundException> {
+            RotateTokenUseCaseImpl(apiTokens, generator, hasher, audit, clock)(token.userId, token.id)
+        }
+        RevokeTokenUseCaseImpl(apiTokens, audit, clock)(token.userId, token.id)
+        assertNull(authenticator.authenticate(issued.secret))
+    }
+
+    @Test
+    fun aPersonAtTheTokenCapRevokesOneBeforeAnotherPhone() = runTest {
+        val state = startMobile()
+        val code = assertNotNull(completeMobile("github", state, state, "good", null).code)
+        val userId = users.users.values.single().id
+        repeat(MAX_TOKENS_PER_USER) { n ->
+            apiTokens.tokens["h(osp_$n)"] = ApiToken(
+                Uuid.random(), userId, null, "t$n", TokenKind.PERSONAL, setOf("profile:read"), "osp_$n", null,
+                clock.now, null, null, null,
+            )
+        }
+
+        assertFailsWith<TooManyTokensException> { exchange(code, verifier, APP_REDIRECT_URI, "ip") }
     }
 
     @Test
@@ -304,7 +358,7 @@ class MobileSignInTest {
         val userId = Uuid.random()
         apiTokens.tokens["h(osm_x)"] = ApiToken(
             Uuid.random(), userId, null, "Ostrom app", TokenKind.MOBILE, stored, "osm_x", null, clock.now,
-            clock.now + 1.days, null, null,
+            clock.now + 1.days, null, null, authenticatedAt = clock.now,
         )
         assertEquals(setOf(ANSWER_SCOPE, "profile:read"), authenticator.authenticate("osm_x")?.scopes)
     }

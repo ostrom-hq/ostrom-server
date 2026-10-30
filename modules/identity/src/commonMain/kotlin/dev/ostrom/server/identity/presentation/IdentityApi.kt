@@ -260,7 +260,7 @@ data class ProfileResponse(
  *
  * @property id The token id.
  * @property name Its label.
- * @property kind `personal` or `cli`.
+ * @property kind `personal`, `cli` or `mobile` (the phone app's).
  * @property scopes What it allows.
  * @property hint The first characters of its secret.
  * @property createdAt When it was issued (ISO 8601).
