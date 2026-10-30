@@ -67,6 +67,15 @@ interface GatesRepository {
      * @return Each gate's approvers, in their order; a gate without request, or another organization's, is absent.
      */
     suspend fun approversOf(orgId: Uuid, gateIds: List<Uuid>): Map<Uuid, List<String>>
+
+    /**
+     * Lists the gates a session asked or joined, oldest first.
+     *
+     * @param orgId The organization.
+     * @param sessionId The session segment.
+     * @return The gates.
+     */
+    suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate>
 }
 
 /** The reads and writes of one transaction. Locking reads hold their rows until the transaction ends. */

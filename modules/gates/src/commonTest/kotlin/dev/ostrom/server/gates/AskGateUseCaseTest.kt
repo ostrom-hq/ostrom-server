@@ -34,7 +34,6 @@ import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
-import dev.ostrom.server.gates.infrastructure.UnavailableGateReceiptSigner
 import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -316,10 +315,7 @@ class AskGateUseCaseTest {
         assertEquals(ErrorKind.UNAVAILABLE, sessions.kind)
         assertNull(NoGateNodes().resolve(gate.orgId, "o/r", "push-main"))
         assertNull(UnknownPullRequestHeads().head(gate.orgId, "o/r", 6))
-        assertEquals(
-            ErrorKind.UNAVAILABLE,
-            assertFailsWith<OstromException> { UnavailableGateReceiptSigner().sign(gate) }.kind,
-        )
+        assertNull(UnavailableGateSessions().agentOf(gate.orgId, SESSION))
 
         val silent = ChannelsGateNotifier({ emptyList() }, RecordingLogger())
         silent.requested(gate, emptyList())
