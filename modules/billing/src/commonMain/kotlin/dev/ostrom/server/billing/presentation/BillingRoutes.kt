@@ -41,7 +41,7 @@ fun Route.billingRoutes(dependencies: BillingRoutesDependencies) = with(dependen
         post<BillingApi.Checkout, PlanRequest> { params, request ->
             val (plan, interval) = request.parse()
             val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
-            call.respond(RedirectResponse(startCheckout(caller, orgId, null, null, plan, interval)))
+            call.respond(RedirectResponse(startCheckout(caller, orgId, plan, interval)))
         }
         post<BillingApi.Portal> { params ->
             val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
