@@ -14,6 +14,8 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 owner_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 agent TEXT NOT NULL,
+                model TEXT,
+                prompt TEXT,
                 repository_url TEXT,
                 repository_ref TEXT,
                 state TEXT NOT NULL,

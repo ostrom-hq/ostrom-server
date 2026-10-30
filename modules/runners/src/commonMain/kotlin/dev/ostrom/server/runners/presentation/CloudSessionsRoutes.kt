@@ -44,8 +44,8 @@ data class CloudSessionsRoutesDependencies(
 )
 
 /**
- * The cloud session routes: management under `/v1/cloud/sessions` for members, and the runner channel under
- * `/v1/runner`, authenticated by the execution's runner token instead of a member's token.
+ * The cloud session routes: management under `/api/v1/cloud/sessions` for members, and the runner channel under
+ * `/api/v1/cloud/runner`, authenticated by the execution's runner token instead of a member's token.
  *
  * @param dependencies The use cases.
  */
@@ -57,8 +57,8 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             val limit = params.limit ?: DEFAULT_LIMIT
             call.respond(
                 CloudSessionsResponse(
-                    sessions = sessions.map { it.toResponse() },
-                    nextBefore = sessions.lastOrNull()?.takeIf { sessions.size == limit }?.id?.toString(),
+                    items = sessions.map { it.toResponse() },
+                    next = sessions.lastOrNull()?.takeIf { sessions.size == limit }?.id?.toString(),
                 ),
             )
         }
@@ -68,7 +68,9 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             val payload = CreateCloudSessionPayload(
                 name = request.name,
                 agent = request.agent,
-                repository = request.repository?.let { RepositorySpec(it.url, it.ref) },
+                repository = request.repo?.let { RepositorySpec(it, request.ref) },
+                model = request.model,
+                prompt = request.prompt,
             )
             call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
         }
@@ -134,11 +136,13 @@ internal fun ApplicationCall.runnerToken(): String {
 fun CloudSession.toResponse() = CloudSessionResponse(
     id = id.toString(),
     name = name,
-    ownerId = ownerId,
+    owner = ownerId,
     agent = agent.wire,
-    repository = repository?.let { RepositoryDto(it.url, it.ref) },
-    state = state.wire,
-    desiredState = desiredState.wire,
+    model = model,
+    repo = repository?.url,
+    ref = repository?.ref,
+    status = state.wire,
+    desiredStatus = desiredState.wire,
     phase = phase,
     epoch = epoch,
     failure = failure?.let { SessionFailureDto(it.code, it.message) },
@@ -148,5 +152,5 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     readyAt = readyAt?.toString(),
     lastActivityAt = lastActivityAt?.toString(),
     pausedAt = pausedAt?.toString(),
-    terminatedAt = terminatedAt?.toString(),
+    endedAt = terminatedAt?.toString(),
 )

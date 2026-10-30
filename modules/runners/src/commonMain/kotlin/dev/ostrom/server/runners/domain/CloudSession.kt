@@ -34,6 +34,8 @@ import kotlin.uuid.Uuid
  * @property runnerTokenHash The SHA-256 (hex) of the current execution's runner token; null while none runs.
  * @property runnerStoppedAt When the runner of the current execution reported its agent stopped (pause drained).
  * @property pausingSince When the session entered `pausing`, for the pause deadline.
+ * @property model The model the agent starts with, if chosen.
+ * @property prompt The first message the agent receives at the first start, if any.
  */
 data class CloudSession(
     val id: Uuid,
@@ -60,6 +62,8 @@ data class CloudSession(
     val runnerTokenHash: String? = null,
     val runnerStoppedAt: Instant? = null,
     val pausingSince: Instant? = null,
+    val model: String? = null,
+    val prompt: String? = null,
 )
 
 /**

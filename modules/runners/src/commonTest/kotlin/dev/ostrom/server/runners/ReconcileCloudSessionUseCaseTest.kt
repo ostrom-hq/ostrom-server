@@ -47,7 +47,7 @@ class ReconcileCloudSessionUseCaseTest {
 
     @Test
     fun aNewSessionGetsItsWorkspaceThenItsFirstExecution() = runTest {
-        val created = put(session())
+        val created = put(session().copy(model = "claude-opus-5-5", prompt = "Fix the tests"))
 
         assertEquals(t0 + 2.seconds, reconcile(created))
 
@@ -60,6 +60,8 @@ class ReconcileCloudSessionUseCaseTest {
         assertEquals("token-1", driver.started.single().runnerToken)
         assertEquals(created.id, driver.started.single().sessionId)
         assertEquals(ORG_A, driver.started.single().orgId)
+        assertEquals("claude-opus-5-5", driver.started.single().model)
+        assertEquals("Fix the tests", driver.started.single().prompt)
     }
 
     @Test
@@ -262,7 +264,7 @@ class ReconcileCloudSessionUseCaseTest {
 
     @Test
     fun aResumeAskedDuringTheDrainResumesRightAfter() = runTest {
-        val pausing = put(runningSession().copy(state = SessionState.PAUSING, desiredState = DesiredState.RUNNING, pausingSince = t0, runnerStoppedAt = t0))
+        val pausing = put(runningSession().copy(state = SessionState.PAUSING, desiredState = DesiredState.RUNNING, pausingSince = t0, runnerStoppedAt = t0, prompt = "once"))
 
         assertEquals(t0, reconcile(pausing))
         val paused = stored(pausing)
@@ -277,6 +279,8 @@ class ReconcileCloudSessionUseCaseTest {
         reconcile(resuming)
         assertEquals(2, stored(pausing).epoch)
         assertEquals("token-1", driver.started.single().runnerToken)
+        // The first message was the first execution's: a resume never sends it again.
+        assertEquals(null, driver.started.single().prompt)
     }
 
     @Test

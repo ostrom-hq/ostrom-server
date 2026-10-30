@@ -4,17 +4,17 @@ import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
 /**
- * `GET /v1/cloud/sessions` (the caller's sessions, `?before=<id>&limit=`) and `POST` (create). To move to
- * ostrom-core with the API contract.
+ * `GET /api/v1/cloud/sessions` (the caller's sessions, `?before=<id>&limit=`) and `POST` (create), as in
+ * ostrom-core's `api/openapi.yaml` (operations `listCloudSessions`, `createCloudSession`).
  *
  * @property before The cursor of the previous page.
  * @property limit The page size, 1 to 50.
  */
 @Serializable
-@Resource("/v1/cloud/sessions")
+@Resource("/api/v1/cloud/sessions")
 class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
     /**
-     * `GET`/`DELETE /v1/cloud/sessions/{id}`.
+     * `GET`/`DELETE /api/v1/cloud/sessions/{id}`.
      *
      * @property parent The collection.
      * @property id The session id.
@@ -23,7 +23,7 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
     @Resource("{id}")
     class Id(val parent: CloudSessionsApi = CloudSessionsApi(), val id: String) {
         /**
-         * `POST /v1/cloud/sessions/{id}/pause`.
+         * `POST /api/v1/cloud/sessions/{id}/pause`.
          *
          * @property parent The session.
          */
@@ -32,7 +32,7 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
         class Pause(val parent: Id)
 
         /**
-         * `POST /v1/cloud/sessions/{id}/resume`.
+         * `POST /api/v1/cloud/sessions/{id}/resume`.
          *
          * @property parent The session.
          */
@@ -42,35 +42,29 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
     }
 }
 
-/** `POST /v1/runner/heartbeat`: the runner channel, authenticated by the execution's runner token. */
+/** `POST /api/v1/cloud/runner/heartbeat`: the runner channel, authenticated by the execution's runner token. */
 @Serializable
-@Resource("/v1/runner/heartbeat")
+@Resource("/api/v1/cloud/runner/heartbeat")
 class RunnerHeartbeatApi
 
 /**
  * Creates a session.
  *
- * @property name A label, 1 to 120 characters.
  * @property agent `claude`, `codex`, `opencode`, `gemini` or `shell`.
- * @property repository The GitHub repository to clone at the first start.
+ * @property name A label, up to 120 characters; the repository's or the agent's name when absent.
+ * @property repo The GitHub repository to clone at the first start, `https://github.com/<owner>/<name>`.
+ * @property ref The branch, tag or commit to check out; the default branch when absent.
+ * @property prompt The agent's first message, up to 20,000 characters; an interactive agent when absent.
+ * @property model The model the agent starts with; the agent's default when absent.
  */
 @Serializable
 data class CreateCloudSessionRequest(
-    val name: String,
     val agent: String,
-    val repository: RepositoryDto? = null,
-)
-
-/**
- * A repository.
- *
- * @property url `https://github.com/<owner>/<name>`.
- * @property ref A branch, tag or commit; the default branch when absent.
- */
-@Serializable
-data class RepositoryDto(
-    val url: String,
+    val name: String? = null,
+    val repo: String? = null,
     val ref: String? = null,
+    val prompt: String? = null,
+    val model: String? = null,
 )
 
 /**
@@ -100,18 +94,21 @@ data class SessionLimitsDto(
 )
 
 /**
- * A cloud session as clients see it. `state` is a closed enum (`creating`, `running`, `pausing`, `paused`,
- * `resuming`, `terminated`, `failed`); `phase` is open.
+ * A cloud session as clients see it (schema `CloudSession` of the contract). `status` is a closed enum
+ * (`creating`, `running`, `pausing`, `paused`, `resuming`, `terminated`, `failed`), `desiredStatus` what the
+ * owner asked for (`running`, `paused`, `terminated`); `phase` is open.
  */
 @Serializable
 data class CloudSessionResponse(
     val id: String,
     val name: String,
-    val ownerId: String,
+    val owner: String,
     val agent: String,
-    val repository: RepositoryDto? = null,
-    val state: String,
-    val desiredState: String,
+    val model: String? = null,
+    val repo: String? = null,
+    val ref: String? = null,
+    val status: String,
+    val desiredStatus: String,
     val phase: String? = null,
     val epoch: Long,
     val failure: SessionFailureDto? = null,
@@ -121,19 +118,19 @@ data class CloudSessionResponse(
     val readyAt: String? = null,
     val lastActivityAt: String? = null,
     val pausedAt: String? = null,
-    val terminatedAt: String? = null,
+    val endedAt: String? = null,
 )
 
 /**
  * A page of sessions.
  *
- * @property sessions The sessions, newest first.
- * @property nextBefore The cursor of the next page, absent on the last one.
+ * @property items The sessions, newest first.
+ * @property next The cursor of the next page (`?before=`), absent on the last one.
  */
 @Serializable
 data class CloudSessionsResponse(
-    val sessions: List<CloudSessionResponse>,
-    val nextBefore: String? = null,
+    val items: List<CloudSessionResponse>,
+    val next: String? = null,
 )
 
 /**
