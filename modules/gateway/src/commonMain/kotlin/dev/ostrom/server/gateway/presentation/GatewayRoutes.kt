@@ -66,7 +66,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
     routePost("$INFERENCE_BASE/v1/responses") { infer(dependencies, WireProtocol.RESPONSES) }
     routePost("$INFERENCE_BASE/v1/chat/completions") { infer(dependencies, WireProtocol.CHAT) }
     routeGet("$INFERENCE_BASE/v1/models") {
-        call.inferenceCaller(dependencies, WireProtocol.CHAT)?.let { caller ->
+        call.inferenceCaller(dependencies, WireProtocol.CHAT)?.let { (caller, _) ->
             call.respondText(modelList(getPolicy(caller), caller).toString(), ContentType.Application.Json)
         }
     }
