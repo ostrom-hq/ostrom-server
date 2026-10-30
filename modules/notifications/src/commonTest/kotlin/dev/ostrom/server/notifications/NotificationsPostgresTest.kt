@@ -15,6 +15,7 @@ import dev.ostrom.server.gates.presentation.GatePush
 import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.notifications.domain.EmailSender
@@ -56,8 +57,20 @@ class NotificationsPostgresTest {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
-                    "user" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
-                    "app" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ANSWER))
+                    "user" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.ALL_USER),
+                        channel = PrincipalChannel.BROWSER,
+                    )
+                    "app" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.ANSWER),
+                        channel = PrincipalChannel.MOBILE_APP,
+                    )
+                    // A person's API token: any program can present it, the agent included (S2-31).
+                    "cli" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ANSWER))
                     "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
                 }
@@ -154,6 +167,7 @@ class NotificationsPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.remove(null, Uuid.random().toString()).status)
         assertEquals(HttpStatusCode.Forbidden, server.register("agent:a:claude").status, "an agent")
         assertEquals(HttpStatusCode.Forbidden, server.register("reader:a:ops").status, "a read-only credential")
+        assertEquals(HttpStatusCode.Forbidden, server.register("cli:a:rev-b").status, "an API token (S2-31)")
         assertEquals(HttpStatusCode.Forbidden, server.register("user:a").status, "no organization")
         val bad = server.register("user:a:rev-b", phone("ExponentPushToken[x]"))
         assertEquals(HttpStatusCode.BadRequest, bad.status)
