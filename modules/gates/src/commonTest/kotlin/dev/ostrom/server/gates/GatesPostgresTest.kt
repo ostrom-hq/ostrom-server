@@ -60,8 +60,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlin.time.TimeSource
 import kotlin.uuid.Uuid
 
 /** The gates against a real PostgreSQL and real HTTP: every parcours of a gate, and the isolation of organizations. */
@@ -535,6 +537,21 @@ class GatesPostgresTest {
         val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
         assertEquals("pending", still.gate.status)
         assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status, "signed in just now")
+    }
+
+    // The hook waits on this answer before every gated command: at the 95th percentile, under 20 ms end to end
+    // (HTTP, token, transaction with its advisory lock, PostgreSQL), after a warm-up.
+    @Test
+    fun aGateDecisionTakesUnderTwentyMillisecondsAtThe95thPercentile() = gatesTest { server ->
+        val agent = "agent:a:$session"
+        repeat(20) { assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/gates", push()).status) }
+        val times = (1..200).map {
+            val start = TimeSource.Monotonic.markNow()
+            assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/gates", push()).status)
+            start.elapsedNow()
+        }.sorted()
+        val p95 = times[times.size * 95 / 100 - 1]
+        assertTrue(p95 < 20.milliseconds, "p95 = $p95, median = ${times[times.size / 2]}")
     }
 
     @Test
