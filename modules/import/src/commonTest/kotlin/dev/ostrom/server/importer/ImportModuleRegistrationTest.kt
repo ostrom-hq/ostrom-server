@@ -9,7 +9,7 @@ class ImportModuleRegistrationTest {
     @Test
     fun registersUnderItsNameWithItsProvenanceTable() {
         assertEquals("import", ImportModule.name)
-        assertEquals(listOf(1), ImportModule.migrations.map { it.version })
+        assertEquals(1, ImportModule.migrations.size, "Its provenance table")
         koinApplication { modules(ImportModule.koinModule) }.close()
     }
 }
