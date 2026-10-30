@@ -2,6 +2,7 @@
 package dev.ostrom.server.usage
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -43,6 +44,8 @@ object TestCallers {
         "stranger" to null,
     )
 
+    private val browserScopes = setOf(RelayScopes.ALL_USER)
+
     /** The scopes and kind of each token: a browser session has every user scope (`user:*`). */
     private val principals = mapOf(
         "agent-a" to (PrincipalKind.SERVICE to setOf(RelayScopes.AGENT_SESSION)),
@@ -66,7 +69,8 @@ object TestCallers {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
                     if (token !in byToken) return null
-                    val (kind, scopes) = principals[token] ?: (PrincipalKind.USER to setOf(RelayScopes.ALL_USER))
+                    val (kind, scopes) = principals[token]
+                        ?: return AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, BROWSER)
                     return AuthenticatedPrincipal(token, kind, scopes)
                 }
             }

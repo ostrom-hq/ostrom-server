@@ -13,6 +13,7 @@ import dev.ostrom.server.automations.domain.WaitsRepository
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -62,14 +63,18 @@ class RecordingEvents : WaitEvents {
 /**
  * The test identities: `alice`, `bob` (members of org A), `dave` (admin of org A), `carol` (owner of org B) and
  * `nobody` (no org) sign in themselves; `reader`, `agent` and `writer` are bob's tokens with `waits:read`,
- * `waits:ask` and `waits:write`; `davekey` is dave's with `waits:write`; `cloud` is bob's with no waits scope.
+ * `waits:ask` and `waits:write`; `davekey` is dave's with `waits:write`; `cloud` is bob's with no waits scope;
+ * `alicekey` is alice's personal token with `waits:write`, `aliceapp` alice in the unlocked mobile app.
  */
 val testIdentities = module {
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
                 "alice", "bob", "dave", "carol", "nobody" ->
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"))
+                    AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"), PrincipalChannel.BROWSER)
+                "alicekey" -> AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("waits:write"))
+                "aliceapp" ->
+                    AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("user:*"), PrincipalChannel.MOBILE_APP)
                 "reader" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:read"))
                 "agent" -> AuthenticatedPrincipal("bob", PrincipalKind.DEVICE, setOf("waits:ask"))
                 "writer" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:write"))

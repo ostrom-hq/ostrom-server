@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.usage.presentation
 
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -74,7 +76,13 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
             call.respond(report(caller, from, to, params.member?.toMemberParameter()).toResponse())
         }
         post<UsageApi.Events> {
-            val caller = call.requireCaller(callers, UsageScopes.WRITE, RelayScopes.AGENT_SESSION)
+            // Made for programs: the CLI's hooks (a personal token) and agents record usage (S2-52, declared).
+            val caller = call.requireCaller(
+                callers,
+                UsageScopes.WRITE,
+                RelayScopes.AGENT_SESSION,
+                writers = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.SERVICE),
+            )
             // Read to one byte past the limit whatever the headers say: a chunked body declares no length.
             val bytes = call.receiveChannel().readRemaining(MAX_INGEST_BYTES + 1).readByteArray()
             if (bytes.size > MAX_INGEST_BYTES) throw TooManyUsageEventsException()

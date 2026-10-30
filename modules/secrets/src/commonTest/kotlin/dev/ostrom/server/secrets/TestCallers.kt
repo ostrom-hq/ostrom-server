@@ -2,6 +2,7 @@
 package dev.ostrom.server.secrets
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.secrets.domain.Caller
@@ -28,13 +29,24 @@ object TestCallers {
         "agent-a" to memberA,
         "cli-a" to memberA,
         "device-a" to memberA,
+        "cli-write-a" to memberA,
     )
 
-    /** What each token is: browser sessions, plus an agent, a CLI token that may only read, and a device. */
+    private val browserScopes = setOf(RelayScopes.ALL_USER)
+
+    /**
+     * What each token is: browser sessions, plus an agent, a CLI token that may only read, a personal token holding
+     * every secrets scope, and a device.
+     */
     private val principals = mapOf(
         "agent-a" to AuthenticatedPrincipal("agent-a", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
         "cli-a" to AuthenticatedPrincipal("cli-a", PrincipalKind.USER, setOf("profile:read", RelayScopes.SECRETS_READ)),
         "device-a" to AuthenticatedPrincipal("device-a", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
+        "cli-write-a" to AuthenticatedPrincipal(
+            "cli-write-a",
+            PrincipalKind.USER,
+            setOf(RelayScopes.SECRETS_READ, RelayScopes.SECRETS_WRITE),
+        ),
     )
 
     /**
@@ -47,7 +59,7 @@ object TestCallers {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: (byToken[token] ?: token.takeIf { it == "stranger" })
-                        ?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER)) }
+                        ?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, BROWSER) }
             }
         }
         single<CallerResolver> {
