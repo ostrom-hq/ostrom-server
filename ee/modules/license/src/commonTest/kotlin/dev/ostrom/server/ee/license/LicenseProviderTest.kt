@@ -59,7 +59,7 @@ class LicenseProviderTest {
             listOf(
                 "INFO license verified {license_id=lic_fixture_0001, customer=Acme Test Corp, " +
                     "expires_at=2027-10-30T00:00:00Z, " +
-                    "max_people=50, features=policies,retention,sso, key_id=59f7291142778b67}",
+                    "max_people=50, features=policies,retention,sso, key_id=45820455880b3a26}",
             ),
             logger.lines,
         )
