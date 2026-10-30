@@ -14,6 +14,7 @@ import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.module.kernelModule
 import dev.ostrom.server.kernel.module.serverKoin
 import dev.ostrom.server.kernel.observability.OstromMetrics
+import dev.ostrom.server.kernel.observability.ProcessMetrics
 import dev.ostrom.server.kernel.observability.TelemetryLogger
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -57,6 +58,7 @@ fun main() {
     )
     val logger = TelemetryLogger(JsonLogger(config.logLevel), telemetry, config.logLevel)
     val metrics = OstromMetrics(telemetry.meter)
+    ProcessMetrics.register(telemetry.meter)
     val modules = serverModules()
     var driver: Driver? = null
     var koin: Koin? = null
