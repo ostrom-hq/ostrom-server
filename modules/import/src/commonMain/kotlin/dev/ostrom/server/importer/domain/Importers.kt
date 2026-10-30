@@ -296,7 +296,7 @@ internal class McpImporter(
                 mcp.unassign(caller, server.id, row.memberId)
                 rows -= row
             }
-            val who = row.memberId?.toString() ?: EVERYONE
+            val who = "${row.memberId ?: EVERYONE}"
             val action = if (dryRun) ImportAction.PLANNED else ImportAction.UPDATED
             ImportItem(ImportKind.ASSIGNMENT, "${imported.planned.name}/$who", action, REVOKED)
         }
