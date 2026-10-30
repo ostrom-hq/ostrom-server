@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.integrations.github
 
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
@@ -20,6 +23,18 @@ class GitHubIntegrationModuleRegistrationTest {
         assertEquals("integrations-github", GitHubIntegrationModule.name)
         assertEquals("create_github", GitHubIntegrationModule.migrations.single().name)
         koinApplication { modules(GitHubIntegrationModule.koinModule) }.close()
+    }
+
+    @Test
+    fun theSettingsComeFromTheServersConfiguration() {
+        val app = koinApplication {
+            modules(
+                GitHubIntegrationModule.koinModule,
+                module { single<ConfigSource> { MapConfigSource(mapOf("OSTROM_GITHUB_APP_ID" to " 42 ")) } },
+            )
+        }
+        assertEquals("42", app.koin.get<GitHubSettings>().appId)
+        app.close()
     }
 
     @Test

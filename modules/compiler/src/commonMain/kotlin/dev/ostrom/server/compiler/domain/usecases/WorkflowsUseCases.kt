@@ -5,6 +5,7 @@ import dev.ostrom.core.api.models.Workflow
 import dev.ostrom.core.api.models.WorkflowNode
 import dev.ostrom.core.api.models.WorkflowNodeKind
 import dev.ostrom.core.api.models.WorkflowStatus
+import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompileInputs
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
@@ -21,7 +22,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlin.time.Clock
-import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Signs the receipt of a decision on a workflow (`decisions.ts` `recordSigned`, receipt kind `workflow`). */
@@ -127,11 +127,11 @@ class WorkflowsUseCaseImpl(
         val workflow = decode(raw)
         val before = repository.workflow(orgId, workflow.id)
         if (create && before != null) throw OstromException(ErrorKind.CONFLICT, "A workflow with this id exists.")
-        val at = clock.now()
-        val saved = repository.saveWorkflow(orgId, workflow.id, raw, expectedVersion, by, at)
+        val author = Authorship(by, clock.now())
+        val saved = repository.saveWorkflow(orgId, workflow.id, raw, expectedVersion, author)
             ?: throw OstromException(ErrorKind.CONFLICT, "workflow_conflict: someone saved this workflow in between.")
         val change = changeOf(before?.doc?.workflow, workflow)
-        if (change != null) record(orgId, workflow, before?.doc?.workflow, change, by, at)
+        if (change != null) record(orgId, workflow, before?.doc?.workflow, change, author)
         return saved
     }
 
@@ -154,36 +154,17 @@ class WorkflowsUseCaseImpl(
     private fun decode(raw: JsonObject): Workflow = try {
         PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), raw)
     } catch (e: IllegalArgumentException) {
-        throw OstromException(ErrorKind.INVALID_REQUEST, "Invalid workflow: ${e.message.orEmpty().take(MAX_ERROR)}")
+        throw InvalidWorkflowException("Invalid workflow: ${e.message.orEmpty().take(MAX_ERROR)}", e)
     }
-
-    // `accept` from proposed to accepted, `edit` otherwise; null when nothing that is decided changed.
-    private fun changeOf(before: Workflow?, after: Workflow): String? {
-        val same = before != null && strip(before) == strip(after)
-        val accepted = before?.status == WorkflowStatus.PROPOSED && after.status == WorkflowStatus.ACCEPTED
-        return when {
-            same -> null
-            accepted -> "accept"
-            else -> "edit"
-        }
-    }
-
-    private fun strip(workflow: Workflow) = listOf(
-        workflow.nodes.map { it.copy(position = null) },
-        workflow.edges,
-        workflow.status,
-        workflow.name,
-    )
 
     private suspend fun record(
         orgId: Uuid,
         after: Workflow,
         before: Workflow?,
         action: String,
-        by: String,
-        at: Instant,
+        author: Authorship,
     ) {
-        val decision = DecisionDoc("dec_${Uuid.random()}", "workflow", after.id, by, JsText.iso(at), null)
+        val decision = DecisionDoc("dec_${Uuid.random()}", "workflow", after.id, author.by, JsText.iso(author.at), null)
         val receipt = signer.sign(orgId, decision, action, before?.let(::summary), summary(after))
         repository.addDecision(orgId, decision.copy(receiptId = receipt))
     }
@@ -215,3 +196,25 @@ class WorkflowsUseCaseImpl(
         const val MAX_ERROR = 200
     }
 }
+
+// `accept` from proposed to accepted, `edit` otherwise; null when nothing that is decided changed.
+private fun changeOf(before: Workflow?, after: Workflow): String? {
+    val same = before != null && strip(before) == strip(after)
+    val accepted = before?.status == WorkflowStatus.PROPOSED && after.status == WorkflowStatus.ACCEPTED
+    return when {
+        same -> null
+        accepted -> "accept"
+        else -> "edit"
+    }
+}
+
+private fun strip(workflow: Workflow) = listOf(
+    workflow.nodes.map { it.copy(position = null) },
+    workflow.edges,
+    workflow.status,
+    workflow.name,
+)
+
+// A workflow the server cannot read: 400, with the parser's reason.
+private class InvalidWorkflowException(message: String, override val cause: Throwable) :
+    OstromException(ErrorKind.INVALID_REQUEST, message)

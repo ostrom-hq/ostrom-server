@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler
 
+import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompilerSettings
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.PackageAudit
@@ -43,12 +44,11 @@ internal class MemoryCompilerRepository : CompilerRepository {
         id: String,
         raw: JsonObject,
         expectedVersion: Int?,
-        by: String,
-        at: Instant,
+        author: Authorship,
     ): StoredWorkflow? {
         val current = workflows[orgId to id]
         if (expectedVersion != null && current?.version != expectedVersion) return null
-        val saved = StoredWorkflow(CompilerDocs.workflow(raw), (current?.version ?: 0) + 1, by, at)
+        val saved = StoredWorkflow(CompilerDocs.workflow(raw), (current?.version ?: 0) + 1, author.by, author.at)
         workflows[orgId to id] = saved
         return saved
     }

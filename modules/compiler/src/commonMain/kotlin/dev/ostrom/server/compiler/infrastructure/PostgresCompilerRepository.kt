@@ -2,123 +2,34 @@
 package dev.ostrom.server.compiler.infrastructure
 
 import dev.ostrom.core.api.models.PackageEnvelope
-import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.PackageAudit
 import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.StoredPackage
-import dev.ostrom.server.compiler.domain.models.StoredWorkflow
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
-import dev.ostrom.server.compiler.domain.services.CompilerDocs
+import dev.ostrom.server.compiler.domain.repositories.WorkflowsRepository
 import dev.ostrom.server.compiler.domain.services.HarnessStamp
 import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [CompilerRepository] on PostgreSQL (sqlx4k). Every call is one transaction that first sets `ostrom.org_id`, read by
- * the row level security policies of the compiler tables.
+ * [CompilerRepository] on PostgreSQL (sqlx4k): harnesses, packages, pins and the audit here, workflows and decisions in
+ * [PostgresWorkflowsRepository]. Every call is one transaction that first sets `ostrom.org_id`, read by the row level
+ * security policies of the compiler tables.
  *
  * @param driver The connection pool.
  */
-class PostgresCompilerRepository(private val driver: Driver) : CompilerRepository {
-    private suspend fun <T> scoped(orgId: Uuid, block: suspend Tx.() -> T): T = driver.transaction {
-        Tx(this).run {
-            fetch(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgId.toString()))
-            block()
-        }
-    }
-
-    override suspend fun workflows(orgId: Uuid): List<StoredWorkflow> = scoped(orgId) {
-        fetch(
-            Statement.create(
-                "SELECT $WORKFLOW_COLUMNS FROM compiler_workflows WHERE org_id = :org " +
-                    "ORDER BY created_at, id LIMIT $MAX_ROWS",
-            ).bind("org", orgId),
-        ).map { it.toWorkflow() }
-    }
-
-    override suspend fun workflow(orgId: Uuid, id: String): StoredWorkflow? = scoped(orgId) {
-        fetch(
-            Statement.create("SELECT $WORKFLOW_COLUMNS FROM compiler_workflows WHERE org_id = :org AND id = :id")
-                .bind("org", orgId).bind("id", id),
-        ).firstOrNull()?.toWorkflow()
-    }
-
-    override suspend fun saveWorkflow(
-        orgId: Uuid,
-        id: String,
-        raw: JsonObject,
-        expectedVersion: Int?,
-        by: String,
-        at: Instant,
-    ): StoredWorkflow? = scoped(orgId) {
-        val statement = if (expectedVersion == null) {
-            Statement.create(
-                "INSERT INTO compiler_workflows (org_id, id, doc, version, updated_by, updated_at, created_at) " +
-                    "VALUES (:org, :id, :doc, 1, :by, :at, :at) ON CONFLICT (org_id, id) DO UPDATE SET " +
-                    "doc = EXCLUDED.doc, version = compiler_workflows.version + 1, " +
-                    "updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at " +
-                    "RETURNING $WORKFLOW_COLUMNS",
-            )
-        } else {
-            Statement.create(
-                "UPDATE compiler_workflows SET doc = :doc, version = version + 1, updated_by = :by, " +
-                    "updated_at = :at WHERE org_id = :org AND id = :id AND version = :expected " +
-                    "RETURNING $WORKFLOW_COLUMNS",
-            ).bind("expected", expectedVersion)
-        }
-        statement.bind("org", orgId).bind("id", id).bind("doc", raw.toString()).bind("by", by).bind("at", at)
-        fetch(statement).firstOrNull()?.toWorkflow()
-    }
-
-    override suspend fun deleteWorkflow(orgId: Uuid, id: String): Boolean = scoped(orgId) {
-        execute(
-            Statement.create("DELETE FROM compiler_workflows WHERE org_id = :org AND id = :id")
-                .bind("org", orgId).bind("id", id),
-        ) > 0
-    }
-
-    override suspend fun decisions(orgId: Uuid): List<DecisionDoc> = scoped(orgId) {
-        fetch(
-            Statement.create(
-                "SELECT id, subject_kind, subject_id, decided_by, decided_at, receipt_id FROM compiler_decisions " +
-                    "WHERE org_id = :org ORDER BY decided_at, id LIMIT $MAX_ROWS",
-            ).bind("org", orgId),
-        ).map {
-            DecisionDoc(
-                id = it.get("id").asString(),
-                subjectKind = it.get("subject_kind").asString(),
-                subjectId = it.get("subject_id").asString(),
-                by = it.get("decided_by").asString(),
-                at = it.get("decided_at").asString(),
-                receiptId = it.get("receipt_id").asStringOrNull(),
-            )
-        }
-    }
-
-    override suspend fun addDecision(orgId: Uuid, decision: DecisionDoc) {
-        scoped(orgId) {
-            execute(
-                Statement.create(
-                    "INSERT INTO compiler_decisions (org_id, id, subject_kind, subject_id, decided_by, decided_at, " +
-                        "receipt_id) VALUES (:org, :id, :kind, :subject, :by, :at, :receipt)",
-                ).bind("org", orgId).bind("id", decision.id).bind("kind", decision.subjectKind)
-                    .bind("subject", decision.subjectId).bind("by", decision.by).bind("at", decision.at)
-                    .bind("receipt", decision.receiptId),
-            )
-        }
-    }
+class PostgresCompilerRepository(
+    private val driver: Driver,
+) : CompilerRepository, WorkflowsRepository by PostgresWorkflowsRepository(driver) {
+    private suspend fun <T> scoped(orgId: Uuid, block: suspend CompilerTx.() -> T): T = driver.inOrg(orgId, block)
 
     override suspend fun harness(orgId: Uuid, repo: String?, digest: String): HarnessStamp? = scoped(orgId) {
         harnesses(orgId, repo, digest).firstOrNull()
@@ -252,23 +163,15 @@ class PostgresCompilerRepository(private val driver: Driver) : CompilerRepositor
         }
     }
 
-    private class Tx(private val executor: QueryExecutor) {
-        suspend fun fetch(statement: Statement): List<ResultSet.Row> =
-            executor.fetchAll(statement).getOrThrow().toList()
-
-        suspend fun execute(statement: Statement): Long = executor.execute(statement).getOrThrow()
-
-        suspend fun harnesses(orgId: Uuid, repo: String?, digest: String): List<HarnessStamp> = fetch(
-            Statement.create(
-                "SELECT version, receipt_id FROM compiler_harnesses " +
-                    "WHERE org_id = :org AND repo_key = :repo AND digest = :digest",
-            ).bind("org", orgId).bind("repo", keyOf(repo)).bind("digest", digest),
-        ).map { HarnessStamp(it.get("version").asString(), it.get("receipt_id").asStringOrNull()) }
-    }
+    private suspend fun CompilerTx.harnesses(orgId: Uuid, repo: String?, digest: String): List<HarnessStamp> = fetch(
+        Statement.create(
+            "SELECT version, receipt_id FROM compiler_harnesses " +
+                "WHERE org_id = :org AND repo_key = :repo AND digest = :digest",
+        ).bind("org", orgId).bind("repo", keyOf(repo)).bind("digest", digest),
+    ).map { HarnessStamp(it.get("version").asString(), it.get("receipt_id").asStringOrNull()) }
 
     private companion object {
         const val MAX_ROWS = 1000
-        const val WORKFLOW_COLUMNS = "doc, version, updated_by, updated_at"
         const val PACKAGE_COLUMNS = "content_digest, digest, version, repo, compiled_at, envelope, counts, revoked, " +
             "revoked_by, revoke_reason"
         val json = Json { ignoreUnknownKeys = true }
@@ -276,13 +179,6 @@ class PostgresCompilerRepository(private val driver: Driver) : CompilerRepositor
 
         // The organization's own pin and harnesses live under `*`, as in the prototype.
         fun keyOf(repo: String?): String = repo ?: "*"
-
-        fun ResultSet.Row.toWorkflow() = StoredWorkflow(
-            doc = CompilerDocs.workflow(json.parseToJsonElement(get("doc").asString()).jsonObject),
-            version = get("version").asInt(),
-            updatedBy = get("updated_by").asString(),
-            updatedAt = get("updated_at").asInstant(),
-        )
 
         fun ResultSet.Row.toPackage() = StoredPackage(
             envelope = json.decodeFromString(PackageEnvelope.serializer(), get("envelope").asString())

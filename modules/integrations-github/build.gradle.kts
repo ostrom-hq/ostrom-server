@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Module integrations-github: the GitHub App (installation per organization, webhooks), the head of a pull request
 // read from GitHub for the gates, and the `ostrom-gate` check run.
 plugins {

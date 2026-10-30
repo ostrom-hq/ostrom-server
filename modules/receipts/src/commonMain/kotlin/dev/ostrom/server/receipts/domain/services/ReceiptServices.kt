@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.receipts.domain.services
 
 import dev.ostrom.server.receipts.domain.models.ReceiptKey

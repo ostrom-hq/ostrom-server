@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
@@ -60,9 +61,9 @@ object GatesModule : ServerModule {
         single<GateDigester> { Sha256GateDigester() }
         single<GateReceiptSigner> { ReceiptsGateSigner(get(), get(), get(), get()) }
         single<EnsureGateReceiptUseCase> { EnsureGateReceiptUseCaseImpl(get(), get(), get()) }
-        single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get(), get()) }
+        single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<AskGateUseCase> { AskGateUseCaseImpl(get(), get(), get(), get()) }
-        single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get()) }
         single<UseGateUseCase> { UseGateUseCaseImpl(get(), get()) }
         single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get()) }
         single<ListApprovalsUseCase> { ListApprovalsUseCaseImpl(get()) }

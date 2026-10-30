@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.models.AskedVia
@@ -125,7 +126,7 @@ class AskGateUseCaseTest {
         val view = ask(bench)(agent(), pushAsk(diff = null, realRepo = "evil/fork", remote = ""))
 
         assertEquals("evil/fork", view.gate.subject.realRepo)
-        assertEquals(listOf("evil/fork"), resolved, "The gate of the repository the command really runs in")
+        assertEquals(listOf<String?>("evil/fork"), resolved, "The gate of the repository the command really runs in")
         assertEquals("", view.gate.subject.diffDigest, "No diff sent: the empty diff is what was shown")
         assertEquals(
             listOf(

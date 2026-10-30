@@ -1,0 +1,16 @@
+name: Question
+description: Ask how something works. Discussions are usually faster.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most questions get a faster answer in [Discussions](https://github.com/ostrom-hq/ostrom-server/discussions/categories/q-a)
+        or in [the documentation](https://ostrom.run/docs).
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you are trying to do, and what you already tried.
+    validations:
+      required: true

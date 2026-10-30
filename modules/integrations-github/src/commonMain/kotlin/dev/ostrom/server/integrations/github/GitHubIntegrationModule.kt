@@ -18,7 +18,6 @@ import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubReposi
 import dev.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import dev.ostrom.server.integrations.github.presentation.GitHubRoutesDependencies
 import dev.ostrom.server.integrations.github.presentation.gitHubRoutes
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.client.HttpClient
@@ -53,7 +52,7 @@ object GitHubIntegrationModule : ServerModule {
             }
         } onClose { it?.close() }
         // From the environment; a test binds its own.
-        single { GitHubSettings.from(EnvironmentConfigSource()) }
+        single { GitHubSettings.from(get()) }
         single<GitHubRepository> { PostgresGitHubRepository(get()) }
         single<GitHubApi> {
             val settings = get<GitHubSettings>()

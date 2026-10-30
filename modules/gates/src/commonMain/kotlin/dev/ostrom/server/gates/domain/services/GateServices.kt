@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.services
 
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
@@ -67,7 +68,10 @@ interface GateChannel {
     suspend fun decided(gate: Gate, requests: List<ApprovalRequest>)
 }
 
-/** Tells people about a gate (notifications, Slack, GitHub check, waiting hooks). Failures never undo a decision. */
+/**
+ * Tells people about a gate (notifications, Slack, GitHub check, waiting hooks). It never throws: a failure is logged
+ * where it happens and never undoes a request or a decision.
+ */
 interface GateNotifier {
     /**
      * A gate asks for a yes: each approver is told on their channels.

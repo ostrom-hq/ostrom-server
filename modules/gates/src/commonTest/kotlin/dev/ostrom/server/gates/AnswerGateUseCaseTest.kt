@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.models.Answer
@@ -200,17 +201,6 @@ class AnswerGateUseCaseTest {
         bench.signer.failure = null
         val read = bench.get(user("rev-b"), view.gate.id)
         assertEquals("rcpt_${view.gate.id}", read.gate.receiptId)
-    }
-
-    @Test
-    fun aFailedDecisionNotificationIsLogged() = runTest {
-        val bench = GateBench()
-        val view = bench.open(bench.pushRequest())
-        bench.notifier.failure = IllegalStateException("push service down")
-        val answered = bench.answer(view, "rev-b")
-
-        assertEquals(GateStatus.APPROVED, answered.gate.status)
-        assertTrue(bench.logger.lines.contains(LogLevel.WARN to "gate decision notification failed"))
     }
 
     @Test
