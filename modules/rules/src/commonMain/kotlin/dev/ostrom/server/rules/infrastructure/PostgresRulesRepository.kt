@@ -11,6 +11,7 @@ import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.repositories.RulesTransaction
 import dev.ostrom.server.rules.domain.services.RuleDocuments
 import dev.ostrom.server.rules.domain.services.SelfApprovalValues
+import dev.ostrom.server.rules.domain.usecases.ListRulesUseCase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -47,8 +48,8 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
         tx.fetchAll(
             Statement.create(
                 "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org AND gate IS NOT NULL " +
-                    "AND status <> 'rejected' ORDER BY id",
-            ).bind("org", orgId),
+                    "AND status <> 'rejected' ORDER BY id LIMIT :limit",
+            ).bind("org", orgId).bind("limit", ListRulesUseCase.MAX_RULES),
         ).getOrThrow().map { it.toRule() }
     }
 
