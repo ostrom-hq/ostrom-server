@@ -35,8 +35,6 @@ class UnavailableGateSessions : GateSessions {
     override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) {
         throw OstromException(ErrorKind.UNAVAILABLE, "Agent sessions are not available on this server.")
     }
-
-    override suspend fun agentOf(orgId: Uuid, sessionId: String): String? = null
 }
 
 /** Without compiled workflows, no gate node applies: the action is recorded as ungated. */

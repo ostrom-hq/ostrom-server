@@ -111,9 +111,10 @@ interface GateSessions {
      *
      * @param orgId The organization.
      * @param sessionId The session segment.
-     * @return The agent (`claude-code`, `codex`…), or null when the session is unknown.
+     * @return The agent (`claude-code`, `codex`…), or null when the session is unknown (the default: a port that
+     *   does not keep sessions knows no agent).
      */
-    suspend fun agentOf(orgId: Uuid, sessionId: String): String?
+    suspend fun agentOf(orgId: Uuid, sessionId: String): String? = null
 }
 
 
