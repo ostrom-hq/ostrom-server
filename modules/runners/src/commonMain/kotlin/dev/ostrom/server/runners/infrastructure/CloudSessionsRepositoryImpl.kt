@@ -199,7 +199,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         fetchAll(
             Statement.create("""SELECT seconds FROM runners_usage WHERE org_id = :org_id AND month = :month""")
                 .bind("org_id", orgId).bind("month", month),
-        ).getOrThrow().firstOrNull()?.get("seconds")?.asLong() ?: 0
+        ).getOrThrow().firstOrNull()?.let { it.get("seconds").asLong() } ?: 0
     }
 
     override suspend fun addUsage(orgId: Uuid, month: String, seconds: Long) {
@@ -218,7 +218,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
     /** The organization of a session, from the one table read across organizations. */
     private suspend fun orgOf(id: Uuid): Uuid? = driver.fetchAll(
         Statement.create("""SELECT org_id FROM runners_session_routes WHERE session_id = :id""").bind("id", id),
-    ).getOrThrow().firstOrNull()?.get("org_id")?.asUuid()
+    ).getOrThrow().firstOrNull()?.let { it.get("org_id").asUuid() }
 
     /** The session a route matches ([condition] on `:key`), loaded in its organization. */
     private suspend fun route(condition: String, key: Any): CloudSession? {
@@ -298,14 +298,14 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             orgId = get("org_id").asUuid(),
             ownerId = get("owner_id").asString(),
             name = get("name").asString(),
-            agent = AgentKind.fromWire(get("agent").asString()) ?: AgentKind.SHELL,
+            agent = get("agent").asString().let { wire -> AgentKind.entries.first { it.wire == wire } },
             repository = url?.let { RepositorySpec(it, get("repository_ref").asStringOrNull()) },
             state = SessionState.fromWire(get("state").asString()),
             desiredState = DesiredState.fromWire(get("desired_state").asString()),
             phase = get("phase").asStringOrNull(),
             epoch = get("epoch").asLong(),
             generation = get("generation").asLong(),
-            failure = failureCode?.let { SessionFailure(it, get("failure_message").asStringOrNull().orEmpty()) },
+            failure = failureCode?.let { SessionFailure(it, get("failure_message").asString()) },
             limits = SessionLimits(
                 idleTimeoutMinutes = get("idle_timeout_minutes").asInt(),
                 maxRunMinutes = get("max_run_minutes").asInt(),
@@ -329,7 +329,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
 
     private companion object {
         /** A placeholder for an unused timestamp parameter (PostgreSQL cannot read Instant.DISTANT_PAST). */
-        val EPOCH: Instant = Instant.fromEpochSeconds(0)
+        private val EPOCH: Instant = Instant.fromEpochSeconds(0)
 
         const val COLUMNS = """
             id, org_id, owner_id, name, agent, model, prompt, repository_url, repository_ref, state, desired_state,

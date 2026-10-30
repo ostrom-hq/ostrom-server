@@ -54,14 +54,14 @@ class CreateCloudSessionUseCaseImpl(
         val agent = AgentKind.fromWire(payload.agent) ?: throw InvalidCloudSessionRequestException(
             "Unknown agent ${payload.agent.take(MAX_ECHO)}: use ${AgentKind.entries.joinToString { it.wire }}.",
         )
-        val name = payload.name?.trim()?.takeIf { it.isNotEmpty() }
-            ?: payload.repository?.url?.substringAfterLast('/')?.removeSuffix(".git")
+        val name = payload.name?.let { it.trim().takeIf(String::isNotEmpty) }
+            ?: payload.repository?.let { it.url.substringAfterLast('/').removeSuffix(".git") }
             ?: agent.wire
         ensureValid(name.length <= MAX_NAME_LENGTH && name.none { it.isISOControl() }) {
             "The name must be 1 to $MAX_NAME_LENGTH characters, without control characters."
         }
         payload.repository?.let { validateRepository(it) }
-        val model = payload.model?.trim()?.takeIf { it.isNotEmpty() }
+        val model = payload.model?.let { it.trim().takeIf(String::isNotEmpty) }
         ensureValid(model == null || MODEL.matches(model)) { "The model is not a valid model name." }
         val prompt = payload.prompt?.takeIf { it.isNotBlank() }
         ensureValid(prompt == null || prompt.length <= MAX_PROMPT_LENGTH) {
@@ -109,11 +109,11 @@ class CreateCloudSessionUseCaseImpl(
         const val MAX_NAME_LENGTH = 120
         const val MAX_PROMPT_LENGTH = 20_000
         const val MAX_ECHO = 32
-        val MODEL = Regex("[A-Za-z0-9._:/@-]{1,100}")
-        val GITHUB_REPOSITORY = Regex(
+        private val MODEL = Regex("[A-Za-z0-9._:/@-]{1,100}")
+        private val GITHUB_REPOSITORY = Regex(
             "https://github\\.com/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}(\\.git)?",
         )
-        val GIT_REF = Regex("[A-Za-z0-9._/-]{1,200}")
+        private val GIT_REF = Regex("[A-Za-z0-9._/-]{1,200}")
     }
 }
 

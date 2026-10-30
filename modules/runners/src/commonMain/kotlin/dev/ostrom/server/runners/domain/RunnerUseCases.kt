@@ -124,11 +124,8 @@ class RunnerHeartbeatUseCaseImpl(
 
     /** Constants and readers of the enclosing type. */
     companion object {
-        /** How often a runner sends a heartbeat. */
-        val HEARTBEAT_INTERVAL = 15.seconds
-
         /** The longest gap between two heartbeats that counts as execution time; a longer one counts this much. */
-        val MAX_BILLED_GAP = 60.seconds
+        private val MAX_BILLED_GAP = 60.seconds
 
         private const val MAX_ATTEMPTS = 3
     }
