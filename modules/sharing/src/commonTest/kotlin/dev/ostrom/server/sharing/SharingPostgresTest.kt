@@ -48,7 +48,7 @@ class SharingPostgresTest {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) = byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER) }
+                override suspend fun authenticate(token: String) = byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()) }
             }
         }
         single<CallerResolver> {
