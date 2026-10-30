@@ -131,9 +131,10 @@ class IdentityTenancyPostgresTest {
             s.driver.execute("ALTER TABLE identity_api_tokens OWNER TO $owner").getOrThrow()
             s.driver.execute("ALTER TABLE identity_audit_events OWNER TO $owner").getOrThrow()
 
-            // Account-level work (no organization set): every token, to authenticate one by its hash; account events.
+            // Account-level work (no organization set): every token, to authenticate one by its hash; account events
+            // (the seeded user's own creation among them).
             assertEquals(listOf("a", "b"), s.asRole(owner, null) { tokenNames() })
-            assertEquals(listOf("account"), s.asRole(owner, null) { actions() })
+            assertEquals(listOf("account", "user.created"), s.asRole(owner, null) { actions() })
             // Confined to B, the owner is held to B like the tenant role: it reads, changes and deletes B's rows only.
             assertEquals(listOf("b"), s.asRole(owner, orgB) { tokenNames() })
             assertEquals(listOf("b"), s.asRole(owner, orgB) { actions() })
