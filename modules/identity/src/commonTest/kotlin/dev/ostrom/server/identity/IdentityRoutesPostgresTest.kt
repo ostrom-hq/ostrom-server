@@ -4,6 +4,7 @@ package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.IssueAgentTokenUseCase
+import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
@@ -18,7 +19,6 @@ import dev.ostrom.server.identity.presentation.DeviceAuthorizationResponse
 import dev.ostrom.server.identity.presentation.DeviceCodeRequest
 import dev.ostrom.server.identity.presentation.DeviceCodeResponse
 import dev.ostrom.server.identity.presentation.DeviceTokenRequest
-import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import dev.ostrom.server.identity.presentation.ProfileResponse
 import dev.ostrom.server.identity.presentation.TokenScopesResponse
 import dev.ostrom.server.identity.presentation.TokensResponse
@@ -206,18 +206,24 @@ class IdentityRoutesPostgresTest {
             server.client.get("/api/v1/tokens/scopes") { bearerAuth(token.secret) }.status,
         )
 
-        // Every scope of the catalogue can be given; a well-formed scope outside it is a 400.
-        val all = server.client.post("/api/v1/tokens") {
-            session(started)
-            json(CreateTokenRequest("all", catalogue.map { it.scope }.take(32)))
+        // Every scope of the catalogue can be given (32 at most per token); one outside it is a 400 that names it.
+        catalogue.map { it.scope }.chunked(32).forEachIndexed { index, scopes ->
+            val created = server.client.post("/api/v1/tokens") {
+                session(started)
+                json(CreateTokenRequest("all-$index", scopes))
+            }
+            assertEquals(HttpStatusCode.Created, created.status, scopes.toString())
         }
-        assertEquals(HttpStatusCode.Created, all.status)
-        val outside = server.client.post("/api/v1/tokens") {
-            session(started)
-            json(CreateTokenRequest("t", listOf("profile:read", "deploy:write")))
+        for (retired in listOf("deploy:write", "billing:manage", "gates:answer")) {
+            val outside = server.client.post("/api/v1/tokens") {
+                session(started)
+                json(CreateTokenRequest("t", listOf("profile:read", retired)))
+            }
+            assertEquals(HttpStatusCode.BadRequest, outside.status)
+            val error = outside.body<ApiError>().error
+            assertEquals("invalid_request", error.type)
+            assertTrue(error.message.endsWith("Not in it: $retired."), error.message)
         }
-        assertEquals(HttpStatusCode.BadRequest, outside.status)
-        assertEquals("invalid_request", outside.body<ApiError>().error.type)
     }
 
     @Test

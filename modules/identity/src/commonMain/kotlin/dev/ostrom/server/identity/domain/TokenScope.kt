@@ -12,9 +12,11 @@ data class TokenScope(val scope: String, val description: String)
 /**
  * The catalogue of the scopes a personal token may be given, grouped by resource: the only source, served by
  * `GET /api/v1/tokens/scopes` and enforced by [validateScopes]. It lists what a route of the server checks for a
- * person's token; never [NEVER_ON_A_TOKEN] (a yes, an agent's scope, a browser session's), nor `waits:ask`, an
- * agent's, nor `billing:manage`, which no longer allows anything more than `billing:read` (S2-52). A module that
- * checks a new scope adds its line here, in the same pull request.
+ * person's token; never [NEVER_ON_A_TOKEN] (a yes, an agent's scope, a browser session's), nor `billing:manage`,
+ * which no longer allows anything more than `billing:read` (S2-52). `waits:ask` is in it: the least privilege for a
+ * token handed to an agent, which asks and never answers. A module that checks a new scope adds its line here, in the
+ * same pull request. The catalogue governs what a token is given: a token created before it keeps its scopes until it
+ * is revoked.
  */
 val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
     TokenScope("profile:read", "Read your profile."),
@@ -46,6 +48,7 @@ val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
     TokenScope("automations:read", "Read the automations and their runs."),
     TokenScope("automations:write", "Create, change, test and delete automations."),
     TokenScope("waits:read", "Read the waits."),
+    TokenScope("waits:ask", "Ask, read and cancel waits, as an agent does; never answer one."),
     TokenScope("waits:write", "Ask, answer and cancel waits."),
     TokenScope("budgets:read", "Read the budgets."),
     TokenScope("budgets:write", "Set the budgets."),

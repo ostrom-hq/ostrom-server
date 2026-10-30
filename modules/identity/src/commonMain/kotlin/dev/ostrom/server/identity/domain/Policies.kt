@@ -89,7 +89,8 @@ const val MAX_TOKENS_PER_USER = 100
 fun validateScopes(scopes: Collection<String>): Set<String> {
     val set = scopes.toSet()
     if (set.isEmpty() || set.size > MAX_SCOPES) throw InvalidScopesException()
-    if (!PERSONAL_TOKEN_SCOPE_NAMES.containsAll(set)) throw InvalidScopesException()
+    val unknown = set - PERSONAL_TOKEN_SCOPE_NAMES
+    if (unknown.isNotEmpty()) throw InvalidScopesException(unknown)
     return set
 }
 
@@ -114,11 +115,15 @@ fun normalizeEmail(raw: String): String {
 }
 
 /** The requested scopes are empty, too many, malformed, or reserved. */
-class InvalidScopesException :
+class InvalidScopesException(unknown: Collection<String> = emptyList()) :
     OstromException(
         ErrorKind.INVALID_REQUEST,
-        "Scopes must be 1 to $MAX_SCOPES values from the catalogue of GET /api/v1/tokens/scopes.",
+        "Scopes must be 1 to $MAX_SCOPES values from the catalogue of GET /api/v1/tokens/scopes." +
+            if (unknown.isEmpty()) "" else " Not in it: ${unknown.take(MAX_NAMED_UNKNOWN).joinToString(", ")}.",
     )
+
+/** How many unknown scopes a refusal names, at most. */
+private const val MAX_NAMED_UNKNOWN = 5
 
 /** The value is not an e-mail address. */
 class InvalidEmailException : OstromException(ErrorKind.INVALID_REQUEST, "This is not a valid e-mail address.")

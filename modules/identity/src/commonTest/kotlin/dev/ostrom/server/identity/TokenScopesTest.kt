@@ -21,7 +21,8 @@ class TokenScopesTest {
     fun theCatalogueNeverListsAScopeNoTokenHolds() {
         assertTrue(PERSONAL_TOKEN_SCOPE_NAMES.none { it in NEVER_ON_A_TOKEN })
         // An agent's, and a scope that no longer allows more than billing:read (S2-52).
-        assertTrue(PERSONAL_TOKEN_SCOPE_NAMES.none { it in setOf("waits:ask", "billing:manage") })
+        assertTrue("billing:manage" !in PERSONAL_TOKEN_SCOPE_NAMES)
+        assertTrue("waits:ask" in PERSONAL_TOKEN_SCOPE_NAMES, "An agent's least privilege: it asks, never answers")
     }
 
     @Test
@@ -46,8 +47,18 @@ class TokenScopesTest {
 
     @Test
     fun aScopeOutsideTheCatalogueIsRefusedEvenWellFormed() {
-        listOf("deploy:write", "gates:answer", "agent:session", "user:*", "waits:ask", "billing:manage").forEach {
+        listOf("deploy:write", "gates:answer", "agent:session", "user:*", "billing:manage").forEach {
             assertFailsWith<InvalidScopesException>(it) { validateScopes(listOf("profile:read", it)) }
         }
+    }
+
+    @Test
+    fun aRefusalNamesUpToFiveScopesOutsideTheCatalogue() {
+        val one = assertFailsWith<InvalidScopesException> { validateScopes(listOf("profile:read", "deploy:write")) }
+        assertTrue(one.message.endsWith(" Not in it: deploy:write."), one.message)
+        val many = assertFailsWith<InvalidScopesException> { validateScopes((1..7).map { "x$it:read" }) }
+        assertTrue(many.message.endsWith(" Not in it: x1:read, x2:read, x3:read, x4:read, x5:read."), many.message)
+        val empty = assertFailsWith<InvalidScopesException> { validateScopes(emptyList()) }
+        assertTrue(empty.message.endsWith("GET /api/v1/tokens/scopes."), empty.message)
     }
 }
