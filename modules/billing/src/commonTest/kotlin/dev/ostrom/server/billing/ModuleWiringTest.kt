@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.billing
 
+import dev.ostrom.server.billing.domain.BillingMetrics
 import dev.ostrom.server.billing.domain.BillingNotifier
 import dev.ostrom.server.billing.domain.BillingRepository
 import dev.ostrom.server.billing.domain.BillingSettings
+import dev.ostrom.server.billing.domain.EventOutcome
 import dev.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import dev.ostrom.server.billing.domain.HandleStripeEventUseCase
 import dev.ostrom.server.billing.domain.LicenseGrant
 import dev.ostrom.server.billing.domain.LicenseProvider
 import dev.ostrom.server.billing.domain.ProcessOutboxUseCase
 import dev.ostrom.server.billing.domain.RecordAgentUsageUseCase
+import dev.ostrom.server.billing.domain.StripeEvent
 import dev.ostrom.server.billing.domain.StripeGateway
 import dev.ostrom.server.billing.fakes.FakeBillingRepository
 import dev.ostrom.server.billing.fakes.FakeLicenseProvider
 import dev.ostrom.server.billing.fakes.FakeNotifier
 import dev.ostrom.server.billing.fakes.FixedClock
+import dev.ostrom.server.billing.fakes.NOW
 import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
@@ -94,15 +98,19 @@ class ModuleWiringTest {
     }
 
     @Test
-    fun theLicenseAndNotificationModulesAreUsedWhenTheyAreBound() = runTest {
+    fun theLicenseNotificationAndObservabilityModulesAreUsedWhenTheyAreBound() = runTest {
         val license = FakeLicenseProvider(LicenseGrant(emptySet(), maxPeople = 40, expiresAt = null))
+        val metrics = FakeBillingMetrics()
         val ports = module {
             single<LicenseProvider> { license }
             single<BillingNotifier> { FakeNotifier() }
+            single<BillingMetrics> { metrics }
         }
         withBillingKoin(emptyMap(), ports) { koin ->
             assertEquals(40, koin.get<GetPlanLimitsUseCase>()(ORG).maxPeople)
-            koin.get<HandleStripeEventUseCase>()
+            val unknown = StripeEvent("evt_1", "invoice.paid", NOW, null, "sub_1", ORG.toString(), null)
+            assertEquals(EventOutcome.IGNORED_UNKNOWN_ORG, koin.get<HandleStripeEventUseCase>()(unknown))
+            assertEquals(listOf("evt_1 invoice.paid"), metrics.unknownOrganizations)
             koin.get<RecordAgentUsageUseCase>()
         }
     }

@@ -28,9 +28,18 @@ dependencyResolutionManagement {
     }
 }
 
-// Local development against a checkout of ostrom-core next to this one: -Postrom.core.local=true.
+// ostrom-core from a checkout next to this one instead of GitHub Packages: -Postrom.core.local=true (or the same line
+// in gradle.properties). Local development uses it, and so does CI, which cannot read the packages of another
+// repository: it checks ostrom-core out with its read-only deploy key at the commit of gradle/ostrom-core.ref (JOURNAL
+// 05:50). Each published artifact is replaced by the project that publishes it.
 if (providers.gradleProperty("ostrom.core.local").orNull == "true") {
-    includeBuild("../ostrom-core")
+    includeBuild("../ostrom-core") {
+        dependencySubstitution {
+            for (module in listOf("api", "receipts", "telemetry")) {
+                substitute(module("dev.ostrom:ostrom-$module")).using(project(":$module"))
+            }
+        }
+    }
 }
 
 include(":kernel", ":testing", ":app", ":runner")
