@@ -168,6 +168,7 @@ class WaitRulesTest {
         assertTrue("approve, change" in refusedAnswer("reject"))
         assertTrue("no field named ghost" in refusedAnswer("approve", "ghost" to "1"))
         assertTrue("at most 5" in refusedAnswer("approve", "text" to "\"abcdef\""))
+        assertTrue("at most 5" in refusedAnswer("approve", "text" to "[1]"))
         assertTrue("at most 8000" in refusedAnswer("approve", "long" to "1"))
         assertTrue("one of its options" in refusedAnswer("approve", "one" to "\"c\""))
         assertTrue("one of its options" in refusedAnswer("approve", "one" to "1"))
@@ -192,6 +193,13 @@ class WaitRulesTest {
         assertTrue("must must be filled" in assertFailsWith<InvalidWaitAnswerException> {
             WaitRules.answer(form, "approve", mapOf("must" to JsonNull))
         }.message)
+    }
+
+    @Test
+    fun aRequiredConfirmationIsFilledByFalseToo() {
+        val yes = WaitField("yes", WaitFieldType.CONFIRM, "Y", required = true)
+        val sure = WaitRules.question(WaitSpec("Sure?", fields = listOf(yes)))
+        WaitRules.answer(sure, "done", mapOf("yes" to json("false")))
     }
 
     @Test
