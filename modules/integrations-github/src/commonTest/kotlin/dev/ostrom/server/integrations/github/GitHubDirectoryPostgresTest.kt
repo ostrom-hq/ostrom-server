@@ -57,6 +57,9 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -252,6 +255,12 @@ class GitHubDirectoryPostgresTest {
         assertTrue(directory.teams(ORG, null, 100).isEmpty())
         directory.forget(ORG)
         assertNull(directory.state(ORG))
+
+        // The console's first lists arrive together: their reads replace the directory one after the other.
+        coroutineScope {
+            (1..4).map { async { directory.replace(ORG, GitHubDirectory(many, teams), NOW) } }.awaitAll()
+        }
+        assertEquals(100, directory.repos(ORG, null, 100).size)
     }
 
     @Test

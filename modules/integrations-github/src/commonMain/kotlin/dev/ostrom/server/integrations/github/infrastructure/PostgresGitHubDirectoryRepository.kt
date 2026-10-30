@@ -49,6 +49,10 @@ class PostgresGitHubDirectoryRepository(private val driver: Driver) : GitHubDire
 
     override suspend fun replace(orgId: Uuid, directory: GitHubDirectory, at: Instant) {
         scoped(orgId) {
+            // One replacement of an organization at a time: the console lists the repositories and the teams at once,
+            // and two first reads would otherwise insert the same keys side by side (a unique violation).
+            val lock = Statement.create("SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext(:key))) AS l")
+            fetch(lock.bind("key", "github-directory:$orgId"))
             execute(Statement.create("DELETE FROM github_repos WHERE org_id = :org").bind("org", orgId))
             directory.repos.chunked(CHUNK).forEach { execute(insertRepos(orgId, it)) }
             execute(Statement.create("DELETE FROM github_teams WHERE org_id = :org").bind("org", orgId))
