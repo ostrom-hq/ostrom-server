@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.http
 
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -55,14 +56,18 @@ data class HealthResponse(
     val checks: Map<String, String>,
 )
 
+/** The paths of the health route: the probes' `/health`, and the API contract's. */
+internal val HEALTH_PATHS = setOf("/health", "/api/v1/health")
+
 /**
  * `GET /health`, unauthenticated, for load balancers and orchestrators: 200 when every check passes, 503 otherwise.
+ * Also served as `/api/v1/health`, its path in the API contract (`status` and `version`, plus the checks).
  *
  * @param checks The checks to run.
  * @param version The server version.
  */
 fun Route.healthRoutes(checks: List<HealthCheck>, version: String) {
-    get("/health") {
+    for (path in HEALTH_PATHS) get(path) {
         val results = checks.associate { check ->
             val up = try {
                 check.isUp()
