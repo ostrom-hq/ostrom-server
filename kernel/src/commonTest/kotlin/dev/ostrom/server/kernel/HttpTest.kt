@@ -48,6 +48,10 @@ class HttpTest {
             if (token == "good-token") AuthenticatedPrincipal("user-1", PrincipalKind.USER, emptySet()) else null
     }
 
+    private class ProbeRefusedException : OstromException(ErrorKind.FORBIDDEN, "Probe refused.")
+
+    private class ProbeBadRequestException : io.ktor.server.plugins.BadRequestException("Probe body unreadable.")
+
     private object ProbeModule : ServerModule {
         override val name: String = "probe"
         override val koinModule: Module = module {}
@@ -55,6 +59,8 @@ class HttpTest {
         override fun routes(route: Route, koin: Koin) {
             route.get("/probe/missing") { throw OstromException(ErrorKind.NOT_FOUND, "Probe not found.") }
             route.get("/probe/crash") { throw IllegalStateException("database password is hunter2") }
+            route.get("/probe/refused") { throw ProbeRefusedException() }
+            route.get("/probe/bad") { throw ProbeBadRequestException() }
             route.authenticated {
                 get("/probe/me") { call.respondText(call.requirePrincipal().subjectId) }
             }
@@ -103,6 +109,15 @@ class HttpTest {
         val response = client.get("/probe/missing")
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertEquals("Probe not found.", response.error().error.message)
+    }
+
+    @Test
+    fun aSubclassOfADomainErrorKeepsItsKind() = httpTest {
+        // Kotlin/Native: StatusPages does not pick the nearest parent class; the subclass must not answer 500.
+        val response = client.get("/probe/refused")
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertEquals("Probe refused.", response.error().error.message)
+        assertEquals(HttpStatusCode.BadRequest, client.get("/probe/bad").status)
     }
 
     @Test
