@@ -41,7 +41,10 @@ class SecretsApi(val after: String? = null, val limit: Int = 50) {
  * @property scope `org` (default; admins) or `personal` (the caller's own; any member).
  */
 @Serializable
-data class SecretWriteRequest(val name: String, val value: String, val scope: String? = null)
+data class SecretWriteRequest(val name: String, val value: String, val scope: String? = null) {
+    /** Never the value: a request printed in a log or an error stays safe. */
+    override fun toString(): String = "SecretWriteRequest(name=$name, value=<redacted>, scope=$scope)"
+}
 
 /**
  * A secret as clients see it, never its value (contract `Secret`).

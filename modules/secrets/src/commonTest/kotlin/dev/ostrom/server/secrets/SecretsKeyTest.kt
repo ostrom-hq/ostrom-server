@@ -56,14 +56,24 @@ class SecretsKeyTest {
     }
 
     @Test
-    fun anExistingKeyFileIsNeverOverwritten() {
-        val path = Path(SystemTemporaryDirectory, "ostrom-secrets-${Uuid.random()}.key").toString()
+    fun anExistingKeyFileIsNeverOverwrittenAndNoTemporaryFileStays() {
+        val directory = Path(SystemTemporaryDirectory, "ostrom-secrets-${Uuid.random()}")
+        SystemFileSystem.createDirectories(directory)
+        val path = Path(directory, "secrets.key").toString()
         try {
             assertTrue(createOwnerOnlyFile(path, "first"))
             assertFalse(createOwnerOnlyFile(path, "second"), "A second writer loses")
             assertEquals("first", SystemFileSystem.source(Path(path)).buffered().use { it.readString() })
+            assertEquals(
+                listOf("secrets.key"),
+                SystemFileSystem.list(directory).map {
+                    it.name
+                },
+                "Written aside, then linked",
+            )
         } finally {
-            SystemFileSystem.delete(Path(path), mustExist = false)
+            SystemFileSystem.list(directory).forEach { SystemFileSystem.delete(it) }
+            SystemFileSystem.delete(directory)
         }
     }
 

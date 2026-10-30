@@ -14,6 +14,7 @@ import dev.ostrom.server.secrets.domain.RevealSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.RotateSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.Secret
 import dev.ostrom.server.secrets.domain.SecretCipher
+import dev.ostrom.server.secrets.domain.SecretCursor
 import dev.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import dev.ostrom.server.secrets.domain.SecretNameTakenException
 import dev.ostrom.server.secrets.domain.SecretNotFoundException
@@ -72,7 +73,10 @@ class SecretUseCasesTest {
         }
         assertFailsWith<InvalidSecretException> { create(admin, CreateSecretPayload("OK", SecretValue(""), false)) }
         assertFailsWith<InvalidSecretException> {
-            create(admin, CreateSecretPayload("OK", SecretValue("a\u0000b"), false))
+            create(admin, CreateSecretPayload("OK", SecretValue("abcd\u0000efgh"), false))
+        }
+        assertFailsWith<InvalidSecretException>("Too short to be scrubbed") {
+            create(admin, CreateSecretPayload("OK", SecretValue("1234567"), false))
         }
         assertFailsWith<InvalidSecretException> {
             create(admin, CreateSecretPayload("OK", SecretValue("x".repeat(16 * 1024 + 1)), false))
@@ -86,13 +90,13 @@ class SecretUseCasesTest {
     @Test
     fun membersListOrgSecretsAndTheirOwnAdminsListEverything() = runTest {
         create(admin, CreateSecretPayload("ORG", SecretValue("org-value-1"), false))
-        create(member, CreateSecretPayload("MINE", SecretValue("my-value-1"), true))
+        val mine = create(member, CreateSecretPayload("MINE", SecretValue("my-value-1"), true))
         create(otherMember, CreateSecretPayload("THEIRS", SecretValue("their-value"), true))
         val list = ListSecretsUseCaseImpl(repository)
 
         assertEquals(listOf("MINE", "ORG"), list(member, null, 50).map { it.name })
         assertEquals(listOf("MINE", "ORG", "THEIRS"), list(admin, null, 500).map { it.name })
-        assertEquals(listOf("ORG"), list(admin, "MINE", 1).map { it.name })
+        assertEquals(listOf("ORG"), list(admin, SecretCursor("MINE", mine.id), 1).map { it.name })
     }
 
     @Test
@@ -210,14 +214,14 @@ class InMemorySecretsRepository : SecretsRepository {
         get(orgId, it)
     }
 
-    override suspend fun list(orgId: Uuid, memberId: Uuid?, afterName: String?, limit: Int): List<Secret> =
+    override suspend fun list(orgId: Uuid, memberId: Uuid?, after: SecretCursor?, limit: Int): List<Secret> =
         rows.values.map { it.secret }
             .filter {
                 it.orgId == orgId &&
                     (memberId == null || it.ownerMemberId == null || it.ownerMemberId == memberId)
             }
-            .filter { afterName == null || it.name > afterName }
-            .sortedBy { it.name }
+            .sortedWith(compareBy({ it.name }, { it.id }))
+            .filter { after == null || it.name > after.name || (it.name == after.name && it.id > after.id) }
             .take(limit)
 
     override suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant, updatedBy: Uuid): Secret? {
@@ -231,11 +235,9 @@ class InMemorySecretsRepository : SecretsRepository {
         return next
     }
 
-    override suspend fun findByName(orgId: Uuid, ownerMemberId: Uuid?, name: String): Secret? =
-        rows.values.map { it.secret }.firstOrNull {
-            it.orgId == orgId &&
-                it.ownerMemberId == ownerMemberId &&
-                it.name == name
+    override suspend fun findManyByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): List<Secret> =
+        rows.values.map { it.secret }.filter {
+            it.orgId == orgId && it.ownerMemberId == ownerMemberId && it.name in names
         }
 
     override suspend fun getOrgSecretsByName(orgId: Uuid, names: Collection<String>): List<StoredSecret> =

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.infrastructure
 
+import io.ktor.http.URLParserException
 import io.ktor.http.Url
 
 /**
@@ -21,7 +22,11 @@ class UpstreamAddressGuard(private val allowPrivate: Boolean = false) {
     fun allows(url: String): Boolean {
         val parsed = try {
             Url(url)
+        } catch (_: URLParserException) {
+            // A part that does not parse (a port that is not a number).
+            null
         } catch (_: IllegalArgumentException) {
+            // A URL that parses but is out of bounds (a port above 65535).
             null
         }
         return when {
@@ -51,48 +56,47 @@ class UpstreamAddressGuard(private val allowPrivate: Boolean = false) {
         val global = first != null && first in GLOBAL_UNICAST && BLOCKED_IPV6_PREFIXES.none { host.startsWith(it) }
         return global && '.' !in host
     }
+}
 
-    /** An IPv4 block, such as `10.0.0.0/8`. */
-    private class Block(cidr: String) {
-        private val bits = cidr.substringAfter('/').toInt()
-        private val base = cidr.substringBefore('/').split('.')
-            .fold(0u) { address, octet -> (address shl OCTET_BITS) or octet.toUInt() }
+/** An IPv4 block, such as `10.0.0.0/8`. */
+private class Block(cidr: String) {
+    private val bits = cidr.substringAfter('/').toInt()
+    private val base = cidr.substringBefore('/').split('.')
+        .fold(0u) { address, octet -> (address shl OCTET_BITS) or octet.toUInt() }
 
-        fun contains(address: UInt): Boolean = (address xor base) shr (IPV4_BITS - bits) == 0u
-    }
+    fun contains(address: UInt): Boolean = (address xor base) shr (IPV4_BITS - bits) == 0u
+}
 
-    private companion object {
-        const val HEX = 16
-        const val IPV4_BITS = 32
-        const val OCTETS = 4
-        const val OCTET_BITS = 8
-        val OCTET = 0..255
-        val OCTET_DIGITS = 1..3
-        val GLOBAL_UNICAST = 0x2000..0x3fff
-        val INTERNAL_SUFFIXES = listOf(".local", ".internal", ".localhost", ".cluster.local", ".svc", ".home.arpa")
-        val BLOCKED_IPV6_PREFIXES = listOf("2001:db8", "2001:0db8", "2002:")
+// Top level rather than in a private companion, whose synthetic accessors no test reaches.
+private const val HEX = 16
+private const val IPV4_BITS = 32
+private const val OCTETS = 4
+private const val OCTET_BITS = 8
+private val OCTET = 0..255
+private val OCTET_DIGITS = 1..3
+private val GLOBAL_UNICAST = 0x2000..0x3fff
+private val INTERNAL_SUFFIXES = listOf(".local", ".internal", ".localhost", ".cluster.local", ".svc", ".home.arpa")
+private val BLOCKED_IPV6_PREFIXES = listOf("2001:db8", "2001:0db8", "2002:")
 
-        /** This network, private, loopback, CGNAT, link-local (cloud metadata), documentation, benchmark, multicast. */
-        val BLOCKED_IPV4 = listOf(
-            "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
-            "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
-            "224.0.0.0/3",
-        ).map(::Block)
+/** This network, private, loopback, CGNAT, link-local (cloud metadata), documentation, benchmark, multicast. */
+private val BLOCKED_IPV4 = listOf(
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+    "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
+    "224.0.0.0/3",
+).map(::Block)
 
-        /** A dotted IPv4 literal as a number, or null. */
-        fun ipv4(host: String): UInt? {
-            val parts = host.split('.')
-            val octets = parts.mapNotNull { part ->
-                part.toIntOrNull()?.takeIf {
-                    part.length in OCTET_DIGITS &&
-                        it in OCTET
-                }
-            }
-            return if (parts.size == OCTETS && octets.size == OCTETS) {
-                octets.fold(0u) { address, octet -> (address shl OCTET_BITS) or octet.toUInt() }
-            } else {
-                null
-            }
+/** A dotted IPv4 literal as a number, or null. */
+private fun ipv4(host: String): UInt? {
+    val parts = host.split('.')
+    val octets = parts.mapNotNull { part ->
+        part.toIntOrNull()?.takeIf {
+            part.length in OCTET_DIGITS &&
+                it in OCTET
         }
+    }
+    return if (parts.size == OCTETS && octets.size == OCTETS) {
+        octets.fold(0u) { address, octet -> (address shl OCTET_BITS) or octet.toUInt() }
+    } else {
+        null
     }
 }

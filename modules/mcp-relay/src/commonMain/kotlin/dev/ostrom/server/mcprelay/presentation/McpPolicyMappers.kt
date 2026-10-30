@@ -17,8 +17,10 @@ fun ArgumentPolicyRequest.toPayload() = ArgumentPolicyPayload(
     conditions = conditions.map {
         val operator = enumOf<ConditionOperator>(it.operator, "operator")
         if (operator == ConditionOperator.MATCHES) {
+            // Checked here, before the condition compiles it: a missing or broken pattern is the caller's 400.
+            val pattern = it.value ?: throw InvalidMcpServerException("The condition on ${it.path} needs a pattern.")
             try {
-                Regex(it.value.orEmpty())
+                Regex(pattern)
             } catch (_: IllegalArgumentException) {
                 throw InvalidMcpServerException("The regular expression of ${it.path} does not compile.")
             }

@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.mcprelay
+
+import dev.ostrom.server.mcprelay.domain.McpRelayRepository
+import dev.ostrom.server.mcprelay.domain.McpTransport
+import dev.ostrom.server.mcprelay.domain.StdioLauncher
+import dev.ostrom.server.mcprelay.domain.StdioSpec
+import dev.ostrom.server.mcprelay.presentation.ArgumentConditionDto
+import dev.ostrom.server.mcprelay.presentation.ArgumentPoliciesResponse
+import dev.ostrom.server.mcprelay.presentation.ArgumentPolicyRequest
+import dev.ostrom.server.mcprelay.presentation.ArgumentPolicyResponse
+import dev.ostrom.server.mcprelay.presentation.McpAssignmentRequest
+import dev.ostrom.server.mcprelay.presentation.McpAssignmentResponse
+import dev.ostrom.server.mcprelay.presentation.McpAssignmentsPage
+import dev.ostrom.server.mcprelay.presentation.McpCallsPage
+import dev.ostrom.server.mcprelay.presentation.McpServerDto
+import dev.ostrom.server.mcprelay.presentation.McpSettingsDto
+import dev.ostrom.server.mcprelay.presentation.McpUsageResponse
+import dev.ostrom.server.secrets.SecretsModule
+import dev.ostrom.server.secrets.presentation.SecretWriteRequest
+import dev.ostrom.server.testing.serverTest
+import io.ktor.client.call.body
+import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.delete
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.uuid.Uuid
+
+/** Assignments, policies, settings and the journal managed over HTTP, and the repository on its own. */
+class McpRelayManagementPostgresTest : RelayPostgresHarness() {
+    @Test
+    fun assignmentsCarryAMembersOwnCredentialAndAreRemoved() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                val sentry = McpServerDto("sentry", "https://sentry.example.com/mcp", "http", scope = "per-member")
+                assertEquals(HttpStatusCode.Created, sendJson(HttpMethod.Post, "$admin/servers", sentry).status)
+                val mine = sendJson(
+                    HttpMethod.Post,
+                    "/api/v1/secrets",
+                    SecretWriteRequest("MINE", "member_own_token", "personal"),
+                    "member-a",
+                )
+                assertEquals(HttpStatusCode.Created, mine.status, mine.bodyAsText())
+                val own = "$admin/servers/sentry/assignments/${Relay.memberA.memberId}"
+                val unknown = sendJson(HttpMethod.Put, own, McpAssignmentRequest(credentialSecret = "NOPE"))
+                assertEquals(HttpStatusCode.BadRequest, unknown.status, "An unknown personal secret")
+                val assigned = sendJson(HttpMethod.Put, own, McpAssignmentRequest(listOf("send"), "MINE"))
+                assertEquals("MINE", assigned.body<McpAssignmentResponse>().credentialSecret)
+                assign(McpServerDto("sentry", transport = "http"), "all", null)
+                val listed = client.get("$admin/servers/sentry/assignments") { bearerAuth("admin-a") }
+                    .body<McpAssignmentsPage>().items
+                assertEquals(listOf(null, "MINE"), listed.map { it.credentialSecret }, "The org's first, then members'")
+                for (member in listOf(Relay.memberA.memberId.toString(), "all")) {
+                    val path = "$admin/servers/sentry/assignments/$member"
+                    assertEquals(HttpStatusCode.NoContent, client.delete(path) { bearerAuth("admin-a") }.status)
+                    assertEquals(HttpStatusCode.NotFound, client.delete(path) { bearerAuth("admin-a") }.status)
+                }
+                val badId = client.delete("$admin/servers/sentry/assignments/nope") { bearerAuth("admin-a") }
+                assertEquals(HttpStatusCode.NotFound, badId.status)
+            }
+        }
+
+    @Test
+    fun policiesSettingsAndTheJournalAreReadAndChangedOverHttp() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                grafana()
+                val policies = "$admin/servers/grafana/policies"
+                val prod =
+                    ArgumentPolicyRequest(
+                        "query",
+                        listOf(ArgumentConditionDto("db", "matches", "^prod")),
+                        "deny",
+                        "No.",
+                    )
+                val created = sendJson(HttpMethod.Post, policies, prod)
+                assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+                val id = created.body<ArgumentPolicyResponse>().id
+                val broken = prod.copy(conditions = listOf(ArgumentConditionDto("db", "matches", "(")))
+                assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Post, policies, broken).status)
+                val listed = client.get(policies) { bearerAuth("admin-a") }.body<ArgumentPoliciesResponse>()
+                assertEquals(listOf("MATCHES"), listed.policies.single().conditions.map { it.operator })
+                assertEquals(HttpStatusCode.NoContent, client.delete("$policies/$id") { bearerAuth("admin-a") }.status)
+                assertEquals(HttpStatusCode.NotFound, client.delete("$policies/$id") { bearerAuth("admin-a") }.status)
+                assertEquals(HttpStatusCode.NotFound, client.delete("$policies/nope") { bearerAuth("admin-a") }.status)
+
+                val settings = client.get("$admin/settings") { bearerAuth("member-a") }.body<McpSettingsDto>()
+                assertEquals(McpSettingsDto("ostrom"), settings)
+                val before = client.get("$admin/calls?before=2030-01-01T00:00:00Z") { bearerAuth("admin-a") }
+                assertEquals(emptyList(), before.body<McpCallsPage>().items)
+                assertEquals(
+                    HttpStatusCode.BadRequest,
+                    client.get("$admin/calls?before=yesterday") { bearerAuth("admin-a") }.status,
+                )
+                val usage = client.get("$admin/usage?days=7") { bearerAuth("admin-a") }.body<McpUsageResponse>()
+                assertEquals(emptyMap(), usage.byServer)
+            }
+        }
+
+    @Test
+    fun theRepositoryStoresAStdioCommandAndMissesWhatIsNotThere() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            val repository = server.koin.get<McpRelayRepository>()
+            val stdio = Relay.server("mysql", transport = McpTransport.STDIO).copy(
+                stdio = StdioSpec(
+                    StdioLauncher.PYPI,
+                    "mcp-mysql==1.2.0",
+                    listOf("--read-only"),
+                    mapOf("MYSQL_MODE" to "ro"),
+                    mapOf("MYSQL_DSN" to Uuid.random()),
+                ),
+            )
+            assertTrue(repository.createServer(stdio))
+            assertEquals(stdio, repository.getServer(Relay.orgA, stdio.id))
+            assertNull(repository.getServer(Relay.orgA, Uuid.random()))
+            assertNull(repository.getServer(Relay.orgB, stdio.id), "Another org misses it")
+            assertNull(repository.updateServer(stdio.copy(id = Uuid.random())))
+            assertFalse(repository.deleteServer(Relay.orgB, stdio.id))
+        }
+}
