@@ -28,9 +28,13 @@ class GitHubGateChecks(
 ) : GateChannel {
     override val name: String = "github-check"
 
-    override suspend fun requested(gate: Gate, requests: List<ApprovalRequest>) = publish(gate, requests)
+    override suspend fun requested(gate: Gate, requests: List<ApprovalRequest>) {
+        publish(gate, requests)
+    }
 
-    override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) = publish(gate, requests)
+    override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) {
+        publish(gate, requests)
+    }
 
     /**
      * Publishes the gate's check, or updates the one already published. A check completed with a conclusion that

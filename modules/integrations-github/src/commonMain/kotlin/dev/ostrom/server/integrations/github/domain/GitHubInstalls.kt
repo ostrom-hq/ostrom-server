@@ -59,19 +59,21 @@ class GitHubInstalls(
     suspend fun finish(installationId: String?, state: String?): GitHubInstallation {
         val id = installationId?.toLongOrNull()
         if (id == null || state.isNullOrEmpty() || state.length > MAX_STATE) {
-            throw OstromException(ErrorKind.INVALID_REQUEST, "This is not a GitHub installation callback.")
+            refuse(ErrorKind.INVALID_REQUEST, "This is not a GitHub installation callback.")
         }
         val orgId = repository.takeState(hash(state), clock.now())
-            ?: throw OstromException(ErrorKind.FORBIDDEN, "This install link expired or was already used.")
+            ?: refuse(ErrorKind.FORBIDDEN, "This install link expired or was already used.")
         val account = api.installationAccount(id)
-            ?: throw OstromException(ErrorKind.INVALID_REQUEST, "GitHub does not know this installation of the App.")
+            ?: refuse(ErrorKind.INVALID_REQUEST, "GitHub does not know this installation of the App.")
         if (repository.installationById(id)?.let { it.orgId != orgId } == true) {
-            throw OstromException(ErrorKind.CONFLICT, "This installation belongs to another organization.")
+            refuse(ErrorKind.CONFLICT, "This installation belongs to another organization.")
         }
         val installation = GitHubInstallation(orgId, id, account)
         repository.saveInstallation(installation, clock.now())
         return installation
     }
+
+    private fun refuse(kind: ErrorKind, message: String): Nothing = throw OstromException(kind, message)
 
     private suspend fun hash(state: String): String =
         CryptographyProvider.Default.get(SHA256).hasher().hash(state.encodeToByteArray())
