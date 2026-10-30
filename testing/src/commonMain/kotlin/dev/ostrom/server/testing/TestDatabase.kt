@@ -34,19 +34,22 @@ import kotlin.uuid.Uuid
  * @property driver The connection pool of the serving role.
  * @property owner The connection pool of the owner, for migrations.
  * @property superuser The connection pool of the configured user, never the path under test.
- * @property ownerRole The name of the owner role.
- * @property servingRole The name of the serving role.
  */
 class TestDatabase private constructor(
     val driver: Driver,
     val owner: Driver,
     val superuser: Driver,
-    val ownerRole: String,
-    val servingRole: String,
     private val admin: DatabaseConfig,
-    private val name: String,
+    private val id: String,
 ) {
+    private val name: String get() = databaseName(id)
     private val url: String get() = admin.url.substringBeforeLast('/') + "/" + name
+
+    /** The name of the owner role, which owns the database, its schema and its tables. */
+    val ownerRole: String get() = ownerRoleName(id)
+
+    /** The name of the serving role, the one [driver] connects as. */
+    val servingRole: String get() = servingRoleName(id)
 
     /**
      * Runs [block] connected to this database as a fresh login role, like a deployment's serving role: not a
@@ -131,9 +134,9 @@ class TestDatabase private constructor(
                 maxConnections = 1,
             )
             val id = Uuid.random().toHexString()
-            val name = "ostrom_test_$id"
-            val ownerRole = "ostrom_test_owner_$id"
-            val servingRole = "ostrom_test_app_$id"
+            val name = databaseName(id)
+            val ownerRole = ownerRoleName(id)
+            val servingRole = servingRoleName(id)
             val ownerPassword = Uuid.random().toHexString()
             val servingPassword = Uuid.random().toHexString()
             // As ci/database-roles.sql, the roles first, then the database owned by the owner.
@@ -152,6 +155,33 @@ class TestDatabase private constructor(
             )
             val testUrl = config.url.substringBeforeLast('/') + "/" + name
             val superuser = connectPostgres(config.copy(url = testUrl, maxConnections = SUPERUSER_POOL_SIZE))
+            superuser.grantAsADeployment(ownerRole, servingRole)
+            return TestDatabase(
+                driver = connectPostgres(DatabaseConfig(testUrl, servingRole, servingPassword, POOL_SIZE)),
+                owner = connectPostgres(DatabaseConfig(testUrl, ownerRole, ownerPassword, OWNER_POOL_SIZE)),
+                superuser = superuser,
+                admin = config,
+                id = id,
+            )
+        }
+
+        private const val TENANT = TENANT_ROLE
+
+        private fun databaseName(id: String) = "ostrom_test_$id"
+
+        private fun ownerRoleName(id: String) = "ostrom_test_owner_$id"
+
+        private fun servingRoleName(id: String) = "ostrom_test_app_$id"
+
+        // The owner of the cross-organization functions (docs/tenancy.md), never granted to the serving role.
+        private const val ROUTER = "ostrom_router"
+
+        // Roles are global to the cluster: tolerate one created by another test, a migration or the roles script.
+        private fun tolerated(sql: String) =
+            "DO $$ BEGIN $sql; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+
+        /** The schema's owner and grants, as ci/database-roles.sql sets them on a deployment's database. */
+        private suspend fun Driver.grantAsADeployment(ownerRole: String, servingRole: String) {
             listOf(
                 "ALTER SCHEMA public OWNER TO $ownerRole",
                 "REVOKE ALL ON SCHEMA public FROM PUBLIC",
@@ -162,26 +192,8 @@ class TestDatabase private constructor(
                     "GRANT USAGE, SELECT ON SEQUENCES TO $servingRole",
                 "ALTER DEFAULT PRIVILEGES FOR ROLE $ownerRole IN SCHEMA public " +
                     "GRANT EXECUTE ON FUNCTIONS TO $servingRole",
-            ).forEach { superuser.execute(it).getOrThrow() }
-            return TestDatabase(
-                driver = connectPostgres(DatabaseConfig(testUrl, servingRole, servingPassword, POOL_SIZE)),
-                owner = connectPostgres(DatabaseConfig(testUrl, ownerRole, ownerPassword, OWNER_POOL_SIZE)),
-                superuser = superuser,
-                ownerRole = ownerRole,
-                servingRole = servingRole,
-                admin = config,
-                name = name,
-            )
+            ).forEach { execute(it).getOrThrow() }
         }
-
-        private const val TENANT = TENANT_ROLE
-
-        // The owner of the cross-organization functions (docs/tenancy.md), never granted to the serving role.
-        private const val ROUTER = "ostrom_router"
-
-        // Roles are global to the cluster: tolerate one created by another test, a migration or the roles script.
-        private fun tolerated(sql: String) =
-            "DO $$ BEGIN $sql; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
 
         /** Runs [statements] on a connection to the configured database opened for them alone, always closed. */
         private suspend fun administer(config: DatabaseConfig, vararg statements: String) {
