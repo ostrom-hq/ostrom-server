@@ -72,7 +72,7 @@ This adds `Signed-off-by: Your Name <you@example.com>` to the message. Forgot it
 push with `--force-with-lease`. The `community` check verifies every commit of a pull request from a contributor
 without write access; maintainers signed it once for all.
 
-Contributions are made under the [GNU AGPL v3.0](LICENSE) (inbound = outbound).
+Contributions to `ee/` are made under the [Ostrom Enterprise License](ee/LICENSE); everything else under the [GNU AGPL v3.0](LICENSE).
 
 ## License headers
 
