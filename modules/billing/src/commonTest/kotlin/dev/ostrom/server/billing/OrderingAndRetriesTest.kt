@@ -74,7 +74,7 @@ class OrderingAndRetriesTest {
         world.repository.save(world.subscribe().copy(paymentIssue = issue))
         world.events(world.event("invoice.payment_failed").copy(created = NOW - 1.hours))
         assertEquals(issue, world.repository.get(world.org)?.paymentIssue)
-        assertEquals(emptyList(), world.notifier.issues)
+        assertTrue(world.notifier.issues.isEmpty())
     }
 
     @Test
@@ -103,10 +103,10 @@ class OrderingAndRetriesTest {
         val world = World()
         val billing = world.subscribe()
         world.sync(billing, "sub_1")
-        assertEquals(emptyList(), world.unknownPrices)
+        assertTrue(world.unknownPrices.isEmpty())
         world.stripe.subscription = stripeSubscription(lookupKey = "someone_elses_price")
         world.sync(billing, "sub_1")
-        assertEquals(listOf("sub_1" to "someone_elses_price"), world.unknownPrices)
+        assertEquals(listOf<Pair<String, String?>>("sub_1" to "someone_elses_price"), world.unknownPrices.toList())
     }
 
     @Test
@@ -159,7 +159,7 @@ class OrderingAndRetriesTest {
         val lines = mutableListOf<String>()
         GuardedBillingNotifier(world.notifier, recording(lines)).agentHoursReached(world.org, 80, 240, 300)
         assertEquals(listOf(world.org to 80), world.notifier.hours)
-        assertEquals(emptyList(), lines)
+        assertTrue(lines.isEmpty())
         val cancelled = GuardedBillingNotifier(Failing(CancellationException("stop")), recording(lines))
         assertFailsWith<CancellationException> { cancelled.agentHoursReached(world.org, 80, 240, 300) }
     }
