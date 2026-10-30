@@ -56,7 +56,13 @@ class GitHubOAuthProvider(
 ) : OAuthProvider {
     override val provider: IdentityProvider = IdentityProvider.GITHUB
 
-    override fun authorizationUrl(state: String, codeChallenge: String, nonce: String, redirectUri: String): String =
+    override fun authorizationUrl(
+        state: String,
+        codeChallenge: String,
+        nonce: String,
+        redirectUri: String,
+        reauthenticate: Boolean,
+    ): String =
         URLBuilder("$webUrl/login/oauth/authorize").apply {
             parameters.append("client_id", client.clientId)
             parameters.append("redirect_uri", redirectUri)
@@ -65,6 +71,8 @@ class GitHubOAuthProvider(
             parameters.append("code_challenge", codeChallenge)
             parameters.append("code_challenge_method", "S256")
             parameters.append("allow_signup", "true")
+            // GitHub has no max_age: the account picker at least stops a silent sign-in.
+            if (reauthenticate) parameters.append("prompt", "select_account")
         }.buildString()
 
     override suspend fun identity(
@@ -174,7 +182,13 @@ class OidcProvider(
     private val clock: Clock,
     private val connectionId: Uuid? = null,
 ) : OAuthProvider {
-    override fun authorizationUrl(state: String, codeChallenge: String, nonce: String, redirectUri: String): String =
+    override fun authorizationUrl(
+        state: String,
+        codeChallenge: String,
+        nonce: String,
+        redirectUri: String,
+        reauthenticate: Boolean,
+    ): String =
         URLBuilder(endpoints.authorizationEndpoint).apply {
             parameters.append("response_type", "code")
             parameters.append("client_id", client.clientId)
@@ -185,6 +199,8 @@ class OidcProvider(
             parameters.append("code_challenge", codeChallenge)
             parameters.append("code_challenge_method", "S256")
             endpoints.extraParameters.forEach { (name, value) -> parameters.append(name, value) }
+            // OpenID Connect: a sign-in older than this is not reused, the provider asks again.
+            if (reauthenticate) parameters.append("max_age", REAUTHENTICATION_MAX_AGE_SECONDS.toString())
         }.buildString()
 
     override suspend fun identity(
@@ -275,6 +291,9 @@ class OidcProvider(
 
     private companion object {
         const val JWT_PARTS = 3
+
+        /** A sign-in again before a yes: the provider reuses none older than the five minutes of S2-54. */
+        const val REAUTHENTICATION_MAX_AGE_SECONDS = 300
     }
 }
 

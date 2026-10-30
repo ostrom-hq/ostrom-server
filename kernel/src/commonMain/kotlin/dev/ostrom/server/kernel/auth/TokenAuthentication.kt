@@ -39,14 +39,19 @@ class TokenAuthenticationProvider internal constructor(config: Config) : Authent
     override suspend fun onAuthenticate(context: AuthenticationContext) {
         val call = context.call
         val token = call.bearerToken()
+        val prefix = authenticator.sessionCookiePrefix
+        val cookie = call.request.cookies[prefix + SESSION_COOKIE]?.takeIf { it.isNotEmpty() }
         // A bearer token wins over a cookie: a CLI or an API client never depends on a browser cookie.
-        val session = if (token == null) call.request.cookies[SESSION_COOKIE]?.takeIf { it.isNotEmpty() } else null
+        val session = if (token == null) cookie else null
         val principal = when {
             token != null -> authenticator.authenticate(token)
             session != null -> authenticator.authenticateSession(
                 sessionToken = session,
-                csrfToken = call.request.headers[CSRF_HEADER],
+                // Double submit (S2-08): the header counts only when it repeats the readable CSRF cookie.
+                csrfToken = call.request.headers[CSRF_HEADER]
+                    ?.takeIf { it == call.request.cookies[prefix + CSRF_COOKIE] },
                 requireCsrf = call.request.httpMethod !in SAFE_METHODS,
+                origin = call.request.headers[HttpHeaders.Origin],
             )
             else -> null
         }

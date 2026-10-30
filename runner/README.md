@@ -1,21 +1,31 @@
 # The runner of cloud sessions
 
-`ostrom-runner` is the process of a cloud session's pod (module `runners` on the server side). It clones the
-repository, opens a PTY running the agent (`/bin/sh -c` then a login shell once the agent exits), relays that
-terminal to the server's WebSocket `/api/v1/cloud/runner/terminal`, and heartbeats the execution on
-`/api/v1/cloud/runner/heartbeat`. It authenticates with its runner token, mounted as a file of the session's
-Kubernetes Secret (`OSTROM_RUNNER_TOKEN_FILE`), or passed as a variable by the Docker runtime.
+`ostrom-runner` is the process of a cloud session (module `runners` on the server side). A session runs the image
+twice, as two containers that share only a socket directory:
+
+- **The agent host** (`ostrom-runner agent-host`, UID 1000, the agent's container). It owns the workspace and runs
+  each terminal the runner asks for on a PTY: `/bin/sh -c` cloning the repository and starting the agent, then a
+  login shell once the agent exits. It never has the runner token.
+- **The runner** (`ostrom-runner`, UID 1001). It holds the runner token, relays the terminal to the server's
+  WebSocket `/api/v1/cloud/runner/terminal`, and heartbeats the execution on `/api/v1/cloud/runner/heartbeat`. It
+  reaches the agent host through the Unix socket `/run/ostrom/agent.sock` (`OSTROM_AGENT_SOCKET`), opened to the
+  group the two containers share (2000).
+
+On Kubernetes the agent host is a native sidecar of the session pod (an init container with `restartPolicy: Always`,
+**Kubernetes 1.29 or later**), so the pod ends when the runner ends. The token and the first message reach the
+runner's container only, as variables the kubelet reads from the execution's Secret (`secretKeyRef`): they are in
+no file, in no volume, and not in the pod's spec. The pod does not share its process namespace. On Docker, the
+driver runs the same two containers.
+
+## The agent cannot read the runner token (S2-49)
+
+The agent and the runner never share a UID, a container, a process namespace or the token. CI proves it on the real
+image (`ci/runner-isolation.sh`, step "Session image, the agent cannot read the runner token" of the `ci` job). It
+runs one session as the Docker driver does, then checks four things:
+
+- the runner started the agent's terminal through the host;
+- the agent's container sees no process of another UID;
+- nothing the agent can read holds the token: process environments, command lines, writable directories;
+- the same search in the runner's container does find the token.
 
 The image is built from `runner/Dockerfile`; the binary is native (Kotlin/Native, `linuxX64` and `linuxArm64`).
-
-## Before cloud sessions are turned back on
-
-Cloud sessions are off. These conditions come first:
-
-- **S2-49: the agent runs as the same user as the runner.** The runner and the agent it starts share uid 1000 in
-  the pod, so the agent can read the runner token file (and the runner's memory). It cannot see the token in its
-  environment: the runner removes the variables in `RunnerConfig.PRIVATE_VARIABLES` before starting the agent.
-  The agent must run as a separate user that cannot read the token, with the runner keeping the token to itself
-  (for example a second uid in the pod's security context and a token file readable by the runner's uid only).
-  Until that is done, a session's agent can use its runner token: heartbeat for its execution, or attach to its
-  own terminal channel. It cannot reach another session.

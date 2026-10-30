@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs
 
-import org.koin.dsl.koinApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import org.koin.dsl.koinApplication
 
 class OrgsModuleRegistrationTest {
     @Test

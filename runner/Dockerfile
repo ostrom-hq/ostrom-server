@@ -1,6 +1,9 @@
-# The cloud session image: the runner (pid 1 of the session pod), the agents' CLIs and the `ostrom` CLI, on Debian
-# with Node.js for the agents. Contract with the server (modules/runners): /usr/local/bin/ostrom-runner, UID 1000,
-# /bin/sh, git and bash. Build context: a directory holding bin/ostrom-runner and, when available, bin/ostrom.
+# The cloud session image: the runner, the agents' CLIs and the `ostrom` CLI, on Debian with Node.js for the agents.
+# A session runs it twice (S2-49): `ostrom-runner agent-host` as UID 1000 runs the agent, with the workspace;
+# `ostrom-runner` as UID 1001 holds the runner token and talks to the server. They share only the socket directory
+# /run/ostrom (group 2000). Contract with the server (modules/runners): /usr/local/bin/ostrom-runner, those UIDs and
+# that group, /bin/sh, git and bash. Build context: a directory holding bin/ostrom-runner and, when available,
+# bin/ostrom.
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
@@ -21,9 +24,10 @@ RUN npm install -g \
 
 COPY bin/ /opt/ostrom-bin/
 RUN install -m 0755 /opt/ostrom-bin/* /usr/local/bin/ && rm -rf /opt/ostrom-bin \
- && mkdir -p /workspace && chown 1000:1000 /workspace
+ && mkdir -p /workspace /run/ostrom && chown 1000:1000 /workspace \
+ && chown 1000:2000 /run/ostrom && chmod 2770 /run/ostrom
 
-# The image's `node` user is UID 1000.
+# The image's `node` user is UID 1000: the agent's. The runner's container sets its own UID.
 USER 1000:1000
 WORKDIR /workspace
 ENV HOME=/workspace/.home
