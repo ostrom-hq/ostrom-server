@@ -60,12 +60,15 @@ data class StripeConfig(
 )
 
 /**
- * [StripeGateway] over Stripe's form-encoded HTTP API. Writes carry an idempotency key, so a retried request after a
- * timeout never creates a second customer or session.
+ * [StripeGateway] over Stripe's form-encoded HTTP API. A customer is created under a key derived from its
+ * organization, so two purchases started together, or a retry after a timeout, get the same customer for 24 hours.
+ * Every other write carries a fresh key: they set absolute values (a price, a quantity, a cancellation), which a
+ * repeat leaves as they are, and a meter event is counted once by its own identifier. A key derived from the
+ * parameters would be wrong for them: cancel, reactivate, cancel again within 24 hours would replay the first answer.
  *
  * @param client The HTTP client (Curl on Linux, Darwin on macOS; MockEngine in unit tests).
  * @param config The key and base URL.
- * @param idempotencyKey Generates the key of each write (random; fixed in tests).
+ * @param idempotencyKey Generates the key of the writes other than a customer (random; fixed in tests).
  */
 @Suppress("TooManyFunctions") // implements StripeGateway, one function per Stripe call
 class StripeGatewayImpl(
@@ -80,6 +83,7 @@ class StripeGatewayImpl(
         HttpMethod.Post,
         "/v1/customers",
         listOfNotNull(name?.let { "name" to it }, email?.let { "email" to it }, "metadata[org_id]" to orgId.toString()),
+        key = "ostrom-customer-$orgId",
     ).requireString("id")
 
     override suspend fun priceId(lookupKey: String): String = priceLock.withLock {
@@ -179,7 +183,12 @@ class StripeGatewayImpl(
         listOf("customer" to customerId, "limit" to limit.toString()),
     ).array("data").map { it.jsonObject.toInvoice() }
 
-    private suspend fun call(method: HttpMethod, path: String, params: List<Pair<String, String>>): JsonObject {
+    private suspend fun call(
+        method: HttpMethod,
+        path: String,
+        params: List<Pair<String, String>>,
+        key: String? = null,
+    ): JsonObject {
         val form = params.joinToString("&") { (key, value) ->
             "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
         }
@@ -191,7 +200,7 @@ class StripeGatewayImpl(
             basicAuth(config.secretKey, "")
             header("Stripe-Version", STRIPE_API_VERSION)
             if (method == HttpMethod.Post) {
-                header("Idempotency-Key", idempotencyKey())
+                header("Idempotency-Key", key ?: idempotencyKey())
                 contentType(ContentType.Application.FormUrlEncoded)
                 setBody(form)
             }

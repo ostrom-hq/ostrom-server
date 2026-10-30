@@ -84,10 +84,19 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
                 .bind("period_end", billing.currentPeriodEnd)
                 .bind("cancel", billing.cancelAtPeriodEnd)
                 .bind("committed", billing.committedPeople)
-                .bind("issue_kind", billing.paymentIssue?.kind?.key)
+                .bind("issue_kind", billing.paymentIssue?.let { it.kind.key })
                 .bind("issue_url", billing.paymentIssue?.hostedInvoiceUrl)
                 .bind("issue_at", billing.paymentIssue?.at)
                 .bind("updated_at", billing.updatedAt),
+        ).getOrThrow()
+    }
+
+    override suspend fun raiseCommittedPeople(orgId: Uuid, people: Int, at: Instant): Unit = scoped(orgId) {
+        execute(
+            Statement.create(
+                "UPDATE billing_accounts SET committed_people = GREATEST(committed_people, :people), " +
+                    "updated_at = :at WHERE org_id = :org_id",
+            ).bind("people", people).bind("at", at).bind("org_id", orgId),
         ).getOrThrow()
     }
 
@@ -151,7 +160,9 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
             Statement.create(
                 "SELECT agent_seconds, sessions FROM billing_usage WHERE org_id = :org_id AND period_start = :period",
             ).bind("org_id", orgId).bind("period", periodStart),
-        ).getOrThrow().firstOrNull()?.toUsage(periodStart) ?: Usage(periodStart, 0, 0)
+        ).getOrThrow().firstOrNull().let { row ->
+            if (row == null) Usage(periodStart, 0, 0) else row.toUsage(periodStart)
+        }
     }
 
     override suspend fun recordAlert(orgId: Uuid, periodStart: Instant, percent: Int, at: Instant): Boolean =
@@ -189,12 +200,18 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         ).getOrThrow()
     }
 
-    override suspend fun dueTasks(now: Instant, limit: Int): List<OutboxTask> = driver.fetchAll(
+    // SKIP LOCKED lets two replicas claim at the same time without waiting for, or taking, each other's rows.
+    override suspend fun claimDueTasks(
+        now: Instant,
+        leaseUntil: Instant,
+        limit: Int,
+    ): List<OutboxTask> = driver.fetchAll(
         Statement.create(
-            "SELECT id, org_id, kind, identifier, happened_at, attempts FROM billing_outbox " +
-                "WHERE done_at IS NULL AND next_attempt_at <= :now ORDER BY next_attempt_at LIMIT :limit",
-        ).bind("now", now).bind("limit", limit),
-    ).getOrThrow().map {
+            "UPDATE billing_outbox SET next_attempt_at = :lease WHERE id IN (SELECT id FROM billing_outbox " +
+                "WHERE done_at IS NULL AND next_attempt_at <= :now ORDER BY next_attempt_at LIMIT :limit " +
+                "FOR UPDATE SKIP LOCKED) RETURNING id, org_id, kind, identifier, happened_at, attempts",
+        ).bind("now", now).bind("lease", leaseUntil).bind("limit", limit),
+    ).getOrThrow().sortedBy { it.get("happened_at").asInstant() }.map {
         OutboxTask(
             id = it.get("id").asUuid(),
             orgId = it.get("org_id").asUuid(),

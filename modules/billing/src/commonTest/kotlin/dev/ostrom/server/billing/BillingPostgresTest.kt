@@ -52,6 +52,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -83,14 +84,14 @@ private suspend fun HttpClient.webhook(payload: String): HttpResponse = webhook(
 
 /** Posts [payload] to the webhook with [signature], or without the header when it is null. */
 private suspend fun HttpClient.webhook(payload: String, signature: String?): HttpResponse =
-    post("/v1/billing/stripe/webhook") {
+    post("/api/v1/billing/stripe/webhook") {
         signature?.let { header("Stripe-Signature", it) }
         setBody(payload)
     }
 
 /** The billing overview of [org] read with [token]. */
 private suspend fun HttpClient.overview(org: Uuid, token: String): BillingOverviewResponse =
-    get("/v1/orgs/$org/billing") { bearerAuth(token) }.body()
+    get("/api/v1/orgs/$org/billing") { bearerAuth(token) }.body()
 
 /** Posts to [path] as organization A's billing admin. */
 private suspend inline fun <reified T> HttpClient.postAs(path: String): T = post(path) { bearerAuth("admin-a") }.body()
@@ -202,6 +203,17 @@ class BillingPostgresTest {
         repository.save(full.copy(paymentIssue = null, status = SubscriptionStatus.ACTIVE))
         assertNull(repository.get(ORG_A)?.paymentIssue)
         assertNull(repository.findByCustomer("cus_unknown"))
+        val later = NOW + 1.minutes
+        repository.raiseCommittedPeople(ORG_A, 9, later)
+        val raised = full.copy(
+            paymentIssue = null,
+            status = SubscriptionStatus.ACTIVE,
+            committedPeople = 9,
+            updatedAt = later,
+        )
+        assertEquals(raised, repository.get(ORG_A), "Only the committed people and the time change")
+        repository.raiseCommittedPeople(ORG_A, 3, later)
+        assertEquals(9, repository.get(ORG_A)?.committedPeople, "Never lowered")
     }
 
     @Test
@@ -230,49 +242,52 @@ class BillingPostgresTest {
         val task = OutboxTask(Uuid.random(), ORG_A, OutboxKind.ACTIVE_PERSON, "ostrom-a-1-alice", NOW, 0)
         repository.enqueue(task)
         repository.enqueue(task.copy(id = Uuid.random()))
-        assertEquals(listOf(task), repository.dueTasks(NOW, 10))
-        assertEquals(emptyList(), repository.dueTasks(NOW - 1.minutes, 10))
+        assertEquals(emptyList(), repository.claimDueTasks(NOW - 1.minutes, NOW, 10), "Not due yet")
+        assertEquals(listOf(task), repository.claimDueTasks(NOW, NOW + 10.minutes, 10))
+        assertEquals(emptyList(), repository.claimDueTasks(NOW, NOW + 10.minutes, 10), "Claimed by another worker")
+        assertEquals(listOf(task), repository.claimDueTasks(NOW + 10.minutes, NOW + 20.minutes, 10), "Lease over")
         repository.failTask(task.id, NOW + 1.minutes)
-        assertEquals(emptyList(), repository.dueTasks(NOW, 10))
-        assertEquals(1, repository.dueTasks(NOW + 1.minutes, 10).single().attempts)
+        assertEquals(emptyList(), repository.claimDueTasks(NOW, NOW + 10.minutes, 10))
+        assertEquals(1, repository.claimDueTasks(NOW + 1.minutes, NOW + 2.minutes, 10).single().attempts)
         repository.completeTask(task.id, NOW)
-        assertEquals(emptyList(), repository.dueTasks(NOW + 1.minutes, 10))
+        assertEquals(emptyList(), repository.claimDueTasks(NOW + 1.days, NOW + 2.days, 10))
     }
 
     @Test
     fun theBillingRoutesAnswerByRole() = serverTest(listOf(BillingModule), overrides) { server ->
         val client = server.client
-        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/orgs/$ORG_A/billing").status)
-        assertEquals(HttpStatusCode.NotFound, client.get("/v1/orgs/$ORG_A/billing") { bearerAuth("admin-b") }.status)
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/orgs/$ORG_A/billing").status)
+        val billingOfA = "/api/v1/orgs/$ORG_A/billing"
+        assertEquals(HttpStatusCode.NotFound, client.get(billingOfA) { bearerAuth("admin-b") }.status)
         assertEquals(
             HttpStatusCode.NotFound,
-            client.get("/v1/orgs/not-a-uuid/billing") { bearerAuth("admin-a") }.status,
+            client.get("/api/v1/orgs/not-a-uuid/billing") { bearerAuth("admin-a") }.status,
         )
 
-        val overview = client.get("/v1/orgs/$ORG_A/billing") { bearerAuth("member-a") }.body<BillingOverviewResponse>()
+        val overview = client.get(billingOfA) { bearerAuth("member-a") }.body<BillingOverviewResponse>()
         assertEquals("free", overview.effectivePlan)
         assertEquals(5, overview.limits.maxPeople)
         assertEquals(0, overview.usage.percentOfHours)
         assertTrue(overview.purchasable)
         assertEquals(4, overview.prices.size)
 
-        val forbidden = client.post("/v1/orgs/$ORG_A/billing/checkout") {
+        val forbidden = client.post("/api/v1/orgs/$ORG_A/billing/checkout") {
             bearerAuth("member-a"); contentType(ContentType.Application.Json); setBody(PlanRequest("team", "month"))
         }
         assertEquals(HttpStatusCode.Forbidden, forbidden.status)
-        val bad = client.post("/v1/orgs/$ORG_A/billing/checkout") {
+        val bad = client.post("/api/v1/orgs/$ORG_A/billing/checkout") {
             bearerAuth("admin-a"); contentType(ContentType.Application.Json); setBody(PlanRequest("gold", "month"))
         }
         assertEquals(HttpStatusCode.BadRequest, bad.status)
-        val badInterval = client.post("/v1/orgs/$ORG_A/billing/checkout") {
+        val badInterval = client.post("/api/v1/orgs/$ORG_A/billing/checkout") {
             bearerAuth("admin-a"); contentType(ContentType.Application.Json); setBody(PlanRequest("team", "week"))
         }
         assertEquals(HttpStatusCode.BadRequest, badInterval.status)
-        val checkout = client.post("/v1/orgs/$ORG_A/billing/checkout") {
+        val checkout = client.post("/api/v1/orgs/$ORG_A/billing/checkout") {
             bearerAuth("admin-a"); contentType(ContentType.Application.Json); setBody(PlanRequest("team", "month"))
         }.body<RedirectResponse>()
         assertEquals("https://checkout.stripe.com/c/pay/cs_test_1", checkout.url)
-        val noSubscription = client.post("/v1/orgs/$ORG_B/billing/portal") { bearerAuth("admin-b") }
+        val noSubscription = client.post("/api/v1/orgs/$ORG_B/billing/portal") { bearerAuth("admin-b") }
         assertEquals(HttpStatusCode.Conflict, noSubscription.status)
         assertTrue(noSubscription.bodyAsText().contains("\"type\":\"conflict\""))
     }
@@ -280,18 +295,19 @@ class BillingPostgresTest {
     @Test
     fun onlyAPersonsTokenWithTheBillingScopeGetsIn() = serverTest(listOf(BillingModule), overrides) { server ->
         val client = server.client
-        assertEquals(HttpStatusCode.OK, client.get("/v1/orgs/$ORG_A/billing") { bearerAuth("reader-a") }.status)
-        val readOnly = client.post("/v1/orgs/$ORG_A/billing/portal") { bearerAuth("reader-a") }
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/orgs/$ORG_A/billing") { bearerAuth("reader-a") }.status)
+        val readOnly = client.post("/api/v1/orgs/$ORG_A/billing/portal") { bearerAuth("reader-a") }
         assertEquals(HttpStatusCode.Forbidden, readOnly.status)
         assertTrue(readOnly.bodyAsText().contains("billing:manage"))
-        assertEquals(HttpStatusCode.Forbidden, client.get("/v1/orgs/$ORG_A/billing") { bearerAuth("device-a") }.status)
-        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/orgs/$ORG_A/billing") { bearerAuth("nobody") }.status)
+        val billingOfA = "/api/v1/orgs/$ORG_A/billing"
+        assertEquals(HttpStatusCode.Forbidden, client.get(billingOfA) { bearerAuth("device-a") }.status)
+        assertEquals(HttpStatusCode.Unauthorized, client.get(billingOfA) { bearerAuth("nobody") }.status)
     }
 
     @Test
     fun aSignedWebhookActivatesThePlanAndTheConsoleShowsIt() = serverTest(listOf(BillingModule), overrides) { server ->
         val client = server.client
-        client.post("/v1/orgs/$ORG_A/billing/checkout") {
+        client.post("/api/v1/orgs/$ORG_A/billing/checkout") {
             bearerAuth("admin-a"); contentType(ContentType.Application.Json); setBody(PlanRequest("business", "month"))
         }
         stripe.subscription = stripeSubscription("ostrom_business_monthly")
@@ -301,7 +317,7 @@ class BillingPostgresTest {
         assertEquals(WebhookResponse(true, "processed"), client.webhook(payload).body<WebhookResponse>())
         assertEquals(WebhookResponse(true, "duplicate"), client.webhook(payload).body<WebhookResponse>())
         val signature = sign(payload)
-        val tooLarge = client.post("/v1/billing/stripe/webhook") {
+        val tooLarge = client.post("/api/v1/billing/stripe/webhook") {
             header("Stripe-Signature", signature)
             setBody("x".repeat(300_000))
         }
@@ -317,27 +333,27 @@ class BillingPostgresTest {
     @Test
     fun theOwnerChangesCancelsResumesAndReadsInvoices() = serverTest(listOf(BillingModule), overrides) { server ->
         val client = server.client
-        client.post("/v1/orgs/$ORG_A/billing/checkout") {
+        client.post("/api/v1/orgs/$ORG_A/billing/checkout") {
             bearerAuth("admin-a"); contentType(ContentType.Application.Json); setBody(PlanRequest("business", "month"))
         }
         stripe.subscription = stripeSubscription("ostrom_business_monthly")
         client.webhook(checkoutCompleted())
 
         stripe.subscription = stripeSubscription("ostrom_team_monthly")
-        val changed = client.post("/v1/orgs/$ORG_A/billing/plan") {
+        val changed = client.post("/api/v1/orgs/$ORG_A/billing/plan") {
             bearerAuth("admin-a"); contentType(ContentType.Application.Json); setBody(PlanRequest("team", "month"))
         }.body<BillingOverviewResponse>()
         assertEquals("team", changed.plan)
         stripe.subscription = stripeSubscription("ostrom_team_monthly", cancelAtPeriodEnd = true)
-        assertTrue(client.postAs<BillingOverviewResponse>("/v1/orgs/$ORG_A/billing/cancel").cancelAtPeriodEnd)
+        assertTrue(client.postAs<BillingOverviewResponse>("/api/v1/orgs/$ORG_A/billing/cancel").cancelAtPeriodEnd)
         stripe.subscription = stripeSubscription("ostrom_team_monthly", cancelAtPeriodEnd = false)
-        assertFalse(client.postAs<BillingOverviewResponse>("/v1/orgs/$ORG_A/billing/resume").cancelAtPeriodEnd)
+        assertFalse(client.postAs<BillingOverviewResponse>("/api/v1/orgs/$ORG_A/billing/resume").cancelAtPeriodEnd)
         assertEquals(
             "https://billing.stripe.com/p/session/test_1",
-            client.postAs<RedirectResponse>("/v1/orgs/$ORG_A/billing/portal").url,
+            client.postAs<RedirectResponse>("/api/v1/orgs/$ORG_A/billing/portal").url,
         )
         stripe.invoices = listOf(Invoice("in_1", "A-1", "paid", 4_200, 700, "usd", NOW, "https://pay", null))
-        val invoices = client.get("/v1/orgs/$ORG_A/billing/invoices?limit=5") { bearerAuth("admin-a") }
+        val invoices = client.get("/api/v1/orgs/$ORG_A/billing/invoices?limit=5") { bearerAuth("admin-a") }
             .body<InvoicesResponse>()
         assertEquals("in_1", invoices.invoices.single().id)
         assertEquals(NOW.toString(), invoices.invoices.single().created)
@@ -346,7 +362,7 @@ class BillingPostgresTest {
     @Test
     fun aFailedPaymentKeepsThePlanAndShowsTheInvoice() = serverTest(listOf(BillingModule), overrides) { server ->
         val client = server.client
-        client.post("/v1/orgs/$ORG_A/billing/checkout") {
+        client.post("/api/v1/orgs/$ORG_A/billing/checkout") {
             bearerAuth("admin-a"); contentType(ContentType.Application.Json); setBody(PlanRequest("team", "month"))
         }
         stripe.subscription = stripeSubscription("ostrom_team_monthly")

@@ -75,7 +75,20 @@ class StripeGatewayImplTest {
         )
         assertEquals(STRIPE_API_VERSION, sent.headers.getValue("Stripe-Version"))
         assertEquals("2026-09-30.endive", STRIPE_API_VERSION)
-        assertEquals("idem-1", sent.headers.getValue("Idempotency-Key"))
+        assertEquals("ostrom-customer-$ORG", sent.headers.getValue("Idempotency-Key"), "One customer per organization")
+    }
+
+    @Test
+    fun writesOtherThanACustomerCarryTheGeneratedKey() = runTest {
+        val harness = Harness(200 to """{"id":"sub_1"}""")
+        harness.gateway.setCancelAtPeriodEnd("sub_1", true)
+        assertEquals("idem-1", harness.sent.single().headers.getValue("Idempotency-Key"))
+    }
+
+    @Test
+    fun aSubscriptionWithoutCustomerIsRefused() = runTest {
+        val harness = Harness(200 to """{"id":"sub_1","status":"active"}""")
+        assertFailsWith<IllegalArgumentException> { harness.gateway.getSubscription("sub_1") }
     }
 
     @Test
@@ -285,7 +298,8 @@ class StripeGatewayImplTest {
         val harness = Harness(
             200 to """{"id":"sub_1","customer":"cus_1","status":"active","current_period_start":10,
                 "current_period_end":20,"items":{"data":[{"id":"si_1"}]}}""",
-            200 to """{"id":"sub_1","customer":"cus_1","status":"incomplete","items":{"data":[]}}""",
+            200 to """{"id":"sub_1","customer":"cus_1","status":"incomplete","cancel_at_period_end":true,
+                "items":{"data":[]}}""",
         )
         val withItem = harness.gateway.getSubscription("sub_1")
         assertEquals("si_1", withItem.itemId)
@@ -293,10 +307,10 @@ class StripeGatewayImplTest {
         assertEquals(Instant.fromEpochSeconds(10), withItem.currentPeriodStart)
         assertEquals(Instant.fromEpochSeconds(20), withItem.currentPeriodEnd)
         val noPeriod = harness.gateway.getSubscription("sub_1")
+        assertTrue(noPeriod.cancelAtPeriodEnd, "cancel_at_period_end: true")
         assertNull(noPeriod.itemId)
         assertNull(noPeriod.currentPeriodStart)
         assertNull(noPeriod.currentPeriodEnd)
-        assertFalse(noPeriod.cancelAtPeriodEnd)
     }
 
     @Test
@@ -321,8 +335,8 @@ class StripeGatewayImplTest {
             }),
             StripeConfig("sk_test_123"),
         )
-        gateway.createCustomer(ORG, null, null)
-        gateway.createCustomer(ORG, null, null)
+        gateway.setCancelAtPeriodEnd("sub_1", true)
+        gateway.setCancelAtPeriodEnd("sub_1", true)
         assertEquals(2, keys.toSet().size)
         assertTrue(keys.all { Uuid.parse(it).toString() == it })
     }

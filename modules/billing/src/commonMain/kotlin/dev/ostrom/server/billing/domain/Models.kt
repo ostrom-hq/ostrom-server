@@ -91,7 +91,7 @@ data class OrgBilling(
     val effectivePlan: Plan get() = if (status?.grantsPlan == true) plan else Plan.FREE
 
     /** Whether a subscription is running (a new checkout must not create a second one). */
-    val hasLiveSubscription: Boolean get() = live() != null
+    val hasLiveSubscription: Boolean get() = stripeSubscriptionId != null && status?.grantsPlan == true
 }
 
 /**

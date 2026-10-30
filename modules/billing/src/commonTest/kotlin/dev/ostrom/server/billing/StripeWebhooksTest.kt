@@ -147,6 +147,11 @@ class StripeWebhooksTest {
         )
         assertEquals("sub_4", noMetadata.subscriptionId)
         assertNull(noMetadata.orgId)
+        val emptyDetails = parseStripeEvent(
+            """{"id":"e","type":"invoice.paid","data":{"object":{"object":"invoice","customer":"cus_1",
+                "subscription":"sub_5","parent":{"subscription_details":{}}}}}""",
+        )
+        assertEquals("sub_5", emptyDetails.subscriptionId)
     }
 
     @Test

@@ -55,7 +55,7 @@ class EdgeCasesTest {
         val world = World()
         assertEquals(5, world.limits(world.org).maxPeople)
         val error = assertFailsWith<PlanLimitException> { world.entitlements(world.org, Entitlement.AddPerson(5)) }
-        assertTrue(error.message!!.startsWith("The Free plan includes 5 people"), error.message)
+        assertTrue(error.message.startsWith("The Free plan includes 5 people"), error.message)
         world.activity(world.org, "alice", NOW)
         assertEquals(emptyList(), world.repository.tasks)
         assertEquals(emptyList(), world.invoices(world.admin, world.org, 10))
@@ -94,6 +94,16 @@ class EdgeCasesTest {
         world.repository.save(OrgBilling(orgId = world.org, stripeCustomerId = "cus_1", updatedAt = NOW))
         val noSubscription = world.events(world.event("invoice.paid", "evt_2").copy(subscriptionId = null))
         assertEquals(EventOutcome.IGNORED, noSubscription)
+        val stranger = World().events(World().event("invoice.paid", "evt_3").copy(subscriptionId = null))
+        assertEquals(EventOutcome.IGNORED, stranger, "No subscription and no organization")
+    }
+
+    @Test
+    fun aFreeOrganizationsActivityQueuesNothingForStripe() = runTest {
+        val world = World()
+        world.repository.save(OrgBilling(orgId = world.org, stripeCustomerId = "cus_1", updatedAt = NOW))
+        world.activity(world.org, "alice", NOW)
+        assertEquals(emptyList(), world.repository.tasks)
     }
 
     @Test

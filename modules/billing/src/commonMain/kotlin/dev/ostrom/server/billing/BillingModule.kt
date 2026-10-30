@@ -38,6 +38,7 @@ import dev.ostrom.server.billing.domain.SyncSubscriptionUseCase
 import dev.ostrom.server.billing.domain.SyncSubscriptionUseCaseImpl
 import dev.ostrom.server.billing.infrastructure.BillingMigrations
 import dev.ostrom.server.billing.infrastructure.BillingRepositoryImpl
+import dev.ostrom.server.billing.infrastructure.GuardedBillingNotifier
 import dev.ostrom.server.billing.infrastructure.LoggingBillingNotifier
 import dev.ostrom.server.billing.infrastructure.StripeConfig
 import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
@@ -86,7 +87,9 @@ object BillingModule : ServerModule {
         single<GetBillingOverviewUseCase> { GetBillingOverviewUseCaseImpl(get(), get(), get(), get()) }
         single<StartCheckoutUseCase> { StartCheckoutUseCaseImpl(get(), get(), get(), get()) }
         single<OpenCustomerPortalUseCase> { OpenCustomerPortalUseCaseImpl(get(), get(), get()) }
-        single<SyncSubscriptionUseCase> { SyncSubscriptionUseCaseImpl(get(), get(), get()) }
+        single<SyncSubscriptionUseCase> {
+            SyncSubscriptionUseCaseImpl(get(), get(), get(), unknownPriceLogger(get()))
+        }
         single<ChangePlanUseCase> { ChangePlanUseCaseImpl(get(), get(), get(), get(), get()) }
         single<SetCancellationUseCase> { SetCancellationUseCaseImpl(get(), get(), get(), get()) }
         single<ListInvoicesUseCase> { ListInvoicesUseCaseImpl(get(), get()) }
@@ -126,8 +129,15 @@ internal fun outboxFailureLogger(logger: Logger): (OutboxTask, Exception) -> Uni
     logger.warn("stripe task failed", fields)
 }
 
+/** Logs a subscription whose price is not in the catalog: it keeps its previous plan until someone looks. */
+internal fun unknownPriceLogger(logger: Logger): (String, String?) -> Unit = { subscriptionId, lookupKey ->
+    val fields = mapOf("subscription_id" to subscriptionId, "lookup_key" to lookupKey)
+    logger.error("subscription price not in the catalog", fields)
+}
+
 /** The `ee/` license; without it, no license. */
 private fun Scope.licenses(): LicenseProvider = getOrNull() ?: NoLicenseProvider()
 
-/** The notifications module; without it, the alerts are logged. */
-private fun Scope.notifier(): BillingNotifier = getOrNull() ?: LoggingBillingNotifier(get())
+/** The notifications module; without it, the alerts are logged. Either way, a failed notification is only logged. */
+private fun Scope.notifier(): BillingNotifier =
+    GuardedBillingNotifier(getOrNull() ?: LoggingBillingNotifier(get()), get())

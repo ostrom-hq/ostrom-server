@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests of the Stripe provisioning: a stateful fake Stripe proves idempotency, a local HTTP server proves the
 wire format (auth, version, form encoding, errors). The stripe-mock integration test lives in test_stripe_mock.py."""
 from __future__ import annotations
@@ -319,8 +320,8 @@ def test_aWebhookDriftUpdatesTheEndpointWithoutANewSecret(change: Any) -> None:
 def test_aWebhookUrlOverrideIsApplied() -> None:
     fake = FakeStripe()
     secrets: list[str] = []
-    provision.Provisioner(fake, CATALOG, False, secrets.append, "https://staging.example/v1/billing/stripe/webhook").run()
-    assert fake.webhooks[0]["url"] == "https://staging.example/v1/billing/stripe/webhook"
+    provision.Provisioner(fake, CATALOG, False, secrets.append, "https://staging.example/api/v1/billing/stripe/webhook").run()
+    assert fake.webhooks[0]["url"] == "https://staging.example/api/v1/billing/stripe/webhook"
 
 
 def test_endpointsAndMetersNotOursAreIgnored() -> None:
