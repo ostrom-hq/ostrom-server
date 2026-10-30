@@ -79,6 +79,7 @@ class GatesPostgresTest {
                     "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
                     "reader" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
                     "device" -> AuthenticatedPrincipal(token, PrincipalKind.DEVICE, setOf(GateScopes.ANSWER))
+                    "runner" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.ASK))
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                 }
             }
@@ -91,6 +92,7 @@ class GatesPostgresTest {
                     return when (kind) {
                         "user", "reader" -> GateActor(id, orgId, ActorKind.USER, personId = id)
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
+                        "runner" -> GateActor(id, orgId, ActorKind.SERVICE)
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
                     }
                 }
@@ -466,6 +468,15 @@ class GatesPostgresTest {
         assertEquals(answered, repository.requestsOf(orgA, gateId).single { it.approverId == "rev-d" })
         assertEquals(answered, repository.approval(orgA, answered.id)?.request)
         assertNull(repository.approval(orgB, answered.id))
+    }
+
+    @Test
+    fun aRunnerKeyAsksAndReadsAGateButOnlyASessionUsesItsYes() = gatesTest { server ->
+        val opened = server.call("runner:a:ci", "/api/v1/gates", push()).body<GateResponse>()
+        assertEquals(HttpStatusCode.OK, server.call("runner:a:ci", "/api/v1/gates/${opened.gate.id}").status)
+        val reserve = server.move("runner:a:ci", opened, "reserve")
+        assertEquals(HttpStatusCode.Forbidden, reserve.status)
+        assertTrue(reserve.bodyAsText().contains("does not allow agent:session"))
     }
 
     @Test
