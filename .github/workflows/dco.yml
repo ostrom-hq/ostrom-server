@@ -6,6 +6,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: dco-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dco:
     runs-on: ubuntu-latest
