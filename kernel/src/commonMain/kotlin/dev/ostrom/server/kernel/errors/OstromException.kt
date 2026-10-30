@@ -28,8 +28,8 @@ enum class ErrorKind(val type: String) {
  *
  * @property kind The kind of failure, which decides the HTTP status.
  * @property message The message sent to the client: never a secret, a token, a prompt or an upstream body.
- * @property type The `error.type` clients receive: the kind's own, unless the refusal needs a more precise stable key
- *   that a client acts on (`installation_not_yours`), with the kind's status.
+ * @property type The `error.type` clients receive: the kind's, unless the contract names a finer key for this failure
+ *   (`step_up_required`, a 403; `installation_not_yours`, a 403). Stable once published, like [ErrorKind.type].
  */
 open class OstromException(
     val kind: ErrorKind,

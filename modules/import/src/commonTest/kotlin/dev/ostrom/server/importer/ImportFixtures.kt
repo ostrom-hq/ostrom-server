@@ -151,8 +151,10 @@ class FakeAccountImporter : AccountImporter {
     override suspend fun import(
         caller: Caller,
         account: dev.ostrom.server.importer.domain.TeamCodeAccount,
+        dryRun: Boolean,
     ): ImportAction {
         if (account.provider != "claude") throw RefusedAccountException()
+        if (dryRun) return ImportAction.PLANNED
         imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
         return ImportAction.CREATED
     }
