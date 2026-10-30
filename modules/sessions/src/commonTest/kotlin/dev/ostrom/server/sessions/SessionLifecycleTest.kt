@@ -173,7 +173,6 @@ class SessionLifecycleTest {
         assertEquals(emptyList(), bench.sweep(), "A closed session is closed once")
         assertEquals("sessions closed, their launcher stopped answering", bench.logger.lines.single().first)
         assertNull(bench.repository.get(ORG, "s-3")?.endedAt, "Never a sign of life: not followed")
-
     }
 
     @Test

@@ -56,7 +56,6 @@ object ReceiptsModule : ServerModule {
         if (koin.getOrNull<ReceiptRules>() == null) {
             koin.loadModules(listOf(module { single<ReceiptRules> { NoReceiptRules() } }))
         }
-
     }
 
     override fun routes(route: Route, koin: Koin) {

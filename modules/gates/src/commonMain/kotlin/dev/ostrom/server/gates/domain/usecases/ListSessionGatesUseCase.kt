@@ -74,6 +74,5 @@ class ListSessionGatesUseCaseImpl(private val repository: GatesRepository) : Lis
             .map {
                 SessionGateDecision(it.id, it.approverId, at, it.status == RequestStatus.APPROVED, gate.selfApproved)
             }
-
     }
 }

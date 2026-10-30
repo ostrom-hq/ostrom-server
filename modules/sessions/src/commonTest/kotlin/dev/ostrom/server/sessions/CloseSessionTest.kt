@@ -131,7 +131,6 @@ class CloseSessionTest {
         assertEquals(Digests.digestOf(preimage), draft.getValue("subject").jsonObject.text("digest"))
         val subject = draft.getValue("subject").jsonObject
         assertEquals("session" to "s-1", subject.text("kind") to subject.text("id"))
-
     }
 
     @Test
