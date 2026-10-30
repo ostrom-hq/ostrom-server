@@ -7,6 +7,9 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            implementation(project(":modules:instance"))
+            // The canonical form, digests, signature field and verifier of ostrom-core: one implementation of format v1.
+            api(libs.ostrom.receipts)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
