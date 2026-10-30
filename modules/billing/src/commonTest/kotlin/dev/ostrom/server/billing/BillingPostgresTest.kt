@@ -78,8 +78,11 @@ private fun checkoutCompleted() = """{"id":"evt_checkout","type":"checkout.sessi
     "created":${NOW.epochSeconds},"data":{"object":{"object":"checkout.session","customer":"cus_1",
     "subscription":"sub_1","client_reference_id":"$ORG_A"}}}"""
 
-/** Posts [payload] to the webhook, signed unless [signature] is null. */
-private suspend fun HttpClient.webhook(payload: String, signature: String? = sign(payload)): HttpResponse =
+/** Posts [payload] to the webhook, signed with the test secret. */
+private suspend fun HttpClient.webhook(payload: String): HttpResponse = webhook(payload, sign(payload))
+
+/** Posts [payload] to the webhook with [signature], or without the header when it is null. */
+private suspend fun HttpClient.webhook(payload: String, signature: String?): HttpResponse =
     post("/v1/billing/stripe/webhook") {
         signature?.let { header("Stripe-Signature", it) }
         setBody(payload)
