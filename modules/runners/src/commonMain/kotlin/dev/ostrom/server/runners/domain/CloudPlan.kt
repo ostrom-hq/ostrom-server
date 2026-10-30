@@ -7,8 +7,10 @@ import kotlin.uuid.Uuid
  * What an organization's plan allows for cloud sessions. The free plan's guards (Lyes, 30/10/2026): 5 agents at
  * once, 300 hours a month, a pause without requests to the model, a limited outbound network and a maximum duration.
  *
- * @property maxRunningSessions Sessions that may hold an execution at once (creating, running, pausing, resuming).
- * @property monthlyHours Execution hours per calendar month (UTC); null for unlimited.
+ * @property maxRunningSessions Sessions that may hold an execution at once (creating, running, pausing, resuming);
+ *   [UNLIMITED_SESSIONS] for no limit.
+ * @property monthlyHours Execution hours per period (the billing period, or the calendar month in UTC without
+ *   billing, see [CloudUsageMeter]); null for unlimited.
  * @property idleTimeoutMinutes Minutes without a request to the model nor terminal input before a session pauses.
  * @property maxRunMinutes Minutes one execution may run before it pauses.
  * @property restrictedEgress Whether pods get the restricted outbound network.
@@ -28,6 +30,9 @@ data class CloudPlan(
 
     /** Constants and readers of the enclosing type. */
     companion object {
+        /** [maxRunningSessions] of a plan without a limit. */
+        const val UNLIMITED_SESSIONS: Int = Int.MAX_VALUE
+
         /** The free plan: 5 agents at once, 300 hours a month, 30 minutes idle, 4 hours per run, limited egress. */
         val FREE: CloudPlan = CloudPlan(
             maxRunningSessions = 5,
@@ -41,8 +46,8 @@ data class CloudPlan(
 }
 
 /**
- * Gives the plan of an organization. The budgets module (billing) will bind its own implementation; until then
- * every organization is on [CloudPlan.FREE].
+ * Gives the plan of an organization: billing's plan limits when the billing module is there, [CloudPlan.FREE]
+ * otherwise.
  */
 interface CloudPlanProvider {
     /**
@@ -81,7 +86,7 @@ data class AllowedOrgs(val all: Boolean, val orgs: Set<Uuid>) {
  * Closes cloud sessions to the organizations [allowed] does not name, whatever [delegate] says of their plan.
  *
  * @param allowed The organizations allowed.
- * @param delegate The plans (the free plan until billing binds its own).
+ * @param delegate The plans.
  */
 class AllowlistedCloudPlanProvider(
     private val allowed: AllowedOrgs,
