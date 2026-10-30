@@ -143,7 +143,7 @@ jobs:
           pkill -f KotlinCompileDaemon || true
           df -h / /mnt
           # Swap where the disk has room (the runner's /mnt can be too small): stopping the daemons is the main fix.
-          for size in 6G 3G; do
+          for size in 4G 2G; do
             if sudo fallocate -l "$size" /native-link.swap; then
               sudo chmod 600 /native-link.swap
               sudo mkswap /native-link.swap
@@ -152,6 +152,14 @@ jobs:
             fi
           done
           free -h
+      # S2-49: one session of the real image, run as the Docker driver runs it; the agent must not reach the token.
+      - name: Session image, the agent cannot read the runner token (S2-49)
+        if: ${{ !cancelled() }}
+        run: |
+          ./gradlew :runner:linkDebugExecutableLinuxX64
+          ci/runner-isolation.sh runner/build/bin/linuxX64/debugExecutable/ostrom-runner.kexe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Server binary (linuxX64 in dist/)
         run: |
           ci/build-linux.sh

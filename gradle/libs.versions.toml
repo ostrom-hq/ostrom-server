@@ -73,6 +73,8 @@ ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 ktor-client-curl = { module = "io.ktor:ktor-client-curl", version.ref = "ktor" }
 ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
 ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
+# The Unix socket between the runner and the agent host of a session pod
+ktor-network = { module = "io.ktor:ktor-network", version.ref = "ktor" }
 
 # ostrom-core
 ostrom-telemetry = { module = "dev.ostrom:ostrom-telemetry", version.ref = "ostrom-core" }

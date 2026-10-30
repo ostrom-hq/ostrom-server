@@ -44,6 +44,24 @@ interface UsersRepository {
     suspend fun loginTaken(login: String): Boolean
 
     /**
+     * Finds a user by login.
+     *
+     * @param login The login, any case (logins are stored in lower case).
+     *
+     * @return The user, or null.
+     */
+    suspend fun findByLogin(login: String): User?
+
+    /**
+     * Reads several users at once.
+     *
+     * @param ids The users.
+     *
+     * @return The users found, in no particular order.
+     */
+    suspend fun getMany(ids: Collection<Uuid>): List<User>
+
+    /**
      * Creates a user with their first identity and e-mail, in one transaction.
      *
      * @param user The user.

@@ -19,16 +19,20 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlin.uuid.Uuid
 
 /**
- * [RuntimeDriver] on a local Docker Engine, through its HTTP API, for tests and self-hosting: a named volume per
- * session and a container per execution, with the same labels, names and runner environment as on Kubernetes.
+ * [RuntimeDriver] on a local Docker Engine, through its HTTP API, for tests and self-hosting: two named volumes per
+ * session (the workspace and the agent socket) and two containers per execution, with the same labels, names and
+ * runner environment as on Kubernetes. As in the pod, the agent host runs the agent in its own container under its
+ * own uid, and only the runner's container has the token (S2-49).
  *
  * The engine is reached over TCP ([DockerSettings.apiUrl]; for the local socket, expose it on the loopback, for
  * example with a socket proxy). The free plan's egress restriction is not enforced here: it is a Kubernetes
@@ -39,6 +43,7 @@ import kotlinx.serialization.json.putJsonObject
  * @param serverUrl The URL the runner reaches the server at.
  * @param runnerImage The session container's image.
  */
+@Suppress("TooManyFunctions") // The port's operations plus one builder per container and volume.
 class DockerRuntimeDriver(
     private val client: HttpClient,
     private val settings: DockerSettings,
@@ -48,17 +53,25 @@ class DockerRuntimeDriver(
     private val base = settings.apiUrl.trimEnd('/')
 
     override suspend fun ensureWorkspace(session: CloudSession) {
-        val volume = buildJsonObject {
-            put("Name", RuntimeNames.workspace(session.id))
-            put("Labels", labels(session.id.toHexString(), null))
+        // Creating a volume that exists answers 201 with the existing volume. The socket's volume takes the owner and
+        // mode of the image's /run/ostrom when the agent's container first mounts it.
+        for (name in listOf(RuntimeNames.workspace(session.id), socketVolume(session.id))) {
+            val volume = buildJsonObject {
+                put("Name", name)
+                put("Labels", labels(session.id.toHexString(), null))
+            }
+            call(HttpMethod.Post, "/volumes/create", volume).requireSuccess("create volume")
         }
-        // Creating a volume that exists answers 201 with the existing volume.
-        call(HttpMethod.Post, "/volumes/create", volume).requireSuccess("create volume")
     }
 
     override suspend fun startExecution(spec: ExecutionSpec) {
         val name = RuntimeNames.execution(spec.sessionId, spec.epoch)
-        val body = containerManifest(spec)
+        // The agent host first: the runner connects to its socket.
+        createAndStart(agentContainer(name), agentManifest(spec))
+        createAndStart(name, runnerManifest(spec))
+    }
+
+    private suspend fun createAndStart(name: String, body: JsonObject) {
         var created = call(HttpMethod.Post, "/containers/create", body, mapOf("name" to name))
         if (created.status == HttpStatusCode.NotFound) {
             pullImage()
@@ -98,7 +111,14 @@ class DockerRuntimeDriver(
     }
 
     override suspend fun deleteWorkspace(session: CloudSession): Boolean {
-        val path = "/volumes/${RuntimeNames.workspace(session.id)}"
+        val socketGone = removeVolume(socketVolume(session.id))
+        val workspaceGone = removeVolume(RuntimeNames.workspace(session.id))
+        return socketGone && workspaceGone
+    }
+
+    /** Removes a volume; true once it is gone. */
+    private suspend fun removeVolume(name: String): Boolean {
+        val path = "/volumes/$name"
         val removed = call(HttpMethod.Delete, path)
         // 409: still used by a container being removed; the reconciler asks again.
         if (removed.status == HttpStatusCode.Conflict) return false
@@ -112,14 +132,39 @@ class DockerRuntimeDriver(
             .requireSuccess("pull image")
     }
 
-    private fun containerManifest(spec: ExecutionSpec): JsonObject = buildJsonObject {
-        put("Image", runnerImage)
-        putJsonArray("Cmd") { add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY)) }
-        put("WorkingDir", KubernetesRuntimeDriver.WORKSPACE)
-        put("User", "${KubernetesRuntimeDriver.RUNNER_UID}:${KubernetesRuntimeDriver.RUNNER_UID}")
-        putJsonArray("Env") {
-            RunnerEnvironment.of(spec, serverUrl, null).forEach { (key, value) -> add(JsonPrimitive("$key=$value")) }
+    /** The agent host's container: the agent's uid, the workspace and the socket, no token. */
+    private fun agentManifest(spec: ExecutionSpec): JsonObject = container(spec, AGENT_USER, MEMORY_BYTES) {
+        // The whole command as the entrypoint: the image's own is the runner, which would take these as arguments.
+        putJsonArray("Entrypoint") {
+            add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY))
+            add(JsonPrimitive("agent-host"))
         }
+        put("WorkingDir", KubernetesRuntimeDriver.WORKSPACE)
+        putJsonArray("Env") {
+            add(JsonPrimitive("OSTROM_AGENT_SOCKET=${RunnerEnvironment.AGENT_SOCKET}"))
+            add(JsonPrimitive("HOME=${KubernetesRuntimeDriver.WORKSPACE}/.home"))
+        }
+    }
+
+    /** The runner's container: its own uid, the shared group for the socket, the token, and nothing else mounted. */
+    private fun runnerManifest(spec: ExecutionSpec): JsonObject = container(spec, RUNNER_USER, RUNNER_MEMORY_BYTES) {
+        putJsonArray("Entrypoint") { add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY)) }
+        putJsonArray("Env") {
+            (RunnerEnvironment.of(spec, serverUrl) + RunnerEnvironment.secrets(spec))
+                .forEach { (key, value) -> add(JsonPrimitive("$key=$value")) }
+        }
+    }
+
+    private fun container(
+        spec: ExecutionSpec,
+        user: String,
+        memory: Long,
+        body: JsonObjectBuilder.() -> Unit,
+    ): JsonObject = buildJsonObject {
+        val agent = user == AGENT_USER
+        put("Image", runnerImage)
+        put("User", user)
+        body()
         put(
             "Labels",
             JsonObject(
@@ -128,8 +173,13 @@ class DockerRuntimeDriver(
             ),
         )
         putJsonObject("HostConfig") {
-            val bind = "${RuntimeNames.workspace(spec.sessionId)}:${KubernetesRuntimeDriver.WORKSPACE}"
-            putJsonArray("Binds") { add(JsonPrimitive(bind)) }
+            val socket = "${socketVolume(spec.sessionId)}:${RunnerEnvironment.AGENT_SOCKET_DIRECTORY}"
+            val workspace = "${RuntimeNames.workspace(spec.sessionId)}:${KubernetesRuntimeDriver.WORKSPACE}"
+            putJsonArray("Binds") {
+                if (agent) add(JsonPrimitive(workspace))
+                add(JsonPrimitive(socket))
+            }
+            if (!agent) putJsonArray("GroupAdd") { add(JsonPrimitive(KubernetesRuntimeDriver.SHARED_GID.toString())) }
             settings.network?.let { put("NetworkMode", it) }
             putJsonArray("ExtraHosts") { add(JsonPrimitive("host.docker.internal:host-gateway")) }
             putJsonObject("RestartPolicy") { put("Name", "no") }
@@ -138,7 +188,7 @@ class DockerRuntimeDriver(
             put("ReadonlyRootfs", true)
             putJsonObject("Tmpfs") { put("/tmp", "rw,nosuid,size=1g") }
             put("PidsLimit", PIDS_LIMIT)
-            put("Memory", MEMORY_BYTES)
+            put("Memory", memory)
             put("NanoCpus", NANO_CPUS)
         }
     }
@@ -167,6 +217,15 @@ class DockerRuntimeDriver(
     companion object {
         private val GONE_OR_DONE = setOf(HttpStatusCode.NotModified, HttpStatusCode.NotFound)
         private const val MEMORY_BYTES = 4L * 1024 * 1024 * 1024
+        private const val RUNNER_MEMORY_BYTES = 256L * 1024 * 1024
+        private const val AGENT_USER = "${KubernetesRuntimeDriver.AGENT_UID}:${KubernetesRuntimeDriver.AGENT_UID}"
+        private const val RUNNER_USER = "${KubernetesRuntimeDriver.RUNNER_UID}:${KubernetesRuntimeDriver.RUNNER_UID}"
+
+        /** The agent host's container of an execution. */
+        fun agentContainer(execution: String): String = "$execution-agent"
+
+        /** The volume of a session's agent socket. */
+        fun socketVolume(sessionId: Uuid): String = "${RuntimeNames.workspace(sessionId)}-socket"
         private const val NANO_CPUS = 2_000_000_000L
         private const val PIDS_LIMIT = 4096
 

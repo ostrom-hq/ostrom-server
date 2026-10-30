@@ -77,7 +77,7 @@ class SignInUseCasesTest {
         assertEquals("secret1", started.state)
         assertEquals(
             "https://idp.example/authorize?state=secret1&challenge=s256(secret2)&nonce=secret3" +
-                "&redirect=https://api.test/v1/auth/github/callback",
+                "&redirect=https://api.test/v1/auth/github/callback&reauth=false",
             started.authorizationUrl,
         )
         assertEquals(listOf("oauth-start:1.2.3.4"), limiter.keys)

@@ -14,6 +14,7 @@ import dev.ostrom.server.identity.fakes.InMemoryWebSessionsRepository
 import dev.ostrom.server.identity.fakes.SettableClock
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -158,7 +159,10 @@ class CredentialAuthenticatorTest {
 
         val principal = authenticator.authenticateSession("oss_a", null, requireCsrf = false)
         assertEquals(
-            AuthenticatedPrincipal(userId.toString(), PrincipalKind.USER, setOf(ALL_USER_SCOPES), stored.id.toString()),
+            AuthenticatedPrincipal(
+                userId.toString(), PrincipalKind.USER, setOf(ALL_USER_SCOPES), stored.id.toString(),
+                channel = PrincipalChannel.BROWSER, authenticatedAt = stored.createdAt,
+            ),
             principal,
         )
         assertTrue(principal!!.isBrowserSession)
@@ -167,6 +171,27 @@ class CredentialAuthenticatorTest {
         clock.now += 6.minutes
         authenticator.authenticateSession("oss_a", null, requireCsrf = false)
         assertEquals(1, sessions.touches)
+    }
+
+    @Test
+    fun aYesNeedsARecentSignInWhichOnlyABrowserSessionCarriesAndSigningInAgainRenews() = runTest {
+        val signedInAt = clock.now
+        session("oss_old")
+        token("osp_p", TokenKind.PERSONAL, setOf("profile:read"))
+        clock.now += 6.minutes
+
+        // Six minutes after signing in: the step-up of a yes (five minutes, S2-54) refuses this session.
+        val old = authenticator.authenticateSession("oss_old", null, requireCsrf = false)
+        assertEquals(signedInAt, old?.authenticatedAt)
+        assertEquals(PrincipalChannel.BROWSER, old?.channel)
+        // A token proves no sign-in at all, whatever its scopes.
+        val api = authenticator.authenticate("osp_p")
+        assertNull(api?.authenticatedAt)
+        assertEquals(PrincipalChannel.API_TOKEN, api?.channel)
+        // Signing in again starts a new session: its sign-in is now.
+        session("oss_new")
+        val renewed = authenticator.authenticateSession("oss_new", null, requireCsrf = false)
+        assertEquals(clock.now, renewed?.authenticatedAt)
     }
 
     @Test
