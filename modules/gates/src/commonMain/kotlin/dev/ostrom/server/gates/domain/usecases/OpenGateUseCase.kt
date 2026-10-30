@@ -22,12 +22,11 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.repositories.GatesTransaction
 import dev.ostrom.server.gates.domain.services.GateDigester
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import dev.ostrom.server.gates.domain.services.GateSessions
-import dev.ostrom.server.kernel.logging.Logger
-import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -79,10 +78,9 @@ interface OpenGateUseCase {
  * @param repository The gates.
  * @param sessions Guards closed sessions.
  * @param policies The organization's self-approval setting.
- * @param notifier Tells the approvers.
+ * @param notifier Tells the approvers; it never throws.
  * @param digester Hashes keys.
  * @param clock The clock.
- * @param logger Logs notification failures.
  */
 class OpenGateUseCaseImpl(
     private val repository: GatesRepository,
@@ -91,7 +89,6 @@ class OpenGateUseCaseImpl(
     private val notifier: GateNotifier,
     private val digester: GateDigester,
     private val clock: Clock,
-    private val logger: Logger,
 ) : OpenGateUseCase {
     override suspend fun invoke(request: OpenGate): GateView {
         validate(request)
@@ -101,72 +98,75 @@ class OpenGateUseCaseImpl(
         if (request.subject.push != null && node?.enforced == true && request.redirected) {
             throw RedirectedPushException()
         }
-        val (mode, approvers) = when {
-            node == null -> GateMode.UNGATED to emptyList()
-            !node.enforced -> GateMode.SHADOW to emptyList()
-            else -> GateMode.ENFORCED to SelfApproval.withAskers(emptyList(), *node.approvers.toTypedArray())
-        }
+        val (mode, approvers) = modeOf(node)
         if (mode == GateMode.ENFORCED && approvers.isEmpty()) throw GateWithoutApproverException()
         val key = digester.digest(GateKeys.keyPreimage(orgId.toString(), request.subject, node))
-        val shown = digester.digest(GateKeys.shownPreimage(request.label, request.subject, request.evidence))
-
         val opened = repository.transaction {
             lockKey(orgId, key)
             val same = byKey(orgId, key, SAME_KEY_LIMIT)
                 .filter { request.subject.push == null || it.subject.diffDigest == request.subject.diffDigest }
-            // An expired yes is not joined: the same action asks a new one (S2-29).
-            val live = same.firstOrNull { it.status in LIVE && !it.yesExpired(clock.now()) }
-            if (live != null) {
-                val joined = join(live, request)
-                if (joined != live) updateGate(joined)
-                return@transaction Opened(joined, requestsOf(orgId, joined.id), created = false)
-            }
-            val latest = same.firstOrNull()
-            if (latest?.status == GateStatus.REJECTED) {
-                return@transaction Opened(latest, requestsOf(orgId, latest.id), created = false)
-            }
-            val now = clock.now()
-            val gate = Gate(
-                id = Uuid.random(),
-                orgId = orgId,
-                key = key,
-                subject = request.subject,
-                node = node,
-                label = request.label,
-                mode = mode,
-                status = when (mode) {
-                    GateMode.ENFORCED -> GateStatus.PENDING
-                    GateMode.SHADOW -> GateStatus.SHADOW
-                    GateMode.UNGATED -> GateStatus.UNGATED
-                },
-                askedBy = SelfApproval.withAskers(emptyList(), request.asker),
-                askedVia = setOf(request.via),
-                sessionIds = listOfNotNull(request.sessionId),
-                launchIds = listOfNotNull(request.actor.launchId),
-                shownDigest = shown,
-                evidence = request.evidence,
-                createdAt = now,
-            )
-            val requests = approvers.map { approver ->
-                ApprovalRequest(Uuid.random(), gate.id, orgId, approver, RequestStatus.PENDING, createdAt = now)
-            }
-            insertGate(gate)
-            if (requests.isNotEmpty()) insertRequests(requests)
-            Opened(gate, requests, created = true)
+            joined(request, same) ?: created(newGate(request, key, mode), approvers)
         }
-
-        if (opened.created && opened.gate.mode == GateMode.ENFORCED) {
-            try {
-                notifier.requested(opened.gate, opened.requests)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                // The request is stored and visible in the console: a failed notification never loses it.
-                logger.warn("gate notification failed", mapOf("gate_id" to opened.gate.id), error)
-            }
-        }
+        if (opened.created && opened.gate.mode == GateMode.ENFORCED) notifier.requested(opened.gate, opened.requests)
         return viewOf(opened.gate, opened.requests, policies.selfApproval(orgId))
     }
+
+    // The live gate of the same action takes the new asker; a refused one answers again. An expired yes is not
+    // joined: the same action asks a new one (S2-29).
+    private suspend fun GatesTransaction.joined(request: OpenGate, same: List<Gate>): Opened? {
+        val live = same.firstOrNull { it.status in LIVE && !it.yesExpired(clock.now()) }
+        val refused = same.firstOrNull()?.takeIf { it.status == GateStatus.REJECTED }
+        return when {
+            live != null -> {
+                val joined = join(live, request)
+                if (joined != live) updateGate(joined)
+                Opened(joined, requestsOf(joined.orgId, joined.id), created = false)
+            }
+            refused != null -> Opened(refused, requestsOf(refused.orgId, refused.id), created = false)
+            else -> null
+        }
+    }
+
+    private suspend fun GatesTransaction.created(gate: Gate, approvers: List<String>): Opened {
+        val now = gate.createdAt
+        val requests = approvers.map { approver ->
+            ApprovalRequest(Uuid.random(), gate.id, gate.orgId, approver, RequestStatus.PENDING, createdAt = now)
+        }
+        insertGate(gate)
+        if (requests.isNotEmpty()) insertRequests(requests)
+        return Opened(gate, requests, created = true)
+    }
+
+    private fun modeOf(node: GateNode?): Pair<GateMode, List<String>> = when {
+        node == null -> GateMode.UNGATED to emptyList()
+        !node.enforced -> GateMode.SHADOW to emptyList()
+        // Each approver once, whatever their case.
+        else -> GateMode.ENFORCED to node.approvers.fold(emptyList<String>()) { all, approver ->
+            SelfApproval.withAskers(all, approver)
+        }
+    }
+
+    private fun newGate(request: OpenGate, key: String, mode: GateMode) = Gate(
+        id = Uuid.random(),
+        orgId = request.actor.orgId,
+        key = key,
+        subject = request.subject,
+        node = request.node,
+        label = request.label,
+        mode = mode,
+        status = when (mode) {
+            GateMode.ENFORCED -> GateStatus.PENDING
+            GateMode.SHADOW -> GateStatus.SHADOW
+            GateMode.UNGATED -> GateStatus.UNGATED
+        },
+        askedBy = SelfApproval.withAskers(emptyList(), request.asker),
+        askedVia = setOf(request.via),
+        sessionIds = listOfNotNull(request.sessionId),
+        launchIds = listOfNotNull(request.actor.launchId),
+        shownDigest = digester.digest(GateKeys.shownPreimage(request.label, request.subject, request.evidence)),
+        evidence = request.evidence,
+        createdAt = clock.now(),
+    )
 
     private fun join(gate: Gate, request: OpenGate): Gate = gate.copy(
         askedBy = SelfApproval.withAskers(gate.askedBy, request.asker),
@@ -232,7 +232,10 @@ class OpenGateUseCaseImpl(
  * @return Whether it is one.
  */
 internal fun isSha(value: String): Boolean =
-    (value.length == 40 || value.length == 64) && value.all { it in '0'..'9' || it in 'a'..'f' }
+    (value.length == SHA1_LENGTH || value.length == SHA256_LENGTH) && value.all { it in '0'..'9' || it in 'a'..'f' }
+
+private const val SHA1_LENGTH = 40
+private const val SHA256_LENGTH = 64
 
 /**
  * The caller's view of a gate.

@@ -41,7 +41,35 @@ interface GateReceiptSigner {
     suspend fun sign(gate: Gate): String
 }
 
-/** Tells people about a gate (notifications, Slack, GitHub check, waiting hooks). Failures never undo a decision. */
+/**
+ * One way to tell about a gate: the GitHub check, Slack, e-mail, push. Each integration binds its own (Koin
+ * `bind GateChannel::class`); the default [GateNotifier] calls them all, and one failing never stops the others.
+ */
+interface GateChannel {
+    /** The channel's name, in logs. */
+    val name: String
+
+    /**
+     * A gate asks for a yes.
+     *
+     * @param gate The gate.
+     * @param requests One per approver.
+     */
+    suspend fun requested(gate: Gate, requests: List<ApprovalRequest>)
+
+    /**
+     * A gate was answered.
+     *
+     * @param gate The decided gate.
+     * @param requests Its requests, as they are now.
+     */
+    suspend fun decided(gate: Gate, requests: List<ApprovalRequest>)
+}
+
+/**
+ * Tells people about a gate (notifications, Slack, GitHub check, waiting hooks). It never throws: a failure is logged
+ * where it happens and never undoes a request or a decision.
+ */
 interface GateNotifier {
     /**
      * A gate asks for a yes: each approver is told on their channels.
