@@ -55,9 +55,13 @@ import io.ktor.http.headersOf
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -72,6 +76,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
@@ -212,11 +218,6 @@ class GatewayPostgresTest {
 
     private val modules = listOf(SecretsModule, SharingModule, GatewayModule)
 
-    private companion object {
-        val KEEP_ALIVE = ": keep-alive\n".repeat(5_000)
-        const val KEEP_ALIVE_BLOCKS = 48
-    }
-
     private suspend fun TestServer.infer(
         path: String,
         body: String,
@@ -309,13 +310,16 @@ class GatewayPostgresTest {
             val upstream = ByteChannel()
             broken = upstream
             val answer = coroutineScope {
-                // The provider sends its first event, then 3 MiB of keep-alives: a channel holds at most 1 MiB, so
-                // the gateway has read and relayed bytes before the connection resets.
+                // The provider sends its first event, and the connection resets once the gateway has had time to read
+                // it. The wait is in real time, as the gateway runs on the server's threads; and the provider writes
+                // no more than that, as the test client only reads the answer once it ends (on Native, a provider
+                // writing more than the answer's buffer was never read).
                 launch {
                     upstream.writeStringUtf8(events.substringBefore("event: content_block_delta"))
-                    repeat(KEEP_ALIVE_BLOCKS) {
-                        upstream.writeStringUtf8(KEEP_ALIVE)
-                        upstream.flush()
+                    upstream.flush()
+                    withContext(Dispatchers.Default) {
+                        withTimeout(10.seconds) { while (received.isEmpty()) delay(5.milliseconds) }
+                        delay(500.milliseconds)
                     }
                     upstream.cancel(IllegalStateException("connection reset"))
                 }
