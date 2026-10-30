@@ -270,14 +270,18 @@ interface GatesCatalogUseCase {
 }
 
 /**
- * [GatesCatalogUseCase] on the saved workflows.
+ * [GatesCatalogUseCase] on the saved workflows: two reads, no compilation (a gate asks it on every boundary action).
  *
- * @param compiler Reads the sources.
+ * @param repository The workflows.
+ * @param sources The production approver.
  */
-class GatesCatalogUseCaseImpl(private val compiler: CompileSourcesUseCase) : GatesCatalogUseCase {
+class GatesCatalogUseCaseImpl(
+    private val repository: CompilerRepository,
+    private val sources: CompilerSources,
+) : GatesCatalogUseCase {
     override suspend fun invoke(orgId: Uuid, repo: String?): List<CatalogEntry> {
-        val inputs = compiler.inputs(orgId, repo)
-        return GatesCatalog(inputs.workflows.map { it.workflow }, inputs.prodApprover).catalog(repo)
+        val workflows = repository.workflows(orgId).map { it.doc.workflow }
+        return GatesCatalog(workflows, sources.settings(orgId).prodApprover).catalog(repo)
     }
 }
 

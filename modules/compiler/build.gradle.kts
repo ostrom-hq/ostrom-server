@@ -9,6 +9,8 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(project(":modules:receipts"))
+            // The compiler binds the gates module's GateNodeResolver and resolves callers with its GateActorResolver.
+            implementation(project(":modules:gates"))
             // The workflow and session package models of the contract.
             api(libs.ostrom.api)
         }
