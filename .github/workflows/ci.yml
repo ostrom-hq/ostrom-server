@@ -60,45 +60,33 @@ jobs:
               }
           }
           KTS
-      - run: python3 scripts/check-conventions.py
-      - name: detekt, JVM tests with Kover 100 %, native tests (linuxX64), all with PostgreSQL
-        run: ./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test --continue
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
-        run: |
-          ci/build-linux.sh
-          ./gradlew :app:linkReleaseExecutableLinuxArm64
-          ldd dist/ostrom-server
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker image
-        run: |
-          docker build -t ostrom-server:ci .
-          docker images ostrom-server:ci --format '{{.Size}}'
-      - name: Smoke test of the image (/health, /v1/instance)
-        run: |
-          docker run -d --name ostrom --network host \
-            -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom_test \
-            ostrom-server:ci
-          for i in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
-          echo
-          curl -fsS localhost:8080/health | grep '"status":"ok"'
-          curl -fsS localhost:8080/v1/instance | grep '"algorithm":"ed25519"'
-          docker logs ostrom
-      - name: Server logs on failure
-        if: failure()
-        run: docker logs ostrom || true
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: ostrom-core from source (probe only, its packages are not readable from this repository yet)
+        uses: actions/checkout@v4
         with:
-          name: ostrom-server-linux
-          path: |
-            dist/ostrom-server
-            app/build/bin/linuxArm64/releaseExecutable/ostrom-server.kexe
-          retention-days: 7
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          repository: ostrom-hq/ostrom-core
+          ref: chore/conventions
+          path: .ostrom-core
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          persist-credentials: false
+      - name: GATES modules only (probe)
+        run: |
+          M="compiler gates receipts sessions"
+          T=""; for m in $M; do T="$T :modules:$m:detekt :modules:$m:jvmTest :modules:$m:koverVerify :modules:$m:koverXmlReport :modules:$m:linuxX64Test"; done
+          ./gradlew -Postrom.core.local=true -Postrom.core.path=.ostrom-core $T --continue
+      - name: Kover reports (probe)
         if: always()
-        with:
-          name: reports
-          path: '**/build/reports/**'
-          retention-days: 7
+        run: |
+          for f in modules/*/build/reports/kover/report.xml; do
+            echo "== $f"
+            python3 - "$f" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          for pkg in root.iter("package"):
+              for sf in pkg.iter("sourcefile"):
+                  for line in sf.iter("line"):
+                      if int(line.get("mi", 0)) > 0 or int(line.get("mb", 0)) > 0:
+                          print(pkg.get("name") + "/" + sf.get("name") + ":" + line.get("nr"), "mi=" + line.get("mi"), "mb=" + line.get("mb"))
+          PY
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

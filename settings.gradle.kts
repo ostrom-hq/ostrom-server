@@ -29,7 +29,12 @@ dependencyResolutionManagement {
 
 // Local development against a checkout of ostrom-core next to this one: -Postrom.core.local=true.
 if (providers.gradleProperty("ostrom.core.local").orNull == "true") {
-    includeBuild("../ostrom-core")
+    includeBuild(providers.gradleProperty("ostrom.core.path").orNull ?: "../ostrom-core") {
+        dependencySubstitution {
+            substitute(module("dev.ostrom:ostrom-api")).using(project(":api"))
+            substitute(module("dev.ostrom:ostrom-receipts")).using(project(":receipts"))
+        }
+    }
 }
 
 include(":kernel", ":testing", ":app")
