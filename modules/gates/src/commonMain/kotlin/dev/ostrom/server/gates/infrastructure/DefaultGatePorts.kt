@@ -6,13 +6,12 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
-import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
-import dev.ostrom.server.gates.presentation.GateActorResolver
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -32,6 +31,8 @@ class UnavailableGateSessions : GateSessions {
     override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) {
         throw OstromException(ErrorKind.UNAVAILABLE, "Agent sessions are not available on this server.")
     }
+
+    override suspend fun agentOf(orgId: Uuid, sessionId: String): String? = null
 }
 
 /** Without compiled workflows, no gate node applies: the action is recorded as ungated. */
@@ -42,12 +43,6 @@ class NoGateNodes : GateNodeResolver {
 /** Without the GitHub integration, a pull request's head is unknown: the merge is bound to its command. */
 class UnknownPullRequestHeads : PullRequestHeads {
     override suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest? = null
-}
-
-/** Without the receipts module, a decision is not signed yet; the next read signs it once the signer exists. */
-class UnavailableGateReceiptSigner : GateReceiptSigner {
-    override suspend fun sign(gate: Gate): String =
-        throw OstromException(ErrorKind.UNAVAILABLE, "Receipts are not available on this server.")
 }
 
 /** Without notifications, approvers find their requests in the console and the hooks poll the gate. */

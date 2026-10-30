@@ -54,7 +54,11 @@ class InMemoryGatesRepository : GatesRepository {
     override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
         requests.values.filter { it.gateId == gateId && it.orgId == orgId }
 
+    override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> =
+        gates.values.filter { it.orgId == orgId && sessionId in it.sessionIds }.sortedBy { it.createdAt }
+
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? =
+
         requests[id]?.takeIf { it.orgId == orgId }
             ?.let { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
 
@@ -129,9 +133,12 @@ class FakeSessions : GateSessions {
         if (launchId != null && launchId != "launch-$sessionId") {
             throw OstromException(ErrorKind.FORBIDDEN, "other launch")
         }
-
     }
+
+    override suspend fun agentOf(orgId: Uuid, sessionId: String): String? =
+        "claude-code".takeIf { sessionId == SESSION }
 }
+
 
 class FakeSigner : GateReceiptSigner {
     val signed = mutableListOf<Gate>()

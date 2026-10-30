@@ -13,21 +13,20 @@ import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
+import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
 import dev.ostrom.server.gates.presentation.AnswerApprovalResponse
 import dev.ostrom.server.gates.presentation.Approval
 import dev.ostrom.server.gates.presentation.ApprovalAnswer
 import dev.ostrom.server.gates.presentation.ApprovalsPage
-import dev.ostrom.server.gates.presentation.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateAskRequest
-import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.gates.presentation.GatePushRef
-import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
-import dev.ostrom.server.gates.presentation.GatePush as PushDto
+import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -54,6 +53,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
+import dev.ostrom.server.gates.presentation.GatePush as PushDto
 
 /** The gates against a real PostgreSQL and real HTTP: every parcours of a gate, and the isolation of organizations. */
 class GatesPostgresTest {
@@ -87,6 +88,8 @@ class GatesPostgresTest {
         single<GateSessions> {
             object : GateSessions {
                 override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) = Unit
+
+                override suspend fun agentOf(orgId: Uuid, sessionId: String): String? = "claude-code"
             }
         }
         single<GateNodeResolver> {
@@ -295,7 +298,23 @@ class GatesPostgresTest {
     }
 
     @Test
+    fun aSessionFindsItsGates() = gatesTest { server ->
+        val agent = "agent:a:$session"
+        val first = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        server.answer("user:a:rev-b", first, "rev-b")
+        val second = server.call(agent, "/api/v1/gates", push(commit = nextSha)).body<GateResponse>()
+        server.call("agent:a:other", "/api/v1/gates", push().copy(sessionId = "other-session"))
+
+        val list = server.koin.get<ListSessionGatesUseCase>()
+        val gates = list(orgA, session)
+        assertEquals(listOf(first.gate.id, second.gate.id), gates.map { it.id.toString() })
+        assertEquals(listOf("rev-b"), gates.first().decisions.map { it.by })
+        assertEquals(emptyList(), list(orgB, session), "Another organization's session has none of them")
+    }
+
+    @Test
     fun theFirstOfTwoSimultaneousConsumesWins() = gatesTest { server ->
+
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         server.answer("user:a:rev-b", opened, "rev-b")

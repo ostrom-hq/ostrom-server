@@ -6,6 +6,7 @@ import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
 import dev.ostrom.server.gates.domain.models.RequestStatus
+import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.usecases.AnswerGateUseCase
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
 import dev.ostrom.server.gates.domain.usecases.GateUse
@@ -25,17 +26,6 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RoutingContext
 import kotlin.uuid.Uuid
-
-/** Turns the authenticated principal into a gate actor (the identity module binds the real one). */
-interface GateActorResolver {
-    /**
-     * Resolves the caller.
-     *
-     * @param principal The authenticated principal.
-     * @return The actor, or null when the credential belongs to no organization.
-     */
-    suspend fun resolve(principal: AuthenticatedPrincipal): GateActor?
-}
 
 /**
  * What the gates routes need.

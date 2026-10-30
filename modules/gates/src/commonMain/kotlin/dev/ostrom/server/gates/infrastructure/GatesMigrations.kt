@@ -63,4 +63,10 @@ val GatesMigrations: List<SchemaMigration> = listOf(
             WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
         """.trimIndent(),
     ),
+    SchemaMigration(
+        2,
+        "gates_by_session",
+        "CREATE INDEX gates_gates_by_session ON gates_gates USING GIN ((CAST(session_ids AS JSONB)))",
+    ),
 )
+

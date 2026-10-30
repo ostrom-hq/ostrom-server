@@ -52,6 +52,20 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         Tx(this).requestsOf(orgId, gateId)
     }
 
+    override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> = driver.transaction {
+        Tx(this).run {
+            scoped(orgId)
+            // Served by the GIN index on the session ids (migration 2).
+            fetch(
+                Statement.create(
+                    "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org " +
+                        "AND CAST(session_ids AS JSONB) @> jsonb_build_array(CAST(:session AS TEXT)) " +
+                        "ORDER BY created_at, id LIMIT $MAX_SESSION_GATES",
+                ).bind("org", orgId).bind("session", sessionId),
+            ).map { it.toGate() }
+        }
+    }
+
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? = driver.transaction {
         Tx(this).run {
             request(orgId, id)?.let { request ->
@@ -214,6 +228,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
     private companion object {
         const val MAX_REQUESTS = 100
+        const val MAX_SESSION_GATES = 500
+
         const val GATE_COLUMNS = "id, org_id, gate_key, subject, node, label, mode, status, asked_by, asked_via, " +
             "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, self_approved, receipt_id, " +
             "reserved_by, reserved_at, consumed_at, created_at"
