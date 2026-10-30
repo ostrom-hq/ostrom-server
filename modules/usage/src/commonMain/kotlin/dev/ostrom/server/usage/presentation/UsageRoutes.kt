@@ -11,7 +11,6 @@ import dev.ostrom.server.secrets.presentation.requireCaller
 import dev.ostrom.server.usage.domain.IngestUsageEventsUseCase
 import dev.ostrom.server.usage.domain.InvalidUsageEventException
 import dev.ostrom.server.usage.domain.ListUsageEventsUseCase
-import dev.ostrom.server.usage.domain.TooManyUsageEventsException
 import dev.ostrom.server.usage.domain.UsageReportUseCase
 import dev.ostrom.server.usage.domain.UsageRules
 import dev.ostrom.server.usage.domain.UsageSummaryUseCase
@@ -33,9 +32,6 @@ import kotlinx.serialization.SerializationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
-
-/** The largest ingestion body read: 500 events of a few hundred bytes each fit well under it. */
-private const val MAX_INGEST_BYTES: Long = 1_048_576
 
 /**
  * What the usage routes need.
@@ -83,9 +79,8 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
                 RelayScopes.AGENT_SESSION,
                 writers = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.SERVICE),
             )
-            // Read to one byte past the limit whatever the headers say: a chunked body declares no length.
-            val bytes = call.receiveChannel().readRemaining(MAX_INGEST_BYTES + 1).readByteArray()
-            if (bytes.size > MAX_INGEST_BYTES) throw TooManyUsageEventsException()
+            // The kernel caps the body at 1 MiB (S2-46), chunked or not: 500 events of a few hundred bytes fit well.
+            val bytes = call.receiveChannel().readRemaining().readByteArray()
             val request = try {
                 OstromJson.decodeFromString(UsageEventsRequest.serializer(), bytes.decodeToString())
             } catch (_: SerializationException) {

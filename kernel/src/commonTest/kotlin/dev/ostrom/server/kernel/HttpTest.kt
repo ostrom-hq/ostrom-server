@@ -14,11 +14,12 @@ import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.ApiError
 import dev.ostrom.server.kernel.http.DEFAULT_BODY_LIMIT
-import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.kernel.http.HealthCheck
 import dev.ostrom.server.kernel.http.HealthResponse
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.Readiness
+import dev.ostrom.server.kernel.http.UNMATCHED_ROUTE
+import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.kernel.http.configureHttp
 import dev.ostrom.server.kernel.http.httpStatus
 import dev.ostrom.server.kernel.http.isValidRequestId
@@ -456,11 +457,11 @@ class HttpTest {
         assertEquals("page", client.get("/a/${Uuid.random()}/$ticket/index.html?token=query-secret").bodyAsText())
         assertEquals("page", client.get("/l/$slug/docs/page.html").bodyAsText())
         assertEquals(HttpStatusCode.NotFound, client.get("/nowhere/$ticket").status)
-        val served = requestLines(3)
-        assertEquals(3, served.size)
-        assertTrue("\"route\":\"/a/{id}/{ticket}/{path...}\"" in served[0], served[0])
-        assertTrue("\"route\":\"/l/{slug}/{path...}\"" in served[1], served[1])
-        assertTrue("\"route\":\"unmatched\"" in served[2], served[2])
+        val served = requestLines(3).joinToString("\n")
+        // Ktor names a tail segment `{...}`, whatever the route calls it.
+        for (route in listOf("/a/{id}/{ticket}/{...}", "/l/{slug}/{...}", UNMATCHED_ROUTE)) {
+            assertTrue("\"route\":\"$route\"" in served, served)
+        }
         for (secret in listOf(ticket, slug, "query-secret", "index.html", "page.html")) {
             assertFalse(lines.any { secret in it }, "$secret must never be logged")
         }

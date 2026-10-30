@@ -12,9 +12,10 @@ const val UNMATCHED_ROUTE: String = "unmatched"
 private val routeTemplateKey = AttributeKey<String>("ostrom.route.template")
 
 /**
- * The template of the route a call matched, such as `/api/v1/artifacts/{id}/content` or `/l/{slug}/{path...}`: what
- * logs, traces and metrics name a request by. Never the concrete path, which can hold an artifact ticket, a public
- * link's slug or another access secret (SECURITY-AUDIT S2-45), nor the query. [UNMATCHED_ROUTE] until routing matched.
+ * The template of the route a call matched, such as `/api/v1/artifacts/{id}/content` or `/l/{slug}/{...}` (Ktor names
+ * a tail segment `{...}`): what logs, traces and metrics name a request by. Never the concrete path, which can hold an
+ * artifact ticket, a public link's slug or another access secret (SECURITY-AUDIT S2-45), nor the query.
+ * [UNMATCHED_ROUTE] until routing matched.
  */
 val ApplicationCall.routeTemplate: String get() = attributes.getOrNull(routeTemplateKey) ?: UNMATCHED_ROUTE
 

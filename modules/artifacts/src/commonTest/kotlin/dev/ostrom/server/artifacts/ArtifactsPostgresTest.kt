@@ -461,8 +461,8 @@ class ArtifactsPostgresTest {
                 delay(20.milliseconds)
             }
             val lines = written.load()
-            assertTrue(lines.any { "\"route\":\"/a/{id}/{ticket}/{path...}\"" in it }, lines.joinToString("\n"))
-            assertTrue(lines.any { "\"route\":\"/l/{slug}/{path...}\"" in it }, lines.joinToString("\n"))
+            assertTrue(lines.any { "\"route\":\"/a/{id}/{ticket}/{...}\"" in it }, lines.joinToString("\n"))
+            assertTrue(lines.any { "\"route\":\"/l/{slug}/{...}\"" in it }, lines.joinToString("\n"))
             assertTrue(ticketSegment.length > 8 && slug.length > 8)
             assertFalse(lines.any { ticketSegment in it || slug in it }, "A ticket or a link slug was logged")
         }
