@@ -53,10 +53,20 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         Tx(this).requestsOf(orgId, gateId)
     }
 
+    override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> =
+        driver.transaction {
+            Tx(this).run {
+                scope.enter(orgId)
+                val statement = Statement.create(GatesQueries.requestsOf(gateIds.size)).bind("org", orgId)
+                gateIds.forEachIndexed { index, gateId -> statement.bind("g$index", gateId) }
+                executor.rows(statement).map { it.toRequest() }
+            }
+        }
+
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> = driver.transaction {
         Tx(this).run {
             scope.enter(orgId)
-            // Served by the GIN index on the session ids (migration 2).
+            // Served by the primary key of the session links (migration 3).
             executor.rows(
                 Statement.create(GatesQueries.OF_SESSION).bind("org", orgId).bind("session", sessionId),
             ).map { it.toGate() }
@@ -152,12 +162,23 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             scope.enter(gate.orgId)
             executor.execute(
                 Statement.create(
-                    "INSERT INTO gates_gates (${GatesQueries.GATE_COLUMNS}) VALUES (:id, :org_id, :gate_key, :subject, :node, " +
+                    "INSERT INTO gates_gates (${GatesQueries.GATE_COLUMNS}) " +
+                        "VALUES (:id, :org_id, :gate_key, :subject, :node, " +
                         ":label, :mode, :status, :asked_by, :asked_via, :session_ids, :launch_ids, :shown_digest, " +
                         ":evidence, :decided_by, :decided_at, :self_approved, :receipt_id, :reserved_by, " +
                         ":reserved_at, :consumed_at, :created_at)",
                 ).bindGate(gate),
             ).getOrThrow()
+            linkSessions(gate)
+        }
+
+        // A gate's sessions are set when it opens and only grow when another session joins it (`addAskers`).
+        private suspend fun linkSessions(gate: Gate) {
+            if (gate.sessionIds.isEmpty()) return
+            val statement = Statement.create(GatesQueries.linkSessions(gate.sessionIds.size))
+                .bind("org", gate.orgId).bind("gate", gate.id)
+            gate.sessionIds.forEachIndexed { index, session -> statement.bind("s$index", session) }
+            executor.execute(statement).getOrThrow()
         }
 
         override suspend fun addAskers(gate: Gate) {
@@ -173,6 +194,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                     .bind("org_id", gate.orgId)
                     .bind("id", gate.id),
             ).getOrThrow()
+            linkSessions(gate)
         }
 
         override suspend fun updateGate(gate: Gate) {
