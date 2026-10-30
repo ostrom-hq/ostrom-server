@@ -16,7 +16,6 @@ import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.presentation.CloudSessionResponse
 import dev.ostrom.server.runners.presentation.CloudSessionsResponse
 import dev.ostrom.server.runners.presentation.CreateCloudSessionRequest
-import dev.ostrom.server.runners.presentation.RepositoryDto
 import dev.ostrom.server.runners.presentation.RunnerHeartbeatRequest
 import dev.ostrom.server.runners.presentation.RunnerHeartbeatResponse
 import dev.ostrom.server.testing.serverTest
@@ -108,7 +107,7 @@ class CloudSessionsPostgresTest {
 
         assertEquals(ResumeOutcome.AtCap, repository.resumeWithinCap(ORG_A, paused.id, 1, t0))
         val resumed = repository.resumeWithinCap(ORG_A, paused.id, 2, t0)
-        assertEquals(DesiredState.RUNNING, (resumed as ResumeOutcome.Resumed).session.desiredState)
+        assertEquals(DesiredState.RUNNING, (resumed as ResumeOutcome.Resumed).session.desiredStatus)
         assertEquals(ResumeOutcome.NotFound, repository.resumeWithinCap(ORG_B, paused.id, 2, t0))
         assertNull(repository.setDesiredState(ORG_B, paused.id, DesiredState.PAUSED, t0))
     }
@@ -118,7 +117,7 @@ class CloudSessionsPostgresTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val over = session(state = SessionState.TERMINATED, desired = DesiredState.TERMINATED, createdAt = t0)
         repository.createWithinCap(over, 5)
-        assertEquals(DesiredState.TERMINATED, repository.setDesiredState(ORG_A, over.id, DesiredState.RUNNING, t0)?.desiredState)
+        assertEquals(DesiredState.TERMINATED, repository.setDesiredState(ORG_A, over.id, DesiredState.RUNNING, t0)?.desiredStatus)
     }
 
     @Test
@@ -175,91 +174,94 @@ class CloudSessionsPostgresTest {
 
     @Test
     fun routesCreateListReadPauseResumeAndDelete() = serverTest(listOf(RunnersModule), identities) { server ->
-        val created = server.client.post("/v1/cloud/sessions") {
+        val created = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
-            setBody(CreateCloudSessionRequest("Fix it", "codex", RepositoryDto("https://github.com/acme/api", "main")))
+            setBody(CreateCloudSessionRequest(agent = "codex", name = "Fix it", repo = "https://github.com/acme/api", ref = "main", prompt = "Fix the tests", model = "gpt-5.5-codex"))
         }
         assertEquals(HttpStatusCode.Created, created.status)
         val session = created.body<CloudSessionResponse>()
-        assertEquals("creating", session.state)
+        assertEquals("creating", session.status)
+        assertEquals("alice", session.owner)
+        assertEquals("gpt-5.5-codex", session.model)
         assertEquals("codex", session.agent)
-        assertEquals(RepositoryDto("https://github.com/acme/api", "main"), session.repository)
+        assertEquals("https://github.com/acme/api", session.repo)
+        assertEquals("main", session.ref)
         assertEquals(30, session.limits.idleTimeoutMinutes)
 
-        val list = server.client.get("/v1/cloud/sessions?limit=1") { bearerAuth("alice") }.body<CloudSessionsResponse>()
-        assertEquals(listOf(session.id), list.sessions.map { it.id })
-        assertEquals(session.id, list.nextBefore)
-        val empty = server.client.get("/v1/cloud/sessions?before=${session.id}") { bearerAuth("alice") }.body<CloudSessionsResponse>()
-        assertEquals(emptyList(), empty.sessions)
-        assertNull(empty.nextBefore)
-        assertEquals(session.id, server.client.get("/v1/cloud/sessions/${session.id}") { bearerAuth("reader") }.body<CloudSessionResponse>().id)
+        val list = server.client.get("/api/v1/cloud/sessions?limit=1") { bearerAuth("alice") }.body<CloudSessionsResponse>()
+        assertEquals(listOf(session.id), list.items.map { it.id })
+        assertEquals(session.id, list.next)
+        val empty = server.client.get("/api/v1/cloud/sessions?before=${session.id}") { bearerAuth("alice") }.body<CloudSessionsResponse>()
+        assertEquals(emptyList(), empty.items)
+        assertNull(empty.next)
+        assertEquals(session.id, server.client.get("/api/v1/cloud/sessions/${session.id}") { bearerAuth("reader") }.body<CloudSessionResponse>().id)
 
-        val paused = server.client.post("/v1/cloud/sessions/${session.id}/pause") { bearerAuth("alice") }
+        val paused = server.client.post("/api/v1/cloud/sessions/${session.id}/pause") { bearerAuth("alice") }
         assertEquals(HttpStatusCode.Accepted, paused.status)
-        assertEquals("paused", paused.body<CloudSessionResponse>().desiredState)
-        val resumed = server.client.post("/v1/cloud/sessions/${session.id}/resume") { bearerAuth("alice") }
-        assertEquals("running", resumed.body<CloudSessionResponse>().desiredState)
-        val deleted = server.client.delete("/v1/cloud/sessions/${session.id}") { bearerAuth("alice") }
+        assertEquals("paused", paused.body<CloudSessionResponse>().desiredStatus)
+        val resumed = server.client.post("/api/v1/cloud/sessions/${session.id}/resume") { bearerAuth("alice") }
+        assertEquals("running", resumed.body<CloudSessionResponse>().desiredStatus)
+        val deleted = server.client.delete("/api/v1/cloud/sessions/${session.id}") { bearerAuth("alice") }
         assertEquals(HttpStatusCode.Accepted, deleted.status)
-        assertEquals("terminated", deleted.body<CloudSessionResponse>().desiredState)
+        assertEquals("terminated", deleted.body<CloudSessionResponse>().desiredStatus)
     }
 
     @Test
     fun routesRefuseWithoutTokenOrganizationOrScope() = serverTest(listOf(RunnersModule), identities) { server ->
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/v1/cloud/sessions").status)
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/v1/cloud/sessions") { bearerAuth("unknown") }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.get("/v1/cloud/sessions") { bearerAuth("nobody") }.status)
-        val readOnly = server.client.post("/v1/cloud/sessions") {
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/sessions").status)
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/sessions") { bearerAuth("unknown") }.status)
+        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/cloud/sessions") { bearerAuth("nobody") }.status)
+        val readOnly = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("reader")
             contentType(ContentType.Application.Json)
-            setBody(CreateCloudSessionRequest("x", "claude"))
+            setBody(CreateCloudSessionRequest(agent = "claude", name = "x"))
         }
         assertEquals(HttpStatusCode.Forbidden, readOnly.status)
     }
 
     @Test
     fun anotherOrganizationOrMemberSeesNothing() = serverTest(listOf(RunnersModule), identities) { server ->
-        val session = server.client.post("/v1/cloud/sessions") {
+        val session = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
-            setBody(CreateCloudSessionRequest("Mine", "claude"))
+            setBody(CreateCloudSessionRequest(agent = "claude", name = "Mine"))
         }.body<CloudSessionResponse>()
 
         for (stranger in listOf("carol", "bob")) {
-            assertEquals(HttpStatusCode.NotFound, server.client.get("/v1/cloud/sessions/${session.id}") { bearerAuth(stranger) }.status)
-            assertEquals(HttpStatusCode.NotFound, server.client.post("/v1/cloud/sessions/${session.id}/pause") { bearerAuth(stranger) }.status)
-            assertEquals(HttpStatusCode.NotFound, server.client.post("/v1/cloud/sessions/${session.id}/resume") { bearerAuth(stranger) }.status)
-            assertEquals(HttpStatusCode.NotFound, server.client.delete("/v1/cloud/sessions/${session.id}") { bearerAuth(stranger) }.status)
-            val list = server.client.get("/v1/cloud/sessions") { bearerAuth(stranger) }.body<CloudSessionsResponse>()
-            assertEquals(emptyList(), list.sessions)
+            assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/cloud/sessions/${session.id}") { bearerAuth(stranger) }.status)
+            assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/cloud/sessions/${session.id}/pause") { bearerAuth(stranger) }.status)
+            assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/cloud/sessions/${session.id}/resume") { bearerAuth(stranger) }.status)
+            assertEquals(HttpStatusCode.NotFound, server.client.delete("/api/v1/cloud/sessions/${session.id}") { bearerAuth(stranger) }.status)
+            val list = server.client.get("/api/v1/cloud/sessions") { bearerAuth(stranger) }.body<CloudSessionsResponse>()
+            assertEquals(emptyList(), list.items)
         }
-        assertEquals(HttpStatusCode.NotFound, server.client.get("/v1/cloud/sessions/not-a-uuid") { bearerAuth("alice") }.status)
+        assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/cloud/sessions/not-a-uuid") { bearerAuth("alice") }.status)
     }
 
     @Test
     fun routesMapRefusalsToStatuses() = serverTest(listOf(RunnersModule), identities) { server ->
-        val bad = server.client.post("/v1/cloud/sessions") {
+        val bad = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
-            setBody(CreateCloudSessionRequest("x", "cursor"))
+            setBody(CreateCloudSessionRequest(agent = "cursor", name = "x"))
         }
         assertEquals(HttpStatusCode.BadRequest, bad.status)
         repeat(5) {
-            server.client.post("/v1/cloud/sessions") {
+            server.client.post("/api/v1/cloud/sessions") {
                 bearerAuth("alice")
                 contentType(ContentType.Application.Json)
-                setBody(CreateCloudSessionRequest("s$it", "claude"))
+                setBody(CreateCloudSessionRequest(agent = "claude", name = "s$it"))
             }
         }
-        val capped = server.client.post("/v1/cloud/sessions") {
+        val capped = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
-            setBody(CreateCloudSessionRequest("one too many", "claude"))
+            setBody(CreateCloudSessionRequest(agent = "claude", name = "one too many"))
         }
         assertEquals(HttpStatusCode.Conflict, capped.status)
-        assertEquals(HttpStatusCode.BadRequest, server.client.get("/v1/cloud/sessions?before=nope") { bearerAuth("alice") }.status)
-        assertEquals(HttpStatusCode.BadRequest, server.client.get("/v1/cloud/sessions?limit=99") { bearerAuth("alice") }.status)
+        assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/cloud/sessions?before=nope") { bearerAuth("alice") }.status)
+        assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/cloud/sessions?limit=99") { bearerAuth("alice") }.status)
     }
 
     @Test
@@ -270,7 +272,7 @@ class CloudSessionsPostgresTest {
         val starting: CloudSession = session(createdAt = t0).copy(epoch = 2, runnerTokenHash = tokens.hash(token), executionStartedAt = t0)
         repository.createWithinCap(starting, 5)
 
-        suspend fun beat(body: RunnerHeartbeatRequest, auth: String? = token) = server.client.post("/v1/runner/heartbeat") {
+        suspend fun beat(body: RunnerHeartbeatRequest, auth: String? = token) = server.client.post("/api/v1/cloud/runner/heartbeat") {
             if (auth != null) header(HttpHeaders.Authorization, auth)
             contentType(ContentType.Application.Json)
             setBody(body)
@@ -295,6 +297,6 @@ class CloudSessionsPostgresTest {
 
     @Test
     fun aRandomIdIsNotFound() = serverTest(listOf(RunnersModule), identities) { server ->
-        assertEquals(HttpStatusCode.NotFound, server.client.get("/v1/cloud/sessions/${Uuid.random()}") { bearerAuth("alice") }.status)
+        assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/cloud/sessions/${Uuid.random()}") { bearerAuth("alice") }.status)
     }
 }

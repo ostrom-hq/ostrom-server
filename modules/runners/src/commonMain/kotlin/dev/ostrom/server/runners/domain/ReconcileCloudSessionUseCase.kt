@@ -101,7 +101,17 @@ class ReconcileCloudSessionUseCaseImpl(
         // The row commits first: an execution the runtime runs always has its row, never the reverse.
         val stored = repository.compareAndSet(next, now + STEP_DELAY) ?: return now
         driver.startExecution(
-            ExecutionSpec(stored.id, stored.orgId, stored.epoch, stored.agent, stored.repository, token, stored.limits),
+            ExecutionSpec(
+                stored.id,
+                stored.orgId,
+                stored.epoch,
+                stored.agent,
+                stored.repository,
+                token,
+                stored.limits,
+                stored.model,
+                stored.prompt.takeIf { stored.epoch == 1L },
+            ),
         )
         return now + STEP_DELAY
     }

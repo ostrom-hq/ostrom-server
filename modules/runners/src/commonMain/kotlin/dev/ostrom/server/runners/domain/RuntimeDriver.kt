@@ -58,6 +58,8 @@ interface RuntimeDriver {
  * @property runnerToken The execution's runner token, handed to the runner only (a Kubernetes Secret, a Docker
  *   environment variable); never stored in clear by the server.
  * @property limits The session's bounds (egress restriction).
+ * @property model The model the agent starts with, if chosen.
+ * @property prompt The agent's first message, given at the first execution only.
  */
 data class ExecutionSpec(
     val sessionId: Uuid,
@@ -67,8 +69,11 @@ data class ExecutionSpec(
     val repository: RepositorySpec?,
     val runnerToken: String,
     val limits: SessionLimits,
+    val model: String? = null,
+    val prompt: String? = null,
 ) {
-    override fun toString(): String = "ExecutionSpec(sessionId=$sessionId, epoch=$epoch, agent=${agent.wire}, runnerToken=***)"
+    override fun toString(): String =
+        "ExecutionSpec(sessionId=$sessionId, epoch=$epoch, agent=${agent.wire}, model=$model, runnerToken=***, prompt=${if (prompt == null) "none" else "***"})"
 }
 
 /** The state of an execution as the runtime sees it. */
