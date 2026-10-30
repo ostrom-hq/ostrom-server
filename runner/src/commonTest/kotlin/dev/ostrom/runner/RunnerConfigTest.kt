@@ -47,6 +47,18 @@ class RunnerConfigTest {
         assertEquals("t", inline.token)
         assertEquals("/w", inline.workspace)
         assertNull(inline.repositoryUrl)
+        assertNull(inline.model)
+        assertNull(inline.prompt)
+
+        val files = mapOf("/run/ostrom/token" to "t", "/run/ostrom/prompt" to "Fix the tests")
+        val prompted = RunnerConfig.from(base + ("OSTROM_AGENT_PROMPT_FILE" to "/run/ostrom/prompt") + ("OSTROM_AGENT_MODEL" to "m")) { files.getValue(it) }
+        assertEquals("Fix the tests", prompted.prompt)
+        assertEquals("m", prompted.model)
+        assertEquals("hi", RunnerConfig.from(base + ("OSTROM_AGENT_PROMPT" to "hi")) { "t" }.prompt)
+        assertFalse("Fix" in prompted.toString())
+        val environment = SessionScript.environment(base + ("OSTROM_AGENT_PROMPT_FILE" to "/run/ostrom/prompt"), prompted)
+        assertEquals("Fix the tests", environment["OSTROM_AGENT_PROMPT"])
+        assertNull(environment["OSTROM_AGENT_PROMPT_FILE"])
     }
 
     @Test
@@ -86,7 +98,7 @@ class RunnerConfigTest {
         var status = HttpStatusCode.OK
         var answer = """{"instruction":"run","state":"running"}"""
         val client = HttpClient(MockEngine { request ->
-            assertEquals("/v1/runner/heartbeat", request.url.encodedPath)
+            assertEquals("/api/v1/cloud/runner/heartbeat", request.url.encodedPath)
             assertEquals("Bearer t", request.headers[HttpHeaders.Authorization])
             bodies += request.body.toByteArray().decodeToString()
             respond(answer, status, headersOf(HttpHeaders.ContentType, "application/json"))

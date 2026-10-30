@@ -13,6 +13,8 @@ import kotlin.uuid.Uuid
  * @property repositoryRef The branch, tag or commit to check out, if any.
  * @property token The runner token.
  * @property workspace The workspace volume.
+ * @property model The model the agent starts with, if chosen.
+ * @property prompt The agent's first message, if any (first execution only).
  */
 data class RunnerConfig(
     val serverUrl: String,
@@ -23,13 +25,15 @@ data class RunnerConfig(
     val repositoryRef: String?,
     val token: String,
     val workspace: String,
+    val model: String? = null,
+    val prompt: String? = null,
 ) {
     /** The token never appears in logs. */
     override fun toString(): String = "RunnerConfig(serverUrl=$serverUrl, sessionId=$sessionId, epoch=$epoch, agent=$agentCommand)"
 
     companion object {
         /** Variables only the runner reads; never passed to the agent. */
-        val PRIVATE_VARIABLES = setOf("OSTROM_RUNNER_TOKEN", "OSTROM_RUNNER_TOKEN_FILE")
+        val PRIVATE_VARIABLES = setOf("OSTROM_RUNNER_TOKEN", "OSTROM_RUNNER_TOKEN_FILE", "OSTROM_AGENT_PROMPT", "OSTROM_AGENT_PROMPT_FILE")
 
         /**
          * Reads the configuration.
@@ -58,6 +62,9 @@ data class RunnerConfig(
                 repositoryRef = environment["OSTROM_REPOSITORY_REF"]?.takeIf { it.isNotBlank() },
                 token = token,
                 workspace = environment["OSTROM_WORKSPACE"]?.takeIf { it.isNotBlank() } ?: DEFAULT_WORKSPACE,
+                model = environment["OSTROM_AGENT_MODEL"]?.takeIf { it.isNotBlank() },
+                prompt = environment["OSTROM_AGENT_PROMPT"]?.takeIf { it.isNotBlank() }
+                    ?: environment["OSTROM_AGENT_PROMPT_FILE"]?.takeIf { it.isNotBlank() }?.let(readFile)?.takeIf { it.isNotBlank() },
             )
         }
 
@@ -69,8 +76,8 @@ data class RunnerConfig(
 object SessionScript {
     /**
      * The script of the first terminal: clone the repository once (never reset afterwards), enter it, run the
-     * agent, then leave a login shell so the member can start the agent again. Values come from the
-     * environment, never from the script's text.
+     * agent (with its model and first message, if any), then leave a login shell so the member can start the
+     * agent again. Values come from the environment, never from the script's text.
      */
     const val FIRST = """
 set -u
@@ -89,7 +96,23 @@ if [ -n "${'$'}{OSTROM_REPOSITORY_URL:-}" ]; then
   fi
   [ -d "${'$'}dir" ] && cd "${'$'}dir"
 fi
-"${'$'}OSTROM_AGENT_COMMAND"
+set --
+if [ -n "${'$'}{OSTROM_AGENT_MODEL:-}" ]; then
+  case "${'$'}OSTROM_AGENT_COMMAND" in
+    bash) ;;
+    gemini) set -- -m "${'$'}OSTROM_AGENT_MODEL" ;;
+    *) set -- --model "${'$'}OSTROM_AGENT_MODEL" ;;
+  esac
+fi
+if [ -n "${'$'}{OSTROM_AGENT_PROMPT:-}" ]; then
+  case "${'$'}OSTROM_AGENT_COMMAND" in
+    bash) ;;
+    gemini) set -- "${'$'}@" -i "${'$'}OSTROM_AGENT_PROMPT" ;;
+    opencode) set -- "${'$'}@" --prompt "${'$'}OSTROM_AGENT_PROMPT" ;;
+    *) set -- "${'$'}@" "${'$'}OSTROM_AGENT_PROMPT" ;;
+  esac
+fi
+"${'$'}OSTROM_AGENT_COMMAND" "${'$'}@"
 echo
 echo "The agent exited. Run ${'$'}OSTROM_AGENT_COMMAND to start it again."
 exec bash -l
@@ -110,7 +133,8 @@ exec bash -l
      * @return The variables.
      */
     fun environment(environment: Map<String, String>, config: RunnerConfig): Map<String, String> =
-        environment.filterKeys { it !in RunnerConfig.PRIVATE_VARIABLES } + mapOf(
+        environment.filterKeys { it !in RunnerConfig.PRIVATE_VARIABLES } +
+            listOfNotNull(config.prompt?.let { "OSTROM_AGENT_PROMPT" to it }) + mapOf(
             "OSTROM_WORKSPACE" to config.workspace,
             "HOME" to (environment["HOME"]?.takeIf { it.isNotBlank() } ?: "${config.workspace}/.home"),
             "TERM" to "xterm-256color",

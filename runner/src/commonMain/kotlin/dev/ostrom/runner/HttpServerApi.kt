@@ -23,7 +23,7 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
- * [ServerApi] over HTTP: `POST /v1/runner/heartbeat` and `WS /v1/runner/terminal`, with the runner token.
+ * [ServerApi] over HTTP: `POST /api/v1/cloud/runner/heartbeat` and `WS /api/v1/cloud/runner/terminal`, with the runner token.
  *
  * @param client An HTTP client with WebSockets installed.
  * @param config The runner's configuration.
@@ -54,7 +54,7 @@ class HttpServerApi(
     }
 
     override suspend fun heartbeat(ready: Boolean, stopped: Boolean, lastModelRequestAt: String?): Instruction {
-        val response = client.post("${config.serverUrl}/v1/runner/heartbeat") {
+        val response = client.post("${config.serverUrl}/api/v1/cloud/runner/heartbeat") {
             bearerAuth(config.token)
             contentType(ContentType.Application.Json)
             setBody(JSON.encodeToString(HeartbeatRequest.serializer(), HeartbeatRequest(config.sessionId.toString(), config.epoch, ready, stopped, lastModelRequestAt)))
@@ -69,7 +69,7 @@ class HttpServerApi(
     }
 
     override suspend fun openTerminal(): TerminalLink {
-        val url = config.serverUrl.replaceFirst("http", "ws") + "/v1/runner/terminal?sessionId=${config.sessionId}&epoch=${config.epoch}"
+        val url = config.serverUrl.replaceFirst("http", "ws") + "/api/v1/cloud/runner/terminal?sessionId=${config.sessionId}&epoch=${config.epoch}"
         val session = client.webSocketSession(url) { bearerAuth(config.token) }
         return WebSocketLink(session, scope)
     }
