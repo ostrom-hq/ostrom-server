@@ -230,8 +230,11 @@ class LaunchesPostgresTest {
             assertTrue("launches_launches_pkey" in plan, plan)
         }
 
+    // The organization is also named: the tests' database role may bypass Row-Level Security (the probe role proves it).
     private suspend fun TestServer.launchesSeenBy(orgId: Uuid): Int = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll("SELECT COUNT(*) AS n FROM launches_launches").getOrThrow().first().get("n").asString().toInt()
+        val count = Statement.create("SELECT COUNT(*) AS n FROM launches_launches WHERE org_id = :org_id")
+            .bind("org_id", orgId)
+        tx.fetchAll(count).getOrThrow().first().get("n").asString().toInt()
     }
 
     private companion object {
