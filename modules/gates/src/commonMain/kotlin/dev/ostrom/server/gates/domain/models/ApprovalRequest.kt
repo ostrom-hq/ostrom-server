@@ -58,6 +58,8 @@ enum class Answer { YES, NO }
  * @property launchId The launch an agent token is scoped to: it acts only in that launch's sessions (audit A12).
  * @property personId The person behind a device or agent token (the developer), who becomes the asker of the gates
  * the token opens; the user itself for a person.
+ * @property authenticatedAt When the person last proved who they are (a sign-in, the app's biometrics): a yes needs it
+ *   recent (S2-54).
  */
 data class GateActor(
     val id: String,
@@ -65,6 +67,7 @@ data class GateActor(
     val kind: ActorKind,
     val launchId: String? = null,
     val personId: String? = null,
+    val authenticatedAt: Instant? = null,
 )
 
 /** The kinds of caller. Only a [USER] answers a request. */

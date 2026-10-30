@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.automations.infrastructure
 
+import dev.ostrom.server.automations.domain.AutomationLauncher
+import dev.ostrom.server.automations.domain.LaunchRequest
+import dev.ostrom.server.automations.domain.LaunchResult
 import dev.ostrom.server.automations.domain.MemberDirectory
 import dev.ostrom.server.automations.domain.Wait
 import dev.ostrom.server.automations.domain.WaitEvents
@@ -21,4 +24,12 @@ internal object SilentWaitEvents : WaitEvents {
     override suspend fun resolved(wait: Wait) = Unit
 
     override suspend fun cancelled(wait: Wait) = Unit
+}
+
+/** The launcher until a module serving cloud sessions binds one: every run fails `cloud_sessions_unavailable`. */
+internal object UnavailableLauncher : AutomationLauncher {
+    override suspend fun launch(request: LaunchRequest): LaunchResult =
+        LaunchResult.Refused("cloud_sessions_unavailable")
+
+    override suspend fun isWorking(orgId: Uuid, sessionId: String): Boolean = false
 }

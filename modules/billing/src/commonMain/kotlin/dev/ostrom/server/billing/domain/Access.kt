@@ -33,15 +33,35 @@ fun OrgPrincipal.requireBillingAdminOf(orgId: Uuid) {
 /** Reading an organization's billing (overview, invoices). */
 const val BILLING_READ = "billing:read"
 
-/** Buying, changing and cancelling the subscription; includes [BILLING_READ]. */
+/**
+ * The scope a token was once issued to change billing with. It no longer allows any write (S2-52: a billing change is
+ * made in the console only); a token that still carries it can read, as with [BILLING_READ].
+ */
 const val BILLING_MANAGE = "billing:manage"
 
-/** The full scope of a member's interactive console session (identity module). */
+/**
+ * The full scope of a member's interactive console session. The identity module never puts it on a token (its
+ * `NEVER_ON_A_TOKEN`), so it marks a browser session until the kernel's `WriteAccess` (S2-52) replaces this check.
+ */
 private const val ALL_USER_SCOPES = "user:*"
 
 /**
- * Whether a credential may use billing with [scope]: only a person (never a device, an agent session or a service),
- * whose token carries [scope], [BILLING_MANAGE] for [BILLING_READ], or the console session's full scope.
+ * Whether a credential may read billing: only a person (never a device, an agent session or a service), signed in
+ * to the console or with a token carrying [BILLING_READ] (or [BILLING_MANAGE]).
  */
-fun AuthenticatedPrincipal.allowsBilling(scope: String): Boolean = kind == PrincipalKind.USER &&
-    (scope in scopes || BILLING_MANAGE in scopes || ALL_USER_SCOPES in scopes)
+fun AuthenticatedPrincipal.allowsBillingRead(): Boolean = kind == PrincipalKind.USER &&
+    (BILLING_READ in scopes || BILLING_MANAGE in scopes || ALL_USER_SCOPES in scopes)
+
+/**
+ * Whether a credential may change billing: a person signed in to the console only, never a token (S2-52).
+ */
+fun AuthenticatedPrincipal.allowsBillingWrite(): Boolean = kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes
+
+/**
+ * Refuses a billing change made with anything but a console session.
+ *
+ * @throws BillingSessionRequiredException When the credential is a token.
+ */
+fun AuthenticatedPrincipal.requireBillingWrite() {
+    if (!allowsBillingWrite()) throw BillingSessionRequiredException()
+}

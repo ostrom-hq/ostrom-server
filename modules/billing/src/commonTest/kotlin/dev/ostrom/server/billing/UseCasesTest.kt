@@ -7,6 +7,7 @@ import dev.ostrom.server.billing.domain.BillingAccessDeniedException
 import dev.ostrom.server.billing.domain.BillingAdminRequiredException
 import dev.ostrom.server.billing.domain.BillingInterval
 import dev.ostrom.server.billing.domain.BillingNotConfiguredException
+import dev.ostrom.server.billing.domain.BillingSessionRequiredException
 import dev.ostrom.server.billing.domain.Invoice
 import dev.ostrom.server.billing.domain.LicenseGrant
 import dev.ostrom.server.billing.domain.NoActiveSubscriptionException
@@ -19,7 +20,9 @@ import dev.ostrom.server.billing.domain.PlanNotPurchasableException
 import dev.ostrom.server.billing.domain.SubscriptionAlreadyActiveException
 import dev.ostrom.server.billing.domain.SubscriptionStateException
 import dev.ostrom.server.billing.domain.SubscriptionStatus
-import dev.ostrom.server.billing.domain.allowsBilling
+import dev.ostrom.server.billing.domain.allowsBillingRead
+import dev.ostrom.server.billing.domain.allowsBillingWrite
+import dev.ostrom.server.billing.domain.requireBillingWrite
 import dev.ostrom.server.billing.fakes.NOW
 import dev.ostrom.server.billing.fakes.stripeSubscription
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -107,15 +110,25 @@ class UseCasesTest {
     }
 
     @Test
-    fun billingScopesArePeoplesOnly() {
+    fun billingIsReadByPeopleAndChangedInTheConsoleOnly() {
         fun principal(kind: PrincipalKind, vararg scopes: String) = AuthenticatedPrincipal("u", kind, scopes.toSet())
-        assertTrue(principal(PrincipalKind.USER, "user:*").allowsBilling(BILLING_MANAGE))
-        assertTrue(principal(PrincipalKind.USER, BILLING_MANAGE).allowsBilling(BILLING_READ))
-        assertTrue(principal(PrincipalKind.USER, BILLING_READ).allowsBilling(BILLING_READ))
-        assertFalse(principal(PrincipalKind.USER, BILLING_READ).allowsBilling(BILLING_MANAGE))
-        assertFalse(principal(PrincipalKind.USER, "orgs:read").allowsBilling(BILLING_READ))
-        assertFalse(principal(PrincipalKind.DEVICE, "user:*").allowsBilling(BILLING_READ))
-        assertFalse(principal(PrincipalKind.SERVICE, BILLING_MANAGE).allowsBilling(BILLING_READ))
+        val session = principal(PrincipalKind.USER, "user:*")
+        assertTrue(session.allowsBillingRead())
+        assertTrue(session.allowsBillingWrite())
+        session.requireBillingWrite()
+        assertTrue(principal(PrincipalKind.USER, BILLING_MANAGE).allowsBillingRead())
+        assertTrue(principal(PrincipalKind.USER, BILLING_READ).allowsBillingRead())
+        assertFalse(principal(PrincipalKind.USER, "orgs:read").allowsBillingRead())
+        assertFalse(principal(PrincipalKind.DEVICE, "user:*").allowsBillingRead())
+        assertFalse(principal(PrincipalKind.SERVICE, BILLING_MANAGE).allowsBillingRead())
+        // S2-52: a personal token never changes billing, whatever its scopes; nor does anything but a person.
+        assertFalse(principal(PrincipalKind.USER, BILLING_MANAGE).allowsBillingWrite())
+        assertFalse(principal(PrincipalKind.USER, BILLING_READ).allowsBillingWrite())
+        assertFalse(principal(PrincipalKind.DEVICE, "user:*").allowsBillingWrite())
+        val refused = assertFailsWith<BillingSessionRequiredException> {
+            principal(PrincipalKind.USER, BILLING_MANAGE).requireBillingWrite()
+        }
+        assertEquals("This change needs a signed-in session in the console: a token cannot make it.", refused.message)
     }
 
     @Test

@@ -33,6 +33,24 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # ostrom-core at the pinned commit, read with its read-only deploy key: the GITHUB_TOKEN of this repository can
+      # never read the Maven packages of another one (JOURNAL 05:50). Moved next to the workspace, where
+      # settings.gradle.kts includes it (ostrom.core.local), so that no check of this repository scans it.
+      - name: ostrom-core version
+        id: core
+        run: echo "ref=$(tr -d '[:space:]' < gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.core.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: ostrom-core
+          persist-credentials: false
+      - name: Build ostrom-core from that checkout
+        run: |
+          mv ostrom-core ../ostrom-core
+          mkdir -p ~/.gradle
+          echo "ostrom.core.local=true" >> ~/.gradle/gradle.properties
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
@@ -120,7 +138,7 @@ jobs:
       - name: The arm64 image starts too (QEMU)
         run: |
           docker buildx build ctx/arm64 --platform linux/arm64 --load -t ostrom-server:smoke-arm64
-          # No database configured: the binary must load (libcrypt.so.1 of the right architecture) and refuse its config.
+          # No database configured: the binary must load (libcrypt.so.1 and libz.so.1 of the right architecture) and refuse its config.
           out=$(docker run --rm --platform linux/arm64 ostrom-server:smoke-arm64 2>&1 || true)
           echo "$out"
           echo "$out" | grep -q 'OSTROM_DATABASE_URL' || { echo "arm64 binary did not start"; exit 1; }

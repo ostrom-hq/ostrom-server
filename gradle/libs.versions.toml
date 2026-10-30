@@ -69,10 +69,14 @@ ktor-client-engine-defaults = { module = "io.ktor:ktor-client-engine-defaults", 
 ktor-client-resources = { module = "io.ktor:ktor-client-resources", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
-# Explicit engine of the runners module on native: Curl (TLS, a custom CA); CIO above serves the JVM target
+# Explicit engines. Runners on native: Curl (TLS, a custom CA); CIO above serves their JVM target and the telemetry
+# export (pure Kotlin, its own TLS).
 ktor-client-curl = { module = "io.ktor:ktor-client-curl", version.ref = "ktor" }
 ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
 ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
+
+# ostrom-core
+ostrom-telemetry = { module = "dev.ostrom:ostrom-telemetry", version.ref = "ostrom-core" }
 
 # Koin (constructor injection, wired in the composition root only)
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }

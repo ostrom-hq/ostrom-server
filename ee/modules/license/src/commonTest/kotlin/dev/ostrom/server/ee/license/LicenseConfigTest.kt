@@ -69,4 +69,18 @@ class LicenseConfigTest {
             SystemFileSystem.delete(path)
         }
     }
+
+    @Test
+    fun aKeyFileLargerThan16KiBIsRefusedWithoutBeingRead() {
+        val path = Path(SystemTemporaryDirectory, "ostrom-license-${Uuid.random().toHexString()}.key")
+        SystemFileSystem.sink(path).buffered().use { it.writeString("x".repeat(MAX_LICENSE_FILE_BYTES + 1)) }
+        try {
+            val error = assertFailsWith<InvalidConfigException> {
+                LicenseConfig.load(MapConfigSource(mapOf("OSTROM_LICENSE_KEY_FILE" to path.toString())))
+            }
+            assertEquals("License key file $path is larger than 16 KiB: it is not a license key.", error.message)
+        } finally {
+            SystemFileSystem.delete(path)
+        }
+    }
 }
