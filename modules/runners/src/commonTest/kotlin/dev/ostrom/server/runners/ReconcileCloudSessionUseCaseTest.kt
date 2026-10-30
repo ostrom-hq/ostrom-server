@@ -6,6 +6,7 @@ import dev.ostrom.server.runners.domain.CloudSession
 import dev.ostrom.server.runners.domain.DesiredState
 import dev.ostrom.server.runners.domain.ExecutionStatus
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.SessionFailure
 import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.fakes.FakeRunnerTokens
@@ -28,7 +29,8 @@ class ReconcileCloudSessionUseCaseTest {
     private val tokens = FakeRunnerTokens()
     private val plans = FixedPlans()
     private val clock = SettableClock()
-    private val reconcile = ReconcileCloudSessionUseCaseImpl(repository, driver, tokens, plans, clock)
+    private val meter = RepositoryCloudUsageMeter(repository)
+    private val reconcile = ReconcileCloudSessionUseCaseImpl(repository, driver, tokens, plans, meter, clock)
     private val t0 = clock.now
 
     private fun put(session: CloudSession) = session.also { repository.put(it) }

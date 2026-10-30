@@ -32,10 +32,10 @@ class CloudSessionLimitException(max: Int) : OstromException(
     "Your plan runs at most $max cloud sessions at once: pause or delete one first.",
 )
 
-/** The organization used all the execution hours of its plan this month. */
+/** The organization used all the execution hours of its plan this period. */
 class CloudHoursExhaustedException(hours: Int) : OstromException(
     ErrorKind.PAYMENT_REQUIRED,
-    "Your plan's $hours cloud hours of this month are used up.",
+    "Your plan's $hours cloud hours of this period are used up.",
 )
 
 /**

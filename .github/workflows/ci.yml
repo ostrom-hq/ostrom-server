@@ -7,7 +7,14 @@ on:
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # A manual run with full_validation also links linuxArm64; a tag (release-binaries.yml) and main's Image workflow
+  # always do (AGENTS.md rule 14: arm64 runs on tags or full_validation only, never on a pull request).
   workflow_dispatch:
+    inputs:
+      full_validation:
+        description: Also link the linuxArm64 release binary
+        type: boolean
+        default: false
 env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
@@ -127,13 +134,51 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
+      # A private repository's runner has 7 GB: after the tests, the Gradle and Kotlin daemons still hold much of it,
+      # and the release links were killed (exit 143) even with #52's lighter daemons. Stop them, and add swap where the
+      # disk has room, before the native links.
+      - name: Free memory for the native links
+        run: |
+          ./gradlew --stop
+          pkill -f KotlinCompileDaemon || true
+          df -h / /mnt
+          # Swap where the disk has room (the runner's /mnt can be too small): stopping the daemons is the main fix.
+          for size in 4G 2G; do
+            if sudo fallocate -l "$size" /native-link.swap; then
+              sudo chmod 600 /native-link.swap
+              sudo mkswap /native-link.swap
+              sudo swapon /native-link.swap
+              break
+            fi
+          done
+          free -h
+      # S2-49: one session of the real image, run as the Docker driver runs it; the agent must not reach the token.
+      - name: Session image, the agent cannot read the runner token (S2-49)
+        if: ${{ !cancelled() }}
+        run: |
+          ./gradlew :runner:linkDebugExecutableLinuxX64
+          ci/runner-isolation.sh runner/build/bin/linuxX64/debugExecutable/ostrom-runner.kexe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Server binary (linuxX64 in dist/)
         run: |
           ci/build-linux.sh
-          ./gradlew :app:linkReleaseExecutableLinuxArm64
           ldd dist/ostrom-server
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Server binary (linuxArm64 cross-linked, full validation only)
+        if: github.event_name == 'workflow_dispatch' && inputs.full_validation
+        run: ./gradlew :app:linkReleaseExecutableLinuxArm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The swap file takes the root disk the images need (run 41029912954: "no space left on device" pulling the
+      # collector): give it back once the links are done.
+      - name: Release the swap of the native links
+        if: ${{ !cancelled() }}
+        run: |
+          sudo swapoff /native-link.swap || true
+          sudo rm -f /native-link.swap
+          df -h /
       - name: Docker image
         run: |
           docker build -t ostrom-server:ci .
@@ -200,9 +245,11 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ostrom-server-linux
+          # The linuxArm64 binary is only there after a full validation.
           path: |
             dist/ostrom-server
             app/build/bin/linuxArm64/releaseExecutable/ostrom-server.kexe
+          if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
