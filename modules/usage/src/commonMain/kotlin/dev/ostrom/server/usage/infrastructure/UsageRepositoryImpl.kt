@@ -28,7 +28,9 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
     override suspend fun insert(events: List<UsageEvent>) {
         if (events.isEmpty()) return
         // Parameters are named e<index>_<column>: ":e1_id" is never a prefix of ":e10_id".
-        val rows = events.indices.joinToString(", ") { index -> "(" + PARAMETERS.joinToString(", ") { ":e${index}_$it" } + ")" }
+        val rows = events.indices.joinToString(", ") { index ->
+            PARAMETERS.joinToString(", ", prefix = "(", postfix = ")") { ":e${index}_$it" }
+        }
         val statement = Statement.create("INSERT INTO usage_events ($COLUMNS) VALUES $rows")
         events.forEachIndexed { index, event -> statement.bindEvent("e${index}_", event) }
         driver.execute(statement).getOrThrow()
@@ -92,7 +94,8 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
             else -> " AND (at, id) < (:before_at, :before_id)"
         }
         val statement = Statement.create(
-            "SELECT $COLUMNS FROM usage_events WHERE org_id = :org_id$member$cursor ORDER BY at DESC, id DESC LIMIT :limit",
+            "SELECT $COLUMNS FROM usage_events WHERE org_id = :org_id$member$cursor " +
+                "ORDER BY at DESC, id DESC LIMIT :limit",
         ).bind("org_id", orgId).bind("limit", limit)
         if (memberId != null) statement.bind("member_id", memberId)
         if (before != null) {

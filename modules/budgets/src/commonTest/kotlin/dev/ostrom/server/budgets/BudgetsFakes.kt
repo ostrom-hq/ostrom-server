@@ -120,7 +120,7 @@ class InMemoryBudgetsRepository : BudgetsRepository {
     val orgLimits = mutableMapOf<Uuid, Long>()
     val defaultLimits = mutableMapOf<Uuid, Long>()
     val memberLimits = mutableMapOf<Pair<Uuid, Uuid>, MemberBudget>()
-    val marked = mutableSetOf<String>()
+    val marked = mutableSetOf<List<Any?>>()
     var limitReads = 0
     var markFailure: Exception? = null
 
@@ -135,18 +135,30 @@ class InMemoryBudgetsRepository : BudgetsRepository {
         return BudgetLimits(orgLimits[orgId], memberLimits[orgId to memberId]?.limitMicros ?: defaultLimits[orgId])
     }
 
-    override suspend fun putOrgLimits(orgId: Uuid, orgLimitMicros: Long?, defaultMemberLimitMicros: Long?, at: Instant) {
+    override suspend fun putOrgLimits(
+        orgId: Uuid,
+        orgLimitMicros: Long?,
+        defaultMemberLimitMicros: Long?,
+        at: Instant,
+    ) {
         if (orgLimitMicros == null) orgLimits.remove(orgId) else orgLimits[orgId] = orgLimitMicros
-        if (defaultMemberLimitMicros == null) defaultLimits.remove(orgId) else defaultLimits[orgId] = defaultMemberLimitMicros
+        if (defaultMemberLimitMicros == null) {
+            defaultLimits.remove(orgId)
+        } else {
+            defaultLimits[orgId] = defaultMemberLimitMicros
+        }
     }
 
     override suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget =
         MemberBudget(memberId, limitMicros, at).also { memberLimits[orgId to memberId] = it }
 
-    override suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean = memberLimits.remove(orgId to memberId) != null
+    override suspend fun deleteMemberLimit(
+        orgId: Uuid,
+        memberId: Uuid,
+    ): Boolean = memberLimits.remove(orgId to memberId) != null
 
     override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
         markFailure?.let { throw it }
-        return marked.add("${alert.orgId}/${alert.memberId}/${alert.scope}/${alert.periodStart}/${alert.thresholdPercent}")
+        return marked.add(listOf(alert.orgId, alert.memberId, alert.scope, alert.periodStart, alert.thresholdPercent))
     }
 }

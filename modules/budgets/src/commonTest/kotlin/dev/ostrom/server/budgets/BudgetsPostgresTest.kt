@@ -54,23 +54,45 @@ class BudgetsPostgresTest {
     private val base = "/v1/orgs/${TestCallers.orgA}/budgets"
     private val member = TestCallers.memberA.memberId
 
-    private suspend fun TestServer.putBudgets(token: String, request: PutBudgetsRequest, path: String = base): HttpResponse =
+    private suspend fun TestServer.putBudgets(
+        token: String,
+        request: PutBudgetsRequest,
+        path: String = base,
+    ): HttpResponse =
         client.put(path) {
             bearerAuth(token)
             contentType(ContentType.Application.Json)
             setBody(request)
         }
 
-    private suspend fun TestServer.putMember(token: String, memberId: String, limit: Long, path: String = base): HttpResponse =
+    private suspend fun TestServer.putMember(
+        token: String,
+        memberId: String,
+        limit: Long,
+        path: String = base,
+    ): HttpResponse =
         client.put("$path/members/$memberId") {
             bearerAuth(token)
             contentType(ContentType.Application.Json)
             setBody(PutMemberBudgetRequest(limit))
         }
 
-    private suspend fun TestServer.spend(costMicros: Long, memberId: Uuid?, at: Instant = TestCallers.epoch, orgId: Uuid = TestCallers.orgA) {
+    private suspend fun TestServer.spend(
+        costMicros: Long,
+        memberId: Uuid?,
+        at: Instant = TestCallers.epoch,
+        orgId: Uuid = TestCallers.orgA,
+    ) {
         koin.get<UsageRecorder>().record(
-            UsageEvent(Uuid.random(), orgId, memberId, UsageKind.MODEL, "claude-sonnet-4-5", costMicros = costMicros, at = at),
+            UsageEvent(
+                Uuid.random(),
+                orgId,
+                memberId,
+                UsageKind.MODEL,
+                "claude-sonnet-4-5",
+                costMicros = costMicros,
+                at = at,
+            ),
         )
     }
 
@@ -80,7 +102,11 @@ class BudgetsPostgresTest {
         val created = server.putMember("admin-a", member.toString(), 50_000_000)
         assertEquals(HttpStatusCode.OK, created.status, created.bodyAsText())
         assertEquals(50_000_000L, created.body<MemberBudgetResponse>().limitMicros)
-        assertEquals(HttpStatusCode.OK, server.putMember("admin-a", member.toString(), 40_000_000).status, "An override is replaced")
+        assertEquals(
+            HttpStatusCode.OK,
+            server.putMember("admin-a", member.toString(), 40_000_000).status,
+            "An override is replaced",
+        )
         server.spend(3_000_000, member)
         server.spend(9_000_000, member, at = TestCallers.monthStart - 1.days)
 
@@ -91,9 +117,18 @@ class BudgetsPostgresTest {
         assertEquals(3_000_000L, budgets.orgSpentMicros, "Only this month counts")
         assertEquals("2026-11-01T00:00:00Z", budgets.resetsAt)
 
-        assertEquals(HttpStatusCode.NoContent, server.client.delete("$base/members/$member") { bearerAuth("admin-a") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.delete("$base/members/$member") { bearerAuth("admin-a") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.delete("$base/members/not-a-uuid") { bearerAuth("admin-a") }.status)
+        assertEquals(
+            HttpStatusCode.NoContent,
+            server.client.delete("$base/members/$member") { bearerAuth("admin-a") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.delete("$base/members/$member") { bearerAuth("admin-a") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.delete("$base/members/not-a-uuid") { bearerAuth("admin-a") }.status,
+        )
         assertEquals(emptyList(), server.client.get(base) { bearerAuth("admin-a") }.body<BudgetsResponse>().overrides)
 
         server.putBudgets("admin-a", PutBudgetsRequest())
@@ -114,9 +149,15 @@ class BudgetsPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, server.client.get(base) { bearerAuth("member-a") }.status)
         assertEquals(HttpStatusCode.Forbidden, server.putBudgets("member-a", PutBudgetsRequest(1, 1)).status)
         assertEquals(HttpStatusCode.Forbidden, server.putMember("member-a", member.toString(), 9_000_000).status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.delete("$base/members/$member") { bearerAuth("member-a") }.status)
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.delete("$base/members/$member") { bearerAuth("member-a") }.status,
+        )
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("$base/me").status)
-        assertEquals(HttpStatusCode.BadRequest, server.putBudgets("admin-a", PutBudgetsRequest(orgLimitMicros = -1)).status)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.putBudgets("admin-a", PutBudgetsRequest(orgLimitMicros = -1)).status,
+        )
         assertEquals(HttpStatusCode.NotFound, server.putMember("admin-a", "not-a-uuid", 1).status)
     }
 
@@ -136,14 +177,22 @@ class BudgetsPostgresTest {
         val exhausted = BudgetDecision.Exhausted(BudgetScope.ORG, 1_000_000, TestCallers.nextMonth)
         assertEquals(exhausted, guard.check(TestCallers.orgA, member))
         assertEquals(exhausted, guard.check(TestCallers.orgA, TestCallers.adminA.memberId))
-        assertEquals(listOf(80, 100), alerts.alerts.map { it.thresholdPercent }, "Each threshold once, for the whole org")
+        assertEquals(
+            listOf(80, 100),
+            alerts.alerts.map { it.thresholdPercent },
+            "Each threshold once, for the whole org",
+        )
 
         val mine = server.client.get("$base/me") { bearerAuth("member-a") }.body<MyBudgetResponse>()
         assertEquals(true, mine.exhausted)
         assertEquals("org", mine.exhaustedScope)
 
         server.putBudgets("admin-a", PutBudgetsRequest(orgLimitMicros = 2_000_000))
-        assertEquals(BudgetDecision.Allowed(1_000_000), guard.check(TestCallers.orgA, member), "A raised limit applies at once")
+        assertEquals(
+            BudgetDecision.Allowed(1_000_000),
+            guard.check(TestCallers.orgA, member),
+            "A raised limit applies at once",
+        )
     }
 
     @Test
@@ -177,13 +226,23 @@ class BudgetsPostgresTest {
         server.putMember("admin-a", member.toString(), 3_000_000)
 
         assertEquals(HttpStatusCode.NotFound, server.client.get(base) { bearerAuth("admin-b") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.putBudgets("admin-b", PutBudgetsRequest(orgLimitMicros = 1)).status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.putBudgets("admin-b", PutBudgetsRequest(orgLimitMicros = 1)).status,
+        )
         assertEquals(HttpStatusCode.NotFound, server.putMember("admin-b", member.toString(), 1).status)
-        assertEquals(HttpStatusCode.NotFound, server.client.delete("$base/members/$member") { bearerAuth("admin-b") }.status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.delete("$base/members/$member") { bearerAuth("admin-b") }.status,
+        )
         assertEquals(HttpStatusCode.NotFound, server.client.get("$base/me") { bearerAuth("admin-b") }.status)
 
         val orgB = "/v1/orgs/${TestCallers.orgB}/budgets"
-        assertEquals(HttpStatusCode.NotFound, server.client.delete("$orgB/members/$member") { bearerAuth("admin-b") }.status, "Org A's override is not org B's")
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.delete("$orgB/members/$member") { bearerAuth("admin-b") }.status,
+            "Org A's override is not org B's",
+        )
         val own = server.client.get(orgB) { bearerAuth("admin-b") }.body<BudgetsResponse>()
         assertEquals(null, own.orgLimitMicros)
         assertEquals(emptyList(), own.overrides)

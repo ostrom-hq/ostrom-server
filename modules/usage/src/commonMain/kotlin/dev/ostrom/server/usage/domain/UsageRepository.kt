@@ -77,7 +77,13 @@ interface UsageRepository {
      *
      * @return The groups.
      */
-    suspend fun summary(orgId: Uuid, memberId: Uuid?, since: Instant, groupBy: UsageGroupBy, limit: Int): List<UsageTotal>
+    suspend fun summary(
+        orgId: Uuid,
+        memberId: Uuid?,
+        since: Instant,
+        groupBy: UsageGroupBy,
+        limit: Int,
+    ): List<UsageTotal>
 
     /**
      * Lists events, newest first.

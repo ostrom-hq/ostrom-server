@@ -56,7 +56,11 @@ class BudgetUseCasesTest {
     @Test
     fun limitsAreZeroToOneBillionDollars() = runTest {
         assertFailsWith<InvalidBudgetException> { putBudgets(TestCallers.adminA, -1, null) }
-        assertFailsWith<InvalidBudgetException> { putBudgets(TestCallers.adminA, null, BudgetRules.MAX_LIMIT_MICROS + 1) }
+        assertFailsWith<InvalidBudgetException> { putBudgets(
+            TestCallers.adminA,
+            null,
+            BudgetRules.MAX_LIMIT_MICROS + 1,
+        ) }
         assertFailsWith<InvalidBudgetException> { putMember(TestCallers.adminA, member, -5) }
         assertEquals(0L, putBudgets(TestCallers.adminA, 0, BudgetRules.MAX_LIMIT_MICROS).settings.orgLimitMicros)
         assertEquals(emptyList(), repository.memberLimits.values.toList())
@@ -85,7 +89,11 @@ class BudgetUseCasesTest {
 
     @Test
     fun aMemberReadsTheirLimitSpendAndTheGatewaysDecision() = runTest {
-        val decisions = mutableListOf<BudgetDecision>(BudgetDecision.Exhausted(BudgetScope.ORG, 9, TestCallers.nextMonth))
+        val decisions = mutableListOf<BudgetDecision>(BudgetDecision.Exhausted(
+            BudgetScope.ORG,
+            9,
+            TestCallers.nextMonth,
+        ))
         val guard = object : BudgetGuard {
             override suspend fun check(orgId: Uuid, memberId: Uuid): BudgetDecision = decisions.removeFirst()
         }
@@ -96,7 +104,13 @@ class BudgetUseCasesTest {
         val budget = mine(TestCallers.memberA)
 
         assertEquals(
-            MyBudget(1_000, 1_500, 0, TestCallers.nextMonth, BudgetDecision.Exhausted(BudgetScope.ORG, 9, TestCallers.nextMonth)),
+            MyBudget(
+                1_000,
+                1_500,
+                0,
+                TestCallers.nextMonth,
+                BudgetDecision.Exhausted(BudgetScope.ORG, 9, TestCallers.nextMonth),
+            ),
             budget,
             "Remaining never goes negative",
         )

@@ -83,16 +83,13 @@ fun modelEvent(
     orgId: Uuid = TestCallers.orgA,
     at: Instant = TestCallers.epoch,
     name: String = "claude-sonnet-4-5",
-    provider: String? = "anthropic",
-    accountId: Uuid? = null,
 ) = UsageEvent(
     id = Uuid.random(),
     orgId = orgId,
     memberId = memberId,
     kind = UsageKind.MODEL,
     name = name,
-    provider = provider,
-    accountId = accountId,
+    provider = "anthropic",
     inputTokens = 100,
     outputTokens = 10,
     cacheReadTokens = 5,
@@ -118,12 +115,20 @@ class InMemoryUsageRepository : UsageRepository {
     }
 
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long =
-        events.filter { it.orgId == orgId && it.at >= since && (memberId == null || it.memberId == memberId) }.sumOf { it.costMicros }
+        events
+            .filter { it.orgId == orgId && it.at >= since && (memberId == null || it.memberId == memberId) }
+            .sumOf { it.costMicros }
 
     override suspend fun accountSpentMicros(accountId: Uuid, since: Instant): Long =
         events.filter { it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
 
-    override suspend fun summary(orgId: Uuid, memberId: Uuid?, since: Instant, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> =
+    override suspend fun summary(
+        orgId: Uuid,
+        memberId: Uuid?,
+        since: Instant,
+        groupBy: UsageGroupBy,
+        limit: Int,
+    ): List<UsageTotal> =
         events.filter { it.orgId == orgId && it.at >= since && (memberId == null || it.memberId == memberId) }
             .filter { groupBy != UsageGroupBy.MODEL || it.kind == UsageKind.MODEL }
             .groupBy {
@@ -152,7 +157,7 @@ class InMemoryUsageRepository : UsageRepository {
     override suspend fun list(orgId: Uuid, memberId: Uuid?, before: UsageCursor?, limit: Int): List<UsageEvent> =
         events.filter { it.orgId == orgId && (memberId == null || it.memberId == memberId) }
             .sortedWith(compareByDescending<UsageEvent> { it.at }.thenByDescending { it.id.toString() })
-            .filter { before == null || it.at < before.at || (before.id != null && it.at == before.at && it.id.toString() < before.id.toString()) }
+            .filter { it.isBefore(before) }
             .take(limit)
 
     override suspend fun purge(before: Instant, limit: Int): Long {
@@ -162,4 +167,11 @@ class InMemoryUsageRepository : UsageRepository {
         events.removeAll(old.toSet())
         return old.size.toLong()
     }
+}
+
+/** Keyset order: newest first, then the id; an id-less cursor keeps every event strictly older. */
+private fun UsageEvent.isBefore(cursor: UsageCursor?): Boolean = when {
+    cursor == null -> true
+    at != cursor.at -> at < cursor.at
+    else -> cursor.id != null && id.toString() < cursor.id.toString()
 }

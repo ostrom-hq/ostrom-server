@@ -36,7 +36,9 @@ class UsageRecorderImpl(
             throw error
         } catch (error: Exception) {
             // The model call already happened: losing one ledger line is better than failing the caller's answer.
-            logger.warn("usage event not recorded", mapOf("org_id" to event.orgId, "kind" to event.kind.name), error)
+            // The class only, never the message: PostgreSQL quotes row values in it.
+            val fields = mapOf("org_id" to event.orgId, "kind" to event.kind.name, "error" to error::class.simpleName)
+            logger.warn("usage event not recorded", fields)
         }
         feed.publish(event)
     }

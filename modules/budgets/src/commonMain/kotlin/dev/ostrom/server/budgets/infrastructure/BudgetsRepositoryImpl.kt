@@ -39,7 +39,9 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         return BudgetSettings(
             orgLimitMicros = rows.firstOrNull { it.scope == ORG }?.limitMicros,
             defaultMemberLimitMicros = rows.firstOrNull { it.scope == DEFAULT_MEMBER }?.limitMicros,
-            overrides = rows.mapNotNull { row -> row.memberId?.let { MemberBudget(it, row.limitMicros, row.updatedAt) } }.take(maxOverrides),
+            overrides = rows
+                .mapNotNull { row -> row.memberId?.let { MemberBudget(it, row.limitMicros, row.updatedAt) } }
+                .take(maxOverrides),
         )
     }
 
@@ -53,7 +55,12 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         return BudgetLimits(orgLimitMicros = rows[ORG], memberLimitMicros = rows[MEMBER] ?: rows[DEFAULT_MEMBER])
     }
 
-    override suspend fun putOrgLimits(orgId: Uuid, orgLimitMicros: Long?, defaultMemberLimitMicros: Long?, at: Instant) {
+    override suspend fun putOrgLimits(
+        orgId: Uuid,
+        orgLimitMicros: Long?,
+        defaultMemberLimitMicros: Long?,
+        at: Instant,
+    ) {
         driver.transaction {
             putShared(orgId, ORG, orgLimitMicros, at)
             putShared(orgId, DEFAULT_MEMBER, defaultMemberLimitMicros, at)
@@ -64,15 +71,16 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         driver.execute(
             Statement.create(
                 "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) " +
-                    "VALUES (:org_id, :member_id, 'MEMBER', :limit, :at) " +
-                    "ON CONFLICT (org_id, scope, member_id) DO UPDATE SET limit_micros = EXCLUDED.limit_micros, updated_at = EXCLUDED.updated_at",
+                    "VALUES (:org_id, :member_id, 'MEMBER', :limit, :at) " + UPSERT,
             ).bind("org_id", orgId).bind("member_id", memberId).bind("limit", limitMicros).bind("at", at),
         ).getOrThrow()
         return MemberBudget(memberId, limitMicros, at)
     }
 
     override suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean = driver.execute(
-        Statement.create("DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = 'MEMBER' AND member_id = :member_id")
+        Statement.create(
+            "DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = 'MEMBER' AND member_id = :member_id",
+        )
             .bind("org_id", orgId).bind("member_id", memberId),
     ).getOrThrow() == 1L
 
@@ -95,7 +103,9 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
     private suspend fun QueryExecutor.putShared(orgId: Uuid, scope: String, limitMicros: Long?, at: Instant) {
         if (limitMicros == null) {
             execute(
-                Statement.create("DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = :scope AND member_id IS NULL")
+                Statement.create(
+                    "DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = :scope AND member_id IS NULL",
+                )
                     .bind("org_id", orgId).bind("scope", scope),
             ).getOrThrow()
             return
@@ -103,8 +113,7 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         execute(
             Statement.create(
                 "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) " +
-                    "VALUES (:org_id, NULL, :scope, :limit, :at) " +
-                    "ON CONFLICT (org_id, scope, member_id) DO UPDATE SET limit_micros = EXCLUDED.limit_micros, updated_at = EXCLUDED.updated_at",
+                    "VALUES (:org_id, NULL, :scope, :limit, :at) " + UPSERT,
             ).bind("org_id", orgId).bind("scope", scope).bind("limit", limitMicros).bind("at", at),
         ).getOrThrow()
     }
@@ -112,6 +121,8 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
     private class StoredLimit(val scope: String, val memberId: Uuid?, val limitMicros: Long, val updatedAt: Instant)
 
     private companion object {
+        const val UPSERT = "ON CONFLICT (org_id, scope, member_id) DO UPDATE " +
+            "SET limit_micros = EXCLUDED.limit_micros, updated_at = EXCLUDED.updated_at"
         const val ORG = "ORG"
         const val DEFAULT_MEMBER = "DEFAULT_MEMBER"
         const val MEMBER = "MEMBER"

@@ -80,7 +80,9 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
             call.response.header("X-Accel-Buffering", "no")
             call.respondBytesWriter(ContentType.Text.EventStream) {
                 writeEventStream(heartbeat) { onSubscribed ->
-                    watch(caller, onSubscribed).map { OstromJson.encodeToString(UsageEventResponse.serializer(), it.toResponse()) }
+                    watch(caller, onSubscribed).map {
+                        OstromJson.encodeToString(UsageEventResponse.serializer(), it.toResponse())
+                    }
                 }
             }
         }

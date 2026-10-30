@@ -45,7 +45,11 @@ class UsagePresentationTest {
     @Test
     fun anUnknownKindOrTimeIsRefused() {
         assertFailsWith<InvalidUsageEventException> { UsageEventRequest("payment", "x").toClientEvent() }
-        assertFailsWith<InvalidUsageEventException> { UsageEventRequest("hook", "Stop", at = "yesterday").toClientEvent() }
+        assertFailsWith<InvalidUsageEventException> { UsageEventRequest(
+            "hook",
+            "Stop",
+            at = "yesterday",
+        ).toClientEvent() }
     }
 
     @Test
@@ -67,7 +71,7 @@ class UsagePresentationTest {
     @Test
     fun anEventMapsToTheApiWithLowerCaseKind() {
         val account = Uuid.random()
-        val response = modelEvent(42, accountId = account).copy(sessionId = "s-9").toResponse()
+        val response = modelEvent(42).copy(accountId = account, sessionId = "s-9").toResponse()
 
         assertEquals("model", response.kind)
         assertEquals(account.toString(), response.accountId)
@@ -84,16 +88,20 @@ class UsagePresentationTest {
     fun theRetentionDefaultsToFourHundredDaysAndIsBounded() {
         assertEquals(400.days, UsageConfig.from(MapConfigSource(emptyMap())).retention)
         assertEquals(30.days, UsageConfig.from(MapConfigSource(mapOf("OSTROM_USAGE_RETENTION_DAYS" to "30"))).retention)
-        assertFailsWith<InvalidConfigException> { UsageConfig.from(MapConfigSource(mapOf("OSTROM_USAGE_RETENTION_DAYS" to "0"))) }
-        assertFailsWith<InvalidConfigException> { UsageConfig.from(MapConfigSource(mapOf("OSTROM_USAGE_RETENTION_DAYS" to "3651"))) }
-        assertFailsWith<InvalidConfigException> { UsageConfig.from(MapConfigSource(mapOf("OSTROM_USAGE_RETENTION_DAYS" to "forever"))) }
+        for (invalid in listOf("0", "3651", "forever")) {
+            assertFailsWith<InvalidConfigException> {
+                UsageConfig.from(MapConfigSource(mapOf("OSTROM_USAGE_RETENTION_DAYS" to invalid)))
+            }
+        }
     }
 
     @Test
     fun theStreamAnnouncesTheSubscriptionThenSendsEventsAndHeartbeats() = runTest {
         val channel = ByteChannel(autoFlush = true)
         val items = MutableSharedFlow<String>()
-        val writer = launch { channel.writeEventStream(15.seconds) { onSubscribed -> items.onSubscription { onSubscribed() } } }
+        val writer = launch {
+            channel.writeEventStream(15.seconds) { onSubscribed -> items.onSubscription { onSubscribed() } }
+        }
 
         assertEquals(": connected", channel.readUTF8Line())
         assertEquals("", channel.readUTF8Line())

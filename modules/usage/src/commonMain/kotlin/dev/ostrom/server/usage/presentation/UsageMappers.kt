@@ -47,11 +47,13 @@ fun String.toGroupBy(): UsageGroupBy = UsageGroupBy.entries.firstOrNull { it.nam
 fun String.toUsageCursor(): UsageCursor {
     val separator = indexOf(CURSOR_SEPARATOR)
     val time = if (separator < 0) this else substring(0, separator)
-    val at = Instant.parseOrNull(time) ?: throw InvalidUsageQueryException("before is not a valid cursor.")
+    val at = Instant.parseOrNull(time) ?: throw invalidCursor()
     if (separator < 0) return UsageCursor(at, null)
-    val id = Uuid.parseOrNull(substring(separator + 1)) ?: throw InvalidUsageQueryException("before is not a valid cursor.")
+    val id = Uuid.parseOrNull(substring(separator + 1)) ?: throw invalidCursor()
     return UsageCursor(at, id)
 }
+
+private fun invalidCursor() = InvalidUsageQueryException("before is not a valid cursor.")
 
 /** The cursor of the page after this event. */
 fun UsageEvent.toCursor(): String = "$at$CURSOR_SEPARATOR$id"
@@ -76,7 +78,15 @@ fun UsageEvent.toResponse() = UsageEventResponse(
 )
 
 /** Maps a group's totals to the API. */
-fun UsageTotal.toResponse() = UsageTotalResponse(key, events, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costMicros)
+fun UsageTotal.toResponse() = UsageTotalResponse(
+    key = key,
+    events = events,
+    inputTokens = inputTokens,
+    outputTokens = outputTokens,
+    cacheReadTokens = cacheReadTokens,
+    cacheWriteTokens = cacheWriteTokens,
+    costMicros = costMicros,
+)
 
 /** Maps a summary to the API. */
 fun UsageSummary.toResponse() = UsageSummaryResponse(

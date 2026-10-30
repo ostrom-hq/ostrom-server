@@ -26,6 +26,8 @@ class UsageFeedImpl(private val buffer: Int = 256) : UsageFeed {
     }
 
     override suspend fun subscribe(orgId: Uuid): SharedFlow<UsageEvent> = lock.withLock {
-        flows.getOrPut(orgId) { MutableSharedFlow(extraBufferCapacity = buffer, onBufferOverflow = BufferOverflow.DROP_OLDEST) }
+        flows.getOrPut(orgId) {
+            MutableSharedFlow(extraBufferCapacity = buffer, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+        }
     }.asSharedFlow()
 }

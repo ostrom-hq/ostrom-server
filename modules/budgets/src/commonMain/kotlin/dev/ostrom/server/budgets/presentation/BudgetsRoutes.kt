@@ -3,16 +3,10 @@ package dev.ostrom.server.budgets.presentation
 
 import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetOverview
-import dev.ostrom.server.budgets.domain.DeleteMemberBudgetUseCase
-import dev.ostrom.server.budgets.domain.GetBudgetsUseCase
-import dev.ostrom.server.budgets.domain.GetMyBudgetUseCase
 import dev.ostrom.server.budgets.domain.MemberBudget
 import dev.ostrom.server.budgets.domain.MemberBudgetNotFoundException
 import dev.ostrom.server.budgets.domain.MyBudget
-import dev.ostrom.server.budgets.domain.PutBudgetsUseCase
-import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCase
 import dev.ostrom.server.kernel.auth.authenticated
-import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.presentation.requireCaller
 import dev.ostrom.server.secrets.presentation.toIdOr
 import io.ktor.http.HttpStatusCode
@@ -22,25 +16,6 @@ import io.ktor.server.resources.get
 import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-
-/**
- * What the budgets routes need.
- *
- * @property callers Resolves the member of each call.
- * @property getBudgets Reads an org's budgets.
- * @property putBudgets Replaces the org and default limits.
- * @property putMemberBudget Sets a member's limit.
- * @property deleteMemberBudget Removes it.
- * @property getMyBudget Reads the caller's.
- */
-data class BudgetsRoutesDependencies(
-    val callers: CallerResolver,
-    val getBudgets: GetBudgetsUseCase,
-    val putBudgets: PutBudgetsUseCase,
-    val putMemberBudget: PutMemberBudgetUseCase,
-    val deleteMemberBudget: DeleteMemberBudgetUseCase,
-    val getMyBudget: GetMyBudgetUseCase,
-)
 
 /**
  * The budgets routes: authenticated; admins manage the limits, any member reads their own budget.

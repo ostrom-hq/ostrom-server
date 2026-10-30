@@ -24,10 +24,11 @@ import dev.ostrom.server.budgets.presentation.budgetsRoutes
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
-import dev.ostrom.server.secrets.domain.UnresolvedCallerResolver
+import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.scope.Scope
 import org.koin.dsl.binds
 import org.koin.dsl.module
 
@@ -50,7 +51,7 @@ object BudgetsModule : ServerModule {
         single<DeleteMemberBudgetUseCase> { DeleteMemberBudgetUseCaseImpl(get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
         single {
-            BudgetsRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get(), get())
+            BudgetsRoutesDependencies(callerResolver(), get(), get(), get(), get(), get())
         }
     }
 
@@ -60,3 +61,9 @@ object BudgetsModule : ServerModule {
         route.budgetsRoutes(koin.get())
     }
 }
+
+/**
+ * The [CallerResolver] a test binds, or else the one on the kernel's `PrincipalOrgResolver` (which refuses everyone
+ * until the identity and orgs modules bind theirs).
+ */
+internal fun Scope.callerResolver(): CallerResolver = getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get())

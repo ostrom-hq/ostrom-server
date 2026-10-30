@@ -100,14 +100,17 @@ class IngestUsageEventsUseCaseImpl(
     }
 
     private fun ClientUsageEvent.validated(now: Instant): ClientUsageEvent {
-        if (kind !in UsageRules.CLIENT_KINDS) throw InvalidUsageEventException("Model usage is recorded by the server only.")
-        if (name.isBlank() || name.length > UsageRules.MAX_NAME_LENGTH) throw InvalidUsageEventException("The name is 1 to 200 characters.")
-        if (sessionId != null && (sessionId.isBlank() || sessionId.length > UsageRules.MAX_NAME_LENGTH)) {
-            throw InvalidUsageEventException("The session id is 1 to 200 characters.")
+        val problem = when {
+            kind !in UsageRules.CLIENT_KINDS -> "Model usage is recorded by the server only."
+            name.isBlank() || name.length > UsageRules.MAX_NAME_LENGTH -> "The name is 1 to 200 characters."
+            sessionId != null && (sessionId.isBlank() || sessionId.length > UsageRules.MAX_NAME_LENGTH) ->
+                "The session id is 1 to 200 characters."
+            durationMillis !in 0..UsageRules.MAX_DURATION_MILLIS -> "The duration is out of range."
+            outcome.isBlank() || outcome.length > UsageRules.MAX_OUTCOME_LENGTH -> "The outcome is 1 to 64 characters."
+            at != null && at > now + UsageRules.MAX_CLOCK_SKEW -> "The event is in the future."
+            else -> null
         }
-        if (durationMillis !in 0..UsageRules.MAX_DURATION_MILLIS) throw InvalidUsageEventException("The duration is out of range.")
-        if (outcome.isBlank() || outcome.length > UsageRules.MAX_OUTCOME_LENGTH) throw InvalidUsageEventException("The outcome is 1 to 64 characters.")
-        if (at != null && at > now + UsageRules.MAX_CLOCK_SKEW) throw InvalidUsageEventException("The event is in the future.")
+        if (problem != null) throw InvalidUsageEventException(problem)
         return this
     }
 

@@ -55,7 +55,13 @@ class UsageUseCasesTest {
     fun aClientEventIsRecordedForTheCallersOrgAndMemberWithoutCost() = runTest {
         val accepted = ingest(
             TestCallers.memberA,
-            listOf(ClientUsageEvent(UsageKind.SKILL, "deploy", sessionId = "s-1", durationMillis = 1200, outcome = "error")),
+            listOf(ClientUsageEvent(
+                UsageKind.SKILL,
+                "deploy",
+                sessionId = "s-1",
+                durationMillis = 1200,
+                outcome = "error",
+            )),
         )
 
         assertEquals(1, accepted)
@@ -74,7 +80,13 @@ class UsageUseCasesTest {
     fun aClientTimeIsKeptWhenItIsNotInTheFuture() = runTest {
         val past = TestCallers.epoch - 3.days
         val skewed = TestCallers.epoch + 4.minutes
-        ingest(TestCallers.memberA, listOf(ClientUsageEvent(UsageKind.HOOK, "PreToolUse", at = past), ClientUsageEvent(UsageKind.SESSION, "s-2", at = skewed)))
+        ingest(
+            TestCallers.memberA,
+            listOf(
+                ClientUsageEvent(UsageKind.HOOK, "PreToolUse", at = past),
+                ClientUsageEvent(UsageKind.SESSION, "s-2", at = skewed),
+            ),
+        )
 
         assertEquals(listOf(past, skewed), repository.events.map { it.at })
     }
@@ -113,7 +125,13 @@ class UsageUseCasesTest {
             }
         }
         assertEquals(emptyList(), repository.events)
-        val longest = ClientUsageEvent(UsageKind.MCP, "x".repeat(200), "s".repeat(200), 7L * 24 * 3600 * 1000, "o".repeat(64))
+        val longest = ClientUsageEvent(
+            UsageKind.MCP,
+            "x".repeat(200),
+            "s".repeat(200),
+            7L * 24 * 3600 * 1000,
+            "o".repeat(64),
+        )
         assertEquals(1, ingest(TestCallers.memberA, listOf(longest)), "The bounds are inclusive")
     }
 
@@ -163,9 +181,9 @@ class UsageUseCasesTest {
         val account = Uuid.random()
         repository.events += listOf(
             modelEvent(100, memberId = TestCallers.adminA.memberId),
-            modelEvent(200, memberId = TestCallers.memberA.memberId, accountId = account),
+            modelEvent(200, memberId = TestCallers.memberA.memberId).copy(accountId = account),
             modelEvent(400, memberId = TestCallers.memberA.memberId, at = TestCallers.epoch - 40.days),
-            modelEvent(800, orgId = TestCallers.orgB, memberId = TestCallers.adminB.memberId, accountId = account),
+            modelEvent(800, orgId = TestCallers.orgB, memberId = TestCallers.adminB.memberId).copy(accountId = account),
         )
         val spend = SpendReaderImpl(repository)
         val since = TestCallers.epoch - 30.days
@@ -186,7 +204,10 @@ class UsageUseCasesTest {
 
         val org = summary(TestCallers.adminA, 7, UsageGroupBy.MEMBER)
         assertEquals(TestCallers.epoch - 7.days, org.since)
-        assertEquals(listOf(TestCallers.memberA.memberId.toString(), TestCallers.adminA.memberId.toString()), org.groups.map { it.key })
+        assertEquals(
+            listOf(TestCallers.memberA.memberId.toString(), TestCallers.adminA.memberId.toString()),
+            org.groups.map { it.key },
+        )
         assertEquals(350L, org.total.costMicros)
         assertEquals(2L, org.total.events)
         assertEquals(200L, org.total.inputTokens)
@@ -210,7 +231,11 @@ class UsageUseCasesTest {
 
     @Test
     fun aMemberListsOnlyTheirOwnEventsAndTheLimitIsBounded() = runTest {
-        repository.events += List(3) { modelEvent(1, memberId = TestCallers.adminA.memberId, at = TestCallers.epoch - it.minutes) }
+        repository.events += List(3) { modelEvent(
+            1,
+            memberId = TestCallers.adminA.memberId,
+            at = TestCallers.epoch - it.minutes,
+        ) }
         repository.events += modelEvent(2, memberId = TestCallers.memberA.memberId)
         val list = ListUsageEventsUseCaseImpl(repository)
 
@@ -224,7 +249,9 @@ class UsageUseCasesTest {
     fun anAdminWatchesTheWholeOrgAndAMemberOnlyThemselves() = runTest {
         val watch = WatchUsageUseCaseImpl(feed)
         var subscribed = 0
-        val org = async(start = CoroutineStart.UNDISPATCHED) { watch(TestCallers.adminA) { subscribed++ }.take(2).toList() }
+        val org = async(start = CoroutineStart.UNDISPATCHED) {
+            watch(TestCallers.adminA) { subscribed++ }.take(2).toList()
+        }
         val mine = async(start = CoroutineStart.UNDISPATCHED) { watch(TestCallers.memberA) { subscribed++ }.first() }
         val other = async(start = CoroutineStart.UNDISPATCHED) { watch(TestCallers.adminB).first() }
         runCurrent()
@@ -275,7 +302,7 @@ class UsageUseCasesTest {
         val purge = object : PurgeUsageUseCase {
             override suspend fun invoke(): Long {
                 runs++
-                if (runs == 1) throw IllegalStateException("database down")
+                if (runs == 1) error("database down")
                 return 0
             }
         }

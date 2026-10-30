@@ -102,7 +102,11 @@ class PutBudgetsUseCaseImpl(
     private val getBudgets: GetBudgetsUseCase,
     private val clock: Clock,
 ) : PutBudgetsUseCase {
-    override suspend fun invoke(caller: Caller, orgLimitMicros: Long?, defaultMemberLimitMicros: Long?): BudgetOverview {
+    override suspend fun invoke(
+        caller: Caller,
+        orgLimitMicros: Long?,
+        defaultMemberLimitMicros: Long?,
+    ): BudgetOverview {
         caller.requireAdmin()
         BudgetRules.requireLimit(orgLimitMicros)
         BudgetRules.requireLimit(defaultMemberLimitMicros)

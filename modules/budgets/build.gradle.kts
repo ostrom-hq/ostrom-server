@@ -11,6 +11,7 @@ kotlin {
             implementation(project(":kernel"))
             implementation(project(":modules:secrets"))
             api(project(":modules:usage"))
+            implementation(libs.kotlinx.datetime)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

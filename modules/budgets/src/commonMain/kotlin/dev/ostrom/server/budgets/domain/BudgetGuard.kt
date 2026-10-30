@@ -39,19 +39,26 @@ interface BudgetDecisionCache {
 }
 
 /**
- * [BudgetGuard] on the limits and the ledger. Decisions are cached [cacheTtl] per (org, member), and the org's spend
- * [cacheTtl] per org, so that the gateway's hot path stays far under a millisecond; the price is that spending may
- * overshoot a limit by what is spent within [cacheTtl]. Crossing 80 % and 100 % of a limit publishes a [BudgetAlert],
- * once per limit, threshold and month: a local memo avoids asking the database again, and the database makes it once
- * across replicas.
+ * How [BudgetGuardImpl] caches.
+ *
+ * @property ttl How long a decision and a spend are reused.
+ * @property maxEntries Entries kept per cache before expired ones are dropped.
+ */
+data class BudgetCacheSettings(val ttl: Duration = 5.seconds, val maxEntries: Int = 100_000)
+
+/**
+ * [BudgetGuard] on the limits and the ledger. Decisions are cached for the [BudgetCacheSettings.ttl] per (org, member),
+ * and the org's spend as long per org, so that the gateway's hot path stays far under a millisecond; the price is that
+ * spending may overshoot a limit by what is spent within that time. Crossing 80 % and 100 % of a limit publishes a
+ * [BudgetAlert], once per limit, threshold and month: a local memo avoids asking the database again, and the database
+ * makes it once across replicas.
  *
  * @param repository The limits.
  * @param spend The ledger.
  * @param alerts Where alerts go.
  * @param clock The time.
  * @param logger Where a failed alert is reported.
- * @param cacheTtl How long a decision and a spend are reused.
- * @param maxCached Entries kept per cache before expired ones are dropped.
+ * @param cache How decisions and spends are cached.
  */
 class BudgetGuardImpl(
     private val repository: BudgetsRepository,
@@ -59,14 +66,16 @@ class BudgetGuardImpl(
     private val alerts: BudgetAlerts,
     private val clock: Clock,
     private val logger: Logger,
-    private val cacheTtl: Duration = 5.seconds,
-    private val maxCached: Int = 100_000,
+    private val cache: BudgetCacheSettings = BudgetCacheSettings(),
 ) : BudgetGuard, BudgetDecisionCache {
     private data class MemberKey(val orgId: Uuid, val memberId: Uuid)
 
     private class Cached<T>(val value: T, val expiresAt: Instant)
 
-    private data class AlertKey(val orgId: Uuid, val memberId: Uuid?, val scope: BudgetScope, val threshold: Int, val period: Instant)
+    /** Whose limit: the org's (no member) or a member's. */
+    private data class Subject(val orgId: Uuid, val memberId: Uuid?, val scope: BudgetScope)
+
+    private data class AlertKey(val subject: Subject, val threshold: Int, val period: Instant)
 
     private class Measured(val limit: Long, val spent: Long) {
         val exhausted: Boolean get() = spent >= limit
@@ -84,7 +93,7 @@ class BudgetGuardImpl(
         val cached = lock.withLock { decisions[key] }
         if (cached != null && cached.expiresAt > now) return cached.value
         val decision = evaluate(orgId, memberId, now)
-        lock.withLock { decisions.putBounded(key, Cached(decision, now + cacheTtl), now) }
+        lock.withLock { decisions.putBounded(key, Cached(decision, now + cache.ttl), now) }
         return decision
     }
 
@@ -100,8 +109,8 @@ class BudgetGuardImpl(
         val limits = repository.limits(orgId, memberId)
         val org = limits.orgLimitMicros?.let { Measured(it, orgSpent(orgId, period, now)) }
         val member = limits.memberLimitMicros?.let { Measured(it, spend.spentMicros(orgId, memberId, period.start)) }
-        if (org != null) alertCrossings(orgId, null, BudgetScope.ORG, org, period, now)
-        if (member != null) alertCrossings(orgId, memberId, BudgetScope.MEMBER, member, period, now)
+        if (org != null) alertCrossings(Subject(orgId, null, BudgetScope.ORG), org, period, now)
+        if (member != null) alertCrossings(Subject(orgId, memberId, BudgetScope.MEMBER), member, period, now)
         return when {
             org != null && org.exhausted -> BudgetDecision.Exhausted(BudgetScope.ORG, org.limit, period.end)
             member != null && member.exhausted -> BudgetDecision.Exhausted(BudgetScope.MEMBER, member.limit, period.end)
@@ -113,25 +122,26 @@ class BudgetGuardImpl(
         val cached = lock.withLock { orgSpends[orgId] }
         if (cached != null && cached.expiresAt > now) return cached.value
         val spent = spend.spentMicros(orgId, null, period.start)
-        lock.withLock { orgSpends.putBounded(orgId, Cached(spent, now + cacheTtl), now) }
+        lock.withLock { orgSpends.putBounded(orgId, Cached(spent, now + cache.ttl), now) }
         return spent
     }
 
-    private suspend fun alertCrossings(
-        orgId: Uuid,
-        memberId: Uuid?,
-        scope: BudgetScope,
-        measured: Measured,
-        period: BudgetPeriod,
-        now: Instant,
-    ) {
+    private suspend fun alertCrossings(subject: Subject, measured: Measured, period: BudgetPeriod, now: Instant) {
         if (measured.limit <= 0) return
         for (threshold in BudgetRules.ALERT_THRESHOLDS) {
             // limit × threshold stays under 10^17: no overflow for any limit BudgetRules accepts.
-            if (measured.spent < measured.limit * threshold / 100) return
-            val key = AlertKey(orgId, memberId, scope, threshold, period.start)
+            if (measured.spent < measured.limit * threshold / PERCENT) return
+            val key = AlertKey(subject, threshold, period.start)
             if (!remember(key)) continue
-            val alert = BudgetAlert(orgId, memberId, scope, threshold, measured.limit, measured.spent, period.start)
+            val alert = BudgetAlert(
+                orgId = subject.orgId,
+                memberId = subject.memberId,
+                scope = subject.scope,
+                thresholdPercent = threshold,
+                limitMicros = measured.limit,
+                spentMicros = measured.spent,
+                periodStart = period.start,
+            )
             try {
                 if (repository.markAlerted(alert, now)) alerts.publish(alert)
             } catch (error: CancellationException) {
@@ -139,7 +149,11 @@ class BudgetGuardImpl(
             } catch (error: Exception) {
                 // The decision does not depend on the alert: report it and let a later check try again.
                 lock.withLock { alerted.remove(key) }
-                logger.warn("budget alert failed", mapOf("org_id" to orgId, "threshold" to threshold), error)
+                // The class only, never the message: PostgreSQL quotes row values in it.
+                logger.warn(
+                    "budget alert failed",
+                    mapOf("org_id" to subject.orgId, "threshold" to threshold, "error" to error::class.simpleName),
+                )
             }
         }
     }
@@ -151,10 +165,12 @@ class BudgetGuardImpl(
     }
 
     private fun <K, V : Cached<*>> HashMap<K, V>.putBounded(key: K, value: V, now: Instant) {
-        if (size >= maxCached) {
+        if (size >= cache.maxEntries) {
             entries.removeAll { it.value.expiresAt <= now }
-            if (size >= maxCached) clear()
+            if (size >= cache.maxEntries) clear()
         }
         put(key, value)
     }
 }
+
+private const val PERCENT = 100

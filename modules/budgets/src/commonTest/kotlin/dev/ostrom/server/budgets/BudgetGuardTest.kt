@@ -2,6 +2,7 @@
 package dev.ostrom.server.budgets
 
 import dev.ostrom.server.budgets.domain.BudgetAlert
+import dev.ostrom.server.budgets.domain.BudgetCacheSettings
 import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetGuardImpl
 import dev.ostrom.server.budgets.domain.BudgetPeriod
@@ -49,8 +50,16 @@ class BudgetGuardTest {
         spend.spent[orgA to null] = 9_500_000
         spend.spent[orgA to member] = 100_000
 
-        assertEquals(BudgetDecision.Allowed(500_000), guard.check(orgA, member), "The org has 0.50 USD left, the member 1.90")
-        assertEquals(listOf(TestCallers.monthStart, TestCallers.monthStart), spend.sinces, "Both sums start on the 1st of the month")
+        assertEquals(
+            BudgetDecision.Allowed(500_000),
+            guard.check(orgA, member),
+            "The org has 0.50 USD left, the member 1.90",
+        )
+        assertEquals(
+            listOf(TestCallers.monthStart, TestCallers.monthStart),
+            spend.sinces,
+            "Both sums start on the 1st of the month",
+        )
     }
 
     @Test
@@ -84,7 +93,10 @@ class BudgetGuardTest {
         overrideMember(300)
         spend.spent[orgA to member] = 301
 
-        assertEquals(BudgetDecision.Exhausted(BudgetScope.MEMBER, 300, TestCallers.nextMonth), guard.check(orgA, member))
+        assertEquals(
+            BudgetDecision.Exhausted(BudgetScope.MEMBER, 300, TestCallers.nextMonth),
+            guard.check(orgA, member),
+        )
     }
 
     @Test
@@ -107,7 +119,10 @@ class BudgetGuardTest {
         assertEquals(1, repository.limitReads)
 
         clock.advance(1.milliseconds)
-        assertEquals(BudgetDecision.Exhausted(BudgetScope.MEMBER, 1_000, TestCallers.nextMonth), guard.check(orgA, member))
+        assertEquals(
+            BudgetDecision.Exhausted(BudgetScope.MEMBER, 1_000, TestCallers.nextMonth),
+            guard.check(orgA, member),
+        )
         assertEquals(2, repository.limitReads)
     }
 
@@ -180,7 +195,10 @@ class BudgetGuardTest {
     fun anAlertAnotherReplicaAlreadySentIsNotSentAgain() = runTest {
         overrideMember(1_000)
         spend.spent[orgA to member] = 900
-        repository.markAlerted(BudgetAlert(orgA, member, BudgetScope.MEMBER, 80, 1_000, 850, TestCallers.monthStart), TestCallers.epoch)
+        repository.markAlerted(
+            BudgetAlert(orgA, member, BudgetScope.MEMBER, 80, 1_000, 850, TestCallers.monthStart),
+            TestCallers.epoch,
+        )
 
         guard.check(orgA, member)
 
@@ -193,7 +211,11 @@ class BudgetGuardTest {
         spend.spent[orgA to member] = 900
         repository.markFailure = IllegalStateException("database down")
 
-        assertEquals(BudgetDecision.Allowed(100), guard.check(orgA, member), "The decision does not depend on the alert")
+        assertEquals(
+            BudgetDecision.Allowed(100),
+            guard.check(orgA, member),
+            "The decision does not depend on the alert",
+        )
         assertEquals(listOf(LogLevel.WARN to "budget alert failed"), logger.events)
 
         repository.markFailure = null
@@ -236,7 +258,7 @@ class BudgetGuardTest {
 
     @Test
     fun theCacheStaysBoundedDroppingExpiredEntriesFirst() = runTest {
-        val small = BudgetGuardImpl(repository, spend, alerts, clock, logger, cacheTtl = 5.seconds, maxCached = 2)
+        val small = BudgetGuardImpl(repository, spend, alerts, clock, logger, BudgetCacheSettings(maxEntries = 2))
         val members = List(3) { Uuid.random() }
         small.check(orgA, members[0])
         clock.advance(5.seconds)
@@ -256,7 +278,8 @@ class BudgetGuardTest {
     fun tenThousandCachedChecksTakeUnderFiftyMilliseconds() = runTest {
         repository.orgLimits[orgA] = 1_000_000
         overrideMember(10_000)
-        guard.check(orgA, member)
+        // An untimed pass first: on the JVM the first calls also pay class loading and the JIT, not the cache.
+        repeat(10_000) { guard.check(orgA, member) }
 
         val mark = TimeSource.Monotonic.markNow()
         repeat(10_000) { guard.check(orgA, member) }

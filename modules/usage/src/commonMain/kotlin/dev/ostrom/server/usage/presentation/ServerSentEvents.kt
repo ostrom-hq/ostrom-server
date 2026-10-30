@@ -20,7 +20,10 @@ import kotlin.time.Duration
  * @param heartbeat The interval of the heartbeat comments.
  * @param subscribe Opens the items; calls its argument once subscribed, before the first item.
  */
-suspend fun ByteWriteChannel.writeEventStream(heartbeat: Duration, subscribe: suspend (onSubscribed: suspend () -> Unit) -> Flow<String>) {
+suspend fun ByteWriteChannel.writeEventStream(
+    heartbeat: Duration,
+    subscribe: suspend (onSubscribed: suspend () -> Unit) -> Flow<String>,
+) {
     val lock = Mutex()
     suspend fun send(text: String) = lock.withLock {
         writeStringUtf8(text)

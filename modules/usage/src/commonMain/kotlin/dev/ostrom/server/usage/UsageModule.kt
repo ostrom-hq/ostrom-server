@@ -8,7 +8,7 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
-import dev.ostrom.server.secrets.domain.UnresolvedCallerResolver
+import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import dev.ostrom.server.usage.domain.IngestUsageEventsUseCase
 import dev.ostrom.server.usage.domain.IngestUsageEventsUseCaseImpl
 import dev.ostrom.server.usage.domain.ListUsageEventsUseCase
@@ -37,6 +37,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.scope.Scope
 import org.koin.dsl.module
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -48,9 +49,13 @@ import kotlin.time.Duration.Companion.hours
  * @property retention How long events are kept before the hourly purge deletes them.
  */
 data class UsageConfig(val retention: Duration) {
+    /** The defaults and the reading of the configuration. */
     companion object {
         /** Days kept by default: a full year plus a month, so that year-over-year totals stay possible. */
         const val DEFAULT_RETENTION_DAYS: Int = 400
+
+        /** The longest retention accepted: ten years. */
+        const val MAX_RETENTION_DAYS: Int = 3650
 
         /**
          * Reads it.
@@ -63,7 +68,7 @@ data class UsageConfig(val retention: Duration) {
          */
         fun from(source: ConfigSource): UsageConfig {
             val raw = source["OSTROM_USAGE_RETENTION_DAYS"] ?: return UsageConfig(DEFAULT_RETENTION_DAYS.days)
-            val days = raw.toIntOrNull()?.takeIf { it in 1..3650 }
+            val days = raw.toIntOrNull()?.takeIf { it in 1..MAX_RETENTION_DAYS }
                 ?: throw InvalidConfigException("OSTROM_USAGE_RETENTION_DAYS is 1 to 3650.")
             return UsageConfig(days.days)
         }
@@ -89,7 +94,7 @@ object UsageModule : ServerModule {
         single<WatchUsageUseCase> { WatchUsageUseCaseImpl(get()) }
         single<PurgeUsageUseCase> { PurgeUsageUseCaseImpl(get(), get(), get<UsageConfig>().retention) }
         single {
-            UsageRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get())
+            UsageRoutesDependencies(callerResolver(), get(), get(), get(), get())
         }
     }
 
@@ -124,9 +129,16 @@ object UsageModule : ServerModule {
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                logger.warn("usage purge failed", mapOf("error" to error::class.simpleName), error)
+                // The class only, never the message: PostgreSQL quotes row values in it.
+                logger.warn("usage purge failed", mapOf("error" to error::class.simpleName))
             }
             delay(interval)
         }
     }
 }
+
+/**
+ * The [CallerResolver] a test binds, or else the one on the kernel's `PrincipalOrgResolver` (which refuses everyone
+ * until the identity and orgs modules bind theirs).
+ */
+internal fun Scope.callerResolver(): CallerResolver = getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get())

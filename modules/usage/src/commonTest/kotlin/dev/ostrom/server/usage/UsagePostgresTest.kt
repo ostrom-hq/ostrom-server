@@ -54,7 +54,10 @@ class UsagePostgresTest {
     private val orgA = "/v1/orgs/${TestCallers.orgA}/usage"
     private val orgB = "/v1/orgs/${TestCallers.orgB}/usage"
 
-    private suspend fun TestServer.declare(token: String, vararg events: UsageEventRequest) = client.post("/v1/usage/events") {
+    private suspend fun TestServer.declare(
+        token: String,
+        vararg events: UsageEventRequest,
+    ) = client.post("/v1/usage/events") {
         bearerAuth(token)
         contentType(ContentType.Application.Json)
         setBody(UsageEventsRequest(events.toList()))
@@ -77,7 +80,8 @@ class UsagePostgresTest {
         assertTrue(stored.all { it.get("member_id").asUuid() == TestCallers.memberA.memberId }, "The member too")
         assertTrue(stored.all { it.get("cost_micros").asLong() == 0L }, "Clients never declare a cost")
 
-        val summary = server.client.get("$orgA/summary?days=1&groupBy=kind") { bearerAuth("admin-a") }.body<UsageSummaryResponse>()
+        val summary = server.client.get("$orgA/summary?days=1&groupBy=kind") { bearerAuth("admin-a") }
+            .body<UsageSummaryResponse>()
         assertEquals("kind", summary.groupBy)
         assertEquals(setOf("SKILL", "MCP", "HOOK"), summary.groups.map { it.key }.toSet())
         assertEquals(3L, summary.total.events)
@@ -91,14 +95,21 @@ class UsagePostgresTest {
         }.body<UsageEventsPageResponse>()
         assertEquals(1, rest.events.size)
         assertEquals(null, rest.next)
-        assertEquals(3, (page.events + rest.events).map { it.id }.toSet().size, "Keyset paging neither repeats nor skips")
+        assertEquals(
+            3,
+            (page.events + rest.events).map { it.id }.toSet().size,
+            "Keyset paging neither repeats nor skips",
+        )
         assertEquals("mcp", rest.events.single().kind, "Oldest last")
     }
 
     @Test
     fun clientsCannotDeclareModelUsageNorMalformedBatches() = serverTest(modules, overrides) { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.client.post("/v1/usage/events").status)
-        assertEquals(HttpStatusCode.BadRequest, server.declare("member-a", UsageEventRequest("model", "claude-opus-4-1")).status)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.declare("member-a", UsageEventRequest("model", "claude-opus-4-1")).status,
+        )
         assertEquals(HttpStatusCode.BadRequest, server.declare("member-a", UsageEventRequest("payment", "x")).status)
         assertEquals(HttpStatusCode.BadRequest, server.declare("member-a", UsageEventRequest("skill", "")).status)
         val tooMany = server.declare("member-a", *Array(501) { UsageEventRequest("hook", "Stop") })
@@ -116,11 +127,19 @@ class UsagePostgresTest {
     fun theServerRecordsModelUsageAndReadsSpend() = serverTest(modules, overrides) { server ->
         val recorder = server.koin.get<UsageRecorder>()
         val account = Uuid.random()
-        recorder.record(modelEvent(1_500, memberId = TestCallers.adminA.memberId, accountId = account))
-        recorder.record(modelEvent(2_500, memberId = TestCallers.memberA.memberId, provider = "openrouter", name = "gpt-5"))
-        recorder.record(modelEvent(4_000, memberId = null, provider = null))
+        recorder.record(modelEvent(1_500, memberId = TestCallers.adminA.memberId).copy(accountId = account))
+        recorder.record(modelEvent(
+            2_500,
+            memberId = TestCallers.memberA.memberId,
+            name = "gpt-5",
+        ).copy(provider = "openrouter"))
+        recorder.record(modelEvent(4_000, memberId = null).copy(provider = null))
         recorder.record(modelEvent(8_000, memberId = TestCallers.memberA.memberId, at = TestCallers.epoch - 40.days))
-        recorder.record(modelEvent(16_000, orgId = TestCallers.orgB, memberId = TestCallers.adminB.memberId, accountId = account))
+        recorder.record(modelEvent(
+            16_000,
+            orgId = TestCallers.orgB,
+            memberId = TestCallers.adminB.memberId,
+        ).copy(accountId = account))
 
         val spend = server.koin.get<SpendReader>()
         val month = TestCallers.epoch - 30.days
@@ -130,24 +149,43 @@ class UsagePostgresTest {
         assertEquals(17_500L, spend.accountSpentMicros(account, month), "An account is pooled across its uses")
 
         suspend fun groups(groupBy: String, token: String = "admin-a") =
-            server.client.get("$orgA/summary?days=30&groupBy=$groupBy") { bearerAuth(token) }.body<UsageSummaryResponse>()
+            server.client.get("$orgA/summary?days=30&groupBy=$groupBy") { bearerAuth(token) }
+                .body<UsageSummaryResponse>()
                 .groups.associate { it.key to it.costMicros }
         assertEquals(
-            mapOf(null to 4_000L, TestCallers.memberA.memberId.toString() to 2_500L, TestCallers.adminA.memberId.toString() to 1_500L),
+            mapOf(
+                null to 4_000L,
+                TestCallers.memberA.memberId.toString() to 2_500L,
+                TestCallers.adminA.memberId.toString() to 1_500L,
+            ),
             groups("member"),
         )
         assertEquals(mapOf<String?, Long>("MODEL" to 8_000L), groups("kind"))
         assertEquals(mapOf<String?, Long>("claude-sonnet-4-5" to 5_500L, "gpt-5" to 2_500L), groups("model"))
         assertEquals(mapOf("anthropic" to 1_500L, "openrouter" to 2_500L, null to 4_000L), groups("provider"))
         assertEquals(mapOf(null to 6_500L, account.toString() to 1_500L), groups("account"))
-        assertEquals(mapOf<String?, Long>(TestCallers.memberA.memberId.toString() to 2_500L), groups("member", "member-a"), "A member sees only themselves")
+        assertEquals(
+            mapOf<String?,
+            Long>(TestCallers.memberA.memberId.toString() to 2_500L),
+            groups("member", "member-a"),
+            "A member sees only themselves",
+        )
 
         val summary = server.client.get("$orgA/summary?days=30") { bearerAuth("admin-a") }.body<UsageSummaryResponse>()
         assertEquals(8_000L, summary.total.costMicros)
         assertEquals(300L, summary.total.inputTokens)
-        assertEquals(HttpStatusCode.BadRequest, server.client.get("$orgA/summary?days=91") { bearerAuth("admin-a") }.status)
-        assertEquals(HttpStatusCode.BadRequest, server.client.get("$orgA/summary?groupBy=team") { bearerAuth("admin-a") }.status)
-        assertEquals(HttpStatusCode.BadRequest, server.client.get("$orgA/events?before=soon") { bearerAuth("admin-a") }.status)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.client.get("$orgA/summary?days=91") { bearerAuth("admin-a") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.client.get("$orgA/summary?groupBy=team") { bearerAuth("admin-a") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.client.get("$orgA/events?before=soon") { bearerAuth("admin-a") }.status,
+        )
     }
 
     @Test
@@ -161,10 +199,21 @@ class UsagePostgresTest {
         val second = repository.list(TestCallers.orgA, null, UsageCursor(first.last().at, first.last().id), 2)
         assertEquals(sameInstant.map { it.id }.toSet(), (first + second.take(1)).map { it.id }.toSet())
         assertEquals(9L, second.last().costMicros)
-        assertEquals(listOf(9L), repository.list(TestCallers.orgA, null, UsageCursor(TestCallers.epoch, null), 10).map { it.costMicros })
-        assertEquals(sameInstant.first(), repository.list(TestCallers.orgA, TestCallers.adminA.memberId, null, 10).first { it.id == sameInstant.first().id })
+        assertEquals(
+            listOf(9L),
+            repository.list(TestCallers.orgA, null, UsageCursor(TestCallers.epoch, null), 10).map { it.costMicros },
+        )
+        val adminEvents = repository.list(TestCallers.orgA, TestCallers.adminA.memberId, null, 10)
+        assertEquals(sameInstant.first(), adminEvents.first { it.id == sameInstant.first().id })
         assertEquals(UsageKind.MODEL, first.first().kind)
-        assertEquals(1, repository.summary(TestCallers.orgA, TestCallers.adminA.memberId, TestCallers.epoch - 1.days, UsageGroupBy.KIND, 10).size)
+        val adminKinds = repository.summary(
+            TestCallers.orgA,
+            TestCallers.adminA.memberId,
+            TestCallers.epoch - 1.days,
+            UsageGroupBy.KIND,
+            10,
+        )
+        assertEquals(1, adminKinds.size)
 
         assertEquals(1L, repository.purge(TestCallers.epoch - 400.days, 10))
         assertEquals(0L, repository.purge(TestCallers.epoch - 400.days, 10))
@@ -178,13 +227,24 @@ class UsagePostgresTest {
         assertEquals(HttpStatusCode.NotFound, server.client.get("$orgA/summary") { bearerAuth("admin-b") }.status)
         assertEquals(HttpStatusCode.NotFound, server.client.get("$orgA/events") { bearerAuth("admin-b") }.status)
         assertEquals(HttpStatusCode.NotFound, server.client.get("$orgA/live") { bearerAuth("admin-b") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.get("/v1/orgs/not-a-uuid/usage/summary") { bearerAuth("admin-a") }.status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.get("/v1/orgs/not-a-uuid/usage/summary") { bearerAuth("admin-a") }.status,
+        )
         val own = server.client.get("$orgB/summary?days=1") { bearerAuth("admin-b") }.body<UsageSummaryResponse>()
         assertEquals(emptyList(), own.groups)
-        assertEquals(emptyList(), server.client.get("$orgB/events") { bearerAuth("admin-b") }.body<UsageEventsPageResponse>().events)
+        assertEquals(
+            emptyList(),
+            server.client.get("$orgB/events") { bearerAuth("admin-b") }.body<UsageEventsPageResponse>().events,
+        )
         server.declare("admin-b", UsageEventRequest("skill", "org-b-skill"))
-        val orgAEvents = server.client.get("$orgA/events") { bearerAuth("admin-a") }.body<UsageEventsPageResponse>().events
-        assertEquals(listOf("claude-sonnet-4-5"), orgAEvents.map { it.name }, "Org B's declaration never lands in org A")
+        val orgAEvents = server.client.get("$orgA/events") { bearerAuth("admin-a") }
+            .body<UsageEventsPageResponse>().events
+        assertEquals(
+            listOf("claude-sonnet-4-5"),
+            orgAEvents.map { it.name },
+            "Org B's declaration never lands in org A",
+        )
     }
 
     @Test
@@ -198,7 +258,11 @@ class UsagePostgresTest {
                 assertEquals(": connected", stream.readUTF8Line())
                 assertEquals("", stream.readUTF8Line())
                 recorder.record(modelEvent(111, memberId = TestCallers.adminA.memberId))
-                recorder.record(modelEvent(222, memberId = TestCallers.memberA.memberId, at = TestCallers.epoch + 1.minutes))
+                recorder.record(modelEvent(
+                    222,
+                    memberId = TestCallers.memberA.memberId,
+                    at = TestCallers.epoch + 1.minutes,
+                ))
                 val line = requireNotNull(stream.readUTF8Line())
                 assertTrue(line.startsWith("data: {"), line)
                 assertTrue("\"costMicros\":222" in line, "A member only follows their own events: $line")
@@ -210,7 +274,10 @@ class UsagePostgresTest {
                 assertEquals(": connected", stream.readUTF8Line())
                 stream.readUTF8Line()
                 recorder.record(modelEvent(333, memberId = TestCallers.memberA.memberId))
-                assertTrue("\"costMicros\":333" in requireNotNull(stream.readUTF8Line()), "An admin follows every member")
+                assertTrue(
+                    "\"costMicros\":333" in requireNotNull(stream.readUTF8Line()),
+                    "An admin follows every member",
+                )
             }
         }
     }
