@@ -33,6 +33,7 @@ data class RunnerConfig(
     override fun toString(): String =
         "RunnerConfig(serverUrl=$serverUrl, sessionId=$sessionId, epoch=$epoch, agent=$agentCommand)"
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** Variables only the runner reads; never passed to the agent. */
         val PRIVATE_VARIABLES = setOf(

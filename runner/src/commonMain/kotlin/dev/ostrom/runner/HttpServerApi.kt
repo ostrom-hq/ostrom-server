@@ -72,7 +72,7 @@ class HttpServerApi(
             HttpStatusCode.OK -> Unit
             HttpStatusCode.Unauthorized, HttpStatusCode.Conflict ->
                 throw ExecutionEndedException("The server ended this execution (${response.status.value}).")
-            else -> throw IllegalStateException("Heartbeat answered ${response.status.value}.")
+            else -> error("Heartbeat answered ${response.status.value}.")
         }
         val answer = JSON.decodeFromString(HeartbeatResponse.serializer(), response.bodyAsText())
         return if (answer.instruction == "stop") Instruction.STOP else Instruction.RUN
@@ -108,6 +108,7 @@ class HttpServerApi(
         override suspend fun close() = session.close()
     }
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         private val JSON = Json {
             ignoreUnknownKeys = true

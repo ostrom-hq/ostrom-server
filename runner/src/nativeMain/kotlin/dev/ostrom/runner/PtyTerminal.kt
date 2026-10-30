@@ -100,6 +100,7 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         result == pid || result < 0
     }
 
+    /** Constants and readers of the enclosing type. */
     companion object : TerminalStarter {
         private const val CHUNK = 16 * 1024
         private val POLL = 100.milliseconds

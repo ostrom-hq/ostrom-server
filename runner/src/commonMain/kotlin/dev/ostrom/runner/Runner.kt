@@ -32,6 +32,7 @@ import kotlin.time.Instant
  * @param reconnectDelay Before reopening a dropped terminal link.
  * @param outputBuffer Output chunks kept while the link is down.
  */
+@Suppress("LongParameterList") // Six collaborators and three tunings with defaults, all named at the call sites.
 class Runner(
     private val config: RunnerConfig,
     private val server: ServerApi,
