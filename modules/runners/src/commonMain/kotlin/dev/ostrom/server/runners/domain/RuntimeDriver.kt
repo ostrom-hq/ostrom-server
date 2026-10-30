@@ -1,0 +1,112 @@
+package dev.ostrom.server.runners.domain
+
+import kotlin.uuid.Uuid
+
+/**
+ * Where executions run: a Kubernetes namespace (production) or the local Docker engine (tests, self-hosting).
+ * Every call is idempotent, so the reconciler can repeat any step after a crash or a lost race.
+ */
+interface RuntimeDriver {
+    /**
+     * Creates the session's workspace volume unless it exists.
+     *
+     * @param session The session.
+     */
+    suspend fun ensureWorkspace(session: CloudSession)
+
+    /**
+     * Starts an execution; starting one that exists changes nothing.
+     *
+     * @param spec What to run.
+     */
+    suspend fun startExecution(spec: ExecutionSpec)
+
+    /**
+     * Reads the state of the session's current execution (its [CloudSession.epoch]).
+     *
+     * @param session The session.
+     *
+     * @return The state.
+     */
+    suspend fun executionStatus(session: CloudSession): ExecutionStatus
+
+    /**
+     * Stops and removes every execution of the session, whatever its epoch, and their credentials.
+     *
+     * @param session The session.
+     */
+    suspend fun stopExecutions(session: CloudSession)
+
+    /**
+     * Deletes the session's workspace volume.
+     *
+     * @param session The session.
+     *
+     * @return True once the volume is proven gone, false while its deletion is still in progress.
+     */
+    suspend fun deleteWorkspace(session: CloudSession): Boolean
+}
+
+/**
+ * One execution to start.
+ *
+ * @property sessionId The session.
+ * @property orgId The session's organization.
+ * @property epoch The execution's number.
+ * @property agent The agent the runner starts.
+ * @property repository The repository the runner clones at the first start.
+ * @property runnerToken The execution's runner token, handed to the runner only (a Kubernetes Secret, a Docker
+ *   environment variable); never stored in clear by the server.
+ * @property limits The session's bounds (egress restriction).
+ */
+data class ExecutionSpec(
+    val sessionId: Uuid,
+    val orgId: Uuid,
+    val epoch: Long,
+    val agent: AgentKind,
+    val repository: RepositorySpec?,
+    val runnerToken: String,
+    val limits: SessionLimits,
+) {
+    override fun toString(): String = "ExecutionSpec(sessionId=$sessionId, epoch=$epoch, agent=${agent.wire}, runnerToken=***)"
+}
+
+/** The state of an execution as the runtime sees it. */
+enum class ExecutionStatus {
+    /** Accepted, not started yet (image pull, scheduling). */
+    PENDING,
+
+    /** Its runner process runs. */
+    RUNNING,
+
+    /** It ended (the runner exited), whatever the exit code. */
+    ENDED,
+
+    /** The runtime cannot start it (bad image, unschedulable for good). */
+    FAILED,
+
+    /** The runtime has no such execution. */
+    MISSING,
+}
+
+/** The names a driver gives to a session's objects, the same in every runtime. */
+object RuntimeNames {
+    /**
+     * The workspace volume of a session.
+     *
+     * @param sessionId The session.
+     *
+     * @return `ostrom-ws-<32 hex>`.
+     */
+    fun workspace(sessionId: Uuid): String = "ostrom-ws-" + sessionId.toHexString()
+
+    /**
+     * The pod or container of an execution: deterministic, so creating it twice is harmless.
+     *
+     * @param sessionId The session.
+     * @param epoch The execution.
+     *
+     * @return `ostrom-s-<32 hex>-e<epoch>`.
+     */
+    fun execution(sessionId: Uuid, epoch: Long): String = "ostrom-s-" + sessionId.toHexString() + "-e" + epoch
+}

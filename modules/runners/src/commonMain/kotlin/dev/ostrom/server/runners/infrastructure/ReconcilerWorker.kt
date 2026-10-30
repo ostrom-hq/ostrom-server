@@ -1,0 +1,71 @@
+package dev.ostrom.server.runners.infrastructure
+
+import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.runners.domain.CloudSessionsRepository
+import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
+import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
+
+/**
+ * The leased reconciler loop: claims due sessions (at most [batch] per pass, with a [lease]) and runs one
+ * reconciliation step on each. Any replica may run it; the lease keeps one replica per session.
+ *
+ * @param repository The sessions.
+ * @param reconcile One step.
+ * @param logger Where failed steps are reported, without the cluster's raw error body.
+ * @param clock The time.
+ * @param owner This replica's lease owner id.
+ */
+class ReconcilerWorker(
+    private val repository: CloudSessionsRepository,
+    private val reconcile: ReconcileCloudSessionUseCase,
+    private val logger: Logger,
+    private val clock: Clock,
+    private val owner: String = "replica-" + Uuid.random().toHexString(),
+    private val lease: Duration = 60.seconds,
+    private val batch: Int = 8,
+    private val idleDelay: Duration = 1.seconds,
+) {
+    /** Runs passes until the calling coroutine is cancelled. */
+    suspend fun run() {
+        while (currentCoroutineContext().isActive) {
+            val worked = pass()
+            if (worked == 0) delay(idleDelay)
+        }
+    }
+
+    /**
+     * One pass: claims due sessions and reconciles each.
+     *
+     * @return How many sessions were claimed.
+     */
+    suspend fun pass(): Int {
+        val now = clock.now()
+        val claimed = repository.claimDue(owner, now, now + lease, batch)
+        for (session in claimed) {
+            val next = try {
+                reconcile(session)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                logger.error(
+                    "cloud session step failed",
+                    mapOf("session_id" to session.id, "state" to session.state.wire, "error" to error::class.simpleName),
+                )
+                clock.now() + RETRY_DELAY
+            }
+            repository.release(session.id, owner, next)
+        }
+        return claimed.size
+    }
+
+    private companion object {
+        val RETRY_DELAY = 30.seconds
+    }
+}
