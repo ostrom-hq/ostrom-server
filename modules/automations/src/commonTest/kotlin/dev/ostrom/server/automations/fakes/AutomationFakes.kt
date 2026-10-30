@@ -48,7 +48,8 @@ fun webhookDefinition(name: String = "Ticket") = AutomationDefinition(
 )
 
 /** [AutomationsRepository] in memory. */
-@Suppress("TooManyFunctions")
+// The fake mirrors the SQL guards one early return at a time.
+@Suppress("TooManyFunctions", "ReturnCount")
 class InMemoryAutomations : AutomationsRepository {
     val automations = linkedMapOf<Uuid, Automation>()
     val runs = linkedMapOf<Uuid, AutomationRun>()

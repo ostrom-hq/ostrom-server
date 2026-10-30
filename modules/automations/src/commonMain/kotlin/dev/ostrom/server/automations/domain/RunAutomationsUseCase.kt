@@ -305,6 +305,7 @@ class RunAutomationsUseCaseImpl(
         return Prompts.render(automation.definition.action.prompt, values)
     }
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** How many webhook requests an automation accepts a minute. */
         const val MAX_PER_MINUTE = 30

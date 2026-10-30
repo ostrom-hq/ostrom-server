@@ -163,6 +163,7 @@ class ManageAutomationsUseCaseImpl(
 
     private fun notAdmin() = AutomationForbiddenException("Only an administrator lists another member's automations.")
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** The most automations a member owns. */
         const val MAX_PER_MEMBER = 20

@@ -68,6 +68,7 @@ class CronSchedule private constructor(
     fun upcoming(after: Instant, zone: TimeZone, count: Int): List<Instant> =
         generateSequence(next(after, zone)) { next(it, zone) }.take(count).toList()
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** The least time between two slots. */
         val MIN_SPACING = 5.minutes
@@ -98,12 +99,14 @@ class CronSchedule private constructor(
             val schedule = CronSchedule(
                 minutes = CronField.read(fields[0], 0..LAST_MINUTE, emptyList()).sorted(),
                 hours = CronField.read(fields[1], 0..LAST_HOUR, emptyList()).sorted(),
-                months = CronField.read(fields[3], 1..LAST_MONTH, MONTHS),
+                months = CronField.read(fields[MONTH_FIELD], 1..LAST_MONTH, MONTHS),
                 days = CronDays(
                     ofMonth = CronField.read(fields[2], 1..LAST_DAY, emptyList()),
-                    ofWeek = CronField.read(fields[4], 0..LAST_WEEKDAY, WEEKDAYS).map { it % DAYS_IN_WEEK }.toSet(),
+                    ofWeek = CronField.read(fields[WEEKDAY_FIELD], 0..LAST_WEEKDAY, WEEKDAYS)
+                        .map { it % DAYS_IN_WEEK }
+                        .toSet(),
                     anyOfMonth = fields[2].startsWith("*"),
-                    anyOfWeek = fields[4].startsWith("*"),
+                    anyOfWeek = fields[WEEKDAY_FIELD].startsWith("*"),
                 ),
             )
             requireAutomation(schedule.next(EPOCH, TimeZone.UTC) != null) { "This cron never runs." }
@@ -112,6 +115,8 @@ class CronSchedule private constructor(
         }
 
         private const val FIELDS = 5
+        private const val MONTH_FIELD = 3
+        private const val WEEKDAY_FIELD = 4
         private const val MINUTES_IN_HOUR = 60
         private const val HOURS_IN_DAY = 24
         private val EPOCH = Instant.fromEpochSeconds(0)

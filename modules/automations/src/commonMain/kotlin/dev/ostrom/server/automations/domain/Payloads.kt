@@ -117,17 +117,17 @@ object Prompts {
     }
 
     /** The text of one value; null for an optional missing one. */
-    private fun text(element: JsonElement?, variable: AutomationVariable): Outcome? {
-        if (element == null || element is JsonNull) {
-            return if (variable.required) Outcome.Problem("required") else null
-        }
-        if (element !is JsonPrimitive) return Outcome.Problem("not_scalar")
-        val text = typed(element, variable) ?: return Outcome.Problem("type:${variable.type.wire}")
-        return when {
-            text.length > variable.maxLength -> Outcome.Problem("max_length")
-            variable.type == VariableType.ENUM && text !in variable.values -> Outcome.Problem("enum")
-            else -> Outcome.Value(text)
-        }
+    private fun text(element: JsonElement?, variable: AutomationVariable): Outcome? = when {
+        element == null || element is JsonNull -> if (variable.required) Outcome.Problem("required") else null
+        element !is JsonPrimitive -> Outcome.Problem("not_scalar")
+        else -> checked(typed(element, variable), variable)
+    }
+
+    private fun checked(text: String?, variable: AutomationVariable): Outcome = when {
+        text == null -> Outcome.Problem("type:${variable.type.wire}")
+        text.length > variable.maxLength -> Outcome.Problem("max_length")
+        variable.type == VariableType.ENUM && text !in variable.values -> Outcome.Problem("enum")
+        else -> Outcome.Value(text)
     }
 
     private fun typed(element: JsonPrimitive, variable: AutomationVariable): String? = when (variable.type) {

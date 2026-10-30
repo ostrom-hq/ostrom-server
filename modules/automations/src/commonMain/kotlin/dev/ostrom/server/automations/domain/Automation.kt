@@ -57,6 +57,7 @@ data class AutomationTrigger(
     val catchup: Catchup = Catchup.ONCE,
     val catchupGraceMinutes: Int = DEFAULT_GRACE_MINUTES,
 ) {
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** Six hours. */
         const val DEFAULT_GRACE_MINUTES = 360
@@ -80,6 +81,7 @@ data class AutomationAction(
     val effort: String? = null,
     val maxRuntimeMinutes: Int = DEFAULT_RUNTIME_MINUTES,
 ) {
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** The default agent. */
         const val DEFAULT_AGENT = "claude"
@@ -125,6 +127,7 @@ data class AutomationVariable(
     val required: Boolean = true,
     val sensitive: Boolean = false,
 ) {
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** The default longest text. */
         const val DEFAULT_MAX_LENGTH = 256
@@ -152,6 +155,7 @@ data class AutomationDefinition(
     val overlap: Overlap = Overlap.SKIP,
     val maxRunsPerDay: Int = DEFAULT_MAX_RUNS_PER_DAY,
 ) {
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** One an hour. */
         const val DEFAULT_MAX_RUNS_PER_DAY = 24
