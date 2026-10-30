@@ -15,8 +15,6 @@ pluginManagement {
 dependencyResolutionManagement {
     repositories {
         mavenCentral()
-        // Probe only: ostrom-core published to the runner's Maven local repository from source.
-        mavenLocal { content { includeGroup("dev.ostrom") } }
         // ostrom-core is published to GitHub Packages (private): token from GITHUB_ACTOR / GITHUB_TOKEN in CI,
         // or gpr.user / gpr.key in ~/.gradle/gradle.properties locally. Only dev.ostrom is looked up there.
         maven("https://maven.pkg.github.com/ostrom-hq/ostrom-core") {
@@ -30,12 +28,16 @@ dependencyResolutionManagement {
     }
 }
 
-// Local development against a checkout of ostrom-core next to this one: -Postrom.core.local=true.
+// ostrom-core from a checkout next to this one instead of GitHub Packages: -Postrom.core.local=true (or the same line
+// in gradle.properties). Local development uses it, and so does CI, which cannot read the packages of another
+// repository: it checks ostrom-core out with its read-only deploy key at the commit of gradle/ostrom-core.ref (JOURNAL
+// 05:50). Each published artifact is replaced by the project that publishes it.
 if (providers.gradleProperty("ostrom.core.local").orNull == "true") {
-    includeBuild(providers.gradleProperty("ostrom.core.path").orNull ?: "../ostrom-core") {
+    includeBuild("../ostrom-core") {
         dependencySubstitution {
-            substitute(module("dev.ostrom:ostrom-api")).using(project(":api"))
-            substitute(module("dev.ostrom:ostrom-receipts")).using(project(":receipts"))
+            for (module in listOf("api", "receipts", "telemetry")) {
+                substitute(module("dev.ostrom:ostrom-$module")).using(project(":$module"))
+            }
         }
     }
 }

@@ -39,6 +39,24 @@ jobs:
       OSTROM_TEST_DATABASE_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # ostrom-core at the pinned commit, read with its read-only deploy key: the GITHUB_TOKEN of this repository can
+      # never read the Maven packages of another one (JOURNAL 05:50). Moved next to the workspace, where
+      # settings.gradle.kts includes it (ostrom.core.local), so that no check of this repository scans it.
+      - name: ostrom-core version
+        id: core
+        run: echo "ref=$(tr -d '[:space:]' < gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.core.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: ostrom-core
+          persist-credentials: false
+      - name: Build ostrom-core from that checkout
+        run: |
+          mv ostrom-core ../ostrom-core
+          mkdir -p ~/.gradle
+          echo "ostrom.core.local=true" >> ~/.gradle/gradle.properties
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
@@ -64,18 +82,8 @@ jobs:
           }
           KTS
       - run: python3 scripts/check-conventions.py
-      - name: ostrom-core from source (probe only, its packages are not readable from this repository yet)
-        uses: actions/checkout@v4
-        with:
-          repository: ostrom-hq/ostrom-core
-          ref: main
-          path: .ostrom-core
-          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
-          persist-credentials: false
       - name: GATES modules only (probe)
         run: |
-          (cd .ostrom-core && ./gradlew --no-daemon -PostromCoreVersion=0.1.13 -Postrom.nativeTargets=linuxX64 \
-            :api:publishToMavenLocal :receipts:publishToMavenLocal)
           M="compiler gates receipts sessions integrations-github integrations-slack notifications"
           T=""; for m in $M; do T="$T :modules:$m:detekt :modules:$m:jvmTest :modules:$m:koverVerify :modules:$m:koverXmlReport :modules:$m:linuxX64Test"; done
           ./gradlew $T --continue
