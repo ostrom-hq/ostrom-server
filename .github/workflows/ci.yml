@@ -91,6 +91,15 @@ jobs:
               }
           }
           KTS
+      # One Gradle daemon (4 GB) and one Kotlin daemon (2 GB) fit the runner with PostgreSQL and stripe-mock; the 6 GB of
+      # gradle.properties, meant for a workstation, plus the Kotlin daemon got runners killed (exit 143) while linking.
+      - name: Gradle memory for this runner
+        run: |
+          mkdir -p ~/.gradle
+          cat >> ~/.gradle/gradle.properties <<'PROPS'
+          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
+          kotlin.daemon.jvmargs=-Xmx2g
+          PROPS
       - run: python3 scripts/check-conventions.py
       - name: License signing tool (ee/tools/license, 100 % lines and branches)
         working-directory: ee/tools/license
@@ -99,8 +108,23 @@ jobs:
           "$RUNNER_TEMP/license-venv/bin/pip" install --quiet coverage==7.6.10 cryptography==44.0.3
           "$RUNNER_TEMP/license-venv/bin/python" -m coverage run --branch --data-file="$RUNNER_TEMP/license.coverage" -m unittest -v test_sign
           "$RUNNER_TEMP/license-venv/bin/python" -m coverage report --data-file="$RUNNER_TEMP/license.coverage" -m --include=sign.py --fail-under=100
-      - name: detekt, JVM tests with Kover 100 %, native tests (linuxX64), all with PostgreSQL
-        run: ./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test --continue
+      # Coverage first, in its own step, with its gaps printed right after: a runner lost during the native links that
+      # follow used to take the coverage report with it (same split as ostrom-cli 0e03e4b and 698cde2).
+      - name: detekt, JVM tests with Kover 100 %, all with PostgreSQL
+        run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Lines and branches not covered
+        if: failure()
+        run: python3 scripts/uncovered.py
+      # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
+      # runner's memory (#13, exit 143 while linking linuxArm64).
+      - name: Two Gradle workers for the native builds
+        if: ${{ !cancelled() }}
+        run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
+      - name: Native tests (linuxX64), with PostgreSQL
+        if: ${{ !cancelled() }}
+        run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
