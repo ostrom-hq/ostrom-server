@@ -159,7 +159,7 @@ class AskGateUseCaseImpl(
         add(Evidence("Asked by", "$asker$session$pr"))
         subject.harnessVersion?.let { add(Evidence("Harness", it)) }
         // Audit S2-05: before the push, GitHub does not have these commits; the diff is what the machine sent.
-        if (push != null && !diff.isNullOrEmpty()) add(Evidence(MACHINE_DIFF, diff))
+        if (push != null && !diff.isNullOrEmpty()) add(Evidence(Evidence.MACHINE_DIFF, diff))
     }
 
     // The head and base of a merge come from GitHub, never from the caller (audit A7b, A8). An enforced merge GitHub
@@ -195,7 +195,6 @@ class AskGateUseCaseImpl(
     }
 
     private companion object {
-        const val MACHINE_DIFF = "Diff (sent by the developer's machine, not checked by Ostrom)"
         const val MAX_DIFF = 8_000
         const val MAX_COMMAND = 8_000
         const val MAX_LABEL = 200

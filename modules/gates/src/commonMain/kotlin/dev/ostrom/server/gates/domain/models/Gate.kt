@@ -110,7 +110,13 @@ data class GateNode(
  * @property label What the line is (`Repository`, `Commits`, `Diff`…).
  * @property value Its value.
  */
-data class Evidence(val label: String, val value: String)
+data class Evidence(val label: String, val value: String) {
+    /** The labels other modules read. */
+    companion object {
+        /** The diff the developer's machine sent with a push: Ostrom shows it, it does not check it. */
+        const val MACHINE_DIFF: String = "Diff (sent by the developer's machine, not checked by Ostrom)"
+    }
+}
 
 /** Whether a gate blocks the action. */
 enum class GateMode {
