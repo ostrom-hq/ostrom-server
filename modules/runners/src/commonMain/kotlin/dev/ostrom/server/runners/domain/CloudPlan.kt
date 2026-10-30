@@ -26,6 +26,7 @@ data class CloudPlan(
     /** The limits a new session of this plan runs under. */
     fun sessionLimits(): SessionLimits = SessionLimits(idleTimeoutMinutes, maxRunMinutes, restrictedEgress)
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** The free plan: 5 agents at once, 300 hours a month, 30 minutes idle, 4 hours per run, limited egress. */
         val FREE: CloudPlan = CloudPlan(
@@ -69,6 +70,7 @@ data class AllowedOrgs(val all: Boolean, val orgs: Set<Uuid>) {
     /** Whether [orgId] is allowed. */
     operator fun contains(orgId: Uuid): Boolean = all || orgId in orgs
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** No organization: the default. */
         val NONE = AllowedOrgs(all = false, orgs = emptySet())

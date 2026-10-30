@@ -165,6 +165,7 @@ class DockerRuntimeDriver(
         epoch?.let { put(KubernetesRuntimeDriver.EPOCH_LABEL, it.toString()) }
     }
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         private val GONE_OR_DONE = setOf(HttpStatusCode.NotModified, HttpStatusCode.NotFound)
         private const val MEMORY_BYTES = 4L * 1024 * 1024 * 1024

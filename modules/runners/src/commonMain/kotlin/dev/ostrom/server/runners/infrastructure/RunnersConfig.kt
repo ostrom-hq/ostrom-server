@@ -29,6 +29,7 @@ data class RunnersConfig(
     /** The runtimes. */
     enum class DriverKind { NONE, KUBERNETES, DOCKER }
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** The runner image published by ostrom-server's CI. */
         const val DEFAULT_RUNNER_IMAGE = "ghcr.io/ostrom-hq/ostrom-runner:latest"
@@ -43,14 +44,7 @@ data class RunnersConfig(
          * @throws InvalidConfigException When a value is invalid, or a driver lacks a required value.
          */
         fun from(source: ConfigSource): RunnersConfig {
-            val driver = when (val raw = source["OSTROM_RUNNERS_DRIVER"]?.lowercase()) {
-                null, "", "none" -> DriverKind.NONE
-                "kubernetes" -> DriverKind.KUBERNETES
-                "docker" -> DriverKind.DOCKER
-                else -> throw InvalidConfigException(
-                    "OSTROM_RUNNERS_DRIVER must be none, kubernetes or docker, not $raw.",
-                )
-            }
+            val driver = driverKind(source["OSTROM_RUNNERS_DRIVER"]?.lowercase())
             val serverUrl = source["OSTROM_RUNNERS_SERVER_URL"]?.trimEnd('/').orEmpty()
             if (driver != DriverKind.NONE && !serverUrl.startsWith("http://") && !serverUrl.startsWith("https://")) {
                 throw InvalidConfigException(
@@ -94,6 +88,13 @@ data class RunnersConfig(
 
         private val LABEL = Regex("([A-Za-z0-9./_-]+)=([A-Za-z0-9._-]+)")
 
+        private fun driverKind(raw: String?): DriverKind = when (raw) {
+            null, "", "none" -> DriverKind.NONE
+            "kubernetes" -> DriverKind.KUBERNETES
+            "docker" -> DriverKind.DOCKER
+            else -> throw InvalidConfigException("OSTROM_RUNNERS_DRIVER must be none, kubernetes or docker, not $raw.")
+        }
+
         private fun allowedOrgs(raw: String): AllowedOrgs {
             val entries = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
             if (entries == listOf("*")) return AllowedOrgs(all = true, orgs = emptySet())
@@ -132,6 +133,7 @@ data class KubernetesSettings(
     val priorityClass: String? = null,
     val serverSelector: Map<String, String> = DEFAULT_SERVER_SELECTOR,
 ) {
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** The labels the Helm chart puts on the server's pods. */
         val DEFAULT_SERVER_SELECTOR = mapOf(

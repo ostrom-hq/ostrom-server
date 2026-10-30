@@ -136,26 +136,35 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
         }
         val link = relay.connectRunner(id, epoch)
             ?: return@webSocket close(CloseReason(TerminalCloseCodes.CONFLICT, NEWER_EXECUTION))
-        try {
-            coroutineScope {
-                val writer = launch {
-                    for (frame in link.outbound) {
-                        when (frame) {
-                            is TerminalRelay.RunnerBound.Input -> send(Frame.Binary(true, frame.bytes))
-                            is TerminalRelay.RunnerBound.Resize ->
-                                send(controlFrame(TerminalControl.Resize(frame.columns, frame.rows)))
-                        }
+        attachRunner(relay, id, link)
+    }
+}
+
+/** Pumps a runner's PTY: its output to the relay, the clients' input and resizes to it. */
+private suspend fun DefaultWebSocketServerSession.attachRunner(
+    relay: TerminalRelay,
+    id: Uuid,
+    link: TerminalRelay.RunnerLink,
+) {
+    try {
+        coroutineScope {
+            val writer = launch {
+                for (frame in link.outbound) {
+                    when (frame) {
+                        is TerminalRelay.RunnerBound.Input -> send(Frame.Binary(true, frame.bytes))
+                        is TerminalRelay.RunnerBound.Resize ->
+                            send(controlFrame(TerminalControl.Resize(frame.columns, frame.rows)))
                     }
-                    close(CloseReason(TerminalCloseCodes.CONFLICT, NEWER_EXECUTION))
                 }
-                for (frame in incoming) {
-                    if (frame is Frame.Binary) relay.output(id, link, frame.readBytes())
-                }
-                writer.cancel()
+                close(CloseReason(TerminalCloseCodes.CONFLICT, NEWER_EXECUTION))
             }
-        } finally {
-            relay.disconnectRunner(id, link)
+            for (frame in incoming) {
+                if (frame is Frame.Binary) relay.output(id, link, frame.readBytes())
+            }
+            writer.cancel()
         }
+    } finally {
+        relay.disconnectRunner(id, link)
     }
 }
 

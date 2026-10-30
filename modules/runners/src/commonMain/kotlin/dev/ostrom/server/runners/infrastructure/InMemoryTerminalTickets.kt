@@ -47,6 +47,7 @@ class InMemoryTerminalTickets(
         entry.caller.takeIf { entry.sessionId == sessionId && clock.now() < entry.expiresAt }
     }
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         const val PREFIX = "ostrom_term_"
         val DEFAULT_LIFETIME = 60.seconds
