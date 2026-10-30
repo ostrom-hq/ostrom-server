@@ -75,7 +75,6 @@ class ListApprovalsUseCaseImpl(
         status: RequestStatus?,
         limit: Int,
     ): List<ApprovalView> {
-
         if (actor.kind != ActorKind.USER) throw OnlyPeopleAnswerException()
         return repository.approvals(actor.orgId, actor.id.takeIf { mine }, status, limit.coerceIn(1, MAX_LIMIT))
     }

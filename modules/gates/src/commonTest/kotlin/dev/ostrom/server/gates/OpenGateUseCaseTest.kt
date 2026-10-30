@@ -210,7 +210,6 @@ class OpenGateUseCaseTest {
             assertFailsWith<InvalidGateRequestException> {
                 bench.open(bench.pushRequest().copy(sessionId = id, actor = device()))
             }
-
         }
         val fromDevice = bench.open(bench.pushRequest().copy(actor = device()))
         assertEquals(GateStatus.PENDING, fromDevice.gate.status, "A device token of the developer may ask")

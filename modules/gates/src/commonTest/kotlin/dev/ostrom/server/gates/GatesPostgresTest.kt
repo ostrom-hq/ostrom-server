@@ -175,7 +175,11 @@ class GatesPostgresTest {
         assertEquals("Merge into main", opened.gate.gate?.label)
         val approvals = server.approvalsOf(opened)
         assertEquals(listOf("lyes", "rev-b", "rev-c"), approvals.map { it.requestedFrom }.sorted())
-        assertTrue(approvals.all { it.evidence.contains(dev.ostrom.server.gates.presentation.Evidence("Diff", "+ok")) })
+        val diff = dev.ostrom.server.gates.presentation.Evidence(
+            "Diff (sent by the developer's machine, not checked by Ostrom)",
+            "+ok",
+        )
+        assertTrue(approvals.all { diff in it.evidence })
         assertEquals(listOf(sha), approvals.first().commits)
 
         val self = server.answer("user:a:lyes", opened, "lyes")
@@ -243,6 +247,9 @@ class GatesPostgresTest {
         assertEquals(opened.gate.id, same.gate.id)
         assertEquals("approved", same.gate.status)
         assertEquals(true, forced.gate.push?.force)
+        val forcedByCommand = server.call(agent, "/api/v1/gates", push().copy(command = "git push -f origin main"))
+            .body<GateResponse>()
+        assertEquals(forced.gate.id, forcedByCommand.gate.id, "Force read from the command too (audit S2-05)")
     }
 
     @Test
@@ -262,8 +269,9 @@ class GatesPostgresTest {
             "/api/v1/gates",
             merge.copy(pr = PullRequestDto("7", sha), command = "gh pr merge 7"),
         )
-            .body<GateResponse>()
-        assertEquals(null, unknown.gate.pr, "Unknown on GitHub: bound to the command in this session")
+        assertEquals(HttpStatusCode.ServiceUnavailable, unknown.status, "Never bound to the text (audit S2-06)")
+        val noNumber = server.call("agent:a:$session", "/api/v1/gates", merge.copy(pr = null))
+        assertEquals(HttpStatusCode.BadRequest, noNumber.status)
         val malformed = server.call("agent:a:$session", "/api/v1/gates", merge.copy(pr = PullRequestDto("six", sha)))
         assertEquals(HttpStatusCode.BadRequest, malformed.status)
     }
@@ -429,6 +437,11 @@ class GatesPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/approvals").status)
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/gates", push()).status)
         assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/approvals").status)
+        // Audit S2-03, S2-04: approvals are read and answered by a signed-in person, never by an agent or device token.
+        assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:$session", "/api/v1/approvals").status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("device:a:lyes", "/api/v1/approvals?mine=true").status)
+
+
         assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/gates/not-a-uuid").status)
         assertEquals(
             HttpStatusCode.BadRequest,
@@ -438,6 +451,5 @@ class GatesPostgresTest {
             HttpStatusCode.NotFound,
             server.call("agent:a:$session", "/api/v1/gates/${Uuid.random()}/explode", post = true).status,
         )
-
     }
 }
