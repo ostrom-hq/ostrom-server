@@ -75,8 +75,6 @@ style:
     maxLineLength: 120
     excludeCommentStatements: false
     excludeRawStrings: true
-  UnsafeCallOnNullableType:
-    active: true
   WildcardImport:
     active: false
 
@@ -85,3 +83,8 @@ naming:
     active: true
     # Tests are lowerCamelCase sentences (teamcode); Compose-style PascalCase factories are not used in Ostrom.
     functionPattern: '[a-z][a-zA-Z0-9]*'
+
+# detekt 1.23 files UnsafeCallOnNullableType under potential-bugs; under style it is an invalid key that fails the run.
+potential-bugs:
+  UnsafeCallOnNullableType:
+    active: true

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.app
 
 import dev.ostrom.server.kernel.config.InvalidConfigException
@@ -14,6 +15,7 @@ import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,14 +30,8 @@ import kotlin.system.exitProcess
  * one structured log line.
  */
 fun main() {
-    val source = try {
-        ServerConfig.source()
-    } catch (error: InvalidConfigException) {
-        JsonLogger(LogLevel.ERROR).error("invalid configuration", mapOf("reason" to error.message))
-        exitProcess(2)
-    }
-    val config = try {
-        ServerConfig.from(source)
+    val (source, config) = try {
+        ServerConfig.source().let { it to ServerConfig.from(it) }
     } catch (error: InvalidConfigException) {
         JsonLogger(LogLevel.ERROR).error("invalid configuration", mapOf("reason" to error.message))
         exitProcess(2)
@@ -44,11 +40,16 @@ fun main() {
     val modules = serverModules()
     var driver: Driver? = null
     var koin: Koin? = null
-    val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // On Kotlin/Native an uncaught coroutine exception ends the process: a failing background job is logged instead,
+    // with its class only (its message may quote a provider error), and the other jobs keep running.
+    val failures = CoroutineExceptionHandler { _, error ->
+        logger.error("background job failed", mapOf("error" to error::class.simpleName))
+    }
+    val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default + failures)
     try {
         val database = connectPostgres(config.database).also { driver = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val server = serverKoin(kernelModule(logger, database, signer, config = source), modules).also { koin = it }
+        val server = serverKoin(kernelModule(logger, database, signer, source), modules).also { koin = it }
         runBlocking {
             val migrations = server.get<MigrationRunner>()
             modules.forEach { migrations.migrate(it.name, it.migrations) }
