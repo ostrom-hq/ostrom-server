@@ -5,28 +5,21 @@ package dev.ostrom.server.kernel.observability
 
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
 import kotlinx.cinterop.toKString
-import platform.posix.RUSAGE_SELF
+import platform.posix.clock
 import platform.posix.fclose
 import platform.posix.fgets
 import platform.posix.fopen
-import platform.posix.getrusage
-import platform.posix.rusage
 import platform.posix.sysconf
 import platform.posix._SC_PAGESIZE
 
-/** User + system CPU seconds of this process, from `getrusage`. */
-internal actual fun processCpuSeconds(): Double = memScoped {
-    val usage = alloc<rusage>()
-    getrusage(RUSAGE_SELF, usage.ptr)
-    val user = usage.ru_utime.tv_sec.toDouble() + usage.ru_utime.tv_usec.toDouble() / MICROS
-    val system = usage.ru_stime.tv_sec.toDouble() + usage.ru_stime.tv_usec.toDouble() / MICROS
-    user + system
-}
+/**
+ * User + system CPU seconds of this process, from POSIX `clock()` (all its threads; `getrusage` is not in the
+ * Kotlin/Native bindings of Linux). POSIX fixes `CLOCKS_PER_SEC` at one million.
+ */
+internal actual fun processCpuSeconds(): Double = clock().toDouble() / CLOCKS_PER_SECOND
 
 /** Resident bytes from `/proc/self/statm` (Linux, where the server runs); null elsewhere. */
 internal actual fun processResidentBytes(): Long? {
@@ -47,5 +40,5 @@ private fun readStatm(): String? {
     }
 }
 
-private const val MICROS = 1_000_000.0
+private const val CLOCKS_PER_SECOND = 1_000_000.0
 private const val LINE = 128
