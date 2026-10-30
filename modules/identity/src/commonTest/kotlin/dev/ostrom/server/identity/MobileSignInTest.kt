@@ -345,7 +345,9 @@ class MobileSignInTest {
         assertFailsWith<MobileUnlockRefusedException> { unlock(token.userId, token.id, "k".repeat(129), "ip") }
         assertFailsWith<MobileUnlockRefusedException> { unlock(Uuid.random(), token.id, issued.unlockKey, "ip") }
         clock.now += 31.days
-        assertFailsWith<MobileUnlockRefusedException>("Expired") { unlock(token.userId, token.id, issued.unlockKey, "ip") }
+        assertFailsWith<MobileUnlockRefusedException>("Expired") {
+            unlock(token.userId, token.id, issued.unlockKey, "ip")
+        }
         assertNull(apiTokens.tokens.values.single().authenticatedAt)
     }
 

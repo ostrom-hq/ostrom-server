@@ -14,6 +14,12 @@ const val MOBILE_REFUSED = "refused"
 /** The `error` of a mobile callback when the provider names the address of another account (S2-07). */
 const val MOBILE_LINK_REQUIRED = "link_required"
 
+/** The app's token kind, to list a person's phones. */
+private val MOBILE_KIND = setOf(TokenKind.MOBILE)
+
+/** The audit details of an app token. */
+private val MOBILE_DETAILS = mapOf("kind" to "mobile")
+
 /** Completes a sign-in the phone app started, when the provider sends its browser back. */
 interface CompleteMobileSignInUseCase {
     /**
@@ -184,8 +190,6 @@ class ExchangeMobileCodeUseCaseImpl(
     private companion object {
         const val EXCHANGE_LIMIT = 30
         const val MOBILE_TOKEN_NAME = "Ostrom app"
-        val MOBILE_KIND = setOf(TokenKind.MOBILE)
-        val MOBILE_DETAILS = mapOf("kind" to "mobile")
     }
 }
 
