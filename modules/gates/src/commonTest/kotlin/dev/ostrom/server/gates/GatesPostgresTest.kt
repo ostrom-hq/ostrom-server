@@ -195,10 +195,11 @@ class GatesPostgresTest {
     private suspend fun TestServer.move(token: String, gate: GateResponse, move: String): HttpResponse =
         call(token, "/api/v1/gates/${gate.gate.id}/$move", post = true)
 
-    // `error.type`, the key of the contract (core api/openapi.yaml) that a client branches on.
-    private suspend fun HttpResponse.errorType(): String {
+    // The status and `error.type`, the key of the contract (core api/openapi.yaml) that a client branches on.
+    private suspend fun HttpResponse.assertRefused(expected: HttpStatusCode, type: String, why: String? = null) {
+        assertEquals(expected, status, why)
         val error = Json.parseToJsonElement(bodyAsText()).jsonObject.getValue("error").jsonObject
-        return error.getValue("type").jsonPrimitive.content
+        assertEquals(type, error.getValue("type").jsonPrimitive.content, why)
     }
 
     private suspend fun TestServer.answer(
@@ -234,9 +235,8 @@ class GatesPostgresTest {
         assertEquals(listOf(sha), approvals.first().commits)
 
         val self = server.answer("user:a:lyes", opened, "lyes")
-        assertEquals(HttpStatusCode.Forbidden, self.status, "The asker never approves while someone else can")
+        self.assertRefused(HttpStatusCode.Forbidden, "self_approval_refused", "The asker never approves")
         assertTrue(self.bodyAsText().contains("rev-b or rev-c must say yes"))
-        assertEquals("self_approval_refused", self.errorType(), "the contract's key, which clients branch on")
         val revB = approvals.first { it.requestedFrom == "rev-b" }
         val admin = server.call(
             "user:a:admin",
@@ -255,8 +255,7 @@ class GatesPostgresTest {
             "/api/v1/approvals/${revB.id}/answer",
             AnswerApprovalRequest(ApprovalAnswer.APPROVE, "x"),
         )
-        assertEquals(HttpStatusCode.Conflict, stale.status, "A yes names what was shown")
-        assertEquals("shown_digest_mismatch", stale.errorType())
+        stale.assertRefused(HttpStatusCode.Conflict, "shown_digest_mismatch", "A yes names what was shown")
 
         val answered = server.answer("user:a:rev-b", opened, "rev-b").body<AnswerApprovalResponse>()
         assertEquals("approved", answered.approval.status)
@@ -269,9 +268,7 @@ class GatesPostgresTest {
             mapOf("lyes" to "expired", "rev-b" to "approved", "rev-c" to "expired"),
             server.approvalsOf(opened).associate { it.requestedFrom to it.status },
         )
-        val late = server.answer("user:a:rev-c", opened, "rev-c")
-        assertEquals(HttpStatusCode.Conflict, late.status)
-        assertEquals("approval_closed", late.errorType())
+        server.answer("user:a:rev-c", opened, "rev-c").assertRefused(HttpStatusCode.Conflict, "approval_closed")
 
         assertEquals("approved", server.move(agent, opened, "reserve").body<GateResponse>().gate.status)
         assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "reserve").status)
@@ -547,9 +544,8 @@ class GatesPostgresTest {
     fun s254ABrowserSessionOlderThanFiveMinutesSignsInAgainBeforeAYes() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         val stale = server.answer("stale:a:rev-b", opened, "rev-b")
-        assertEquals(HttpStatusCode.Forbidden, stale.status)
+        stale.assertRefused(HttpStatusCode.Forbidden, "step_up_required")
         assertTrue(stale.bodyAsText().contains("Sign in again"))
-        assertEquals("step_up_required", stale.errorType())
         val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
         assertEquals("pending", still.gate.status)
         assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status, "signed in just now")
