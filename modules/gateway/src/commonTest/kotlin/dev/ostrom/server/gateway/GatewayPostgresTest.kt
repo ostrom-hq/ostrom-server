@@ -56,10 +56,9 @@ import io.ktor.http.contentType
 import io.ktor.http.headersOf
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.toByteArray
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.channels.Channel
-import kotlinx.io.readText
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -296,7 +295,7 @@ class GatewayPostgresTest {
                 body.awaitContent()
                 upstream.cancel(IllegalStateException("connection reset"))
                 val rest = try {
-                    body.readRemaining().readText()
+                    body.toByteArray().decodeToString()
                 } catch (_: Exception) {
                     ""
                 }
