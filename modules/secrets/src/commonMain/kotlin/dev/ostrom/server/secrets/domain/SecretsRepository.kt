@@ -64,7 +64,17 @@ interface SecretsRepository {
      *
      * @return The secret after the change, or null when it does not exist.
      */
-    suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant): Secret?
+    suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant, updatedBy: Uuid): Secret?
+
+    /**
+     * Finds a secret by its name.
+     *
+     * @param ownerMemberId The member for a personal secret, null for an org secret.
+     */
+    suspend fun findByName(orgId: Uuid, ownerMemberId: Uuid?, name: String): Secret?
+
+    /** Org secrets (not personal ones) by name, with their envelopes. */
+    suspend fun getOrgSecretsByName(orgId: Uuid, names: Collection<String>): List<StoredSecret>
 
     /**
      * Deletes a secret.

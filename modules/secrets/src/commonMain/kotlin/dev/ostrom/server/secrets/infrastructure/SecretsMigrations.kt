@@ -16,7 +16,8 @@ val SecretsMigrations: List<SchemaMigration> = listOf(
                 envelope TEXT NOT NULL,
                 version INTEGER NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL
+                updated_at TIMESTAMPTZ NOT NULL,
+                updated_by UUID NOT NULL
             );
             CREATE UNIQUE INDEX secrets_entries_name ON secrets_entries (org_id, name, owner_member_id) NULLS NOT DISTINCT;
             CREATE INDEX secrets_entries_owner ON secrets_entries (org_id, owner_member_id, name)

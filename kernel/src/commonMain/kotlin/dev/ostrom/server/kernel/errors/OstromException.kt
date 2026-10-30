@@ -2,13 +2,14 @@ package dev.ostrom.server.kernel.errors
 
 /**
  * The kinds of failure a use case can report. The presentation layer maps each to one HTTP status
- * (`dev.ostrom.server.kernel.http.configureErrors`); the domain never speaks HTTP.
+ * (`dev.ostrom.server.kernel.http.configureErrors`, CONVENTIONS section 3.2); the domain never speaks HTTP.
  *
- * @property code The stable machine-readable code clients receive in `error.code`.
+ * @property type The stable `snake_case` key clients receive in `error.type`; never changed once published.
  */
-enum class ErrorKind(val code: String) {
+enum class ErrorKind(val type: String) {
     INVALID_REQUEST("invalid_request"),
     UNAUTHORIZED("unauthorized"),
+    PAYMENT_REQUIRED("payment_required"),
     FORBIDDEN("forbidden"),
     NOT_FOUND("not_found"),
     CONFLICT("conflict"),
@@ -25,8 +26,9 @@ enum class ErrorKind(val code: String) {
  * exception reaching the HTTP layer is an internal error: logged, and answered without its message.
  *
  * @property kind The kind of failure, which decides the HTTP status.
+ * @property message The message sent to the client: never a secret, a token, a prompt or an upstream body.
  */
 open class OstromException(
     val kind: ErrorKind,
-    message: String,
+    override val message: String,
 ) : Exception(message)

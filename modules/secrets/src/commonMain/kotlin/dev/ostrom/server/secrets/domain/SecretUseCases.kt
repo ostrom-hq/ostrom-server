@@ -54,6 +54,7 @@ class CreateSecretUseCaseImpl(
             version = 1,
             createdAt = now,
             updatedAt = now,
+            updatedBy = caller.memberId,
         )
         val envelope = cipher.seal(payload.value.reveal().encodeToByteArray(), secretContext(secret.orgId, secret.id))
         if (!repository.create(StoredSecret(secret, envelope))) throw SecretNameTakenException()
@@ -123,7 +124,7 @@ class RotateSecretUseCaseImpl(
         val current = repository.requireWritable(caller, id)
         SecretRules.requireValue(value.reveal())
         val envelope = cipher.seal(value.reveal().encodeToByteArray(), secretContext(current.orgId, current.id))
-        return repository.rotate(caller.orgId, id, envelope, clock.now()) ?: throw SecretNotFoundException()
+        return repository.rotate(caller.orgId, id, envelope, clock.now(), caller.memberId) ?: throw SecretNotFoundException()
     }
 }
 
@@ -169,6 +170,35 @@ interface RevealSecretsUseCase {
      * @throws SecretUnreadableException When a stored envelope does not open with this instance's key.
      */
     suspend operator fun invoke(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, SecretValue>
+
+    /**
+     * Decrypts org secrets (never personal ones) by name: MCP servers and gateway settings name the secrets they use.
+     *
+     * @return The values by name; a missing name is absent from the map.
+     *
+     * @throws SecretUnreadableException When a stored envelope does not open with this instance's key.
+     */
+    suspend fun byName(orgId: Uuid, names: Collection<String>): Map<String, SecretValue>
+}
+
+/** Finds the id of a secret the caller can see, by name: the API addresses secrets by name. */
+interface FindSecretUseCase {
+    /**
+     * Finds it.
+     *
+     * @param caller The caller.
+     * @param name The name.
+     * @param personal True for the caller's personal secret, false for the org secret.
+     *
+     * @throws SecretNotFoundException When there is none.
+     */
+    suspend operator fun invoke(caller: Caller, name: String, personal: Boolean): Secret
+}
+
+/** [FindSecretUseCase] on the repository. */
+class FindSecretUseCaseImpl(private val repository: SecretsRepository) : FindSecretUseCase {
+    override suspend fun invoke(caller: Caller, name: String, personal: Boolean): Secret =
+        repository.findByName(caller.orgId, if (personal) caller.memberId else null, name) ?: throw SecretNotFoundException()
 }
 
 /**
@@ -189,6 +219,15 @@ class RevealSecretsUseCaseImpl(
             stored.secret.id to SecretValue(plaintext.decodeToString())
         }
     }
+
+    override suspend fun byName(orgId: Uuid, names: Collection<String>): Map<String, SecretValue> {
+        if (names.isEmpty()) return emptyMap()
+        return repository.getOrgSecretsByName(orgId, names.distinct()).associate { stored ->
+            val plaintext = cipher.open(stored.envelope, secretContext(stored.secret.orgId, stored.secret.id))
+                ?: throw SecretUnreadableException()
+            stored.secret.name to SecretValue(plaintext.decodeToString())
+        }
+    }
 }
 
 private suspend fun SecretsRepository.requireWritable(caller: Caller, id: Uuid): Secret {
@@ -200,4 +239,31 @@ private suspend fun SecretsRepository.requireWritable(caller: Caller, id: Uuid):
         owner != caller.memberId && !caller.role.isAdmin -> throw SecretNotFoundException()
     }
     return secret
+}
+
+/**
+ * Translates between secret names (what the API and its clients use) and ids (what other modules store, so a
+ * rotation or a rename keeps their reference). Holds no value.
+ */
+interface SecretDirectoryUseCase {
+    /**
+     * Ids of secrets by name.
+     *
+     * @param ownerMemberId The member for personal secrets, null for org secrets.
+     *
+     * @return The id of each name found.
+     */
+    suspend fun idsByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): Map<String, Uuid>
+
+    /** Names of secrets by id; a missing id is absent. */
+    suspend fun namesById(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, String>
+}
+
+/** [SecretDirectoryUseCase] on the repository. */
+class SecretDirectoryUseCaseImpl(private val repository: SecretsRepository) : SecretDirectoryUseCase {
+    override suspend fun idsByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): Map<String, Uuid> =
+        names.distinct().mapNotNull { name -> repository.findByName(orgId, ownerMemberId, name)?.let { name to it.id } }.toMap()
+
+    override suspend fun namesById(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, String> =
+        if (ids.isEmpty()) emptyMap() else repository.getMany(orgId, ids.distinct()).associate { it.secret.id to it.secret.name }
 }

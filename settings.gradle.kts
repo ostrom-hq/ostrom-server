@@ -1,5 +1,8 @@
 rootProject.name = "ostrom-server"
 
+// No TYPESAFE_PROJECT_ACCESSORS (CONVENTIONS section 9): the module `artifacts` would generate an accessor that
+// clashes with ProjectDependency.getArtifacts() and breaks the build. Modules depend on project(":path").
+
 pluginManagement {
     includeBuild("build-logic")
     repositories {
