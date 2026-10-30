@@ -19,6 +19,7 @@ import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.domain.services.HarnessStamp
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.presentation.AuditPage
+import dev.ostrom.server.compiler.presentation.CompilerScopes
 import dev.ostrom.server.compiler.presentation.PackageSummary
 import dev.ostrom.server.compiler.presentation.PackagesPage
 import dev.ostrom.server.compiler.presentation.PreviewRequest
@@ -30,6 +31,7 @@ import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
+import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -48,6 +50,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -75,12 +78,20 @@ class CompilerPostgresTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     private val orgB = Uuid.parse("0000000b-0000-0000-0000-000000000000")
 
-    // Tokens are `<kind>:<org letter>:<id>`: `user:a:lead`, `agent:a:launch-1`.
+    // Tokens are `<kind>:<org letter>:<id>`: `user:a:lead` (browser session), `agent:a:launch-1`, `cli:a:dev` (the
+    // CLI's token, which an agent can read on the developer's machine), `gates:a:x` (a gates-only key).
+    private val cliScopes = setOf(CompilerScopes.WORKFLOWS_READ, CompilerScopes.WORKFLOWS_WRITE)
+
     private fun overrides(config: Map<String, String>?, sources: CompilerSources? = null): Module = module {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) =
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
+                override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
+                    "user" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
+                    "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
+                    "cli" -> AuthenticatedPrincipal(token, PrincipalKind.USER, cliScopes)
+                    "gates" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
+                    else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
+                }
             }
         }
         single<GateActorResolver> {
@@ -88,7 +99,7 @@ class CompilerPostgresTest {
                 override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? {
                     val (kind, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
                     val orgId = if (org == "a") orgA else orgB
-                    return if (kind == "user") {
+                    return if (kind != "agent") {
                         GateActor(id, orgId, ActorKind.USER, personId = id)
                     } else {
                         GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lead")
@@ -195,6 +206,38 @@ class CompilerPostgresTest {
         assertEquals(HttpStatusCode.NotFound, server.call("user:b:dev", "/api/v1/workflows/release", "DELETE").status)
         assertEquals(HttpStatusCode.NoContent, server.call("user:a:dev", "/api/v1/workflows/release", "DELETE").status)
         assertEquals(HttpStatusCode.NotFound, server.call("user:a:dev", "/api/v1/workflows/release").status)
+    }
+
+    @Test
+    fun theCliTokenProposesButOnlyABrowserSessionDecides() = compilerTest { server ->
+        // SECURITY-AUDIT S2-03, S2-04: an agent that reads the CLI's token cannot accept or remove a gate.
+        val gatesOnly = server.call("gates:a:x", "/api/v1/workflows")
+        assertEquals(HttpStatusCode.Forbidden, gatesOnly.status)
+        assertTrue(gatesOnly.bodyAsText().contains("does not allow workflows:read"))
+        assertEquals(HttpStatusCode.Forbidden, server.call("gates:a:x", "/api/v1/gates/catalog").status)
+        val revoke = server.call("cli:a:dev", "/api/v1/packages/x/revoke", "POST", RevokeRequest("x"))
+        assertEquals(HttpStatusCode.Forbidden, revoke.status)
+
+        val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
+        assertEquals(HttpStatusCode.Forbidden, accepted.status)
+        assertTrue(accepted.bodyAsText().contains("Only a person signed in to the console"))
+        val noStatus = JsonObject(mapOf("id" to JsonPrimitive("bare")))
+        assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", "/api/v1/workflows", "POST", noStatus).status)
+        val proposed = server.call("cli:a:dev", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))
+        assertEquals(HttpStatusCode.Created, proposed.status)
+        val path = "/api/v1/workflows/release"
+        val accepting = SaveWorkflowRequest(release(), expectedVersion = 1)
+        assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", path, "PUT", accepting).status)
+        val reproposed = SaveWorkflowRequest(release(WorkflowStatus.PROPOSED, command = "make check"), 1)
+        assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", path, "PUT", reproposed).status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", path, "DELETE").status)
+
+        val accept = server.call("user:a:lead", path, "PUT", SaveWorkflowRequest(release(), 2))
+        assertEquals(HttpStatusCode.OK, accept.status)
+        val edit = SaveWorkflowRequest(release(WorkflowStatus.PROPOSED), 3)
+        assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", path, "PUT", edit).status, "Accepted stays so")
+        assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", "/api/v1/gates/catalog?repo=acme-api").status)
+        assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", path).status)
     }
 
     @Test
