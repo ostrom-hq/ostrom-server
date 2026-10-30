@@ -4,6 +4,7 @@ package dev.ostrom.server.rules.domain.services
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
+import kotlinx.datetime.LocalDate
 
 /**
  * The bounds of what the console writes into a rule, checked before anything is stored: text is trimmed, a gate's
@@ -88,10 +89,12 @@ object RuleChecks {
      *
      * @param value The date.
      * @return It.
-     * @throws InvalidRuleException When not `YYYY-MM-DD`.
+     * @throws InvalidRuleException When not `YYYY-MM-DD`, or not a day of the calendar (`2026-02-31`).
      */
     fun reviewBy(value: String): String = value.also {
-        ensure(date.matches(it)) { "A review date is written YYYY-MM-DD." }
+        ensure(date.matches(it) && LocalDate.Formats.ISO.parseOrNull(it) != null) {
+            "A review date is a day of the calendar, written YYYY-MM-DD."
+        }
     }
 
     /**

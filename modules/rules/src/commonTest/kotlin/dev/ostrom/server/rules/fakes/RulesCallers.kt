@@ -81,19 +81,13 @@ object RulesCallers {
         single<GateActorResolver> {
             object : GateActorResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? {
-                    val person = people[principal.subjectId] ?: return null
-                    val caller = person.caller ?: return null
-                    val login = person.login ?: return null
-                    return when (person.kind) {
-                        PrincipalKind.SERVICE -> GateActor(
-                            "agent",
-                            caller.orgId,
-                            ActorKind.AGENT_SESSION,
-                            launchId = "launch-1",
-                            personId = login,
-                        )
-                        PrincipalKind.DEVICE -> GateActor(login, caller.orgId, ActorKind.DEVICE, personId = login)
-                        else -> GateActor(login, caller.orgId, ActorKind.USER, personId = login)
+                    val person = people[principal.subjectId]
+                    val caller = person?.caller
+                    val login = person?.login
+                    return if (person == null || caller == null || login == null) {
+                        null
+                    } else {
+                        actorOf(person.kind, caller.orgId, login)
                     }
                 }
             }
@@ -146,4 +140,10 @@ suspend fun TestServer.call(method: String, path: String, token: String?, body: 
         "PATCH" -> client.patch(path, request)
         else -> client.delete(path, request)
     }
+}
+
+private fun actorOf(kind: PrincipalKind, orgId: Uuid, login: String): GateActor = when (kind) {
+    PrincipalKind.SERVICE -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = "launch-1", personId = login)
+    PrincipalKind.DEVICE -> GateActor(login, orgId, ActorKind.DEVICE, personId = login)
+    else -> GateActor(login, orgId, ActorKind.USER, personId = login)
 }

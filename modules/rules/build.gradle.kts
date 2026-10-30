@@ -15,6 +15,8 @@ kotlin {
             implementation(project(":modules:gates"))
             // Every decision signs a receipt.
             implementation(project(":modules:receipts"))
+            // A review date is checked against the calendar.
+            implementation(libs.kotlinx.datetime)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
