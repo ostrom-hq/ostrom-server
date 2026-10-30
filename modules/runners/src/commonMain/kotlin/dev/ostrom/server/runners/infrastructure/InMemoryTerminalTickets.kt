@@ -50,6 +50,6 @@ class InMemoryTerminalTickets(
     /** Constants and readers of the enclosing type. */
     companion object {
         const val PREFIX = "ostrom_term_"
-        val DEFAULT_LIFETIME = 60.seconds
+        private val DEFAULT_LIFETIME = 60.seconds
     }
 }

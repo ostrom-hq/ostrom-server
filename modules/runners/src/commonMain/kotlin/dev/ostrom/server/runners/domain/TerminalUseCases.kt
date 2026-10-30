@@ -166,7 +166,7 @@ class TerminalActivity(
 
     /** Constants and readers of the enclosing type. */
     companion object {
-        val DEFAULT_INTERVAL = 30.seconds
+        private val DEFAULT_INTERVAL = 30.seconds
         private const val MAX_TRACKED = 10_000
     }
 }
