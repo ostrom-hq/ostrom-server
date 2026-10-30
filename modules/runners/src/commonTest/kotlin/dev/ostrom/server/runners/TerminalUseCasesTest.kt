@@ -90,12 +90,14 @@ class TerminalUseCasesTest {
         assertNull(tickets.redeem(other.value, live.id))
 
         val late = issue(alice, live.id)
+        val forgotten = issue(alice, live.id)
         clock.now += 61.seconds
         assertNull(tickets.redeem(late.value, live.id))
         val kept = issue(alice, live.id)
         // Expired tickets are purged at the next issue, live ones kept.
         issue(alice, live.id)
         assertEquals(alice, tickets.redeem(kept.value, live.id))
+        assertNull(tickets.redeem(forgotten.value, live.id))
     }
 
     @Test
