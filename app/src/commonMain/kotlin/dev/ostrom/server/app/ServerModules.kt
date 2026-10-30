@@ -8,6 +8,7 @@ import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gateway.GatewayModule
 import dev.ostrom.server.identity.IdentityModule
+import dev.ostrom.server.importer.ImportModule
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.integrations.github.GitHubIntegrationModule
 import dev.ostrom.server.integrations.slack.SlackIntegrationModule
@@ -44,4 +45,5 @@ fun serverModules(): List<ServerModule> = listOf(
     GitHubIntegrationModule,
     SlackIntegrationModule,
     SharingModule,
+    ImportModule,
 )
