@@ -178,7 +178,7 @@ class SlackPostgresTest {
     // The value of the last request's yes button: `<request id>:<shown digest>`, or null without buttons.
     private fun lastButton(): String? = slack.posted.last().second.blocks.map { it.jsonObject }
         .firstOrNull { it["type"]!!.jsonPrimitive.content == "actions" }
-        ?.get("elements")!!.jsonArray.first().jsonObject["value"]!!.jsonPrimitive.content
+        ?.let { it["elements"]!!.jsonArray.first().jsonObject["value"]!!.jsonPrimitive.content }
 
     @Test
     fun aSmallPushIsApprovedFromSlackByTheLinkedApprover() = slackTest { server ->
