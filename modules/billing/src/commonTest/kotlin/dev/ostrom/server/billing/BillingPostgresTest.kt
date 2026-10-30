@@ -227,6 +227,8 @@ class BillingPostgresTest {
             server.database.withRole { role, driver ->
                 server.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
                     .getOrThrow()
+                // What the deployment grants `ostrom_app`: PUBLIC cannot run the router's functions (S2-60).
+                server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
                 val repository = BillingRepositoryImpl(driver)
                 repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_serving", updatedAt = NOW))
                 assertEquals(ORG_A, repository.findByCustomer("cus_serving")?.orgId)

@@ -55,15 +55,24 @@ fun routedTableSql(table: String, routerPrivileges: String): String = """
 
 /**
  * The SQL that hands functions over to [ROUTER_ROLE]: an owner needs `CREATE` on the schema, granted for the handover
- * only. Each function must be `SECURITY DEFINER` with `SET search_path = pg_catalog, public`, and take exactly what its
- * operation needs.
+ * only. `EXECUTE` is revoked from `PUBLIC` and granted to the serving role `ostrom_app` when the deployment created it
+ * (audit S2-60, as the orgs module does). Each function must be `SECURITY DEFINER` with
+ * `SET search_path = pg_catalog, public, pg_temp` (`pg_temp` last, so a temporary object never stands in for theirs),
+ * and take exactly what its operation needs.
  *
  * @param signatures The functions, with their argument types: `runners_route_by_token(TEXT)`.
  *
  * @return The statements.
  */
 fun routerFunctionsSql(vararg signatures: String): String = (
-    listOf("GRANT CREATE ON SCHEMA public TO $ROUTER_ROLE;") +
+    signatures.map { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" } +
+        "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$SERVING_ROLE') THEN" +
+        signatures.map { "GRANT EXECUTE ON FUNCTION $it TO $SERVING_ROLE;" } +
+        "END IF; END \$\$;" +
+        "GRANT CREATE ON SCHEMA public TO $ROUTER_ROLE;" +
         signatures.map { "ALTER FUNCTION $it OWNER TO $ROUTER_ROLE;" } +
         "REVOKE CREATE ON SCHEMA public FROM $ROUTER_ROLE;"
     ).joinToString("\n")
+
+/** The deployment's serving role, the only one that may run the router's functions (S2-60). */
+private const val SERVING_ROLE = "ostrom_app"

@@ -243,7 +243,7 @@ class KernelPostgresTest {
             $ROUTER_ROLE_SQL
             ${routedTableSql("probe_routes", "SELECT")}
             CREATE FUNCTION probe_route(p_slug TEXT) RETURNS TABLE (id UUID, org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$ SELECT r.id, r.org_id FROM probe_routes r WHERE r.slug = p_slug $$;
             ${routerFunctionsSql("probe_route(TEXT)")}
             DO $$ BEGIN CREATE ROLE ostrom_probe_serving NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -256,6 +256,10 @@ class KernelPostgresTest {
         val owner = driver.fetchAll("SELECT pg_get_userbyid(proowner) AS o FROM pg_proc WHERE proname = 'probe_route'")
             .getOrThrow().single().get("o").asString()
         assertEquals(ROUTER_ROLE, owner)
+        // S2-60: PUBLIC cannot run it, a role runs it only once granted (the serving role, by routerFunctionsSql).
+        val public = "SELECT has_function_privilege('ostrom_probe_serving', 'probe_route(TEXT)', 'EXECUTE') AS e"
+        assertFalse(driver.fetchAll(public).getOrThrow().single().get("e").asBoolean())
+        driver.execute("GRANT EXECUTE ON FUNCTION probe_route(TEXT) TO ostrom_probe_serving").getOrThrow()
 
         // The CI user is a superuser, which bypasses row-level security: the proof runs as a plain role.
         suspend fun asServing(org: String?, sql: String) = driver.transaction {

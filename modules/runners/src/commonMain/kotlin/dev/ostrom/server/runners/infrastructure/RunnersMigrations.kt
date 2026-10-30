@@ -94,14 +94,14 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             $ROUTER_ROLE_SQL
             ${routedTableSql("runners_session_routes", "SELECT, UPDATE")}
             CREATE FUNCTION runners_route_by_session(p_session_id UUID) RETURNS TABLE (session_id UUID, org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$ SELECT r.session_id, r.org_id FROM runners_session_routes r WHERE r.session_id = p_session_id $$;
             CREATE FUNCTION runners_route_by_token(p_hash TEXT) RETURNS TABLE (session_id UUID, org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$ SELECT r.session_id, r.org_id FROM runners_session_routes r WHERE r.runner_token_hash = p_hash $$;
             CREATE FUNCTION runners_claim_due(p_owner TEXT, p_until TIMESTAMPTZ, p_now TIMESTAMPTZ, p_limit INTEGER)
                 RETURNS TABLE (session_id UUID, org_id UUID)
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$
                 UPDATE runners_session_routes r SET reconcile_owner = p_owner, reconcile_until = p_until,
                     claimed_at = p_now
@@ -114,7 +114,7 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 $$;
             CREATE FUNCTION runners_release(p_session_id UUID, p_owner TEXT, p_has_next BOOLEAN, p_next_at TIMESTAMPTZ)
                 RETURNS VOID
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$
                 UPDATE runners_session_routes r SET reconcile_owner = NULL, reconcile_until = NULL,
                     next_reconcile_at = CASE

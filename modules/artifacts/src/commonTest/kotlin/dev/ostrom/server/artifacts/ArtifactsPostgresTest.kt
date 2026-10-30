@@ -188,6 +188,8 @@ class ArtifactsPostgresTest {
             server.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
                 .getOrThrow()
             server.driver.execute("GRANT ostrom_tenant TO $role").getOrThrow()
+            // What the deployment grants `ostrom_app`: PUBLIC cannot run the router's functions (S2-60).
+            server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
             val repository = ArtifactsRepositoryImpl(driver)
             val linked = artifact(access = ArtifactAccess.LINK).copy(linkSlug = "serving-slug")
             repository.create(linked, version(linked, 1, "a" to "s"), emptyMap())

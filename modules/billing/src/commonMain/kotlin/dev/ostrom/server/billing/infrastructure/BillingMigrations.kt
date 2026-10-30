@@ -119,13 +119,13 @@ val BillingMigrations: List<SchemaMigration> = listOf(
             ${routedTableSql("billing_customers", "SELECT")}
             ${routedTableSql("billing_outbox", "SELECT, UPDATE")}
             CREATE FUNCTION billing_org_of_customer(p_customer TEXT) RETURNS TABLE (org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$ SELECT c.org_id FROM billing_customers c WHERE c.stripe_customer_id = p_customer $$;
             CREATE FUNCTION billing_claim_outbox(p_now TIMESTAMPTZ, p_lease TIMESTAMPTZ, p_limit INTEGER)
                 RETURNS TABLE (
                     id UUID, org_id UUID, kind TEXT, identifier TEXT, happened_at TIMESTAMPTZ, attempts INTEGER
                 )
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$
                 UPDATE billing_outbox o SET next_attempt_at = p_lease WHERE o.id IN (
                     SELECT d.id FROM billing_outbox d WHERE d.done_at IS NULL AND d.next_attempt_at <= p_now
@@ -134,10 +134,10 @@ val BillingMigrations: List<SchemaMigration> = listOf(
                 RETURNING o.id, o.org_id, o.kind, o.identifier, o.happened_at, o.attempts
                 $$;
             CREATE FUNCTION billing_complete_outbox(p_id UUID, p_at TIMESTAMPTZ) RETURNS VOID
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$ UPDATE billing_outbox o SET done_at = p_at WHERE o.id = p_id $$;
             CREATE FUNCTION billing_fail_outbox(p_id UUID, p_retry TIMESTAMPTZ) RETURNS VOID
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$
                 UPDATE billing_outbox o SET attempts = o.attempts + 1, next_attempt_at = p_retry WHERE o.id = p_id
                 $$;

@@ -81,10 +81,10 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
             $ROUTER_ROLE_SQL
             ${routedTableSql("artifacts_routes", "SELECT")}
             CREATE FUNCTION artifacts_route_by_id(p_artifact_id UUID) RETURNS TABLE (artifact_id UUID, org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$ SELECT r.artifact_id, r.org_id FROM artifacts_routes r WHERE r.artifact_id = p_artifact_id $$;
             CREATE FUNCTION artifacts_route_by_slug(p_slug TEXT) RETURNS TABLE (artifact_id UUID, org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$ SELECT r.artifact_id, r.org_id FROM artifacts_routes r WHERE r.link_slug = p_slug $$;
             $ROUTE_FUNCTIONS_OWNER
         """.trimIndent(),
