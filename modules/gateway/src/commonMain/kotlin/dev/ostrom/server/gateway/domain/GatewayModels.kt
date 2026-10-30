@@ -2,41 +2,73 @@ package dev.ostrom.server.gateway.domain
 
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.sharing.domain.AccountProvider
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** The API shape an agent speaks to the gateway. */
-enum class WireProtocol {
+/**
+ * The API shape an agent speaks to the gateway.
+ *
+ * @property shared The subscription accounts that serve it, if any.
+ */
+enum class WireProtocol(val shared: AccountProvider?) {
     /** Anthropic Messages (`/v1/messages`): Claude Code. */
-    MESSAGES,
+    MESSAGES(AccountProvider.CLAUDE),
 
     /** OpenAI Responses (`/v1/responses`): Codex. */
-    RESPONSES,
+    RESPONSES(AccountProvider.CODEX),
 
     /** OpenAI Chat Completions (`/v1/chat/completions`): other agents, OpenRouter. */
-    CHAT,
+    CHAT(null),
+    ;
+
+    /** The provider whose API key serves [model] when no shared account does. */
+    fun keyProvider(model: String): InferenceProvider = when (this) {
+        MESSAGES -> InferenceProvider.ANTHROPIC
+        RESPONSES -> InferenceProvider.OPENAI
+        CHAT -> if ('/' in model) InferenceProvider.OPENROUTER else InferenceProvider.OPENAI
+    }
 }
 
 /**
  * Where a request is sent, and with what credential.
  *
  * @property wire The name in the usage ledger.
+ * @property family The price family ([PriceTable]): shared accounts are priced as their API equivalent.
+ * @property label The provider's name, for messages.
  */
-enum class InferenceProvider(val wire: String) {
+enum class InferenceProvider(val wire: String, val family: String, val label: String) {
     /** A shared Claude Pro/Max account (OAuth). */
-    CLAUDE_SHARED("claude"),
+    CLAUDE_SHARED("claude", "anthropic", "Anthropic"),
 
     /** A shared ChatGPT account for Codex (OAuth). */
-    CODEX_SHARED("codex"),
+    CODEX_SHARED("codex", "openai", "OpenAI"),
 
     /** The org's Anthropic API key. */
-    ANTHROPIC("anthropic"),
+    ANTHROPIC("anthropic", "anthropic", "Anthropic"),
 
     /** The org's OpenAI API key. */
-    OPENAI("openai"),
+    OPENAI("openai", "openai", "OpenAI"),
 
     /** The org's OpenRouter API key. */
-    OPENROUTER("openrouter"),
+    OPENROUTER("openrouter", "openrouter", "OpenRouter"),
+}
+
+/**
+ * One model call as an agent sent it.
+ *
+ * @property protocol The API shape.
+ * @property body The request body.
+ * @property headers The agent's headers, names in lowercase, without its Ostrom credential.
+ * @property sessionId The agent session, for account affinity, when the agent named it.
+ */
+class InferenceCall(
+    val protocol: WireProtocol,
+    val body: String,
+    val headers: Map<String, String>,
+    val sessionId: String?,
+) {
+    override fun toString(): String = "InferenceCall($protocol, ${body.length} chars)"
 }
 
 /**
@@ -47,10 +79,7 @@ enum class InferenceProvider(val wire: String) {
  * @property cacheRead Input read from the provider's cache.
  * @property cacheWrite Input written to the cache.
  */
-data class TokenUsage(val input: Long = 0, val output: Long = 0, val cacheRead: Long = 0, val cacheWrite: Long = 0) {
-    /** All tokens. */
-    val total: Long get() = input + output + cacheRead + cacheWrite
-}
+data class TokenUsage(val input: Long = 0, val output: Long = 0, val cacheRead: Long = 0, val cacheWrite: Long = 0)
 
 /**
  * One relayed model call, for the usage ledger, budgets, per-account limits and traces. Never holds prompt or output.
@@ -91,16 +120,26 @@ data class ModelCallRecord(
     val durationMillis: Long,
 )
 
-/** Receives every relayed call: bound to the usage ledger by the usage wiring; the default drops them. */
+/** Receives every relayed call: bound to the usage ledger by the usage wiring. */
 fun interface ModelUsageSink {
-    /** Records it; must not throw (the gateway also guards). */
+    /** Records it; may throw, the gateway guards. */
     suspend fun record(call: ModelCallRecord)
 }
 
-/** Receives every relayed call for tracing (Langfuse through OBS); the default does nothing. */
+/** Drops every call: the default until the usage module binds its [ModelUsageSink]. */
+object NoModelUsageSink : ModelUsageSink {
+    override suspend fun record(call: ModelCallRecord) = Unit
+}
+
+/** Receives every relayed call for tracing (Langfuse through OBS). */
 fun interface ModelCallObserver {
     /** Observes it. */
     suspend fun observe(call: ModelCallRecord)
+}
+
+/** Traces nothing: the default until OBS binds its [ModelCallObserver]. */
+object NoModelCallObserver : ModelCallObserver {
+    override suspend fun observe(call: ModelCallRecord) = Unit
 }
 
 /** Whether a member may spend now. */
@@ -117,16 +156,22 @@ sealed interface SpendDecision {
     data class Exhausted(val message: String, val resetsAt: Instant?) : SpendDecision
 }
 
-/** Budgets as the gateway sees them; bound to the budgets module by the budgets wiring, allows all by default. */
+/** Budgets as the gateway sees them; bound to the budgets module by the budgets wiring. */
 fun interface SpendGuard {
     /** Decides for the member. */
     suspend fun check(orgId: Uuid, memberId: Uuid): SpendDecision
 }
 
+/** Allows every call: the default until the budgets module binds its [SpendGuard]. */
+object AllowAllSpend : SpendGuard {
+    override suspend fun check(orgId: Uuid, memberId: Uuid): SpendDecision = SpendDecision.Allowed
+}
+
 /**
  * The org's inference settings (an addition to the API contract, `/api/v1/inference/settings`).
  *
- * @property anthropicKeySecret Org secret (by name) holding an Anthropic API key, for Messages when no shared account serves.
+ * @property anthropicKeySecret Org secret (by name) holding an Anthropic API key, for Messages when no shared account
+ *   serves.
  * @property openaiKeySecret Org secret holding an OpenAI API key, for Responses and Chat.
  * @property openrouterKeySecret Org secret holding an OpenRouter key, for Chat (models named `vendor/model`).
  * @property useSharedAccounts Whether shared subscription accounts serve first (on by default).
@@ -136,7 +181,16 @@ data class GatewaySettings(
     val openaiKeySecret: String? = null,
     val openrouterKeySecret: String? = null,
     val useSharedAccounts: Boolean = true,
-)
+) {
+    /** The secret naming the key of [provider], if the org set one. */
+    fun keySecret(provider: InferenceProvider): String? = if (provider.family == InferenceProvider.ANTHROPIC.family) {
+        anthropicKeySecret
+    } else if (provider == InferenceProvider.OPENROUTER) {
+        openrouterKeySecret
+    } else {
+        openaiKeySecret
+    }
+}
 
 /**
  * Which models members may use (contract `ModelPolicy`). A model is allowed when it starts with one of the entries;
@@ -151,14 +205,17 @@ data class ModelPolicy(
     val default: String? = null,
     val byMember: Map<String, List<String>> = emptyMap(),
 ) {
+    /** The list that applies to the member. */
+    fun listFor(memberId: Uuid): List<String> = byMember[memberId.toString()] ?: allowed
+
     /** Whether the member may use the model. */
     fun allows(memberId: Uuid, model: String): Boolean {
-        val list = byMember[memberId.toString()] ?: allowed
+        val list = listFor(memberId)
         return list.isEmpty() || list.any { model.startsWith(it) }
     }
 }
 
-/** Storage of the org's settings and model policy. */
+/** Storage of the org's settings and model policy, confined to the org. */
 interface GatewaySettingsRepository {
     /** The settings, defaults when never set. */
     suspend fun get(orgId: Uuid): GatewaySettings

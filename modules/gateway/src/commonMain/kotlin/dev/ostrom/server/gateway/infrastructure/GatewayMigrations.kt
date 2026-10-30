@@ -1,8 +1,13 @@
 package dev.ostrom.server.gateway.infrastructure
 
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
+import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
-/** The schema of the gateway module; its tables start with `gateway_`. */
+/**
+ * The schema of the gateway module; its tables start with `gateway_`. Version 2 confines both tables to their org
+ * (row-level security, SECURITY-AUDIT S2-01).
+ */
 val GatewayMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
         version = 1,
@@ -22,5 +27,11 @@ val GatewayMigrations: List<SchemaMigration> = listOf(
                 by_member TEXT NOT NULL
             );
         """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 2,
+        name = "confine_gateway_to_their_org",
+        sql = TENANT_ROLE_SQL + "\n" + tenantTableSql("gateway_settings") + "\n" +
+            tenantTableSql("gateway_model_policies"),
     ),
 )

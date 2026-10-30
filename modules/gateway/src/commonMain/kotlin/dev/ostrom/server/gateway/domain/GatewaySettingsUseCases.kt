@@ -39,8 +39,9 @@ class GetGatewaySettingsUseCaseImpl(private val repository: GatewaySettingsRepos
 class PutGatewaySettingsUseCaseImpl(private val repository: GatewaySettingsRepository) : PutGatewaySettingsUseCase {
     override suspend fun invoke(caller: Caller, settings: GatewaySettings): GatewaySettings {
         caller.requireAdmin()
-        listOfNotNull(settings.anthropicKeySecret, settings.openaiKeySecret, settings.openrouterKeySecret).forEach {
-            if (!GatewayRules.SECRET_NAME.matches(it)) throw InvalidGatewaySettingsException("A key is named by the org secret holding it.")
+        val names = listOfNotNull(settings.anthropicKeySecret, settings.openaiKeySecret, settings.openrouterKeySecret)
+        if (names.any { !GatewayRules.SECRET_NAME.matches(it) }) {
+            throw InvalidGatewaySettingsException("A key is named by the org secret holding it.")
         }
         repository.put(caller.orgId, settings)
         return settings
@@ -56,13 +57,7 @@ class GetModelPolicyUseCaseImpl(private val repository: GatewaySettingsRepositor
 class PutModelPolicyUseCaseImpl(private val repository: GatewaySettingsRepository) : PutModelPolicyUseCase {
     override suspend fun invoke(caller: Caller, policy: ModelPolicy): ModelPolicy {
         caller.requireAdmin()
-        GatewayRules.requireModels(policy.allowed)
-        if (policy.byMember.size > GatewayRules.MAX_MEMBERS) throw InvalidGatewaySettingsException("At most ${GatewayRules.MAX_MEMBERS} members with their own list.")
-        policy.byMember.forEach { (member, models) ->
-            if (Uuid.parseOrNull(member) == null) throw InvalidGatewaySettingsException("byMember is keyed by member id.")
-            GatewayRules.requireModels(models)
-        }
-        policy.default?.let { GatewayRules.requireModels(listOf(it)) }
+        GatewayRules.requirePolicy(policy)
         repository.putPolicy(caller.orgId, policy)
         return policy
     }
@@ -76,20 +71,27 @@ object GatewayRules {
     /** Members with their own list. */
     const val MAX_MEMBERS = 1000
 
-    /** The longest model name. */
-    const val MAX_MODEL = 200
-
     /** A model name or prefix. */
-    val MODEL = Regex("[A-Za-z0-9._:/-]+")
+    val MODEL = Regex("[A-Za-z0-9._:/-]{1,${RequestBody.MAX_MODEL}}")
 
     /** A secret name, as the secrets module accepts it. */
     val SECRET_NAME = Regex("[A-Za-z0-9_.-]{1,128}")
 
-    /** Refuses a malformed list. */
-    fun requireModels(models: List<String>) {
-        if (models.size > MAX_MODELS) throw InvalidGatewaySettingsException("At most $MAX_MODELS models.")
-        if (models.any { it.isEmpty() || it.length > MAX_MODEL || !MODEL.matches(it) }) {
-            throw InvalidGatewaySettingsException("Models are names or prefixes of letters, digits, '.', '-', '_', ':' or '/'.")
+    /** Refuses a malformed policy. */
+    fun requirePolicy(policy: ModelPolicy) {
+        val problem = when {
+            policy.byMember.size > MAX_MEMBERS -> "At most $MAX_MEMBERS members with their own list."
+            policy.byMember.keys.any { Uuid.parseOrNull(it) == null } -> "byMember is keyed by member id."
+            else -> (policy.byMember.values + listOf(policy.allowed, listOfNotNull(policy.default)))
+                .firstNotNullOfOrNull(::modelsProblem)
         }
+        if (problem != null) throw InvalidGatewaySettingsException(problem)
+    }
+
+    private fun modelsProblem(models: List<String>): String? = when {
+        models.size > MAX_MODELS -> "At most $MAX_MODELS models."
+        models.any { !MODEL.matches(it) } ->
+            "Models are names or prefixes of letters, digits, '.', '-', '_', ':' or '/'."
+        else -> null
     }
 }

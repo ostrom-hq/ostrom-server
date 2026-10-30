@@ -12,12 +12,8 @@ kotlin {
             implementation(project(":modules:secrets"))
             implementation(project(":modules:sharing"))
             implementation(libs.ktor.client.core)
-        }
-        linuxMain.dependencies {
-            implementation(libs.ktor.client.curl)
-        }
-        macosMain.dependencies {
-            implementation(libs.ktor.client.darwin)
+            // The engine of each platform: Curl on Linux, Darwin on macOS, CIO on the test-only JVM target.
+            implementation(libs.ktor.client.engine.defaults)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

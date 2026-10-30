@@ -1,0 +1,256 @@
+package dev.ostrom.server.gateway
+
+import dev.ostrom.server.gateway.domain.AllowAllSpend
+import dev.ostrom.server.gateway.domain.ByteSink
+import dev.ostrom.server.gateway.domain.ByteSource
+import dev.ostrom.server.gateway.domain.GatewaySettings
+import dev.ostrom.server.gateway.domain.GatewaySettingsRepository
+import dev.ostrom.server.gateway.domain.InferencePlanner
+import dev.ostrom.server.gateway.domain.InferenceRefusal
+import dev.ostrom.server.gateway.domain.InferenceResponder
+import dev.ostrom.server.gateway.domain.InferenceUpstream
+import dev.ostrom.server.gateway.domain.InstanceProviderKeys
+import dev.ostrom.server.gateway.domain.ModelPolicy
+import dev.ostrom.server.gateway.domain.ProviderEndpoints
+import dev.ostrom.server.gateway.domain.SpendGuard
+import dev.ostrom.server.gateway.domain.UpstreamAnswer
+import dev.ostrom.server.gateway.domain.UpstreamRequest
+import dev.ostrom.server.gateway.domain.UpstreamRequests
+import dev.ostrom.server.gateway.domain.WireProtocol
+import dev.ostrom.server.secrets.domain.Caller
+import dev.ostrom.server.secrets.domain.MemberRole
+import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
+import dev.ostrom.server.secrets.domain.SecretUnreadableException
+import dev.ostrom.server.secrets.domain.SecretValue
+import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.sharing.domain.AccountCredentials
+import dev.ostrom.server.sharing.domain.AccountLimits
+import dev.ostrom.server.sharing.domain.AccountProvider
+import dev.ostrom.server.sharing.domain.AccountStatus
+import dev.ostrom.server.sharing.domain.AccountTokenCipher
+import dev.ostrom.server.sharing.domain.AccountTokens
+import dev.ostrom.server.sharing.domain.NoAccountSpendReader
+import dev.ostrom.server.sharing.domain.OAuthRefresher
+import dev.ostrom.server.sharing.domain.QuotaWindow
+import dev.ostrom.server.sharing.domain.QuotaWindowRepository
+import dev.ostrom.server.sharing.domain.RefreshResult
+import dev.ostrom.server.sharing.domain.SharedAccount
+import dev.ostrom.server.sharing.domain.SharedAccountPool
+import dev.ostrom.server.sharing.domain.SharedAccountRepository
+import dev.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
+import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
+
+/** Orgs and members of the gateway tests. */
+object Gw {
+    val orgA: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
+    val orgB: Uuid = Uuid.parse("0000000b-0000-0000-0000-000000000000")
+    val adminA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000a1"), MemberRole.ADMIN)
+    val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
+    val otherA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000c1"), MemberRole.MEMBER)
+    val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.ADMIN)
+    val epoch: Instant = Instant.parse("2026-10-30T10:00:00Z")
+    val endpoints =
+        ProviderEndpoints(
+            "https://anthropic.test",
+            "https://openai.test",
+            "https://openrouter.test/api",
+            "https://codex.test",
+        )
+    val cipher = AccountTokenCipher(AesGcmSecretCipher(ByteArray(32) { 7 }))
+}
+
+/** A clock the test moves. */
+class TestClock(var now: Instant = Gw.epoch) : Clock {
+    override fun now(): Instant = now
+
+    fun advance(by: Duration) {
+        now += by
+    }
+}
+
+/** [GatewaySettingsRepository] in memory. */
+class InMemorySettings : GatewaySettingsRepository {
+    val settings = mutableMapOf<Uuid, GatewaySettings>()
+    val policies = mutableMapOf<Uuid, ModelPolicy>()
+
+    override suspend fun get(orgId: Uuid) = settings[orgId] ?: GatewaySettings()
+
+    override suspend fun put(orgId: Uuid, settings: GatewaySettings) {
+        this.settings[orgId] = settings
+    }
+
+    override suspend fun policy(orgId: Uuid) = policies[orgId] ?: ModelPolicy()
+
+    override suspend fun putPolicy(orgId: Uuid, policy: ModelPolicy) {
+        policies[orgId] = policy
+    }
+}
+
+/** Shared accounts and their windows in memory. */
+class InMemoryAccounts :
+    SharedAccountRepository,
+    QuotaWindowRepository {
+    val accounts = mutableListOf<SharedAccount>()
+    val envelopes = mutableMapOf<Uuid, String>()
+    val windows = mutableMapOf<Uuid, List<QuotaWindow>>()
+
+    override suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount {
+        accounts += account
+        envelopes[account.id] = envelope
+        return account
+    }
+
+    override suspend fun get(orgId: Uuid, id: Uuid) = accounts.firstOrNull { it.orgId == orgId && it.id == id }
+
+    override suspend fun list(orgId: Uuid) = accounts.filter { it.orgId == orgId }
+
+    override suspend fun ready(orgId: Uuid, provider: AccountProvider) =
+        accounts.filter { it.orgId == orgId && it.provider == provider && it.status == AccountStatus.READY }
+
+    override suspend fun update(account: SharedAccount): SharedAccount? {
+        val index = accounts.indexOfFirst { it.id == account.id }
+        if (index < 0) return null
+        accounts[index] = account
+        return account
+    }
+
+    override suspend fun delete(orgId: Uuid, id: Uuid) = accounts.removeAll { it.id == id }
+
+    override suspend fun envelope(orgId: Uuid, id: Uuid) = envelopes[id]
+
+    override suspend fun putEnvelope(orgId: Uuid, id: Uuid, envelope: String) {
+        envelopes[id] = envelope
+    }
+
+    override suspend fun setStatus(orgId: Uuid, id: Uuid, status: AccountStatus) {
+        get(orgId, id)?.let { update(it.copy(status = status)) }
+    }
+
+    override suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant) {
+        get(orgId, id)?.let { update(it.copy(cooldownUntil = until)) }
+    }
+
+    override suspend fun put(orgId: Uuid, id: Uuid, windows: List<QuotaWindow>) {
+        this.windows[id] = windows
+    }
+
+    override suspend fun byAccount(orgId: Uuid) = windows
+
+    /** Shares an account of [provider] in org A. */
+    suspend fun share(provider: AccountProvider, label: String, clock: Clock, org: Uuid = Gw.orgA): SharedAccount {
+        val account = SharedAccount(
+            Uuid.random(), org, provider, label, null, "acct-$label", Gw.memberA.memberId, 0,
+            AccountStatus.READY, AccountLimits(), null, clock.now(),
+        )
+        val tokens = AccountCredentials("access-$label", "refresh-$label", clock.now() + 1.days)
+        return upsert(account, Gw.cipher.seal(tokens, org, account.id))
+    }
+}
+
+/** A refresher that never renews. */
+class NoRefresh : OAuthRefresher {
+    override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials) = RefreshResult.Unavailable
+}
+
+/** The pool over [accounts]. */
+fun pool(accounts: InMemoryAccounts, clock: Clock) = SharedAccountPool(
+    accounts,
+    accounts,
+    AccountTokens(accounts, Gw.cipher, NoRefresh(), clock),
+    ProviderQuotaHeaderParser(),
+    NoAccountSpendReader(),
+    clock,
+)
+
+/** Org key secrets by name. */
+class FakeSecrets(private val values: Map<String, String> = emptyMap()) : RevealSecretsUseCase {
+    var unreadable = false
+
+    override suspend fun invoke(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, SecretValue> = emptyMap()
+
+    override suspend fun byName(orgId: Uuid, names: Collection<String>): Map<String, SecretValue> {
+        if (unreadable) throw SecretUnreadableException()
+        return names.mapNotNull { name -> values[name]?.let { name to SecretValue(it) } }.toMap()
+    }
+}
+
+/** A planner over fakes. */
+fun planner(
+    settings: InMemorySettings,
+    shared: SharedAccountPool,
+    secrets: FakeSecrets = FakeSecrets(),
+    keys: InstanceProviderKeys = InstanceProviderKeys(),
+    spend: SpendGuard = AllowAllSpend,
+) = InferencePlanner(settings, shared, secrets, spend, keys, UpstreamRequests(Gw.endpoints))
+
+/** What the agent received. */
+class RecordingResponder : InferenceResponder {
+    var refusal: InferenceRefusal? = null
+    var protocol: WireProtocol? = null
+    var status: Int? = null
+    var headers: List<Pair<String, String>> = emptyList()
+    private val chunks = mutableListOf<ByteArray>()
+
+    /** Writing fails after this many writes (the agent went away). */
+    var failAfterWrites = Int.MAX_VALUE
+
+    val size: Int get() = chunks.sumOf { it.size }
+
+    val text: String get() = chunks.fold(ByteArray(0)) { all, chunk -> all + chunk }.decodeToString()
+
+    override suspend fun refuse(protocol: WireProtocol, refusal: InferenceRefusal) {
+        this.protocol = protocol
+        this.refusal = refusal
+    }
+
+    override suspend fun stream(status: Int, headers: List<Pair<String, String>>, body: suspend (ByteSink) -> Unit) {
+        this.status = status
+        this.headers = headers
+        var writes = 0
+        body(
+            ByteSink { bytes, count ->
+                check(writes++ < failAfterWrites) { "agent gone" }
+                chunks += bytes.copyOf(count)
+            },
+        )
+    }
+}
+
+/** Reads [chunks] in turn, as much of each as the buffer holds; an empty chunk is a read of 0. */
+class ChunkSource(chunks: List<ByteArray>) : ByteSource {
+    private val queue = ArrayDeque(chunks)
+    private var offset = 0
+
+    override suspend fun read(buffer: ByteArray): Int {
+        val chunk = queue.firstOrNull() ?: return -1
+        val count = minOf(chunk.size - offset, buffer.size)
+        chunk.copyInto(buffer, 0, offset, offset + count)
+        offset += count
+        if (offset == chunk.size) {
+            queue.removeFirst()
+            offset = 0
+        }
+        return count
+    }
+}
+
+/** A body of [chunks]. */
+fun source(vararg chunks: ByteArray): ByteSource = ChunkSource(chunks.toList())
+
+/** A provider answering each request with the next answer of [answers] (an exception is thrown). */
+class FakeUpstream(vararg answers: Any) : InferenceUpstream {
+    private val queue = ArrayDeque(answers.toList())
+    val requests = mutableListOf<UpstreamRequest>()
+
+    override suspend fun <T> exchange(request: UpstreamRequest, handle: suspend (UpstreamAnswer) -> T): T {
+        requests += request
+        return when (val next = queue.removeFirst()) {
+            is Throwable -> throw next
+            else -> handle(next as UpstreamAnswer)
+        }
+    }
+}

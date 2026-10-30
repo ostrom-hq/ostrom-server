@@ -29,7 +29,9 @@ class KtorInferenceUpstream(private val client: HttpClient) : InferenceUpstream 
             setBody(TextContent(request.body, ContentType.Application.Json))
         }.execute { response ->
             val channel = response.bodyAsChannel()
-            val headers = response.headers.entries().associate { (name, values) -> name.lowercase() to values.joinToString(",") }
-            handle(UpstreamAnswer(response.status.value, headers, ByteSource { buffer -> channel.readAvailable(buffer, 0, buffer.size) }))
+            val headers = response.headers.entries()
+                .associate { (name, values) -> name.lowercase() to values.joinToString(",") }
+            val body = ByteSource { buffer -> channel.readAvailable(buffer, 0, buffer.size) }
+            handle(UpstreamAnswer(response.status.value, headers, body))
         }
 }

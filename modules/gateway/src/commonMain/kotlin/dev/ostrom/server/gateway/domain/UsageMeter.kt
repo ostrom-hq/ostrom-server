@@ -8,9 +8,10 @@ import kotlinx.serialization.json.longOrNull
 
 /**
  * Reads token usage from a provider's answer as it streams through, without holding it: bytes are split into lines,
- * and only a line that can carry usage (it names `usage`) is parsed. Prompt and output text are never kept beyond the
- * current line, and a line longer than 256 KiB is dropped. Works for Anthropic Messages events, OpenAI Responses
- * events and Chat Completions chunks, streamed (server-sent events) or not (one JSON body, [acceptBody]).
+ * and only a line that can carry usage (a `data:` line naming `usage`) is parsed. Prompt and output text are never
+ * kept beyond the current line, and a line longer than 256 KiB is dropped. Works for Anthropic Messages events,
+ * OpenAI Responses events and Chat Completions chunks, streamed (server-sent events) or not (one JSON body,
+ * [acceptBody]).
  *
  * @param protocol The API shape of the answer.
  */
@@ -27,22 +28,15 @@ class UsageMeter(private val protocol: WireProtocol) {
     /** The usage seen so far, or null when the answer reported none. */
     val usage: TokenUsage? get() = if (seen) TokenUsage(input, output, cacheRead, cacheWrite) else null
 
-    /** Feeds streamed bytes. */
-    fun accept(bytes: ByteArray, count: Int = bytes.size) {
+    /** Feeds streamed bytes: the first [count] of [bytes]. */
+    fun accept(bytes: ByteArray, count: Int) {
         for (index in 0 until count) {
             val byte = bytes[index]
-            if (byte == NEWLINE) {
-                if (!dropping) consumeLine()
-                length = 0
-                dropping = false
-            } else if (!dropping) {
-                if (length == MAX_LINE) {
-                    dropping = true
-                    length = 0
-                } else {
-                    if (length == line.size) line = line.copyOf(minOf(line.size * 2, MAX_LINE))
-                    line[length++] = byte
-                }
+            when {
+                byte == NEWLINE -> endLine()
+                dropping -> Unit
+                length == MAX_LINE -> dropping = true
+                else -> append(byte)
             }
         }
     }
@@ -52,61 +46,74 @@ class UsageMeter(private val protocol: WireProtocol) {
         parse(body.decodeToString())?.let(::read)
     }
 
-    private fun consumeLine() {
-        if (length < 6 || line[0] != 'd'.code.toByte()) return
-        val text = line.decodeToString(0, length)
-        if (!text.startsWith("data:") || "usage" !in text) return
-        parse(text.removePrefix("data:").trim())?.let(::read)
+    private fun append(byte: Byte) {
+        if (length == line.size) line = line.copyOf(minOf(line.size * 2, MAX_LINE))
+        line[length++] = byte
+    }
+
+    private fun endLine() {
+        if (!dropping && length > DATA.length && line[0] == DATA_START) {
+            val text = line.decodeToString(0, length)
+            if (text.startsWith(DATA) && "usage" in text) parse(text.substring(DATA.length).trim())?.let(::read)
+        }
+        length = 0
+        dropping = false
+    }
+
+    private fun read(json: JsonObject) {
+        when (protocol) {
+            WireProtocol.MESSAGES -> {
+                // message_start carries message.usage, message_delta carries usage; a whole message carries usage.
+                json.child("message")?.child("usage")?.let(::anthropic)
+                json.child("usage")?.let(::anthropic)
+            }
+            WireProtocol.RESPONSES -> (json.child("response")?.child("usage") ?: json.child("usage"))
+                ?.let { openAi(it, "input_tokens", "input_tokens_details", "output_tokens") }
+            WireProtocol.CHAT -> json.child("usage")
+                ?.let { openAi(it, "prompt_tokens", "prompt_tokens_details", "completion_tokens") }
+        }
+    }
+
+    private fun anthropic(usage: JsonObject) {
+        // Counts only grow along a stream: keep the largest seen.
+        usage.count("input_tokens")?.let {
+            seen = true
+            input = maxOf(input, it)
+        }
+        usage.count("output_tokens")?.let {
+            seen = true
+            output = maxOf(output, it)
+        }
+        usage.count("cache_read_input_tokens")?.let { cacheRead = maxOf(cacheRead, it) }
+        usage.count("cache_creation_input_tokens")?.let { cacheWrite = maxOf(cacheWrite, it) }
+    }
+
+    /** OpenAI counts cached tokens inside the input; the ledger keeps them apart. */
+    private fun openAi(usage: JsonObject, inputName: String, detailsName: String, outputName: String) {
+        usage.count(inputName)?.let { total ->
+            val cached = usage.child(detailsName)?.count("cached_tokens")?.coerceAtMost(total) ?: 0
+            seen = true
+            input = total - cached
+            cacheRead = cached
+            output = usage.count(outputName) ?: output
+        }
     }
 
     private fun parse(text: String): JsonObject? = try {
         Json.parseToJsonElement(text) as? JsonObject
     } catch (_: SerializationException) {
         null
-    } catch (_: IllegalArgumentException) {
-        null
     }
 
-    private fun read(json: JsonObject) {
-        when (protocol) {
-            WireProtocol.MESSAGES -> {
-                // message_start carries message.usage, message_delta carries usage; a non-streamed message carries usage.
-                ((json["message"] as? JsonObject)?.get("usage") as? JsonObject)?.let(::anthropic)
-                (json["usage"] as? JsonObject)?.let(::anthropic)
-            }
-            WireProtocol.RESPONSES -> {
-                val usage = ((json["response"] as? JsonObject)?.get("usage") ?: json["usage"]) as? JsonObject ?: return
-                val cached = ((usage["input_tokens_details"] as? JsonObject)?.get("cached_tokens") as? JsonPrimitive)?.longOrNull ?: 0
-                val total = usage.long("input_tokens") ?: return
-                seen = true
-                input = (total - cached).coerceAtLeast(0)
-                cacheRead = cached.coerceIn(0, total)
-                output = usage.long("output_tokens") ?: output
-            }
-            WireProtocol.CHAT -> {
-                val usage = json["usage"] as? JsonObject ?: return
-                val cached = ((usage["prompt_tokens_details"] as? JsonObject)?.get("cached_tokens") as? JsonPrimitive)?.longOrNull ?: 0
-                val total = usage.long("prompt_tokens") ?: return
-                seen = true
-                input = (total - cached).coerceAtLeast(0)
-                cacheRead = cached.coerceIn(0, total)
-                output = usage.long("completion_tokens") ?: output
-            }
-        }
-    }
+    private fun JsonObject.child(name: String): JsonObject? = this[name] as? JsonObject
 
-    private fun anthropic(usage: JsonObject) {
-        // Counts only grow along a stream: keep the largest seen.
-        usage.long("input_tokens")?.let { seen = true; input = maxOf(input, it) }
-        usage.long("output_tokens")?.let { seen = true; output = maxOf(output, it) }
-        usage.long("cache_read_input_tokens")?.let { cacheRead = maxOf(cacheRead, it) }
-        usage.long("cache_creation_input_tokens")?.let { cacheWrite = maxOf(cacheWrite, it) }
-    }
-
-    private fun JsonObject.long(name: String): Long? = (this[name] as? JsonPrimitive)?.longOrNull?.takeIf { it in 0..MAX_TOKENS }
+    private fun JsonObject.count(name: String): Long? =
+        (this[name] as? JsonPrimitive)?.longOrNull?.takeIf { it in 0..MAX_TOKENS }
 
     private companion object {
         const val NEWLINE: Byte = 10
+        const val DATA = "data:"
+        const val DATA_START: Byte = 100
         const val INITIAL = 1024
         const val MAX_LINE = 256 * 1024
         const val MAX_TOKENS = 100_000_000L
