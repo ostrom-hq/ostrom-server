@@ -68,7 +68,7 @@ private val SCOPED_TOKENS = mapOf(
 )
 
 /** A Stripe-Signature header for [payload], signed now with the test secret. */
-private fun sign(payload: String): String {
+private suspend fun sign(payload: String): String {
     val signed = "${NOW.epochSeconds}.$payload".encodeToByteArray()
     return "t=${NOW.epochSeconds},v1=${hmacSha256Hex(WEBHOOK_SECRET, signed)}"
 }
@@ -293,8 +293,9 @@ class BillingPostgresTest {
         assertEquals(HttpStatusCode.BadRequest, client.webhook(payload, signature = null).status)
         assertEquals(WebhookResponse(true, "processed"), client.webhook(payload).body<WebhookResponse>())
         assertEquals(WebhookResponse(true, "duplicate"), client.webhook(payload).body<WebhookResponse>())
+        val signature = sign(payload)
         val tooLarge = client.post("/v1/billing/stripe/webhook") {
-            header("Stripe-Signature", sign(payload))
+            header("Stripe-Signature", signature)
             setBody("x".repeat(300_000))
         }
         assertEquals(HttpStatusCode.PayloadTooLarge, tooLarge.status)
