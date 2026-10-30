@@ -46,6 +46,12 @@ class ImportAccountsPostgresTest {
         return koin.get<AccountTokenCipher>().open(envelope, adminA.orgId, id)?.accessToken
     }
 
+    /** The statuses of claude-1, claude-2 and claude-3, and nothing else shared. */
+    private suspend fun TestServer.statuses(): List<AccountStatus> = accounts().let { shared ->
+        assertEquals(setOf("claude-1", "claude-2", "claude-3"), shared.keys)
+        listOf("claude-1", "claude-2", "claude-3").map { shared.getValue(it).status }
+    }
+
     private suspend fun TestServer.accountLines(vararg accounts: TeamCodeAccountDto, dryRun: Boolean = false) =
         report(TeamCodeImportRequest(accounts = accounts.toList()), dryRun = dryRun).items.filter {
             it.kind == "account"
@@ -99,40 +105,61 @@ class ImportAccountsPostgresTest {
     fun aRerunTurnsOffWhatTeamCodeDisabledAndRevivesWhatNeedsAReconnection() =
         serverTest(modules, importOverrides()) { server ->
             with(server) {
-                accountLines(account("claude", "claude-1"), account("claude", "claude-2"))
-                // claude-1 lost its tokens; claude-2 is serving although TeamCode has it disabled (a run that stopped
-                // between sharing it and turning it off).
-                koin.get<SharedAccountRepository>()
-                    .setStatus(adminA.orgId, accounts().getValue("claude-1").id, AccountStatus.RECONNECT_REQUIRED)
-                val again =
-                    arrayOf(account("claude", "claude-1", run = 2), account("claude", "claude-2", true, run = 2))
+                accountLines(
+                    account("claude", "claude-1"),
+                    account("claude", "claude-2"),
+                    account("claude", "claude-3"),
+                )
+                // claude-1 and claude-3 lost their tokens; claude-2 serves although TeamCode has since disabled it.
+                val repository = koin.get<SharedAccountRepository>()
+                for (id in listOf("claude-1", "claude-3")) {
+                    repository.setStatus(adminA.orgId, accounts().getValue(id).id, AccountStatus.RECONNECT_REQUIRED)
+                }
+                val unnamed = account("claude", "claude-4", run = 2).copy(label = "")
+                val again = arrayOf(
+                    account("claude", "claude-1", run = 2),
+                    account("claude", "claude-2", disabled = true, run = 2),
+                    account("claude", "claude-3", disabled = true, run = 2),
+                    unnamed,
+                )
+                val refused = line("account", "claude/", SKIPPED, "A label is 1 to 120 printable characters.")
 
-                val plan = accountLines(*again, dryRun = true)
                 assertEquals(
                     listOf(
                         line("account", "claude/Lyes claude-1", PLANNED),
                         line("account", "claude/Lyes claude-2", PLANNED),
+                        line("account", "claude/Lyes claude-3", PLANNED),
+                        refused,
                     ),
-                    plan,
-                    "A dry run makes the same checks",
+                    accountLines(*again, dryRun = true),
+                    "A dry run makes the same checks, the share's refusals included",
                 )
-                assertEquals(AccountStatus.RECONNECT_REQUIRED, accounts().getValue("claude-1").status, "Dry run")
-                assertEquals(AccountStatus.READY, accounts().getValue("claude-2").status, "Dry run")
+                val before =
+                    listOf(AccountStatus.RECONNECT_REQUIRED, AccountStatus.READY, AccountStatus.RECONNECT_REQUIRED)
+                assertEquals(before, statuses(), "A dry run writes nothing")
 
                 assertEquals(
                     listOf(
                         line("account", "claude/Lyes claude-1", UPDATED),
                         line("account", "claude/Lyes claude-2", UPDATED),
+                        line("account", "claude/Lyes claude-3", UPDATED),
+                        refused,
                     ),
                     accountLines(*again),
                 )
-                assertEquals(AccountStatus.READY, accounts().getValue("claude-1").status, "Revived")
+                // Revived; turned off; revived and turned off in the same write.
+                assertEquals(listOf(AccountStatus.READY, AccountStatus.DISABLED, AccountStatus.DISABLED), statuses())
                 assertEquals("access-claude-1-token-2", accessToken("claude-1"), "With TeamCode's tokens")
-                assertEquals(AccountStatus.DISABLED, accounts().getValue("claude-2").status, "Turned off")
                 assertEquals("access-claude-2-token-1", accessToken("claude-2"), "Turning it off keeps its tokens")
                 assertEquals(
-                    listOf(line("account", "claude/Lyes claude-2", UNCHANGED)),
-                    accountLines(account("claude", "claude-2", true, run = 3)),
+                    listOf(
+                        line("account", "claude/Lyes claude-2", UNCHANGED),
+                        line("account", "claude/Lyes claude-3", UNCHANGED),
+                    ),
+                    accountLines(
+                        account("claude", "claude-2", disabled = true, run = 3),
+                        account("claude", "claude-3", disabled = true, run = 3),
+                    ),
                     "Nothing left to do",
                 )
             }
