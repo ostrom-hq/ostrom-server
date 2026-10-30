@@ -29,11 +29,17 @@ data class RunnerConfig(
     val prompt: String? = null,
 ) {
     /** The token never appears in logs. */
-    override fun toString(): String = "RunnerConfig(serverUrl=$serverUrl, sessionId=$sessionId, epoch=$epoch, agent=$agentCommand)"
+    override fun toString(): String =
+        "RunnerConfig(serverUrl=$serverUrl, sessionId=$sessionId, epoch=$epoch, agent=$agentCommand)"
 
     companion object {
         /** Variables only the runner reads; never passed to the agent. */
-        val PRIVATE_VARIABLES = setOf("OSTROM_RUNNER_TOKEN", "OSTROM_RUNNER_TOKEN_FILE", "OSTROM_AGENT_PROMPT", "OSTROM_AGENT_PROMPT_FILE")
+        val PRIVATE_VARIABLES = setOf(
+            "OSTROM_RUNNER_TOKEN",
+            "OSTROM_RUNNER_TOKEN_FILE",
+            "OSTROM_AGENT_PROMPT",
+            "OSTROM_AGENT_PROMPT_FILE",
+        )
 
         /**
          * Reads the configuration.
@@ -46,25 +52,30 @@ data class RunnerConfig(
          * @throws IllegalArgumentException When a variable is missing or malformed.
          */
         fun from(environment: Map<String, String>, readFile: (String) -> String): RunnerConfig {
-            fun required(name: String) = environment[name]?.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("$name is required.")
+            fun optional(name: String) = environment[name]?.takeIf { it.isNotBlank() }
+            fun required(name: String) = requireNotNull(optional(name)) { "$name is required." }
             val serverUrl = required("OSTROM_SERVER_URL").trimEnd('/')
-            require(serverUrl.startsWith("http://") || serverUrl.startsWith("https://")) { "OSTROM_SERVER_URL must be an http(s) URL." }
-            val token = environment["OSTROM_RUNNER_TOKEN"]?.takeIf { it.isNotBlank() }
-                ?: environment["OSTROM_RUNNER_TOKEN_FILE"]?.takeIf { it.isNotBlank() }?.let { readFile(it).trim() }
-                ?: throw IllegalArgumentException("OSTROM_RUNNER_TOKEN or OSTROM_RUNNER_TOKEN_FILE is required.")
+            require(serverUrl.startsWith("http://") || serverUrl.startsWith("https://")) {
+                "OSTROM_SERVER_URL must be an http(s) URL."
+            }
+            val token = requireNotNull(
+                optional("OSTROM_RUNNER_TOKEN") ?: optional("OSTROM_RUNNER_TOKEN_FILE")?.let { readFile(it).trim() },
+            ) { "OSTROM_RUNNER_TOKEN or OSTROM_RUNNER_TOKEN_FILE is required." }
             require(token.isNotEmpty()) { "The runner token is empty." }
             return RunnerConfig(
                 serverUrl = serverUrl,
-                sessionId = Uuid.parseOrNull(required("OSTROM_SESSION_ID")) ?: throw IllegalArgumentException("OSTROM_SESSION_ID is not a UUID."),
-                epoch = required("OSTROM_EPOCH").toLongOrNull() ?: throw IllegalArgumentException("OSTROM_EPOCH is not a number."),
+                sessionId = requireNotNull(Uuid.parseOrNull(required("OSTROM_SESSION_ID"))) {
+                    "OSTROM_SESSION_ID is not a UUID."
+                },
+                epoch = requireNotNull(required("OSTROM_EPOCH").toLongOrNull()) { "OSTROM_EPOCH is not a number." },
                 agentCommand = required("OSTROM_AGENT_COMMAND"),
                 repositoryUrl = environment["OSTROM_REPOSITORY_URL"]?.takeIf { it.isNotBlank() },
                 repositoryRef = environment["OSTROM_REPOSITORY_REF"]?.takeIf { it.isNotBlank() },
                 token = token,
                 workspace = environment["OSTROM_WORKSPACE"]?.takeIf { it.isNotBlank() } ?: DEFAULT_WORKSPACE,
                 model = environment["OSTROM_AGENT_MODEL"]?.takeIf { it.isNotBlank() },
-                prompt = environment["OSTROM_AGENT_PROMPT"]?.takeIf { it.isNotBlank() }
-                    ?: environment["OSTROM_AGENT_PROMPT_FILE"]?.takeIf { it.isNotBlank() }?.let(readFile)?.takeIf { it.isNotBlank() },
+                prompt = optional("OSTROM_AGENT_PROMPT")
+                    ?: optional("OSTROM_AGENT_PROMPT_FILE")?.let(readFile)?.takeIf { it.isNotBlank() },
             )
         }
 

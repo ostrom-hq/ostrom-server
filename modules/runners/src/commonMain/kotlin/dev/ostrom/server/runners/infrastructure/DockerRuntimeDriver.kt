@@ -87,9 +87,11 @@ class DockerRuntimeDriver(
         val filters = """{"label":["${KubernetesRuntimeDriver.SESSION_LABEL}=${session.id.toHexString()}"]}"""
         val listed = call(HttpMethod.Get, "/containers/json", parameters = mapOf("all" to "true", "filters" to filters))
         listed.requireSuccess("list containers")
-        val ids = Json.parseToJsonElement(listed.bodyAsText()).jsonArray.mapNotNull { it.jsonObject["Id"]?.jsonPrimitive?.content }
+        val ids = Json.parseToJsonElement(listed.bodyAsText()).jsonArray
+            .mapNotNull { it.jsonObject["Id"]?.jsonPrimitive?.content }
         for (id in ids) {
-            val stopped = call(HttpMethod.Post, "/containers/$id/stop", parameters = mapOf("t" to KubernetesRuntimeDriver.GRACE_SECONDS.toString()))
+            val grace = mapOf("t" to KubernetesRuntimeDriver.GRACE_SECONDS.toString())
+            val stopped = call(HttpMethod.Post, "/containers/$id/stop", parameters = grace)
             if (stopped.status !in GONE_OR_DONE) stopped.requireSuccess("stop container")
             val removed = call(HttpMethod.Delete, "/containers/$id", parameters = mapOf("force" to "true"))
             if (removed.status != HttpStatusCode.NotFound) removed.requireSuccess("remove container")
@@ -107,7 +109,8 @@ class DockerRuntimeDriver(
 
     private suspend fun pullImage() {
         val (image, tag) = splitImage(runnerImage)
-        call(HttpMethod.Post, "/images/create", parameters = mapOf("fromImage" to image, "tag" to tag)).requireSuccess("pull image")
+        call(HttpMethod.Post, "/images/create", parameters = mapOf("fromImage" to image, "tag" to tag))
+            .requireSuccess("pull image")
     }
 
     private fun containerManifest(spec: ExecutionSpec): JsonObject = buildJsonObject {
@@ -126,7 +129,8 @@ class DockerRuntimeDriver(
             ),
         )
         putJsonObject("HostConfig") {
-            putJsonArray("Binds") { add(JsonPrimitive("${RuntimeNames.workspace(spec.sessionId)}:${KubernetesRuntimeDriver.WORKSPACE}")) }
+            val bind = "${RuntimeNames.workspace(spec.sessionId)}:${KubernetesRuntimeDriver.WORKSPACE}"
+            putJsonArray("Binds") { add(JsonPrimitive(bind)) }
             settings.network?.let { put("NetworkMode", it) }
             putJsonArray("ExtraHosts") { add(JsonPrimitive("host.docker.internal:host-gateway")) }
             putJsonObject("RestartPolicy") { put("Name", "no") }
@@ -173,7 +177,11 @@ class DockerRuntimeDriver(
             val at = reference.indexOf('@')
             if (at >= 0) return reference.substring(0, at) to reference.substring(at + 1)
             val colon = reference.lastIndexOf(':')
-            return if (colon > reference.lastIndexOf('/')) reference.substring(0, colon) to reference.substring(colon + 1) else reference to "latest"
+            return if (colon > reference.lastIndexOf('/')) {
+                reference.substring(0, colon) to reference.substring(colon + 1)
+            } else {
+                reference to "latest"
+            }
         }
     }
 }
@@ -184,7 +192,8 @@ class DockerRuntimeDriver(
  * @param step What the driver was doing.
  * @param status The HTTP status.
  */
-class DockerApiException(step: String, status: HttpStatusCode) : Exception("Docker Engine API: $step answered ${status.value}.")
+class DockerApiException(step: String, status: HttpStatusCode) :
+    Exception("Docker Engine API: $step answered ${status.value}.")
 
 private fun HttpResponse.requireSuccess(step: String) {
     if (!status.isSuccess()) throw DockerApiException(step, status)

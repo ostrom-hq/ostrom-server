@@ -2,8 +2,6 @@ package dev.ostrom.server.runners.infrastructure
 
 import dev.ostrom.server.runners.domain.RuntimeDriver
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.curl.Curl
-import io.ktor.client.plugins.HttpTimeout
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -23,29 +21,23 @@ object RuntimeDrivers {
      *
      * @return The driver; [DisabledRuntimeDriver] when no runtime is configured.
      */
-    fun create(config: RunnersConfig, readFile: (String) -> String = ::readTextFile): RuntimeDriver = when (config.driver) {
-        RunnersConfig.DriverKind.NONE -> DisabledRuntimeDriver()
-        RunnersConfig.DriverKind.KUBERNETES -> KubernetesRuntimeDriver(
-            client = HttpClient(Curl) {
-                expectSuccess = false
-                engine { caInfo = config.kubernetes.caFile }
-                install(HttpTimeout) { requestTimeoutMillis = KUBERNETES_TIMEOUT_MILLIS }
-            },
-            settings = config.kubernetes,
-            serverUrl = config.serverUrl,
-            runnerImage = config.runnerImage,
-            token = { readFile(config.kubernetes.tokenFile).trim() },
-        )
-        RunnersConfig.DriverKind.DOCKER -> DockerRuntimeDriver(
-            client = HttpClient(Curl) {
-                expectSuccess = false
-                install(HttpTimeout) { requestTimeoutMillis = DOCKER_TIMEOUT_MILLIS }
-            },
-            settings = config.docker,
-            serverUrl = config.serverUrl,
-            runnerImage = config.runnerImage,
-        )
-    }
+    fun create(config: RunnersConfig, readFile: (String) -> String = ::readTextFile): RuntimeDriver =
+        when (config.driver) {
+            RunnersConfig.DriverKind.NONE -> DisabledRuntimeDriver()
+            RunnersConfig.DriverKind.KUBERNETES -> KubernetesRuntimeDriver(
+                client = runtimeHttpClient(config.kubernetes.caFile, KUBERNETES_TIMEOUT_MILLIS),
+                settings = config.kubernetes,
+                serverUrl = config.serverUrl,
+                runnerImage = config.runnerImage,
+                token = { readFile(config.kubernetes.tokenFile).trim() },
+            )
+            RunnersConfig.DriverKind.DOCKER -> DockerRuntimeDriver(
+                client = runtimeHttpClient(null, DOCKER_TIMEOUT_MILLIS),
+                settings = config.docker,
+                serverUrl = config.serverUrl,
+                runnerImage = config.runnerImage,
+            )
+        }
 
     /**
      * Reads a whole text file.
@@ -56,3 +48,13 @@ object RuntimeDrivers {
      */
     fun readTextFile(path: String): String = SystemFileSystem.source(Path(path)).buffered().use { it.readString() }
 }
+
+/**
+ * The HTTP client of a runtime's API: answers are read whatever their status, and a call never hangs.
+ *
+ * @param caFile A CA bundle to trust instead of the system's (the Kubernetes cluster CA), or null.
+ * @param timeoutMillis The request timeout.
+ *
+ * @return The client: Curl on native; CIO on the test-only JVM target, which never reaches a real runtime.
+ */
+internal expect fun runtimeHttpClient(caFile: String?, timeoutMillis: Long): HttpClient

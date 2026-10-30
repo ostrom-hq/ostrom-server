@@ -73,7 +73,8 @@ data class ExecutionSpec(
     val prompt: String? = null,
 ) {
     override fun toString(): String =
-        "ExecutionSpec(sessionId=$sessionId, epoch=$epoch, agent=${agent.wire}, model=$model, runnerToken=***, prompt=${if (prompt == null) "none" else "***"})"
+        "ExecutionSpec(sessionId=$sessionId, epoch=$epoch, agent=${agent.wire}, model=$model, runnerToken=***, " +
+            "prompt=${if (prompt == null) "none" else "***"})"
 }
 
 /** The state of an execution as the runtime sees it. */

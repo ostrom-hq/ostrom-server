@@ -56,12 +56,15 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         }
     }
 
-    private fun readOnce(): Long = buffer.usePinned { platform.posix.read(master, it.addressOf(0), CHUNK.convert()).toLong() }
+    private fun readOnce(): Long =
+        buffer.usePinned { platform.posix.read(master, it.addressOf(0), CHUNK.convert()).toLong() }
 
     override suspend fun write(bytes: ByteArray) = withContext(Dispatchers.IO) {
         var offset = 0
         while (offset < bytes.size) {
-            val written = bytes.usePinned { platform.posix.write(master, it.addressOf(offset), (bytes.size - offset).convert()) }
+            val written = bytes.usePinned {
+                platform.posix.write(master, it.addressOf(offset), (bytes.size - offset).convert())
+            }
             if (written.toLong() < 0L) {
                 if (errno == EINTR) continue
                 return@withContext
@@ -100,9 +103,12 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         private const val CHUNK = 16 * 1024
         private val POLL = 100.milliseconds
         const val SHELL = "/bin/sh"
+        private const val COLUMNS = 120
+        private const val ROWS = 40
+        private val GRACE = 10.seconds
 
         override fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
-            spawn(listOf(SHELL, "-c", script), environment, directory, 120, 40, 10.seconds)
+            spawn(listOf(SHELL, "-c", script), environment, directory, COLUMNS, ROWS, GRACE)
 
         /**
          * Starts a program on a new PTY.
@@ -118,7 +124,15 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
          *
          * @throws IllegalStateException When the PTY cannot be opened.
          */
-        fun spawn(argv: List<String>, environment: Map<String, String>, directory: String, columns: Int, rows: Int, grace: Duration): PtyTerminal = memScoped {
+        @Suppress("LongParameterList") // forkpty's own inputs, passed through.
+        fun spawn(
+            argv: List<String>,
+            environment: Map<String, String>,
+            directory: String,
+            columns: Int,
+            rows: Int,
+            grace: Duration,
+        ): PtyTerminal = memScoped {
             val arguments = allocArray<CPointerVar<ByteVar>>(argv.size + 1)
             argv.forEachIndexed { index, value -> arguments[index] = value.cstr.ptr }
             arguments[argv.size] = null

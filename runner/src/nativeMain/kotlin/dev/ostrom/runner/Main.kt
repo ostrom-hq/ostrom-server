@@ -21,17 +21,19 @@ import kotlin.time.Clock
 fun main() {
     val environment = readEnvironment()
     val config = try {
-        RunnerConfig.from(environment) { path -> SystemFileSystem.source(Path(path)).buffered().use { it.readString() } }
+        RunnerConfig.from(environment) { path ->
+            SystemFileSystem.source(Path(path)).buffered().use { it.readString() }
+        }
     } catch (error: IllegalArgumentException) {
         log("invalid configuration: ${error.message}")
-        exitProcess(2)
+        exitProcess(EXIT_BAD_CONFIGURATION)
     }
     log("starting $config")
     val code = runBlocking {
         val client = HttpClient(CIO) {
             expectSuccess = false
             install(WebSockets)
-            install(HttpTimeout) { connectTimeoutMillis = 10_000 }
+            install(HttpTimeout) { connectTimeoutMillis = CONNECT_TIMEOUT_MILLIS }
         }
         try {
             Runner(config, HttpServerApi(client, config, this), PtyTerminal, environment, Clock.System, ::log).run()
@@ -59,6 +61,12 @@ private fun readEnvironment(): Map<String, String> {
 
 private val KNOWN_VARIABLES = listOf(
     "PATH", "HOME", "LANG", "USER", "SHELL", "OSTROM_SERVER_URL", "OSTROM_SESSION_ID", "OSTROM_EPOCH", "OSTROM_AGENT",
-    "OSTROM_AGENT_COMMAND", "OSTROM_REPOSITORY_URL", "OSTROM_REPOSITORY_REF", "OSTROM_RUNNER_TOKEN", "OSTROM_RUNNER_TOKEN_FILE",
+    "OSTROM_AGENT_COMMAND", "OSTROM_AGENT_MODEL", "OSTROM_AGENT_PROMPT", "OSTROM_AGENT_PROMPT_FILE",
+    "OSTROM_REPOSITORY_URL", "OSTROM_REPOSITORY_REF", "OSTROM_RUNNER_TOKEN", "OSTROM_RUNNER_TOKEN_FILE",
     "OSTROM_WORKSPACE",
 )
+
+private const val CONNECT_TIMEOUT_MILLIS = 10_000L
+
+/** The exit code of a bad configuration (1 is an execution the server ended). */
+private const val EXIT_BAD_CONFIGURATION = 2

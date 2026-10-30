@@ -1,5 +1,6 @@
 package dev.ostrom.server.runners.presentation
 
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCase
@@ -34,6 +35,7 @@ import kotlin.uuid.Uuid
  * @property listCloudSessions Lists the caller's.
  * @property changeCloudSession Pauses, resumes, deletes.
  * @property runnerHeartbeat The runner channel.
+ * @property orgResolver The member a request acts for.
  */
 data class CloudSessionsRoutesDependencies(
     val createCloudSession: CreateCloudSessionUseCase,
@@ -41,6 +43,7 @@ data class CloudSessionsRoutesDependencies(
     val listCloudSessions: ListCloudSessionsUseCase,
     val changeCloudSession: ChangeCloudSessionUseCase,
     val runnerHeartbeat: RunnerHeartbeatUseCase,
+    val orgResolver: PrincipalOrgResolver,
 )
 
 /**
@@ -52,7 +55,7 @@ data class CloudSessionsRoutesDependencies(
 fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = with(dependencies) {
     authenticated {
         get<CloudSessionsApi> { params ->
-            val caller = call.requirePrincipal().toCaller(CLOUD_READ)
+            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
             val sessions = listCloudSessions(caller, params.before?.let { parseId(it) }, params.limit)
             val limit = params.limit ?: DEFAULT_LIMIT
             call.respond(
@@ -63,7 +66,7 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             )
         }
         post<CloudSessionsApi> {
-            val caller = call.requirePrincipal().toCaller(CLOUD_WRITE)
+            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
             val request = call.receive<CreateCloudSessionRequest>()
             val payload = CreateCloudSessionPayload(
                 name = request.name,
@@ -75,20 +78,22 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             call.respond(HttpStatusCode.Created, createCloudSession(caller, payload).toResponse())
         }
         get<CloudSessionsApi.Id> { params ->
-            val caller = call.requirePrincipal().toCaller(CLOUD_READ)
+            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_READ)
             call.respond(getCloudSession(caller, sessionId(params.id)).toResponse())
         }
         delete<CloudSessionsApi.Id> { params ->
-            val caller = call.requirePrincipal().toCaller(CLOUD_WRITE)
+            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
             call.respond(HttpStatusCode.Accepted, changeCloudSession.delete(caller, sessionId(params.id)).toResponse())
         }
         post<CloudSessionsApi.Id.Pause> { params ->
-            val caller = call.requirePrincipal().toCaller(CLOUD_WRITE)
-            call.respond(HttpStatusCode.Accepted, changeCloudSession.pause(caller, sessionId(params.parent.id)).toResponse())
+            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
+            val paused = changeCloudSession.pause(caller, sessionId(params.parent.id))
+            call.respond(HttpStatusCode.Accepted, paused.toResponse())
         }
         post<CloudSessionsApi.Id.Resume> { params ->
-            val caller = call.requirePrincipal().toCaller(CLOUD_WRITE)
-            call.respond(HttpStatusCode.Accepted, changeCloudSession.resume(caller, sessionId(params.parent.id)).toResponse())
+            val caller = orgResolver.callerOf(call.requirePrincipal(), CLOUD_WRITE)
+            val resumed = changeCloudSession.resume(caller, sessionId(params.parent.id))
+            call.respond(HttpStatusCode.Accepted, resumed.toResponse())
         }
     }
     post<RunnerHeartbeatApi> {

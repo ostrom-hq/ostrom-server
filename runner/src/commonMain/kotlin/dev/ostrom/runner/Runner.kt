@@ -74,7 +74,11 @@ class Runner(
     private suspend fun heartbeat(): Int {
         while (true) {
             val instruction = try {
-                server.heartbeat(ready = terminal != null, stopped = false, lastModelRequestAt = lastOutputAt?.toString())
+                server.heartbeat(
+                    ready = terminal != null,
+                    stopped = false,
+                    lastModelRequestAt = lastOutputAt?.toString(),
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: ExecutionEndedException) {

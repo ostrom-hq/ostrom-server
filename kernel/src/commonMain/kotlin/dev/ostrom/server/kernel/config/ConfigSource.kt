@@ -1,11 +1,10 @@
 package dev.ostrom.server.kernel.config
 
-import kotlinx.cinterop.toKString
+import dev.ostrom.server.kernel.platform.getEnv
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readString
-import platform.posix.getenv
 
 /**
  * Where configuration values are read from. Keys are the environment variable names (`OSTROM_PORT`), whatever the
@@ -22,15 +21,18 @@ interface ConfigSource {
     operator fun get(key: String): String?
 }
 
-/** Reads the process environment. */
+/** Reads the process environment; a variable set to a blank value counts as unset. */
 class EnvironmentConfigSource : ConfigSource {
-    override fun get(key: String): String? = getenv(key)?.toKString()
+    override fun get(key: String): String? = getEnv(key).unlessBlank()
 }
 
-/** A fixed set of values: a parsed configuration file, or the values of a test. */
+/** A fixed set of values (a parsed configuration file, the values of a test); a blank value counts as unset. */
 class MapConfigSource(private val values: Map<String, String>) : ConfigSource {
-    override fun get(key: String): String? = values[key]
+    override fun get(key: String): String? = values[key].unlessBlank()
 }
+
+/** A blank value counts as unset, in every source. */
+internal fun String?.unlessBlank(): String? = this?.takeIf { it.isNotBlank() }
 
 /** Asks each source in order and keeps the first value found: the environment comes before the file. */
 class LayeredConfigSource(private val sources: List<ConfigSource>) : ConfigSource {
@@ -52,16 +54,19 @@ fun parseConfigFile(content: String): Map<String, String> = content.lineSequence
         val line = raw.trim()
         if (line.isEmpty() || line.startsWith("#")) return@mapIndexedNotNull null
         val separator = line.indexOf('=')
-        if (separator <= 0) throw InvalidConfigException("Line ${index + 1} of the configuration file is not KEY=value.")
-        val key = line.substring(0, separator).trim()
-        val value = line.substring(separator + 1).trim().let {
-            if (it.length >= 2 && (it.first() == '"' && it.last() == '"' || it.first() == '\'' && it.last() == '\'')) {
-                it.substring(1, it.length - 1)
-            } else it
+        if (separator <= 0) {
+            throw InvalidConfigException("Line ${index + 1} of the configuration file is not KEY=value.")
         }
-        key to value
+        line.substring(0, separator).trim() to unquote(line.substring(separator + 1).trim())
     }
     .toMap()
+
+private fun unquote(value: String): String {
+    val quoted = value.length >= 2 && value.first() in QUOTES && value.last() == value.first()
+    return if (quoted) value.substring(1, value.length - 1) else value
+}
+
+private val QUOTES = setOf('"', '\'')
 
 /**
  * Reads and parses a configuration file.

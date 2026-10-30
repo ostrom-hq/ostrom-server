@@ -7,7 +7,9 @@
 .env
 .env.*
 !.env.example
-data/
+/data/
 *.log
 # Instance signing keys never enter the repository.
-*.pem
+/data/*.pem
+/*.pem
+/dist/

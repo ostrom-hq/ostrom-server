@@ -1,8 +1,5 @@
 package dev.ostrom.server.runners
 
-import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.PrincipalKind
-import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.runners.domain.CloudSession
 import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.DesiredState
@@ -12,6 +9,8 @@ import dev.ostrom.server.runners.domain.SessionFailure
 import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.ORG_B
+import dev.ostrom.server.runners.fakes.ALICE
+import dev.ostrom.server.runners.fakes.testIdentities
 import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.presentation.CloudSessionResponse
 import dev.ostrom.server.runners.presentation.CloudSessionsResponse
@@ -33,7 +32,6 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -45,20 +43,7 @@ import kotlin.uuid.Uuid
 
 /** Against a real PostgreSQL: the repository's SQL and the routes, with a fake identity. */
 class CloudSessionsPostgresTest {
-    /** `alice` and `bob` in org A, `carol` in org B, `nobody` without an organization, `reader` read-only. */
-    private val identities = module {
-        single<TokenAuthenticator> {
-            object : TokenAuthenticator {
-                override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
-                    "alice", "bob" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("org:$ORG_A"))
-                    "carol" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("org:$ORG_B"))
-                    "reader" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("org:$ORG_A", "cloud:read"))
-                    "nobody" -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
-                    else -> null
-                }
-            }
-        }
-    }
+    private val identities = testIdentities
 
     private val t0 = Instant.parse("2026-10-30T10:00:00Z")
 
@@ -182,7 +167,7 @@ class CloudSessionsPostgresTest {
         assertEquals(HttpStatusCode.Created, created.status)
         val session = created.body<CloudSessionResponse>()
         assertEquals("creating", session.status)
-        assertEquals("alice", session.owner)
+        assertEquals(ALICE.toString(), session.owner)
         assertEquals("gpt-5.5-codex", session.model)
         assertEquals("codex", session.agent)
         assertEquals("https://github.com/acme/api", session.repo)
@@ -211,7 +196,7 @@ class CloudSessionsPostgresTest {
     fun routesRefuseWithoutTokenOrganizationOrScope() = serverTest(listOf(RunnersModule), identities) { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/sessions").status)
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/sessions") { bearerAuth("unknown") }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/cloud/sessions") { bearerAuth("nobody") }.status)
+        assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/cloud/sessions") { bearerAuth("nobody") }.status)
         val readOnly = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("reader")
             contentType(ContentType.Application.Json)
@@ -259,7 +244,7 @@ class CloudSessionsPostgresTest {
             contentType(ContentType.Application.Json)
             setBody(CreateCloudSessionRequest(agent = "claude", name = "one too many"))
         }
-        assertEquals(HttpStatusCode.Conflict, capped.status)
+        assertEquals(HttpStatusCode.PaymentRequired, capped.status)
         assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/cloud/sessions?before=nope") { bearerAuth("alice") }.status)
         assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/cloud/sessions?limit=99") { bearerAuth("alice") }.status)
     }

@@ -73,14 +73,14 @@ object RunnersModule : ServerModule {
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
         single<ReconcileCloudSessionUseCase> { ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get()) }
         single { ReconcilerWorker(get(), get(), get(), get()) }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get()) }
+        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
         single { TerminalRelay() }
         single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
         single<OpenTerminalUseCase> { OpenTerminalUseCaseImpl(get()) }
         single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }
         single { TerminalActivity(get(), get()) }
-        single { TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        single { TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = RunnersMigrations

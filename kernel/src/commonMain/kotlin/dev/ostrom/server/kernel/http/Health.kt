@@ -9,6 +9,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /** One dependency `/health` checks. Modules may bind more in Koin (`single<HealthCheck>(named("…"))`). */
@@ -25,15 +26,16 @@ interface HealthCheck {
 }
 
 /**
- * Checks that PostgreSQL answers `SELECT 1` within two seconds.
+ * Checks that PostgreSQL answers `SELECT 1` in time.
  *
  * @param driver The database.
+ * @param timeout How long to wait for the answer.
  */
-class DatabaseHealthCheck(private val driver: Driver) : HealthCheck {
+class DatabaseHealthCheck(private val driver: Driver, private val timeout: Duration = 2.seconds) : HealthCheck {
     override val name: String = "database"
 
     override suspend fun isUp(): Boolean = try {
-        withTimeout(2.seconds) { driver.fetchAll("SELECT 1").isSuccess }
+        withTimeout(timeout) { driver.fetchAll("SELECT 1").isSuccess }
     } catch (_: TimeoutCancellationException) {
         false
     }

@@ -23,7 +23,8 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 /**
- * [ServerApi] over HTTP: `POST /api/v1/cloud/runner/heartbeat` and `WS /api/v1/cloud/runner/terminal`, with the runner token.
+ * [ServerApi] over HTTP: `POST /api/v1/cloud/runner/heartbeat` and `WS /api/v1/cloud/runner/terminal`, with the
+ * runner token.
  *
  * @param client An HTTP client with WebSockets installed.
  * @param config The runner's configuration.
@@ -57,11 +58,19 @@ class HttpServerApi(
         val response = client.post("${config.serverUrl}/api/v1/cloud/runner/heartbeat") {
             bearerAuth(config.token)
             contentType(ContentType.Application.Json)
-            setBody(JSON.encodeToString(HeartbeatRequest.serializer(), HeartbeatRequest(config.sessionId.toString(), config.epoch, ready, stopped, lastModelRequestAt)))
+            val request = HeartbeatRequest(
+                config.sessionId.toString(),
+                config.epoch,
+                ready,
+                stopped,
+                lastModelRequestAt,
+            )
+            setBody(JSON.encodeToString(HeartbeatRequest.serializer(), request))
         }
         when (response.status) {
             HttpStatusCode.OK -> Unit
-            HttpStatusCode.Unauthorized, HttpStatusCode.Conflict -> throw ExecutionEndedException("The server ended this execution (${response.status.value}).")
+            HttpStatusCode.Unauthorized, HttpStatusCode.Conflict ->
+                throw ExecutionEndedException("The server ended this execution (${response.status.value}).")
             else -> throw IllegalStateException("Heartbeat answered ${response.status.value}.")
         }
         val answer = JSON.decodeFromString(HeartbeatResponse.serializer(), response.bodyAsText())
@@ -69,12 +78,16 @@ class HttpServerApi(
     }
 
     override suspend fun openTerminal(): TerminalLink {
-        val url = config.serverUrl.replaceFirst("http", "ws") + "/api/v1/cloud/runner/terminal?sessionId=${config.sessionId}&epoch=${config.epoch}"
+        val query = "sessionId=${config.sessionId}&epoch=${config.epoch}"
+        val url = config.serverUrl.replaceFirst("http", "ws") + "/api/v1/cloud/runner/terminal?$query"
         val session = client.webSocketSession(url) { bearerAuth(config.token) }
         return WebSocketLink(session, scope)
     }
 
-    private class WebSocketLink(private val session: DefaultClientWebSocketSession, scope: CoroutineScope) : TerminalLink {
+    private class WebSocketLink(
+        private val session: DefaultClientWebSocketSession,
+        scope: CoroutineScope,
+    ) : TerminalLink {
         override val incoming: ReceiveChannel<ServerFrame> = scope.produce {
             for (frame in session.incoming) {
                 when (frame) {
@@ -84,7 +97,9 @@ class HttpServerApi(
                 }
             }
             val reason = session.closeReason.await()
-            if (reason != null && reason.code in ENDED_CODES) throw ExecutionEndedException("The server closed the terminal (${reason.code}).")
+            if (reason != null && reason.code in ENDED_CODES) {
+                throw ExecutionEndedException("The server closed the terminal (${reason.code}).")
+            }
         }
 
         override suspend fun send(bytes: ByteArray) = session.send(Frame.Binary(true, bytes))
@@ -99,7 +114,9 @@ class HttpServerApi(
         }
 
         /** 4401 (token refused) and 4409 (another execution): this runner is over. */
-        private val ENDED_CODES = setOf<Short>(4401, 4409)
+        private const val TOKEN_REFUSED: Short = 4401
+        private const val ANOTHER_EXECUTION: Short = 4409
+        private val ENDED_CODES = setOf(TOKEN_REFUSED, ANOTHER_EXECUTION)
 
         /**
          * Reads a text frame from the server.
