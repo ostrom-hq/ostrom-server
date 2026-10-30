@@ -36,7 +36,17 @@ class KubernetesRuntimeDriverTest {
     private val ns = "/api/v1/namespaces/ostrom"
 
     private fun spec(restricted: Boolean = true, repository: RepositorySpec? = RepositorySpec("https://github.com/acme/api", "main")) =
-        ExecutionSpec(session.id, ORG_A, 4, AgentKind.CLAUDE, repository, "ostrom_runner_abc", CloudPlan.FREE.sessionLimits().copy(restrictedEgress = restricted))
+        ExecutionSpec(
+            session.id,
+            ORG_A,
+            4,
+            AgentKind.CLAUDE,
+            repository,
+            "ostrom_runner_abc",
+            CloudPlan.FREE.sessionLimits().copy(restrictedEgress = restricted),
+            model = "claude-opus-5-5".takeIf { restricted },
+            prompt = "Fix the tests".takeIf { restricted },
+        )
 
     private fun body(index: Int): JsonObject = Json.parseToJsonElement(api.calls[index].body!!).jsonObject
 
@@ -70,6 +80,7 @@ class KubernetesRuntimeDriverTest {
         assertEquals(listOf("POST $policies", "POST $policies", "POST $ns/secrets", "POST $ns/pods"), api.lines())
         val secret = body(2)
         assertEquals("ostrom_runner_abc", secret["stringData"]!!.jsonObject["token"]!!.jsonPrimitive.content)
+        assertEquals("Fix the tests", secret["stringData"]!!.jsonObject["prompt"]!!.jsonPrimitive.content)
         val pod = body(3)
         val metadata = pod["metadata"]!!.jsonObject
         assertEquals("ostrom-s-$hex-e4", metadata["name"]!!.jsonPrimitive.content)
@@ -89,6 +100,9 @@ class KubernetesRuntimeDriverTest {
         assertEquals("main", env["OSTROM_REPOSITORY_REF"])
         assertEquals("claude", env["OSTROM_AGENT_COMMAND"])
         assertEquals("4", env["OSTROM_EPOCH"])
+        assertEquals("claude-opus-5-5", env["OSTROM_AGENT_MODEL"])
+        assertEquals("/run/ostrom/prompt", env["OSTROM_AGENT_PROMPT_FILE"])
+        assertFalse("Fix the tests" in pod.toString())
         assertFalse("ostrom_runner_abc" in pod.toString())
         assertEquals("ostrom-ws-$hex", spec["volumes"]!!.jsonArray[0].jsonObject["persistentVolumeClaim"]!!.jsonObject["claimName"]!!.jsonPrimitive.content)
         assertEquals("ostrom-s-$hex-e4", spec["volumes"]!!.jsonArray[1].jsonObject["secret"]!!.jsonObject["secretName"]!!.jsonPrimitive.content)
@@ -99,6 +113,8 @@ class KubernetesRuntimeDriverTest {
         val open = body(5)
         assertEquals("open", open["metadata"]!!.jsonObject["labels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
         assertNull(open["metadata"]!!.jsonObject["annotations"])
+        assertNull(body(4)["stringData"]!!.jsonObject["prompt"])
+        assertFalse("OSTROM_AGENT_PROMPT_FILE" in open.toString())
         assertFalse("OSTROM_REPOSITORY_REF" in open["spec"]!!.jsonObject["containers"]!!.jsonArray[0].toString())
     }
 

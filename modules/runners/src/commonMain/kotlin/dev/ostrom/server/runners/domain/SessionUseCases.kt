@@ -6,14 +6,18 @@ import kotlin.uuid.Uuid
 /**
  * What a member asks for when creating a session.
  *
- * @property name A label, 1 to 120 characters.
+ * @property name A label, 1 to 120 characters; the repository's or the agent's name when absent.
  * @property agent The agent's wire name (`claude`, `codex`, `opencode`, `gemini`, `shell`).
  * @property repository The repository to clone, if any.
+ * @property model The model the agent starts with, if chosen.
+ * @property prompt The agent's first message, if any.
  */
 data class CreateCloudSessionPayload(
-    val name: String,
+    val name: String?,
     val agent: String,
     val repository: RepositorySpec?,
+    val model: String? = null,
+    val prompt: String? = null,
 )
 
 /** Creates a cloud session for the caller, within their organization's plan. */
@@ -46,13 +50,21 @@ class CreateCloudSessionUseCaseImpl(
     private val clock: Clock,
 ) : CreateCloudSessionUseCase {
     override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
-        val name = payload.name.trim()
-        if (name.isEmpty() || name.length > MAX_NAME_LENGTH || name.any { it.isISOControl() }) {
-            throw InvalidCloudSessionRequestException("The name must be 1 to $MAX_NAME_LENGTH characters, without control characters.")
-        }
         val agent = AgentKind.fromWire(payload.agent)
             ?: throw InvalidCloudSessionRequestException("Unknown agent ${payload.agent.take(32)}: use ${AgentKind.entries.joinToString { it.wire }}.")
+        val name = payload.name?.trim()?.takeIf { it.isNotEmpty() }
+            ?: payload.repository?.url?.substringAfterLast('/')?.removeSuffix(".git")
+            ?: agent.wire
+        if (name.length > MAX_NAME_LENGTH || name.any { it.isISOControl() }) {
+            throw InvalidCloudSessionRequestException("The name must be 1 to $MAX_NAME_LENGTH characters, without control characters.")
+        }
         payload.repository?.let { validateRepository(it) }
+        val model = payload.model?.trim()?.takeIf { it.isNotEmpty() }
+        if (model != null && !MODEL.matches(model)) throw InvalidCloudSessionRequestException("The model is not a valid model name.")
+        val prompt = payload.prompt?.takeIf { it.isNotBlank() }
+        if (prompt != null && prompt.length > MAX_PROMPT_LENGTH) {
+            throw InvalidCloudSessionRequestException("The prompt must be at most $MAX_PROMPT_LENGTH characters.")
+        }
         val plan = plans.planFor(caller.orgId)
         val now = clock.now()
         requireHoursLeft(repository, plan, caller.orgId, now)
@@ -72,6 +84,8 @@ class CreateCloudSessionUseCaseImpl(
             limits = plan.sessionLimits(),
             createdAt = now,
             updatedAt = now,
+            model = model,
+            prompt = prompt,
         )
         if (!repository.createWithinCap(session, plan.maxRunningSessions)) {
             throw CloudSessionLimitException(plan.maxRunningSessions)
@@ -91,6 +105,8 @@ class CreateCloudSessionUseCaseImpl(
 
     private companion object {
         const val MAX_NAME_LENGTH = 120
+        const val MAX_PROMPT_LENGTH = 20_000
+        val MODEL = Regex("[A-Za-z0-9._:/@-]{1,100}")
         val GITHUB_REPOSITORY = Regex("https://github\\.com/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}(\\.git)?")
         val GIT_REF = Regex("[A-Za-z0-9._/-]{1,200}")
     }

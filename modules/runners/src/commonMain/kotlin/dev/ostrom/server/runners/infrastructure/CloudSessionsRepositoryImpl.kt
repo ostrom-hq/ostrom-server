@@ -37,7 +37,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         execute(
             Statement.create(
                 "INSERT INTO runners_sessions ($COLUMNS, next_reconcile_at) VALUES ($VALUES, :created_at)",
-            ).bindSession(session),
+            ).bindInsert(session),
         ).getOrThrow()
         true
     }
@@ -102,7 +102,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
                 "runner_token_hash = :runner_token_hash, next_reconcile_at = CASE WHEN CAST(:has_next AS BOOLEAN) THEN " +
                 "LEAST(COALESCE(next_reconcile_at, :next_at), :next_at) ELSE next_reconcile_at END " +
                 "WHERE id = :id AND generation = :generation RETURNING $COLUMNS",
-        ).bindSession(session)
+        ).bindUpdate(session)
             .bind("generation", session.generation)
             .bind("has_next", nextReconcileAt != null)
             .bind("next_at", nextReconcileAt ?: session.updatedAt),
@@ -173,23 +173,29 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         ).bind("org_id", orgId).bind("except", except ?: Uuid.NIL),
     ).getOrThrow().first().get("n").asInt()
 
-    private fun Statement.bindSession(session: CloudSession): Statement = bind("id", session.id)
+    /** Binds every column of an insert (sqlx4k refuses a name the statement does not use). */
+    private fun Statement.bindInsert(session: CloudSession): Statement = bindUpdate(session)
         .bind("org_id", session.orgId)
         .bind("owner_id", session.ownerId)
         .bind("name", session.name)
         .bind("agent", session.agent.wire)
+        .bind("model", session.model)
+        .bind("prompt", session.prompt)
         .bind("repository_url", session.repository?.url)
         .bind("repository_ref", session.repository?.ref)
+        .bind("idle_timeout_minutes", session.limits.idleTimeoutMinutes)
+        .bind("max_run_minutes", session.limits.maxRunMinutes)
+        .bind("restricted_egress", session.limits.restrictedEgress)
+        .bind("created_at", session.createdAt)
+
+    /** Binds the columns a reconciler or heartbeat write changes. */
+    private fun Statement.bindUpdate(session: CloudSession): Statement = bind("id", session.id)
         .bind("state", session.state.wire)
         .bind("desired_state", session.desiredState.wire)
         .bind("phase", session.phase)
         .bind("epoch", session.epoch)
         .bind("failure_code", session.failure?.code)
         .bind("failure_message", session.failure?.message)
-        .bind("idle_timeout_minutes", session.limits.idleTimeoutMinutes)
-        .bind("max_run_minutes", session.limits.maxRunMinutes)
-        .bind("restricted_egress", session.limits.restrictedEgress)
-        .bind("created_at", session.createdAt)
         .bind("updated_at", session.updatedAt)
         .bind("execution_started_at", session.executionStartedAt)
         .bind("ready_at", session.readyAt)
@@ -233,6 +239,8 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             pausingSince = get("pausing_since").asInstantOrNull(),
             runnerStoppedAt = get("runner_stopped_at").asInstantOrNull(),
             runnerTokenHash = get("runner_token_hash").asStringOrNull(),
+            model = get("model").asStringOrNull(),
+            prompt = get("prompt").asStringOrNull(),
         )
     }
 
@@ -240,11 +248,11 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         /** A placeholder for an unused timestamp parameter (PostgreSQL cannot read Instant.DISTANT_PAST). */
         val EPOCH: Instant = Instant.fromEpochSeconds(0)
 
-        const val COLUMNS = "id, org_id, owner_id, name, agent, repository_url, repository_ref, state, desired_state, " +
+        const val COLUMNS = "id, org_id, owner_id, name, agent, model, prompt, repository_url, repository_ref, state, desired_state, " +
             "phase, epoch, generation, failure_code, failure_message, idle_timeout_minutes, max_run_minutes, " +
             "restricted_egress, created_at, updated_at, execution_started_at, ready_at, last_heartbeat_at, " +
             "last_activity_at, paused_at, terminated_at, pausing_since, runner_stopped_at, runner_token_hash"
-        const val VALUES = ":id, :org_id, :owner_id, :name, :agent, :repository_url, :repository_ref, :state, " +
+        const val VALUES = ":id, :org_id, :owner_id, :name, :agent, :model, :prompt, :repository_url, :repository_ref, :state, " +
             ":desired_state, :phase, :epoch, 0, :failure_code, :failure_message, :idle_timeout_minutes, " +
             ":max_run_minutes, :restricted_egress, :created_at, :updated_at, :execution_started_at, :ready_at, " +
             ":last_heartbeat_at, :last_activity_at, :paused_at, :terminated_at, :pausing_since, :runner_stopped_at, " +

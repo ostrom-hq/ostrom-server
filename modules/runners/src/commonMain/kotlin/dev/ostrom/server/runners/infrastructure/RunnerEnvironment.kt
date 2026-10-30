@@ -4,7 +4,7 @@ import dev.ostrom.server.runners.domain.ExecutionSpec
 
 /**
  * The environment of the runner process, the same for every runtime. It holds identifiers and the server URL; the
- * token is in a file (Kubernetes Secret) or, for the Docker runtime only, in `OSTROM_RUNNER_TOKEN`.
+ * token and the first prompt are files of a Kubernetes Secret or, for the Docker runtime only, variables.
  */
 object RunnerEnvironment {
     /**
@@ -26,7 +26,15 @@ object RunnerEnvironment {
             add("OSTROM_REPOSITORY_URL" to repository.url)
             repository.ref?.let { add("OSTROM_REPOSITORY_REF" to it) }
         }
-        if (tokenFile != null) add("OSTROM_RUNNER_TOKEN_FILE" to tokenFile) else add("OSTROM_RUNNER_TOKEN" to spec.runnerToken)
+        spec.model?.let { add("OSTROM_AGENT_MODEL" to it) }
+        if (tokenFile != null) {
+            add("OSTROM_RUNNER_TOKEN_FILE" to tokenFile)
+            // The first message is a file of the same Secret: a pod's spec is readable by more than its runner.
+            if (spec.prompt != null) add("OSTROM_AGENT_PROMPT_FILE" to tokenFile.substringBeforeLast('/') + "/prompt")
+        } else {
+            add("OSTROM_RUNNER_TOKEN" to spec.runnerToken)
+            spec.prompt?.let { add("OSTROM_AGENT_PROMPT" to it) }
+        }
         add("HOME" to "/workspace/.home")
         add("TERM" to "xterm-256color")
     }
