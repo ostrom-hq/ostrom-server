@@ -67,6 +67,9 @@ class GitHubIntegrationModuleRegistrationTest {
             val api = app.koin.get<GitHubApi>()
             assertIs<HttpGitHubApi>(api)
             assertFailsWith<GitHubCallException> { api.installationAccount(1) }
+            // The OAuth client of the install is the App's, read at each exchange: none in these environments.
+            val noClient = assertFailsWith<GitHubCallException> { api.userToken("code") }
+            assertEquals("The GitHub App has no OAuth client on this server.", noClient.message)
             app.koin.get<HttpClient>(GITHUB_HTTP)
             app.close()
         }

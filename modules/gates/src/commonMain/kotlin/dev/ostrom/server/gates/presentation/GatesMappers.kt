@@ -8,7 +8,6 @@ import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
-import dev.ostrom.server.gates.domain.models.GatePush as DomainPush
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
@@ -16,6 +15,7 @@ import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.usecases.AskGate
+import dev.ostrom.server.gates.domain.models.GatePush as DomainPush
 
 /** Maps the hook's request; `dev` is ignored, the asker is the credential's person. */
 internal fun GateAskRequest.toAskGate() = AskGate(

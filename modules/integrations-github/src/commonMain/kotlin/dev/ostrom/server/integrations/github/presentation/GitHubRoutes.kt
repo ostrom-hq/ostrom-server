@@ -4,15 +4,19 @@ package dev.ostrom.server.integrations.github.presentation
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.requireAnyScope
+import dev.ostrom.server.integrations.github.domain.GitHubCallException
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.TOKEN_AUTH
 import dev.ostrom.server.kernel.auth.authenticated
-import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.HttpStatusCode
 import io.ktor.resources.Resource
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.principal
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
@@ -32,15 +36,21 @@ class GitHubWebhookPath
 @Serializable
 @Resource("/api/v1/github/app")
 class GitHubAppPath {
-    /** Starts the install on GitHub. */
+    /**
+     * Starts the install on GitHub.
+     *
+     * @property org The organization to install it on (its id or short name), checked like the `Ostrom-Org` header:
+     *   the caller must be one of its owners or admins. Without it, the caller's organization.
+     */
     @Serializable
     @Resource("install/start")
-    class Start(val parent: GitHubAppPath = GitHubAppPath())
+    class Start(val parent: GitHubAppPath = GitHubAppPath(), val org: String? = null)
 
     /**
      * GitHub's return from the install.
      *
      * @property installationId The installation.
+     * @property code The authorization of the person who installed (the App asks for it during the install).
      * @property state The state of the start.
      */
     @Serializable
@@ -48,6 +58,7 @@ class GitHubAppPath {
     class Callback(
         val parent: GitHubAppPath = GitHubAppPath(),
         @SerialName("installation_id") val installationId: String? = null,
+        val code: String? = null,
         val state: String? = null,
     )
 }
@@ -69,8 +80,10 @@ data class GitHubAppStatus(
 )
 
 /**
- * The GitHub routes of the contract: the webhook (signed, no credential), the install callback (its state is the
- * proof), and the organization's App status and install start (a browser session of an owner or admin).
+ * The GitHub routes of the contract: the webhook (signed, no credential), the install callback (its state, bound to
+ * the session that started it, is the proof), and the organization's App status and install start (a browser session
+ * of an owner or admin). The callback always sends the browser back to the console's `/github` page, with
+ * `installed=1` or `error=<error.type>`: never free text in the URL.
  *
  * @param dependencies The use cases.
  */
@@ -83,9 +96,20 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
         webhooks(call.request.header(EVENT_HEADER), body.decodeToString())
         call.respond(HttpStatusCode.NoContent)
     }
-    get<GitHubAppPath.Callback> { params ->
-        installs.finish(params.installationId, params.state)
-        call.respondRedirect("${settings.webOrigin}/console/settings?github=installed")
+    // GitHub sends the browser back with its session cookie (SameSite=Lax): the session is read when there is one.
+    authenticate(TOKEN_AUTH, optional = true) {
+        get<GitHubAppPath.Callback> { params ->
+            val session = call.principal<AuthenticatedPrincipal>()?.let(::sessionOf)
+            val outcome = try {
+                installs.finish(params.installationId, params.code, params.state, session)
+                "installed=1"
+            } catch (refused: OstromException) {
+                "error=${refused.type}"
+            } catch (_: GitHubCallException) {
+                "error=${ErrorKind.UNAVAILABLE.type}"
+            }
+            call.respondRedirect("${settings.webOrigin}/github?$outcome")
+        }
     }
     authenticated {
         get<GitHubAppPath> {
@@ -102,13 +126,16 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
                 ),
             )
         }
-        get<GitHubAppPath.Start> {
+        get<GitHubAppPath.Start> { params ->
             val actor = actorOf(call, setOf(GateScopes.ALL_USER))
-            val member = call.requireOrgPrincipal(members, actor.orgId)
-            if (member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) {
+            val principal = call.requirePrincipal()
+            // A named organization the caller is not in, or does not exist, answers like a role too low: 403.
+            val orgId = if (params.org == null) actor.orgId else orgs.orgId(params.org)
+            val member = if (orgId == null) null else members.resolve(principal, orgId)
+            if (member == null || member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) {
                 throw OstromException(ErrorKind.FORBIDDEN, "Only an owner or an admin installs the GitHub App.")
             }
-            call.respondRedirect(installs.start(actor.orgId, actor.id))
+            call.respondRedirect(installs.start(member.orgId, actor.id, sessionOf(principal)))
         }
     }
 }
@@ -119,6 +146,9 @@ private suspend fun GitHubRoutesDependencies.actorOf(call: ApplicationCall, acce
     return actors.resolve(principal)
         ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
 }
+
+// The session of a browser, or the credential of a token: what finishes an install must be what started it.
+private fun sessionOf(principal: AuthenticatedPrincipal): String = principal.credentialId ?: principal.subjectId
 
 private const val SIGNATURE_HEADER = "X-Hub-Signature-256"
 private const val EVENT_HEADER = "X-GitHub-Event"

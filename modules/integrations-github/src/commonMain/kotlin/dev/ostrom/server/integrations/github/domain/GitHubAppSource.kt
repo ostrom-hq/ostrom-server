@@ -26,6 +26,9 @@ data class GitHubAppCredentials(
     /** Whether an App is named at all: an id or a slug. */
     val named: Boolean get() = appId != null || slug != null
 
+    /** The slug to install the App with, only when the server can check who installs it (its OAuth client). */
+    val installSlug: String? get() = if (clientId == null || clientSecret == null) null else slug
+
     // The key and the secrets never appear in a log or a dump.
     override fun toString(): String = "GitHubAppCredentials(appId=$appId, slug=$slug)"
 }

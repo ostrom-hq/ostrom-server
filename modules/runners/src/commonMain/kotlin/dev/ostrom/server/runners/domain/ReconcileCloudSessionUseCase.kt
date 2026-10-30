@@ -32,7 +32,8 @@ interface ReconcileCloudSessionUseCase {
  * @param repository The sessions.
  * @param driver The runtime.
  * @param tokens Mints the runner tokens.
- * @param plans The organizations' plans, for the monthly hours.
+ * @param plans The organizations' plans, for their hours.
+ * @param usage The hours used.
  * @param clock The time.
  */
 // Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
@@ -43,6 +44,7 @@ class ReconcileCloudSessionUseCaseImpl(
     private val driver: RuntimeDriver,
     private val tokens: RunnerTokens,
     private val plans: CloudPlanProvider,
+    private val usage: CloudUsageMeter,
     private val clock: Clock,
 ) : ReconcileCloudSessionUseCase {
     override suspend fun invoke(session: CloudSession): Instant? {
@@ -186,8 +188,8 @@ class ReconcileCloudSessionUseCaseImpl(
         val hours = plan.monthlyHours?.let { it * SECONDS_PER_HOUR }
         return when {
             !plan.available -> SessionFailure("closed", "Cloud sessions are closed to this organization.")
-            hours != null && repository.usageSeconds(session.orgId, monthOf(now)) >= hours ->
-                SessionFailure("hours_exhausted", "The cloud hours of this month are used up.")
+            hours != null && usage.usedSeconds(session.orgId, now) >= hours ->
+                SessionFailure("hours_exhausted", "The cloud hours of this period are used up.")
             else -> null
         }
     }

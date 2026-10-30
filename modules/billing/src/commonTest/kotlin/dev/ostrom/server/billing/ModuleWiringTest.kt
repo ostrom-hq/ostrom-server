@@ -6,6 +6,7 @@ import dev.ostrom.server.billing.domain.BillingNotifier
 import dev.ostrom.server.billing.domain.BillingRepository
 import dev.ostrom.server.billing.domain.BillingSettings
 import dev.ostrom.server.billing.domain.EventOutcome
+import dev.ostrom.server.billing.domain.GetAgentUsageUseCase
 import dev.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import dev.ostrom.server.billing.domain.HandleStripeEventUseCase
 import dev.ostrom.server.billing.domain.LicenseGrant
@@ -94,6 +95,7 @@ class ModuleWiringTest {
             assertEquals(null, koin.get<GetPlanLimitsUseCase>()(ORG).maxPeople, "No license: no people limit")
             koin.get<HandleStripeEventUseCase>()
             koin.get<RecordAgentUsageUseCase>()
+            assertEquals(0L, koin.get<GetAgentUsageUseCase>()(ORG).agentSeconds)
         }
     }
 

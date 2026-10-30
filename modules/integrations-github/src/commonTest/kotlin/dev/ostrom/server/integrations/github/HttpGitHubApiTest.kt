@@ -5,6 +5,7 @@ import dev.ostrom.server.integrations.github.domain.CheckRun
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.integrations.github.domain.GitHubPull
 import dev.ostrom.server.integrations.github.infrastructure.AppJwt
+import dev.ostrom.server.integrations.github.infrastructure.AppOAuthClient
 import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
 import dev.whyoleg.cryptography.BinarySize.Companion.bits
 import dev.whyoleg.cryptography.CryptographyProvider
@@ -20,6 +21,7 @@ import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.CancellationException
@@ -44,7 +46,7 @@ class HttpGitHubApiTest {
     private fun MockRequestHandleScope.json(body: String, status: HttpStatusCode = HttpStatusCode.OK) =
         respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
 
-    private suspend fun api(configured: Boolean = true): HttpGitHubApi {
+    private suspend fun api(configured: Boolean = true, oauth: AppOAuthClient? = OAUTH): HttpGitHubApi {
         val engine = MockEngine { request ->
             calls += request
             if (request.url.encodedPath.endsWith("/access_tokens")) {
@@ -60,7 +62,7 @@ class HttpGitHubApiTest {
             install(HttpTimeout)
         }
         val jwt = if (configured) AppJwt("123", pem(), clock) else null
-        return HttpGitHubApi(http, "https://api.github.test", { jwt }, clock)
+        return HttpGitHubApi(http, "https://api.github.test", { jwt }, clock, "https://github.test") { oauth }
     }
 
     private suspend fun pem(): String = CryptographyProvider.Default.get(RSA.PKCS1)
@@ -163,4 +165,62 @@ class HttpGitHubApiTest {
         handler = { throw CancellationException("stop") }
         assertFailsWith<CancellationException> { api().installationAccount(42) }
     }
+
+    @Test
+    fun theCodeOfTheInstallIsExchangedForThePersonsTokenWithTheAppsOAuthClient() = runTest {
+        handler = { json("""{"access_token":"gho_person","token_type":"bearer","scope":""}""") }
+        assertEquals("gho_person", api().userToken("the-code"))
+        val exchange = calls.single()
+        assertEquals(HttpMethod.Post, exchange.method)
+        assertEquals("https://github.test/login/oauth/access_token", exchange.url.toString())
+        assertEquals("application/json", exchange.headers[HttpHeaders.Accept])
+        val form = (exchange.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+        assertEquals("client_id=Iv1.test&client_secret=client-secret&code=the-code", form)
+        assertNull(exchange.headers[HttpHeaders.Authorization], "No App JWT on the OAuth exchange")
+
+        // GitHub answers 200 with an error for a code it refuses.
+        handler = { json("""{"error":"bad_verification_code","error_description":"The code is incorrect."}""") }
+        assertNull(api().userToken("used"))
+
+        handler = { json("""{"message":"down"}""", HttpStatusCode.ServiceUnavailable) }
+        val down = assertFailsWith<GitHubCallException> { api().userToken("the-code") }
+        assertEquals("GitHub refused the authorization (503).", down.message)
+
+        val none = assertFailsWith<GitHubCallException> { api(oauth = null).userToken("the-code") }
+        assertEquals("The GitHub App has no OAuth client on this server.", none.message)
+        assertEquals("AppOAuthClient(id=Iv1.test)", OAUTH.toString(), "The secret never shows")
+    }
+
+    @Test
+    fun thePersonsInstallationsAreReadPageByPageWithTheirToken() = runTest {
+        handler = { request ->
+            val page = request.url.parameters["page"]?.toInt() ?: 0
+            val count = if (page == 1) 100 else 2
+            val ids = (1..count).joinToString(",") { """{"id":${page * 1000 + it},"account":{"login":"x"}}""" }
+            json("""{"total_count":102,"installations":[$ids]}""")
+        }
+        val ids = api().userInstallations("gho_person")
+        assertEquals(102, ids.size)
+        assertTrue(1001L in ids && 2002L in ids)
+        assertEquals(listOf("1", "2"), calls.map { it.url.parameters["page"] })
+        assertTrue(calls.all { it.url.encodedPath == "/user/installations" && it.url.parameters["per_page"] == "100" })
+        assertEquals("Bearer gho_person", calls.first().headers[HttpHeaders.Authorization])
+
+        // A person reaching thousands of installations: the read stops after 10 pages.
+        calls.clear()
+        handler = { request ->
+            val page = request.url.parameters["page"]!!.toInt()
+            json("""{"installations":[${(1..100).joinToString(",") { """{"id":${page * 1000 + it}}""" }}]}""")
+        }
+        assertEquals(1000, api().userInstallations("gho_many").size)
+        assertEquals(10, calls.size)
+
+        handler = { json("""{"message":"Bad credentials"}""", HttpStatusCode.Unauthorized) }
+        val refused = assertFailsWith<GitHubCallException> { api().userInstallations("gho_revoked") }
+        assertEquals("GitHub refused the installations (401).", refused.message)
+        handler = { json("""{}""") }
+        assertEquals(emptySet(), api().userInstallations("gho_nobody"))
+    }
 }
+
+private val OAUTH = AppOAuthClient("Iv1.test", "client-secret")

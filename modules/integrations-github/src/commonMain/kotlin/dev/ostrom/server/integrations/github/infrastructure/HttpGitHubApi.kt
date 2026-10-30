@@ -8,12 +8,14 @@ import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
+import dev.ostrom.server.integrations.github.domain.GitHubPeopleApi
 import dev.ostrom.server.integrations.github.domain.GitHubPull
 import dev.ostrom.server.integrations.github.domain.GitHubRepo
 import dev.ostrom.server.integrations.github.domain.GitHubTeam
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.header
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
@@ -23,6 +25,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
@@ -45,20 +48,27 @@ import kotlin.time.Instant
  * `checks: write` and `pull_requests: read`, kept until a minute before it expires. The directory
  * ([GitHubDirectoryApi]) is read with tokens of their own, read-only: `metadata` for the repositories, `members` for
  * the teams. The manifest conversion ([GitHubManifestApi]) is the one call without a credential: the code is the
- * proof.
+ * proof. The person's calls of the install ([GitHubPeopleApi]) go through [HttpGitHubPeople].
  *
  * @param http The client (`expectSuccess = false`).
  * @param apiUrl GitHub's API (`https://api.github.com`, or `https://<host>/api/v3` for GitHub Enterprise Server).
  * @param jwt The App's JWT, read at each exchange (the App can be created after the start), or null when the App is
  *   not configured: then every authenticated call fails.
  * @param clock The clock.
+ * @param webUrl GitHub's web address, where the OAuth code of the install is exchanged.
+ * @param oauth The App's OAuth client, read at each exchange, or null when it has none: then the install fails.
  */
 class HttpGitHubApi(
     private val http: HttpClient,
     private val apiUrl: String,
     private val jwt: suspend () -> AppJwt?,
     private val clock: Clock,
-) : GitHubApi, GitHubDirectoryApi, GitHubManifestApi {
+    webUrl: String,
+    oauth: suspend () -> AppOAuthClient?,
+) : GitHubApi,
+    GitHubDirectoryApi,
+    GitHubManifestApi,
+    GitHubPeopleApi by HttpGitHubPeople(http, apiUrl, webUrl, oauth) {
     private val tokens = mutableMapOf<Pair<Long, Map<String, String>>, InstallationToken>()
     private val lock = Mutex()
 
@@ -211,21 +221,13 @@ class HttpGitHubApi(
         body: JsonObject?,
         timeoutMs: Long? = null,
         base: String = apiUrl,
-    ): HttpResponse = try {
-        http.request("$base$path") {
-            this.method = method
-            headers(token)
-            timeoutMs?.let { timeout { requestTimeoutMillis = it } }
-            body?.let {
-                contentType(ContentType.Application.Json)
-                setBody(it.toString())
-            }
+    ): HttpResponse = http.exchange(method, "$base$path", path) {
+        headers(token)
+        timeoutMs?.let { timeout { requestTimeoutMillis = it } }
+        body?.let {
+            contentType(ContentType.Application.Json)
+            setBody(it.toString())
         }
-    } catch (error: CancellationException) {
-        throw error
-    } catch (error: Exception) {
-        // A timeout or a refused connection: the message of the cause can carry the URL, never a token.
-        throw GitHubCallException("GitHub did not answer ${method.value} $path.", error)
     }
 
     private data class InstallationToken(val token: String, val expiresAt: Instant)
@@ -340,11 +342,89 @@ private val REPOS = mapOf("metadata" to "read")
 private val TEAMS = mapOf("members" to "read", "metadata" to "read")
 private val json = Json { ignoreUnknownKeys = true }
 
+/**
+ * [GitHubPeopleApi] over HTTPS: the code of the install's return is exchanged with the App's OAuth client for the
+ * person's token, which only reads `GET /user/installations`, then is dropped (never stored nor logged).
+ *
+ * @param http The client (`expectSuccess = false`).
+ * @param apiUrl GitHub's API.
+ * @param webUrl GitHub's web address.
+ * @param oauth The App's OAuth client, or null when it has none.
+ */
+class HttpGitHubPeople(
+    private val http: HttpClient,
+    private val apiUrl: String,
+    private val webUrl: String,
+    private val oauth: suspend () -> AppOAuthClient?,
+) : GitHubPeopleApi {
+    override suspend fun userToken(code: String): String? {
+        val client = oauth() ?: throw GitHubCallException("The GitHub App has no OAuth client on this server.")
+        val form = Parameters.build {
+            append("client_id", client.id)
+            append("client_secret", client.secret)
+            append("code", code)
+        }
+        val response = http.exchange(HttpMethod.Post, "$webUrl$OAUTH_TOKEN_PATH", OAUTH_TOKEN_PATH) {
+            header(HttpHeaders.Accept, ContentType.Application.Json.toString())
+            header(HttpHeaders.UserAgent, USER_AGENT)
+            setBody(FormDataContent(form))
+        }
+        // GitHub answers 200 with an `error` field for a code it refuses.
+        return decode<UserToken>(response, "authorization").accessToken
+    }
+
+    override suspend fun userInstallations(userToken: String): Set<Long> {
+        val ids = mutableSetOf<Long>()
+        var page = 1
+        do {
+            val path = "/user/installations?per_page=$INSTALLATIONS_PAGE&page=$page"
+            val response = http.exchange(HttpMethod.Get, "$apiUrl$path", path) { headers(userToken) }
+            val batch = decode<UserInstallations>(response, "installations").installations
+            batch.mapTo(ids) { it.id }
+            page++
+        } while (batch.size == INSTALLATIONS_PAGE && page <= INSTALLATIONS_PAGES)
+        return ids
+    }
+
+    @Serializable
+    private data class UserToken(@SerialName("access_token") val accessToken: String? = null)
+
+    @Serializable
+    private data class InstallationId(val id: Long)
+
+    @Serializable
+    private data class UserInstallations(val installations: List<InstallationId> = emptyList())
+}
+
+private const val USER_AGENT = "ostrom"
+private const val OAUTH_TOKEN_PATH = "/login/oauth/access_token"
+private const val INSTALLATIONS_PAGE = 100
+
+// 1,000 installations reachable by one person: beyond, the install is refused rather than read forever.
+private const val INSTALLATIONS_PAGES = 10
+
+private suspend fun HttpClient.exchange(
+    method: HttpMethod,
+    url: String,
+    path: String,
+    build: HttpRequestBuilder.() -> Unit,
+): HttpResponse = try {
+    request(url) {
+        this.method = method
+        build()
+    }
+} catch (error: CancellationException) {
+    throw error
+} catch (error: Exception) {
+    // A timeout or a refused connection: the message of the cause can carry the URL, never a token.
+    throw GitHubCallException("GitHub did not answer ${method.value} $path.", error)
+}
+
 private fun HttpRequestBuilder.headers(token: String?) {
     token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
     header(HttpHeaders.Accept, "application/vnd.github+json")
     header("X-GitHub-Api-Version", "2022-11-28")
-    header(HttpHeaders.UserAgent, "ostrom")
+    header(HttpHeaders.UserAgent, USER_AGENT)
 }
 
 private suspend inline fun <reified T> decode(response: HttpResponse, what: String): T {

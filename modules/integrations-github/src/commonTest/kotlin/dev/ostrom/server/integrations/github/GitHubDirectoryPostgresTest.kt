@@ -35,6 +35,8 @@ import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.orgs.domain.FindOrgUseCase
+import dev.ostrom.server.orgs.domain.OrgNotFoundException
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.testing.TestServer
@@ -151,6 +153,16 @@ class GitHubDirectoryPostgresTest {
         single<GitHubApi> { github }
         single<GitHubDirectoryApi> { directoryApi }
         single<GitHubManifestApi> { directoryApi }
+        // The orgs module's lookup: acme is org A, globex org B, by short name or id.
+        single<FindOrgUseCase> {
+            object : FindOrgUseCase {
+                override suspend fun invoke(ref: String): Uuid = when (ref) {
+                    "acme", ORG.toString() -> ORG
+                    "globex", OTHER_ORG.toString() -> OTHER_ORG
+                    else -> throw OrgNotFoundException()
+                }
+            }
+        }
     }
 
     private fun orgOf(letter: String) = if (letter == "a") ORG else OTHER_ORG
@@ -201,7 +213,9 @@ class GitHubDirectoryPostgresTest {
         }
         assertEquals(HttpStatusCode.NotFound, server.get("user:b:owner", "/api/v1/orgs/$ORG/teams").status)
         assertEquals(HttpStatusCode.NotFound, server.get("user:a:owner", "/api/v1/orgs/${Uuid.random()}/teams").status)
-        assertEquals(HttpStatusCode.NotFound, server.get("user:a:owner", "/api/v1/orgs/acme/teams").status)
+        // `{org}` reads a short name too, through the orgs module: acme is A's, globex is B's.
+        assertEquals(HttpStatusCode.OK, server.get("user:a:owner", "/api/v1/orgs/acme/teams").status)
+        assertEquals(HttpStatusCode.NotFound, server.get("user:a:owner", "/api/v1/orgs/globex/teams").status)
         assertEquals(HttpStatusCode.Forbidden, server.get("user:a", "/api/v1/repos").status, "No organization")
         assertEquals(HttpStatusCode.BadRequest, server.get("user:a:owner", "/api/v1/repos?limit=0").status)
         assertEquals(HttpStatusCode.BadRequest, server.get("user:a:owner", "/api/v1/orgs/$ORG/teams?limit=101").status)
@@ -225,7 +239,9 @@ class GitHubDirectoryPostgresTest {
         apps.saveApp(createdApp(), "user:a:owner", NOW)
         val start = server.get("user:a:owner", "/api/v1/github/app/install/start")
         val state = start.headers[HttpHeaders.Location].orEmpty().substringAfter("state=")
-        server.get(null, "/api/v1/github/app/install/callback?installation_id=42&state=$state")
+        val callback = "/api/v1/github/app/install/callback?installation_id=42&code=code-acme&state=$state"
+        val back = server.get("user:a:owner", callback)
+        assertEquals("https://console.example/github?installed=1", back.headers[HttpHeaders.Location])
         server.get("user:a:owner", "/api/v1/repos")
         assertEquals(2, directoryApi.reads)
     }

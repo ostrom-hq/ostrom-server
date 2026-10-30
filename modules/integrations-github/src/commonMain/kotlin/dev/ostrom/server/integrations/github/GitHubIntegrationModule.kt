@@ -20,7 +20,6 @@ import dev.ostrom.server.integrations.github.domain.GitHubPullRequestHeads
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCase
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
-import dev.ostrom.server.integrations.github.domain.IdOrgReferences
 import dev.ostrom.server.integrations.github.domain.InstanceAdmins
 import dev.ostrom.server.integrations.github.domain.ListGitHubReposUseCase
 import dev.ostrom.server.integrations.github.domain.ListGitHubReposUseCaseImpl
@@ -32,11 +31,13 @@ import dev.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import dev.ostrom.server.integrations.github.infrastructure.GitHubMigrations
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
+import dev.ostrom.server.integrations.github.infrastructure.OrgsOrgReferences
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubRepository
 import dev.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import dev.ostrom.server.integrations.github.infrastructure.credentials
+import dev.ostrom.server.integrations.github.infrastructure.oauthClient
 import dev.ostrom.server.integrations.github.presentation.GitHubDirectoryRoutesDependencies
 import dev.ostrom.server.integrations.github.presentation.GitHubManifestRoutesDependencies
 import dev.ostrom.server.integrations.github.presentation.GitHubRoutesDependencies
@@ -84,12 +85,19 @@ object GitHubIntegrationModule : ServerModule {
         single { GitHubSettings.from(get()) }
         single { GitHubAppSetup.from(get()) }
         single<GitHubRepository> { PostgresGitHubRepository(get()) }
+        // The orgs module's lookup: `?org=` and `{org}` read an id or a short name, as the `Ostrom-Org` header does.
+        single<OrgReferences> { OrgsOrgReferences(get()) }
         single<GitHubAppStore> { PostgresGitHubAppStore(get(), get()) }
         single<GitHubAppSource> { GitHubAppSourceImpl(get<GitHubSettings>().credentials(), get(), get()) }
         single { AppJwts(get(), get()) }
         single {
             val jwts = get<AppJwts>()
-            HttpGitHubApi(get(GITHUB_HTTP), get<GitHubSettings>().apiUrl, { jwts.current() }, get())
+            val apps = get<GitHubAppSource>()
+            val settings = get<GitHubSettings>()
+            // The OAuth client is the App's, read like its key: the environment's, or the one the manifest created.
+            HttpGitHubApi(get(GITHUB_HTTP), settings.apiUrl, { jwts.current() }, get(), settings.webUrl) {
+                apps.current().oauthClient()
+            }
         }
         single<GitHubApi> { get<HttpGitHubApi>() }
         single<GitHubDirectoryApi> { get<HttpGitHubApi>() }
@@ -98,7 +106,6 @@ object GitHubIntegrationModule : ServerModule {
         single { GitHubDirectorySync(get(), get(), get(), get(), get()) }
         single<ListGitHubReposUseCase> { ListGitHubReposUseCaseImpl(get(), get()) }
         single<ListGitHubTeamsUseCase> { ListGitHubTeamsUseCaseImpl(get(), get()) }
-        single<OrgReferences> { IdOrgReferences() }
         single<InstanceAdmins> { ConfiguredInstanceAdmins(get<GitHubAppSetup>().instanceAdmins) }
         single {
             val settings = get<GitHubSettings>()
@@ -112,14 +119,14 @@ object GitHubIntegrationModule : ServerModule {
         single {
             val apps = get<GitHubAppSource>()
             val sync = get<GitHubDirectorySync>()
-            GitHubInstalls(get(), get(), { apps.current().slug }, get<GitHubSettings>().webUrl, get()) {
+            GitHubInstalls(get(), get(), { apps.current().installSlug }, get<GitHubSettings>().webUrl, get()) {
                 sync.installed(it)
             }
         }
         single {
             val apps = get<GitHubAppSource>()
             val signature = WebhookSignature { apps.current().webhookSecret }
-            GitHubRoutesDependencies(get(), get(), get(), get(), get(), signature, get(), apps)
+            GitHubRoutesDependencies(get(), get(), get(), get(), get(), signature, get(), apps, get())
         }
         single { GitHubDirectoryRoutesDependencies(get(), get(), get(), get(), get()) }
         single {

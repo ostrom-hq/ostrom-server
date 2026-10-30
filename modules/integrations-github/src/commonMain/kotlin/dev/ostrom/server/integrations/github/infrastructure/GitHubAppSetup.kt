@@ -32,7 +32,13 @@ data class GitHubAppSetup(val publicUrl: String, val appName: String, val instan
 /**
  * The App the environment names, as the App source reads it (it wins over a stored App).
  *
- * @return The App; no OAuth client from the environment yet.
+ * @return The App, with its OAuth client when the environment names one.
  */
-fun GitHubSettings.credentials(): GitHubAppCredentials =
-    GitHubAppCredentials(appId = appId, slug = slug, privateKeyPem = privateKeyPem, webhookSecret = webhookSecret)
+fun GitHubSettings.credentials(): GitHubAppCredentials = GitHubAppCredentials(
+    appId = appId,
+    slug = slug,
+    privateKeyPem = privateKeyPem,
+    webhookSecret = webhookSecret,
+    clientId = clientId,
+    clientSecret = clientSecret,
+)

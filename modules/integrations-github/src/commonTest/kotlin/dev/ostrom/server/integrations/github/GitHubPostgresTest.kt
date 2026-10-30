@@ -28,6 +28,8 @@ import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.orgs.domain.FindOrgUseCase
+import dev.ostrom.server.orgs.domain.OrgNotFoundException
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.testing.TestServer
@@ -76,6 +78,9 @@ class GitHubPostgresTest {
                         token,
                         PrincipalKind.USER,
                         setOf(GateScopes.ALL_USER),
+                        // An admin's session has its own id, as the identity module's do; the others fall back to the
+                        // subject.
+                        credentialId = if (token.startsWith("admin:")) "session-$token" else null,
                         channel = PrincipalChannel.BROWSER,
                         authenticatedAt = Clock.System.now(),
                     )
@@ -123,10 +128,25 @@ class GitHubPostgresTest {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
             }
         }
-        single { GitHubSettings("123", null, secret, slug, webOrigin = "https://console.example") }
+        single {
+            GitHubSettings(
+                "123", null, secret, slug, webOrigin = "https://console.example",
+                clientId = "Iv1.test", clientSecret = "client-secret",
+            )
+        }
         single<GitHubApi> { github }
         // Seals an App the manifest flow would create (none in these tests: the environment names one).
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
+        // The orgs module's lookup: acme is org A, globex org B, by short name or id.
+        single<FindOrgUseCase> {
+            object : FindOrgUseCase {
+                override suspend fun invoke(ref: String): Uuid = when (ref) {
+                    "acme", ORG.toString() -> ORG
+                    "globex", OTHER_ORG.toString() -> OTHER_ORG
+                    else -> throw OrgNotFoundException()
+                }
+            }
+        }
     }
 
     // Read when the server starts: a test sets it before.
@@ -142,11 +162,29 @@ class GitHubPostgresTest {
             token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
         }
 
-    private suspend fun TestServer.install(token: String, installation: Long): HttpResponse {
-        val start = get(token, "/api/v1/github/app/install/start")
+    private suspend fun TestServer.stateOf(token: String, query: String = ""): String {
+        val start = get(token, "/api/v1/github/app/install/start$query")
         assertEquals(HttpStatusCode.Found, start.status)
-        val state = start.headers[HttpHeaders.Location].orEmpty().substringAfter("state=")
-        return get(null, "/api/v1/github/app/install/callback?installation_id=$installation&state=$state")
+        return start.headers[HttpHeaders.Location].orEmpty().substringAfter("state=")
+    }
+
+    /**
+     * Installs [installation] as the GitHub person who reaches it, unless [code] names another person; the browser
+     * comes back with the session that started.
+     *
+     * @return Where the callback sends the browser.
+     */
+    private suspend fun TestServer.install(token: String, installation: Long, code: String? = null): String {
+        val state = stateOf(token)
+        val person = code ?: if (installation == 42L) "code-acme" else "code-globex"
+        return back(token, "installation_id=$installation&code=$person&state=$state")
+    }
+
+    /** The callback, with [token]'s session: always a redirect to the console, whose target it returns. */
+    private suspend fun TestServer.back(token: String?, query: String): String {
+        val response = get(token, "/api/v1/github/app/install/callback?$query")
+        assertEquals(HttpStatusCode.Found, response.status)
+        return response.headers[HttpHeaders.Location].orEmpty()
     }
 
     private suspend fun sign(body: String): String {
@@ -174,9 +212,7 @@ class GitHubPostgresTest {
             start.headers[HttpHeaders.Location].orEmpty()
                 .startsWith("https://github.com/apps/ostrom-dev/installations/new?state="),
         )
-        val back = server.install("user:a:owner", 42)
-        assertEquals(HttpStatusCode.Found, back.status)
-        assertEquals("https://console.example/console/settings?github=installed", back.headers[HttpHeaders.Location])
+        assertEquals(INSTALLED, server.install("user:a:owner", 42))
         val status = server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>()
         assertEquals(GitHubAppStatus(true, "ostrom-dev", 42, "https://github.com/apps/ostrom-dev"), status)
         assertEquals(true, server.get("reader:a:ops", "/api/v1/github/app").body<GitHubAppStatus>().installed)
@@ -237,15 +273,62 @@ class GitHubPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.get(null, "/api/v1/github/app").status)
         assertEquals(HttpStatusCode.Forbidden, server.get("user:a", "/api/v1/github/app").status, "No organization")
 
-        val start = server.get("user:a:owner", "/api/v1/github/app/install/start")
-        val state = start.headers[HttpHeaders.Location].orEmpty().substringAfter("state=")
-        val callback = "/api/v1/github/app/install/callback?installation_id=42&state=$state"
-        assertEquals(HttpStatusCode.Found, server.get(null, callback).status)
-        assertEquals(HttpStatusCode.Forbidden, server.get(null, callback).status, "Used once")
-        assertEquals(HttpStatusCode.BadRequest, server.get(null, "/api/v1/github/app/install/callback").status)
+        val callback = "installation_id=42&code=code-acme&state=${server.stateOf("user:a:owner")}"
+        assertEquals(INSTALLED, server.back("user:a:owner", callback))
+        assertEquals(failed("forbidden"), server.back("user:a:owner", callback), "Used once")
+        assertEquals(failed("invalid_request"), server.back("user:a:owner", ""))
 
-        assertEquals(HttpStatusCode.Conflict, server.install("user:b:owner", 42).status, "Org A holds it")
-        assertEquals(HttpStatusCode.Found, server.install("user:b:owner", 43).status)
+        assertEquals(failed("conflict"), server.install("user:b:owner", 42), "Org A holds it")
+        assertEquals(INSTALLED, server.install("user:b:owner", 43))
+    }
+
+    @Test
+    fun anInstallStartNamesItsOrganizationAndTheCallerMustAdministerIt() = gitHubTest { server ->
+        for (org in listOf("acme", ORG.toString())) {
+            val state = server.stateOf("user:a:owner", "?org=$org")
+            assertEquals(INSTALLED, server.back("user:a:owner", "installation_id=42&code=code-acme&state=$state"))
+        }
+        assertEquals(true, server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
+        // Not an owner or admin of it, not a member at all, or no such organization: 403 alike.
+        for ((token, org) in listOf("member:a:dev" to "acme", "user:a:owner" to "globex", "user:a:owner" to "nope")) {
+            val start = server.get(token, "/api/v1/github/app/install/start?org=$org")
+            assertEquals(HttpStatusCode.Forbidden, start.status, "$token ?org=$org")
+        }
+        assertEquals(INSTALLED, server.install("admin:b:ops", 43))
+    }
+
+    @Test
+    fun onlyTheSessionThatStartedAnInstallFinishesIt() = gitHubTest { server ->
+        val callback = "installation_id=42&code=code-acme&state=${server.stateOf("user:a:owner")}"
+        // Another session of the same organization (a link sent to an admin), or no session: refused, and the
+        // state still serves its own session.
+        assertEquals(failed("forbidden"), server.back("admin:a:ops", callback))
+        assertEquals(failed("unauthorized"), server.back(null, callback))
+        assertEquals(false, server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
+        assertEquals(INSTALLED, server.back("user:a:owner", callback))
+    }
+
+    @Test
+    fun gitHubDownDuringTheCallbackSendsTheBrowserBackWithTheReason() = gitHubTest { server ->
+        github.down = true
+        assertEquals(failed("unavailable"), server.install("user:a:owner", 42))
+        github.down = false
+        assertEquals(false, server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
+    }
+
+    @Test
+    fun anOrganizationCannotTakeAnotherOnesInstallation() = gitHubTest { server ->
+        // The owner of org B reaches only globex's installation (43) on GitHub, and comes back with acme's (42),
+        // which no organization has linked yet.
+        assertEquals(failed("installation_not_yours"), server.install("user:b:owner", 42, code = "code-globex"))
+        assertEquals(false, server.get("user:b:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
+        // A code GitHub does not accept, or none at all (the App does not ask for the person's authorization).
+        assertEquals(failed("installation_not_yours"), server.install("user:b:owner", 43, code = "code-forged"))
+        val noCode = "installation_id=43&state=${server.stateOf("user:b:owner")}"
+        assertEquals(failed("invalid_request"), server.back("user:b:owner", noCode))
+        // The owner of acme's organization still installs it.
+        assertEquals(INSTALLED, server.install("user:a:owner", 42))
+        assertEquals(true, server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
     }
 
     @Test
@@ -332,3 +415,7 @@ class GitHubPostgresTest {
     private suspend fun QueryExecutor.count(table: String): String =
         fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow().first().get("n").asString()
 }
+
+private const val INSTALLED = "https://console.example/github?installed=1"
+
+private fun failed(type: String) = "https://console.example/github?error=$type"

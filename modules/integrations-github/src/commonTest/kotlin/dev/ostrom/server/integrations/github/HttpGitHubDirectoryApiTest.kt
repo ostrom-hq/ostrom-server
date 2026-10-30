@@ -65,7 +65,7 @@ class HttpGitHubDirectoryApiTest {
         }
         val http = HttpClient(engine) { expectSuccess = false }
         val jwt = AppJwt("123", pem, clock)
-        return HttpGitHubApi(http, apiUrl, { jwt }, clock)
+        return HttpGitHubApi(http, apiUrl, { jwt }, clock, "https://github.test") { null }
     }
 
     private suspend fun pem(): String = CryptographyProvider.Default.get(RSA.PKCS1)

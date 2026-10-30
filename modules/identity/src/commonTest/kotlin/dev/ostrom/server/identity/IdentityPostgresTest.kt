@@ -71,6 +71,11 @@ class IdentityPostgresTest {
         assertNull(users.findByVerifiedEmail("bob@example.com"))
         assertTrue(users.loginTaken(ada.login))
         assertTrue(!users.loginTaken("nobody"))
+        assertEquals(ada, users.findByLogin(ada.login.uppercase()))
+        assertNull(users.findByLogin("nobody"))
+        assertEquals(listOf(ada), users.getMany(listOf(ada.id, ada.id, Uuid.random())))
+        assertEquals(emptyList(), users.getMany(emptyList()))
+        assertEquals(setOf(ada, bob), users.getMany(listOf(bob.id, ada.id)).toSet())
 
         val google = VerifiedIdentity(IdentityProvider.GOOGLE, "g", "bob@example.com", true)
         users.link(bob.id, google, UserEmail("bob@example.com", true), now)

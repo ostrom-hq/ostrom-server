@@ -14,6 +14,10 @@ import dev.ostrom.server.kernel.config.ConfigSource
  * @property apiUrl `OSTROM_GITHUB_API`, GitHub's API (GitHub Enterprise Server, or a test double).
  * @property webUrl `OSTROM_GITHUB_WEB`, GitHub's web address, for the install link.
  * @property webOrigin `OSTROM_WEB_ORIGIN`, the console, for the check's link and the return of the install.
+ * @property clientId `OSTROM_GITHUB_APP_CLIENT_ID`, the App's OAuth client: the install asks the person who installs
+ *   to authorize it ("Request user authorization (OAuth) during installation" on the App), so that the server checks
+ *   the installation is theirs.
+ * @property clientSecret `OSTROM_GITHUB_APP_CLIENT_SECRET`, its secret.
  */
 data class GitHubSettings(
     val appId: String?,
@@ -23,6 +27,8 @@ data class GitHubSettings(
     val apiUrl: String = "https://api.github.com",
     val webUrl: String = "https://github.com",
     val webOrigin: String = "http://localhost:5173",
+    val clientId: String? = null,
+    val clientSecret: String? = null,
 ) {
     /** Whether the App can authenticate: an id and a key. */
     val configured: Boolean get() = appId != null && privateKeyPem != null
@@ -51,6 +57,8 @@ data class GitHubSettings(
                 apiUrl = (value("OSTROM_GITHUB_API") ?: defaults.apiUrl).trimEnd('/'),
                 webUrl = (value("OSTROM_GITHUB_WEB") ?: defaults.webUrl).trimEnd('/'),
                 webOrigin = (value("OSTROM_WEB_ORIGIN") ?: defaults.webOrigin).trimEnd('/'),
+                clientId = value("OSTROM_GITHUB_APP_CLIENT_ID"),
+                clientSecret = value("OSTROM_GITHUB_APP_CLIENT_SECRET"),
             )
         }
     }

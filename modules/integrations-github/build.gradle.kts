@@ -13,6 +13,8 @@ kotlin {
             implementation(project(":modules:gates"))
             // The cipher that seals the App created by the manifest flow (the instance's secrets key).
             implementation(project(":modules:secrets"))
+            // The organization an install start names (`?org=`): the orgs module's lookup by id or short name.
+            implementation(project(":modules:orgs"))
             // RS256 for the App's JWT, HMAC-SHA256 for the webhook signature (OpenSSL, linked by the kernel).
             implementation(libs.cryptography.core)
             // Outbound HTTPS to GitHub: Curl on Linux, Darwin on macOS (CIO has no TLS on Kotlin/Native).

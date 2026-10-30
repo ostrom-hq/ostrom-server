@@ -50,10 +50,18 @@ interface OAuthProvider {
      * @param codeChallenge The PKCE challenge (S256 of the verifier).
      * @param nonce The OIDC nonce the ID token must carry (ignored by plain OAuth providers).
      * @param redirectUri The server's callback URL.
+     * @param reauthenticate Whether the person signs in again to prove it is them (before a yes, S2-54): the
+     *   provider is asked not to sign them in silently.
      *
      * @return The URL to send the browser to.
      */
-    fun authorizationUrl(state: String, codeChallenge: String, nonce: String, redirectUri: String): String
+    fun authorizationUrl(
+        state: String,
+        codeChallenge: String,
+        nonce: String,
+        redirectUri: String,
+        reauthenticate: Boolean,
+    ): String
 
     /**
      * Exchanges the authorization code and reads who signed in. Everything returned has been checked: the token came

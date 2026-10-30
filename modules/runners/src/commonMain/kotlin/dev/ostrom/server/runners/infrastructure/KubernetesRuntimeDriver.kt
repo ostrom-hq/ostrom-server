@@ -21,6 +21,7 @@ import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -169,48 +170,45 @@ class KubernetesRuntimeDriver(
             settings.imagePullSecret?.let { secret ->
                 putJsonArray("imagePullSecrets") { add(buildJsonObject { put("name", secret) }) }
             }
+            // The runner and the agent never share a uid (S2-49): the agent host runs the agent in its own container,
+            // which has neither the token nor a view of the runner's processes; the pod's group is only the socket's.
+            put("shareProcessNamespace", false)
             putJsonObject("securityContext") {
                 put("runAsNonRoot", true)
-                put("runAsUser", RUNNER_UID)
-                put("runAsGroup", RUNNER_UID)
-                put("fsGroup", RUNNER_UID)
+                put("fsGroup", SHARED_GID)
                 putJsonObject("seccompProfile") { put("type", "RuntimeDefault") }
+            }
+            // A native sidecar (Kubernetes 1.29+): it starts before the runner and stops once the runner has ended.
+            putJsonArray("initContainers") {
+                add(
+                    container("agent", AGENT_UID) {
+                        put("restartPolicy", "Always")
+                        putJsonArray("command") {
+                            add(JsonPrimitive(RUNNER_BINARY))
+                            add(JsonPrimitive("agent-host"))
+                        }
+                        put("workingDir", WORKSPACE)
+                        putJsonArray("env") {
+                            add(variable("OSTROM_AGENT_SOCKET", RunnerEnvironment.AGENT_SOCKET))
+                            add(variable("HOME", "$WORKSPACE/.home"))
+                        }
+                        put("resources", resources("250m", "512Mi", "2", "4Gi", "2Gi"))
+                        putJsonArray("volumeMounts") {
+                            add(mount("workspace", WORKSPACE))
+                            add(mount("tmp", "/tmp"))
+                            add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
+                        }
+                    },
+                )
             }
             putJsonArray("containers") {
                 add(
-                    buildJsonObject {
-                        put("name", "runner")
-                        put("image", runnerImage)
+                    container("runner", RUNNER_UID) {
                         putJsonArray("command") { add(JsonPrimitive(RUNNER_BINARY)) }
-                        put("workingDir", WORKSPACE)
-                        put("env", environment(spec))
-                        putJsonObject("securityContext") {
-                            put("allowPrivilegeEscalation", false)
-                            put("readOnlyRootFilesystem", true)
-                            putJsonObject("capabilities") { putJsonArray("drop") { add(JsonPrimitive("ALL")) } }
-                        }
-                        putJsonObject("resources") {
-                            putJsonObject("requests") {
-                                put("cpu", "250m")
-                                put("memory", "512Mi")
-                                put("ephemeral-storage", "256Mi")
-                            }
-                            putJsonObject("limits") {
-                                put("cpu", "2")
-                                put("memory", "4Gi")
-                                put("ephemeral-storage", "2Gi")
-                            }
-                        }
+                        put("env", environment(spec, name))
+                        put("resources", resources("50m", "64Mi", "500m", "256Mi", "64Mi"))
                         putJsonArray("volumeMounts") {
-                            add(buildJsonObject { put("name", "workspace"); put("mountPath", WORKSPACE) })
-                            add(buildJsonObject { put("name", "tmp"); put("mountPath", "/tmp") })
-                            add(
-                                buildJsonObject {
-                                    put("name", "runner-token")
-                                    put("mountPath", TOKEN_DIRECTORY)
-                                    put("readOnly", true)
-                                },
-                            )
+                            add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
                         }
                     },
                 )
@@ -226,28 +224,81 @@ class KubernetesRuntimeDriver(
                 )
                 add(
                     buildJsonObject {
-                        put("name", "runner-token")
-                        putJsonObject("secret") {
-                            put("secretName", name)
-                            put("defaultMode", TOKEN_FILE_MODE)
-                        }
+                        put("name", "tmp")
+                        putJsonObject("emptyDir") { put("sizeLimit", "1Gi") }
                     },
                 )
                 add(
                     buildJsonObject {
-                        put("name", "tmp")
-                        putJsonObject("emptyDir") { put("sizeLimit", "1Gi") }
+                        put("name", "agent-socket")
+                        putJsonObject("emptyDir") { put("sizeLimit", "1Mi") }
                     },
                 )
             }
         }
     }
 
-    private fun environment(spec: ExecutionSpec): JsonArray = buildJsonArray {
-        RunnerEnvironment.of(spec, serverUrl, "$TOKEN_DIRECTORY/token").forEach { (key, value) ->
-            add(buildJsonObject { put("name", key); put("value", value) })
+    /** A container of the session pod: its own uid and group, no privilege, a read-only root. */
+    private fun container(name: String, uid: Int, body: JsonObjectBuilder.() -> Unit): JsonObject = buildJsonObject {
+        put("name", name)
+        put("image", runnerImage)
+        putJsonObject("securityContext") {
+            put("runAsUser", uid)
+            put("runAsGroup", uid)
+            put("allowPrivilegeEscalation", false)
+            put("readOnlyRootFilesystem", true)
+            putJsonObject("capabilities") { putJsonArray("drop") { add(JsonPrimitive("ALL")) } }
+        }
+        body()
+    }
+
+    /**
+     * The runner's variables: identifiers as values, the token and the first message read from the execution's
+     * Secret by the kubelet, so that they are neither in the pod's spec nor in a file.
+     */
+    private fun environment(spec: ExecutionSpec, secret: String): JsonArray = buildJsonArray {
+        RunnerEnvironment.of(spec, serverUrl).forEach { (key, value) -> add(variable(key, value)) }
+        val keys = listOf(RunnerEnvironment.TOKEN to "token") +
+            listOfNotNull(spec.prompt?.let { RunnerEnvironment.PROMPT to "prompt" })
+        keys.forEach { (variable, key) ->
+            add(
+                buildJsonObject {
+                    put("name", variable)
+                    putJsonObject("valueFrom") {
+                        putJsonObject("secretKeyRef") {
+                            put("name", secret)
+                            put("key", key)
+                        }
+                    }
+                },
+            )
         }
     }
+
+    private fun variable(name: String, value: String): JsonObject = buildJsonObject {
+        put("name", name)
+        put("value", value)
+    }
+
+    private fun mount(name: String, path: String): JsonObject = buildJsonObject {
+        put("name", name)
+        put("mountPath", path)
+    }
+
+    @Suppress("LongParameterList") // The five figures of a container's requests and limits.
+    private fun resources(cpu: String, memory: String, cpuLimit: String, memoryLimit: String, disk: String) =
+        buildJsonObject {
+            putJsonObject("requests") {
+                put("cpu", cpu)
+                put("memory", memory)
+                put("ephemeral-storage", EPHEMERAL_REQUEST)
+            }
+            putJsonObject("limits") {
+                put("cpu", cpuLimit)
+                put("memory", memoryLimit)
+                put("ephemeral-storage", disk)
+            }
+        }
 
     private suspend fun create(path: String, body: JsonObject) {
         val response = call(HttpMethod.Post, "$base$path", body)
@@ -294,10 +345,16 @@ class KubernetesRuntimeDriver(
 
         const val RUNNER_BINARY = "/usr/local/bin/ostrom-runner"
         const val WORKSPACE = "/workspace"
-        const val TOKEN_DIRECTORY = "/run/ostrom"
-        const val RUNNER_UID = 1000
+        /** The agent's uid (the image's `node` user), owner of the workspace. */
+        const val AGENT_UID = 1000
+
+        /** The runner's uid: never the agent's (S2-49). */
+        const val RUNNER_UID = 1001
+
+        /** The group both containers share, for the agent socket only (the pod's fsGroup). */
+        const val SHARED_GID = 2000
         const val GRACE_SECONDS = 20
-        private const val TOKEN_FILE_MODE = 0x100 // 0400
+        private const val EPHEMERAL_REQUEST = "64Mi"
 
         /** The egress label value of an execution. */
         fun egress(spec: ExecutionSpec): String = if (spec.limits.restrictedEgress) "restricted" else "open"
