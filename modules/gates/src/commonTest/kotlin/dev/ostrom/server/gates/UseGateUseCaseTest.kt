@@ -23,11 +23,29 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 class UseGateUseCaseTest {
     private suspend fun approved(bench: GateBench) = bench.open(bench.pushRequest()).also { bench.answer(it, "rev-b") }
+
+    @Test
+    fun s214AYesIsUsedOnlyWithItsSignedReceipt() = runTest {
+        val bench = GateBench()
+        bench.signer.failure = IllegalStateException("receipts down")
+        val view = approved(bench)
+        assertNull(bench.repository.gates.getValue(view.gate.id).receiptId)
+        val reserve = assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.RESERVE) }
+        assertTrue("receipt" in reserve.message.orEmpty())
+        assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.CONSUME) }
+
+        bench.signer.failure = null
+        val reserved = bench.use(agent(), view.gate.id, GateUse.RESERVE)
+        assertEquals(GateStatus.RESERVED, reserved.status, "signed at reserve time, then usable")
+        assertNotNull(reserved.receiptId)
+    }
 
     @Test
     fun aYesIsReservedThenConsumedOnce() = runTest {
