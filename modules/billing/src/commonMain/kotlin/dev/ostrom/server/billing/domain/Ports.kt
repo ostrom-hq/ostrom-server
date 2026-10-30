@@ -58,6 +58,12 @@ interface StripeGateway {
     /** Schedules the end of the subscription at the period end, or cancels that schedule. */
     suspend fun setCancelAtPeriodEnd(subscriptionId: String, cancel: Boolean)
 
+    /**
+     * Ends the subscription now, without a refund of the period already paid nor a last invoice: what an
+     * organization's deletion does.
+     */
+    suspend fun cancelNow(subscriptionId: String)
+
     /** Raises the quantity of a yearly item and invoices the prorated difference now. */
     suspend fun setQuantity(subscriptionId: String, itemId: String, quantity: Int)
 

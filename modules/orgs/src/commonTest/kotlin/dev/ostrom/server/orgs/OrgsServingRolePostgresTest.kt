@@ -98,6 +98,39 @@ class OrgsServingRolePostgresTest {
         }
 
     @Test
+    fun theServingRoleChangesSettingsAndFinishesADeletionAcrossOrganizations() =
+        serverTest(listOf(IdentityModule, OrgsModule)) { server ->
+            val ada = server.user("ada")
+            server.database.withRole { role, serving ->
+                server.driver
+                    .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
+                    .getOrThrow()
+                server.driver.execute("GRANT ostrom_tenant TO $role").getOrThrow()
+                server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
+                val orgs = OrgsRepositoryImpl(serving)
+                val acme = org("acme")
+                assertNull(orgs.create(acme, owner(acme, ada)) { false })
+
+                orgs.update(acme.id, "Acme Labs", "Europe/Paris")
+                val zoned = acme.copy(name = "Acme Labs", timeZone = "Europe/Paris")
+                assertEquals(zoned, orgs.get(acme.id))
+                assertEquals(zoned, orgs.findBySlug("acme"))
+                assertEquals(listOf(zoned), orgs.listOfUser(ada.id).map { it.org })
+
+                orgs.delete(acme.id, now, now + 30.days)
+                // Found with no organization set: only through the functions, which list ids and nothing else.
+                assertEquals(listOf(acme.id), orgs.deletionsToSettle(10))
+                orgs.markSettled(acme.id, now)
+                assertEquals(emptyList(), orgs.deletionsToSettle(10))
+                assertEquals(emptyList(), orgs.duePurges(now, 10))
+                assertEquals(listOf(acme.id), orgs.duePurges(now + 30.days, 10))
+                orgs.erase(acme.id, now + 30.days)
+                assertEquals(emptyList(), orgs.duePurges(now + 31.days, 10))
+                assertTrue(orgs.slugTaken("acme"))
+            }
+        }
+
+    @Test
     fun theCrossOrganizationFunctionsPutTheTemporarySchemaLast() =
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val hardened =
@@ -109,6 +142,6 @@ class OrgsServingRolePostgresTest {
                     .single()
                     .get("n")
                     .asLong()
-            assertEquals(6L, hardened)
+            assertEquals(8L, hardened)
         }
 }

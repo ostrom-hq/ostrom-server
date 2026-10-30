@@ -184,46 +184,71 @@ class GetOrgUseCaseImpl(private val orgs: OrgsRepository, private val members: M
         requireMembership(orgs, members, orgId, userId)
 }
 
-/** Renames an organization (owner or admin). */
-interface RenameOrgUseCase {
+/**
+ * Changes an organization's settings (owner or admin): its name and its time zone. Its short name
+ * never changes: the console's links, the `Ostrom-Org` header and the CLI's configuration name it,
+ * and a redirect from an old one would expire, or leak the new one to anyone who knew the old one.
+ */
+interface UpdateOrgUseCase {
     /**
-     * Renames it.
+     * Changes them.
      *
      * @param orgId The organization.
      * @param userId The caller.
-     * @param name The new name.
+     * @param change What changes.
      * @return The organization and the caller's membership.
      * @throws NotAllowedException When the caller is neither owner nor admin.
+     * @throws InvalidOrgRequestException For an invalid name or time zone, or another short name.
      */
-    suspend operator fun invoke(orgId: Uuid, userId: Uuid, name: String): Membership
+    suspend operator fun invoke(orgId: Uuid, userId: Uuid, change: OrgChange): Membership
 }
 
 /**
- * [RenameOrgUseCase].
+ * [UpdateOrgUseCase]. Each change is audited; a field given unchanged changes nothing.
  *
  * @param orgs The organizations.
  * @param members The members.
  * @param audit The audit log.
  */
-class RenameOrgUseCaseImpl(
+class UpdateOrgUseCaseImpl(
     private val orgs: OrgsRepository,
     private val members: MembersRepository,
     private val audit: OrgAudit,
-) : RenameOrgUseCase {
-    override suspend fun invoke(orgId: Uuid, userId: Uuid, name: String): Membership {
-        val cleanName = validOrgName(name)
+) : UpdateOrgUseCase {
+    override suspend fun invoke(orgId: Uuid, userId: Uuid, change: OrgChange): Membership {
+        val name = change.name?.let(::validOrgName)
+        val timeZone = change.timeZone?.let(::validTimeZone)
         val caller = requireMembership(orgs, members, orgId, userId)
         ensure(caller.member.role in MANAGER_ROLES) {
-            NotAllowedException("Only an owner or an admin can rename it.")
+            NotAllowedException("Only an owner or an admin can change the organization.")
         }
-        orgs.rename(orgId, cleanName)
-        val details = mapOf("from" to caller.org.name, "to" to cleanName)
-        audit.record(OrgEvent(orgId, userId, "org.renamed", "org", orgId.toString(), details))
-        return caller.copy(org = caller.org.copy(name = cleanName))
+        val org = caller.org
+        ensure(change.slug == null || change.slug == org.slug) {
+            InvalidOrgRequestException(
+                "The short name never changes: links and the Ostrom-Org header name it."
+            )
+        }
+        val updated = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
+        if (updated != org) orgs.update(orgId, updated.name, updated.timeZone)
+        if (updated.name != org.name) {
+            val details = mapOf("from" to org.name, "to" to updated.name)
+            audit.record(OrgEvent(orgId, userId, "org.renamed", "org", orgId.toString(), details))
+        }
+        if (updated.timeZone != org.timeZone) {
+            val details = mapOf("from" to org.timeZone, "to" to updated.timeZone)
+            audit.record(
+                OrgEvent(orgId, userId, "org.time_zone.changed", "org", orgId.toString(), details)
+            )
+        }
+        return caller.copy(org = updated)
     }
 }
 
-/** Deletes an organization (owner only, who confirms with its short name). */
+/**
+ * Deletes an organization (owner only, who confirms with its short name, signed in less than 5
+ * minutes ago). The deletion is logical for [DELETION_GRACE]: nobody reaches the organization any
+ * more, its data stays until [SettleOrgDeletionsUseCase] erases it.
+ */
 interface DeleteOrgUseCase {
     /**
      * Deletes it.
@@ -231,10 +256,18 @@ interface DeleteOrgUseCase {
      * @param orgId The organization.
      * @param userId The caller.
      * @param confirmSlug The short name, typed again by the owner.
+     * @param authenticatedAt When the owner last signed in, null when unknown.
      * @throws NotAllowedException When the caller is not the owner.
      * @throws InvalidOrgRequestException When the confirmation does not match.
+     * @throws OrgStepUpRequiredException When the sign-in is older than [DELETION_STEP_UP] or
+     *   unknown.
      */
-    suspend operator fun invoke(orgId: Uuid, userId: Uuid, confirmSlug: String)
+    suspend operator fun invoke(
+        orgId: Uuid,
+        userId: Uuid,
+        confirmSlug: String,
+        authenticatedAt: Instant?,
+    )
 }
 
 /**
@@ -251,7 +284,12 @@ class DeleteOrgUseCaseImpl(
     private val audit: OrgAudit,
     private val clock: Clock,
 ) : DeleteOrgUseCase {
-    override suspend fun invoke(orgId: Uuid, userId: Uuid, confirmSlug: String) {
+    override suspend fun invoke(
+        orgId: Uuid,
+        userId: Uuid,
+        confirmSlug: String,
+        authenticatedAt: Instant?,
+    ) {
         val caller = requireMembership(orgs, members, orgId, userId)
         ensure(caller.member.role == OrgRole.OWNER) {
             NotAllowedException("Only the owner can delete the organization.")
@@ -259,6 +297,11 @@ class DeleteOrgUseCaseImpl(
         ensure(confirmSlug == caller.org.slug) {
             InvalidOrgRequestException("Type the organization's short name to confirm.")
         }
+        val now = clock.nowMillis()
+        ensure(authenticatedAt != null && now - authenticatedAt <= DELETION_STEP_UP) {
+            OrgStepUpRequiredException()
+        }
+        val purgeAfter = now + DELETION_GRACE
         // Recorded first: the deletion removes the members, and the event must exist even if the
         // deletion fails.
         audit.record(
@@ -268,10 +311,10 @@ class DeleteOrgUseCaseImpl(
                 "org.deleted",
                 "org",
                 orgId.toString(),
-                mapOf("slug" to caller.org.slug),
+                mapOf("slug" to caller.org.slug, "purge_after" to purgeAfter.toString()),
             )
         )
-        orgs.delete(orgId, clock.nowMillis())
+        orgs.delete(orgId, now, purgeAfter)
     }
 }
 

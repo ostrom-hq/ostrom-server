@@ -1,13 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs.domain
 
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
+import kotlinx.datetime.TimeZone
 
 /** The longest short name, as GitHub's organization names. */
 const val MAX_SLUG = 39
 
 /** The longest organization name. */
 const val MAX_ORG_NAME = 100
+
+/** An organization's time zone until an owner or admin sets one. */
+const val DEFAULT_TIME_ZONE = "UTC"
+
+/**
+ * How long a deleted organization is kept, out of everyone's reach, before it is erased for good (its audit log
+ * stays).
+ */
+val DELETION_GRACE: Duration = 30.days
+
+/** How old the owner's sign-in may be to delete the organization: the same proof as a yes (S2-54). */
+val DELETION_STEP_UP: Duration = 5.minutes
 
 private const val MIN_SLUG = 2
 private const val SLUG_ATTEMPTS = 20
@@ -98,6 +114,21 @@ fun validSlug(slug: String): String {
     }
     ensure(slug !in RESERVED_SLUGS) { InvalidOrgRequestException("This short name is reserved.") }
     return slug
+}
+
+/**
+ * Checks a time zone: [DEFAULT_TIME_ZONE] or a zone of the time zone database the server knows (`Europe/Paris`), never
+ * a raw offset.
+ *
+ * @param id The zone.
+ * @return The zone.
+ * @throws InvalidOrgRequestException For any other value.
+ */
+fun validTimeZone(id: String): String {
+    ensure(id == DEFAULT_TIME_ZONE || id in TimeZone.availableZoneIds) {
+        InvalidOrgRequestException("The time zone must be a known IANA zone, such as Europe/Paris.")
+    }
+    return id
 }
 
 /**

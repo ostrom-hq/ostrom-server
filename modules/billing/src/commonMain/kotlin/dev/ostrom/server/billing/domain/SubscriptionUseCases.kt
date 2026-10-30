@@ -200,6 +200,47 @@ class SetCancellationUseCaseImpl(
     }
 }
 
+/**
+ * Ends the subscription of a deleted organization now (the orgs module tells billing of the deletion): a deleted
+ * organization is never billed again. Idempotent: the subscription is read from Stripe first, and one that already
+ * ended is left alone.
+ */
+interface EndDeletedOrgSubscriptionUseCase {
+    /**
+     * Ends it, if there is one.
+     *
+     * @param orgId The deleted organization.
+     */
+    suspend operator fun invoke(orgId: Uuid)
+}
+
+/**
+ * [EndDeletedOrgSubscriptionUseCase]. Nothing to do on a self-hosted server (no Stripe) or for an organization without
+ * a running subscription. The invoices stay with Stripe and the billing row stays here: accounting keeps them.
+ *
+ * @param repository The billing rows.
+ * @param stripe Stripe.
+ * @param sync Reads the subscription back from Stripe.
+ * @param settings Whether Stripe is configured.
+ */
+class EndDeletedOrgSubscriptionUseCaseImpl(
+    private val repository: BillingRepository,
+    private val stripe: StripeGateway,
+    private val sync: SyncSubscriptionUseCase,
+    private val settings: BillingSettings,
+) : EndDeletedOrgSubscriptionUseCase {
+    override suspend fun invoke(orgId: Uuid) {
+        val live = repository.get(orgId).live()
+        if (!settings.stripeEnabled || live == null) return
+        // Read first: a retry after a cancellation whose sync failed must not cancel twice.
+        val current = sync(live.billing, live.subscriptionId)
+        if (current.live() != null) {
+            stripe.cancelNow(live.subscriptionId)
+            sync(current, live.subscriptionId)
+        }
+    }
+}
+
 /** Lists an organization's invoices and receipts. */
 interface ListInvoicesUseCase {
     /** @return The latest invoices, newest first; empty for an organization that never bought. */

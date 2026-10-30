@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.orgs.domain
+
+import dev.ostrom.server.kernel.module.OrgDeletionListener
+import kotlinx.coroutines.CancellationException
+import kotlin.time.Clock
+
+/** How many organizations one pass settles, then purges, at most. */
+const val DELETION_BATCH = 50
+
+/**
+ * Finishes the deletions, across organizations: tells every module of each new deletion
+ * ([OrgDeletionListener.deleted]: billing ends the subscription), then, once [DELETION_GRACE] is
+ * over, has every module erase its data ([OrgDeletionListener.purge]) and erases the organization.
+ * Every replica runs it: each step is idempotent.
+ */
+interface SettleOrgDeletionsUseCase {
+    /**
+     * Runs one pass.
+     *
+     * @return What it did.
+     */
+    suspend operator fun invoke(): DeletionPass
+}
+
+/**
+ * [SettleOrgDeletionsUseCase]. An organization a module fails on is left as it is and tried again
+ * at the next pass; the others go on.
+ *
+ * @param orgs The organizations.
+ * @param listeners The modules told of a deletion.
+ * @param clock The clock.
+ * @param batch How many organizations of each kind one pass takes.
+ */
+class SettleOrgDeletionsUseCaseImpl(
+    private val orgs: OrgsRepository,
+    private val listeners: List<OrgDeletionListener>,
+    private val clock: Clock,
+    private val batch: Int = DELETION_BATCH,
+) : SettleOrgDeletionsUseCase {
+    override suspend fun invoke(): DeletionPass {
+        val toSettle = orgs.deletionsToSettle(batch)
+        val settled = toSettle.count { id ->
+            succeeds {
+                listeners.forEach { it.deleted(id) }
+                orgs.markSettled(id, clock.nowMillis())
+            }
+        }
+        val toPurge = orgs.duePurges(clock.nowMillis(), batch)
+        val purged = toPurge.count { id ->
+            succeeds {
+                listeners.forEach { it.purge(id) }
+                orgs.erase(id, clock.nowMillis())
+            }
+        }
+        return DeletionPass(settled, purged, toSettle.size - settled + toPurge.size - purged)
+    }
+
+    // A module's failure on one organization never stops the others; a cancellation stops the pass.
+    private suspend fun succeeds(block: suspend () -> Unit): Boolean =
+        try {
+            block()
+            true
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
+        }
+}

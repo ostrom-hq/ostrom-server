@@ -24,7 +24,8 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-private const val ORG_COLUMNS = "o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at"
+private const val ORG_COLUMNS =
+    "o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at, o.time_zone"
 private const val MEMBER_COLUMNS = "m.id AS member_id, m.org_id, m.user_id, m.role, m.joined_at"
 private const val INVITATION_COLUMNS =
     "id, org_id, email, role, invited_by, created_at, expires_at, max_uses, uses, revoked_at"
@@ -127,18 +128,21 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
             .getOrThrow()
             .firstOrNull() != null
 
-    override suspend fun rename(id: Uuid, name: String) {
+    override suspend fun update(id: Uuid, name: String, timeZone: String) {
         driver.inOrg(id) {
             execute(
-                    Statement.create("UPDATE orgs_organizations SET name = :name WHERE id = :id")
+                    Statement.create(
+                            "UPDATE orgs_organizations SET name = :name, time_zone = :zone WHERE id = :id"
+                        )
                         .bind("name", name)
+                        .bind("zone", timeZone)
                         .bind("id", id)
                 )
                 .getOrThrow()
         }
     }
 
-    override suspend fun delete(id: Uuid, at: Instant) {
+    override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
         driver.inOrg(id) {
             execute(
                     Statement.create("DELETE FROM orgs_invitations WHERE org_id = :id")
@@ -149,7 +153,58 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
                 .getOrThrow()
             execute(
                     Statement.create(
-                            "UPDATE orgs_organizations SET deleted_at = :at, free_claim = NULL WHERE id = :id"
+                            "UPDATE orgs_organizations SET deleted_at = :at, purge_after = :purge, " +
+                                "free_claim = NULL WHERE id = :id"
+                        )
+                        .bind("at", at)
+                        .bind("purge", purgeAfter)
+                        .bind("id", id)
+                )
+                .getOrThrow()
+        }
+    }
+
+    // Across organizations: the serving role reaches the deleted ones only through these functions.
+    override suspend fun deletionsToSettle(limit: Int): List<Uuid> =
+        driver
+            .fetchAll(
+                Statement.create("SELECT id FROM orgs_deletions_to_settle(CAST(:limit AS INTEGER)) id")
+                    .bind("limit", limit)
+            )
+            .getOrThrow()
+            .map { it.get("id").asUuid() }
+
+    override suspend fun markSettled(id: Uuid, at: Instant) {
+        driver.inOrg(id) {
+            execute(
+                    Statement.create(
+                            "UPDATE orgs_organizations SET deletion_settled_at = :at WHERE id = :id"
+                        )
+                        .bind("at", at)
+                        .bind("id", id)
+                )
+                .getOrThrow()
+        }
+    }
+
+    override suspend fun duePurges(now: Instant, limit: Int): List<Uuid> =
+        driver
+            .fetchAll(
+                Statement.create(
+                        "SELECT id FROM orgs_due_purges(CAST(:now AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) id"
+                    )
+                    .bind("now", now)
+                    .bind("limit", limit)
+            )
+            .getOrThrow()
+            .map { it.get("id").asUuid() }
+
+    override suspend fun erase(id: Uuid, at: Instant) {
+        driver.inOrg(id) {
+            execute(
+                    Statement.create(
+                            "UPDATE orgs_organizations SET name = '', github_org_id = NULL, time_zone = 'UTC', " +
+                                "purged_at = :at WHERE id = :id AND deleted_at IS NOT NULL"
                         )
                         .bind("at", at)
                         .bind("id", id)
@@ -408,6 +463,7 @@ private fun ResultSet.Row.toOrg() =
         githubOrgId = get("github_org_id").asStringOrNull()?.toLong(),
         freeClaim = get("free_claim").asStringOrNull(),
         createdAt = get("created_at").asInstant(),
+        timeZone = get("time_zone").asString(),
     )
 
 private fun ResultSet.Row.toMember() =

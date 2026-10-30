@@ -33,6 +33,11 @@ class SettableClock(var now: Instant = Instant.parse("2026-10-30T10:00:00Z")) : 
 class OrgsStore {
     val orgs = mutableMapOf<Uuid, Org>()
     val deleted = mutableSetOf<Uuid>()
+
+    /** When each deleted organization may be erased. */
+    val purgeAfter = mutableMapOf<Uuid, Instant>()
+    val settled = mutableSetOf<Uuid>()
+    val erased = mutableSetOf<Uuid>()
     val members = mutableMapOf<Uuid, Member>()
     val invitations = mutableMapOf<Uuid, Pair<Invitation, String>>()
 }
@@ -62,15 +67,38 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
     override suspend fun slugTaken(slug: String): Boolean =
         store.orgs.values.any { it.slug == slug }
 
-    override suspend fun rename(id: Uuid, name: String) {
-        store.orgs[id] = store.orgs.getValue(id).copy(name = name)
+    /** How many times [update] wrote. */
+    var updates = 0
+
+    override suspend fun update(id: Uuid, name: String, timeZone: String) {
+        updates++
+        store.orgs[id] = store.orgs.getValue(id).copy(name = name, timeZone = timeZone)
     }
 
-    override suspend fun delete(id: Uuid, at: Instant) {
+    override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
         store.deleted += id
+        store.purgeAfter[id] = purgeAfter
         store.orgs[id] = store.orgs.getValue(id).copy(freeClaim = null)
         store.members.values.removeAll { it.orgId == id }
         store.invitations.values.removeAll { it.first.orgId == id }
+    }
+
+    override suspend fun deletionsToSettle(limit: Int): List<Uuid> =
+        store.deleted.filter { it !in store.settled }.take(limit)
+
+    override suspend fun markSettled(id: Uuid, at: Instant) {
+        store.settled += id
+    }
+
+    override suspend fun duePurges(now: Instant, limit: Int): List<Uuid> =
+        store.purgeAfter
+            .filter { (id, after) -> id in store.settled && id !in store.erased && after <= now }
+            .keys
+            .take(limit)
+
+    override suspend fun erase(id: Uuid, at: Instant) {
+        store.erased += id
+        store.orgs[id] = store.orgs.getValue(id).copy(name = "", githubOrgId = null, timeZone = "UTC")
     }
 
     override suspend fun listOfUser(userId: Uuid): List<Membership> =
