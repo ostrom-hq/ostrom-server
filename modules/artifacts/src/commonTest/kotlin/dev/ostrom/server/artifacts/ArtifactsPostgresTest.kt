@@ -241,9 +241,16 @@ class ArtifactsPostgresTest {
             HttpStatusCode.NotFound,
             client.get("/api/v1/artifacts/${created.id}") { bearerAuth("bob") }.status,
         )
+        // Only the owner shares a personal artifact, which stays personal for those it is shared with.
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            client.put("/api/v1/artifacts/${created.id}/members/$BOB") { bearerAuth("dave") }.status,
+        )
         val share = client.put("/api/v1/artifacts/${created.id}/members/$BOB") { bearerAuth("alice") }
         assertEquals(HttpStatusCode.NoContent, share.status)
-        assertEquals(HttpStatusCode.OK, client.get("/api/v1/artifacts/${created.id}") { bearerAuth("bob") }.status)
+        val shared = client.get("/api/v1/artifacts/${created.id}") { bearerAuth("bob") }
+        assertEquals(HttpStatusCode.OK, shared.status)
+        assertEquals("personal", shared.body<ArtifactResponse>().access)
         val members = client.get("/api/v1/artifacts/${created.id}/members") { bearerAuth("bob") }
             .body<ArtifactMembersResponse>()
         assertEquals(listOf(BOB.toString()), members.members)

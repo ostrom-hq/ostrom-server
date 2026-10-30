@@ -21,10 +21,14 @@ interface ManageArtifactUseCase {
     suspend fun members(caller: ArtifactCaller, id: Uuid): List<String>
 
     /**
-     * Shares the artifact with a member of the organization, or stops.
+     * Shares the artifact with a member of the organization, or stops. Sharing a `personal` artifact keeps it
+     * `personal` and adds the member to its readers (the console calls that state "members"); only its owner shares
+     * it, while an administrator may still stop a share.
      *
      * @param member The member's id.
      * @param share True to share, false to stop.
+     *
+     * @throws ArtifactNotWritableException When an administrator shares another member's `personal` artifact.
      */
     suspend fun share(caller: ArtifactCaller, id: Uuid, member: String, share: Boolean)
 
@@ -67,7 +71,9 @@ internal class ManageArtifactUseCaseImpl(
     }
 
     override suspend fun share(caller: ArtifactCaller, id: Uuid, member: String, share: Boolean) {
-        rules.manageable(caller, id)
+        val artifact = rules.manageable(caller, id)
+        val othersPersonal = artifact.access == ArtifactAccess.PERSONAL && artifact.ownerId != caller.memberId
+        if (share && othersPersonal) throw ArtifactNotWritableException()
         ensureValid(Uuid.parseOrNull(member) != null) { "Name the member by their id." }
         repository.setMember(caller.orgId, id, member, share)
     }

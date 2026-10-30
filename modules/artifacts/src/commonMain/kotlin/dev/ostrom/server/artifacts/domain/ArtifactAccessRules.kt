@@ -6,7 +6,8 @@ import kotlin.uuid.Uuid
 /**
  * Who may do what with an artifact. Reading: the owner, an administrator, every member for `team` and `link`,
  * and the members it is shared with. Publishing a version: the owner. Changing access, sharing and deleting: the
- * owner or an administrator. Another organization's artifact is never visible.
+ * owner or an administrator, except sharing a `personal` artifact, which only its owner does. Another
+ * organization's artifact is never visible.
  *
  * @param repository Where shares are read.
  */

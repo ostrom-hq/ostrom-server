@@ -121,6 +121,15 @@ class ArtifactUseCasesTest {
         manage.share(alice, personal.id, bob.memberId, share = false)
         assertFailsWith<ArtifactNotFoundException> { read.get(bob, personal.id) }
         assertFailsWith<InvalidArtifactRequestException> { manage.share(alice, personal.id, "bob", share = true) }
+        // A personal artifact is shared by its owner alone; it stays personal, read by those it is shared with.
+        assertFailsWith<ArtifactNotWritableException> { manage.share(dave, personal.id, bob.memberId, share = true) }
+        assertFailsWith<ArtifactNotFoundException> { read.get(bob, personal.id) }
+        manage.share(alice, personal.id, bob.memberId, share = true)
+        assertEquals(ArtifactAccess.PERSONAL, read.get(bob, personal.id).access)
+        manage.share(dave, personal.id, bob.memberId, share = false)
+        assertFailsWith<ArtifactNotFoundException> { read.get(bob, personal.id) }
+        manage.share(dave, team.id, bob.memberId, share = true)
+        assertEquals(listOf(bob.memberId), manage.members(bob, team.id))
 
         assertFailsWith<ArtifactNotWritableException> { publish.addVersion(bob, team.id, page()) }
         assertFailsWith<ArtifactNotWritableException> { publish.addVersion(dave, team.id, page()) }
