@@ -58,7 +58,7 @@ class WaitsMcpTest {
     @Test
     fun theProtocolIsNegotiatedAndTheToolsListed() = serverTest(listOf(AutomationsModule), testIdentities) { server ->
         val client = server.client
-        fun initialize(params: String) =
+        suspend fun initialize(params: String) =
             client.json("""{"jsonrpc":"2.0","id":1,"method":"initialize"$params}""").getValue("result").jsonObject
         val result = initialize(""","params":{"protocolVersion":"2024-11-05"}""")
         assertEquals("2024-11-05", result.getValue("protocolVersion").jsonPrimitive.content)
