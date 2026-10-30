@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.runners.domain.CloudSessionsRepository
@@ -48,7 +49,11 @@ class TerminalRoutesTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val tokens = server.koin.get<RunnerTokens>()
         val token = tokens.mint()
-        val running = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0).copy(epoch = 2, runnerTokenHash = tokens.hash(token))
+        val running = session(
+            ownerId = ALICE.toString(),
+            state = SessionState.RUNNING,
+            createdAt = t0,
+        ).copy(epoch = 2, runnerTokenHash = tokens.hash(token))
         repository.createWithinCap(running, 5)
         val ws: HttpClient = createClient { install(WebSockets) }
 
@@ -62,7 +67,13 @@ class TerminalRoutesTest {
                 send(Frame.Binary(true, "ls\r".encodeToByteArray()))
                 assertEquals("ls\r", (runner.incoming.receive() as Frame.Binary).readBytes().decodeToString())
                 send("""{"type":"resize","columns":120,"rows":40}""")
-                assertEquals(TerminalControl.Resize(120, 40), TerminalJson.decodeFromString(TerminalControl.serializer(), (runner.incoming.receive() as Frame.Text).readText()))
+                assertEquals(
+                    TerminalControl.Resize(120, 40),
+                    TerminalJson.decodeFromString(
+                        TerminalControl.serializer(),
+                        (runner.incoming.receive() as Frame.Text).readText(),
+                    ),
+                )
                 // Out-of-range sizes are ignored; an unknown frame closes the socket.
                 send("""{"type":"resize","columns":0,"rows":40}""")
                 send("""{"type":"runner","connected":false}""")
@@ -83,7 +94,9 @@ class TerminalRoutesTest {
     fun aBrowserOpensTheTerminalWithASingleUseTicket() = serverTest(listOf(RunnersModule), identities) { server ->
         val live = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0)
         server.koin.get<CloudSessionsRepository>().createWithinCap(live, 5)
-        val ticket = server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("alice") }.body<TerminalTicketResponse>()
+        val ticket = server.client.post(
+            "/api/v1/cloud/sessions/${live.id}/terminal/ticket",
+        ) { bearerAuth("alice") }.body<TerminalTicketResponse>()
         val ws = createClient { install(WebSockets) }
 
         ws.webSocket("/api/v1/cloud/sessions/${live.id}/terminal?ticket=${ticket.ticket}") {
@@ -92,27 +105,47 @@ class TerminalRoutesTest {
         ws.webSocket("/api/v1/cloud/sessions/${live.id}/terminal?ticket=${ticket.ticket}") {
             assertEquals(TerminalCloseCodes.UNAUTHORIZED, closeCode())
         }
-        assertEquals(HttpStatusCode.Forbidden, server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("reader") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("carol") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/cloud/sessions/nope/terminal/ticket") { bearerAuth("alice") }.status)
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("reader") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("carol") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.post("/api/v1/cloud/sessions/nope/terminal/ticket") { bearerAuth("alice") }.status,
+        )
     }
 
     @Test
     fun theTerminalRefusesStrangersAndOverSessions() = serverTest(listOf(RunnersModule), identities) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
         val live = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0)
-        val over = session(ownerId = ALICE.toString(), state = SessionState.TERMINATED, desired = DesiredState.TERMINATED, createdAt = t0)
+        val over = session(
+            ownerId = ALICE.toString(),
+            state = SessionState.TERMINATED,
+            desired = DesiredState.TERMINATED,
+            createdAt = t0,
+        )
         repository.createWithinCap(live, 5)
         repository.createWithinCap(over, 5)
         val ws = createClient { install(WebSockets) }
 
         suspend fun code(path: String, token: String?): Short? {
             var code: Short? = null
-            ws.webSocket(path, request = { if (token != null) header(HttpHeaders.Authorization, token) }) { code = closeCode() }
+            ws.webSocket(
+                path,
+                request = { if (token != null) header(HttpHeaders.Authorization, token) },
+            ) { code = closeCode() }
             return code
         }
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/api/v1/cloud/sessions/${live.id}/terminal", null))
-        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/api/v1/cloud/sessions/${live.id}/terminal", "Bearer unknown"))
+        assertEquals(
+            TerminalCloseCodes.UNAUTHORIZED,
+            code("/api/v1/cloud/sessions/${live.id}/terminal", "Bearer unknown"),
+        )
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/api/v1/cloud/sessions/${live.id}/terminal", "alice"))
         assertEquals(TerminalCloseCodes.FORBIDDEN, code("/api/v1/cloud/sessions/${live.id}/terminal", "Bearer reader"))
         assertEquals(TerminalCloseCodes.NOT_FOUND, code("/api/v1/cloud/sessions/${live.id}/terminal", "Bearer carol"))
@@ -125,19 +158,29 @@ class TerminalRoutesTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val tokens = server.koin.get<RunnerTokens>()
         val token = tokens.mint()
-        val running = session(ownerId = ALICE.toString(), state = SessionState.RUNNING, createdAt = t0).copy(epoch = 2, runnerTokenHash = tokens.hash(token))
+        val running = session(
+            ownerId = ALICE.toString(),
+            state = SessionState.RUNNING,
+            createdAt = t0,
+        ).copy(epoch = 2, runnerTokenHash = tokens.hash(token))
         repository.createWithinCap(running, 5)
         val ws = createClient { install(WebSockets) }
 
         suspend fun code(query: String, auth: String?): Short? {
             var code: Short? = null
-            ws.webSocket("/api/v1/cloud/runner/terminal$query", request = { if (auth != null) header(HttpHeaders.Authorization, auth) }) { code = closeCode() }
+            ws.webSocket(
+                "/api/v1/cloud/runner/terminal$query",
+                request = { if (auth != null) header(HttpHeaders.Authorization, auth) },
+            ) { code = closeCode() }
             return code
         }
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=${running.id}&epoch=2", null))
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=${running.id}", "Bearer $token"))
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=nope&epoch=2", "Bearer $token"))
-        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=${running.id}&epoch=2", "Bearer ostrom_runner_wrong"))
+        assertEquals(
+            TerminalCloseCodes.UNAUTHORIZED,
+            code("?sessionId=${running.id}&epoch=2", "Bearer ostrom_runner_wrong"),
+        )
         assertEquals(TerminalCloseCodes.CONFLICT, code("?sessionId=${running.id}&epoch=1", "Bearer $token"))
         assertEquals(TerminalCloseCodes.CONFLICT, code("?sessionId=${Uuid.random()}&epoch=2", "Bearer $token"))
     }

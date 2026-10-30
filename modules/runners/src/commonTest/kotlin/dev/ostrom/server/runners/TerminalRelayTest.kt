@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.runners.infrastructure.Scrollback
@@ -24,7 +25,9 @@ class TerminalRelayTest {
         while (true) add(tryReceive().getOrNull() ?: break)
     }
 
-    private fun List<ClientBound>.text(): String = filterIsInstance<ClientBound.Output>().joinToString("") { it.bytes.decodeToString() }
+    private fun List<ClientBound>.text(): String = filterIsInstance<ClientBound.Output>().joinToString(
+        "",
+    ) { it.bytes.decodeToString() }
 
     @Test
     fun aClientSeesTheRunnerComeAndGoAndItsOutput() = runTest {
