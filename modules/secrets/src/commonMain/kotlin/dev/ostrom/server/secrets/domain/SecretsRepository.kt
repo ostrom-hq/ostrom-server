@@ -48,12 +48,12 @@ interface SecretsRepository {
      *
      * @param orgId The org.
      * @param memberId The member, or null for every secret (admins).
-     * @param afterName Keyset cursor: names strictly after it.
+     * @param after Keyset cursor: secrets strictly after it, by name then id.
      * @param limit The page size.
      *
-     * @return The secrets, by name.
+     * @return The secrets, by name then id.
      */
-    suspend fun list(orgId: Uuid, memberId: Uuid?, afterName: String?, limit: Int): List<Secret>
+    suspend fun list(orgId: Uuid, memberId: Uuid?, after: SecretCursor?, limit: Int): List<Secret>
 
     /**
      * Replaces a value and bumps the version.
@@ -68,11 +68,11 @@ interface SecretsRepository {
     suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant, updatedBy: Uuid): Secret?
 
     /**
-     * Finds a secret by its name.
+     * Finds secrets by name, in one query.
      *
-     * @param ownerMemberId The member for a personal secret, null for an org secret.
+     * @param ownerMemberId The member for personal secrets, null for org secrets.
      */
-    suspend fun findByName(orgId: Uuid, ownerMemberId: Uuid?, name: String): Secret?
+    suspend fun findManyByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): List<Secret>
 
     /** Org secrets (not personal ones) by name, with their envelopes. */
     suspend fun getOrgSecretsByName(orgId: Uuid, names: Collection<String>): List<StoredSecret>
