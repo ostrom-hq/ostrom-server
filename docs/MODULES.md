@@ -78,11 +78,19 @@ val OrgsMigrations = listOf(
 - Each module has its **own** version sequence (1, 2, 3… without gaps) in its own table `_migrations_<name>`:
   two modules never compete for a number.
 - **Every table starts with the module name** (`orgs_…`, `instance_…`).
-- An applied migration is never edited (its checksum is verified at each start and the server refuses to start);
-  add a new version instead.
-- PostgreSQL 15 or later: unique indexes use `NULLS NOT DISTINCT`, and the first start creates the `ostrom_tenant`
-  role of row-level security, so the server's database user needs `CREATEROLE` (or an administrator creates the role
-  first).
+- Migrations are applied by **`ostrom-server migrate`**, with the owner's credentials
+  (`OSTROM_DATABASE_MIGRATION_URL`), under a PostgreSQL advisory lock: init containers or replicas that migrate at
+  once wait for each other. The serving process never migrates: at start it checks that every migration is applied
+  unchanged, and refuses to start otherwise (run `migrate` first).
+- An applied migration is never edited (its checksum is verified by `migrate` and at each start); add a new version
+  instead.
+- **A table holding an organization's data** has `org_id`, `ENABLE` and `FORCE ROW LEVEL SECURITY` and its policy in
+  the same migration (CONVENTIONS 16.1, [tenancy.md](tenancy.md)):
+  `USING (org_id = CAST(nullif(current_setting('ostrom.org_id', true), '') AS uuid))` and the same `WITH CHECK`.
+- PostgreSQL 15 or later: unique indexes use `NULLS NOT DISTINCT`. Some modules' migrations create the `ostrom_tenant`
+  role their queries switch to (`SET LOCAL ROLE`): the owner that runs `migrate` needs `CREATEROLE`, and the serving
+  role must be a member of `ostrom_tenant` (ci/database-roles.sql creates it beforehand and grants it to both, as a
+  deployment must). Their `inTenant` converges on the kernel's `withOrganization`, which needs no role switch.
 - Plain PostgreSQL. Statements are split on `;`. **No `::type` casts** (write `CAST(x AS type)`): the driver reads
   `:name` as a named parameter.
 - Modules migrate in the order of `serverModules()`: a module whose tables reference another module's tables comes
@@ -103,6 +111,9 @@ driver.fetchAll(Statement.create("SELECT id, name, created_at FROM orgs_organiza
 - Always bind values (`:name`), never concatenate them into SQL.
 - `Result` from sqlx4k is unwrapped with `getOrThrow()` in the repository; the domain never sees `Result`.
 - Transactions: `driver.transaction { execute(…).getOrThrow(); … }`.
+- **Tenant tables only through `driver.withOrganization(orgId) { tx -> … }`**: it opens the transaction and sets
+  `ostrom.org_id` for it alone, so row-level security shows and accepts that organization's rows only. The repository
+  of a tenant table receives the transaction, never the pool. Outside it, a tenant table shows no row.
 - `Uuid` (kotlin.uuid), `Instant` (kotlin.time), `String`, numbers, `Boolean`, `ByteArray` bind directly.
 
 ## 5. Routes and errors
@@ -159,6 +170,10 @@ Every request is already logged once by the kernel (method, path, status, durati
   a fresh PostgreSQL database, applies the migrations, runs `initialize`, serves the routes, and drops the database
   afterwards. Fakes replace real bindings through `overrides = module { single<TokenAuthenticator> { … } }`.
   Name these classes `*PostgresTest`.
+- **Isolation tests** (one per tenant table, CONVENTIONS 16.1): `serverTest` and `TestDatabase` connect as the test
+  database's owner, a superuser that bypasses row-level security. Prove the isolation as a serving role instead:
+  `database.withRole { role, serving -> … }` creates a login role that owns nothing (grant it the module's tables),
+  connects as it, and drops it afterwards; `kernel/…/TenancyPostgresTest.kt` is the model.
 - Locally: `docker compose up -d postgres`,
   `export OSTROM_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres`, then
   `./gradlew :modules:orgs:jvmTest :modules:orgs:koverHtmlReport` (always through `.coord/build-lock.sh` on the shared
@@ -188,6 +203,11 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | Pool size |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `OSTROM_TRUSTED_PROXIES` | none | Comma-separated networks (`10.0.0.0/8, fd00::/8`) of the reverse proxies whose `X-Forwarded-For` is believed: the client is the right-most hop that is not one of them. With none, the header is ignored and the client is the socket's peer |
+| `OSTROM_SHUTDOWN_DELAY_SECONDS` | `5` | 0 to 10: after SIGTERM, how long the server keeps serving with `/ready` at 503 before stopping the engine (then up to 15 s for requests in flight: at most 25 s, within the Helm grace period of 30 s) |
+| `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
+| `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
+| `OSTROM_ALLOW_TEST_ACCOUNTS` | — | `true` lets `ostrom-server seed-test-account` run; never set in production |
 | `OSTROM_SECRETS_KEY` | — | The secrets key, base64 of 32 bytes (AES-256-GCM); wins over the file. Losing it loses every stored secret |
 | `OSTROM_SECRETS_KEY_FILE` | `data/secrets.key` | File of the secrets key, created with mode 0600 at first start when `OSTROM_SECRETS_KEY` is unset; keep it on a persistent volume |
 | `OSTROM_USAGE_RETENTION_DAYS` | `400` | Days the usage ledger keeps its events (1 to 3650); older ones are purged every hour |
@@ -200,11 +220,26 @@ A module that needs its own keys reads them from the `ConfigSource` bound in Koi
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
 `serverTest`, give it values with `overrides = module { single<ConfigSource> { MapConfigSource(mapOf(…)) } }`.
 
+## Commands
+
+| Command | What it does | Exit |
+|---|---|---|
+| `ostrom-server` (or `serve`) | Refuses a database role that is a superuser, has `BYPASSRLS`, or owns a table or is a member of its owner, checks the migrations, serves. On SIGTERM or SIGINT: `/ready` at 503 for `OSTROM_SHUTDOWN_DELAY_SECONDS`, then the engine stops and the pool closes | 0 after a graceful stop, 1 on a failure, 2 on an invalid configuration |
+| `ostrom-server migrate` | Applies every module's migrations with `OSTROM_DATABASE_MIGRATION_URL`, under the advisory lock | 0, 1 on a failure, 2 without the URL |
+| `ostrom-server seed-test-account <email>` | With `OSTROM_ALLOW_TEST_ACCOUNTS=true`, creates a test account through the module that binds `TestAccountSeeder` (identity) and prints `{"email","token","organizationId"}` on one line | 0, 2 when refused or when no module binds the seeder |
+
+The probes: `GET /health` (liveness: 200 while the dependencies answer, also while draining) and `GET /ready`
+(readiness: 200 `ready`, 503 `degraded` or `draining`), both unauthenticated.
+
+The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
+`migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
+through `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, `SELECT, INSERT, UPDATE, DELETE` on its tables and `USAGE, SELECT`
+on its sequences. CI's smoke test sets them up the same way.
+
 ## Known limits of the foundation
 
-- **No graceful shutdown on SIGTERM yet**: the process stops without draining requests or closing the pool.
-- **Migrations of several replicas starting at once are not serialized** (no advisory lock: the sqlx4k pool does not
-  pin a connection for the migrator). Start one replica first after a release that adds migrations.
+- **The in-memory limits are per replica**: a rate limit keyed on the client address (now the real one behind
+  `OSTROM_TRUSTED_PROXIES`) counts each pod apart.
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the

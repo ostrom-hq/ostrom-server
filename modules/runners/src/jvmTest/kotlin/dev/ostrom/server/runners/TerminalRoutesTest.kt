@@ -48,6 +48,14 @@ class TerminalRoutesTest {
     private suspend fun DefaultClientWebSocketSession.nextControl(): TerminalControl =
         TerminalJson.decodeFromString(TerminalControl.serializer(), (incoming.receive() as Frame.Text).readText())
 
+    // The runner's socket is open once its handshake ends, a moment before the relay knows it: a member who comes in
+    // between first hears that no runner is there, then the runner arriving.
+    private suspend fun DefaultClientWebSocketSession.awaitRunner() {
+        val first = nextControl()
+        val control = if (first == TerminalControl.Runner(false)) nextControl() else first
+        assertEquals(TerminalControl.Runner(true), control)
+    }
+
     @Test
     fun aMemberAndTheRunnerTalkThroughTheRelay() = serverTest(listOf(RunnersModule), identities) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
@@ -64,7 +72,7 @@ class TerminalRoutesTest {
         ws.webSocket("/api/v1/cloud/runner/terminal?sessionId=${running.id}&epoch=2", request = { bearerAuth(token) }) {
             val runner = this
             ws.webSocket("/api/v1/cloud/sessions/${running.id}/terminal", request = { bearerAuth("alice") }) {
-                assertEquals(TerminalControl.Runner(true), nextControl())
+                awaitRunner()
                 // A runner's text frame means nothing: only its bytes are output.
                 runner.send("noise")
                 runner.send(Frame.Binary(true, "$ ".encodeToByteArray()))
