@@ -54,7 +54,7 @@ class CloudSessionsPostgresTest {
                     "alice", "bob" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("org:$ORG_A"))
                     "carol" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("org:$ORG_B"))
                     "reader" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("org:$ORG_A", "cloud:read"))
-                    "nobody" -> AuthenticatedPrincipal(token, PrincipalKind.USER)
+                    "nobody" -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                     else -> null
                 }
             }
