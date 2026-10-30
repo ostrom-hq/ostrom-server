@@ -7,9 +7,9 @@ import kotlin.test.assertEquals
 
 class ImportModuleRegistrationTest {
     @Test
-    fun registersUnderItsNameWithoutTables() {
+    fun registersUnderItsNameWithItsProvenanceTable() {
         assertEquals("import", ImportModule.name)
-        assertEquals(emptyList(), ImportModule.migrations)
+        assertEquals(listOf(1), ImportModule.migrations.map { it.version })
         koinApplication { modules(ImportModule.koinModule) }.close()
     }
 }
