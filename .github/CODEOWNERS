@@ -1,0 +1,6 @@
+# Code owners: every pull request asks the maintainers for a review.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+*                   @ostrom-hq/maintainers
+/.github/           @ostrom-hq/maintainers
+/LICENSE            @ostrom-hq/maintainers
+/ee/                @ostrom-hq/maintainers
