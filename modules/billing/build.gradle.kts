@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Module billing: Stripe subscriptions per active person, plan limits, cloud agent usage and alerts.
 plugins {
     id("ostrom.native-module")
