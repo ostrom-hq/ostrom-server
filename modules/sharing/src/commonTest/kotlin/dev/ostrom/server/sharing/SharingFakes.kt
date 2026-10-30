@@ -54,7 +54,7 @@ class ContextCipher : SecretCipher {
 /** A refresher answering what the test says, counting its calls. */
 class FakeRefresher(var result: RefreshResult = RefreshResult.Unavailable) : OAuthRefresher {
     var calls = 0
-    var onRefresh: () -> Unit = {}
+    var onRefresh: suspend () -> Unit = {}
 
     override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials): RefreshResult {
         calls++

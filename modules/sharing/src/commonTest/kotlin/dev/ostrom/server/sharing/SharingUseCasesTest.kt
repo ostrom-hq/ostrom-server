@@ -164,7 +164,7 @@ class SharingUseCasesTest {
             update(
                 Sharing.adminA,
                 account.id,
-                UpdateAccountPayload(label = "Team", limits = AccountLimits(maxConcurrent = 2)),
+                UpdateAccountPayload(label = "Team", limits = { it.copy(maxConcurrent = 2) }),
             )
         assertEquals("Team", changed.label)
         assertEquals(2, changed.limits.maxConcurrent)
