@@ -2,6 +2,7 @@
 package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateDigester
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -36,7 +37,6 @@ import dev.ostrom.server.gates.infrastructure.Sha256GateDigester
 import dev.ostrom.server.gates.infrastructure.UnavailableGateReceiptSigner
 import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
-import dev.ostrom.server.gates.presentation.GateActorResolver
 import dev.ostrom.server.gates.presentation.GatesRoutesDependencies
 import dev.ostrom.server.gates.presentation.gatesRoutes
 import dev.ostrom.server.kernel.database.SchemaMigration

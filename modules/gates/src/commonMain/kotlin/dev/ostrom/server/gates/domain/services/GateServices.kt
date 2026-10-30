@@ -3,9 +3,11 @@ package dev.ostrom.server.gates.domain.services
 
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
 import dev.ostrom.server.gates.domain.models.Gate
+import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import kotlin.uuid.Uuid
 
 /** Hashes the canonical preimages of [dev.ostrom.server.gates.domain.models.GateKeys]. */
@@ -129,4 +131,18 @@ interface PullRequestHeads {
      * @return The pull request, or null when GitHub does not answer or does not know it.
      */
     suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest?
+}
+
+/**
+ * Turns the authenticated principal into the actor of a gate or a session: its organization, its person and, for an
+ * agent token, its launch (the identity module binds the real one; the sessions module uses it too).
+ */
+interface GateActorResolver {
+    /**
+     * Resolves the caller.
+     *
+     * @param principal The authenticated principal.
+     * @return The actor, or null when the credential belongs to no organization.
+     */
+    suspend fun resolve(principal: AuthenticatedPrincipal): GateActor?
 }
