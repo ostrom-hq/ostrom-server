@@ -1,0 +1,57 @@
+# Tests of the Stripe provisioning script (ops/stripe): unit tests with a stateful fake Stripe, integration against
+# stripe-mock, 100 % of lines and branches; then a drift check against the real Stripe test account.
+name: billing-ops
+
+on:
+  pull_request:
+    paths: ["ops/stripe/**", ".github/workflows/billing-ops.yml"]
+  push:
+    branches: [main]
+    paths: ["ops/stripe/**", ".github/workflows/billing-ops.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: billing-ops-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  stripe-provision:
+    name: stripe-provision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      stripe-mock:
+        image: stripe/stripe-mock:latest
+        ports: ["12111:12111"]
+    env:
+      STRIPE_MOCK_URL: http://localhost:12111
+      STRIPE_MOCK_REQUIRED: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install pytest==9.2.0 coverage==7.16.2
+      - name: Tests, 100 % of lines and branches
+        run: |
+          coverage run --branch --include='ops/stripe/provision.py' -m pytest -q ops/stripe/tests
+          coverage report -m --fail-under=100
+
+  # The real test account must match the catalog: a change of catalog.json is applied with provision.py before merge.
+  stripe-test-drift:
+    name: stripe-test-drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: provision.py --check against the Stripe test account
+        env:
+          STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+        run: |
+          umask 077
+          printf '%s' "$STRIPE_TEST_KEY" > "$RUNNER_TEMP/stripe-test.key"
+          python3 ops/stripe/provision.py --env test --key-file "$RUNNER_TEMP/stripe-test.key" --check
