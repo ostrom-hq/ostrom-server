@@ -54,24 +54,26 @@ data class RunnersConfig(
             return RunnersConfig(
                 driver = driver,
                 serverUrl = serverUrl,
-                runnerImage = source["OSTROM_RUNNERS_IMAGE"]?.takeIf { it.isNotBlank() } ?: DEFAULT_RUNNER_IMAGE,
+                runnerImage = source.nonBlank("OSTROM_RUNNERS_IMAGE") ?: DEFAULT_RUNNER_IMAGE,
                 kubernetes = KubernetesSettings(
                     apiUrl = source["OSTROM_RUNNERS_KUBERNETES_API_URL"] ?: KubernetesSettings.IN_CLUSTER_API_URL,
                     namespace = source["OSTROM_RUNNERS_KUBERNETES_NAMESPACE"] ?: "ostrom",
                     tokenFile = source["OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE"]
                         ?: KubernetesSettings.IN_CLUSTER_TOKEN_FILE,
                     caFile = source["OSTROM_RUNNERS_KUBERNETES_CA_FILE"] ?: KubernetesSettings.IN_CLUSTER_CA_FILE,
-                    storageClass = source["OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS"]?.takeIf { it.isNotBlank() },
+                    storageClass = source.nonBlank("OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS"),
                     workspaceSize = source["OSTROM_RUNNERS_WORKSPACE_SIZE"] ?: "10Gi",
-                    imagePullSecret = source["OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET"]?.takeIf { it.isNotBlank() },
+                    imagePullSecret = source.nonBlank("OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET"),
                 ),
                 docker = DockerSettings(
                     apiUrl = source["OSTROM_RUNNERS_DOCKER_API_URL"] ?: "http://127.0.0.1:2375",
-                    network = source["OSTROM_RUNNERS_DOCKER_NETWORK"]?.takeIf { it.isNotBlank() },
+                    network = source.nonBlank("OSTROM_RUNNERS_DOCKER_NETWORK"),
                 ),
                 allowedOrgs = allowedOrgs(source["OSTROM_RUNNERS_ALLOWED_ORGS"].orEmpty()),
             )
         }
+
+        private fun ConfigSource.nonBlank(key: String): String? = this[key]?.takeIf { it.isNotBlank() }
 
         private fun driverKind(raw: String?): DriverKind = when (raw) {
             null, "", "none" -> DriverKind.NONE

@@ -6,7 +6,7 @@ import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -35,10 +35,10 @@ class ReconcilerWorker(
     private val idleDelay: Duration = DEFAULT_IDLE_DELAY,
 ) {
     /** Runs passes until the calling coroutine is cancelled. */
-    suspend fun run() {
-        while (currentCoroutineContext().isActive) {
-            val worked = pass()
-            if (worked == 0) delay(idleDelay)
+    suspend fun run(): Nothing {
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            if (pass() == 0) delay(idleDelay)
         }
     }
 
@@ -72,15 +72,15 @@ class ReconcilerWorker(
     }
 
     private companion object {
-        val RETRY_DELAY = 30.seconds
+        private val RETRY_DELAY = 30.seconds
 
         /** How long a claimed session stays this replica's. */
-        val DEFAULT_LEASE = 60.seconds
+        private val DEFAULT_LEASE = 60.seconds
 
         /** Sessions claimed per pass. */
         const val DEFAULT_BATCH = 8
 
         /** The pause between two passes that found nothing to do. */
-        val DEFAULT_IDLE_DELAY = 1.seconds
+        private val DEFAULT_IDLE_DELAY = 1.seconds
     }
 }
