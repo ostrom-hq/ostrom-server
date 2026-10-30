@@ -87,16 +87,16 @@ class GatesPostgresTest {
                         token,
                         PrincipalKind.USER,
                         setOf(GateScopes.ALL_USER),
-                        PrincipalChannel.BROWSER,
-                        Clock.System.now() - if (token.startsWith("stale")) 10.minutes else 0.minutes,
+                        channel = PrincipalChannel.BROWSER,
+                        authenticatedAt = Clock.System.now() - if (token.startsWith("stale")) 10.minutes else 0.minutes,
                     )
                     // The app: the biometric unlock is its fresh proof.
                     "app" -> AuthenticatedPrincipal(
                         token,
                         PrincipalKind.USER,
                         setOf(GateScopes.ANSWER),
-                        PrincipalChannel.MOBILE_APP,
-                        Clock.System.now(),
+                        channel = PrincipalChannel.MOBILE_APP,
+                        authenticatedAt = Clock.System.now(),
                     )
                     // A personal token of the CLI: a person's, with every scope, yet readable by the agent (S2-31).
                     "cli" ->
@@ -107,7 +107,7 @@ class GatesPostgresTest {
                         token,
                         PrincipalKind.USER,
                         setOf(GateScopes.READ),
-                        PrincipalChannel.BROWSER,
+                        channel = PrincipalChannel.BROWSER,
                     )
                     "device" -> AuthenticatedPrincipal(token, PrincipalKind.DEVICE, setOf(GateScopes.ANSWER))
                     "runner" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.ASK))
