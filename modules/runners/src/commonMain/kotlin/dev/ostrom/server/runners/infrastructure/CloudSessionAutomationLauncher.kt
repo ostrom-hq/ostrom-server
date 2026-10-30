@@ -51,6 +51,7 @@ internal class CloudSessionAutomationLauncher(
 
     override suspend fun isWorking(orgId: Uuid, sessionId: String): Boolean {
         val id = Uuid.parseOrNull(sessionId) ?: return false
-        return repository.get(orgId, id)?.state?.holdsExecution == true
+        val session = repository.get(orgId, id)
+        return session != null && session.state.holdsExecution
     }
 }
