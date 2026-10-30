@@ -151,4 +151,31 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX identity_magic_links_expiry ON identity_magic_links (expires_at)
         """.trimIndent(),
     ),
+    // S2-07: an OAuth attempt started by a signed-in user links the provider to that user.
+    // S2-01: every identity table with an org_id is ENABLE + FORCE row level security, so the owner role is bound too.
+    // The organization rows are only seen inside their organization (inOrg); outside any organization (account-level
+    // work: authenticating a token, a user's own audit log), the serving role sees the rows that are no organization's
+    // (audit) or the tokens by their hash; the tenant role without an organization sees nothing (fail-closed).
+    SchemaMigration(
+        version = 3,
+        name = "link_identities_and_force_tenancy",
+        sql = """
+            ALTER TABLE identity_oauth_attempts ADD COLUMN link_user_id UUID REFERENCES identity_users (id) ON DELETE CASCADE;
+            ALTER TABLE identity_audit_events FORCE ROW LEVEL SECURITY;
+            CREATE POLICY identity_audit_events_account ON identity_audit_events
+                USING (org_id IS NULL AND NULLIF(current_setting('ostrom.org_id', true), '') IS NULL
+                    AND current_user <> 'ostrom_tenant')
+                WITH CHECK (org_id IS NULL AND NULLIF(current_setting('ostrom.org_id', true), '') IS NULL
+                    AND current_user <> 'ostrom_tenant');
+            ALTER TABLE identity_api_tokens ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE identity_api_tokens FORCE ROW LEVEL SECURITY;
+            CREATE POLICY identity_api_tokens_tenant ON identity_api_tokens
+                USING (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID))
+                WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID));
+            CREATE POLICY identity_api_tokens_account ON identity_api_tokens
+                USING (NULLIF(current_setting('ostrom.org_id', true), '') IS NULL AND current_user <> 'ostrom_tenant')
+                WITH CHECK (NULLIF(current_setting('ostrom.org_id', true), '') IS NULL AND current_user <> 'ostrom_tenant');
+            GRANT SELECT ON identity_api_tokens TO ostrom_tenant
+        """.trimIndent(),
+    ),
 )

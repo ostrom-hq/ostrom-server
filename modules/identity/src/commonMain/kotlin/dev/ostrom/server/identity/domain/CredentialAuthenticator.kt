@@ -11,7 +11,8 @@ import kotlin.time.Instant
  * The server's [TokenAuthenticator]: resolves API tokens (`Authorization: Bearer`) and browser sessions (cookie +
  * CSRF header). One indexed read per request; the last-use date is written at most every [SESSION_TOUCH_INTERVAL].
  *
- * - A personal or CLI token acts as its user, limited to its scopes.
+ * - A personal or CLI token acts as its user, limited to its scopes, and never to more than [grantedScopes] allows
+ *   for its kind: whatever its row says, a token never answers a gate (S2-04, S2-31).
  * - An agent token is an [PrincipalKind.AGENT] whose subject is its agent session, with the single [AGENT_SCOPE]:
  *   it never passes a console route (audit A2) and can only act on that session.
  * - A browser session acts as its user with all their rights, and needs the CSRF token on state-changing requests.
@@ -39,14 +40,14 @@ class CredentialAuthenticatorImpl(
             TokenKind.AGENT -> AuthenticatedPrincipal(
                 subjectId = checkNotNull(stored.agentSessionId) { "An agent token has no agent session." },
                 kind = PrincipalKind.AGENT,
-                scopes = setOf(AGENT_SCOPE),
+                scopes = grantedScopes(stored.kind, stored.scopes),
                 credentialId = stored.id.toString(),
                 orgId = stored.orgId?.toString(),
             )
             TokenKind.PERSONAL, TokenKind.CLI -> AuthenticatedPrincipal(
                 subjectId = stored.userId.toString(),
                 kind = PrincipalKind.USER,
-                scopes = stored.scopes,
+                scopes = grantedScopes(stored.kind, stored.scopes),
                 credentialId = stored.id.toString(),
                 orgId = stored.orgId?.toString(),
             )

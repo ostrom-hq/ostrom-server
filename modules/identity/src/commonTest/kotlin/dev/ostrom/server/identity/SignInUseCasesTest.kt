@@ -1,10 +1,12 @@
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.AccountLinkRequiredException
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.InvalidEmailException
 import dev.ostrom.server.identity.domain.InvalidMagicLinkException
 import dev.ostrom.server.identity.domain.InvalidSignInStateException
+import dev.ostrom.server.identity.domain.LinkIdentityUseCaseImpl
 import dev.ostrom.server.identity.domain.Mail
 import dev.ostrom.server.identity.domain.MailNotSentException
 import dev.ostrom.server.identity.domain.ProviderNotConfiguredException
@@ -55,7 +57,9 @@ class SignInUseCasesTest {
     private val startSession = StartWebSessionUseCaseImpl(sessions, generator, hasher, clock)
     private val callback = { provider: IdentityProvider -> "https://api.test/v1/auth/${provider.key}/callback" }
     private val start = StartOAuthSignInUseCaseImpl(methods, attempts, generator, hasher, limiter, clock, callback)
-    private val complete = CompleteOAuthSignInUseCaseImpl(methods, attempts, hasher, resolve, startSession, clock, callback)
+    private val link = LinkIdentityUseCaseImpl(users, RecordingAuditLog(), clock)
+    private val complete =
+        CompleteOAuthSignInUseCaseImpl(methods, attempts, hasher, resolve, link, startSession, clock, callback)
     private val request = RequestMagicLinkUseCaseImpl(
         methods, links, mail, generator, hasher, limiter, clock,
         { to, link -> Mail(to, "Sign in", "<a href=\"$link\">", link) }, { "https://app.test/auth/email#token=$it" },
@@ -142,6 +146,24 @@ class SignInUseCasesTest {
         start("github", null, "ip")
         assertFailsWith<ProviderRejectedException> { complete("github", "secret7", "secret7", "bad") }
         assertTrue(users.users.isEmpty())
+    }
+
+    @Test
+    fun anIdentityThatCannotMergeIsLinkedOnlyFromTheSignedInAccount() = runTest {
+        start("github", null, "ip")
+        val ada = complete("github", "secret1", "secret1", "good").user
+        // Google for an address outside Gmail and outside a Workspace of its domain: no sign-in into Ada's account.
+        start("google", null, "ip")
+        assertFailsWith<AccountLinkRequiredException> { complete("google", "secret5", "secret5", "good") }
+        assertEquals(listOf("github"), users.listIssuers(ada.id))
+
+        // Ada, signed in, starts the link herself: the callback links Google to her.
+        start("google", "/settings", "ip", linkTo = ada.id)
+        assertEquals(ada.id, attempts.attempts.getValue("h(secret8)").linkUserId)
+        val linked = complete("google", "secret8", "secret8", "good")
+        assertEquals(ada.id, linked.user.id)
+        assertEquals("/settings", linked.redirectPath)
+        assertEquals(listOf("github", "google"), users.listIssuers(ada.id))
     }
 
     @Test

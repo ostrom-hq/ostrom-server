@@ -63,6 +63,9 @@ class DeviceUseCasesTest {
         val approved = assertIs<DevicePollResult.Approved>(poll("secret1"))
         assertEquals(TokenKind.CLI, approved.token.token.kind)
         assertEquals(CLI_SCOPES, approved.token.token.scopes)
+        // S2-04: the CLI token can neither answer a gate nor edit a workflow (an agent on the machine can read it).
+        val expected = setOf("profile:read", "orgs:read", "workflows:read", "sessions:write")
+        assertEquals(expected, approved.token.token.scopes)
         assertEquals("osc_secret2", approved.token.secret)
         assertEquals(userId, approved.token.token.userId)
         assertEquals(clock.now + CLI_TOKEN_LIFETIME, approved.token.token.expiresAt)

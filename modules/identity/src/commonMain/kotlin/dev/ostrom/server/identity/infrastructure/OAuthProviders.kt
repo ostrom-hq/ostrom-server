@@ -209,6 +209,7 @@ class OidcProvider(
             displayName = claims.name,
             avatarUrl = claims.picture,
             connectionId = connectionId,
+            hostedDomain = claims.hd,
         )
     }
 
@@ -245,6 +246,7 @@ class OidcProvider(
         @SerialName("email_verified") val emailVerified: Boolean? = null,
         val name: String? = null,
         val picture: String? = null,
+        val hd: String? = null,
     ) {
         /** `aud` is a string or an array of strings. */
         val audiences: List<String>

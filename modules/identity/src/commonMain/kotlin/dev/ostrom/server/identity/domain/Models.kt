@@ -29,7 +29,8 @@ data class User(
  * An e-mail address of a user. Only a verified address merges accounts.
  *
  * @property email The address, normalized (lower case, trimmed).
- * @property verified True once a provider or a sign-in link proved the user owns it.
+ * @property verified True once a sign-in link, or a provider that is an authority for the address, proved the user
+ *   owns it (S2-07: an organization's SSO never verifies an address).
  */
 data class UserEmail(
     val email: String,
@@ -72,6 +73,8 @@ enum class IdentityProvider(val key: String) {
  * @property avatarUrl A picture to start the account with.
  * @property login A handle to start the account with (the GitHub login); taken or invalid, another is made.
  * @property connectionId For [IdentityProvider.OIDC], the organization's SSO connection; null otherwise.
+ * @property hostedDomain For Google, the Workspace domain of the account (`hd` claim): its administrator owns the
+ *   addresses of that domain, so Google is an authority for them. Null for a consumer account and other providers.
  */
 data class VerifiedIdentity(
     val provider: IdentityProvider,
@@ -82,6 +85,7 @@ data class VerifiedIdentity(
     val avatarUrl: String? = null,
     val login: String? = null,
     val connectionId: Uuid? = null,
+    val hostedDomain: String? = null,
 ) {
     /** The scope in which [subject] is unique: the provider, plus the connection for organization SSO. */
     val issuer: String get() = connectionId?.let { "${provider.key}:$it" } ?: provider.key
