@@ -206,6 +206,7 @@ private val byToken = mapOf(
     "device-a" to Importing.adminA,
     "cli-read" to Importing.adminA,
     "cli-import" to Importing.adminA,
+    "service-import" to Importing.ownerA,
 )
 
 private val principals = mapOf(
@@ -213,8 +214,23 @@ private val principals = mapOf(
     "device-a" to AuthenticatedPrincipal("device-a", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
     "cli-read" to AuthenticatedPrincipal("cli-read", PrincipalKind.USER, setOf(RelayScopes.MCP_READ)),
     "cli-import" to AuthenticatedPrincipal("cli-import", PrincipalKind.USER, setOf("import:write")),
+    "service-import" to AuthenticatedPrincipal(
+        "000000aa-0000-0000-0000-00000000005e",
+        PrincipalKind.SERVICE,
+        setOf("import:write"),
+    ),
     "stranger" to AuthenticatedPrincipal("stranger", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
 )
+
+/**
+ * The user behind a person's token (`owner-a`, `admin-a`…): its principal's subject.
+ *
+ * @param token The token.
+ */
+fun userOf(token: String): Uuid = Uuid.fromLongs(0xA0, byToken.keys.indexOf(token).toLong())
+
+/** The callers by their principal's subject. */
+private val bySubject = byToken.mapKeys { (token, _) -> principals[token]?.subjectId ?: "${userOf(token)}" }
 
 /** The import tests' bindings: a fixed key, tokens by name, a fake token endpoint, an account import if given. */
 fun importOverrides(accounts: AccountImporter? = null): Module = module {
@@ -223,14 +239,14 @@ fun importOverrides(accounts: AccountImporter? = null): Module = module {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String) = principals[token]
                 ?: byToken[token]?.let {
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
+                    AuthenticatedPrincipal("${userOf(token)}", PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
                 }
         }
     }
     single<CallerResolver> {
         object : CallerResolver {
             override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
-                byToken[principal.subjectId]
+                bySubject[principal.subjectId]
         }
     }
     single<OAuthRefresher> { TeamCodeRefresher() }

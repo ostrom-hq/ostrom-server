@@ -17,15 +17,16 @@ interface ImportTeamCodeUseCase {
      * @param memberMap TeamCode member id to Ostrom member id; unmapped members' assignments are skipped. The ids are
      *   not checked against the org's members: this server has no members port yet.
      * @param dryRun Reports what the import would do without writing anything.
-     * @param cutover The final run, once TeamCode is stopped: an owner only, recorded in the audit log; it also revives
-     *   the shared accounts waiting for a reconnection with TeamCode's tokens ([AccountImporter.begin]).
+     * @param cutoverBy For the final run, once TeamCode is stopped, the user who runs it (null for a normal run): an
+     *   owner only, recorded in the audit log in that user's name; it also revives the shared accounts waiting for a
+     *   reconnection with TeamCode's tokens ([AccountImporter.begin]).
      *
      * @return One line per item.
      *
      * @throws dev.ostrom.server.secrets.domain.AdminRequiredException When the caller does not administer the org.
-     * @throws CutoverOwnerRequiredException When [cutover] is asked by an admin who is not an owner.
-     * @throws CutoverAuditUnavailableException When [cutover] is asked and no audit log is installed.
-     * @throws CutoverSharingUnavailableException When [cutover] is asked and this server does not import shared
+     * @throws CutoverOwnerRequiredException When [cutoverBy] is given and the caller is an admin, not an owner.
+     * @throws CutoverAuditUnavailableException When [cutoverBy] is given and no audit log is installed.
+     * @throws CutoverSharingUnavailableException When [cutoverBy] is given and this server does not import shared
      *   accounts.
      */
     suspend operator fun invoke(
@@ -33,7 +34,7 @@ interface ImportTeamCodeUseCase {
         export: TeamCodeExport,
         memberMap: Map<String, Uuid>,
         dryRun: Boolean,
-        cutover: Boolean = false,
+        cutoverBy: Uuid?,
     ): ImportReport
 }
 
@@ -87,10 +88,10 @@ class ImportTeamCodeUseCaseImpl(
         export: TeamCodeExport,
         memberMap: Map<String, Uuid>,
         dryRun: Boolean,
-        cutover: Boolean,
+        cutoverBy: Uuid?,
     ): ImportReport {
         caller.requireAdmin()
-        if (cutover) startCutover(caller, export.accounts.size, dryRun)
+        cutoverBy?.let { startCutover(caller, it, export.accounts.size, dryRun) }
         val records = provenance.list(caller.orgId)
         val serverRecords = records.filter { it.kind == ImportRecordKind.SERVER }
         val recorded = serverRecords.associate { it.sourceKey to it.ostromName }
@@ -103,15 +104,15 @@ class ImportTeamCodeUseCaseImpl(
             McpImporter(mcp, dryRun, mcp.listServers(caller), servers, record),
         )
         val items = run.import(plan)
-        importAccounts(caller, export.accounts, dryRun, cutover, items)
+        importAccounts(caller, export.accounts, dryRun, cutoverBy != null, items)
         return ImportReport(items)
     }
 
     /**
      * Refuses a cutover but by an owner, on a server that imports shared accounts and keeps an audit log, and records
-     * it unless it is a dry run.
+     * it in the name of [user] unless it is a dry run.
      */
-    private suspend fun startCutover(caller: Caller, accounts: Int, dryRun: Boolean) {
+    private suspend fun startCutover(caller: Caller, user: Uuid, accounts: Int, dryRun: Boolean) {
         val refusal = when {
             caller.role != MemberRole.OWNER -> CutoverOwnerRequiredException()
             this.accounts == null -> CutoverSharingUnavailableException()
@@ -119,7 +120,7 @@ class ImportTeamCodeUseCaseImpl(
         }
         refusal?.let { throw it }
         val log = audit ?: throw CutoverAuditUnavailableException()
-        if (!dryRun) log.cutover(caller, accounts)
+        if (!dryRun) log.cutover(caller, user, accounts)
     }
 
     /**

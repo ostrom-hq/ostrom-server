@@ -233,12 +233,43 @@ class ImportAccountsPostgresTest {
                 val event = audit.entries.single()
                 assertEquals(IdentityImportAudit.CUTOVER, event.action)
                 assertEquals(adminA.orgId, event.orgId)
-                assertEquals(mapOf("memberId" to "${Importing.ownerA.memberId}", "accounts" to "6"), event.details)
+                assertEquals("6", event.details["accounts"])
                 assertEquals(
                     names.take(3).map { line("account", it, UNCHANGED) },
                     accountLines(*again.take(3).toTypedArray()),
                     "Nothing left to do",
                 )
+            }
+        }
+    }
+
+    @Test
+    fun theCutoverIsAuditedInTheOwnersNameAndTheReportCountsWhatWaitsForIt() {
+        val audit = RecordingAuditLog()
+        serverTest(modules, withAudit(audit)) { server ->
+            with(server) {
+                val request = TeamCodeImportRequest(accounts = (1..3).map { account("claude", "claude-$it") })
+                report(request)
+                reconnectRequired("claude-1", "claude-2")
+                val normal = report(request)
+                assertEquals(
+                    listOf(0, 0, 1, 0, 2),
+                    listOf(normal.created, normal.updated, normal.unchanged, normal.skipped, normal.reviveAtCutover),
+                )
+                for (token in listOf("service-import", "cli-import")) {
+                    val response = import(request, token, cutover = true)
+                    assertEquals(HttpStatusCode.Forbidden, response.status, "A person runs the cutover, never $token")
+                }
+                assertEquals(emptyList(), audit.entries, "Nothing recorded for a refused cutover")
+                val cutover = report(request, "owner-a", cutover = true)
+                assertEquals(listOf(2, 1, 0), listOf(cutover.updated, cutover.unchanged, cutover.reviveAtCutover))
+                val event = audit.entries.single()
+                assertEquals(userOf("owner-a"), event.actorId, "The owner who ran it, as a user")
+                assertEquals(adminA.orgId, event.orgId)
+                assertEquals(IdentityImportAudit.CUTOVER, event.action)
+                assertEquals("org" to "${adminA.orgId}", event.targetType to event.targetId)
+                val member = "${Importing.ownerA.memberId}"
+                assertEquals(mapOf("mode" to "cutover", "memberId" to member, "accounts" to "3"), event.details)
             }
         }
     }

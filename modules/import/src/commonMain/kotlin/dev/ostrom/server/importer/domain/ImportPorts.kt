@@ -16,6 +16,7 @@ import dev.ostrom.server.secrets.domain.CreateSecretUseCase
 import dev.ostrom.server.secrets.domain.FindSecretUseCase
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
 import dev.ostrom.server.secrets.domain.RotateSecretUseCase
+import kotlin.uuid.Uuid
 
 /**
  * The secrets use cases the import writes through: it owns no table, the secrets module checks and seals.
@@ -79,10 +80,11 @@ fun interface ImportAudit {
     /**
      * Records it, before it writes anything.
      *
-     * @param caller The owner running it.
+     * @param caller The owner running it, as a member of the org.
+     * @param user The same person as a user: the event's actor.
      * @param accounts How many of TeamCode's shared accounts it imports.
      */
-    suspend fun cutover(caller: Caller, accounts: Int)
+    suspend fun cutover(caller: Caller, user: Uuid, accounts: Int)
 }
 
 /** One run of an [AccountImporter]. */

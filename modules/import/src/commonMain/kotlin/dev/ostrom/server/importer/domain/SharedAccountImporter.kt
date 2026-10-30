@@ -123,7 +123,10 @@ class SharedAccountImporter(
             val existing = known[key]
             return when {
                 existing?.status == AccountStatus.RECONNECT_REQUIRED && !cutover -> ImportAction.REVIVE_AT_CUTOVER
-                else -> change(provider, account, existing)?.let { carryOut(key, it) } ?: ImportAction.UNCHANGED
+                else -> {
+                    val change = change(provider, account, existing)
+                    if (change == null) ImportAction.UNCHANGED else carryOut(key, change)
+                }
             }
         }
 
@@ -191,8 +194,10 @@ class SharedAccountImporter(
             return try {
                 share(caller, renewed)
             } catch (changed: AccountChangedException) {
-                val now = list(caller).firstOrNull { it.account.id == change.known.id }?.account
-                    ?.takeIf { it.status == AccountStatus.RECONNECT_REQUIRED } ?: throw changed
+                val waiting = list(caller).firstOrNull {
+                    it.account.id == change.known.id && it.account.status == AccountStatus.RECONNECT_REQUIRED
+                } ?: throw changed
+                val now = waiting.account
                 share(caller, renewed.copy(label = now.label, email = now.email, ifVersion = now.version))
             }
         }

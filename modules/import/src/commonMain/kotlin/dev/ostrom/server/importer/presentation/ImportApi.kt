@@ -168,13 +168,14 @@ data class TeamCodeImportRequest(
 data class ImportItemDto(val kind: String, val name: String, val action: String, val reason: String? = null)
 
 /**
- * The import report. A `revive_at_cutover` line counts in none of the totals: read it from [items].
+ * The import report.
  *
  * @property items One line per item.
  * @property created How many were created.
  * @property updated How many were updated.
  * @property unchanged How many were already as in TeamCode.
  * @property skipped How many were not imported.
+ * @property reviveAtCutover How many shared accounts wait for a reconnection until the cutover run.
  */
 @Serializable
 data class ImportReportDto(
@@ -183,4 +184,5 @@ data class ImportReportDto(
     val updated: Int,
     val unchanged: Int,
     val skipped: Int,
+    val reviveAtCutover: Int,
 )
