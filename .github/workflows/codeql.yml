@@ -1,10 +1,7 @@
 name: CodeQL
 
+# Weekly and by hand only (org CI rule: the runners go to the ci job of pull requests).
 on:
-  push:
-    branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
@@ -18,7 +15,6 @@ concurrency:
 jobs:
   analyze:
     name: analyze (${{ matrix.language }})
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
