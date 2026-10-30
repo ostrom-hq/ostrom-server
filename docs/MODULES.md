@@ -196,10 +196,10 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OTEL_SERVICE_NAME` | `ostrom-server` | `service.name` of traces, metrics and logs |
 | `OTEL_RESOURCE_ATTRIBUTES` | — | `deployment.environment.name=production` |
 | `OTEL_TRACES_SAMPLER_ARG` | `1` | Share of new traces recorded (0 to 1); a caller's sampled trace is always continued |
-| `OTEL_SDK_DISABLED` | `false` | `true` turns OTLP export off |
+| `OTEL_SDK_DISABLED` | `false` | The standard OpenTelemetry variable, read as every SDK reads it (not an Ostrom feature switch): `true` exports nothing even with an endpoint |
 | `OSTROM_LANGFUSE_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY` | — | Model calls to Langfuse (the three together) |
 | `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | Product events to PostHog |
-| `OSTROM_POD_NAME` | random | `service.instance.id` |
+| `OSTROM_POD_NAME` | random | `service.instance.id` (`ServerConfig.instanceId`; the chart sets it from the pod name) |
 
 A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a

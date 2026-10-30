@@ -13,7 +13,7 @@ import kotlin.time.Clock
 
 /**
  * Writes every event to [delegate] (the JSON lines on standard output) and, when an OTLP destination is configured,
- * exports it as an OpenTelemetry log record linked to its trace through the `trace_id` and `span_id` fields. The
+ * exports it as an OpenTelemetry log record linked to its trace through the `trace_id`, `span_id` and `trace_flags` fields. The
  * error's type is exported, never its message (it may quote a provider or a secret).
  *
  * @param delegate The logger that writes the line.
@@ -58,10 +58,12 @@ class TelemetryLogger(
         LogLevel.ERROR -> Severity.ERROR
     }
 
+    /** The trace the fields link to, its sampled flag included (an unsampled trace stays unsampled). */
     private fun Map<String, Any?>.spanContext(): SpanContext? {
-        val traceId = this[TRACE_ID_FIELD] ?: return null
-        val spanId = this[SPAN_ID_FIELD] ?: return null
-        return SpanContext.parseTraceparent("00-$traceId-$spanId-01")
+        val traceId = this[TRACE_ID_FIELD]
+        val spanId = this[SPAN_ID_FIELD]
+        val flags = this[TRACE_FLAGS_FIELD] ?: SAMPLED_FLAGS
+        return if (traceId == null || spanId == null) null else SpanContext.parseTraceparent("00-$traceId-$spanId-$flags")
     }
 
     /** The field names that link a log event to its trace. */
@@ -71,5 +73,13 @@ class TelemetryLogger(
 
         /** The span id, 16 lower-case hex digits. */
         const val SPAN_ID_FIELD: String = "span_id"
+
+        /** The W3C trace flags, `01` sampled or `00`; sampled when absent. */
+        const val TRACE_FLAGS_FIELD: String = "trace_flags"
+
+        private const val SAMPLED_FLAGS = "01"
+
+        /** The [TRACE_FLAGS_FIELD] value of [span]. */
+        fun traceFlags(span: SpanContext): String = if (span.sampled) SAMPLED_FLAGS else "00"
     }
 }

@@ -30,6 +30,7 @@ import kotlin.time.Clock
  *
  * @return The module.
  */
+@Suppress("LongParameterList") // The kernel's composition root: one parameter per shared dependency.
 fun kernelModule(
     logger: Logger,
     driver: Driver,

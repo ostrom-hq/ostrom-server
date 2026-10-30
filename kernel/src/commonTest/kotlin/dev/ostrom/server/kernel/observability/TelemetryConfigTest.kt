@@ -29,15 +29,19 @@ class TelemetryConfigTest {
 
     @Test
     fun theStandardOpenTelemetryVariablesAreRead() {
-        val telemetry = ServerConfig.from(
+        val config = ServerConfig.from(
             MapConfigSource(
                 database + mapOf(
                     "OTEL_EXPORTER_OTLP_ENDPOINT" to "http://collector:4318",
                     "OTEL_RESOURCE_ATTRIBUTES" to "deployment.environment.name=staging",
                     "OSTROM_POSTHOG_API_KEY" to "phc_1",
+                    "OSTROM_POD_NAME" to "ostrom-server-7d9f",
                 ),
             ),
-        ).telemetry
+        )
+        val telemetry = config.telemetry
+        assertEquals("ostrom-server-7d9f", config.instanceId)
+        assertNull(ServerConfig.from(MapConfigSource(database)).instanceId)
 
         assertEquals("http://collector:4318/v1/traces", telemetry.otlp?.url(Signal.TRACES))
         assertEquals("staging", telemetry.environment)

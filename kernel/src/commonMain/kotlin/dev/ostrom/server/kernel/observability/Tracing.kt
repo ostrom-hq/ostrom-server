@@ -30,6 +30,9 @@ const val UNMATCHED_ROUTE: String = "unmatched"
 private const val HEALTH_PATH = "/health"
 private const val SERVER_ERROR = 500
 private const val NOT_FOUND = 404
+private const val CLIENT_CLOSED_REQUEST = 499
+private const val OTHER_METHOD = "_OTHER"
+private val HTTP_METHODS = setOf("GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH")
 
 private val routeKey = AttributeKey<String>("ostrom.route")
 private val spanKey = AttributeKey<SpanContext>("ostrom.span")
@@ -53,35 +56,58 @@ fun Application.installTelemetry(telemetry: Telemetry, metrics: OstromMetrics) {
     }
     intercept(ApplicationCallPipeline.Monitoring) {
         val started = TimeSource.Monotonic.markNow()
-        val method = call.request.httpMethod.value
+        val method = knownMethod(call.request.httpMethod.value)
+        var span: Span? = null
+        var ending = Ending.ANSWERED
         metrics.requestStarted()
-        val span = if (call.request.path() == HEALTH_PATH) {
-            null
-        } else {
-            val parent = SpanContext.parseTraceparent(call.request.headers[SpanContext.TRACEPARENT_HEADER])
-            telemetry.tracer.startSpan(method, SpanKind.SERVER, parent, Attributes.of("http.request.method" to method))
-        }
-        span?.let {
-            call.attributes.put(spanKey, it.context)
-            call.response.headers.append(TRACE_RESPONSE_HEADER, it.context.toTraceparent())
-        }
-        var failed = false
+        // Everything after the in-flight increment is inside the try: the finally always decrements it.
         try {
+            span = if (call.request.path() == HEALTH_PATH) null else startSpan(call, telemetry, method)
             if (span == null) proceed() else withContext(SpanContextElement(span.context)) { proceed() }
         } catch (cancelled: CancellationException) {
+            ending = Ending.CANCELLED
             throw cancelled
         } catch (error: Throwable) {
-            failed = true
+            ending = Ending.FAILED
             throw error
         } finally {
             val route = call.attributes.getOrNull(routeKey) ?: UNMATCHED_ROUTE
-            // No status yet: the engine answers 404 after the pipeline when nothing responded (no route matched).
-            val status = call.response.status()?.value ?: if (failed) SERVER_ERROR else NOT_FOUND
-            metrics.requestServed(method, route, status, started.elapsedNow())
-            span?.finish(method, route, status)
+            val status = call.response.status()?.value ?: ending.status
+            try {
+                metrics.requestServed(method, route, status, started.elapsedNow())
+            } finally {
+                span?.finish(method, route, status)
+            }
         }
     }
 }
+
+/** How a request ended when no status was written: the status recorded for it. */
+private enum class Ending(val status: Int) {
+    /** The engine answers 404 after the pipeline when nothing responded (no route matched). */
+    ANSWERED(NOT_FOUND),
+
+    /** A handler threw: the engine answers 500. */
+    FAILED(SERVER_ERROR),
+
+    /** The client went away or the call was cancelled: 499, as proxies record it, never a 404 nor an error. */
+    CANCELLED(CLIENT_CLOSED_REQUEST),
+}
+
+private fun startSpan(call: ApplicationCall, telemetry: Telemetry, method: String): Span {
+    val parent = SpanContext.parseTraceparent(call.request.headers[SpanContext.TRACEPARENT_HEADER])
+    val attributes = Attributes.of("http.request.method" to method)
+    val span = telemetry.tracer.startSpan(method, SpanKind.SERVER, parent, attributes)
+    call.attributes.put(spanKey, span.context)
+    call.response.headers.append(TRACE_RESPONSE_HEADER, span.context.toTraceparent())
+    return span
+}
+
+/**
+ * The method as metrics and span names record it: one of the HTTP methods, else `_OTHER` (OpenTelemetry semantic
+ * conventions), so that a client cannot create series or span names at will.
+ */
+internal fun knownMethod(method: String): String = if (method in HTTP_METHODS) method else OTHER_METHOD
 
 private fun Span.finish(method: String, route: String, status: Int) {
     updateName("$method $route")

@@ -16,9 +16,9 @@ import io.ktor.server.plugins.callid.CallId
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.resources.Resources
 import io.ktor.server.routing.routing
-import kotlin.uuid.Uuid
 import kotlinx.serialization.json.Json
 import org.koin.core.Koin
+import kotlin.uuid.Uuid
 
 /** The JSON settings of every request and answer. */
 val OstromJson: Json = Json {

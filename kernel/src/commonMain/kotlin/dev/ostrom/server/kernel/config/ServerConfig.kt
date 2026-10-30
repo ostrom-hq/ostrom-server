@@ -15,6 +15,8 @@ import dev.ostrom.server.kernel.logging.LogLevel
  * @property logLevel The lowest level written to the logs.
  * @property telemetry Where traces, metrics, logs and product events go (the standard `OTEL_*` variables,
  *   `OSTROM_LANGFUSE_*`, `OSTROM_POSTHOG_*`); nowhere by default.
+ * @property instanceId The `service.instance.id` of the telemetry (`OSTROM_POD_NAME`, the pod name in Kubernetes);
+ *   null to draw a random one at start.
  */
 data class ServerConfig(
     val host: String,
@@ -23,6 +25,7 @@ data class ServerConfig(
     val signingKeyFile: String,
     val logLevel: LogLevel,
     val telemetry: TelemetrySettings = TelemetrySettings(serviceName = SERVICE_NAME),
+    val instanceId: String? = null,
 ) {
     /** Reading the configuration. */
     companion object {
@@ -59,8 +62,9 @@ data class ServerConfig(
                 TelemetrySettings.fromEnvironment({ source[it] }, SERVICE_NAME)
             } catch (error: IllegalArgumentException) {
                 // The message names the variable, never its value (it may hold a key).
-                throw InvalidConfigException("Invalid telemetry settings: ${error.message}")
+                throw InvalidConfigException("Invalid telemetry settings: ${error.message}", error)
             },
+            instanceId = source["OSTROM_POD_NAME"],
         )
 
         /** The default `service.name` of the server's telemetry. */

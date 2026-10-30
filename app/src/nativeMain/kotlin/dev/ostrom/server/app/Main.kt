@@ -19,6 +19,7 @@ import dev.ostrom.server.kernel.observability.TelemetryLogger
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO as CioClient
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -52,10 +53,11 @@ fun main() {
             serviceName = config.telemetry.serviceName,
             serviceVersion = SERVER_VERSION,
             environment = config.telemetry.environment,
-            instanceId = source["OSTROM_POD_NAME"] ?: Uuid.random().toString(),
+            instanceId = config.instanceId ?: Uuid.random().toString(),
         ),
         scope = exporters,
-        httpClient = { HttpClient() },
+        // CIO, not the platform engine: the image (distroless) has no libcurl; CIO brings its own TLS.
+        httpClient = { HttpClient(CioClient) },
     )
     val logger = TelemetryLogger(JsonLogger(config.logLevel), telemetry, config.logLevel)
     val metrics = OstromMetrics(telemetry.meter)
@@ -101,13 +103,15 @@ private fun shutDown(
     telemetry: Telemetry,
     exporters: CoroutineScope,
 ) {
-    workers.cancel()
-    koin?.close()
-    runBlocking {
-        driver?.close()
-        telemetry.shutdown(TELEMETRY_FLUSH_TIMEOUT)
+    try {
+        workers.cancel()
+        koin?.close()
+        runBlocking { driver?.close() }
+    } finally {
+        // Whatever failed above, the last spans and logs (the one that says why the server stopped among them) leave.
+        runBlocking { telemetry.shutdown(TELEMETRY_FLUSH_TIMEOUT) }
+        exporters.cancel()
     }
-    exporters.cancel()
 }
 
 /** How long the last spans, logs and metrics may take to leave when the server stops. */

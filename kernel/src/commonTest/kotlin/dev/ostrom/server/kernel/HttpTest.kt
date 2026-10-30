@@ -372,6 +372,7 @@ class HttpTest {
                 "request_id" to null,
                 "trace_id" to null,
                 "span_id" to null,
+                "trace_flags" to null,
             ),
             fields,
         )

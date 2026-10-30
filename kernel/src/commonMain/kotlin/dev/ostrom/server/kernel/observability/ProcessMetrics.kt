@@ -8,6 +8,11 @@ import dev.ostrom.core.telemetry.metrics.Meter
  * The server's own CPU time and resident memory (OpenTelemetry `process.cpu.time`, `process.memory.usage`), read only
  * when the metric reader collects (once per export interval): what the API dashboard plots next to the traffic, so a
  * CPU budget overrun is seen without a profiler.
+ *
+ * Both are gauges, the only asynchronous instrument of ostrom-core's meter: `process.cpu.time` is the cumulative
+ * total, which `rate()` reads like a counter (a restart reads as a reset, as for a counter); the dashboards and the
+ * metric catalog of ostrom-infra say so. A cumulative asynchronous counter in core would be the exact OpenTelemetry
+ * type; it changes nothing to the queries.
  */
 object ProcessMetrics {
     /** Registers both gauges on [meter]. */

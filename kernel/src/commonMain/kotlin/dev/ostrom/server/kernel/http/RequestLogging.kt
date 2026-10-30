@@ -49,6 +49,7 @@ val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingC
  * @param start When the call started; null if the call skipped the plugin's start hook.
  * @param span The request's span; null when the request is not traced (`/health`, telemetry off).
  */
+@Suppress("LongParameterList") // One parameter per field of the line, each read from a different part of the call.
 internal fun requestFields(
     method: String,
     path: String,
@@ -64,4 +65,5 @@ internal fun requestFields(
     "request_id" to requestId,
     TelemetryLogger.TRACE_ID_FIELD to span?.traceIdHex,
     TelemetryLogger.SPAN_ID_FIELD to span?.spanIdHex,
+    TelemetryLogger.TRACE_FLAGS_FIELD to span?.let(TelemetryLogger::traceFlags),
 )

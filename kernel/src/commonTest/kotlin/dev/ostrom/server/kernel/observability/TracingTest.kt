@@ -31,6 +31,7 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -59,7 +60,7 @@ class TracingTest {
         override suspend fun isUp(): Boolean = true
     }
 
-    private fun tracingTest(withTelemetry: Boolean = true, block: suspend ApplicationTestBuilder.() -> Unit) =
+    private fun withServer(withTelemetry: Boolean = true, block: suspend ApplicationTestBuilder.() -> Unit) =
         testApplication {
             val metrics = OstromMetrics(telemetry.meter)
             val koin = koinApplication {
@@ -80,7 +81,7 @@ class TracingTest {
         }
 
     @Test
-    fun aRequestContinuesTheCallersTraceAndNamesItsSpanAfterTheRoute() = tracingTest {
+    fun aRequestContinuesTheCallersTraceAndNamesItsSpanAfterTheRoute() = withServer {
         val parent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
         val response = client.get("/probe/42?token=secret") { header(SpanContext.TRACEPARENT_HEADER, parent) }
 
@@ -98,7 +99,7 @@ class TracingTest {
     }
 
     @Test
-    fun requestDurationsAreMeasuredByRouteTemplateAndTheLogLinksToTheTrace() = tracingTest {
+    fun requestDurationsAreMeasuredByRouteTemplateAndTheLogLinksToTheTrace() = withServer {
         client.get("/probe/1")
         client.get("/probe/2")
 
@@ -115,7 +116,7 @@ class TracingTest {
     }
 
     @Test
-    fun aServerErrorMarksTheSpanAndAnUnmatchedPathHasNoRoute() = tracingTest {
+    fun aServerErrorMarksTheSpanAndAnUnmatchedPathHasNoRoute() = withServer {
         assertEquals(HttpStatusCode.InternalServerError, client.get("/probe/crash").status)
         assertEquals(HttpStatusCode.NotFound, client.get("/nowhere/at/all").status)
 
@@ -127,7 +128,7 @@ class TracingTest {
     }
 
     @Test
-    fun aHandlerThatAnswersNothingIsA404OnItsRoute() = tracingTest {
+    fun aHandlerThatAnswersNothingIsA404OnItsRoute() = withServer {
         assertEquals(HttpStatusCode.NotFound, client.get("/probe/silent").status)
 
         val span = telemetry.spans.single()
@@ -136,7 +137,7 @@ class TracingTest {
     }
 
     @Test
-    fun healthIsMeasuredButNeverTraced() = tracingTest {
+    fun healthIsMeasuredButNeverTraced() = withServer {
         val response = client.get("/health")
 
         assertTrue(telemetry.spans.isEmpty())
@@ -150,7 +151,7 @@ class TracingTest {
     }
 
     @Test
-    fun withoutTelemetryInKoinNothingIsTraced() = tracingTest(withTelemetry = false) {
+    fun withoutTelemetryInKoinNothingIsTraced() = withServer(withTelemetry = false) {
         val response = client.get("/probe/1")
 
         assertEquals("none", response.bodyAsText())
@@ -174,6 +175,31 @@ class TracingTest {
         val span = telemetry.spans.single()
         assertEquals(StatusCode.ERROR, span.status)
         assertEquals(AttributeValue.Integer(500), span.attributes["http.response.status_code"])
+    }
+
+    @Test
+    fun aCancelledCallIsA499NeitherANotFoundNorAnError() = testApplication {
+        val metrics = OstromMetrics(telemetry.meter)
+        application {
+            installTelemetry(telemetry, metrics)
+            routing { get("/gone") { throw CancellationException("the client went away") } }
+        }
+        try {
+            client.get("/gone")
+        } catch (_: CancellationException) {
+            // The test engine hands the cancellation back to the caller; the span and the metric are what matter.
+        }
+
+        val span = telemetry.spans.single()
+        assertEquals(StatusCode.UNSET, span.status)
+        assertEquals(AttributeValue.Integer(499), span.attributes["http.response.status_code"])
+    }
+
+    @Test
+    fun anUnknownMethodIsRecordedAsOther() {
+        assertEquals("GET", knownMethod("GET"))
+        assertEquals("PATCH", knownMethod("PATCH"))
+        assertEquals("_OTHER", knownMethod("BREW"))
     }
 
     @Test

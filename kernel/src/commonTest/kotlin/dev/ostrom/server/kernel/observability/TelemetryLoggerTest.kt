@@ -3,6 +3,7 @@ package dev.ostrom.server.kernel.observability
 
 import dev.ostrom.core.telemetry.AttributeValue
 import dev.ostrom.core.telemetry.logs.Severity
+import dev.ostrom.core.telemetry.trace.SpanContext
 import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
 import kotlin.test.Test
@@ -54,6 +55,30 @@ class TelemetryLoggerTest {
         assertTrue(record.attributes.entries.none { it.value.toString().contains("hunter2") })
         assertEquals("0af7651916cd43dd8448eb211c80319c", record.spanContext?.traceIdHex)
         assertEquals("b7ad6b7169203331", record.spanContext?.spanIdHex)
+        assertEquals(true, record.spanContext?.sampled)
+    }
+
+    @Test
+    fun anUnsampledTraceStaysUnsampledInItsLogs() {
+        val span = SpanContext(1L, 2L, 3L, sampled = false)
+        logger.info(
+            "a",
+            mapOf(
+                TelemetryLogger.TRACE_ID_FIELD to span.traceIdHex,
+                TelemetryLogger.SPAN_ID_FIELD to span.spanIdHex,
+                TelemetryLogger.TRACE_FLAGS_FIELD to TelemetryLogger.traceFlags(span),
+            ),
+        )
+
+        assertEquals(span, telemetry.logs.single().spanContext)
+        assertEquals("01", TelemetryLogger.traceFlags(span.copy(sampled = true)))
+    }
+
+    @Test
+    fun aSpanIdAloneLinksToNoTrace() {
+        logger.info("a", mapOf(TelemetryLogger.SPAN_ID_FIELD to "b7ad6b7169203331"))
+
+        assertNull(telemetry.logs.single().spanContext)
     }
 
     @Test

@@ -30,8 +30,14 @@ internal actual fun processCpuSeconds(): Double = memScoped {
 
 /** Resident bytes from `/proc/self/statm` (Linux, where the server runs); null elsewhere. */
 internal actual fun processResidentBytes(): Long? {
+    val pages = readStatm()?.trim()?.split(' ')?.getOrNull(1)?.toLongOrNull()
+    return pages?.let { it * sysconf(_SC_PAGESIZE) }
+}
+
+/** The first line of `/proc/self/statm`, or null where there is none. */
+private fun readStatm(): String? {
     val file = fopen("/proc/self/statm", "r") ?: return null
-    val line = try {
+    return try {
         memScoped {
             val buffer = allocArray<ByteVar>(LINE)
             fgets(buffer, LINE, file)?.toKString()
@@ -39,8 +45,6 @@ internal actual fun processResidentBytes(): Long? {
     } finally {
         fclose(file)
     }
-    val pages = line?.trim()?.split(' ')?.getOrNull(1)?.toLongOrNull() ?: return null
-    return pages * sysconf(_SC_PAGESIZE)
 }
 
 private const val MICROS = 1_000_000.0

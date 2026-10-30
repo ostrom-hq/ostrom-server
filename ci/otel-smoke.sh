@@ -8,6 +8,12 @@ set -euo pipefail
 out="$(mktemp -d)"
 chmod 777 "$out"
 cleanup() {
+  status=$?
+  # On a failure the server's and the collector's logs are printed before the containers go.
+  if [ "$status" -ne 0 ]; then
+    echo "--- server logs"; docker logs ostrom-otel 2>&1 | tail -50 || true
+    echo "--- collector logs"; docker logs otel-collector 2>&1 | tail -20 || true
+  fi
   docker rm -f ostrom-otel otel-collector >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -25,7 +31,7 @@ docker run -d --name ostrom-otel --network host \
 for _ in $(seq 1 30); do curl -fsS localhost:8081/health >/dev/null 2>&1 && break; sleep 1; done
 
 trace_id="4bf92f3577b34da6a3ce929d0e0e4736"
-headers="$(curl -fsS -D - -o /dev/null -H "traceparent: 00-${trace_id}-00f067aa0ba902b7-01" localhost:8081/v1/instance)"
+headers="$(curl -fsS -D - -o /dev/null -H "traceparent: 00-${trace_id}-00f067aa0ba902b7-01" localhost:8081/api/v1/instance)"
 echo "$headers" | grep -i "^traceresponse: 00-${trace_id}-" || { echo "no traceresponse header"; exit 1; }
 
 # Spans and logs leave in batches every 5 s, metrics every 30 s: wait for each file to show what it should.
@@ -35,10 +41,10 @@ wait_for() {
     grep -q "$pattern" "$out/$file" 2>/dev/null && return 0
     sleep 1
   done
-  echo "nothing matching $pattern in $file"; ls -l "$out"; docker logs otel-collector | tail -20; exit 1
+  echo "nothing matching $pattern in $file"; ls -l "$out"; exit 1
 }
 wait_for traces.json "\"traceId\":\"${trace_id}\""
-wait_for traces.json '"name":"GET /v1/instance"'
+wait_for traces.json '"name":"GET /api/v1/instance"'
 wait_for logs.json '"service.name"'
 wait_for metrics.json '"name":"http.server.request.duration"'
 wait_for metrics.json '"name":"process.cpu.time"'
