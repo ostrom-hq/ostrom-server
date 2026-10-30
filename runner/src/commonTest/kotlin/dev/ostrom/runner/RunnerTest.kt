@@ -29,7 +29,7 @@ class RunnerTest {
         override suspend fun write(bytes: ByteArray) {
             written += bytes.decodeToString()
         }
-        override fun resize(columns: Int, rows: Int) {
+        override suspend fun resize(columns: Int, rows: Int) {
             sizes += columns to rows
         }
         override suspend fun terminate() {
@@ -67,6 +67,11 @@ class RunnerTest {
         override suspend fun openTerminal(): TerminalLink = links.receive().getOrThrow()
     }
 
+    private fun starter(block: (String, Map<String, String>, String) -> Terminal) = object : TerminalStarter {
+        override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
+            block(script, environment, directory)
+    }
+
     private val clock = object : Clock {
         override fun now(): Instant = Instant.parse("2026-10-30T10:00:00Z")
     }
@@ -76,7 +81,7 @@ class RunnerTest {
         val server = FakeServer()
         val terminals = mutableListOf<FakeTerminal>()
         val logs = mutableListOf<String>()
-        val runner = Runner(config, server, { script, environment, directory ->
+        val runner = Runner(config, server, starter { script, environment, directory ->
             assertEquals("/workspace", directory)
             assertTrue("OSTROM_RUNNER_TOKEN" !in environment)
             FakeTerminal(script).also { terminals += it }
@@ -140,7 +145,7 @@ class RunnerTest {
     @Test
     fun aDroppedLinkIsReopened() = runTest {
         val server = FakeServer()
-        val runner = Runner(config, server, { script, _, _ -> FakeTerminal(script) }, emptyMap(), clock, {})
+        val runner = Runner(config, server, starter { script, _, _ -> FakeTerminal(script) }, emptyMap(), clock, {})
         val first = FakeLink()
         val second = FakeLink()
         server.links.send(Result.success(first))
@@ -162,7 +167,8 @@ class RunnerTest {
     fun aFailedLastHeartbeatIsLoggedAndTheRunnerStillStops() = runTest {
         val server = FakeServer().apply { lastFails = true }
         val logs = mutableListOf<String>()
-        val runner = Runner(config, server, { script, _, _ -> FakeTerminal(script) }, emptyMap(), clock, { logs += it })
+        val terminals = starter { script, _, _ -> FakeTerminal(script) }
+        val runner = Runner(config, server, terminals, emptyMap(), clock, { logs += it })
         server.instructions.send(Result.success(Instruction.STOP))
 
         assertEquals(0, runner.run())
