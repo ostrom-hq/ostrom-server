@@ -19,6 +19,8 @@ import kotlin.uuid.Uuid
  * @property refreshToken The OAuth refresh token.
  * @property expiresAt When the access token expires.
  * @property limits Its limits.
+ * @property disabled Stores it turned off, in the same write: an account its source had disabled (an import from
+ *   TeamCode) never serves, not even for a moment. Sharing again never turns an account back on.
  */
 data class ShareAccountPayload(
     val provider: AccountProvider,
@@ -29,6 +31,7 @@ data class ShareAccountPayload(
     val refreshToken: String,
     val expiresAt: Instant,
     val limits: AccountLimits = AccountLimits(),
+    val disabled: Boolean = false,
 ) {
     override fun toString(): String =
         "ShareAccountPayload(provider=$provider, label=$label, providerAccountId=$providerAccountId, tokens=[REDACTED])"
@@ -72,6 +75,9 @@ data class SharedAccountView(
 interface ShareAccountUseCase {
     /** Shares it; returns the stored account. */
     suspend operator fun invoke(caller: Caller, payload: ShareAccountPayload): SharedAccount
+
+    /** Refuses what [invoke] would refuse, writing nothing (an import's dry run). */
+    suspend fun check(caller: Caller, payload: ShareAccountPayload)
 }
 
 /** Lists the org's accounts. */
@@ -103,6 +109,17 @@ class ShareAccountUseCaseImpl(
     private val clock: Clock,
 ) : ShareAccountUseCase {
     override suspend fun invoke(caller: Caller, payload: ShareAccountPayload): SharedAccount {
+        val account = sameAccount(caller, payload).sharedAgain(caller, payload, clock)
+        val credentials = AccountCredentials(payload.accessToken, payload.refreshToken, payload.expiresAt)
+        return repository.upsert(account, cipher.seal(credentials, account.orgId, account.id))
+    }
+
+    override suspend fun check(caller: Caller, payload: ShareAccountPayload) {
+        sameAccount(caller, payload)
+    }
+
+    /** The account [payload] shares again, if the org has it, once every refusal is ruled out. */
+    private suspend fun sameAccount(caller: Caller, payload: ShareAccountPayload): SharedAccount? {
         SharingRules.requireLabel(payload.label)
         SharingRules.requireLimits(payload.limits)
         SharingRules.requireTokens(payload.accessToken, payload.refreshToken, payload.providerAccountId)
@@ -116,9 +133,7 @@ class ShareAccountUseCaseImpl(
             same != null && !caller.mayChange(same) -> throw AccountOwnedByAnotherMemberException()
             else -> Unit
         }
-        val account = same.sharedAgain(caller, payload, clock)
-        val credentials = AccountCredentials(payload.accessToken, payload.refreshToken, payload.expiresAt)
-        return repository.upsert(account, cipher.seal(credentials, account.orgId, account.id))
+        return same
     }
 }
 
@@ -137,7 +152,7 @@ private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayl
         providerAccountId = payload.providerAccountId,
         ownerMemberId = caller.memberId,
         priority = 0,
-        status = AccountStatus.READY,
+        status = if (payload.disabled) AccountStatus.DISABLED else AccountStatus.READY,
         limits = payload.limits,
         cooldownUntil = null,
         createdAt = clock.now(),
@@ -150,7 +165,7 @@ private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayl
             ownerMemberId = ownerMemberId ?: caller.memberId,
             priority = priority,
             limits = limits,
-            status = if (status == AccountStatus.DISABLED) AccountStatus.DISABLED else AccountStatus.READY,
+            status = if (status == AccountStatus.DISABLED) AccountStatus.DISABLED else fresh.status,
             createdAt = createdAt,
         )
     }
