@@ -54,7 +54,9 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
         post<ApprovalsApi.Id.Answer> { params ->
             val principal = call.requirePrincipal()
             principal.requireAnswering()
+            // S2-54: the sign-in's age comes from the identity module, never from the request.
             val actor = actors.actorOf(principal, GateScopes.answering)
+                .copy(authenticatedAt = principal.authenticatedAt)
             val body = call.receive<AnswerApprovalRequest>()
             val id = params.parent.id.toUuid()
             val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO

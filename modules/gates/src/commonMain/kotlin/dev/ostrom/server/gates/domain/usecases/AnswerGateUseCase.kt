@@ -17,6 +17,7 @@ import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.SelfApprovalRefusedException
+import dev.ostrom.server.gates.domain.models.StepUp
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
@@ -91,6 +92,7 @@ class AnswerGateUseCaseImpl(
                 is SelfApproval.Verdict.Allowed -> verdict.selfApproved
             }
             val now = clock.now()
+            StepUp.check(answer, actor.authenticatedAt, now)
             val answered = answered(requests, request.id, answer, channel, now)
             val next = gate.copy(
                 status = if (answer == Answer.YES) GateStatus.APPROVED else GateStatus.REJECTED,

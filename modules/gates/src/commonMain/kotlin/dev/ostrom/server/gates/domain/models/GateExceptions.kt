@@ -11,6 +11,12 @@ class GateNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Gate not fou
 class NotTheApproverException :
     OstromException(ErrorKind.FORBIDDEN, "Only the approver this request was sent to can answer it.")
 
+/** A yes from a sign-in older than [StepUp.WITHIN], or of unknown age (S2-54). */
+class StepUpRequiredException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Sign in again to say yes: a yes needs a sign-in of less than 5 minutes, or the app's biometrics.",
+)
+
 /** A device, agent or service token tried to answer: only a signed-in person says yes or no. */
 class OnlyPeopleAnswerException : OstromException(ErrorKind.FORBIDDEN, "Only a signed-in person can answer a gate.")
 
