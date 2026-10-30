@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.app
 
-import dev.ostrom.core.telemetry.Telemetry
-import dev.ostrom.core.telemetry.otlp.Resource
 import dev.ostrom.server.app.signals.ostrom_await_signal
 import dev.ostrom.server.app.signals.ostrom_install_signal_handlers
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -28,8 +26,6 @@ import dev.ostrom.server.kernel.observability.ProcessMetrics
 import dev.ostrom.server.kernel.observability.TelemetryLogger
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO as CioClient
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -43,8 +39,6 @@ import kotlinx.coroutines.runBlocking
 import org.koin.core.Koin
 import platform.posix.SIGTERM
 import kotlin.system.exitProcess
-import kotlin.time.Duration.Companion.seconds
-import kotlin.uuid.Uuid
 
 private const val EXIT_FAILURE = 1
 private const val EXIT_USAGE = 2
@@ -126,50 +120,11 @@ private fun serve() {
         logger.info("server stopped")
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         failed(logger, "server stopped on a failure", error)
-        stopServing(workers, koin, driver, telemetry, exporters)
+        stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver) }
         exitProcess(EXIT_FAILURE)
     }
-    stopServing(workers, koin, driver, telemetry, exporters)
+    stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver) }
 }
-
-/**
- * The server's telemetry: traces, metrics, logs and product events, sent nowhere unless configured.
- *
- * @param config The server configuration, with its telemetry settings.
- * @param exporters The scope of the exporters, cancelled after the last flush.
- */
-private fun startTelemetry(config: ServerConfig, exporters: CoroutineScope): Telemetry = Telemetry.start(
-    settings = config.telemetry,
-    resource = Resource(
-        serviceName = config.telemetry.serviceName,
-        serviceVersion = SERVER_VERSION,
-        environment = config.telemetry.environment,
-        instanceId = config.instanceId ?: Uuid.random().toString(),
-    ),
-    scope = exporters,
-    // CIO, not the platform engine: the image (distroless) has no libcurl; CIO brings its own TLS.
-    httpClient = { HttpClient(CioClient) },
-)
-
-/** Stops the workers, Koin and the pool, then flushes the telemetry whatever failed before. */
-private fun stopServing(
-    workers: CoroutineScope,
-    koin: Koin?,
-    driver: Driver?,
-    telemetry: Telemetry,
-    exporters: CoroutineScope,
-) {
-    try {
-        shutDown(workers, koin, driver)
-    } finally {
-        // The last spans and logs (the one that says why the server stopped among them) leave.
-        runBlocking { telemetry.shutdown(TELEMETRY_FLUSH_TIMEOUT) }
-        exporters.cancel()
-    }
-}
-
-/** How long the last spans, logs and metrics may take to leave when the server stops. */
-private val TELEMETRY_FLUSH_TIMEOUT = 5.seconds
 
 /** Applies every module's migrations under the migration lock, with the owner's connection, then exits. */
 private fun migrate() {
