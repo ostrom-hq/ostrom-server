@@ -46,7 +46,7 @@ class GatePolicyUseCaseImpl(
     private val clock: Clock,
 ) : GatePolicyUseCase {
     override suspend fun invoke(orgId: Uuid, repo: String?): JsonObject {
-        val named = repo?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_REPO }
+        val named = repo.orEmpty().trim().takeIf { it.isNotEmpty() && it.length <= MAX_REPO }
             ?: throw OstromException(ErrorKind.INVALID_REQUEST, "A gate policy is signed for one repository.")
         val issued = clock.now()
         val policy = catalogJson(catalog(orgId, named))

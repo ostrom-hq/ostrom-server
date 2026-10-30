@@ -50,6 +50,8 @@ class GatesCatalogTest {
         assertEquals(true, gate?.enforce)
         val first = GatesCatalog(listOf(decided, named), null).gateFor(merge, "acme-api")
         assertEquals("g3", first?.nodeId)
+        val namedFirst = GatesCatalog(listOf(named, decided), null).gateFor(merge, "acme-api")
+        assertEquals("g3", namedFirst?.nodeId, "a later gate with a lower score never replaces it")
         assertEquals(emptyList(), first?.approvers)
         val onlyProposed = GatesCatalog(listOf(proposed), null).gateFor(merge, "acme-api")
         assertEquals(false, onlyProposed?.enforce)
@@ -74,7 +76,7 @@ class GatesCatalogTest {
             listOf(node("g0", GATE, label = "approve merge"), step),
             status = WorkflowStatus.PROPOSED,
         )
-        val few = workflow("w0", listOf(node("g9", GATE, label = "merge")))
+        val few = workflow("w0", listOf(node("g9", GATE, label = "merge", detail = "now")))
         val gate = GatesCatalog(listOf(weaker, guessed, few), null).gateFor(merge, "acme-api")
         assertEquals("g", gate?.nodeId)
         assertEquals("guessed", gate?.basis)
@@ -103,7 +105,7 @@ class GatesCatalogTest {
         val again = GateAction("db-drop", "Again", listOf("other"), emptyList())
         val builtIn = GateAction("merge", "Merge", listOf("my-merge"), listOf("web"))
         val actions = listOf(custom, tooled, empty, again, builtIn, action("deploy"))
-        val wf = workflow("w", listOf(node("g", GATE, actions = actions)))
+        val wf = workflow("w", listOf(node("g", GATE, actions = actions), node("g0", GATE, label = "Nothing declared")))
         val catalog = GatesCatalog(listOf(wf), null).catalog("acme-api")
         val classes = catalog.map { it.action.cls }
         assertEquals(ActionClasses.builtIn.map { it.cls } + listOf("db-drop", "ship"), classes)
