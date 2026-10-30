@@ -1,8 +1,8 @@
 # The server image: the native binary (built by `ci/build-linux.sh`, which leaves it in dist/ostrom-server; the image
 # workflow puts the linuxX64 or linuxArm64 one there) on distroless/cc (glibc and libgcc only, no shell, non-root).
-# No JVM. The Kotlin/Native runtime also links libcrypt.so.1, and the Curl client engine (the MCP relay's HTTP client)
-# links libz.so.1, which distroless/cc lacks: both are copied from Debian 12 of the same architecture
-# (x86_64-linux-gnu or aarch64-linux-gnu).
+# No JVM. The Kotlin/Native runtime also links libcrypt.so.1, and Ktor's Curl client (billing's Stripe calls and the
+# MCP relay's upstream calls; libcurl, OpenSSL and nghttp2 are linked statically) links libz.so.1; distroless/cc lacks
+# both: they are copied from Debian 12 of the same architecture (x86_64-linux-gnu or aarch64-linux-gnu).
 FROM debian:12-slim AS layout
 RUN set -eu; triplet="$(uname -m)-linux-gnu"; \
     mkdir -p /out/var/lib/ostrom "/out/usr/lib/$triplet"; \
