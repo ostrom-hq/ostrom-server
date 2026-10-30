@@ -3,24 +3,23 @@ package dev.ostrom.server.kernel.http
 import kotlinx.serialization.Serializable
 
 /**
- * The body of every error answer: `{"error":{"code":"not_found","message":"…","requestId":"…"}}`.
- * To move to ostrom-core with the rest of the API contract once it is published.
+ * The body of every error answer: `{"error":{"type":"not_found","message":"…"}}` (CONVENTIONS section 3.3). The
+ * request id is in the `X-Request-Id` header of every answer. Moves to ostrom-core's `api` with the rest of the
+ * contract once it publishes `ApiError`.
  *
  * @property error The failure.
  */
 @Serializable
-data class ApiError(val error: ApiErrorDetail)
+data class ApiError(val error: ErrorDetail)
 
 /**
  * A failure as clients see it.
  *
- * @property code A stable machine-readable code ([dev.ostrom.server.kernel.errors.ErrorKind.code]).
+ * @property type A stable `snake_case` key clients switch on ([dev.ostrom.server.kernel.errors.ErrorKind.type]).
  * @property message A human-readable message, safe to display.
- * @property requestId The request id (`X-Request-Id`), to find the request in the server logs.
  */
 @Serializable
-data class ApiErrorDetail(
-    val code: String,
+data class ErrorDetail(
+    val type: String,
     val message: String,
-    val requestId: String? = null,
 )

@@ -53,8 +53,9 @@ fun main() {
             "server starting",
             mapOf("version" to SERVER_VERSION, "host" to config.host, "port" to config.port, "key_id" to signer.keyId),
         )
-        embeddedServer(CIO, port = config.port, host = config.host) { configureHttp(server, modules) }.start(wait = true)
-    } catch (error: Throwable) {
+        embeddedServer(CIO, port = config.port, host = config.host) { configureHttp(server, modules) }
+            .start(wait = true)
+    } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         logger.error("server stopped on a failure", error = error)
         shutDown(workers, koin, driver)
         exitProcess(1)
