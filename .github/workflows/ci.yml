@@ -86,15 +86,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # A private repository's runner has 7 GB: after the tests, the Gradle and Kotlin daemons hold most of it, and the
-      # release link of the server was killed (exit 143). Stop them and add swap before the native links.
+      # release link of the server was killed (exit 143). Stop them, and add swap where the disk has room, before the native links.
       - name: Free memory for the native links
         run: |
           ./gradlew --stop
           pkill -f KotlinCompileDaemon || true
-          sudo fallocate -l 8G /mnt/native-link.swap
-          sudo chmod 600 /mnt/native-link.swap
-          sudo mkswap /mnt/native-link.swap
-          sudo swapon /mnt/native-link.swap
+          df -h / /mnt
+          # Swap where the disk has room (the runner's /mnt can be too small): stopping the daemons is the main fix.
+          for size in 6G 3G; do
+            if sudo fallocate -l "$size" /native-link.swap; then
+              sudo chmod 600 /native-link.swap
+              sudo mkswap /native-link.swap
+              sudo swapon /native-link.swap
+              break
+            fi
+          done
           free -h
       - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
         run: |
