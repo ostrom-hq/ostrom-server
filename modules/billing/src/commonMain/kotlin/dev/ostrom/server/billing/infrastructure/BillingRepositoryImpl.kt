@@ -46,7 +46,7 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
     override suspend fun findByCustomer(customerId: String): OrgBilling? = driver.fetchAll(
         Statement.create("SELECT org_id FROM billing_customers WHERE stripe_customer_id = :customer")
             .bind("customer", customerId),
-    ).getOrThrow().firstOrNull()?.get("org_id")?.asUuid()?.let { get(it) }
+    ).getOrThrow().firstOrNull()?.let { get(it.get("org_id").asUuid()) }
 
     override suspend fun save(billing: OrgBilling): Unit = scoped(billing.orgId) {
         billing.stripeCustomerId?.let { customerId ->
@@ -237,7 +237,7 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
             stripeCustomerId = get("stripe_customer_id").asStringOrNull(),
             stripeSubscriptionId = get("stripe_subscription_id").asStringOrNull(),
             subscriptionItemId = get("subscription_item_id").asStringOrNull(),
-            plan = Plan.fromKey(get("plan").asString()) ?: Plan.FREE,
+            plan = Plan.entries.first { it.key == get("plan").asString() },
             interval = get("billing_interval").asStringOrNull()?.let(BillingInterval::fromKey),
             status = get("status").asStringOrNull()?.let(SubscriptionStatus::fromStripe),
             currentPeriodStart = get("current_period_start").asInstantOrNull(),

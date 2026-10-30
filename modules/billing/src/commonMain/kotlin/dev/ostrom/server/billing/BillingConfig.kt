@@ -35,8 +35,8 @@ data class BillingConfig(
             fun secret(name: String): String? =
                 source[name] ?: source["${name}_FILE"]?.let { readFile(it).trim().takeIf(String::isNotEmpty) }
             val key = secret("OSTROM_STRIPE_SECRET_KEY")
-            val webhookSecrets = secret("OSTROM_STRIPE_WEBHOOK_SECRET")
-                ?.split(',')?.map(String::trim)?.filter(String::isNotEmpty).orEmpty()
+            val webhookSecrets = secret("OSTROM_STRIPE_WEBHOOK_SECRET").orEmpty()
+                .split(',').map(String::trim).filter(String::isNotEmpty)
             if (key != null && webhookSecrets.isEmpty()) {
                 throw InvalidConfigException("OSTROM_STRIPE_WEBHOOK_SECRET is required when a Stripe key is set.")
             }

@@ -134,6 +134,22 @@ class StripeWebhooksTest {
     }
 
     @Test
+    fun anInvoiceOutsideASubscriptionNamesNone() {
+        val quote = parseStripeEvent(
+            """{"id":"e","type":"invoice.paid","data":{"object":{"object":"invoice","customer":"cus_1",
+                "parent":{"type":"quote_details","quote_details":{"quote":"qt_1"}}}}}""",
+        )
+        assertNull(quote.subscriptionId)
+        assertNull(quote.orgId)
+        val noMetadata = parseStripeEvent(
+            """{"id":"e","type":"invoice.paid","data":{"object":{"object":"invoice","customer":"cus_1",
+                "parent":{"subscription_details":{"subscription":"sub_4"}}}}}""",
+        )
+        assertEquals("sub_4", noMetadata.subscriptionId)
+        assertNull(noMetadata.orgId)
+    }
+
+    @Test
     fun aCustomerEventIsItsOwnCustomer() {
         val event = parseStripeEvent(
             """{"id":"e","type":"customer.updated","data":{"object":{"object":"customer","id":"cus_3",

@@ -22,6 +22,7 @@ import dev.ostrom.server.billing.domain.ListInvoicesUseCaseImpl
 import dev.ostrom.server.billing.domain.NoLicenseProvider
 import dev.ostrom.server.billing.domain.OpenCustomerPortalUseCase
 import dev.ostrom.server.billing.domain.OpenCustomerPortalUseCaseImpl
+import dev.ostrom.server.billing.domain.OutboxTask
 import dev.ostrom.server.billing.domain.ProcessOutboxUseCase
 import dev.ostrom.server.billing.domain.ProcessOutboxUseCaseImpl
 import dev.ostrom.server.billing.domain.RecordAgentUsageUseCase
@@ -44,7 +45,6 @@ import dev.ostrom.server.billing.infrastructure.StripeSignatureVerifier
 import dev.ostrom.server.billing.presentation.BillingRoutesDependencies
 import dev.ostrom.server.billing.presentation.billingRoutes
 import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
@@ -73,7 +73,7 @@ object BillingModule : ServerModule {
     override val name: String = "billing"
 
     override val koinModule: Module = module {
-        single { BillingConfig.load(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
+        single { BillingConfig.load(get<ConfigSource>()) }
         single { BillingSettings(get<BillingConfig>().stripeSecretKey != null, get<BillingConfig>().consoleUrl) }
         single<BillingRepository> { BillingRepositoryImpl(get()) }
         single<StripeGateway> {
@@ -96,11 +96,7 @@ object BillingModule : ServerModule {
         single<RecordAgentUsageUseCase> { RecordAgentUsageUseCaseImpl(get(), get(), notifier(), get()) }
         single<CheckEntitlementUseCase> { CheckEntitlementUseCaseImpl(get(), get(), get(), get()) }
         single<ProcessOutboxUseCase> {
-            val logger = get<Logger>()
-            ProcessOutboxUseCaseImpl(get(), get(), get()) { task, error ->
-                val fields = mapOf("task_id" to task.id, "kind" to task.kind.key, "error" to error::class.simpleName)
-                logger.warn("stripe task failed", fields)
-            }
+            ProcessOutboxUseCaseImpl(get(), get(), get(), outboxFailureLogger(get()))
         }
         single {
             BillingRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get())
@@ -123,6 +119,12 @@ object BillingModule : ServerModule {
 // Ports other modules implement. Billing binds no default for them (Koin refuses overrides, docs/MODULES.md): it
 // resolves them when present and falls back otherwise, so the notifications and `ee/` license modules bind them
 // without a conflict.
+
+/** Logs a failed Stripe task by its id, kind and error class, never the error's message. */
+internal fun outboxFailureLogger(logger: Logger): (OutboxTask, Exception) -> Unit = { task, error ->
+    val fields = mapOf("task_id" to task.id, "kind" to task.kind.key, "error" to error::class.simpleName)
+    logger.warn("stripe task failed", fields)
+}
 
 /** The `ee/` license; without it, no license. */
 private fun Scope.licenses(): LicenseProvider = getOrNull() ?: NoLicenseProvider()
