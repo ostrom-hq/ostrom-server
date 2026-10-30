@@ -45,10 +45,11 @@ fun serverTest(
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) = testApplication {
     val database = TestDatabase.create() ?: return@testApplication
+    val signer = Ed25519InstanceSigner.generate()
     val koin = koinApplication {
         allowOverride(true)
         modules(
-            listOf(kernelModule(JsonLogger(LogLevel.WARN), database.driver, Ed25519InstanceSigner.generate())) +
+            listOf(kernelModule(JsonLogger(LogLevel.WARN), database.driver, signer)) +
                 modules.map { it.koinModule } + listOfNotNull(overrides),
         )
     }.koin

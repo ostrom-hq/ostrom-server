@@ -55,6 +55,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Native tests (linuxX64, with PostgreSQL)
+        timeout-minutes: 30
         run: ./gradlew linuxX64Test --continue
 
       - name: Server binaries (linuxX64, linuxArm64)
