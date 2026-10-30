@@ -25,6 +25,8 @@ kotlin {
         // The JVM target only runs the tests and Kover (never shipped): the JDK provides Ed25519 there.
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
+            // Loading a key file needs its public key, which the JDK alone cannot derive from an Ed25519 private key.
+            runtimeOnly(libs.bouncycastle.bcprov)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
