@@ -48,10 +48,21 @@ class BillingApi(val orgId: String) {
     class Invoices(val parent: BillingApi, val limit: Int = 24)
 }
 
-/** `POST /api/v1/billing/stripe/webhook`: Stripe's events, verified by their signature (no bearer token). */
+/**
+ * `POST /webhooks/stripe`: Stripe's events, verified by their signature (no bearer token). Outside `/api/v1`, like
+ * every incoming webhook (`/webhooks/github`, `/webhooks/slack`).
+ */
+@Serializable
+@Resource("/webhooks/stripe")
+class StripeWebhookApi
+
+/**
+ * `POST /api/v1/billing/stripe/webhook`: the path the webhook was first served at, kept as an alias of
+ * [StripeWebhookApi] until live billing opens (the test endpoint may still point at it).
+ */
 @Serializable
 @Resource("/api/v1/billing/stripe/webhook")
-class StripeWebhookApi
+class LegacyStripeWebhookApi
 
 /** A plan to buy or switch to. */
 @Serializable

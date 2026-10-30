@@ -5,6 +5,7 @@ import dev.ostrom.server.billing.domain.PaymentIssue
 import dev.ostrom.server.billing.domain.PaymentIssueKind
 import dev.ostrom.server.billing.domain.ProcessOutboxUseCase
 import dev.ostrom.server.billing.fakes.NOW
+import dev.ostrom.server.billing.infrastructure.LoggingBillingMetrics
 import dev.ostrom.server.billing.infrastructure.LoggingBillingNotifier
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.config.MapConfigSource
@@ -137,6 +138,24 @@ class ConfigAndWorkerTest {
             listOf(
                 "INFO agent hours alert {org_id=$org, percent=80, used_hours=240, limit_hours=300}",
                 "WARN payment issue {org_id=$org, kind=payment_failed}",
+            ),
+            logger.lines,
+        )
+    }
+
+    @Test
+    fun anEventForAnUnknownOrganizationIsLoggedAndCounted() {
+        val logger = RecordingLogger()
+        val metrics = LoggingBillingMetrics(logger)
+        assertEquals(0, metrics.ignoredUnknownOrg)
+        metrics.stripeEventForUnknownOrganization("evt_1", "customer.subscription.updated")
+        metrics.stripeEventForUnknownOrganization("evt_2", "invoice.paid")
+        assertEquals(2, metrics.ignoredUnknownOrg)
+        assertEquals(
+            listOf(
+                "WARN stripe event ignored {outcome=ignored_unknown_org, event_id=evt_1, " +
+                    "type=customer.subscription.updated, count=1}",
+                "WARN stripe event ignored {outcome=ignored_unknown_org, event_id=evt_2, type=invoice.paid, count=2}",
             ),
             logger.lines,
         )

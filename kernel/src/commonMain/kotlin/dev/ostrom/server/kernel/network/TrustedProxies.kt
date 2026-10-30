@@ -5,6 +5,8 @@ import dev.ostrom.server.kernel.config.InvalidConfigException
 
 private const val BYTE_BITS = 8
 private val PREFIX = Regex("[0-9]{1,3}")
+private val HEADER_NAME = Regex("[A-Za-z0-9-]+")
+private const val FORWARDED_FOR = "X-Forwarded-For"
 
 /**
  * An IP network, `address/prefix` (`10.0.0.0/8`, `fd00::/8`); a bare address is a network of one.
@@ -51,28 +53,40 @@ class IpNetwork private constructor(private val bytes: ByteArray, private val pr
  * limits and logs are keyed on (S2-02).
  *
  * @property networks The trusted networks.
+ * @property clientHeader The header in which a trusted proxy gives the client's address
+ *   (`OSTROM_CLIENT_ADDRESS_HEADER`, such as Cloudflare's `CF-Connecting-IP`), read before `X-Forwarded-For`; none by
+ *   default. Only for proxies that set it themselves and that clients cannot reach around.
  */
-class TrustedProxies(private val networks: List<IpNetwork>) {
+class TrustedProxies(private val networks: List<IpNetwork>, val clientHeader: String? = null) {
     /** Whether no proxy is trusted. */
     val isEmpty: Boolean get() = networks.isEmpty()
 
     /**
-     * The client's address. When the peer is a trusted proxy, the `X-Forwarded-For` hops are read from the right
-     * (the hop the proxy itself appended) and the first address that is not a trusted proxy is the client: what a
-     * client writes to the left of it is never believed. A malformed hop (a host name, a port) stops the walk at the
+     * The client's address. When the peer is a trusted proxy, the address in [clientHeader] wins when it is an
+     * address outside the trusted networks; otherwise the `X-Forwarded-For` hops are read from the right (the hop
+     * the proxy itself appended) and the first address that is not a trusted proxy is the client: what a client
+     * writes to the left of it is never believed. A malformed hop (a host name, a port) stops the walk at the
      * last address read, a trusted proxy's, so that clients behind a proxy writing ports share its address.
      *
      * @param peer The socket's peer address.
      * @param forwardedFor The `X-Forwarded-For` header values, in order.
+     * @param headerValue The value of [clientHeader] in the request, when it has exactly one.
      *
      * @return The client's address in canonical form ([formatIpAddress]); [peer] as given only when it is not an
      *   IP address.
      */
-    fun clientAddress(peer: String, forwardedFor: List<String>): String {
+    fun clientAddress(peer: String, forwardedFor: List<String>, headerValue: String? = null): String {
         val peerBytes = parseIpAddress(peer) ?: return peer
-        val client = if (networks.any { peerBytes in it }) forwardedClient(forwardedFor) else null
+        val client = if (networks.any { peerBytes in it }) {
+            headerClient(headerValue) ?: forwardedClient(forwardedFor)
+        } else {
+            null
+        }
         return formatIpAddress(client ?: peerBytes)
     }
+
+    private fun headerClient(value: String?): ByteArray? =
+        value?.let { parseIpAddress(it.trim()) }?.takeIf { address -> networks.none { address in it } }
 
     private fun forwardedClient(forwardedFor: List<String>): ByteArray? {
         val hops = forwardedFor.flatMap { it.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }
@@ -89,13 +103,16 @@ class TrustedProxies(private val networks: List<IpNetwork>) {
          * Parses `OSTROM_TRUSTED_PROXIES`, a comma-separated list of networks (`10.0.0.0/8, fd00::/8`).
          *
          * @param value The list, or null for none.
+         * @param clientHeader `OSTROM_CLIENT_ADDRESS_HEADER`, or null for none.
          *
          * @return The trusted proxies.
          *
-         * @throws InvalidConfigException When an entry is not an IP address or network.
+         * @throws InvalidConfigException When an entry is not an IP address or network, when the header is not a
+         *   header name, or when a header is given without a trusted proxy (it would never be read).
          */
-        fun parse(value: String?): TrustedProxies {
+        fun parse(value: String?, clientHeader: String? = null): TrustedProxies {
             val entries = value.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            val header = headerName(clientHeader, entries.isNotEmpty())
             if (entries.isEmpty()) return NONE
             return TrustedProxies(
                 entries.map {
@@ -103,7 +120,26 @@ class TrustedProxies(private val networks: List<IpNetwork>) {
                         "OSTROM_TRUSTED_PROXIES: '$it' is not an IP address or network (address/prefix).",
                     )
                 },
+                header,
             )
+        }
+
+        private fun headerName(value: String?, withProxies: Boolean): String? {
+            val name = value.orEmpty().trim()
+            if (name.isEmpty()) return null
+            // X-Forwarded-For carries what clients write: its first value is theirs, so it is no client header.
+            if (!HEADER_NAME.matches(name) || name.equals(FORWARDED_FOR, ignoreCase = true)) {
+                throw InvalidConfigException(
+                    "OSTROM_CLIENT_ADDRESS_HEADER: '$name' is not the name of a header a proxy sets alone.",
+                )
+            }
+            if (!withProxies) {
+                throw InvalidConfigException(
+                    "OSTROM_CLIENT_ADDRESS_HEADER needs OSTROM_TRUSTED_PROXIES: the header is only read from a " +
+                        "trusted proxy.",
+                )
+            }
+            return name
         }
     }
 }
