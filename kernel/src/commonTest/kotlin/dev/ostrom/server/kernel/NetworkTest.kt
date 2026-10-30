@@ -119,6 +119,9 @@ class NetworkTest {
     fun aPeerThatIsNotATrustedProxyIsTheClientWhateverItForwards() {
         assertEquals("203.0.113.7", proxies.clientAddress("203.0.113.7", listOf("198.51.100.1")))
         assertEquals("localhost", proxies.clientAddress("localhost", listOf("198.51.100.1")))
+        // The peer is canonical too: one client is one rate-limit key, whatever form the socket gives.
+        assertEquals("203.0.113.7", proxies.clientAddress("::ffff:203.0.113.7", listOf("198.51.100.1")))
+        assertEquals("2001:db8::7", TrustedProxies.NONE.clientAddress("2001:DB8:0:0::7", emptyList()))
         assertEquals("10.0.0.5", TrustedProxies.NONE.clientAddress("10.0.0.5", listOf("198.51.100.1")))
     }
 
@@ -147,6 +150,7 @@ class NetworkTest {
     fun aMalformedHopStopsTheWalk() {
         assertEquals("10.0.0.5", proxies.clientAddress("10.0.0.5", emptyList()))
         assertEquals("10.0.0.5", proxies.clientAddress("10.0.0.5", listOf("unknown")))
+        assertEquals("10.0.0.5", proxies.clientAddress("::ffff:10.0.0.5", listOf("unknown")))
         assertEquals("10.2.2.2", proxies.clientAddress("10.0.0.5", listOf("198.51.100.1, garbage, 10.2.2.2")))
         assertEquals("10.0.0.5", proxies.clientAddress("10.0.0.5", listOf(" , ")))
     }

@@ -16,8 +16,9 @@ The rule is CONVENTIONS section 16.1 (ostrom-core); this page says how `ostrom-s
   when missing, so the owner has `CREATEROLE` (since PostgreSQL 16, that only lets it manage the roles it administers).
   `ci/database-roles.sql` creates it beforehand, as a deployment must.
 - At start the server refuses to serve (`UnsafeDatabaseRoleException`, exit 1) when its role is a superuser, has
-  `BYPASSRLS`, or owns a table of the schema or is a member of its owner (`pg_has_role(current_user, relowner,
-  'USAGE')`): such a role could reach, or unlock, every organization's rows (`kernel/…/database/DatabaseRole.kt`).
+  `BYPASSRLS`, or owns a table of the schema or is a member of its owner, even without inheriting its rights
+  (`pg_has_role(current_user, relowner, 'MEMBER')`): such a role could reach, or unlock, every organization's rows
+  (`kernel/…/database/DatabaseRole.kt`).
 
 ## The tables
 

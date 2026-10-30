@@ -102,7 +102,7 @@ jobs:
           docker build -t ostrom-server:smoke ctx/amd64
           docker network create smoke
           docker run -d --name pg --network smoke -e POSTGRES_PASSWORD=postgres postgres:17.6
-          for _ in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+          for _ in $(seq 1 30); do docker exec pg pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
           # As deployed (docs/tenancy.md): the owner migrates, the server serves as a role that owns nothing.
           docker exec -i pg psql -U postgres -v ON_ERROR_STOP=1 < ci/database-roles.sql
           docker run --rm --network smoke --read-only --cap-drop ALL \

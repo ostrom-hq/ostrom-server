@@ -17,8 +17,9 @@ import kotlin.time.Duration.Companion.seconds
  * @property logLevel The lowest level written to the logs.
  * @property trustedProxies The reverse proxies whose `X-Forwarded-For` is believed (`OSTROM_TRUSTED_PROXIES`).
  * @property drainDelay How long the server keeps serving, `/ready` at 503, between SIGTERM and stopping the engine
- *   (`OSTROM_SHUTDOWN_DELAY_SECONDS`, 0 to 15), so the load balancer stops sending it requests first. With the 15 s
- *   the engine then gives requests in flight, a stop takes at most 30 s, the Helm chart's grace period.
+ *   (`OSTROM_SHUTDOWN_DELAY_SECONDS`, 0 to 10), so the load balancer stops sending it requests first. With the 15 s
+ *   the engine then gives requests in flight, a stop takes at most 25 s, leaving 5 s of the Helm chart's 30 s grace
+ *   period to close the pool and the workers.
  */
 data class ServerConfig(
     val host: String,
@@ -36,7 +37,7 @@ data class ServerConfig(
         private const val DEFAULT_MAX_CONNECTIONS = 10
         private const val MAX_CONNECTIONS = 1000
         private const val DEFAULT_DRAIN_DELAY_SECONDS = 5
-        private const val MAX_DRAIN_DELAY_SECONDS = 15
+        private const val MAX_DRAIN_DELAY_SECONDS = 10
         private const val MIGRATION_CONNECTIONS = 2
 
         /**

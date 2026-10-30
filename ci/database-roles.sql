@@ -8,7 +8,8 @@ CREATE ROLE ostrom_owner LOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOREPLICATION N
 CREATE ROLE ostrom_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD 'ostrom_app';
 -- The role those modules' queries switch to (SET LOCAL ROLE): owner of nothing, so the policies apply to it; the
 -- serving role must be a member of it.
-CREATE ROLE ostrom_tenant NOLOGIN NOSUPERUSER NOBYPASSRLS;
+-- Roles are global to the cluster: tolerate one created before (CI's tests create it in the same server).
+DO $$ BEGIN CREATE ROLE ostrom_tenant NOLOGIN NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 GRANT ostrom_tenant TO ostrom_owner WITH ADMIN OPTION;
 GRANT ostrom_tenant TO ostrom_app;
 CREATE DATABASE ostrom OWNER ostrom_owner;

@@ -142,6 +142,20 @@ class TenancyPostgresTest {
                 database.driver.execute("ALTER TABLE owned OWNER TO $role").getOrThrow()
                 assertFailsWith<UnsafeDatabaseRoleException> { owning.requireRowLevelSecurity() }
             }
+            database.withRole { role, member ->
+                // Without inheriting the owner's rights, a member can still SET ROLE to it.
+                val owner = "${role}_owner"
+                database.driver.execute("CREATE ROLE $owner NOLOGIN").getOrThrow()
+                try {
+                    database.driver.execute("CREATE TABLE owned_by_group (id int)").getOrThrow()
+                    database.driver.execute("ALTER TABLE owned_by_group OWNER TO $owner").getOrThrow()
+                    database.driver.execute("GRANT $owner TO $role WITH INHERIT FALSE").getOrThrow()
+                    assertFailsWith<UnsafeDatabaseRoleException> { member.requireRowLevelSecurity() }
+                } finally {
+                    database.driver.execute("DROP TABLE IF EXISTS owned_by_group").getOrThrow()
+                    database.driver.execute("DROP ROLE $owner").getOrThrow()
+                }
+            }
         } finally {
             database.close()
         }

@@ -65,19 +65,16 @@ class TrustedProxies(private val networks: List<IpNetwork>) {
      * @param peer The socket's peer address.
      * @param forwardedFor The `X-Forwarded-For` header values, in order.
      *
-     * @return The client's address in canonical form ([formatIpAddress]), or [peer] as the socket gives it.
+     * @return The client's address in canonical form ([formatIpAddress]); [peer] as given only when it is not an
+     *   IP address.
      */
     fun clientAddress(peer: String, forwardedFor: List<String>): String {
-        if (!isTrusted(peer)) return peer
+        val peerBytes = parseIpAddress(peer) ?: return peer
+        if (networks.none { peerBytes in it }) return formatIpAddress(peerBytes)
         val hops = forwardedFor.flatMap { it.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }
         val readable = hops.asReversed().map(::parseIpAddress).takeWhile { it != null }.filterNotNull()
         val client = readable.firstOrNull { address -> networks.none { address in it } } ?: readable.lastOrNull()
-        return if (client == null) peer else formatIpAddress(client)
-    }
-
-    private fun isTrusted(address: String): Boolean {
-        val bytes = parseIpAddress(address) ?: return false
-        return networks.any { bytes in it }
+        return formatIpAddress(client ?: peerBytes)
     }
 
     /** Reading the trusted proxies. */

@@ -241,8 +241,10 @@ class ConfigTest {
         )
         assertEquals("198.51.100.1", config.trustedProxies.clientAddress("10.0.0.5", listOf("198.51.100.1")))
         assertEquals(Duration.ZERO, config.drainDelay)
+        val longest = ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_DELAY_SECONDS" to "10")))
+        assertEquals(10.seconds, longest.drainDelay)
         assertFailsWith<InvalidConfigException> {
-            ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_DELAY_SECONDS" to "16")))
+            ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_SHUTDOWN_DELAY_SECONDS" to "11")))
         }
         assertFailsWith<InvalidConfigException> {
             ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_TRUSTED_PROXIES" to "everyone")))
