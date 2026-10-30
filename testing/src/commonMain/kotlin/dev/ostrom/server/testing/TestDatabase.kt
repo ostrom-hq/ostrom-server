@@ -19,14 +19,13 @@ import kotlin.uuid.Uuid
  */
 class TestDatabase private constructor(
     val driver: Driver,
-    private val admin: Driver,
+    private val admin: DatabaseConfig,
     private val name: String,
 ) {
     /** Closes the pool and drops the database. */
     suspend fun close() {
         driver.close()
-        admin.execute("DROP DATABASE IF EXISTS $name WITH (FORCE)").getOrThrow()
-        admin.close()
+        administer(admin, "DROP DATABASE IF EXISTS $name WITH (FORCE)")
     }
 
     /** Creating test databases. */
@@ -55,17 +54,20 @@ class TestDatabase private constructor(
                 password = environment["OSTROM_TEST_DATABASE_PASSWORD"],
                 maxConnections = 1,
             )
-            val admin = connectPostgres(config)
             val name = "ostrom_test_" + Uuid.random().toHexString()
-            var database: TestDatabase? = null
+            administer(config, "CREATE DATABASE $name")
+            val testUrl = config.url.substringBeforeLast('/') + "/" + name
+            val driver = connectPostgres(config.copy(url = testUrl, maxConnections = POOL_SIZE))
+            return TestDatabase(driver, config, name)
+        }
+
+        /** Runs [sql] on a connection to the configured database opened for it alone, closed whatever happens. */
+        private suspend fun administer(config: DatabaseConfig, sql: String) {
+            val admin = connectPostgres(config)
             try {
-                admin.execute("CREATE DATABASE $name").getOrThrow()
-                val testUrl = config.url.substringBeforeLast('/') + "/" + name
-                val driver = connectPostgres(config.copy(url = testUrl, maxConnections = POOL_SIZE))
-                database = TestDatabase(driver, admin, name)
-                return database
+                admin.execute(sql).getOrThrow()
             } finally {
-                if (database == null) admin.close()
+                admin.close()
             }
         }
     }

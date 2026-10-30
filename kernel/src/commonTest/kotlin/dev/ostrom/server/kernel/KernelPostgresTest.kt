@@ -15,7 +15,9 @@ import dev.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.koin.core.qualifier.named
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,8 +32,13 @@ import kotlin.time.Duration
 class KernelPostgresTest {
     private val lines = mutableListOf<String>()
 
+    // On the real clock: runTest's virtual time would fire the health check's timeout before the database answers.
     private fun databaseTest(block: suspend (TestDatabase, MigrationRunner) -> Unit) = runTest {
-        val database = TestDatabase.create() ?: return@runTest
+        withContext(Dispatchers.Default) { runDatabaseTest(block) }
+    }
+
+    private suspend fun runDatabaseTest(block: suspend (TestDatabase, MigrationRunner) -> Unit) {
+        val database = TestDatabase.create() ?: return
         try {
             val logger = JsonLogger(LogLevel.INFO, sink = { lines += it })
             val signer = Ed25519InstanceSigner.generate()

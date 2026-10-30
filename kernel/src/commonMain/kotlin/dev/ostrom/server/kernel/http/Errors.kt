@@ -9,9 +9,9 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
 import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.ContentTransformationException
 import io.ktor.server.plugins.NotFoundException
 import io.ktor.server.plugins.PayloadTooLargeException
-import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.response.respond
@@ -73,7 +73,9 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
     val fields = mapOf("request_id" to callId)
     when (cause) {
         is OstromException -> respondError(cause.kind, cause.message)
-        is UnsupportedMediaTypeException ->
+        // No converter for the request's Content-Type: `receive` throws CannotTransformContentToTypeException, a
+        // sibling of UnsupportedMediaTypeException under this base.
+        is ContentTransformationException ->
             respondError(ErrorKind.UNSUPPORTED_MEDIA_TYPE, "The request body must be JSON.")
         is BadRequestException -> {
             // Never the cause's message: a deserialization error quotes the request body.
