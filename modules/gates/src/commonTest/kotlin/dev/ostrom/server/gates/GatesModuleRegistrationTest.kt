@@ -15,11 +15,18 @@ import dev.ostrom.server.gates.fakes.FakeNotifier
 import dev.ostrom.server.gates.fakes.FakePolicies
 import dev.ostrom.server.gates.fakes.FakeSessions
 import dev.ostrom.server.gates.fakes.FakeSigner
+import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
+import dev.ostrom.server.gates.infrastructure.NoGateActors
+import dev.ostrom.server.gates.infrastructure.NoGateNodes
+import dev.ostrom.server.gates.infrastructure.UnavailableGateReceiptSigner
+import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
+import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.uuid.Uuid
 
@@ -28,6 +35,19 @@ class GatesModuleRegistrationTest {
     fun registersUnderItsNameWithDefinitionsThatLoad() {
         assertEquals("gates", GatesModule.name)
         koinApplication { modules(GatesModule.koinModule) }.close()
+    }
+
+    @Test
+    fun withoutAnotherModuleThePortsFailClosed() {
+        val app = koinApplication { }
+        app.koin.loadModules(listOf(GatesModule.defaultPorts(app.koin)))
+        assertIs<DefaultGatePolicies>(app.koin.get<GatePolicies>())
+        assertIs<UnavailableGateSessions>(app.koin.get<GateSessions>())
+        assertIs<NoGateNodes>(app.koin.get<GateNodeResolver>())
+        assertIs<UnknownPullRequestHeads>(app.koin.get<PullRequestHeads>())
+        assertIs<UnavailableGateReceiptSigner>(app.koin.get<GateReceiptSigner>())
+        assertIs<NoGateActors>(app.koin.get<GateActorResolver>())
+        app.close()
     }
 
     @Test
