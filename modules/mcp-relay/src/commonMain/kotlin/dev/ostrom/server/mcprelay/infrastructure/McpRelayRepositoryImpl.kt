@@ -54,7 +54,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
                 "credential_header, stdio, sharing, version, created_at) VALUES (:id, :org_id, :name, :transport, " +
                 ":url, :credential, :header, :stdio, :sharing, :version, :created_at) ON CONFLICT (org_id, name) DO " +
                 "NOTHING",
-        ).bindServer(server),
+        ).bindServer(server).bind("created_at", server.createdAt),
     ).getOrThrow() == 1L
 
     override suspend fun updateServer(server: McpServer): McpServer? {
@@ -317,6 +317,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         ).getOrThrow()
     }
 
+    // Every column but created_at, which only INSERT names: sqlx4k refuses a value for a parameter its SQL lacks.
     private fun Statement.bindServer(server: McpServer): Statement = bind("id", server.id)
         .bind("org_id", server.orgId)
         .bind("name", server.name)
@@ -333,7 +334,6 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         )
         .bind("sharing", server.sharing.name)
         .bind("version", server.version)
-        .bind("created_at", server.createdAt)
 
     private fun Statement.bindNullable(name: String, value: Any?, type: KClass<*>): Statement =
         if (value == null) bindNull(name, type) else bind(name, value)
