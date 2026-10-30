@@ -40,6 +40,15 @@ interface SecretHasher {
      * @return The CSRF token.
      */
     suspend fun csrfToken(sessionSecret: String): String
+
+    /**
+     * The PKCE `S256` challenge of a verifier (RFC 7636 § 4.2): base64url, without padding, of its SHA-256.
+     *
+     * @param verifier The code verifier.
+     *
+     * @return The challenge.
+     */
+    suspend fun pkceChallenge(verifier: String): String
 }
 
 /** Limits how often something can be tried (sign-in links, code polls, token creation). */

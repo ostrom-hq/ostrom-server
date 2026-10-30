@@ -1,5 +1,33 @@
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
+import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
+import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.MagicLinksRepository
+import dev.ostrom.server.identity.domain.MailSender
+import dev.ostrom.server.identity.domain.OAuthAttemptsRepository
+import dev.ostrom.server.identity.domain.OAuthProvider
+import dev.ostrom.server.identity.domain.RequestMagicLinkUseCase
+import dev.ostrom.server.identity.domain.RequestMagicLinkUseCaseImpl
+import dev.ostrom.server.identity.domain.SignInMethods
+import dev.ostrom.server.identity.domain.StartOAuthSignInUseCase
+import dev.ostrom.server.identity.domain.StartOAuthSignInUseCaseImpl
+import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
+import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
+import dev.ostrom.server.identity.infrastructure.DirectoryMailSender
+import dev.ostrom.server.identity.infrastructure.GitHubOAuthProvider
+import dev.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
+import dev.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
+import dev.ostrom.server.identity.infrastructure.OidcProvider
+import dev.ostrom.server.identity.infrastructure.ResendMailSender
+import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
+import dev.ostrom.server.identity.infrastructure.magicLinkMail
+import dev.ostrom.server.identity.presentation.SignInConfig
+import dev.ostrom.server.identity.presentation.SignInRoutesDependencies
+import dev.ostrom.server.identity.presentation.signInRoutes
+import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
+import org.koin.core.qualifier.named
 import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCase
 import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
 import dev.ostrom.server.identity.domain.ApiTokensRepository
@@ -60,6 +88,7 @@ import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.module
+import kotlin.time.Clock
 
 /**
  * The identity module: users and their sign-in identities, browser sessions, API, CLI and agent tokens, the
@@ -101,6 +130,34 @@ object IdentityModule : ServerModule {
         single<GetDeviceAuthorizationUseCase> { GetDeviceAuthorizationUseCaseImpl(get(), get(), get()) }
         single<AnswerDeviceAuthorizationUseCase> { AnswerDeviceAuthorizationUseCaseImpl(get(), get(), get(), get()) }
         single<PollDeviceAuthorizationUseCase> { PollDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get()) }
+        single { SignInConfig.from(get()) }
+        single(HTTP) {
+            HttpClient {
+                expectSuccess = false
+                install(HttpTimeout) {
+                    connectTimeoutMillis = HTTP_TIMEOUT_MS
+                    requestTimeoutMillis = HTTP_TIMEOUT_MS
+                }
+            }
+        } onClose { it?.close() }
+        single { signInMethods(get(), get(HTTP), get()) }
+        single<MailSender> { mailSender(get(), get(HTTP), get()) }
+        single<OAuthAttemptsRepository> { OAuthAttemptsRepositoryImpl(get()) }
+        single<MagicLinksRepository> { MagicLinksRepositoryImpl(get()) }
+        single<StartOAuthSignInUseCase> {
+            val config = get<IdentityConfig>()
+            StartOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get(), config::callbackUrl)
+        }
+        single<CompleteOAuthSignInUseCase> {
+            val config = get<IdentityConfig>()
+            CompleteOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get(), config::callbackUrl)
+        }
+        single<RequestMagicLinkUseCase> {
+            val config = get<IdentityConfig>()
+            RequestMagicLinkUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), ::magicLinkMail, config::magicLinkUrl)
+        }
+        single<VerifyMagicLinkUseCase> { VerifyMagicLinkUseCaseImpl(get(), get(), get(), get(), get()) }
+        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get()) }
         single {
             IdentityRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
@@ -112,5 +169,28 @@ object IdentityModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.identityRoutes(koin.get())
+        route.signInRoutes(koin.get())
+    }
+
+    private val HTTP = named("identity-http")
+    private const val HTTP_TIMEOUT_MS = 10_000L
+
+    private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {
+        val oauth = buildMap<IdentityProvider, OAuthProvider> {
+            config.github?.let { put(IdentityProvider.GITHUB, GitHubOAuthProvider(it, http, config.githubWebUrl, config.githubApiUrl)) }
+            config.google?.let {
+                put(
+                    IdentityProvider.GOOGLE,
+                    OidcProvider(IdentityProvider.GOOGLE, config.googleEndpoints, it, http, clock, extraParameters = mapOf("prompt" to "select_account")),
+                )
+            }
+        }
+        return SignInMethods(oauth, email = config.resendApiKey != null || config.mailDirectory != null)
+    }
+
+    private fun mailSender(config: SignInConfig, http: HttpClient, clock: Clock): MailSender = when {
+        config.resendApiKey != null -> ResendMailSender(http, config.resendApiKey, config.mailFrom)
+        config.mailDirectory != null -> DirectoryMailSender(config.mailDirectory, clock)
+        else -> UnconfiguredMailSender()
     }
 }

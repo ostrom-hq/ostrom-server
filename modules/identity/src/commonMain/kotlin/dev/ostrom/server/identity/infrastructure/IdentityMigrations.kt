@@ -121,4 +121,33 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             GRANT SELECT, INSERT ON identity_audit_events TO ostrom_tenant
         """.trimIndent(),
     ),
+    SchemaMigration(
+        version = 2,
+        name = "create_sign_in",
+        sql = """
+            CREATE TABLE identity_oauth_attempts (
+                id UUID PRIMARY KEY,
+                state_hash TEXT NOT NULL UNIQUE,
+                provider TEXT NOT NULL,
+                connection_id UUID,
+                code_verifier TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                redirect_path TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ
+            );
+            CREATE INDEX identity_oauth_attempts_expiry ON identity_oauth_attempts (expires_at);
+            CREATE TABLE identity_magic_links (
+                id UUID PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL,
+                redirect_path TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ
+            );
+            CREATE INDEX identity_magic_links_expiry ON identity_magic_links (expires_at)
+        """.trimIndent(),
+    ),
 )

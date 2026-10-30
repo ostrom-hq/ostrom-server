@@ -1,5 +1,6 @@
 package dev.ostrom.server.identity.presentation
 
+import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
 
@@ -16,6 +17,24 @@ data class IdentityConfig(
 ) {
     /** Cookies are `Secure` whenever the API is served over HTTPS (always, outside a developer's machine). */
     val secureCookies: Boolean get() = publicUrl.startsWith("https://")
+
+    /**
+     * The server's callback URL for a provider, registered in the provider's settings (GESTES-LYES.md).
+     *
+     * @param provider The provider.
+     *
+     * @return The URL.
+     */
+    fun callbackUrl(provider: IdentityProvider): String = "$publicUrl/v1/auth/${provider.key}/callback"
+
+    /**
+     * The console page an e-mailed link opens; the token is in the fragment (see `VerifyMagicLinkRequest`).
+     *
+     * @param token The link's token.
+     *
+     * @return The URL.
+     */
+    fun magicLinkUrl(token: String): String = "$consoleUrl/auth/email#token=$token"
 
     companion object {
         /**

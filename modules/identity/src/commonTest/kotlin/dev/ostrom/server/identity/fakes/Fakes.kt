@@ -44,6 +44,8 @@ class FakeHasher : SecretHasher {
     override suspend fun hash(secret: String): String = "h($secret)"
 
     override suspend fun csrfToken(sessionSecret: String): String = "csrf($sessionSecret)"
+
+    override suspend fun pkceChallenge(verifier: String): String = "s256($verifier)"
 }
 
 class ScriptedRateLimiter(var allow: Boolean = true) : RateLimiter {

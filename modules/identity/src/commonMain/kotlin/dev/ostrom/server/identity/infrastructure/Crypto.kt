@@ -50,6 +50,8 @@ class Sha256SecretHasher : SecretHasher {
     override suspend fun csrfToken(sessionSecret: String): String =
         UrlBase64.encode(sha256((CSRF_DOMAIN + sessionSecret).encodeToByteArray()))
 
+    override suspend fun pkceChallenge(verifier: String): String = UrlBase64.encode(sha256(verifier.encodeToByteArray()))
+
     private suspend fun sha256(data: ByteArray): ByteArray = CryptographyProvider.Default.get(SHA256).hasher().hash(data)
 
     private companion object {

@@ -82,6 +82,106 @@ class AuthApi {
     }
 }
 
+/** Signing in: the offered methods, GitHub and Google, and e-mailed links. */
+@Serializable
+@Resource("/v1/auth")
+class SignInApi {
+    /**
+     * `GET /v1/auth/providers`: the sign-in methods this instance offers.
+     *
+     * @property parent The auth resource.
+     */
+    @Serializable
+    @Resource("providers")
+    class Providers(val parent: SignInApi = SignInApi())
+
+    /**
+     * A sign-in with an OAuth provider.
+     *
+     * @property parent The auth resource.
+     * @property provider `github` or `google`.
+     */
+    @Serializable
+    @Resource("{provider}")
+    class Provider(val parent: SignInApi = SignInApi(), val provider: String) {
+        /**
+         * `GET /v1/auth/{provider}/start?redirect=`: sends the browser to the provider's consent page.
+         *
+         * @property parent The provider resource.
+         * @property redirect The console path to return to.
+         */
+        @Serializable
+        @Resource("start")
+        class Start(val parent: Provider, val redirect: String? = null)
+
+        /**
+         * `GET /v1/auth/{provider}/callback`: where the provider sends the browser back.
+         *
+         * @property parent The provider resource.
+         * @property code The authorization code.
+         * @property state The state.
+         * @property error The provider's error, when the user refused or it failed.
+         */
+        @Serializable
+        @Resource("callback")
+        class Callback(val parent: Provider, val code: String? = null, val state: String? = null, val error: String? = null)
+    }
+
+    /**
+     * `POST /v1/auth/email`: e-mails a sign-in link.
+     *
+     * @property parent The auth resource.
+     */
+    @Serializable
+    @Resource("email")
+    class Email(val parent: SignInApi = SignInApi()) {
+        /**
+         * `POST /v1/auth/email/verify`: signs in with the link's token.
+         *
+         * @property parent The e-mail resource.
+         */
+        @Serializable
+        @Resource("verify")
+        class Verify(val parent: Email = Email())
+    }
+}
+
+/**
+ * The sign-in methods this instance offers.
+ *
+ * @property methods `github`, `google`, `email`, in that order of keys.
+ */
+@Serializable
+data class ProvidersResponse(val methods: List<String>)
+
+/**
+ * A request for a sign-in link.
+ *
+ * @property email The address.
+ * @property redirect The console path to return to after signing in.
+ */
+@Serializable
+data class MagicLinkRequest(val email: String, val redirect: String? = null)
+
+/**
+ * The token of a sign-in link, read by the console from the link's fragment (`/auth/email#token=…`): a fragment is
+ * never sent to a server, so the token stays out of access logs and `Referer` headers, and a mail scanner that opens
+ * the link signs nobody in.
+ *
+ * @property token The token.
+ */
+@Serializable
+data class VerifyMagicLinkRequest(val token: String)
+
+/**
+ * A completed sign-in: the session cookie is set on the same answer.
+ *
+ * @property redirect The console path to go to.
+ * @property csrfToken The token to send in `X-CSRF-Token` on state-changing requests.
+ */
+@Serializable
+data class SignedInResponse(val redirect: String, val csrfToken: String)
+
 /** `GET`/`POST /v1/tokens`: the user's personal and CLI tokens. */
 @Serializable
 @Resource("/v1/tokens")
