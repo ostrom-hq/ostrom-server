@@ -69,5 +69,24 @@ class OutdatedLauncherException : OstromException(
         "written by `ostrom sync`), then run the same push again.",
 )
 
+/**
+ * An enforced merge whose head and base GitHub did not give: its yes would be bound to the command's text, and commits
+ * pushed after the yes would be merged under it (audit S2-06, A8). Refused until the GitHub integration answers.
+ */
+class GitHubRequiredException : OstromException(
+    ErrorKind.UNAVAILABLE,
+    "GitHub integration required: Ostrom ties a merge's yes to the pull request's head and base, read from GitHub, " +
+        "and could not read them for this pull request. No yes was asked. Install the Ostrom GitHub App on this " +
+        "repository, or check that the pull request exists, then run the same merge again.",
+)
+
+/** An enforced merge sent without its pull request number: nothing but the text would tie the yes (audit S2-06). */
+class MissingPullRequestException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "This merge names no pull request number, so Ostrom could not tie the yes to the pull request's head, and no " +
+        "yes was asked. Merge with `gh pr merge <number>`, and update the launcher if it is the one that sent this.",
+)
+
 /** A field of the request is out of bounds (too long, malformed SHA, too many refs). */
+
 class InvalidGateRequestException(reason: String) : OstromException(ErrorKind.INVALID_REQUEST, reason)

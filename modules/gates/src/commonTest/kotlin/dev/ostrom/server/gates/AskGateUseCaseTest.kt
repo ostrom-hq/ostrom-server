@@ -7,6 +7,9 @@ import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.GatePush
 import dev.ostrom.server.gates.domain.models.GateStatus
+import dev.ostrom.server.gates.domain.models.GitHubRequiredException
+import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
+import dev.ostrom.server.gates.domain.models.MissingPullRequestException
 import dev.ostrom.server.gates.domain.models.OutdatedLauncherException
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.RedirectedPushException
@@ -110,7 +113,7 @@ class AskGateUseCaseTest {
                 Evidence("Repository", "ostrom-hq/gate-demo"),
                 Evidence("Asked by", "lyes · session s-000005"),
                 Evidence("Harness", "0.9.0"),
-                Evidence("Diff", "+line"),
+                Evidence("Diff (sent by the developer's machine, not checked by Ostrom)", "+line"),
             ),
             view.gate.evidence,
         )
@@ -169,14 +172,51 @@ class AskGateUseCaseTest {
             view.gate.evidence[3],
         )
 
-        val unknown = ask(bench)(agent(), merge.copy(pullRequest = 7, command = "gh pr merge 7", push = null))
-        assertNull(unknown.gate.subject.pullRequest)
-        val outside = ask(bench, mapOf(6 to GatePullRequest(6, SHA_A, "main")))(
-            agent(),
-            merge.copy(repo = "  ", push = null),
+        // Audit S2-06: a merge whose head GitHub did not give is never bound to the command's text.
+        val unknown = merge.copy(pullRequest = 7, command = "gh pr merge 7", push = null)
+        val refused = assertFailsWith<GitHubRequiredException> { ask(bench)(agent(), unknown) }
+        assertEquals(ErrorKind.UNAVAILABLE, refused.kind)
+        assertFailsWith<InvalidGateRequestException> {
+            ask(bench, mapOf(6 to GatePullRequest(6, SHA_A, "main")))(agent(), merge.copy(repo = "  ", push = null))
+        }
+        assertFailsWith<MissingPullRequestException> {
+            ask(bench)(agent(), merge.copy(pullRequest = null, push = null, command = "gh pr merge --squash"))
+        }
+        assertEquals(1, bench.repository.gates.size, "Only the merge GitHub knows was opened")
+
+        // A shadow or ungated merge blocks nothing: it is logged against its text.
+        val shadow = ask(bench, gate = node.copy(enforced = false))(agent(), unknown)
+        assertEquals(GateStatus.SHADOW, shadow.gate.status)
+        assertNull(shadow.gate.subject.pullRequest)
+        assertEquals(GateStatus.UNGATED, ask(bench, gate = null)(agent(), unknown.copy(pullRequest = null)).gate.status)
+    }
+
+    @Test
+    fun aForcePushIsReadFromTheCommandToo() = runTest {
+        val bench = GateBench()
+        val forced = listOf(
+            "git push --force origin main",
+            "git push --force-with-lease origin main",
+            "git push -uf origin main",
+            "git push origin +main",
+            "git push origin :old",
+            "git push --mirror origin",
+            "git push --delete origin old",
+            "git push -d origin old",
+            "git -C x push --prune origin",
         )
-        assertNull(outside.gate.subject.pullRequest, "Outside a repository, GitHub is not asked")
-        assertEquals(Evidence("Asked by", "agent-$SESSION · session s-000005"), outside.gate.evidence[2])
+        for (command in forced) {
+            val view = ask(bench)(agent(), pushAsk(command = command))
+            assertEquals(true, view.gate.subject.push?.force, command)
+        }
+        for (command in listOf("git push origin main", "git push -u origin main", "git push origin a+b")) {
+            assertEquals(false, ask(bench)(agent(), pushAsk(command = command)).gate.subject.push?.force, command)
+        }
+        assertTrue(GateCommands.forces("git push -f && echo"))
+        assertFalse(GateCommands.forces("git commit -f && git push origin main"))
+        assertTrue(GateCommands.mentionsMerge("gh pr merge 6"))
+        assertTrue(GateCommands.mentionsMerge("gh api -X PUT repos/o/r/pulls/6/merge"))
+        assertFalse(GateCommands.mentionsMerge("git merge main"))
     }
 
     @Test

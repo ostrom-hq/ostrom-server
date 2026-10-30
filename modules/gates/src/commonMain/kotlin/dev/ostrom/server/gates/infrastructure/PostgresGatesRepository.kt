@@ -193,7 +193,6 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                         "INSERT INTO gates_requests (id, gate_id, org_id, position, approver_id, status, " +
                             "answered_at, channel, created_at) VALUES (:id, :gate_id, :org_id, :position, " +
                             ":approver_id, :status, :answered_at, :channel, :created_at)",
-
                     ).bindRequest(request).bind("position", position),
                 ).getOrThrow()
             }

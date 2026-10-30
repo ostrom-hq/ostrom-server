@@ -129,7 +129,6 @@ class FakeSessions : GateSessions {
         if (launchId != null && launchId != "launch-$sessionId") {
             throw OstromException(ErrorKind.FORBIDDEN, "other launch")
         }
-
     }
 }
 

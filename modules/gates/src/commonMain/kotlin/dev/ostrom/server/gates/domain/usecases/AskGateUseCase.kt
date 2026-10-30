@@ -4,9 +4,13 @@ import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateCommands
+import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.GatePush
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.GateView
+import dev.ostrom.server.gates.domain.models.GitHubRequiredException
+import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
+import dev.ostrom.server.gates.domain.models.MissingPullRequestException
 import dev.ostrom.server.gates.domain.models.OutdatedLauncherException
 import dev.ostrom.server.gates.domain.services.GateDigester
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -78,11 +82,11 @@ class AskGateUseCaseImpl(
         val repo = ask.repo?.trim()?.takeIf { it.isNotEmpty() }
         val realRepo = ask.realRepo?.trim()?.takeIf { it.isNotEmpty() && it != repo }
         val node = nodes.resolve(orgId, realRepo ?: repo, ask.actionClass)
-        // The head and base of a merge come from GitHub, never from the caller (audit A7b, A8). Unknown: the merge is
-        // bound to the command in this session, as the prototype did.
-        val pullRequest = ask.pullRequest?.let { number -> repo?.let { pullRequests.head(orgId, it, number) } }
-        val push = if (pullRequest == null) ask.push else null
         val command = ask.command.trim().take(MAX_COMMAND)
+        val pullRequest = pullRequestOf(orgId, repo, ask, command, node?.enforced == true)
+        // Audit S2-05: the hook's force flag is the machine's word; the command's options count too.
+        val push = ask.push.takeIf { pullRequest == null }
+            ?.let { it.copy(force = it.force || GateCommands.forces(command)) }
         // CORRECTIFS-3: a hook from before the commits were sent; its yes would be bound to the text, not the commits.
         if (node?.enforced == true && pullRequest == null && push == null && GateCommands.mentionsPush(command)) {
             throw OutdatedLauncherException()
@@ -122,7 +126,8 @@ class AskGateUseCaseImpl(
 
             add(Evidence("Asked by", "$asker$session$pr"))
             subject.harnessVersion?.let { add(Evidence("Harness", it)) }
-            if (push != null && !diff.isNullOrEmpty()) add(Evidence("Diff", diff))
+            // Audit S2-05: before the push, GitHub does not have these commits; the diff is what the machine sent.
+            if (push != null && !diff.isNullOrEmpty()) add(Evidence(MACHINE_DIFF, diff))
         }
         return open(
             OpenGate(
@@ -139,6 +144,31 @@ class AskGateUseCaseImpl(
         )
     }
 
+    // The head and base of a merge come from GitHub, never from the caller (audit A7b, A8). An enforced merge GitHub
+    // does not describe is refused, never bound to the command's text (audit S2-06); a shadow one is only logged.
+    private suspend fun pullRequestOf(
+        orgId: Uuid,
+        repo: String?,
+        ask: AskGate,
+        command: String,
+        enforced: Boolean,
+    ): GatePullRequest? {
+        val number = ask.pullRequest
+        val head = when {
+            number == null -> null
+            repo == null -> throw InvalidGateRequestException("A pull request needs the session's repository.")
+            else -> pullRequests.head(orgId, repo, number)
+        }
+        val refusal = when {
+            !enforced || head != null -> null
+            number != null -> GitHubRequiredException()
+            GateCommands.mentionsMerge(command) -> MissingPullRequestException()
+            else -> null
+        }
+        refusal?.let { throw it }
+        return head
+    }
+
     private fun pushLine(push: GatePush): String {
         val refs = push.refs.joinToString(", ") { "${it.ref} ← ${it.sha.take(PUSH_SHA).ifEmpty { "(deleted)" }}" }
         val force = if (push.force) " (force-push)" else ""
@@ -147,6 +177,7 @@ class AskGateUseCaseImpl(
     }
 
     private companion object {
+        const val MACHINE_DIFF = "Diff (sent by the developer's machine, not checked by Ostrom)"
         const val MAX_DIFF = 8_000
         const val MAX_COMMAND = 8_000
         const val MAX_LABEL = 200

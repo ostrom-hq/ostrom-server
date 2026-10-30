@@ -204,7 +204,6 @@ class OpenGateUseCaseImpl(
         ref.ref.isNotBlank() && ref.ref.length <= MAX_REF && (ref.sha.isEmpty() || isSha(ref.sha))
 
     private inline fun ensure(condition: Boolean, reason: () -> String) {
-
         if (!condition) throw InvalidGateRequestException(reason())
     }
 

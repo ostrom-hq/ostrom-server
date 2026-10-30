@@ -221,6 +221,15 @@ object GateCommands {
     )
     private val push = Regex("\\bgit\\b[^\\n;&|]*\\bpush\\b")
 
+    // What follows `git … push` up to the end of that command.
+    private val pushArguments = Regex("\\bgit\\b[^\\n;&|]*?\\bpush\\b([^\\n;&|]*)")
+
+    // A push that rewrites or deletes: --force*, --mirror, --delete, --prune, a short group with f or d, +ref, :ref.
+    private val forcing = Regex("^(--force.*|--mirror|--delete|--prune|-[a-zA-Z]*[fd][a-zA-Z]*|\\+.+|:.+)$")
+
+    // `gh pr merge`, or a merge through the REST or GraphQL API.
+    private val merge = Regex("\\bgh\\s+pr\\s+merge\\b|/pulls/[^\\s/]+/merge\\b|\\bmergePullRequest\\b")
+
     /**
      * Tells whether a command changes where git reads or sends.
      *
@@ -236,4 +245,23 @@ object GateCommands {
      * @return True for a push.
      */
     fun mentionsPush(command: String): Boolean = push.containsMatchIn(command)
+
+    /**
+     * Tells whether a push command rewrites or deletes what it sends to (audit S2-05: the hook's `force` flag alone
+     * is the machine's word).
+     *
+     * @param command The command.
+     * @return True for a force-push, a mirror, a deletion or a prune.
+     */
+    fun forces(command: String): Boolean = pushArguments.findAll(command).any { match ->
+        match.groupValues[1].split(' ', '\t').any { forcing.matches(it.trim('"', '\'')) }
+    }
+
+    /**
+     * Tells whether a command merges a pull request.
+     *
+     * @param command The command.
+     * @return True for `gh pr merge` or a merge through GitHub's API.
+     */
+    fun mentionsMerge(command: String): Boolean = merge.containsMatchIn(command)
 }
