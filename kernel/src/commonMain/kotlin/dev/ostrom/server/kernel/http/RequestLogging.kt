@@ -1,8 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.core.telemetry.trace.SpanContext
 import dev.ostrom.server.kernel.logging.LogLevel
-import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.observability.TelemetryLogger
 import dev.ostrom.server.kernel.observability.spanContext
 import io.ktor.http.HttpStatusCode
@@ -15,21 +15,12 @@ import io.ktor.util.AttributeKey
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
-/**
- * Configuration of [RequestLogging].
- *
- * @property logger Where request lines go; set by [configureHttp].
- */
-class RequestLoggingConfig {
-    lateinit var logger: Logger
-}
-
 private val requestStart = AttributeKey<TimeSource.Monotonic.ValueTimeMark>("ostrom.request.start")
 
 /**
  * One structured line per answered request: method, path (never the query string, which may carry a token),
- * status, duration, request id, and the trace and span ids when the request is traced. `/health` is logged at DEBUG
- * so probes do not flood the logs.
+ * status, duration, request id, and the trace and span ids when the request is traced. The health route is logged at
+ * DEBUG so probes do not flood the logs.
  */
 val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingConfig) {
     val logger = pluginConfig.logger
@@ -37,7 +28,7 @@ val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingC
     on(ResponseSent) { call ->
         val path = call.request.path()
         logger.log(
-            if (path == "/health") LogLevel.DEBUG else LogLevel.INFO,
+            if (path in HEALTH_PATHS) LogLevel.DEBUG else LogLevel.INFO,
             "request served",
             requestFields(
                 method = call.request.httpMethod.value,

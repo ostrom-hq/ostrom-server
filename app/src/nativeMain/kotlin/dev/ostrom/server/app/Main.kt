@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.app
 
 import dev.ostrom.core.telemetry.Telemetry
@@ -38,8 +39,8 @@ import kotlin.uuid.Uuid
  * one structured log line.
  */
 fun main() {
-    val config = try {
-        ServerConfig.load()
+    val (source, config) = try {
+        ServerConfig.source().let { it to ServerConfig.from(it) }
     } catch (error: InvalidConfigException) {
         JsonLogger(LogLevel.ERROR).error("invalid configuration", mapOf("reason" to error.message))
         exitProcess(2)
@@ -72,7 +73,7 @@ fun main() {
     try {
         val database = connectPostgres(config.database).also { driver = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val kernel = kernelModule(logger, database, signer, telemetry = telemetry, metrics = metrics)
+        val kernel = kernelModule(logger, database, signer, source, telemetry = telemetry, metrics = metrics)
         val server = serverKoin(kernel, modules).also { koin = it }
         runBlocking {
             val migrations = server.get<MigrationRunner>()

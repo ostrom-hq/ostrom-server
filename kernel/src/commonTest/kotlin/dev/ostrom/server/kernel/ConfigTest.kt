@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.config.DatabaseConfig
@@ -145,6 +146,7 @@ class ConfigTest {
     fun readsTheProcessEnvironment() {
         val environment = EnvironmentConfigSource()
         assertNotNull(environment["PATH"], "PATH is set in every test process")
+        assertEquals(environment["PATH"], ServerConfig.source()["PATH"], "The process source reads the environment")
         assertNull(environment["OSTROM_SURELY_UNSET_${Uuid.random().toHexString()}"])
     }
 
