@@ -51,10 +51,8 @@ class IdentityRoutesPostgresTest {
         return user to koin.get<StartWebSessionUseCase>()(user.id)
     }
 
-    private fun HttpRequestBuilder.session(started: StartedSession, csrf: Boolean = true) {
-        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}")
-        if (csrf) header(CSRF_HEADER, started.csrfToken)
-    }
+    private fun HttpRequestBuilder.session(started: StartedSession, csrf: Boolean = true) =
+        browserSession(started.secret, started.csrfToken.takeIf { csrf })
 
     private fun HttpRequestBuilder.json(body: Any) {
         contentType(ContentType.Application.Json)

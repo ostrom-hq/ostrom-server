@@ -58,16 +58,24 @@ interface TokenAuthenticator {
 
     /**
      * Resolves a browser session cookie. A request that changes state must also carry the session's CSRF token
-     * in the `X-CSRF-Token` header ([CSRF_HEADER]); the authenticator checks it against the session.
+     * in the `X-CSRF-Token` header ([CSRF_HEADER]), equal to the readable [CSRF_COOKIE] (the kernel passes it only
+     * then), and come from an allowed `Origin`; the authenticator checks the token against the session and the origin
+     * against its list (audit S2-08).
      *
      * @param sessionToken The value of the [SESSION_COOKIE] cookie.
-     * @param csrfToken The value of the [CSRF_HEADER] header, if any.
+     * @param csrfToken The value of the [CSRF_HEADER] header when it repeats the [CSRF_COOKIE] cookie, else null.
      * @param requireCsrf True for a method that changes state (anything but GET, HEAD and OPTIONS).
+     * @param origin The request's `Origin` header, if any.
      *
-     * @return The principal, or null when the session is unknown, expired, revoked or the CSRF token is wrong.
+     * @return The principal, or null when the session is unknown, expired, revoked, the CSRF token is wrong or the
+     *   origin is not allowed.
      */
-    suspend fun authenticateSession(sessionToken: String, csrfToken: String?, requireCsrf: Boolean): AuthenticatedPrincipal? =
-        null
+    suspend fun authenticateSession(
+        sessionToken: String,
+        csrfToken: String?,
+        requireCsrf: Boolean,
+        origin: String? = null,
+    ): AuthenticatedPrincipal? = null
 }
 
 /** The cookie that carries a browser session (HttpOnly, Secure, SameSite=Lax; set by the identity module). */
@@ -75,6 +83,12 @@ const val SESSION_COOKIE = "ostrom_session"
 
 /** The header that carries the CSRF token of a browser session on state-changing requests. */
 const val CSRF_HEADER = "X-CSRF-Token"
+
+/**
+ * The readable cookie (not HttpOnly) that carries the CSRF token of a browser session, set with [SESSION_COOKIE]:
+ * the console copies it into [CSRF_HEADER]; another site can neither read it nor set the header (double submit).
+ */
+const val CSRF_COOKIE = "ostrom_csrf"
 
 /** Rejects every token: the default until the identity module is registered, so no route is open by mistake. */
 class RejectingTokenAuthenticator : TokenAuthenticator {

@@ -178,4 +178,20 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             GRANT SELECT ON identity_api_tokens TO ostrom_tenant
         """.trimIndent(),
     ),
+    // S2-08: a signed-in person's one-time link (`opk_`, 15 min) that opens a browser session elsewhere.
+    SchemaMigration(
+        version = 4,
+        name = "sign_in_links",
+        sql = """
+            CREATE TABLE identity_sign_in_links (
+                id UUID PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                user_id UUID NOT NULL REFERENCES identity_users (id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ
+            );
+            CREATE INDEX identity_sign_in_links_expiry ON identity_sign_in_links (expires_at)
+        """.trimIndent(),
+    ),
 )

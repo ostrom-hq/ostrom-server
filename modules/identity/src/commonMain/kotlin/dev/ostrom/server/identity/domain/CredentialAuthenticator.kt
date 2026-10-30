@@ -22,12 +22,14 @@ import kotlin.time.Instant
  * @param sessions The browser sessions.
  * @param hasher Hashes secrets and derives CSRF tokens.
  * @param clock The clock.
+ * @param allowedOrigins The origins a session may change state from (`IdentityConfig.allowedOrigins`).
  */
 class CredentialAuthenticatorImpl(
     private val tokens: ApiTokensRepository,
     private val sessions: WebSessionsRepository,
     private val hasher: SecretHasher,
     private val clock: Clock,
+    private val allowedOrigins: Set<String>,
 ) : TokenAuthenticator {
     override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
         val kind = TokenKind.entries.firstOrNull { token.startsWith(it.prefix + "_") } ?: return null
@@ -58,11 +60,10 @@ class CredentialAuthenticatorImpl(
         sessionToken: String,
         csrfToken: String?,
         requireCsrf: Boolean,
+        origin: String?,
     ): AuthenticatedPrincipal? {
         if (!sessionToken.startsWith(SESSION_PREFIX + "_") || sessionToken.length > MAX_SECRET_LENGTH) return null
-        if (requireCsrf && (csrfToken == null || !constantTimeEquals(csrfToken, hasher.csrfToken(sessionToken)))) {
-            return null
-        }
+        if (requireCsrf && !csrfHolds(sessionToken, csrfToken, origin)) return null
         val session = sessions.findBySecretHash(hasher.hash(sessionToken)) ?: return null
         val now = clock.now()
         if (session.revokedAt != null || session.expiresAt <= now) return null
@@ -74,6 +75,13 @@ class CredentialAuthenticatorImpl(
             credentialId = session.id.toString(),
         )
     }
+
+    /**
+     * A state-changing request with a session cookie (S2-08): the CSRF token (the kernel passes it only when the
+     * header repeats the readable cookie) is the session's, and the request comes from an allowed origin.
+     */
+    private suspend fun csrfHolds(sessionToken: String, csrfToken: String?, origin: String?): Boolean =
+        origin in allowedOrigins && csrfToken != null && constantTimeEquals(csrfToken, hasher.csrfToken(sessionToken))
 
     private fun stale(lastUse: Instant?, now: Instant) = lastUse == null || now - lastUse >= SESSION_TOUCH_INTERVAL
 

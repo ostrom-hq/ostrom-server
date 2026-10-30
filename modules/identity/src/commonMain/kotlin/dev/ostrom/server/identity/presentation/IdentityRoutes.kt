@@ -23,8 +23,10 @@ import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.TokenNotFoundException
 import dev.ostrom.server.identity.domain.isBrowserSession
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
+import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireScope
@@ -60,6 +62,7 @@ import kotlin.uuid.Uuid
  * @property pollDeviceAuthorization Polls it.
  * @property getDeviceAuthorization Shows it to the user.
  * @property answerDeviceAuthorization Approves or denies it.
+ * @property signOutListeners Told after a sign-out (the phones registered with the credential are dropped).
  */
 data class IdentityRoutesDependencies(
     val config: IdentityConfig,
@@ -75,6 +78,7 @@ data class IdentityRoutesDependencies(
     val pollDeviceAuthorization: PollDeviceAuthorizationUseCase,
     val getDeviceAuthorization: GetDeviceAuthorizationUseCase,
     val answerDeviceAuthorization: AnswerDeviceAuthorizationUseCase,
+    val signOutListeners: List<SignOutListener>,
 )
 
 /**
@@ -125,12 +129,15 @@ fun Route.identityRoutes(dependencies: IdentityRoutesDependencies) = with(depend
             } else {
                 revokeToken(userId, credential)
             }
+            // After the revocation: a listener that fails cannot keep the credential alive (S2-08, APP 06:10).
+            signOutListeners.forEach { it.signedOut(principal.subjectId, principal.credentialId) }
             call.respond(HttpStatusCode.NoContent)
         }
         post<AuthApi.Logout.Everywhere> {
             val principal = call.requireBrowserSession()
             endWebSession.everywhere(principal.userId())
             call.clearSessionCookie(config)
+            signOutListeners.forEach { it.signedOut(principal.subjectId, null) }
             call.respond(HttpStatusCode.NoContent)
         }
 
@@ -171,45 +178,40 @@ fun Route.identityRoutes(dependencies: IdentityRoutesDependencies) = with(depend
 }
 
 /**
- * Sets the session cookie after a sign-in: HttpOnly (no script reads it), Secure when the API is served over HTTPS,
- * SameSite=Lax (sent on the console's own requests and top-level navigations, not on another site's forms), for
- * the whole API, until the session expires.
+ * Sets the session cookies after a sign-in (audit S2-08): [SESSION_COOKIE], HttpOnly (no script reads it), and
+ * [CSRF_COOKIE], readable by the console's script, which copies it into the `X-CSRF-Token` header of every request
+ * that changes state. Both are Secure when the API is served over HTTPS, SameSite=Lax (sent on the console's own
+ * requests and top-level navigations, not on another site's forms), for the whole API, until the session expires. The
+ * session's secret is never in a response body.
  *
  * @param started The session.
  * @param config Where the API is served.
  */
 fun ApplicationCall.setSessionCookie(started: StartedSession, config: IdentityConfig) {
-    response.cookies.append(
-        Cookie(
-            name = SESSION_COOKIE,
-            value = started.secret,
-            maxAge = (started.session.expiresAt - started.session.createdAt).inWholeSeconds.toInt(),
-            path = "/",
-            secure = config.secureCookies,
-            httpOnly = true,
-            extensions = mapOf("SameSite" to "Lax"),
-        ),
-    )
+    val maxAge = (started.session.expiresAt - started.session.createdAt).inWholeSeconds.toInt()
+    response.cookies.append(sessionCookie(SESSION_COOKIE, started.secret, maxAge, config, httpOnly = true))
+    response.cookies.append(sessionCookie(CSRF_COOKIE, started.csrfToken, maxAge, config, httpOnly = false))
 }
 
 /**
- * Removes the session cookie (sign-out).
+ * Expires both session cookies (sign-out).
  *
  * @param config Where the API is served.
  */
 fun ApplicationCall.clearSessionCookie(config: IdentityConfig) {
-    response.cookies.append(
-        Cookie(
-            name = SESSION_COOKIE,
-            value = "",
-            maxAge = 0,
-            path = "/",
-            secure = config.secureCookies,
-            httpOnly = true,
-            extensions = mapOf("SameSite" to "Lax"),
-        ),
-    )
+    response.cookies.append(sessionCookie(SESSION_COOKIE, "", 0, config, httpOnly = true))
+    response.cookies.append(sessionCookie(CSRF_COOKIE, "", 0, config, httpOnly = false))
 }
+
+private fun sessionCookie(name: String, value: String, maxAge: Int, config: IdentityConfig, httpOnly: Boolean) = Cookie(
+    name = name,
+    value = value,
+    maxAge = maxAge,
+    path = "/",
+    secure = config.secureCookies,
+    httpOnly = httpOnly,
+    extensions = mapOf("SameSite" to "Lax"),
+)
 
 /**
  * The principal, refused unless it is a user's browser session: managing tokens and approving a CLI login are

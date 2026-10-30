@@ -2,6 +2,11 @@ package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
+import dev.ostrom.server.identity.domain.CreateSignInLinkUseCase
+import dev.ostrom.server.identity.domain.CreateSignInLinkUseCaseImpl
+import dev.ostrom.server.identity.domain.ExchangeSignInLinkUseCase
+import dev.ostrom.server.identity.domain.ExchangeSignInLinkUseCaseImpl
+import dev.ostrom.server.identity.domain.SignInLinksRepository
 import dev.ostrom.server.identity.domain.GitHubTokenVerifier
 import dev.ostrom.server.identity.domain.IssueCliTokenUseCase
 import dev.ostrom.server.identity.domain.IssueCliTokenUseCaseImpl
@@ -24,15 +29,19 @@ import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
 import dev.ostrom.server.identity.infrastructure.DirectoryMailSender
 import dev.ostrom.server.identity.infrastructure.GitHubOAuthProvider
 import dev.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
+import dev.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.OidcProvider
 import dev.ostrom.server.identity.infrastructure.ResendMailSender
 import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import dev.ostrom.server.identity.infrastructure.magicLinkMail
+import dev.ostrom.server.identity.presentation.SessionRoutesDependencies
 import dev.ostrom.server.identity.presentation.SignInConfig
 import dev.ostrom.server.identity.presentation.SignInRoutesDependencies
 import dev.ostrom.server.identity.presentation.signInRoutes
+import dev.ostrom.server.identity.presentation.sessionRoutes
+import dev.ostrom.server.identity.presentation.noStoreOnIdentityRoutes
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import org.koin.core.qualifier.named
@@ -93,6 +102,7 @@ import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.server.routing.Route
+import dev.ostrom.server.kernel.auth.SignOutListener
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.module
@@ -122,7 +132,9 @@ object IdentityModule : ServerModule {
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
-        single<TokenAuthenticator> { CredentialAuthenticatorImpl(get(), get(), get(), get()) }
+        single<TokenAuthenticator> {
+            CredentialAuthenticatorImpl(get(), get(), get(), get(), get<IdentityConfig>().allowedOrigins)
+        }
         single<ResolveUserUseCase> { ResolveUserUseCaseImpl(get(), get(), get()) }
         single<LinkIdentityUseCase> { LinkIdentityUseCaseImpl(get(), get(), get()) }
         single<GetProfileUseCase> { GetProfileUseCaseImpl(get()) }
@@ -173,9 +185,14 @@ object IdentityModule : ServerModule {
         single<IssueCliTokenUseCase> { IssueCliTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<LauncherLoginUseCase> { LauncherLoginUseCaseImpl(get(), get(), get(), get()) }
         single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        single<SignInLinksRepository> { SignInLinksRepositoryImpl(get()) }
+        single<CreateSignInLinkUseCase> { CreateSignInLinkUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<ExchangeSignInLinkUseCase> { ExchangeSignInLinkUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single { SessionRoutesDependencies(get(), get(), get()) }
         single {
             IdentityRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                getAll<SignOutListener>(),
             )
         }
     }
@@ -183,8 +200,10 @@ object IdentityModule : ServerModule {
     override val migrations: List<SchemaMigration> = IdentityMigrations
 
     override fun routes(route: Route, koin: Koin) {
+        route.noStoreOnIdentityRoutes()
         route.identityRoutes(koin.get())
         route.signInRoutes(koin.get())
+        route.sessionRoutes(koin.get())
     }
 
     private val HTTP = named("identity-http")

@@ -175,4 +175,19 @@ class SupportTest {
         assertEquals("http://localhost:8080", IdentityConfig.from(MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to " "))).publicUrl)
         assertFailsWith<InvalidConfigException> { IdentityConfig.from(MapConfigSource(mapOf("OSTROM_CONSOLE_URL" to "ftp://x"))) }
     }
+
+    @Test
+    fun theAllowedOriginsAreTheConsolesUnlessListed() {
+        assertEquals(setOf("http://localhost:5173"), IdentityConfig.from(MapConfigSource(emptyMap())).allowedOrigins)
+        val console = mapOf("OSTROM_CONSOLE_URL" to "https://app.ostrom.run/", "OSTROM_ALLOWED_ORIGINS" to " , ")
+        assertEquals(setOf("https://app.ostrom.run"), IdentityConfig.from(MapConfigSource(console)).allowedOrigins)
+
+        val listed = mapOf("OSTROM_ALLOWED_ORIGINS" to "https://App.Ostrom.run/, http://localhost:3000")
+        val origins = IdentityConfig.from(MapConfigSource(listed)).allowedOrigins
+        assertEquals(setOf("https://app.ostrom.run", "http://localhost:3000"), origins)
+        listOf("ftp://x", "https://app.ostrom.run/console", "app.ostrom.run").forEach { origin ->
+            val source = MapConfigSource(mapOf("OSTROM_ALLOWED_ORIGINS" to origin))
+            assertFailsWith<InvalidConfigException>(origin) { IdentityConfig.from(source) }
+        }
+    }
 }

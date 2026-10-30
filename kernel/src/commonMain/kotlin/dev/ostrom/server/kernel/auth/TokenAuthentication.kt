@@ -44,8 +44,10 @@ class TokenAuthenticationProvider internal constructor(config: Config) : Authent
             token != null -> authenticator.authenticate(token)
             session != null -> authenticator.authenticateSession(
                 sessionToken = session,
-                csrfToken = call.request.headers[CSRF_HEADER],
+                // Double submit (S2-08): the header counts only when it repeats the readable CSRF cookie.
+                csrfToken = call.request.headers[CSRF_HEADER]?.takeIf { it == call.request.cookies[CSRF_COOKIE] },
                 requireCsrf = call.request.httpMethod !in SAFE_METHODS,
+                origin = call.request.headers[HttpHeaders.Origin],
             )
             else -> null
         }
