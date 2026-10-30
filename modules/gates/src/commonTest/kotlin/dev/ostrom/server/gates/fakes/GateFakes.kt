@@ -193,10 +193,11 @@ val OTHER_ORG: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000000b")
 const val SESSION = "s-0000051"
 const val OTHER_SESSION = "s-0000052"
 
-fun user(id: String, org: Uuid = ORG) = GateActor(id, org, ActorKind.USER)
+// Every credential acts for a person (S2-15): a user and a device for their own, an agent session for `lyes`.
+fun user(id: String, org: Uuid = ORG) = GateActor(id, org, ActorKind.USER, personId = id)
 fun agent(session: String = SESSION, org: Uuid = ORG) =
-    GateActor("agent-$session", org, ActorKind.AGENT_SESSION, launchId = "launch-$session")
-fun device(id: String = "lyes") = GateActor("device-$id", ORG, ActorKind.DEVICE)
+    GateActor("agent-$session", org, ActorKind.AGENT_SESSION, launchId = "launch-$session", personId = "lyes")
+fun device(id: String = "lyes") = GateActor("device-$id", ORG, ActorKind.DEVICE, personId = id)
 fun ciService() = GateActor("github-app", ORG, ActorKind.SERVICE)
 
 const val SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
