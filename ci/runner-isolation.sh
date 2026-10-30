@@ -58,10 +58,14 @@ others=$(docker exec iso-agent ps -eo uid= | awk '$1 != 1000')
 test -z "$others" || fail "The agent's container sees processes of another UID: $others"
 
 # What a container's UID can read: every process's environment and command line, and the writable directories.
+# Dumped to a file first: `grep -q` stops reading at its first match, and under pipefail the writer's SIGPIPE would
+# turn a match into a failure of the pipeline.
 readable() {
   docker exec "$1" sh -c 'cat /proc/[0-9]*/environ /proc/[0-9]*/cmdline 2> /dev/null;
-    tar -cf - /workspace /run/ostrom /tmp /etc /var /home /root 2> /dev/null; true'
+    tar -cf - /workspace /run/ostrom /tmp /etc /var /home /root 2> /dev/null; true' > "$context/$1.dump"
 }
-if readable iso-agent | grep -qaF "$token"; then fail "The agent's container can read the runner token."; fi
-readable iso-runner | grep -qaF "$token" || fail "The search did not find the token in the runner's container."
+readable iso-agent
+readable iso-runner
+if grep -qaF "$token" "$context/iso-agent.dump"; then fail "The agent's container can read the runner token."; fi
+grep -qaF "$token" "$context/iso-runner.dump" || fail "The search did not find the token in the runner's container."
 echo "S2-49: the agent (UID 1000) cannot read the runner token; the runner (UID 1001) holds it."

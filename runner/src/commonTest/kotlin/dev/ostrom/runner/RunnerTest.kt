@@ -122,7 +122,7 @@ class RunnerTest {
         val runner = Runner(
             config,
             server,
-            { script, _, _ -> FakeTerminal(script).also { terminals += it } },
+            starter { script, _, _ -> FakeTerminal(script).also { terminals += it } },
             emptyMap(),
             clock,
             {},
