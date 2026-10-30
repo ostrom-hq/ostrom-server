@@ -11,7 +11,9 @@ import io.ktor.server.plugins.PayloadTooLargeException
 import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.request.contentLength
 import io.ktor.server.routing.Route
-import io.ktor.server.routing.TransparentRouteSelector
+import io.ktor.server.routing.RouteSelector
+import io.ktor.server.routing.RouteSelectorEvaluation
+import io.ktor.server.routing.RoutingResolveContext
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readRemaining
@@ -84,7 +86,10 @@ private val RouteBodyLimit = createRouteScopedPlugin("RouteBodyLimit", ::RouteBo
 }
 
 /** Matches like its parent; parenthesized so that route templates leave it out. */
-private class BodyLimitSelector(private val bytes: Long) : TransparentRouteSelector() {
+private class BodyLimitSelector(private val bytes: Long) : RouteSelector() {
+    override suspend fun evaluate(context: RoutingResolveContext, segmentIndex: Int): RouteSelectorEvaluation =
+        RouteSelectorEvaluation.Transparent
+
     override fun toString(): String = "(body limit $bytes)"
 }
 

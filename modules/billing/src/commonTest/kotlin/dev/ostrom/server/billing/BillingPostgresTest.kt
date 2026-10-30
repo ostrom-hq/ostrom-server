@@ -176,34 +176,44 @@ class BillingPostgresTest {
                 )
             }
             assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
-
-            // S2-51: the customers and the outbox are confined too, reached across organizations only by key.
-            repository.enqueue(OutboxTask(Uuid.random(), ORG_A, OutboxKind.entries.first(), "evt_a", NOW, 0))
-            server.driver.execute(
-                "GRANT SELECT, INSERT ON billing_customers, billing_outbox TO ostrom_billing_rls_probe",
-            ).getOrThrow()
-            suspend fun asProbe(org: Uuid?, sql: String) = server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
-                org?.let {
-                    fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
-                        .getOrThrow()
-                }
-                fetchAll(sql).getOrThrow().map { it.get("org_id").asUuid() }
-            }
-            for (table in listOf("billing_customers", "billing_outbox")) {
-                assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM $table"), table)
-                assertEquals(emptyList(), asProbe(ORG_B, "SELECT org_id FROM $table"), table)
-                assertEquals(listOf(ORG_A), asProbe(ORG_A, "SELECT org_id FROM $table"), table)
-            }
-            assertFails("Org B cannot write a customer of org A") {
-                asProbe(ORG_B, "INSERT INTO billing_customers VALUES ('cus_x', '$ORG_A') RETURNING org_id")
-            }
-            assertEquals(listOf(ORG_A), asProbe(null, "SELECT org_id FROM billing_org_of_customer('cus_a')"))
-            assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM billing_org_of_customer('cus_unknown')"))
-            assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM billing_org_of_customer(NULL)"))
-            val claimed = asProbe(null, "SELECT org_id FROM billing_claim_outbox('$NOW', '$NOW', 10)")
-            assertEquals(listOf(ORG_A), claimed, "The worker claims the due tasks of every organization")
         }
+
+    @Test
+    fun customersAndOutboxAreConfinedAndReachedOnlyByKey() = serverTest(listOf(BillingModule), overrides) { server ->
+        val repository = server.koin.get<BillingRepository>()
+        repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_a", updatedAt = NOW))
+        // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
+        server.driver.execute(
+            "DO \$\$ BEGIN CREATE ROLE ostrom_billing_rls_probe NOLOGIN; " +
+                "EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
+        ).getOrThrow()
+        // S2-51: the customers and the outbox are confined too, reached across organizations only by key.
+        repository.enqueue(OutboxTask(Uuid.random(), ORG_A, OutboxKind.entries.first(), "evt_a", NOW, 0))
+        server.driver.execute(
+            "GRANT SELECT, INSERT ON billing_customers, billing_outbox TO ostrom_billing_rls_probe",
+        ).getOrThrow()
+        suspend fun asProbe(org: Uuid?, sql: String) = server.driver.transaction {
+            execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
+            org?.let {
+                fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
+                    .getOrThrow()
+            }
+            fetchAll(sql).getOrThrow().map { it.get("org_id").asUuid() }
+        }
+        for (table in listOf("billing_customers", "billing_outbox")) {
+            assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM $table"), table)
+            assertEquals(emptyList(), asProbe(ORG_B, "SELECT org_id FROM $table"), table)
+            assertEquals(listOf(ORG_A), asProbe(ORG_A, "SELECT org_id FROM $table"), table)
+        }
+        assertFails("Org B cannot write a customer of org A") {
+            asProbe(ORG_B, "INSERT INTO billing_customers VALUES ('cus_x', '$ORG_A') RETURNING org_id")
+        }
+        assertEquals(listOf(ORG_A), asProbe(null, "SELECT org_id FROM billing_org_of_customer('cus_a')"))
+        assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM billing_org_of_customer('cus_unknown')"))
+        assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM billing_org_of_customer(NULL)"))
+        val claimed = asProbe(null, "SELECT org_id FROM billing_claim_outbox('$NOW', '$NOW', 10)")
+        assertEquals(listOf(ORG_A), claimed, "The worker claims the due tasks of every organization")
+    }
 
     @Test
     fun aServingRoleReachesCustomersAndTheOutboxOnlyThroughTheRoutersFunctions() =

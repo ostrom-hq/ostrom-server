@@ -73,6 +73,11 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             call.respond(HttpStatusCode.Accepted, resumed.toResponse())
         }
     }
+    runnerChannelRoutes(dependencies)
+}
+
+/** The runner channel, authenticated by the execution's runner token, checked before the body is read (S2-46). */
+private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependencies) = with(dependencies) {
     bodyLimit(HEARTBEAT_BODY_LIMIT) {
         post<RunnerHeartbeatApi> {
             val token = call.runnerToken()

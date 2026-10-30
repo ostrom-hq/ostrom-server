@@ -67,11 +67,13 @@ object TestCallers {
         single<Clock> { clock }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
-                    if (token !in byToken) return null
-                    val (kind, scopes) = principals[token]
-                        ?: return AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, BROWSER)
-                    return AuthenticatedPrincipal(token, kind, scopes)
+                override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when {
+                    token !in byToken -> null
+                    // A token without its own kind is a browser session, with every user scope.
+                    token !in principals -> AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, BROWSER)
+                    else -> principals.getValue(token).let { (kind, scopes) ->
+                        AuthenticatedPrincipal(token, kind, scopes)
+                    }
                 }
             }
         }
