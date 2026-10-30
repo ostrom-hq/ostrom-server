@@ -80,7 +80,7 @@ class OAuthProvidersTest {
                 "/login/oauth/access_token" -> json("""{"access_token":"gho_x","token_type":"bearer"}""")
                 "/user" -> json(
                     """{"id":583231,"login":"ada","name":"Ada Lovelace","email":"public@example.com",""" +
-                        """""avatar_url":"https://a.test/1"}""",
+                        """"avatar_url":"https://a.test/1"}""",
                 )
                 else -> json(
                     """[{"email":"old@example.com","primary":false,"verified":true},""" +
@@ -158,7 +158,7 @@ class OAuthProvidersTest {
         nonce: String = "\"n-1\"",
         extra: String = ""
     ) = """{"iss":$iss,"aud":$aud,"exp":$exp,"nonce":$nonce,"sub":"108",""" +
-        """""email":"ada@example.com","email_verified":true,""" +
+        """"email":"ada@example.com","email_verified":true,""" +
         """"name":"Ada","picture":"https://p.test/a"$extra}"""
 
     private fun oidc(idToken: String?, connection: Uuid? = null): OidcProvider {
@@ -215,14 +215,14 @@ class OAuthProvidersTest {
     fun oidcWithAnUnverifiedEmailCannotMergeAccounts() = runTest {
         val unverified =
             """{"iss":"https://idp.test","aud":"client-id","exp":1793440000,"nonce":"n-1","sub":"108",""" +
-                """""email":"a@b.co"}"""
+                """"email":"a@b.co"}"""
 
         val identity = oidc(jwt(unverified)).identity("c", "v", "n-1", "r")
 
         assertEquals(VerifiedIdentity(IdentityProvider.OIDC, "108", "a@b.co", false), identity)
         val noEmail =
             """{"iss":"https://idp.test","aud":"client-id","exp":1793440000,"nonce":"n-1","sub":"108",""" +
-                """""email_verified":true}"""
+                """"email_verified":true}"""
         assertEquals(false, oidc(jwt(noEmail)).identity("c", "v", "n-1", "r").emailVerified)
     }
 

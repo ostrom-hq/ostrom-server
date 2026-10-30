@@ -140,7 +140,7 @@ class AccountUseCasesTest {
         users.duplicatesToThrow = 1
         users.onDuplicate = {
             // The other sign-in created the user meanwhile.
-            users.users[winner] = dev.ostrom.server.identity.domain.User(winner, "Ada", null, null, clock.now)
+            users.users[winner] = dev.ostrom.server.identity.domain.User(winner, "ada", "Ada", null, null, clock.now)
             users.identities["github" to "1"] = winner
         }
 
