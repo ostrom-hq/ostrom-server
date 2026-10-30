@@ -45,10 +45,10 @@ fun McpServerDto.credentialName(): String? =
     if (transport.equals("http", ignoreCase = true)) secretNames.firstOrNull() else null
 
 /** Every secret name a server uses. */
-fun McpServerDto.secretNamesUsed(): List<String> = listOfNotNull(credentialName()) + stdio?.secretEnv?.values.orEmpty()
+fun McpServerDto.secretNamesUsed(): List<String> = listOfNotNull(credentialName()) + stdio?.secretEnv.orEmpty().values
 
 /** Every secret id a server uses. */
-fun McpServer.secretIds(): List<Uuid> = listOfNotNull(credentialSecretId) + stdio?.secretEnv?.values.orEmpty()
+fun McpServer.secretIds(): List<Uuid> = listOfNotNull(credentialSecretId) + stdio?.secretEnv.orEmpty().values
 
 /**
  * Maps a server to the API.

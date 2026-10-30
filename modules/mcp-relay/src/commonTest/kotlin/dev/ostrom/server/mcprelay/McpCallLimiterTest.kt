@@ -29,6 +29,14 @@ class McpCallLimiterTest {
     }
 
     @Test
+    fun aMemberRunsUpToItsConcurrencyAtOnce() = runTest {
+        val limiter = McpCallLimiter(McpLimits(memberConcurrency = 2), TestClock())
+        assertEquals(true, limiter.acquire(org, member, server))
+        assertEquals(true, limiter.acquire(org, member, server), "A second call while the first runs")
+        assertEquals(false, limiter.acquire(org, member, server), "Not a third")
+    }
+
+    @Test
     fun aServerHasAConcurrencyAcrossItsMembers() = runTest {
         val limiter = McpCallLimiter(McpLimits(serverConcurrency = 1), TestClock())
         assertEquals(true, limiter.acquire(org, member, server))

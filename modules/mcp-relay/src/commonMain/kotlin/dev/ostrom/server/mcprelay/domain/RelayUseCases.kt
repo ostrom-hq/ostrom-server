@@ -210,13 +210,16 @@ class RelayMcpMessageUseCaseImpl(
         }
         val call = RelayedOperation(caller, effective, McpOperation.CALL, tool)
         val policy = ArgumentPolicy.decide(repository.listPolicies(caller.orgId, effective.server.id), tool, arguments)
-        val answer = when (policy?.effect) {
-            null -> relayCall(call, tool, arguments)
-            PolicyEffect.DENY -> {
-                journal(call, McpOutcome.DENIED, policyId = policy.id)
-                toolError("Refused by the organization's policy: ${policy.message}")
+        val answer = if (policy == null) {
+            relayCall(call, tool, arguments)
+        } else {
+            when (policy.effect) {
+                PolicyEffect.DENY -> {
+                    journal(call, McpOutcome.DENIED, policyId = policy.id)
+                    toolError("Refused by the organization's policy: ${policy.message}")
+                }
+                PolicyEffect.REQUIRE_APPROVAL -> gated(call, tool, arguments, policy)
             }
-            PolicyEffect.REQUIRE_APPROVAL -> gated(call, tool, arguments, policy)
         }
         return result(id, answer)
     }
@@ -312,7 +315,7 @@ class RelayMcpMessageUseCaseImpl(
     private suspend fun target(caller: Caller, effective: EffectiveServer): UpstreamTarget {
         val server = effective.server
         val credentialId = effective.assignment.credentialSecretId ?: server.credentialSecretId
-        val ids = listOfNotNull(credentialId) + server.stdio?.secretEnv?.values.orEmpty()
+        val ids = listOfNotNull(credentialId) + server.stdio?.secretEnv.orEmpty().values
         val values = revealSecrets(caller.orgId, ids)
         // Fail closed: a server never runs nor is called without a credential or variable it was declared with.
         if (!values.keys.containsAll(ids)) throw McpSecretNotFoundException()

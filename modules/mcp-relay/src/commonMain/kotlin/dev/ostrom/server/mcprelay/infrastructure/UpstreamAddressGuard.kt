@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.infrastructure
 
-import io.ktor.http.URLParserException
-import io.ktor.http.Url
+import io.ktor.http.parseUrl
 
 /**
  * Refuses upstream URLs that name the server's own network: loopback, private, link-local (cloud metadata),
@@ -20,15 +19,8 @@ class UpstreamAddressGuard(private val allowPrivate: Boolean = false) {
      * @param url The upstream URL.
      */
     fun allows(url: String): Boolean {
-        val parsed = try {
-            Url(url)
-        } catch (_: URLParserException) {
-            // A part that does not parse (a port that is not a number).
-            null
-        } catch (_: IllegalArgumentException) {
-            // A URL that parses but is out of bounds (a port above 65535).
-            null
-        }
+        // Null for anything that does not parse or has no host (a port that is not a number or above 65535).
+        val parsed = parseUrl(url)
         return when {
             parsed == null || parsed.protocol.name != "https" -> false
             allowPrivate -> true
