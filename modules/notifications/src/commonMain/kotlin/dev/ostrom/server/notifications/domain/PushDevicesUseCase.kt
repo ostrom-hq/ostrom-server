@@ -82,8 +82,10 @@ class PushDevicesUseCaseImpl(
 
     private companion object {
         const val PROVIDER = "expo"
-        val PLATFORMS = setOf("ios", "android")
-        val TOKEN = Regex("Expo(nent)?PushToken\\[[A-Za-z0-9_-]{8,100}]")
-        val LOCALE = Regex("[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8}){0,2}")
     }
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val PLATFORMS = setOf("ios", "android")
+private val TOKEN = Regex("Expo(nent)?PushToken\\[[A-Za-z0-9_-]{8,100}]")
+private val LOCALE = Regex("[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8}){0,2}")
