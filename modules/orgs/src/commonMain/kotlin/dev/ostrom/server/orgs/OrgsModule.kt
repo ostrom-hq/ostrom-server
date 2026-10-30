@@ -70,6 +70,7 @@ import dev.ostrom.server.orgs.presentation.MemberCommands
 import dev.ostrom.server.orgs.presentation.OrgCommands
 import dev.ostrom.server.orgs.presentation.OrgsConfig
 import dev.ostrom.server.orgs.presentation.OrgsRoutesDependencies
+import dev.ostrom.server.orgs.presentation.myOrganizationsRoutes
 import dev.ostrom.server.orgs.presentation.orgsRoutes
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
@@ -147,6 +148,8 @@ object OrgsModule : ServerModule {
     override val migrations: List<SchemaMigration> = OrgsMigrations
 
     override fun routes(route: Route, koin: Koin) {
-        route.orgsRoutes(koin.get())
+        val dependencies = koin.get<OrgsRoutesDependencies>()
+        route.orgsRoutes(dependencies)
+        route.myOrganizationsRoutes(dependencies)
     }
 }
