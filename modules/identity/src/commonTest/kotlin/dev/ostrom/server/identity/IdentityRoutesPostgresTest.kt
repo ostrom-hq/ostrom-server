@@ -18,7 +18,9 @@ import dev.ostrom.server.identity.presentation.DeviceAuthorizationResponse
 import dev.ostrom.server.identity.presentation.DeviceCodeRequest
 import dev.ostrom.server.identity.presentation.DeviceCodeResponse
 import dev.ostrom.server.identity.presentation.DeviceTokenRequest
+import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import dev.ostrom.server.identity.presentation.ProfileResponse
+import dev.ostrom.server.identity.presentation.TokenScopesResponse
 import dev.ostrom.server.identity.presentation.TokensResponse
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
@@ -73,6 +75,7 @@ class IdentityRoutesPostgresTest {
     fun withoutCredentialsEveryAccountRouteIs401() = serverTest(listOf(IdentityModule)) { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me").status)
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/tokens").status)
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/tokens/scopes").status)
         assertEquals(HttpStatusCode.Unauthorized, server.client.post("/api/v1/auth/logout").status)
         assertEquals(
             HttpStatusCode.Unauthorized,
@@ -178,6 +181,43 @@ class IdentityRoutesPostgresTest {
             server.client.get("/api/v1/auth/me/audit?limit=2") { session(started) }.body<AuditEventsResponse>()
         assertEquals(listOf("token.revoked", "token.rotated"), actions.events.map { it.action })
         assertNotNull(actions.nextBefore)
+    }
+
+    @Test
+    fun theScopeCatalogueIsServedToASessionAndEnforced() = serverTest(listOf(IdentityModule)) { server ->
+        val (_, started) = server.signIn()
+
+        val response = server.client.get("/api/v1/tokens/scopes") { session(started, csrf = false) }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val catalogue = response.body<TokenScopesResponse>().scopes
+        assertEquals(
+            PERSONAL_TOKEN_SCOPES.map { it.scope to it.description },
+            catalogue.map { it.scope to it.description },
+        )
+        assertTrue(catalogue.none { it.scope in setOf("gates:answer", "agent:session", "user:*") })
+
+        // A token reads its own profile, never the catalogue: tokens are managed from the console.
+        val token = server.client.post("/api/v1/tokens") {
+            session(started)
+            json(CreateTokenRequest("t", listOf("profile:read")))
+        }.body<CreatedTokenResponse>()
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.get("/api/v1/tokens/scopes") { bearerAuth(token.secret) }.status,
+        )
+
+        // Every scope of the catalogue can be given; a well-formed scope outside it is a 400.
+        val all = server.client.post("/api/v1/tokens") {
+            session(started)
+            json(CreateTokenRequest("all", catalogue.map { it.scope }.take(32)))
+        }
+        assertEquals(HttpStatusCode.Created, all.status)
+        val outside = server.client.post("/api/v1/tokens") {
+            session(started)
+            json(CreateTokenRequest("t", listOf("profile:read", "deploy:write")))
+        }
+        assertEquals(HttpStatusCode.BadRequest, outside.status)
+        assertEquals("invalid_request", outside.body<ApiError>().error.type)
     }
 
     @Test

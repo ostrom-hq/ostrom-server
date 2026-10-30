@@ -69,9 +69,6 @@ fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kin
     TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN
 }
 
-/** A scope is `resource:action`, lower case. */
-private val SCOPE_PATTERN = Regex("[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9-]{0,31}")
-
 /** At most this many scopes on one token. */
 const val MAX_SCOPES = 32
 
@@ -79,19 +76,20 @@ const val MAX_SCOPES = 32
 const val MAX_TOKENS_PER_USER = 100
 
 /**
- * Checks the scopes a user asks for a personal token: at least one, well-formed, none of [NEVER_ON_A_TOKEN] (an
- * agent's scope, or [ANSWER_SCOPE]: a token never says yes, S2-04).
+ * Checks the scopes a user asks for a personal token: at least one, at most [MAX_SCOPES], each from the catalogue
+ * [PERSONAL_TOKEN_SCOPES], which never lists [NEVER_ON_A_TOKEN] (an agent's scope, or [ANSWER_SCOPE]: a token never
+ * says yes, S2-04).
  *
  * @param scopes The requested scopes.
  *
  * @return The scopes, deduplicated.
  *
- * @throws InvalidScopesException When the set is empty, too large, malformed or names a scope no token holds.
+ * @throws InvalidScopesException When the set is empty, too large, or names a scope outside the catalogue.
  */
 fun validateScopes(scopes: Collection<String>): Set<String> {
     val set = scopes.toSet()
     if (set.isEmpty() || set.size > MAX_SCOPES) throw InvalidScopesException()
-    if (set.any { !SCOPE_PATTERN.matches(it) || it in NEVER_ON_A_TOKEN }) throw InvalidScopesException()
+    if (!PERSONAL_TOKEN_SCOPE_NAMES.containsAll(set)) throw InvalidScopesException()
     return set
 }
 
@@ -117,7 +115,10 @@ fun normalizeEmail(raw: String): String {
 
 /** The requested scopes are empty, too many, malformed, or reserved. */
 class InvalidScopesException :
-    OstromException(ErrorKind.INVALID_REQUEST, "Scopes must be 1 to $MAX_SCOPES distinct resource:action values.")
+    OstromException(
+        ErrorKind.INVALID_REQUEST,
+        "Scopes must be 1 to $MAX_SCOPES values from the catalogue of GET /api/v1/tokens/scopes.",
+    )
 
 /** The value is not an e-mail address. */
 class InvalidEmailException : OstromException(ErrorKind.INVALID_REQUEST, "This is not a valid e-mail address.")
