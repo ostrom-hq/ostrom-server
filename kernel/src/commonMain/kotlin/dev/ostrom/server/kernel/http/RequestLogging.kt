@@ -2,6 +2,8 @@ package dev.ostrom.server.kernel.http
 
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.kernel.observability.TelemetryLogger
+import dev.ostrom.server.kernel.observability.spanContext
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.hooks.ResponseSent
 import io.ktor.server.plugins.callid.callId
@@ -23,7 +25,8 @@ private val requestStart = AttributeKey<TimeSource.Monotonic.ValueTimeMark>("ost
 
 /**
  * One structured line per answered request: method, path (never the query string, which may carry a token),
- * status, duration and request id. `/health` is logged at DEBUG so probes do not flood the logs.
+ * status, duration, request id, and the trace and span ids when the request is traced. `/health` is logged at DEBUG
+ * so probes do not flood the logs.
  */
 val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingConfig) {
     val logger = pluginConfig.logger
@@ -39,6 +42,8 @@ val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingC
                 "status" to call.response.status()?.value,
                 "duration_ms" to call.attributes.getOrNull(requestStart)?.elapsedNow()?.inWholeMilliseconds,
                 "request_id" to call.callId,
+                TelemetryLogger.TRACE_ID_FIELD to call.spanContext?.traceIdHex,
+                TelemetryLogger.SPAN_ID_FIELD to call.spanContext?.spanIdHex,
             ),
         )
     }

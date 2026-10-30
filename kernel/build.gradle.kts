@@ -1,5 +1,6 @@
 // The shared kernel every functional module builds on: configuration, logs, database and migrations, uniform
-// HTTP errors, token authentication, the instance signing key and the ServerModule contract.
+// HTTP errors, token authentication, the instance signing key, the ServerModule contract and observability (traces,
+// metrics and logs through ostrom-core's telemetry module).
 plugins {
     id("ostrom.native-module")
 }
@@ -16,6 +17,7 @@ kotlin {
             api(libs.ktor.serialization.json)
             api(libs.sqlx4k.postgres)
             api(libs.kotlinx.io)
+            api(libs.ostrom.telemetry)
             implementation(libs.cryptography.core)
             implementation(libs.cryptography.openssl)
         }

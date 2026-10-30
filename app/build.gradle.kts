@@ -16,6 +16,8 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(libs.ktor.server.cio)
+            // The engine of telemetry's HTTP client (OTLP, Langfuse, PostHog).
+            implementation(libs.ktor.client.cio)
             rootProject.subprojects
                 .filter { it.path.startsWith(":modules:") }
                 .forEach { implementation(project(it.path)) }

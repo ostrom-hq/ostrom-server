@@ -1,5 +1,6 @@
 package dev.ostrom.server.kernel.config
 
+import dev.ostrom.core.telemetry.TelemetrySettings
 import dev.ostrom.server.kernel.logging.LogLevel
 
 /**
@@ -11,6 +12,8 @@ import dev.ostrom.server.kernel.logging.LogLevel
  * @property database How to reach PostgreSQL.
  * @property signingKeyFile The PEM file (PKCS#8) of the instance's Ed25519 key, created on first start if missing.
  * @property logLevel The lowest level written to the logs.
+ * @property telemetry Where traces, metrics, logs and product events go (the standard `OTEL_*` variables,
+ *   `OSTROM_LANGFUSE_*`, `OSTROM_POSTHOG_*`); nowhere by default.
  */
 data class ServerConfig(
     val host: String,
@@ -18,6 +21,7 @@ data class ServerConfig(
     val database: DatabaseConfig,
     val signingKeyFile: String,
     val logLevel: LogLevel,
+    val telemetry: TelemetrySettings = TelemetrySettings(serviceName = SERVICE_NAME),
 ) {
     companion object {
         /**
@@ -43,7 +47,16 @@ data class ServerConfig(
                 LogLevel.entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
                     ?: throw InvalidConfigException("OSTROM_LOG_LEVEL must be one of ${LogLevel.entries.joinToString()}.")
             } ?: LogLevel.INFO,
+            telemetry = try {
+                TelemetrySettings.fromEnvironment({ source[it] }, SERVICE_NAME)
+            } catch (error: IllegalArgumentException) {
+                // The message names the variable, never its value (it may hold a key).
+                throw InvalidConfigException(error.message ?: "Invalid telemetry settings.")
+            },
         )
+
+        /** The default `service.name` of the server's telemetry. */
+        const val SERVICE_NAME: String = "ostrom-server"
 
         /**
          * Reads the configuration from the environment, then from the file named by `OSTROM_CONFIG_FILE` if set.

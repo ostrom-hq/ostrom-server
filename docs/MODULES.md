@@ -166,6 +166,16 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | Pool size |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP/HTTP base URL (Grafana Cloud OTLP gateway, any collector); nothing is exported without it |
+| `OTEL_EXPORTER_OTLP_HEADERS` | — | `Authorization=Basic%20…` for Grafana Cloud (keep it in a Secret) |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | The only protocol written; any other value stops the start |
+| `OTEL_SERVICE_NAME` | `ostrom-server` | `service.name` of traces, metrics and logs |
+| `OTEL_RESOURCE_ATTRIBUTES` | — | `deployment.environment.name=production` |
+| `OTEL_TRACES_SAMPLER_ARG` | `1` | Share of new traces recorded (0 to 1); a caller's sampled trace is always continued |
+| `OTEL_SDK_DISABLED` | `false` | `true` turns OTLP export off |
+| `OSTROM_LANGFUSE_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY` | — | Model calls to Langfuse (the three together) |
+| `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | Product events to PostHog |
+| `OSTROM_POD_NAME` | random | `service.instance.id` |
 
 A module that needs its own keys reads them from the `ConfigSource` with the `OSTROM_<MODULE>_…` prefix and adds them
 to this table.
@@ -181,3 +191,24 @@ to this table.
   `InstanceSigner` interface and the key file format (PKCS#8 PEM, `kid` = 16 hex of SHA-256 of the SPKI DER, as the
   prototype) stay.
 - **API DTOs** live in each module until `ostrom-core` publishes the contract.
+
+## Observability
+
+The kernel traces and measures every request (`kernel/…/observability/Tracing.kt`): a SERVER span continuing the
+caller's `traceparent`, named after the route template, returned in `traceresponse`; `/health` is measured, never
+traced. A module adds its own work to the current trace and the server's metrics through Koin:
+
+```kotlin
+val telemetry = koin.get<Telemetry>()      // dev.ostrom.core.telemetry
+val metrics = koin.get<OstromMetrics>()    // dev.ostrom.server.kernel.observability
+
+telemetry.tracer.inSpan("gates.compile") { compile(request) }        // nested under the request's span
+metrics.gateRequested(GateKind.MERGE.wire)
+telemetry.capture(ProductEvents.gateRequested(userId, orgId, GateKind.MERGE, clock.now().toEpochMilliseconds()))
+```
+
+A model call (gateway, extraction) runs in
+`telemetry.tracer.inSpan(ModelCall.SPAN_NAME, SpanKind.CLIENT, call.toAttributes(org.contentCapture))` and then
+`metrics.modelCalled(call, duration)`: the span alone goes to Langfuse, prompts only when the org turned capture on.
+Metric attributes are bounded values, never ids; a new metric is added to `OstromMetrics` and to
+`ostrom-infra/observability/catalog.py` together. Event taxonomy and privacy rules: ostrom-core `docs/telemetry.md`.
