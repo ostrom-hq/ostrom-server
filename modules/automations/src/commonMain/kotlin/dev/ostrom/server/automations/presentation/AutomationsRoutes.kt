@@ -4,6 +4,7 @@ package dev.ostrom.server.automations.presentation
 import dev.ostrom.server.automations.domain.AutomationQuery
 import dev.ostrom.server.automations.domain.AutomationRules
 import dev.ostrom.server.automations.domain.InvalidAutomationException
+import dev.ostrom.server.automations.domain.InvalidSignatureException
 import dev.ostrom.server.automations.domain.InvalidWebhookPayloadException
 import dev.ostrom.server.automations.domain.WebhookDelivery
 import dev.ostrom.server.kernel.auth.authenticated
@@ -40,7 +41,9 @@ fun Route.automationsRoutes(dependencies: AutomationsRoutesDependencies) = with(
         // refused before the signature, which a cut body could never match.
         val body = call.receiveChannel().readRemaining(MAX_BODY + 1L).readByteArray()
         if (body.size > MAX_BODY) throw InvalidWebhookPayloadException("The body is at most 64 KiB.")
-        val triggered = runs.trigger(automationId(params.parent.id), delivery, body)
+        // An id that cannot exist answers like a wrong signature: the webhook never says which automations exist.
+        val id = Uuid.parseOrNull(params.parent.id) ?: throw InvalidSignatureException()
+        val triggered = runs.trigger(id, delivery, body)
         if (triggered.deduplicated) call.response.header(IDEMPOTENCY_REPLAYED, "true")
         val run = triggered.run
         val response = TriggerResponse(run.id.toString(), run.status.wire, triggered.deduplicated)
