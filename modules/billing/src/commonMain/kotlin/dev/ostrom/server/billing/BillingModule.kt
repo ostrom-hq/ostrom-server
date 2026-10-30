@@ -12,6 +12,8 @@ import dev.ostrom.server.billing.domain.ChangePlanUseCaseImpl
 import dev.ostrom.server.billing.domain.CheckEntitlementUseCase
 import dev.ostrom.server.billing.domain.CheckEntitlementUseCaseImpl
 import dev.ostrom.server.billing.domain.GetBillingOverviewUseCase
+import dev.ostrom.server.billing.domain.GetAgentUsageUseCase
+import dev.ostrom.server.billing.domain.GetAgentUsageUseCaseImpl
 import dev.ostrom.server.billing.domain.GetBillingOverviewUseCaseImpl
 import dev.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import dev.ostrom.server.billing.domain.GetPlanLimitsUseCaseImpl
@@ -69,8 +71,8 @@ private const val STRIPE_TIMEOUT_MILLIS = 30_000L
  * The billing module: Stripe subscriptions per active person, plan limits enforced on the server, cloud agent usage
  * and its alerts. Other modules depend on its use cases: orgs calls [CheckEntitlementUseCase] before adding a member
  * (the caller's role comes from the kernel's PrincipalOrgResolver); sessions and gates call
- * [RecordMemberActivityUseCase]; runners call [CheckEntitlementUseCase] before a cloud agent and
- * [RecordAgentUsageUseCase] after; the `ee/` license module binds [LicenseProvider].
+ * [RecordMemberActivityUseCase]; runners read [GetPlanLimitsUseCase] and [GetAgentUsageUseCase] before and while a
+ * cloud agent runs, and add its time with [RecordAgentUsageUseCase]; the `ee/` license module binds [LicenseProvider].
  */
 object BillingModule : ServerModule {
     override val name: String = "billing"
@@ -101,6 +103,7 @@ object BillingModule : ServerModule {
         }
         single<RecordMemberActivityUseCase> { RecordMemberActivityUseCaseImpl(get()) }
         single<RecordAgentUsageUseCase> { RecordAgentUsageUseCaseImpl(get(), get(), notifier(), get()) }
+        single<GetAgentUsageUseCase> { GetAgentUsageUseCaseImpl(get(), get()) }
         single<CheckEntitlementUseCase> { CheckEntitlementUseCaseImpl(get(), get(), get(), get()) }
         single<ProcessOutboxUseCase> {
             ProcessOutboxUseCaseImpl(get(), get(), get(), outboxFailureLogger(get()))
