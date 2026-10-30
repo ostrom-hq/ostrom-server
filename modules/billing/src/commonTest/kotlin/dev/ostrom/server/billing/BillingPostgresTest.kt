@@ -270,7 +270,7 @@ class BillingPostgresTest {
         assertEquals("https://checkout.stripe.com/c/pay/cs_test_1", checkout.url)
         val noSubscription = client.post("/v1/orgs/$ORG_B/billing/portal") { bearerAuth("admin-b") }
         assertEquals(HttpStatusCode.Conflict, noSubscription.status)
-        assertTrue(noSubscription.bodyAsText().contains("\"code\":\"conflict\""))
+        assertTrue(noSubscription.bodyAsText().contains("\"type\":\"conflict\""))
     }
 
     @Test
