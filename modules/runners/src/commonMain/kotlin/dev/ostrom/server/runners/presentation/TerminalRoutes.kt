@@ -94,8 +94,8 @@ private const val MAX_SIZE = 1000
 fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(dependencies) {
     if (application.pluginOrNull(WebSockets) == null) {
         application.install(WebSockets) {
-            pingPeriod = PING_PERIOD
-            timeout = PING_TIMEOUT
+            pingPeriodMillis = PING_PERIOD.inWholeMilliseconds
+            timeoutMillis = PING_TIMEOUT.inWholeMilliseconds
             maxFrameSize = MAX_FRAME_BYTES
         }
     }

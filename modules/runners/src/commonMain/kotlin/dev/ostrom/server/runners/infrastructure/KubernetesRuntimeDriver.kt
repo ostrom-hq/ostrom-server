@@ -100,8 +100,8 @@ class KubernetesRuntimeDriver(
     }
 
     override suspend fun executionStatus(session: CloudSession): ExecutionStatus {
-        val pod = RuntimeNames.execution(session.id, session.epoch)
-        val response = call(HttpMethod.Get, "$base/api/v1/namespaces/$namespace/pods/$pod")
+        val name = RuntimeNames.execution(session.id, session.epoch)
+        val response = call(HttpMethod.Get, "$base/api/v1/namespaces/$namespace/pods/$name")
         if (response.status == HttpStatusCode.NotFound) return ExecutionStatus.MISSING
         response.requireSuccess("read pod")
         val pod = Json.parseToJsonElement(response.bodyAsText()).jsonObject
