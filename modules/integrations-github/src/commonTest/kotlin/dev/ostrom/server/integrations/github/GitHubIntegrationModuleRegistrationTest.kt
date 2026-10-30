@@ -85,8 +85,8 @@ class GitHubIntegrationModuleRegistrationTest {
             )
         }
         assertIs<HttpGitHubApi>(configured.koin.get<GitHubApi>(), "With a key: the App's JWT, read at the first call")
-        assertSame(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubDirectoryApi>())
-        assertSame(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubManifestApi>())
+        assertSame<Any>(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubDirectoryApi>())
+        assertSame<Any>(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubManifestApi>())
         configured.close()
     }
 

@@ -410,11 +410,12 @@ private suspend fun HttpClient.exchange(
     method: HttpMethod,
     url: String,
     path: String,
-    build: HttpRequestBuilder.() -> Unit,
+    configure: HttpRequestBuilder.() -> Unit,
 ): HttpResponse = try {
+    // Not `build`: inside the builder, that name is HttpRequestBuilder.build(), which would drop the configuration.
     request(url) {
         this.method = method
-        build()
+        configure()
     }
 } catch (error: CancellationException) {
     throw error
