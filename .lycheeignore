@@ -1,0 +1,8 @@
+# Links lychee does not check. Each line is a regular expression.
+# Until the public launch: the site is not live and the ostrom-hq repositories are private (remove both at launch).
+^https?://([a-z0-9-]+\.)?ostrom\.run
+^https://github\.com/ostrom-hq/
+^mailto:
+# Local and example addresses in documentation.
+^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)
+example\.(com|org)
