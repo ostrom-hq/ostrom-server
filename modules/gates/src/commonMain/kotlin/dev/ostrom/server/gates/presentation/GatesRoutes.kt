@@ -66,7 +66,7 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
 }
 
 private suspend fun RoutingContext.respondUse(dependencies: GatesRoutesDependencies, id: String, move: GateUse) {
-    val actor = dependencies.actors.actorOf(call.requirePrincipal(), GateScopes.asking)
+    val actor = dependencies.actors.actorOf(call.requirePrincipal(), GateScopes.using)
     val gateId = id.toUuid()
     dependencies.use(actor, gateId, move)
     call.respond(dependencies.gate(actor, gateId).toResponse(actor))

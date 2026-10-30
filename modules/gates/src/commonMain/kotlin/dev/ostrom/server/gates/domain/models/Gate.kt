@@ -72,8 +72,21 @@ data class Gate(
     fun yesExpired(now: Instant): Boolean =
         status == GateStatus.APPROVED && decidedAt?.let { now - it >= YES_LIFETIME } == true
 
+    /**
+     * Whether a reservation outlived [RESERVATION_LIFETIME] without its action reporting back (the agent died before
+     * consuming or releasing): the same action is then asked anew instead of waiting on it forever.
+     *
+     * @param now The current time.
+     * @return True for a gate reserved [RESERVATION_LIFETIME] or more ago.
+     */
+    fun reservationLapsed(now: Instant): Boolean =
+        status == GateStatus.RESERVED && reservedAt?.let { now - it >= RESERVATION_LIFETIME } == true
+
     /** The gate's constants. */
     companion object {
+        /** How long a reserved yes waits for its action to consume or release it. */
+        val RESERVATION_LIFETIME: Duration = 30.minutes
+
         /** How long a yes waits for its action: one yes is one head commit and one destination, used soon. */
         val YES_LIFETIME: Duration = 15.minutes
     }
