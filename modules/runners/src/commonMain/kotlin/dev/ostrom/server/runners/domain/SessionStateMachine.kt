@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.domain
 
 import dev.ostrom.server.runners.domain.SessionState.CREATING

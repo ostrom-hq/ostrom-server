@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
@@ -49,7 +49,7 @@ object RunnersModule : ServerModule {
     override val name: String = "runners"
 
     override val koinModule: Module = module {
-        single<RunnersConfig> { RunnersConfig.from(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
+        single<RunnersConfig> { RunnersConfig.from(get<ConfigSource>()) }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
         single<RunnerTokens> { RunnerTokensImpl() }
         single<CloudPlanProvider> {
