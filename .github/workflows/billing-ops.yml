@@ -4,24 +4,29 @@ name: billing-ops
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: ["ops/stripe/**", ".github/workflows/billing-ops.yml"]
   push:
     branches: [main]
     paths: ["ops/stripe/**", ".github/workflows/billing-ops.yml"]
   workflow_dispatch:
 
+# One run per workflow and ref; a new push cancels the previous run, except on main (JOURNAL 03:10).
 concurrency:
-  group: billing-ops-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
 jobs:
-  stripe-provision:
-    name: stripe-provision
+  # One job (JOURNAL 03:10: one runner per pull request). Path-filtered, so it is not a required check; `ci` is.
+  billing-ops:
+    name: billing-ops
+    # A draft pull request runs no CI: mark it ready when you want it.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     services:
       stripe-mock:
         image: stripe/stripe-mock:latest
@@ -34,21 +39,16 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: .github/workflows/billing-ops.yml
       - run: pip install pytest==9.2.0 coverage==7.16.2
-      - name: Tests, 100 % of lines and branches
+      - name: stripe-provision — tests, 100 % of lines and branches
         run: |
           coverage run --branch --include='ops/stripe/provision.py' -m pytest -q ops/stripe/tests
           coverage report -m --fail-under=100
-
-  # The real test account must match the catalog: a change of catalog.json is applied with provision.py before merge.
-  stripe-test-drift:
-    name: stripe-test-drift
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: provision.py --check against the Stripe test account
+      # The real test account must match the catalog: a change of catalog.json is applied with provision.py before merge.
+      - name: stripe-test-drift — provision.py --check against the Stripe test account
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
         run: |
