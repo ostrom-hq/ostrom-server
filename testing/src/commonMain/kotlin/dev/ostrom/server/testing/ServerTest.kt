@@ -12,27 +12,11 @@ import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.kernel.module.kernelModule
 import dev.ostrom.server.kernel.module.serverKoin
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
-import io.github.smyrgeorge.sqlx4k.Driver
-import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
-import org.koin.core.Koin
 import org.koin.core.module.Module
-
-/**
- * What a server test can use.
- *
- * @property koin The test server's Koin, to reach a repository or use case directly.
- * @property driver The test database.
- * @property client An HTTP client to the test server that reads and writes JSON.
- */
-class TestServer(
-    val koin: Koin,
-    val driver: Driver,
-    val client: HttpClient,
-)
 
 /**
  * Runs a test against a real server: a fresh PostgreSQL database (see [TestDatabase]), the kernel, the given

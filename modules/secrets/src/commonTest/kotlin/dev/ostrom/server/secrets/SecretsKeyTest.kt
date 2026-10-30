@@ -68,12 +68,17 @@ class SecretsKeyTest {
     }
 
     @Test
-    fun blankVariablesFallBackToTheDefaultFile() {
+    fun blankVariablesFallBackToTheDefaultFile() =
+        assertTheDefaultFileIsUsed(mapOf(SecretsKey.KEY_VARIABLE to " ", SecretsKey.FILE_VARIABLE to " "))
+
+    @Test
+    fun noVariablesFallBackToTheDefaultFile() = assertTheDefaultFileIsUsed(emptyMap())
+
+    private fun assertTheDefaultFileIsUsed(variables: Map<String, String>) {
         // A bare file name: the key file has no parent directory to create.
         val path = "ostrom-secrets-${Uuid.random()}.key"
         try {
-            val config = MapConfigSource(mapOf(SecretsKey.KEY_VARIABLE to " ", SecretsKey.FILE_VARIABLE to " "))
-            val created = SecretsKey.load(config, defaultFile = path)
+            val created = SecretsKey.load(MapConfigSource(variables), defaultFile = path)
             assertEquals(32, created.size)
             assertTrue(SystemFileSystem.exists(Path(path)))
         } finally {
