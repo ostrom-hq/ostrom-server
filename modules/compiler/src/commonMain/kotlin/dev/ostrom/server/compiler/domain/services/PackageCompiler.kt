@@ -335,7 +335,8 @@ object PackageCompiler {
             val trigger = NodeRules.triggerOf(node, workflow, suggested)
             // A linked gate (the only trigger with a gate node) without actions of its own: the catalog's classes.
             val gateNodeId = trigger.gateNodeId
-            val classes = if (gateNodeId != null && trigger.classes.isEmpty()) gateClasses(gateNodeId) else trigger.classes
+            val classes =
+                if (gateNodeId != null && trigger.classes.isEmpty()) gateClasses(gateNodeId) else trigger.classes
             val resolved = patternsOf(classes, trigger.patterns)
             return CompiledTrigger(trigger.from, trigger.gateNodeId, classes, trigger.patterns, resolved)
         }

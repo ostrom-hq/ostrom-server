@@ -95,7 +95,8 @@ class CloseSessionTest {
             ),
         )
         bench.clock.now += 10.minutes
-        val ended = bench.close(ORG, session.id, EndSession(tools = 7, model = "opus", costUsd = 1.5, exitCode = 0))
+        bench.costs.cost = 1.5
+        val ended = bench.close(ORG, session.id, EndSession(tools = 7, model = "opus", costUsd = 9.0, exitCode = 0))
 
         assertEquals("rcpt_session_s-1", ended.receiptId)
         assertEquals(Instant.parse("2026-10-30T09:10:00.123Z"), ended.endedAt)

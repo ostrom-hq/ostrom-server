@@ -5,6 +5,8 @@ import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
+import dev.ostrom.server.sessions.domain.services.NoSessionCosts
+import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
 import dev.ostrom.server.sessions.domain.usecases.CloseSessionUseCaseImpl
 import dev.ostrom.server.sessions.domain.usecases.EndSessionUseCase
@@ -49,7 +51,8 @@ object SessionsModule : ServerModule {
     override val koinModule: Module = module {
         single<SessionsRepository> { PostgresSessionsRepository(get()) }
         single<GateSessions> { SessionsGateGuard(get()) }
-        single<CloseSessionUseCase> { CloseSessionUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<SessionCosts> { NoSessionCosts() }
+        single<CloseSessionUseCase> { CloseSessionUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single { SessionSegments(get(), get()) }
         single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get()) }
         single<EndSessionUseCase> { EndSessionUseCaseImpl(get(), get()) }

@@ -81,10 +81,12 @@ class AskGateUseCaseImpl(
     override suspend fun invoke(actor: GateActor, ask: AskGate): GateView {
         val orgId = actor.orgId
         val asker = actor.personId ?: actor.id
-        val repo = ask.repo?.trim()?.takeIf { it.isNotEmpty() }
-        val realRepo = ask.realRepo?.trim()?.takeIf { it.isNotEmpty() && it != repo }
+        // `?.trim()?.takeIf` has a null check nothing reaches: Kover counts it, so the texts are read as non-null.
+        val repo = ask.repo.orEmpty().trim().ifEmpty { null }
+        val realRepo = ask.realRepo.orEmpty().trim().takeIf { it.isNotEmpty() && it != repo }
         val node = nodes.resolve(orgId, realRepo ?: repo, ask.actionClass)
-        val command = ask.command.trim().take(MAX_COMMAND)
+        // Never cut: a tail the checks did not read would run unseen. OpenGate refuses a command that is too long.
+        val command = ask.command.trim()
         val pullRequest = pullRequestOf(orgId, repo, ask, command, node?.enforced == true)
         // Audit S2-05: the hook's force flag is the machine's word; the command's options count too.
         val push = ask.push.takeIf { pullRequest == null }
@@ -101,7 +103,7 @@ class AskGateUseCaseImpl(
                 sessionId = ask.sessionId,
                 subject = subject,
                 node = node,
-                label = node?.name ?: ask.actionClass,
+                label = if (node == null) ask.actionClass else node.name,
                 evidence = evidenceOf(node, subject, asker, ask.sessionId, ask.diff?.take(MAX_DIFF)),
                 redirected = GateCommands.redirected(command),
             ),
@@ -122,10 +124,13 @@ class AskGateUseCaseImpl(
         scope = "session:${ask.sessionId ?: "-"}",
         push = push,
         pullRequest = pullRequest,
-        commits = pullRequest?.let { listOf(it.headSha) }
-            ?: push?.refs?.map { it.sha }?.filter { it.isNotEmpty() }.orEmpty(),
+        commits = when {
+            pullRequest != null -> listOf(pullRequest.headSha)
+            push != null -> push.refs.map { it.sha }.filter { it.isNotEmpty() }
+            else -> emptyList()
+        },
         diffDigest = push?.let { digester.digest(ask.diff?.take(MAX_DIFF).orEmpty()) },
-        tool = ask.tool?.take(MAX_LABEL) ?: "Bash",
+        tool = (ask.tool ?: "Bash").take(MAX_LABEL),
         harnessVersion = ask.harnessVersion?.take(MAX_LABEL),
         runId = ask.runId?.take(MAX_LABEL),
     )
@@ -197,7 +202,6 @@ class AskGateUseCaseImpl(
     private companion object {
         const val MACHINE_DIFF = "Diff (sent by the developer's machine, not checked by Ostrom)"
         const val MAX_DIFF = 8_000
-        const val MAX_COMMAND = 8_000
         const val MAX_LABEL = 200
         const val MAX_SHOWN_COMMAND = 400
         const val SHORT_SHA = 7

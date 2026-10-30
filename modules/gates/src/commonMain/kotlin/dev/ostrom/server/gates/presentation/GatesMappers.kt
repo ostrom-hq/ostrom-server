@@ -2,6 +2,7 @@
 package dev.ostrom.server.gates.presentation
 
 import dev.ostrom.server.gates.domain.models.ActorKind
+import dev.ostrom.server.gates.domain.models.AnswerChannel
 import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Gate
@@ -27,19 +28,22 @@ internal fun GateAskRequest.toAskGate() = AskGate(
     command = command.orEmpty(),
     harnessVersion = harnessVersion,
     push = push?.let { dto -> DomainPush(dto.remote, dto.refs.map { PushRef(it.ref, it.sha) }, dto.force == true) },
-    pullRequest = pr?.number?.trimStart('#')?.let {
-        it.toIntOrNull() ?: throw InvalidGateRequestException("Malformed pull request number.")
-    },
+    pullRequest = pullRequestNumber(if (pr == null) ci?.pr else pr.number),
     diff = diff,
-    via = AskedVia.HOOK,
+    // The GitHub check sends its CI context, often with its pull request there only.
+    via = if (ci == null) AskedVia.HOOK else AskedVia.CI,
 )
+
+private fun pullRequestNumber(number: String?): Int? = number?.let {
+    it.trimStart('#').toIntOrNull() ?: throw InvalidGateRequestException("Malformed pull request number.")
+}
 
 /** Maps a gate for its caller: their own approval, when they are a person and an approver. */
 internal fun GateView.toResponse(actor: GateActor): GateResponse {
     val mine = requests.takeIf { actor.kind == ActorKind.USER }
         ?.firstOrNull { SelfApproval.same(it.approverId, actor.id) }
     return GateResponse(
-        gate = gate.toRequest(mine?.id?.toString()),
+        gate = gate.toRequest(mine?.let { it.id.toString() }),
         approval = mine?.let { ApprovalView(it, gate).toApproval() },
         waitingFor = waitingFor,
     )
@@ -99,10 +103,10 @@ internal fun ApprovalView.toApproval(): Approval {
         title = "${gate.askedBy.firstOrNull() ?: "An agent"}: ${gate.label}$where",
         evidence = gate.evidence.map { Evidence(it.label, it.value) },
         repo = gate.subject.repo,
-        sha = gate.subject.pullRequest?.headSha ?: gate.subject.commits.lastOrNull(),
+        sha = shaOf(gate),
         commits = gate.subject.commits,
         requestedFrom = request.approverId,
-        channel = request.channel?.name?.lowercase() ?: "console",
+        channel = channelOf(request.channel),
         status = when (request.status) {
             RequestStatus.CLOSED -> "expired"
             else -> request.status.name.lowercase()
@@ -114,3 +118,12 @@ internal fun ApprovalView.toApproval(): Approval {
         selfApproved = gate.selfApproved,
     )
 }
+
+// The head of a pull request, else the last commit of a push. An if, not `?.headSha ?:`: Kover counts the
+// null check of a property that is never null.
+private fun shaOf(gate: Gate): String? {
+    val pullRequest = gate.subject.pullRequest
+    return if (pullRequest == null) gate.subject.commits.lastOrNull() else pullRequest.headSha
+}
+
+private fun channelOf(channel: AnswerChannel?): String = if (channel == null) "console" else channel.name.lowercase()
