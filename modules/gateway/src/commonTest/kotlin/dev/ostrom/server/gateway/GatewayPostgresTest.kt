@@ -250,7 +250,6 @@ class GatewayPostgresTest {
             val answer = infer("messages", body) {
                 header("x-api-key", "agent-a")
                 header("anthropic-beta", "fine-grained-tool-streaming-2025-05-14")
-                header("x-claude-code-session-id", "session-42")
             }
             assertEquals(HttpStatusCode.OK, answer.status)
             assertEquals("text/event-stream", answer.headers["Content-Type"]?.substringBefore(';'))
@@ -272,13 +271,34 @@ class GatewayPostgresTest {
             assertEquals(InferenceProvider.CLAUDE_SHARED, record.provider)
             assertEquals(TokenUsage(input = 1200, output = 42, cacheRead = 300), record.usage)
             assertEquals(Gw.orgA, record.orgId)
-            assertEquals("session-42", record.sessionId)
+            assertEquals("agent-a", record.sessionId, "An agent token's session is its launch")
             assertNotNull(record.accountId)
             assertTrue(record.priced)
             assertEquals(listOf(record), traces)
 
             val models = client.get("/api/v1/inference/v1/models") { bearerAuth("agent-a") }.bodyAsText()
             assertTrue("\"claude-opus-5\"" in models, "Without a policy, every priced model is listed")
+        }
+    }
+
+    /** S2-53: the session, which drives the shared account's affinity and the usage rows, comes from the token. */
+    @Test
+    fun aForgedSessionHeaderIsIgnored() = serverTest(modules, overrides) { server ->
+        with(server) {
+            shareClaude()
+            val forged = mapOf(
+                "ostrom-session-id" to "someone-else",
+                "x-claude-code-session-id" to "someone-else",
+                "session_id" to "someone-else",
+            )
+            for (token in listOf("agent-a", "use-a")) {
+                val answer = infer("messages", """{"model":"claude-opus-5","stream":true}""") {
+                    header("x-api-key", token)
+                    forged.forEach { (name, value) -> header(name, value) }
+                }
+                assertEquals(HttpStatusCode.OK, answer.status, answer.bodyAsText())
+            }
+            assertEquals(listOf("agent-a", null), records.map { it.sessionId })
         }
     }
 
@@ -334,7 +354,6 @@ class GatewayPostgresTest {
 
             val chat = infer("chat/completions", """{"model":"gpt-5","messages":[]}""") {
                 bearerAuth("use-a")
-                header("ostrom-session-id", "s-1")
             }
             assertEquals(HttpStatusCode.OK, chat.status)
             assertEquals(completion, chat.bodyAsText())
@@ -342,22 +361,21 @@ class GatewayPostgresTest {
             assertEquals("Bearer sk-org-openai", received.last().headers["Authorization"])
             assertEquals(TokenUsage(input = 20, output = 3), records.last().usage)
             assertEquals(false, records.last().priced, "No price row for OpenAI models")
-            assertEquals("s-1", records.last().sessionId)
+            assertEquals(null, records.last().sessionId, "A credential that is not an agent session has none")
 
             val router = infer("chat/completions", """{"model":"meta/llama-4"}""") {
                 bearerAuth("member-a")
-                header("session_id", "s-2")
             }
             assertEquals(HttpStatusCode.OK, router.status)
             assertEquals("https://openrouter.test/api/v1/chat/completions", received.last().url.toString())
             assertEquals("Bearer sk-or-org", received.last().headers["Authorization"])
             assertEquals(InferenceProvider.OPENROUTER, records.last().provider)
-            assertEquals("s-2", records.last().sessionId)
+            assertEquals(null, records.last().sessionId)
 
             val responses = infer("responses", """{"model":"gpt-5"}""") { bearerAuth("agent-a") }
             assertEquals(HttpStatusCode.OK, responses.status)
             assertEquals("https://openai.test/v1/responses", received.last().url.toString())
-            assertEquals(null, records.last().sessionId)
+            assertEquals("agent-a", records.last().sessionId)
         }
     }
 

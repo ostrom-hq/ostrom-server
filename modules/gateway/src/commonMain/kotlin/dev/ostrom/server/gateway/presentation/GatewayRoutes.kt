@@ -8,6 +8,7 @@ import dev.ostrom.server.gateway.domain.ModelPolicy
 import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -121,7 +122,7 @@ private fun modelList(policy: ModelPolicy, caller: Caller): JsonObject {
 }
 
 private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies, protocol: WireProtocol) {
-    val caller = call.inferenceCaller(dependencies, protocol) ?: return
+    val (caller, principal) = call.inferenceCaller(dependencies, protocol) ?: return
     val bytes = call.receiveChannel().readRemaining(MAX_INFERENCE_REQUEST_BYTES + 1).readByteArray()
     val responder = KtorInferenceResponder(call, dependencies.clock)
     if (bytes.size > MAX_INFERENCE_REQUEST_BYTES) {
@@ -129,32 +130,36 @@ private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies
     } else {
         val headers = call.request.headers.entries()
             .associate { (name, values) -> name.lowercase() to values.joinToString(",") } - CREDENTIAL_HEADERS
-        val session = headers["ostrom-session-id"] ?: headers["x-claude-code-session-id"] ?: headers["session_id"]
+        // The session comes from the token, never from a header the agent sets (S2-53): an agent session's token is
+        // its launch; any other credential has no session, so no account affinity.
+        val session = principal.subjectId.takeIf { RelayScopes.AGENT_SESSION in principal.scopes }
         val inference = InferenceCall(protocol, bytes.decodeToString(), headers, session?.take(MAX_SESSION))
         dependencies.relay(caller, inference, responder)
     }
 }
 
 /**
- * The member of an inference call, or null after answering in the provider's shape: 401 without a valid token, 403
+ * The member of an inference call and the principal of its token, or null after answering in the provider's shape:
+ * 401 without a valid token, 403
  * for a credential that may not call models (a device, a token without the scope).
  */
 private suspend fun ApplicationCall.inferenceCaller(
     dependencies: GatewayRoutesDependencies,
     protocol: WireProtocol,
-): Caller? {
+): Pair<Caller, AuthenticatedPrincipal>? {
     val principal = inferenceToken()?.let { dependencies.tokens.authenticate(it) }
     val allowed = principal?.takeIf { it.mayUse(INFERENCE_SCOPES) }
     val caller = allowed?.let { dependencies.callers.resolve(it, null) }
-    if (caller == null) {
+    if (allowed == null || caller == null) {
         val refusal = if (principal != null && allowed == null) {
             InferenceRefusal(RefusalKind.CREDENTIAL_NOT_ALLOWED, "This credential does not allow model calls.")
         } else {
             InferenceRefusal(RefusalKind.UNAUTHENTICATED, "A valid Ostrom token is required.")
         }
         KtorInferenceResponder(this, dependencies.clock).refuse(protocol, refusal)
+        return null
     }
-    return caller
+    return caller to allowed
 }
 
 /** The token of an inference call: `x-api-key` (Anthropic clients) or `Authorization: Bearer`. */
