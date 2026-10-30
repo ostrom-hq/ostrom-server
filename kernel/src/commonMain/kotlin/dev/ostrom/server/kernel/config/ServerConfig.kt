@@ -20,7 +20,8 @@ import kotlin.time.Duration.Companion.seconds
  *   `OSTROM_LANGFUSE_*`, `OSTROM_POSTHOG_*`); nowhere by default.
  * @property instanceId The `service.instance.id` of the telemetry (`OSTROM_POD_NAME`, the pod name in Kubernetes);
  *   null to draw a random one at start.
- * @property trustedProxies The reverse proxies whose `X-Forwarded-For` is believed (`OSTROM_TRUSTED_PROXIES`).
+ * @property trustedProxies The reverse proxies whose `X-Forwarded-For` is believed (`OSTROM_TRUSTED_PROXIES`), and
+ *   their client address header (`OSTROM_CLIENT_ADDRESS_HEADER`).
  * @property drainDelay How long the server keeps serving, `/ready` at 503, between SIGTERM and stopping the engine
  *   (`OSTROM_SHUTDOWN_DELAY_SECONDS`, 0 to 10), so the load balancer stops sending it requests first. With the 15 s
  *   the engine then gives requests in flight, a stop takes at most 25 s, leaving 5 s of the Helm chart's 30 s grace
@@ -78,7 +79,10 @@ data class ServerConfig(
                 throw InvalidConfigException("Invalid telemetry settings: ${error.message}", error)
             },
             instanceId = source["OSTROM_POD_NAME"],
-            trustedProxies = TrustedProxies.parse(source["OSTROM_TRUSTED_PROXIES"]),
+            trustedProxies = TrustedProxies.parse(
+                source["OSTROM_TRUSTED_PROXIES"],
+                source["OSTROM_CLIENT_ADDRESS_HEADER"],
+            ),
             drainDelay = source.int(
                 "OSTROM_SHUTDOWN_DELAY_SECONDS",
                 DEFAULT_DRAIN_DELAY_SECONDS,

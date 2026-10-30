@@ -42,7 +42,7 @@ if (providers.gradleProperty("ostrom.core.local").orNull == "true") {
     }
 }
 
-include(":kernel", ":testing", ":app")
+include(":kernel", ":testing", ":app", ":runner")
 
 // Every directory of modules/ with a build file is a functional module (:modules:<name>), discovered here so that
 // adding a module never edits this file.
