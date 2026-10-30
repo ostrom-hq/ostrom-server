@@ -162,6 +162,8 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | Pool size |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `OSTROM_SECRETS_KEY` | — | The secrets key, base64 of 32 bytes (AES-256-GCM); wins over the file. Losing it loses every stored secret |
+| `OSTROM_SECRETS_KEY_FILE` | `data/secrets.key` | File of the secrets key, created with mode 0600 at first start when `OSTROM_SECRETS_KEY` is unset; keep it on a persistent volume |
 
 A module that needs its own keys reads them from the `ConfigSource` with the `OSTROM_<MODULE>_…` prefix and adds them
 to this table.
