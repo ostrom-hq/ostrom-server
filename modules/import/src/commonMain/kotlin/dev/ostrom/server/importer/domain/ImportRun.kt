@@ -28,8 +28,8 @@ internal class ImportRun(
     /**
      * Applies [plan].
      *
-     * @return The report lines: the prefix, each server with its secrets and denials, each assignment, then what the
-     *   plan skipped.
+     * @return The report lines: the prefix, each server with its secrets and denials, each assignment, the assignments
+     *   TeamCode no longer has, then what the plan skipped.
      */
     suspend fun import(plan: TeamCodeImportPlan): MutableList<ImportItem> {
         items += mcp.prefix(caller)
@@ -38,13 +38,19 @@ internal class ImportRun(
         secrets.prepare(caller.orgId, writes)
         for (planned in plan.servers) server(planned)
         for (planned in plan.assignments) assignment(planned)
+        val members = plan.assignments.groupBy({ it.server.source.id }, { it.memberId })
+        for ((source, server) in imported) {
+            guarded(items, ImportKind.ASSIGNMENT, server.planned.name) {
+                items += mcp.revoke(caller, server, members[source].orEmpty().toSet())
+            }
+        }
         items += plan.skipped
         return items
     }
 
     private suspend fun server(planned: PlannedServer) {
         val writes = serverSecrets(planned)
-        val refusal = planned.conflict ?: mcp.refusal(planned.name) ?: writes.firstNotNullOfOrNull(secrets::foreign)
+        val refusal = planned.conflict ?: mcp.refusal(planned) ?: writes.firstNotNullOfOrNull(secrets::foreign)
         if (refusal != null) {
             items += ImportItem(ImportKind.SERVER, planned.name, ImportAction.SKIPPED, refusal)
             return

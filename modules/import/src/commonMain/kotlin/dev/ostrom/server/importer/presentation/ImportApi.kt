@@ -50,7 +50,11 @@ data class TeamCodeStdioDto(
     val packageName: String,
     val args: List<String> = emptyList(),
     val secretEnv: Map<String, String> = emptyMap(),
-)
+) {
+    /** Without the secret values: a log line or an error message never shows them. */
+    override fun toString(): String =
+        "TeamCodeStdioDto(launcher=$launcher, packageName=$packageName, args=$args, secretEnv=${secretEnv.keys})"
+}
 
 /**
  * An MCP variant of TeamCode.
@@ -78,7 +82,12 @@ data class TeamCodeMcpServerDto(
     val stdio: TeamCodeStdioDto? = null,
     val toolMode: String? = null,
     val tools: List<String> = emptyList(),
-)
+) {
+    /** Without the shared credential: a log line or an error message never shows it. */
+    override fun toString(): String = "TeamCodeMcpServerDto(id=$id, target=$target, variant=$variant, " +
+        "perMember=$perMember, url=$url, credentialHeader=$credentialHeader, sharedSecret=$REDACTED, stdio=$stdio, " +
+        "toolMode=$toolMode, tools=$tools)"
+}
 
 /**
  * A member's assignment.
@@ -88,7 +97,11 @@ data class TeamCodeMcpServerDto(
  * @property memberSecret The member's own credential, in clear.
  */
 @Serializable
-data class TeamCodeAssignmentDto(val memberId: String, val serverId: String, val memberSecret: String? = null)
+data class TeamCodeAssignmentDto(val memberId: String, val serverId: String, val memberSecret: String? = null) {
+    /** Without the member's credential: a log line or an error message never shows it. */
+    override fun toString(): String =
+        "TeamCodeAssignmentDto(memberId=$memberId, serverId=$serverId, memberSecret=$REDACTED)"
+}
 
 /**
  * A shared subscription account.
@@ -112,7 +125,15 @@ data class TeamCodeAccountDto(
     val refreshToken: String,
     val expiresAt: String,
     val disabled: Boolean = false,
-)
+) {
+    /** Without the tokens: a log line or an error message never shows them. */
+    override fun toString(): String = "TeamCodeAccountDto(provider=$provider, " +
+        "providerAccountId=$providerAccountId, label=$label, accessToken=$REDACTED, refreshToken=$REDACTED, " +
+        "expiresAt=$expiresAt, disabled=$disabled)"
+}
+
+/** What a request's [toString] shows instead of a credential. */
+private const val REDACTED = "<redacted>"
 
 /**
  * The import request: what `ostrom import teamcode` read from TeamCode, and the member map it built.

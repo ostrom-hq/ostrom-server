@@ -45,7 +45,7 @@ data class PlannedServer(
     val allowedTools: Set<String>? get() = source.tools.toSet().takeIf { source.toolMode == ToolMode.ALLOW }
 
     /** The tools denied to everyone. */
-    val deniedTools: List<String> get() = source.tools.takeIf { source.toolMode == ToolMode.DENY }.orEmpty()
+    val deniedTools: List<String> get() = source.tools.takeIf { source.toolMode == ToolMode.DENY }.orEmpty().distinct()
 
     /** The variant as TeamCode names it, for the reasons of the report. */
     val label: String get() = "${source.target}/${source.variant}"

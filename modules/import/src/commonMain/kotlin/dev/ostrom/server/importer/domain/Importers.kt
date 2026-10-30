@@ -76,7 +76,8 @@ internal class SecretImporter(
      */
     suspend fun prepare(orgId: Uuid, writes: List<SecretWrite>) {
         for (write in writes) found[write.key] = find(write)
-        values += secrets.reveal(orgId, found.values.mapNotNull { it?.id })
+        // Only what the import created may be rotated: a secret it did not create is never opened.
+        values += secrets.reveal(orgId, found.values.mapNotNull { it?.id }.filter { it in owned })
     }
 
     /** Why [write] is not imported: a secret of that name exists that the import did not create; or null. */
@@ -144,18 +145,24 @@ internal data class ServerOutcome(val lines: List<ImportItem>, val assignable: B
  * @param mcp The MCP relay use cases.
  * @param dryRun Whether to write nothing.
  * @param existing The org's servers before the import.
- * @param owned The ids of the servers the import created.
+ * @param owners The TeamCode variant each server the import created comes from, by server id.
  * @param record Records what it creates.
  */
 internal class McpImporter(
     private val mcp: McpPorts,
     private val dryRun: Boolean,
     existing: List<McpServer>,
-    private val owned: Set<Uuid>,
+    private val owners: Map<Uuid, String>,
     private val record: Recorder,
 ) {
     private val hadServers = existing.isNotEmpty()
     private val byName = existing.associateBy { it.name }.toMutableMap()
+
+    /** The server each variant was imported as, found by id: an admin renaming it never makes the import forget it. */
+    private val bySource = existing
+        .mapNotNull { server -> owners[server.id]?.let { it to server } }
+        .toMap()
+        .toMutableMap()
     private val assignments = mutableMapOf<Uuid, MutableList<McpAssignment>>()
 
     /**
@@ -177,14 +184,17 @@ internal class McpImporter(
         return ImportItem(ImportKind.SETTING, "agentPrefix", action, reason.takeIf { action == ImportAction.SKIPPED })
     }
 
-    /** Why a server named [name] cannot be imported, known before writing anything; or null. */
-    fun refusal(name: String): String? {
+    /** Why [planned] cannot be imported, known before writing anything; or null. */
+    fun refusal(planned: PlannedServer): String? {
+        val name = planned.name
         val existing = byName[name]
+        val owner = existing?.let { owners[it.id] }
         val seen = McpRules.agentName("", name)
         val shadowed = byName.values.firstOrNull { it.name != name && McpRules.agentName("", it.name) == seen }
         return when {
-            existing != null && existing.id !in owned ->
-                "A server named $name exists and was not imported from TeamCode."
+            existing != null && owner == null -> "A server named $name exists and was not imported from TeamCode."
+            existing != null && owner != planned.source.id ->
+                "A server named $name was imported from another TeamCode variant: delete it to import this one."
             shadowed != null -> "The agent would see $name as the server ${shadowed.name} already is."
             else -> null
         }
@@ -195,7 +205,7 @@ internal class McpImporter(
      * denied its new tools before it changes. Either way it is only assignable once every denial is in place.
      */
     suspend fun server(caller: Caller, planned: PlannedServer, payload: McpServerPayload): ServerOutcome {
-        val existing = byName[planned.name]
+        val existing = bySource[planned.source.id]
         return if (existing == null) create(caller, planned, payload) else update(caller, planned, existing, payload)
     }
 
@@ -234,6 +244,7 @@ internal class McpImporter(
         val server = mcp.createServer(caller, payload)
         record(ImportRecord(ImportRecordKind.SERVER, planned.source.id, planned.name, server.id))
         byName[planned.name] = server
+        bySource[planned.source.id] = server
         assignments[server.id] = mutableListOf()
         val refused = deny(caller, server, planned.deniedTools)
         return if (refused == null) {
@@ -270,6 +281,27 @@ internal class McpImporter(
         )
     }
 
+    /**
+     * Removes from [imported] every assignment TeamCode no longer has: a member revoked in TeamCode loses the server
+     * here too, rather than keep reaching it with their old credential. Only servers the import created get here.
+     *
+     * @param members The members TeamCode assigns it to, whether or not their assignment was written.
+     */
+    suspend fun revoke(caller: Caller, imported: ImportedServer, members: Set<Uuid>): List<ImportItem> {
+        val server = imported.server ?: return emptyList()
+        val rows = assignmentsOf(caller, server.id)
+        val stale = rows.filter { it.memberId !in members }
+        return stale.map { row ->
+            if (!dryRun) {
+                mcp.unassign(caller, server.id, row.memberId)
+                rows -= row
+            }
+            val who = row.memberId?.toString() ?: EVERYONE
+            val action = if (dryRun) ImportAction.PLANNED else ImportAction.UPDATED
+            ImportItem(ImportKind.ASSIGNMENT, "${imported.planned.name}/$who", action, REVOKED)
+        }
+    }
+
     /** Creates the denials of [tools], in order; the first refusal stops them and is returned as the reason. */
     private suspend fun deny(caller: Caller, server: McpServer, tools: List<String>): String? {
         for (tool in tools) {
@@ -291,6 +323,8 @@ internal class McpImporter(
 
     private companion object {
         const val DENIED = "Denied in TeamCode."
+        const val EVERYONE = "everyone"
+        const val REVOKED = "Removed: TeamCode no longer assigns this server to this member."
     }
 }
 

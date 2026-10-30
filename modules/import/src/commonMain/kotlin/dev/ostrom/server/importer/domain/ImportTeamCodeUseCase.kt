@@ -57,13 +57,15 @@ class ImportTeamCodeUseCaseImpl(
     ): ImportReport {
         caller.requireAdmin()
         val records = provenance.list(caller.orgId)
-        val recorded = records.filter { it.kind == ImportRecordKind.SERVER }.associate { it.sourceKey to it.ostromName }
+        val serverRecords = records.filter { it.kind == ImportRecordKind.SERVER }
+        val recorded = serverRecords.associate { it.sourceKey to it.ostromName }
+        val servers = serverRecords.associate { it.ostromId to it.sourceKey }
         val plan = TeamCodeImportPlanner.plan(export, memberMap, recorded)
         val record: Recorder = { provenance.record(caller.orgId, it) }
         val run = ImportRun(
             caller,
             SecretImporter(secrets, dryRun, records.ids(ImportRecordKind.SECRET), record),
-            McpImporter(mcp, dryRun, mcp.listServers(caller), records.ids(ImportRecordKind.SERVER), record),
+            McpImporter(mcp, dryRun, mcp.listServers(caller), servers, record),
         )
         val items = run.import(plan)
         for (account in export.accounts) importAccount(caller, account, dryRun, items)

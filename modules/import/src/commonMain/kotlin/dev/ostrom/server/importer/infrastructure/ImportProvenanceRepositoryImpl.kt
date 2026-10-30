@@ -22,7 +22,7 @@ class ImportProvenanceRepositoryImpl(private val driver: Driver) : ImportProvena
         orgId,
         Statement.create(
             "SELECT kind, source_key, ostrom_name, ostrom_id FROM import_provenance WHERE org_id = :org_id " +
-                "ORDER BY kind, source_key LIMIT :limit",
+                "ORDER BY kind = 'SECRET', source_key LIMIT :limit",
         )
             .bind("org_id", orgId)
             .bind("limit", MAX_IMPORT_RECORDS),

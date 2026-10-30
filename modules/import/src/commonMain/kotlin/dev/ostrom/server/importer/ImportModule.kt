@@ -31,7 +31,7 @@ object ImportModule : ServerModule {
 
     override val koinModule: Module = module {
         single { SecretPorts(get(), get(), get(), get()) }
-        single { McpPorts(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { McpPorts(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<ImportProvenanceRepository> { ImportProvenanceRepositoryImpl(get()) }
         single<ImportTeamCodeUseCase> { ImportTeamCodeUseCaseImpl(get(), get(), get(), getOrNull()) }
         single { ImportRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get()) }

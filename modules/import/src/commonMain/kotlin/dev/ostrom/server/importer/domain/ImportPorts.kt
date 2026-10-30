@@ -9,6 +9,7 @@ import dev.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCase
 import dev.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCase
 import dev.ostrom.server.mcprelay.domain.ListMcpServersUseCase
 import dev.ostrom.server.mcprelay.domain.PutMcpSettingsUseCase
+import dev.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
 import dev.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CreateSecretUseCase
@@ -39,6 +40,7 @@ data class SecretPorts(
  * @property updateServer Changes one.
  * @property listAssignments A server's assignments.
  * @property assign Assigns a server to a member.
+ * @property unassign Removes an assignment TeamCode no longer has.
  * @property listPolicies A server's argument policies.
  * @property createPolicy Adds one.
  * @property getSettings The agent prefix.
@@ -50,6 +52,7 @@ data class McpPorts(
     val updateServer: UpdateMcpServerUseCase,
     val listAssignments: ListMcpAssignmentsUseCase,
     val assign: AssignMcpServerUseCase,
+    val unassign: UnassignMcpServerUseCase,
     val listPolicies: ListArgumentPoliciesUseCase,
     val createPolicy: CreateArgumentPolicyUseCase,
     val getSettings: GetMcpSettingsUseCase,
