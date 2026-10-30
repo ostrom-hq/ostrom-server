@@ -45,6 +45,9 @@ class UpstreamAddressGuard(private val allowPrivate: Boolean = false) {
                     host == it.drop(1) || host.endsWith(it)
                 } -> false
             address != null -> BLOCKED_IPV4.none { it.contains(address) }
+            // 127.1, 0x7f.0.0.1, 0177.0.0.1, 2130706433: the resolver reads them as addresses, so only the
+            // canonical dotted-decimal form is checked and every other numeric form is refused.
+            isNumericHost(host) -> false
             ':' in host -> isPublicIpv6(host)
             else -> '.' in host
         }
@@ -73,7 +76,7 @@ private const val IPV4_BITS = 32
 private const val OCTETS = 4
 private const val OCTET_BITS = 8
 private val OCTET = 0..255
-private val OCTET_DIGITS = 1..3
+private const val HEX_DIGITS = "0123456789abcdef"
 private val GLOBAL_UNICAST = 0x2000..0x3fff
 private val INTERNAL_SUFFIXES = listOf(".local", ".internal", ".localhost", ".cluster.local", ".svc", ".home.arpa")
 private val BLOCKED_IPV6_PREFIXES = listOf("2001:db8", "2001:0db8", "2002:")
@@ -85,18 +88,28 @@ private val BLOCKED_IPV4 = listOf(
     "224.0.0.0/3",
 ).map(::Block)
 
-/** A dotted IPv4 literal as a number, or null. */
+/** A canonical dotted-decimal IPv4 literal (four octets, no leading zero) as a number, or null. */
 private fun ipv4(host: String): UInt? {
     val parts = host.split('.')
     val octets = parts.mapNotNull { part ->
-        part.toIntOrNull()?.takeIf {
-            part.length in OCTET_DIGITS &&
-                it in OCTET
-        }
+        part.toIntOrNull()?.takeIf { it in OCTET && part == it.toString() }
     }
     return if (parts.size == OCTETS && octets.size == OCTETS) {
         octets.fold(0u) { address, octet -> (address shl OCTET_BITS) or octet.toUInt() }
     } else {
         null
     }
+}
+
+/** Whether inet_aton could read the host as an address: one to four decimal, octal or `0x` hex numbers. */
+private fun isNumericHost(host: String): Boolean {
+    val parts = host.split('.')
+    return parts.size <= OCTETS &&
+        parts.all { part ->
+            if (part.startsWith("0x")) {
+                part.drop(2).all { it in HEX_DIGITS }
+            } else {
+                part.all { it in '0'..'9' }
+            }
+        }
 }

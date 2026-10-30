@@ -5,6 +5,7 @@ import dev.ostrom.server.mcprelay.domain.McpOutcome
 import dev.ostrom.server.mcprelay.domain.McpUpstream
 import dev.ostrom.server.mcprelay.domain.UpstreamResult
 import dev.ostrom.server.mcprelay.domain.UpstreamTarget
+import dev.ostrom.server.secrets.domain.SecretValue
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.SHA256
 import io.ktor.client.HttpClient
@@ -103,7 +104,7 @@ class HostMcpUpstream(
                 UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server has no command."),
             )
         val body = buildJsonObject {
-            put("key", processKey(target.processKey))
+            put("key", processKey(target.processKey, target.secretEnv))
             putJsonObject("spec") {
                 put("launcher", spec.launcher.wire)
                 put("package", spec.packageName)
@@ -195,11 +196,18 @@ class HostMcpUpstream(
         private const val MAX_ERROR = 1000
 
         /**
-         * The host's process key: SHA-256 (64 hex characters) of the relay's key.
+         * The host's process key: SHA-256 (64 hex characters) of the relay's key and the secret variables, so a
+         * rotated secret starts a new process instead of reusing one that holds the old value.
          *
          * @param key `org:server:version`, plus `:member:assignedAt` for a per-member server.
+         * @param secretEnv The secret variables the process starts with.
          */
-        fun processKey(key: String): String =
-            CryptographyProvider.Default.get(SHA256).hasher().hashBlocking(key.encodeToByteArray()).toHexString()
+        fun processKey(key: String, secretEnv: Map<String, SecretValue> = emptyMap()): String {
+            val material = secretEnv.entries.sortedBy { it.key }
+                .joinToString("") { (name, value) -> "\u0000$name=${value.reveal()}" }
+            return CryptographyProvider.Default.get(SHA256).hasher()
+                .hashBlocking((key + material).encodeToByteArray())
+                .toHexString()
+        }
     }
 }

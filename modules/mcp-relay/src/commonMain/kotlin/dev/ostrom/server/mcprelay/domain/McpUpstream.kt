@@ -74,13 +74,26 @@ interface McpUpstream {
     ): UpstreamResult<JsonObject>
 }
 
+/** What the approver answers for a call an argument policy holds for approval. */
+sealed interface ApprovalDecision {
+    /** A human approved this exact call (member, server, tool, arguments); the grant is used up by this call. */
+    data object Approved : ApprovalDecision
+
+    /**
+     * Not approved yet.
+     *
+     * @property link Where the approver answers (a console link), or null when no gate could be opened.
+     */
+    data class Pending(val link: String?) : ApprovalDecision
+}
+
 /**
- * Opens a gate when an argument policy asks for approval. Bound by the gates module; without it, a call that needs
- * approval is refused with the policy's message.
+ * Opens a gate when an argument policy asks for approval, and lets the retry through once a human approved it.
+ * Bound by the gates module; without it, a call that needs approval is refused with the policy's message.
  */
 interface ApprovalRequester {
     /**
-     * Asks for approval of a call.
+     * Asks for approval of a call: consumes a grant already given for this exact call, or opens (or finds) its gate.
      *
      * @param caller The member.
      * @param server The server.
@@ -88,7 +101,7 @@ interface ApprovalRequester {
      * @param arguments The arguments the approver sees.
      * @param policy The policy that asks for it.
      *
-     * @return Where the approver answers (a console link), or null when no gate could be opened.
+     * @return [ApprovalDecision.Approved] to relay the call, [ApprovalDecision.Pending] to refuse it for now.
      */
     suspend fun request(
         caller: dev.ostrom.server.secrets.domain.Caller,
@@ -96,7 +109,7 @@ interface ApprovalRequester {
         tool: String,
         arguments: JsonObject,
         policy: ArgumentPolicy,
-    ): String?
+    ): ApprovalDecision
 }
 
 /** No gates module: nothing is opened. */
@@ -107,5 +120,5 @@ class NoApprovalRequester : ApprovalRequester {
         tool: String,
         arguments: JsonObject,
         policy: ArgumentPolicy,
-    ): String? = null
+    ): ApprovalDecision = ApprovalDecision.Pending(null)
 }

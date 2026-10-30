@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay
 
+import dev.ostrom.server.mcprelay.domain.McpCall
+import dev.ostrom.server.mcprelay.domain.McpOperation
+import dev.ostrom.server.mcprelay.domain.McpOutcome
 import dev.ostrom.server.mcprelay.domain.McpRelayRepository
 import dev.ostrom.server.mcprelay.domain.McpTransport
 import dev.ostrom.server.mcprelay.domain.StdioLauncher
@@ -29,8 +32,10 @@ import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Assignments, policies, settings and the journal managed over HTTP, and the repository on its own. */
@@ -95,12 +100,38 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                 assertEquals(McpSettingsDto("ostrom"), settings)
                 val before = client.get("$admin/calls?before=2030-01-01T00:00:00Z") { bearerAuth("admin-a") }
                 assertEquals(emptyList(), before.body<McpCallsPage>().items)
-                assertEquals(
-                    HttpStatusCode.BadRequest,
-                    client.get("$admin/calls?before=yesterday") { bearerAuth("admin-a") }.status,
-                )
+                for (cursor in listOf("yesterday", "2030-01-01T00:00:00Z/nope")) {
+                    assertEquals(
+                        HttpStatusCode.BadRequest,
+                        client.get("$admin/calls?before=$cursor") { bearerAuth("admin-a") }.status,
+                        cursor,
+                    )
+                }
                 val usage = client.get("$admin/usage?days=7") { bearerAuth("admin-a") }.body<McpUsageResponse>()
                 assertEquals(emptyMap(), usage.byServer)
+            }
+        }
+
+    @Test
+    fun journalPagesNeitherLoseNorRepeatCallsOfTheSameInstant() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                // Three calls in the same microsecond: a page boundary between them loses or repeats none.
+                val journal = koin.get<McpRelayRepository>()
+                val tied = List(3) {
+                    McpCall(
+                        Uuid.random(), Relay.adminA.orgId, Relay.adminA.memberId, Uuid.random(), "grafana",
+                        McpOperation.CALL, "query", McpOutcome.OK, Instant.parse("2026-10-30T05:00:00Z"), 1, 1,
+                    )
+                }
+                tied.forEach { journal.record(it) }
+                val first = client.get("$admin/calls?limit=2") { bearerAuth("admin-a") }.body<McpCallsPage>()
+                val next = assertNotNull(first.next)
+                val second = client.get("$admin/calls?limit=2&before=$next") { bearerAuth("admin-a") }
+                    .body<McpCallsPage>()
+                assertEquals(tied.map { it.id.toString() }.toSet(), (first.items + second.items).map { it.id }.toSet())
+                assertEquals(3, (first.items + second.items).size)
+                assertNull(second.next)
             }
         }
 

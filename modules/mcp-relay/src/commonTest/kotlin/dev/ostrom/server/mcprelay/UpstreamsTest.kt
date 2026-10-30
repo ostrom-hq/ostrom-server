@@ -316,16 +316,30 @@ class UpstreamsTest {
             "https://svc/",
             "https://[2600::1.2.3.4]/",
             "https://[2002::1]/",
+            // Shorthand, octal, hex and integer forms of 127.0.0.1 and 169.254.169.254, which inet_aton accepts.
+            "https://127.1/",
+            "https://0x7f.0.0.1/",
+            "https://0177.0.0.1/",
+            "https://0xa9.0xfe.0xa9.0xfe/",
+            "https://169.254.43518/",
+            "https://2130706433/",
+            "https://0x7f000001/",
+            "https://0x/",
+            // Leading zeros and out-of-range octets are not canonical: refused rather than guessed.
+            "https://010.8.8.8/",
+            "https://0001.2.3.4/",
+            "https://1.2.3.256/",
         ).forEach { assertFalse(guard.allows(it), it) }
         listOf(
             "https://mcp.grafana.com/mcp",
             "https://8.8.8.8/",
             "https://[2606:4700::1111]/",
             "https://172.32.0.1",
-            // Not IPv4 literals (a leading zero run, an octet above 255, five parts): names with a dot.
-            "https://0001.2.3.4/",
-            "https://1.2.3.256/",
+            // Five numeric parts is not an address; hex letters without 0x make a name.
             "https://1.2.3.4.5/",
+            "https://cafe.de/",
+            "https://0xcafe.com/",
+            "https://0xzz.example.com/",
         ).forEach {
             assertTrue(guard.allows(it), it)
         }
@@ -367,8 +381,19 @@ class UpstreamsTest {
         assertEquals("http://mcp-host:8080/v1/ops", request.url.toString())
         assertEquals("Bearer host_token", request.headers[HttpHeaders.Authorization])
         assertEquals("1", request.headers["TeamCode-Host-Protocol"])
-        assertEquals(HostMcpUpstream.processKey("org:server:1"), body!!["key"]!!.jsonPrimitive.content)
-        assertEquals(64, body["key"]!!.jsonPrimitive.content.length)
+        val key = body!!["key"]!!.jsonPrimitive.content
+        assertEquals(HostMcpUpstream.processKey("org:server:1", stdioTarget().secretEnv), key)
+        assertEquals(64, key.length)
+        // A rotated secret is a new process: the old one, started with the old value, is never reused.
+        val rotated = stdioTarget().copy(secretEnv = mapOf("TOKEN" to SecretValue("discord_bot_token_2")))
+        upstream.callTool(rotated, "discord_send", buildJsonObject { put("text", "hi") }, 5.seconds)
+        assertTrue(key != requests.last().second!!["key"]!!.jsonPrimitive.content)
+        assertTrue(
+            HostMcpUpstream.processKey("k", mapOf("A" to SecretValue("1"), "B" to SecretValue("2"))) ==
+                HostMcpUpstream.processKey("k", mapOf("B" to SecretValue("2"), "A" to SecretValue("1"))),
+            "The order of the variables does not matter",
+        )
+        assertTrue(HostMcpUpstream.processKey("k") != HostMcpUpstream.processKey("k", mapOf("A" to SecretValue("1"))))
         val spec = body["spec"]!!.jsonObject
         assertEquals("npm", spec["launcher"]!!.jsonPrimitive.content)
         assertEquals("discord_bot_token", spec["secrets"]!!.jsonObject["TOKEN"]!!.jsonPrimitive.content)

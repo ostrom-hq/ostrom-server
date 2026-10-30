@@ -183,7 +183,8 @@ object McpRules {
             )
             rule(
                 condition.operator != ConditionOperator.MATCHES || SafePattern.isSafe(value.orEmpty()),
-                "A pattern may not repeat a repeated group nor refer back to a group (it could run for minutes).",
+                "A pattern may not repeat a group that repeats or alternates, refer back to a group, nor repeat " +
+                    "without bound more than twice (it could run for minutes).",
             )
         }
     }
@@ -222,8 +223,9 @@ class InvalidMcpServerException(message: String) : OstromException(ErrorKind.INV
 /** No server with this id in the org. */
 class McpServerNotFoundException : OstromException(ErrorKind.NOT_FOUND, "MCP server not found.")
 
-/** The org already has a server with this name. */
-class McpServerNameTakenException : OstromException(ErrorKind.CONFLICT, "An MCP server with this name already exists.")
+/** The org already has a server with this name, or one the agent would see under the same name. */
+class McpServerNameTakenException(message: String = "An MCP server with this name already exists.") :
+    OstromException(ErrorKind.CONFLICT, message)
 
 /** The secret named by a server or assignment is not an org secret. */
 class McpSecretNotFoundException : OstromException(ErrorKind.INVALID_REQUEST, "The credential names an unknown secret.")
