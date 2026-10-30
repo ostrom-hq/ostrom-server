@@ -10,9 +10,10 @@ on:
     tags: ['[0-9]*']
   workflow_dispatch:
 
+# One run per workflow and ref; never cancelled on main (each push of main publishes its `edge`).
 concurrency:
-  group: image-${{ github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -46,18 +47,18 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME}"; else v="0.0.0-edge.$(date -u +%Y%m%d%H%M%S).${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Release binaries (linuxX64, linuxArm64)
-        run: ./gradlew :app:linkReleaseExecutableLinuxX64 :app:linkReleaseExecutableLinuxArm64 -PostromVersion=${{ steps.v.outputs.version }}
+        run: ./gradlew :app:linkReleaseExecutableLinuxX64 :app:linkReleaseExecutableLinuxArm64
       - name: Image contexts
         run: |
           for a in amd64:linuxX64 arm64:linuxArm64; do
             arch=${a%%:*}; target=${a#*:}
-            mkdir -p "ctx/$arch"
-            cp Dockerfile "ctx/$arch/"
-            cp "app/build/bin/$target/releaseExecutable/ostrom-server.kexe" "ctx/$arch/ostrom-server"
+            mkdir -p "ctx/$arch/dist"
+            cp Dockerfile .dockerignore "ctx/$arch/"
+            cp "app/build/bin/$target/releaseExecutable/ostrom-server.kexe" "ctx/$arch/dist/ostrom-server"
           done
-          file ctx/*/ostrom-server
+          file ctx/*/dist/ostrom-server
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: contexts, path: ctx, retention-days: 3 }
+        with: { name: contexts, path: ctx, retention-days: 3, include-hidden-files: true }
     outputs:
       version: ${{ steps.v.outputs.version }}
 
@@ -96,16 +97,26 @@ jobs:
             org.opencontainers.image.version=${{ needs.binaries.outputs.version }}
       - name: Smoke test of the amd64 image against PostgreSQL
         run: |
-          chmod +x ctx/*/ostrom-server
+          chmod +x ctx/*/dist/ostrom-server
           docker build -t ostrom-server:smoke ctx/amd64
           docker network create smoke
           docker run -d --name pg --network smoke -e POSTGRES_PASSWORD=postgres postgres:17.6
           for _ in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+          # Read-only root and no capability, like the chart; the instance key goes to a writable /var/lib/ostrom.
           docker run -d --name s --network smoke -p 8080:8080 --read-only --cap-drop ALL \
+            --tmpfs /var/lib/ostrom:uid=65532,gid=65532 \
             -e OSTROM_DATABASE_URL=postgresql://pg:5432/postgres -e OSTROM_DATABASE_USER=postgres -e OSTROM_DATABASE_PASSWORD=postgres \
             ostrom-server:smoke
           for _ in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
           curl -fsS localhost:8080/health | grep -q '"status":"ok"' || { docker logs s; exit 1; }
+          curl -fsS localhost:8080/api/v1/instance | grep -q '"algorithm":"ed25519"' || { docker logs s; exit 1; }
+      - name: The arm64 image starts too (QEMU)
+        run: |
+          docker buildx build ctx/arm64 --platform linux/arm64 --load -t ostrom-server:smoke-arm64
+          # No database configured: the binary must load (libcrypt.so.1 of the right architecture) and refuse its config.
+          out=$(docker run --rm --platform linux/arm64 ostrom-server:smoke-arm64 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q 'OSTROM_DATABASE_URL' || { echo "arm64 binary did not start"; exit 1; }
       - name: Build and push each architecture by digest
         id: arch
         run: |
