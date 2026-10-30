@@ -82,13 +82,12 @@ interface ListSecretsUseCase {
  * @param repository The storage.
  */
 class ListSecretsUseCaseImpl(private val repository: SecretsRepository) : ListSecretsUseCase {
-    override suspend fun invoke(caller: Caller, afterName: String?, limit: Int): List<Secret> =
-        repository.list(
-            orgId = caller.orgId,
-            memberId = if (caller.role.isAdmin) null else caller.memberId,
-            afterName = afterName,
-            limit = limit.coerceIn(1, SecretRules.MAX_PAGE),
-        )
+    override suspend fun invoke(caller: Caller, afterName: String?, limit: Int): List<Secret> = repository.list(
+        orgId = caller.orgId,
+        memberId = if (caller.role.isAdmin) null else caller.memberId,
+        afterName = afterName,
+        limit = limit.coerceIn(1, SecretRules.MAX_PAGE),
+    )
 }
 
 /** Replaces a secret's value. */
@@ -124,7 +123,8 @@ class RotateSecretUseCaseImpl(
         val current = repository.requireWritable(caller, id)
         SecretRules.requireValue(value.reveal())
         val envelope = cipher.seal(value.reveal().encodeToByteArray(), secretContext(current.orgId, current.id))
-        return repository.rotate(caller.orgId, id, envelope, clock.now(), caller.memberId) ?: throw SecretNotFoundException()
+        return repository.rotate(caller.orgId, id, envelope, clock.now(), caller.memberId)
+            ?: throw SecretNotFoundException()
     }
 }
 
@@ -198,7 +198,8 @@ interface FindSecretUseCase {
 /** [FindSecretUseCase] on the repository. */
 class FindSecretUseCaseImpl(private val repository: SecretsRepository) : FindSecretUseCase {
     override suspend fun invoke(caller: Caller, name: String, personal: Boolean): Secret =
-        repository.findByName(caller.orgId, if (personal) caller.memberId else null, name) ?: throw SecretNotFoundException()
+        repository.findByName(caller.orgId, if (personal) caller.memberId else null, name)
+            ?: throw SecretNotFoundException()
 }
 
 /**
@@ -207,10 +208,8 @@ class FindSecretUseCaseImpl(private val repository: SecretsRepository) : FindSec
  * @param repository The storage.
  * @param cipher The instance key.
  */
-class RevealSecretsUseCaseImpl(
-    private val repository: SecretsRepository,
-    private val cipher: SecretCipher,
-) : RevealSecretsUseCase {
+class RevealSecretsUseCaseImpl(private val repository: SecretsRepository, private val cipher: SecretCipher) :
+    RevealSecretsUseCase {
     override suspend fun invoke(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, SecretValue> {
         if (ids.isEmpty()) return emptyMap()
         return repository.getMany(orgId, ids.distinct()).associate { stored ->
@@ -262,8 +261,16 @@ interface SecretDirectoryUseCase {
 /** [SecretDirectoryUseCase] on the repository. */
 class SecretDirectoryUseCaseImpl(private val repository: SecretsRepository) : SecretDirectoryUseCase {
     override suspend fun idsByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): Map<String, Uuid> =
-        names.distinct().mapNotNull { name -> repository.findByName(orgId, ownerMemberId, name)?.let { name to it.id } }.toMap()
+        names.distinct().mapNotNull { name ->
+            repository.findByName(orgId, ownerMemberId, name)?.let { name to it.id }
+        }.toMap()
 
-    override suspend fun namesById(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, String> =
-        if (ids.isEmpty()) emptyMap() else repository.getMany(orgId, ids.distinct()).associate { it.secret.id to it.secret.name }
+    override suspend fun namesById(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, String> = if (ids.isEmpty()) {
+        emptyMap()
+    } else {
+        repository.getMany(orgId, ids.distinct()).associate {
+            it.secret.id to
+                it.secret.name
+        }
+    }
 }
