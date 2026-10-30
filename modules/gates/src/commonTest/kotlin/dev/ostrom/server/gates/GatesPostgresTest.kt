@@ -546,7 +546,9 @@ class GatesPostgresTest {
         val agent = "agent:a:$session"
         repeat(20) { assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/gates", push()).status) }
         val times = (1..200).map {
-            TimeSource.Monotonic.measureTime { server.call(agent, "/api/v1/gates", push()).status }
+            val start = TimeSource.Monotonic.markNow()
+            assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/gates", push()).status)
+            start.elapsedNow()
         }.sorted()
         val p95 = times[times.size * 95 / 100 - 1]
         assertTrue(p95 < 20.milliseconds, "p95 = $p95, median = ${times[times.size / 2]}")
