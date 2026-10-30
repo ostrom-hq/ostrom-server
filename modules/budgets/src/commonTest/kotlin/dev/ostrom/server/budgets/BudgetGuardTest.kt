@@ -134,7 +134,7 @@ class BudgetGuardTest {
         guard.check(orgA, member)
         guard.check(orgA, admin)
 
-        assertEquals(listOf(orgA to null), spend.reads)
+        assertEquals(listOf<Pair<Uuid, Uuid?>>(orgA to null), spend.reads)
         clock.advance(5.seconds)
         guard.check(orgA, member)
         assertEquals(2, spend.reads.size, "Read again once expired")

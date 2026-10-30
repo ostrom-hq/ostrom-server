@@ -136,11 +136,11 @@ class UsagePostgresTest {
             mapOf(null to 4_000L, TestCallers.memberA.memberId.toString() to 2_500L, TestCallers.adminA.memberId.toString() to 1_500L),
             groups("member"),
         )
-        assertEquals(mapOf("MODEL" to 8_000L), groups("kind"))
-        assertEquals(mapOf("claude-sonnet-4-5" to 5_500L, "gpt-5" to 2_500L), groups("model"))
+        assertEquals(mapOf<String?, Long>("MODEL" to 8_000L), groups("kind"))
+        assertEquals(mapOf<String?, Long>("claude-sonnet-4-5" to 5_500L, "gpt-5" to 2_500L), groups("model"))
         assertEquals(mapOf("anthropic" to 1_500L, "openrouter" to 2_500L, null to 4_000L), groups("provider"))
         assertEquals(mapOf(null to 6_500L, account.toString() to 1_500L), groups("account"))
-        assertEquals(mapOf(TestCallers.memberA.memberId.toString() to 2_500L), groups("member", "member-a"), "A member sees only themselves")
+        assertEquals(mapOf<String?, Long>(TestCallers.memberA.memberId.toString() to 2_500L), groups("member", "member-a"), "A member sees only themselves")
 
         val summary = server.client.get("$orgA/summary?days=30") { bearerAuth("admin-a") }.body<UsageSummaryResponse>()
         assertEquals(8_000L, summary.total.costMicros)
