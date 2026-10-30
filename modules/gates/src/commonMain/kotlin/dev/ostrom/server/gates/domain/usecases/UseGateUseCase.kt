@@ -65,10 +65,12 @@ class UseGateUseCaseImpl(
         val next = when (use) {
             GateUse.RESERVE -> {
                 if (gate.status != GateStatus.APPROVED) throw GateNotUsableException(reserveRefusal(gate))
+                if (gate.yesExpired(clock.now())) throw GateNotUsableException(EXPIRED)
                 gate.copy(status = GateStatus.RESERVED, reservedBy = launch, reservedAt = clock.now())
             }
             GateUse.CONSUME -> when {
                 gate.status == GateStatus.SHADOW || gate.status == GateStatus.UNGATED -> return@transaction gate
+                gate.yesExpired(clock.now()) -> throw GateNotUsableException(EXPIRED)
                 gate.status == GateStatus.APPROVED -> gate.copy(status = GateStatus.CONSUMED, consumedAt = clock.now())
                 else -> {
                     heldBy(gate, launch)
@@ -101,5 +103,9 @@ class UseGateUseCaseImpl(
         GateStatus.PENDING -> "This gate is still waiting for a yes."
         GateStatus.REJECTED -> "This gate was refused."
         else -> "This action is not gated: there is no yes to reserve."
+    }
+
+    private companion object {
+        const val EXPIRED = "This yes expired: it waits 15 minutes for its action. Ask again."
     }
 }
