@@ -101,13 +101,13 @@ jobs:
           docker run -d --name pg --network smoke -e POSTGRES_PASSWORD=postgres postgres:17.6
           for _ in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
           # Read-only root and no capability, like the chart; the instance key goes to a writable /var/lib/ostrom.
-          docker run -d --name s --network smoke -p 8080:8080 --read-only --cap-drop ALL \
+          docker run -d --name ostrom-smoke --network smoke -p 8080:8080 --read-only --cap-drop ALL \
             --tmpfs /var/lib/ostrom:uid=65532,gid=65532 \
             -e OSTROM_DATABASE_URL=postgresql://pg:5432/postgres -e OSTROM_DATABASE_USER=postgres -e OSTROM_DATABASE_PASSWORD=postgres \
             ostrom-server:smoke
           for _ in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
-          curl -fsS localhost:8080/health | grep -q '"status":"ok"' || { docker logs s; exit 1; }
-          curl -fsS localhost:8080/api/v1/instance | grep -q '"algorithm":"ed25519"' || { docker logs s; exit 1; }
+          curl -fsS localhost:8080/health | grep -q '"status":"ok"' || { docker logs ostrom-smoke; exit 1; }
+          curl -fsS localhost:8080/api/v1/instance | grep -q '"algorithm":"ed25519"' || { docker logs ostrom-smoke; exit 1; }
       - name: The arm64 image starts too (QEMU)
         run: |
           docker buildx build ctx/arm64 --platform linux/arm64 --load -t ostrom-server:smoke-arm64
@@ -117,14 +117,19 @@ jobs:
           echo "$out" | grep -q 'OSTROM_DATABASE_URL' || { echo "arm64 binary did not start"; exit 1; }
       - name: Build and push each architecture by digest
         id: arch
+        env:
+          LABELS: ${{ steps.meta.outputs.labels }}
         run: |
-          labels=$(printf '%s\n' "${{ steps.meta.outputs.labels }}" | sed '/^$/d; s/^/--label /' | tr '\n' ' ')
           for arch in amd64 arm64; do
-            # shellcheck disable=SC2086
-            docker buildx build ctx/$arch --platform linux/$arch --sbom=true --provenance=mode=max $labels \
-              --output type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true \
-              --metadata-file meta-$arch.json
-            echo "$arch=$(jq -r '."containerimage.digest"' meta-$arch.json)" >> "$GITHUB_OUTPUT"
+            # One `--label` per line of LABELS, values kept whole (the description has spaces).
+            set --
+            while IFS= read -r l; do if [ -n "$l" ]; then set -- "$@" --label "$l"; fi; done <<EOF
+          $LABELS
+          EOF
+            docker buildx build "ctx/$arch" --platform "linux/$arch" --sbom=true --provenance=mode=max "$@" \
+              --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+              --metadata-file "meta-$arch.json"
+            echo "$arch=$(jq -r '."containerimage.digest"' "meta-$arch.json")" >> "$GITHUB_OUTPUT"
           done
       - name: Index with every tag
         id: index
