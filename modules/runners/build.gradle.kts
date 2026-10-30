@@ -9,7 +9,13 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(libs.cryptography.core)
-            implementation(libs.cryptography.openssl)
+        }
+        nativeMain.dependencies {
+            implementation(libs.cryptography.openssl3.prebuilt)
+        }
+        // The JVM target only runs the tests and Kover (never shipped): the JDK provides SHA-256 there.
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

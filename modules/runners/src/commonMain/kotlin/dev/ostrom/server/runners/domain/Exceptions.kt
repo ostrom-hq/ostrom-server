@@ -13,15 +13,27 @@ class CloudSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Clou
  */
 class InvalidCloudSessionRequestException(message: String) : OstromException(ErrorKind.INVALID_REQUEST, message)
 
+/**
+ * Refuses a malformed request.
+ *
+ * @param condition What a valid request satisfies.
+ * @param message What to fix, built only when the request is refused.
+ *
+ * @throws InvalidCloudSessionRequestException When [condition] is false.
+ */
+internal inline fun ensureValid(condition: Boolean, message: () -> String) {
+    if (!condition) throw InvalidCloudSessionRequestException(message())
+}
+
 /** The organization already runs as many sessions as its plan allows. */
 class CloudSessionLimitException(max: Int) : OstromException(
-    ErrorKind.CONFLICT,
+    ErrorKind.PAYMENT_REQUIRED,
     "Your plan runs at most $max cloud sessions at once: pause or delete one first.",
 )
 
 /** The organization used all the execution hours of its plan this month. */
 class CloudHoursExhaustedException(hours: Int) : OstromException(
-    ErrorKind.CONFLICT,
+    ErrorKind.PAYMENT_REQUIRED,
     "Your plan's $hours cloud hours of this month are used up.",
 )
 
@@ -33,13 +45,23 @@ class CloudHoursExhaustedException(hours: Int) : OstromException(
 class CloudSessionStateException(message: String) : OstromException(ErrorKind.CONFLICT, message)
 
 /** The runner's credential is not the current execution's: it must stop and exit. */
-class ExecutionFencedException : OstromException(ErrorKind.CONFLICT, "This execution is no longer the session's current one.")
+class ExecutionFencedException : OstromException(
+    ErrorKind.CONFLICT,
+    "This execution is no longer the session's current one.",
+)
 
 /** The runner's credential is unknown. */
 class RunnerUnauthenticatedException : OstromException(ErrorKind.UNAUTHORIZED, "A valid runner token is required.")
 
-/** The caller's credential carries no organization. */
-class NoOrganizationException : OstromException(ErrorKind.FORBIDDEN, "This credential is not bound to an organization.")
+/** The caller acts for no organization: answered like an unknown organization, so that none leaks. */
+class NotAMemberException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 
-/** The caller's credential lacks the scope the action needs. */
-class MissingScopeException(scope: String) : OstromException(ErrorKind.FORBIDDEN, "This credential lacks the $scope scope.")
+/**
+ * The caller's credential lacks the scope the action needs.
+ *
+ * @param scope The missing scope.
+ */
+class MissingScopeException(scope: String) : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This credential lacks the $scope scope.",
+)

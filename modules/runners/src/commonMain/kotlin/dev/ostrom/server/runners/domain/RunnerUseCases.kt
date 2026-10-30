@@ -70,13 +70,17 @@ class RunnerHeartbeatUseCaseImpl(
     private val tokens: RunnerTokens,
     private val clock: Clock,
 ) : RunnerHeartbeatUseCase {
+    // The three refusals are the runner protocol's answers (unknown token, fenced, lost every race).
+    @Suppress("ThrowsCount")
     override suspend fun invoke(token: String, heartbeat: RunnerHeartbeat): HeartbeatAnswer {
         repeat(MAX_ATTEMPTS) {
-            val session = repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
+            val session = repository.findByRunnerTokenHash(tokens.hash(token))
+                ?: throw RunnerUnauthenticatedException()
             if (session.id != heartbeat.sessionId || session.epoch != heartbeat.epoch) throw ExecutionFencedException()
             val now = clock.now()
             val updated = apply(session, heartbeat, now)
-            val stored = repository.compareAndSet(updated, if (updated.state != session.state || heartbeat.stopped) now else null)
+            val changed = updated.state != session.state || heartbeat.stopped
+            val stored = repository.compareAndSet(updated, if (changed) now else null)
             if (stored != null) {
                 val last = session.lastHeartbeatAt ?: session.executionStartedAt ?: now
                 val seconds = (now - last).inWholeSeconds.coerceIn(0, MAX_BILLED_GAP.inWholeSeconds)
@@ -98,7 +102,13 @@ class RunnerHeartbeatUseCaseImpl(
         val starting = session.state == SessionState.CREATING || session.state == SessionState.RESUMING
         if (starting && heartbeat.ready) {
             SessionStateMachine.requireTransition(session.state, SessionState.RUNNING)
-            next = next.copy(state = SessionState.RUNNING, phase = null, readyAt = now, lastActivityAt = now, failure = null)
+            next = next.copy(
+                state = SessionState.RUNNING,
+                phase = null,
+                readyAt = now,
+                lastActivityAt = now,
+                failure = null,
+            )
         }
         if (heartbeat.stopped && session.state == SessionState.PAUSING && session.runnerStoppedAt == null) {
             next = next.copy(runnerStoppedAt = now)
@@ -106,8 +116,10 @@ class RunnerHeartbeatUseCaseImpl(
         return next
     }
 
-    private fun instructionFor(session: CloudSession): RunnerInstruction =
-        if (session.state == SessionState.PAUSING || session.desiredState != DesiredState.RUNNING) RunnerInstruction.STOP else RunnerInstruction.RUN
+    private fun instructionFor(session: CloudSession): RunnerInstruction {
+        val stopping = session.state == SessionState.PAUSING || session.desiredState != DesiredState.RUNNING
+        return if (stopping) RunnerInstruction.STOP else RunnerInstruction.RUN
+    }
 
     companion object {
         /** How often a runner sends a heartbeat. */
