@@ -38,7 +38,7 @@ object LaunchesModule : ServerModule {
         single<LaunchesRepository> { PostgresLaunchesRepository(get()) }
         single<LauncherResolver> { IdentityLauncherResolver(get(), get()) }
         single<AgentTokenService> { IdentityAgentTokens(get()) }
-        single<GateActorResolver> { LaunchGateActors(get(), get()) }
+        single<GateActorResolver> { LaunchGateActors(get(), get(), get()) }
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }

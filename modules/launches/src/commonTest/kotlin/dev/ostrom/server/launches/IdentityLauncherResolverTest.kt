@@ -10,7 +10,6 @@ import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
-import dev.ostrom.server.launches.domain.models.Launcher
 import dev.ostrom.server.launches.fakes.ADA
 import dev.ostrom.server.launches.fakes.ORG
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
@@ -25,11 +24,13 @@ class IdentityLauncherResolverTest {
     private val ghost = Uuid.parse("000000ff-0000-0000-0000-000000000000")
     private val outsider = Uuid.parse("000000ee-0000-0000-0000-000000000000")
     private val asked = mutableListOf<Uuid?>()
+    private val seen = mutableListOf<AuthenticatedPrincipal>()
 
     // Ada and the ghost (a member whose user is gone) are members; the outsider is not.
     private val orgs = object : PrincipalOrgResolver {
         override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? {
             asked += orgId
+            seen += principal
             val member = principal.subjectId != outsider.toString()
             return if (member) OrgPrincipal(ORG, Uuid.random(), OrgRole.MEMBER) else null
         }
@@ -41,8 +42,17 @@ class IdentityLauncherResolverTest {
 
     @Test
     fun aMemberIsTheLauncherOfTheOrganizationTheOrgsModuleResolves() = runTest {
-        assertEquals(Launcher(ORG, ADA.userId, "ada"), resolver.resolve(person(ADA.userId.toString())))
+        assertEquals(ADA, resolver.resolve(person(ADA.userId.toString())))
         assertEquals(listOf<Uuid?>(null), asked, "The organization is the credential's, never the request's body")
+    }
+
+    @Test
+    fun aPersonsRoleIsReadNowInTheLaunchsOrganization() = runTest {
+        assertEquals(OrgRole.MEMBER, resolver.role(ORG, ADA.userId))
+        assertEquals(listOf<Uuid?>(ORG), asked)
+        assertEquals(ORG.toString(), seen.single().orgId, "As a credential bound to that organization")
+        assertEquals(PrincipalKind.USER to ADA.userId.toString(), seen.single().kind to seen.single().subjectId)
+        assertNull(resolver.role(ORG, outsider), "No longer a member")
     }
 
     @Test

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
+import dev.ostrom.server.identity.domain.MAX_AGENT_TOKEN_LIFETIME
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
 import dev.ostrom.server.launches.domain.models.LaunchRefusedException
 import dev.ostrom.server.launches.domain.models.NewLaunch
@@ -12,8 +15,6 @@ import dev.ostrom.server.launches.fakes.FixedClock
 import dev.ostrom.server.launches.fakes.InMemoryLaunches
 import dev.ostrom.server.launches.fakes.ORG
 import dev.ostrom.server.launches.fakes.RecordingTokens
-import dev.ostrom.server.kernel.errors.ErrorKind
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -21,6 +22,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
+import kotlinx.coroutines.test.runTest
 
 class CreateLaunchTest {
     private val clock = FixedClock()
@@ -46,7 +48,7 @@ class CreateLaunchTest {
         assertEquals("claude-opus-4-1", launch.model)
         assertEquals(Instant.parse("2026-10-30T10:00:00.123Z"), launch.createdAt, "Kept to the millisecond")
         assertEquals(launch.createdAt + 24.hours, launch.expiresAt)
-        assertEquals(24.hours, CreateLaunchUseCaseImpl.LIFETIME)
+        assertEquals(MAX_AGENT_TOKEN_LIFETIME, CreateLaunchUseCaseImpl.LIFETIME, "Never above what identity issues")
         assertEquals(listOf(launch), launches.launches)
         assertEquals(listOf(Triple(ADA, launch.id, CreateLaunchUseCaseImpl.LIFETIME)), tokens.issued)
         assertEquals("osa_${launch.id}", created.agentToken)
@@ -74,9 +76,13 @@ class CreateLaunchTest {
 
     @Test
     fun aLaunchThePolicyRefusesIsNeitherStoredNorGivenAToken() = runTest {
-        val agent = assertFailsWith<LaunchRefusedException> { create(ADA, NewLaunch(null, "Claude Code", null)) }
-        assertEquals("The agent name is not valid.", agent.message)
-        assertEquals(ErrorKind.FORBIDDEN, agent.kind)
+        val agent = assertFailsWith<InvalidLaunchException> { create(ADA, NewLaunch(null, "Claude Code", null)) }
+        assertEquals("The agent name is not valid." to ErrorKind.INVALID_REQUEST, agent.message to agent.kind)
+        val badModel = assertFailsWith<InvalidLaunchException> { create(ADA, NewLaunch(null, "codex", "a b")) }
+        assertEquals("The model name is not valid.", badModel.message)
+        val billing = ADA.copy(role = OrgRole.BILLING)
+        val payer = assertFailsWith<LaunchRefusedException> { create(billing, NewLaunch(null, "codex", null)) }
+        assertEquals(LaunchPolicy.BILLING_ONLY to ErrorKind.FORBIDDEN, payer.message to payer.kind)
         val model = assertFailsWith<LaunchRefusedException> { create(ADA, NewLaunch(null, "codex", "gpt-5")) }
         assertEquals("gpt-5 is not on the allowlist.", model.message)
         assertTrue(launches.launches.isEmpty())

@@ -28,8 +28,8 @@ interface CreateLaunchUseCase {
      *
      * @return The launch and its agent token's secret.
      *
-     * @throws InvalidLaunchException When the repository is malformed.
-     * @throws LaunchRefusedException When the organization's policy refuses the agent or the model.
+     * @throws InvalidLaunchException When the repository, the agent's name or the model's is malformed.
+     * @throws LaunchRefusedException When the organization's policy refuses the person or the model.
      */
     suspend operator fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch
 }
@@ -53,6 +53,8 @@ class CreateLaunchUseCaseImpl(
         if (repo != null && !wellFormed(repo)) {
             throw InvalidLaunchException("repo: 1 to $MAX_REPO characters, without control characters.")
         }
+        // A malformed name is the client's mistake (400); a refusal, the organization's answer (403).
+        policy.malformed(request.agent, request.model)?.let { throw InvalidLaunchException(it) }
         policy.refusal(launcher, request.agent, request.model)?.let { throw LaunchRefusedException(it) }
         val now = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
         val launch = Launch(
@@ -75,7 +77,7 @@ class CreateLaunchUseCaseImpl(
 
     /** The bounds of a launch. */
     companion object {
-        /** How long a launch and its agent token live: the identity module's longest agent token. */
+        /** How long a launch and its agent token live: the identity module's longest agent token (a test checks). */
         val LIFETIME: Duration = 24.hours
 
         /** The longest repository name. */

@@ -3,6 +3,7 @@ package dev.ostrom.server.launches.infrastructure
 
 import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.launches.domain.models.Launcher
@@ -26,7 +27,13 @@ class IdentityLauncherResolver(
         val userId = Uuid.parseOrNull(principal.subjectId)?.takeIf { principal.kind == PrincipalKind.USER }
             ?: return null
         return orgs.resolve(principal, null)?.let { member ->
-            users.get(userId)?.let { Launcher(member.orgId, it.id, it.login) }
+            users.get(userId)?.let { Launcher(member.orgId, it.id, it.login, member.role) }
         }
+    }
+
+    // The person as a credential bound to the organization: the orgs module reads their membership as it is now.
+    override suspend fun role(orgId: Uuid, userId: Uuid): OrgRole? {
+        val person = AuthenticatedPrincipal(userId.toString(), PrincipalKind.USER, emptySet(), orgId = orgId.toString())
+        return orgs.resolve(person, orgId)?.role
     }
 }
