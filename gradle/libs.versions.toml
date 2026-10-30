@@ -68,7 +68,7 @@ ktor-client-engine-defaults = { module = "io.ktor:ktor-client-engine-defaults", 
 ktor-client-resources = { module = "io.ktor:ktor-client-resources", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
-# Explicit engines of the runners module: Curl on native (TLS, a custom CA), CIO on the test-only JVM target
+# Explicit engine of the runners module on native: Curl (TLS, a custom CA); CIO above serves the JVM target
 ktor-client-curl = { module = "io.ktor:ktor-client-curl", version.ref = "ktor" }
 ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
 ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }

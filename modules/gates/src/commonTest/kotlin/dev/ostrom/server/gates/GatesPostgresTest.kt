@@ -457,7 +457,7 @@ class GatesPostgresTest {
         // Joining writes the askers only: a status or a decision in the joiner's stale copy is never written back.
         val joiner = gate.copy(
             askedBy = gate.askedBy + "rev-c",
-            askedVia = gate.askedVia + AskedVia.CLI,
+            askedVia = gate.askedVia - AskedVia.MCP,
             sessionIds = gate.sessionIds + "s-2",
             launchIds = gate.launchIds + "launch-2",
             status = GateStatus.PENDING,

@@ -249,6 +249,18 @@ class ConfigTest {
         assertFailsWith<InvalidConfigException> {
             ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_TRUSTED_PROXIES" to "everyone")))
         }
+        val cloudflare = ServerConfig.from(
+            MapConfigSource(
+                database + mapOf(
+                    "OSTROM_TRUSTED_PROXIES" to "10.0.0.0/8",
+                    "OSTROM_CLIENT_ADDRESS_HEADER" to "CF-Connecting-IP",
+                ),
+            ),
+        )
+        assertEquals("CF-Connecting-IP", cloudflare.trustedProxies.clientHeader)
+        assertFailsWith<InvalidConfigException> {
+            ServerConfig.from(MapConfigSource(database + mapOf("OSTROM_CLIENT_ADDRESS_HEADER" to "CF-Connecting-IP")))
+        }
     }
 
     @Test
