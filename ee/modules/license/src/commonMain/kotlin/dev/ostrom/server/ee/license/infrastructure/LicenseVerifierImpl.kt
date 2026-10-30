@@ -89,12 +89,11 @@ class LicenseVerifierImpl(
     } catch (_: IllegalArgumentException) {
         null
     }
-
-    private companion object {
-        const val PREFIX = "ostrom-license.v1."
-        const val MAX_LENGTH = 8_192
-        const val SIGNATURE_SIZE = 64
-        const val KEY_ID_LENGTH = 16
-        val UNPADDED_URL_SAFE = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
-    }
 }
+
+// File-level rather than in a companion: a private companion's constructor is a line no test can reach (Kover).
+private const val PREFIX = "ostrom-license.v1."
+private const val MAX_LENGTH = 8_192
+private const val SIGNATURE_SIZE = 64
+private const val KEY_ID_LENGTH = 16
+private val UNPADDED_URL_SAFE = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
