@@ -104,7 +104,7 @@ class AskGateUseCaseTest {
                         "This yes covers these commits only.",
                 ),
                 Evidence("Repository", "ostrom-hq/gate-demo"),
-                Evidence("Asked by", "lyes · session 00000000"),
+                Evidence("Asked by", "lyes · session s-000005"),
                 Evidence("Harness", "0.9.0"),
                 Evidence("Diff", "+line"),
             ),
@@ -130,7 +130,7 @@ class AskGateUseCaseTest {
                 ),
                 Evidence("Repository", "evil/fork"),
                 Evidence("Session repository", "ostrom-hq/gate-demo: NOT the repository this command runs in (evil/fork). Check before saying yes."),
-                Evidence("Asked by", "agent-$SESSION · session 00000000"),
+                Evidence("Asked by", "agent-$SESSION · session s-000005"),
             ),
             view.gate.evidence,
         )
@@ -154,13 +154,13 @@ class AskGateUseCaseTest {
         assertEquals(listOf(SHA_A), view.gate.subject.commits)
         assertNull(view.gate.subject.diffDigest)
         assertEquals("mcp", view.gate.subject.tool)
-        assertEquals(Evidence("Asked by", "agent-$SESSION · session 00000000 · PR #6 @ aaaaaaa into main"), view.gate.evidence[3])
+        assertEquals(Evidence("Asked by", "agent-$SESSION · session s-000005 · PR #6 @ aaaaaaa into main"), view.gate.evidence[3])
 
         val unknown = ask(bench)(agent(), merge.copy(pullRequest = 7, command = "gh pr merge 7", push = null))
         assertNull(unknown.gate.subject.pullRequest)
         val outside = ask(bench, mapOf(6 to GatePullRequest(6, SHA_A, "main")))(agent(), merge.copy(repo = "  ", push = null))
         assertNull(outside.gate.subject.pullRequest, "Outside a repository, GitHub is not asked")
-        assertEquals(Evidence("Asked by", "agent-$SESSION · session 00000000"), outside.gate.evidence[2])
+        assertEquals(Evidence("Asked by", "agent-$SESSION · session s-000005"), outside.gate.evidence[2])
     }
 
     @Test

@@ -13,12 +13,11 @@ import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.usecases.AskGate
-import kotlin.uuid.Uuid
 import dev.ostrom.server.gates.domain.models.GatePush as DomainPush
 
 /** Maps the hook's request; `dev` is ignored, the asker is the credential's person. */
 internal fun GateAskRequest.toAskGate() = AskGate(
-    sessionId = sessionId?.let { Uuid.parseOrNull(it) ?: throw InvalidGateRequestException("Malformed session id.") },
+    sessionId = sessionId,
     runId = runId,
     repo = repo,
     realRepo = realRepo,
@@ -48,7 +47,7 @@ internal fun GateView.toResponse(actor: GateActor): GateResponse {
 internal fun Gate.toRequest(approvalId: String?) = GateRequest(
     id = id.toString(),
     approvalId = approvalId,
-    sessionId = sessionIds.firstOrNull()?.toString(),
+    sessionId = sessionIds.firstOrNull(),
     runId = subject.runId,
     repo = subject.repo,
     realRepo = subject.realRepo,

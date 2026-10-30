@@ -40,7 +40,7 @@ class GetGateUseCaseImpl(
 ) : GetGateUseCase {
     override suspend fun invoke(actor: GateActor, gateId: Uuid): GateView {
         val stored = repository.get(actor.orgId, gateId) ?: throw GateNotFoundException()
-        if (actor.kind == ActorKind.AGENT_SESSION && actor.sessionId !in stored.sessionIds) throw NotYourGateException()
+        if (actor.kind == ActorKind.AGENT_SESSION && actor.launchId !in stored.launchIds) throw NotYourGateException()
         val gate = receipts.ensureSigned(stored)
         return viewOf(gate, repository.requestsOf(actor.orgId, gate.id), policies.selfApproval(actor.orgId))
     }

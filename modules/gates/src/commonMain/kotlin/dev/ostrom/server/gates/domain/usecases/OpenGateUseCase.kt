@@ -47,7 +47,7 @@ data class OpenGate(
     val actor: GateActor,
     val asker: String,
     val via: AskedVia,
-    val sessionId: Uuid?,
+    val sessionId: String?,
     val subject: GateSubject,
     val node: GateNode?,
     val label: String,
@@ -94,7 +94,7 @@ class OpenGateUseCaseImpl(
     override suspend fun invoke(request: OpenGate): GateView {
         validate(request)
         val orgId = request.actor.orgId
-        request.sessionId?.let { sessions.assertOpen(orgId, it) }
+        request.sessionId?.let { sessions.assertOpen(orgId, it, request.actor.launchId) }
         val node = request.node
         if (request.subject.push != null && node?.enforced == true && request.redirected) throw RedirectedPushException()
         val (mode, approvers) = when {
@@ -137,6 +137,7 @@ class OpenGateUseCaseImpl(
                 askedBy = SelfApproval.withAskers(emptyList(), request.asker),
                 askedVia = setOf(request.via),
                 sessionIds = listOfNotNull(request.sessionId),
+                launchIds = listOfNotNull(request.actor.launchId),
                 shownDigest = shown,
                 evidence = request.evidence,
                 createdAt = now,
@@ -165,14 +166,18 @@ class OpenGateUseCaseImpl(
     private fun join(gate: Gate, request: OpenGate): Gate = gate.copy(
         askedBy = SelfApproval.withAskers(gate.askedBy, request.asker),
         askedVia = gate.askedVia + request.via,
-        sessionIds = request.sessionId?.takeIf { it !in gate.sessionIds }?.let { gate.sessionIds + it }
-            ?: gate.sessionIds,
+        sessionIds = (gate.sessionIds + listOfNotNull(request.sessionId)).distinct(),
+        launchIds = (gate.launchIds + listOfNotNull(request.actor.launchId)).distinct(),
     )
 
     private fun validate(request: OpenGate) {
         val actor = request.actor
-        if (actor.kind == ActorKind.AGENT_SESSION && (request.sessionId == null || request.sessionId != actor.sessionId)) {
+        // An agent token asks only inside a session; the sessions module checks the session is of its launch.
+        if (actor.kind == ActorKind.AGENT_SESSION && (request.sessionId == null || actor.launchId == null)) {
             throw NotYourGateException()
+        }
+        request.sessionId?.let { id ->
+            ensure(id.isNotBlank() && id.length <= MAX_SESSION_ID) { "A session id has 1 to $MAX_SESSION_ID characters." }
         }
         val subject = request.subject
         ensure(subject.command.length <= MAX_COMMAND) { "The command is longer than $MAX_COMMAND characters." }
@@ -201,6 +206,7 @@ class OpenGateUseCaseImpl(
     private companion object {
         val LIVE = setOf(GateStatus.PENDING, GateStatus.APPROVED, GateStatus.RESERVED)
         const val SAME_KEY_LIMIT = 20
+        const val MAX_SESSION_ID = 128
         const val MAX_COMMAND = 8_000
         const val MAX_EVIDENCE = 30
         const val MAX_LABEL = 200

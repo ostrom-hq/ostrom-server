@@ -59,7 +59,7 @@ import kotlin.uuid.Uuid
 class GatesPostgresTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     private val orgB = Uuid.parse("0000000b-0000-0000-0000-000000000000")
-    private val session = Uuid.parse("00000000-0000-0000-0000-0000000005e5")
+    private val session = "claude-5e5"
     private val sha = "0123456789abcdef0123456789abcdef01234567"
     private val nextSha = "fedcba9876543210fedcba9876543210fedcba98"
 
@@ -77,7 +77,7 @@ class GatesPostgresTest {
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
                         "user" -> GateActor(id, orgId, ActorKind.USER, personId = id)
-                        "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, Uuid.parse(id), personId = "lyes")
+                        "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
                     }
                 }
@@ -85,7 +85,7 @@ class GatesPostgresTest {
         }
         single<GateSessions> {
             object : GateSessions {
-                override suspend fun assertOpen(orgId: Uuid, sessionId: Uuid) = Unit
+                override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) = Unit
             }
         }
         single<GateNodeResolver> {
@@ -349,13 +349,14 @@ class GatesPostgresTest {
             askedBy = listOf("lyes", "pr-author"),
             askedVia = setOf(AskedVia.CI, AskedVia.HOOK, AskedVia.MCP),
             sessionIds = listOf(session),
+            launchIds = listOf("launch-1"),
             shownDigest = "s",
             evidence = listOf(Evidence("l", "v")),
             decidedBy = "rev-b",
             decidedAt = at,
             selfApproved = true,
             receiptId = "rcpt",
-            reservedBy = session,
+            reservedBy = "launch-1",
             reservedAt = at,
             consumedAt = at,
             createdAt = at,
@@ -371,7 +372,7 @@ class GatesPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/gates", push()).status)
         assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/approvals").status)
         assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/gates/not-a-uuid").status)
-        assertEquals(HttpStatusCode.BadRequest, server.call("agent:a:$session", "/api/v1/gates", push().copy(sessionId = "x")).status)
+        assertEquals(HttpStatusCode.BadRequest, server.call("agent:a:$session", "/api/v1/gates", push().copy(sessionId = "")).status)
         assertEquals(HttpStatusCode.NotFound, server.call("agent:a:$session", "/api/v1/gates/${Uuid.random()}/explode", post = true).status)
     }
 }

@@ -112,10 +112,12 @@ class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.SOLE_APPR
 }
 
 class FakeSessions : GateSessions {
-    val closed = mutableSetOf<Uuid>()
+    val closed = mutableSetOf<String>()
 
-    override suspend fun assertOpen(orgId: Uuid, sessionId: Uuid) {
+    // A session belongs to the launch `launch-<session>`, the way [agent] scopes its token.
+    override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) {
         if (sessionId in closed) throw OstromException(ErrorKind.CONFLICT, "session closed")
+        if (launchId != null && launchId != "launch-$sessionId") throw OstromException(ErrorKind.FORBIDDEN, "other launch")
     }
 }
 
@@ -162,11 +164,12 @@ class SettableClock(var now: Instant = Instant.parse("2026-10-30T02:00:00Z")) : 
 
 val ORG: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000000a")
 val OTHER_ORG: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000000b")
-val SESSION: Uuid = Uuid.parse("00000000-0000-0000-0000-000000000051")
-val OTHER_SESSION: Uuid = Uuid.parse("00000000-0000-0000-0000-000000000052")
+const val SESSION = "s-0000051"
+const val OTHER_SESSION = "s-0000052"
 
 fun user(id: String, org: Uuid = ORG) = GateActor(id, org, ActorKind.USER)
-fun agent(session: Uuid = SESSION, org: Uuid = ORG) = GateActor("agent-$session", org, ActorKind.AGENT_SESSION, session)
+fun agent(session: String = SESSION, org: Uuid = ORG) =
+    GateActor("agent-$session", org, ActorKind.AGENT_SESSION, launchId = "launch-$session")
 fun device(id: String = "lyes") = GateActor("device-$id", ORG, ActorKind.DEVICE)
 fun ciService() = GateActor("github-app", ORG, ActorKind.SERVICE)
 

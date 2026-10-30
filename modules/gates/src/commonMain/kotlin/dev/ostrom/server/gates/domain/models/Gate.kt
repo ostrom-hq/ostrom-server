@@ -28,7 +28,8 @@ import kotlin.uuid.Uuid
  * @property decidedAt When the gate was answered.
  * @property selfApproved True when the yes came from someone who asked, as the only possible approver.
  * @property receiptId The signed receipt of the decision, once signed.
- * @property reservedBy The session that reserved the yes before running the action.
+ * @property launchIds The launches whose agent tokens asked for it (an agent token reads and uses only its launch's gates).
+ * @property reservedBy The launch that reserved the yes before running the action.
  * @property reservedAt When it was reserved.
  * @property consumedAt When the action ran and the yes was used up.
  * @property createdAt When the gate was opened.
@@ -44,14 +45,15 @@ data class Gate(
     val status: GateStatus,
     val askedBy: List<String>,
     val askedVia: Set<AskedVia>,
-    val sessionIds: List<Uuid>,
+    val sessionIds: List<String>,
+    val launchIds: List<String> = emptyList(),
     val shownDigest: String,
     val evidence: List<Evidence>,
     val decidedBy: String? = null,
     val decidedAt: Instant? = null,
     val selfApproved: Boolean = false,
     val receiptId: String? = null,
-    val reservedBy: Uuid? = null,
+    val reservedBy: String? = null,
     val reservedAt: Instant? = null,
     val consumedAt: Instant? = null,
     val createdAt: Instant,

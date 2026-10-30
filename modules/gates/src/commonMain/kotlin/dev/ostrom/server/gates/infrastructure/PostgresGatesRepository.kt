@@ -24,7 +24,6 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
@@ -160,7 +159,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             executor.execute(
                 Statement.create(
                     "INSERT INTO gates_gates ($GATE_COLUMNS) VALUES (:id, :org_id, :gate_key, :subject, :node, :label, " +
-                        ":mode, :status, :asked_by, :asked_via, :session_ids, :shown_digest, :evidence, :decided_by, " +
+                        ":mode, :status, :asked_by, :asked_via, :session_ids, :launch_ids, :shown_digest, :evidence, :decided_by, " +
                         ":decided_at, :self_approved, :receipt_id, :reserved_by, :reserved_at, :consumed_at, :created_at)",
                 ).bindGate(gate),
             ).getOrThrow()
@@ -172,7 +171,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                 Statement.create(
                     "UPDATE gates_gates SET gate_key = :gate_key, subject = :subject, node = :node, label = :label, " +
                         "mode = :mode, status = :status, asked_by = :asked_by, asked_via = :asked_via, " +
-                        "session_ids = :session_ids, shown_digest = :shown_digest, evidence = :evidence, " +
+                        "session_ids = :session_ids, launch_ids = :launch_ids, shown_digest = :shown_digest, evidence = :evidence, " +
                         "decided_by = :decided_by, decided_at = :decided_at, self_approved = :self_approved, " +
                         "receipt_id = :receipt_id, reserved_by = :reserved_by, reserved_at = :reserved_at, " +
                         "consumed_at = :consumed_at, created_at = :created_at WHERE org_id = :org_id AND id = :id",
@@ -209,7 +208,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
     private companion object {
         const val MAX_REQUESTS = 100
         const val GATE_COLUMNS = "id, org_id, gate_key, subject, node, label, mode, status, asked_by, asked_via, " +
-            "session_ids, shown_digest, evidence, decided_by, decided_at, self_approved, receipt_id, reserved_by, " +
+            "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, self_approved, receipt_id, reserved_by, " +
             "reserved_at, consumed_at, created_at"
         const val REQUEST_COLUMNS = "id, gate_id, org_id, position, approver_id, status, answered_at, channel, created_at"
         val json = Json { ignoreUnknownKeys = true }
@@ -229,14 +228,15 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             .bind("status", gate.status.name)
             .bind("asked_by", json.encodeToString(strings, gate.askedBy))
             .bind("asked_via", json.encodeToString(strings, gate.askedVia.map { it.name }.sorted()))
-            .bind("session_ids", json.encodeToString(strings, gate.sessionIds.map { it.toString() }))
+            .bind("session_ids", json.encodeToString(strings, gate.sessionIds))
+            .bind("launch_ids", json.encodeToString(strings, gate.launchIds))
             .bind("shown_digest", gate.shownDigest)
             .bind("evidence", json.encodeToString(ListSerializer(EvidenceRecord.serializer()), gate.evidence.map { EvidenceRecord(it.label, it.value) }))
             .bind("decided_by", gate.decidedBy)
             .bindOrNull("decided_at", gate.decidedAt, Instant::class)
             .bind("self_approved", gate.selfApproved)
             .bind("receipt_id", gate.receiptId)
-            .bindOrNull("reserved_by", gate.reservedBy, Uuid::class)
+            .bindOrNull("reserved_by", gate.reservedBy, String::class)
             .bindOrNull("reserved_at", gate.reservedAt, Instant::class)
             .bindOrNull("consumed_at", gate.consumedAt, Instant::class)
             .bind("created_at", gate.createdAt)
@@ -261,7 +261,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             status = GateStatus.valueOf(get("status").asString()),
             askedBy = json.decodeFromString(strings, get("asked_by").asString()),
             askedVia = json.decodeFromString(strings, get("asked_via").asString()).map { AskedVia.valueOf(it) }.toSet(),
-            sessionIds = json.decodeFromString(strings, get("session_ids").asString()).map { Uuid.parse(it) },
+            sessionIds = json.decodeFromString(strings, get("session_ids").asString()),
+            launchIds = json.decodeFromString(strings, get("launch_ids").asString()),
             shownDigest = get("shown_digest").asString(),
             evidence = json.decodeFromString(ListSerializer(EvidenceRecord.serializer()), get("evidence").asString())
                 .map { Evidence(it.label, it.value) },
@@ -269,7 +270,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             decidedAt = get("decided_at").asInstantOrNull(),
             selfApproved = get("self_approved").asBoolean(),
             receiptId = get("receipt_id").asStringOrNull(),
-            reservedBy = get("reserved_by").asUuidOrNull(),
+            reservedBy = get("reserved_by").asStringOrNull(),
             reservedAt = get("reserved_at").asInstantOrNull(),
             consumedAt = get("consumed_at").asInstantOrNull(),
             createdAt = get("created_at").asInstant(),

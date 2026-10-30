@@ -31,7 +31,7 @@ import kotlin.uuid.Uuid
  * @property via The path.
  */
 data class AskGate(
-    val sessionId: Uuid?,
+    val sessionId: String?,
     val runId: String?,
     val repo: String?,
     val realRepo: String?,
@@ -115,7 +115,7 @@ class AskGateUseCaseImpl(
                     ),
                 )
             }
-            val session = ask.sessionId?.let { " · session ${it.toString().take(SHORT_SESSION)}" }.orEmpty()
+            val session = ask.sessionId?.let { " · session ${it.take(SHORT_SESSION)}" }.orEmpty()
             val pr = pullRequest?.let { " · PR #${it.number} @ ${it.headSha.take(SHORT_SHA)} into ${it.base}" }.orEmpty()
             add(Evidence("Asked by", "$asker$session$pr"))
             subject.harnessVersion?.let { add(Evidence("Harness", it)) }

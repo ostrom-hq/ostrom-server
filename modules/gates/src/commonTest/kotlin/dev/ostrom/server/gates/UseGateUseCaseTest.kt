@@ -34,7 +34,7 @@ class UseGateUseCaseTest {
         val view = approved(bench)
         val reserved = bench.use(agent(), view.gate.id, GateUse.RESERVE)
         assertEquals(GateStatus.RESERVED, reserved.status)
-        assertEquals(SESSION, reserved.reservedBy)
+        assertEquals("launch-$SESSION", reserved.reservedBy)
 
         val consumed = bench.use(agent(), view.gate.id, GateUse.CONSUME)
         assertEquals(GateStatus.CONSUMED, consumed.status)

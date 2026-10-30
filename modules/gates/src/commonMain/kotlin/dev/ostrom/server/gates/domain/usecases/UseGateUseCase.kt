@@ -58,25 +58,25 @@ class UseGateUseCaseImpl(
 ) : UseGateUseCase {
     override suspend fun invoke(actor: GateActor, gateId: Uuid, use: GateUse): Gate = repository.transaction {
         val gate = lockGate(actor.orgId, gateId) ?: throw GateNotFoundException()
-        val session = actor.sessionId
-        if (actor.kind != ActorKind.AGENT_SESSION || session == null || session !in gate.sessionIds) {
+        val launch = actor.launchId
+        if (actor.kind != ActorKind.AGENT_SESSION || launch == null || launch !in gate.launchIds) {
             throw NotYourGateException()
         }
         val next = when (use) {
             GateUse.RESERVE -> {
                 if (gate.status != GateStatus.APPROVED) throw GateNotUsableException(reserveRefusal(gate))
-                gate.copy(status = GateStatus.RESERVED, reservedBy = session, reservedAt = clock.now())
+                gate.copy(status = GateStatus.RESERVED, reservedBy = launch, reservedAt = clock.now())
             }
             GateUse.CONSUME -> when {
                 gate.status == GateStatus.SHADOW || gate.status == GateStatus.UNGATED -> return@transaction gate
                 gate.status == GateStatus.APPROVED -> gate.copy(status = GateStatus.CONSUMED, consumedAt = clock.now())
                 else -> {
-                    heldBy(gate, session)
+                    heldBy(gate, launch)
                     gate.copy(status = GateStatus.CONSUMED, consumedAt = clock.now())
                 }
             }
             GateUse.RELEASE -> {
-                heldBy(gate, session)
+                heldBy(gate, launch)
                 gate.copy(status = GateStatus.APPROVED, reservedBy = null, reservedAt = null)
             }
         }
@@ -84,8 +84,8 @@ class UseGateUseCaseImpl(
         next
     }
 
-    private fun heldBy(gate: Gate, session: Uuid) {
-        if (gate.status == GateStatus.RESERVED && gate.reservedBy == session) return
+    private fun heldBy(gate: Gate, launch: String) {
+        if (gate.status == GateStatus.RESERVED && gate.reservedBy == launch) return
         throw GateNotUsableException(
             if (gate.status == GateStatus.APPROVED) {
                 "This yes is not reserved by your session: reserve it before the action."

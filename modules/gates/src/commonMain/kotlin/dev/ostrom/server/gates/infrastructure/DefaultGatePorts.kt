@@ -29,7 +29,7 @@ class DefaultGatePolicies : GatePolicies {
 
 /** Without the sessions module, a gate asked inside a session is refused rather than added to an unknown session. */
 class UnavailableGateSessions : GateSessions {
-    override suspend fun assertOpen(orgId: Uuid, sessionId: Uuid) {
+    override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) {
         throw OstromException(ErrorKind.UNAVAILABLE, "Agent sessions are not available on this server.")
     }
 }

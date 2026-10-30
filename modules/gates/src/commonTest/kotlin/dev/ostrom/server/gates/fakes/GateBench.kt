@@ -45,7 +45,7 @@ class GateBench {
     /** A push of [sha] to main from the session [session]. */
     fun pushRequest(
         sha: String = SHA_A,
-        session: Uuid = SESSION,
+        session: String = SESSION,
         asker: String = "lyes",
         node: GateNode? = node("lyes", "rev-b"),
         force: Boolean = false,
@@ -77,7 +77,7 @@ class GateBench {
         sha: String = SHA_A,
         base: String = "main",
         viaCheck: Boolean = false,
-        session: Uuid = SESSION,
+        session: String = SESSION,
         asker: String = "lyes",
         node: GateNode? = node("lyes", "rev-b"),
     ) = OpenGate(
