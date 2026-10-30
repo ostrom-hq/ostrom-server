@@ -1,10 +1,9 @@
 name: Release
 
-# release-please keeps a release pull request open from the Conventional Commit titles merged on main.
-# Merging it tags the version, writes CHANGELOG.md and creates the GitHub release.
+# release-please opens or updates the release pull request from the Conventional Commit titles merged on main;
+# merging that pull request and running this again tags the version, writes CHANGELOG.md and creates the GitHub
+# release. Started by hand only (org CI rule: no run on every push to main).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions: {}

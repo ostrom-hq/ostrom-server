@@ -1,24 +1,20 @@
 name: Community
 
-# Pull request title, DCO, SPDX headers, workflow security (zizmor) and links, in one job named `community`.
+# Pull request title, DCO, SPDX headers and workflow security (zizmor), in one job named `community`, on pull
+# requests only and never on drafts (org CI rule). Links are checked weekly by links.yml.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
-  schedule:
-    - cron: '23 6 * * 1'
-  workflow_dispatch:
 
 permissions: {}
 
 concurrency:
   group: community-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
   community:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -33,7 +29,7 @@ jobs:
       # The title becomes the squash commit on main and the changelog line: it must be a Conventional Commit.
       # GitHub's revert button titles a pull request 'Revert "<original title>"': accepted as is.
       - name: Pull request title
-        if: github.event_name == 'pull_request' && !startsWith(github.event.pull_request.title, 'Revert "')
+        if: ${{ !startsWith(github.event.pull_request.title, 'Revert "') }}
         uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -56,7 +52,6 @@ jobs:
             The subject "{subject}" must not start with a capitalized word ("Add ..."): write "feat(cli): add ostrom doctor". Acronyms (API, CLI) are fine.
 
       - name: Developer Certificate of Origin
-        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -86,8 +81,7 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          if [ -n "$BASE" ]; then python3 .github/scripts/check_spdx.py --base "$BASE"
-          else python3 .github/scripts/check_spdx.py; fi
+          python3 .github/scripts/check_spdx.py --base "$BASE"
 
       - name: Workflow security
         uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
@@ -96,14 +90,3 @@ jobs:
           min-severity: high
           advanced-security: false
 
-      - name: Links
-        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
-        with:
-          args: >-
-            --no-progress --cache --max-cache-age 1d --max-retries 3 --accept 200,206,429
-            --exclude-path node_modules --exclude-path CHANGELOG.md
-            './**/*.md' './**/*.mdx'
-          fail: true
-          jobSummary: true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
