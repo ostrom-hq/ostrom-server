@@ -6,6 +6,8 @@ import dev.ostrom.server.secrets.domain.CreateSecretPayload
 import dev.ostrom.server.secrets.domain.InvalidSecretException
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.domain.Secret
+import dev.ostrom.server.secrets.domain.SecretCursor
+import dev.ostrom.server.secrets.domain.SecretRules
 import dev.ostrom.server.secrets.domain.SecretValue
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
@@ -15,6 +17,7 @@ import io.ktor.server.resources.post
 import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlin.uuid.Uuid
 
 /**
  * The secrets routes: authenticated, in the org of the caller's token; values go in, never out.
@@ -25,9 +28,9 @@ fun Route.secretsRoutes(dependencies: SecretsRoutesDependencies) = with(dependen
     authenticated {
         get<SecretsApi> { params ->
             val caller = call.requireCaller(callers, RelayScopes.SECRETS_READ)
-            val limit = params.limit.coerceIn(1, MAX_PAGE)
-            val page = listSecrets(caller, params.after, limit)
-            val next = if (page.size == limit) page.last().name else null
+            val limit = params.limit.coerceIn(1, SecretRules.MAX_PAGE)
+            val page = listSecrets(caller, params.after?.toSecretCursor(), limit)
+            val next = if (page.size == limit) page.last().toCursor() else null
             call.respond(SecretsPageResponse(page.map { it.toSecretResponse() }, next))
         }
         post<SecretsApi> {
@@ -53,8 +56,19 @@ fun Route.secretsRoutes(dependencies: SecretsRoutesDependencies) = with(dependen
     }
 }
 
-/** The largest page of secrets. */
-private const val MAX_PAGE = 200
+/** The opaque cursor of the page after [this]: its name, `/` (never in a name), its id. */
+fun Secret.toCursor(): String = "$name/$id"
+
+/**
+ * Reads a cursor of [toCursor].
+ *
+ * @throws InvalidSecretException When it is not one.
+ */
+fun String.toSecretCursor(): SecretCursor {
+    val id = Uuid.parseOrNull(substringAfterLast('/', missingDelimiterValue = ""))
+        ?: throw InvalidSecretException("The cursor is not one this server returned.")
+    return SecretCursor(substringBeforeLast('/'), id)
+}
 
 /** Maps a secret to the API, without its value. */
 fun Secret.toSecretResponse() = SecretResponse(

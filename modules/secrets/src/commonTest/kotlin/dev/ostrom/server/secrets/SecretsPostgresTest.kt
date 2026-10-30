@@ -30,6 +30,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.encodeURLParameter
 import org.koin.dsl.module
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
@@ -199,22 +200,37 @@ class SecretsPostgresTest {
     }
 
     @Test
-    fun listsArePagedByName() = serverTest(listOf(SecretsModule), TestCallers.overrides) { server ->
-        for (name in listOf("A", "B", "C")) {
+    fun listsArePagedByNameThenIdSoThatSharedNamesAreNotSkipped() =
+        serverTest(listOf(SecretsModule), TestCallers.overrides) { server ->
+            for (name in listOf("A", "B", "C")) {
+                server.client.post(base) {
+                    bearerAuth("admin-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(SecretWriteRequest(name, "value-of-$name"))
+                }
+            }
             server.client.post(base) {
-                bearerAuth("admin-a")
+                bearerAuth("member-a")
                 contentType(ContentType.Application.Json)
-                setBody(SecretWriteRequest(name, "value-of-$name"))
+                setBody(SecretWriteRequest("B", "member-own-b", scope = "personal"))
+            }
+
+            val names = mutableListOf<String>()
+            var after: String? = null
+            do {
+                val query = if (after == null) "" else "&after=${after.encodeURLParameter()}"
+                val page = server.client.get("$base?limit=2$query") {
+                    bearerAuth("admin-a")
+                }.body<SecretsPageResponse>()
+                names += page.items.map { it.name }
+                after = page.next
+            } while (after != null)
+            assertEquals(listOf("A", "B", "B", "C"), names, "The org's B and member-a's B both appear")
+            for (bad in listOf("B", "B/not-an-id")) {
+                val refused = server.client.get("$base?after=$bad") { bearerAuth("admin-a") }
+                assertEquals(HttpStatusCode.BadRequest, refused.status)
             }
         }
-
-        val first = server.client.get("$base?limit=2") { bearerAuth("admin-a") }.body<SecretsPageResponse>()
-        assertEquals(listOf("A", "B"), first.items.map { it.name })
-        assertEquals("B", first.next)
-        val second = server.client.get("$base?limit=2&after=B") { bearerAuth("admin-a") }.body<SecretsPageResponse>()
-        assertEquals(listOf("C"), second.items.map { it.name })
-        assertEquals(null, second.next)
-    }
 
     @Test
     fun onlyCredentialsWithTheScopeReachTheSecrets() =
@@ -303,8 +319,9 @@ class SecretsPostgresTest {
             setBody(SecretWriteRequest("PRESENT", "present-value-1"))
         }
         val repository = server.koin.get<SecretsRepository>()
-        val present = repository.findByName(TestCallers.orgA, null, "PRESENT")!!
-        assertEquals(null, repository.findByName(TestCallers.orgA, null, "ABSENT"))
+        val present = repository.findManyByName(TestCallers.orgA, null, listOf("PRESENT", "ABSENT")).single()
+        assertEquals(emptyList(), repository.findManyByName(TestCallers.orgA, null, emptyList()))
+        assertEquals(emptyList(), repository.findManyByName(TestCallers.orgA, Uuid.random(), listOf("PRESENT")))
         assertEquals(null, repository.get(TestCallers.orgA, Uuid.random()))
         assertEquals(listOf("PRESENT"), repository.getMany(TestCallers.orgA, listOf(present.id)).map { it.secret.name })
         assertEquals(emptyList(), repository.getMany(TestCallers.orgA, emptyList()))
