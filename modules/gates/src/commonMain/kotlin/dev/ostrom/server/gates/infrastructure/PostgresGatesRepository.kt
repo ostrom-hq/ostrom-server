@@ -57,7 +57,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         Tx(this).run {
             scoped(orgId)
             // Served by the GIN index on the session ids (migration 2).
-            fetch(
+            executor.rows(
                 Statement.create(
                     "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org " +
                         "AND CAST(session_ids AS JSONB) @> jsonb_build_array(CAST(:session AS TEXT)) " +
@@ -210,7 +210,10 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                     Statement.create(
                         "UPDATE gates_requests SET status = :status, answered_at = :answered_at, channel = :channel " +
                             "WHERE org_id = :org_id AND id = :id",
-                    ).bindRequest(request),
+                    ).bind("org_id", request.orgId).bind("id", request.id).bind("status", request.status.name)
+                        // sqlx4k refuses a bound name the statement does not use: only this update's own.
+                        .bindOrNull("answered_at", request.answeredAt, Instant::class)
+                        .bind("channel", request.channel?.name),
                 ).getOrThrow()
             }
         }
