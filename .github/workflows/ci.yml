@@ -1,23 +1,26 @@
 # CI of ostrom-server, after ostrom-core's reference template (docs/conventions/.github/workflows/build.yml,
-# CONVENTIONS section 11). Pull requests and main run on Linux only; macosArm64 is a development target, built on
-# version tags only.
+# CONVENTIONS section 11). Pull requests and main, Linux only. Not on version tags: releases are built by the release
+# workflow without these caches, which a tag build must never restore (zizmor cache-poisoning).
 name: Build
 on:
   push:
     branches: [main]
-    tags: ['[0-9]*']
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
   contents: read
   packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
+# One run per workflow and ref; a new push cancels the previous run, except on main (org CI rules, JOURNAL 03:10).
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  linux:
+  # One job, `ci`, the required check of main. A draft pull request runs no CI: mark it ready when you want it.
+  ci:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 40
     runs-on: ubuntu-24.04
     services:
@@ -60,6 +63,7 @@ jobs:
               }
           }
           KTS
+      - run: python3 scripts/check-conventions.py
       - name: ostrom-core from source (probe only, its packages are not readable from this repository yet)
         uses: actions/checkout@v4
         with:
@@ -72,7 +76,7 @@ jobs:
         run: |
           (cd .ostrom-core && ./gradlew --no-daemon -PostromCoreVersion=0.1.13 -Postrom.nativeTargets=linuxX64 \
             :api:publishToMavenLocal :receipts:publishToMavenLocal)
-          M="compiler gates receipts sessions"
+          M="compiler gates receipts sessions integrations-github"
           T=""; for m in $M; do T="$T :modules:$m:detekt :modules:$m:jvmTest :modules:$m:koverVerify :modules:$m:koverXmlReport :modules:$m:linuxX64Test"; done
           ./gradlew $T --continue
       - name: Kover reports (probe)

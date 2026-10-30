@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.usecases
 
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateCommands
+import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.GatePush
 import dev.ostrom.server.gates.domain.models.GateSubject
@@ -88,47 +90,9 @@ class AskGateUseCaseImpl(
         val push = ask.push.takeIf { pullRequest == null }
             ?.let { it.copy(force = it.force || GateCommands.forces(command)) }
         // CORRECTIFS-3: a hook from before the commits were sent; its yes would be bound to the text, not the commits.
-        if (node?.enforced == true && pullRequest == null && push == null && GateCommands.mentionsPush(command)) {
-            throw OutdatedLauncherException()
-        }
-        val diff = ask.diff?.take(MAX_DIFF)
-        val subject = GateSubject(
-            repo = repo,
-            realRepo = realRepo,
-            actionClass = ask.actionClass,
-            command = command,
-            scope = "session:${ask.sessionId ?: "-"}",
-            push = push,
-            pullRequest = pullRequest,
-            commits = pullRequest?.let { listOf(it.headSha) }
-                ?: push?.refs?.map { it.sha }?.filter { it.isNotEmpty() }.orEmpty(),
-            diffDigest = push?.let { digester.digest(diff.orEmpty()) },
-            tool = ask.tool?.take(MAX_LABEL) ?: "Bash",
-            harnessVersion = ask.harnessVersion?.take(MAX_LABEL),
-            runId = ask.runId?.take(MAX_LABEL),
-        )
-        val evidence = buildList {
-            node?.let { add(Evidence("Gate", "${it.name} (${it.workflowName})")) }
-            add(Evidence("Command", command.take(MAX_SHOWN_COMMAND).ifEmpty { subject.tool }))
-            push?.let { add(Evidence("Commits", "${pushLine(it)}. This yes covers these commits only.")) }
-            (realRepo ?: repo)?.let { add(Evidence("Repository", it)) }
-            if (realRepo != null && repo != null) {
-                add(
-                    Evidence(
-                        "Session repository",
-                        "$repo: NOT the repository this command runs in ($realRepo). Check before saying yes.",
-                    ),
-                )
-            }
-            val session = ask.sessionId?.let { " · session ${it.take(SHORT_SESSION)}" }.orEmpty()
-            val pr = pullRequest?.let { " · PR #${it.number} @ ${it.headSha.take(SHORT_SHA)} into ${it.base}" }
-                .orEmpty()
-
-            add(Evidence("Asked by", "$asker$session$pr"))
-            subject.harnessVersion?.let { add(Evidence("Harness", it)) }
-            // Audit S2-05: before the push, GitHub does not have these commits; the diff is what the machine sent.
-            if (push != null && !diff.isNullOrEmpty()) add(Evidence(MACHINE_DIFF, diff))
-        }
+        val bound = pullRequest != null || push != null
+        if (node?.enforced == true && !bound && GateCommands.mentionsPush(command)) throw OutdatedLauncherException()
+        val subject = subjectOf(ask, command, repo to realRepo, pullRequest, push)
         return open(
             OpenGate(
                 actor = actor,
@@ -138,10 +102,64 @@ class AskGateUseCaseImpl(
                 subject = subject,
                 node = node,
                 label = node?.name ?: ask.actionClass,
-                evidence = evidence,
+                evidence = evidenceOf(node, subject, asker, ask.sessionId, ask.diff?.take(MAX_DIFF)),
                 redirected = GateCommands.redirected(command),
             ),
         )
+    }
+
+    private fun subjectOf(
+        ask: AskGate,
+        command: String,
+        repos: Pair<String?, String?>,
+        pullRequest: GatePullRequest?,
+        push: GatePush?,
+    ): GateSubject = GateSubject(
+        repo = repos.first,
+        realRepo = repos.second,
+        actionClass = ask.actionClass,
+        command = command,
+        scope = "session:${ask.sessionId ?: "-"}",
+        push = push,
+        pullRequest = pullRequest,
+        commits = pullRequest?.let { listOf(it.headSha) }
+            ?: push?.refs?.map { it.sha }?.filter { it.isNotEmpty() }.orEmpty(),
+        diffDigest = push?.let { digester.digest(ask.diff?.take(MAX_DIFF).orEmpty()) },
+        tool = ask.tool?.take(MAX_LABEL) ?: "Bash",
+        harnessVersion = ask.harnessVersion?.take(MAX_LABEL),
+        runId = ask.runId?.take(MAX_LABEL),
+    )
+
+    // What the approvers are shown, all computed here: the gate, the command, the commits, where it runs, who asks.
+    private fun evidenceOf(
+        node: GateNode?,
+        subject: GateSubject,
+        asker: String,
+        sessionId: String?,
+        diff: String?,
+    ): List<Evidence> = buildList {
+        val repo = subject.repo
+        val realRepo = subject.realRepo
+        val push = subject.push
+        node?.let { add(Evidence("Gate", "${it.name} (${it.workflowName})")) }
+        add(Evidence("Command", subject.command.take(MAX_SHOWN_COMMAND).ifEmpty { subject.tool }))
+        push?.let { add(Evidence("Commits", "${pushLine(it)}. This yes covers these commits only.")) }
+        (realRepo ?: repo)?.let { add(Evidence("Repository", it)) }
+        if (realRepo != null && repo != null) {
+            add(
+                Evidence(
+                    "Session repository",
+                    "$repo: NOT the repository this command runs in ($realRepo). Check before saying yes.",
+                ),
+            )
+        }
+        val session = sessionId?.let { " · session ${it.take(SHORT_SESSION)}" }.orEmpty()
+        val pr = subject.pullRequest?.let { " · PR #${it.number} @ ${it.headSha.take(SHORT_SHA)} into ${it.base}" }
+            .orEmpty()
+        add(Evidence("Asked by", "$asker$session$pr"))
+        subject.harnessVersion?.let { add(Evidence("Harness", it)) }
+        // Audit S2-05: before the push, GitHub does not have these commits; the diff is what the machine sent.
+        if (push != null && !diff.isNullOrEmpty()) add(Evidence(MACHINE_DIFF, diff))
     }
 
     // The head and base of a merge come from GitHub, never from the caller (audit A7b, A8). An enforced merge GitHub

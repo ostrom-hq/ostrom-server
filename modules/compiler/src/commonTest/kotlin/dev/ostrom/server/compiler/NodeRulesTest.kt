@@ -124,8 +124,9 @@ class NodeRulesTest {
 
     @Test
     fun simpleNodesProduceTheirArtifacts() {
-        val (trigger, step, agent, wait) =
-            produced(node("t", TRIGGER), node("s", STEP), node("a", AGENT), node("x", WAIT))
+        val simple = produced(node("t", TRIGGER), node("s", STEP), node("a", AGENT), node("x", WAIT))
+        val (trigger, step, agent) = simple
+        val wait = simple[3]
         assertEquals(listOf(ArtifactType.CONTEXT), trigger.map { it.type })
         assertEquals(AgentEvent.SESSION_START, trigger[0].event)
         assertEquals("instructions and linked rules, loaded when the agent needs them", step[0].note)

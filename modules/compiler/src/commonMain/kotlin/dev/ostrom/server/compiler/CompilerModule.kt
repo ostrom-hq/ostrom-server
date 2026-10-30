@@ -26,7 +26,6 @@ import dev.ostrom.server.compiler.presentation.CompilerRoutesDependencies
 import dev.ostrom.server.compiler.presentation.compilerRoutes
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.server.routing.Route
@@ -38,7 +37,7 @@ import org.koin.dsl.module
  * The compiler module: the organization's workflows, compiled with the decided rules into a signed session package
  * per repository (version, pin, revocation, audit), and the gates catalogue the hooks and the gates module share. It
  * binds the gates module's [GateNodeResolver]. Its sources (rules, repositories, settings) have a default here, read
- * from the environment, until the module that owns them binds its own.
+ * from the server's configuration, until the module that owns them binds its own.
  */
 object CompilerModule : ServerModule {
     override val name: String = "compiler"
@@ -61,7 +60,7 @@ object CompilerModule : ServerModule {
             CatalogGateNodes { koin.get() }
         }
         single {
-            val publicUrl = get<CompilerConfig>().config["OSTROM_PUBLIC_URL"]
+            val publicUrl = get<ConfigSource>()["OSTROM_PUBLIC_URL"]
             CompilerRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), publicUrl)
         }
     }
@@ -74,20 +73,10 @@ object CompilerModule : ServerModule {
     }
 
     internal fun defaultPorts(koin: Koin): Module = module {
-        if (koin.getOrNull<CompilerConfig>() == null) single { CompilerConfig(EnvironmentConfigSource()) }
-        if (koin.getOrNull<CompilerSources>() == null) {
-            single<CompilerSources> { DefaultCompilerSources(get<CompilerConfig>().config) }
-        }
+        if (koin.getOrNull<CompilerSources>() == null) single<CompilerSources> { DefaultCompilerSources(get()) }
     }
 
     override fun routes(route: Route, koin: Koin) {
         route.compilerRoutes(koin.get())
     }
 }
-
-/**
- * Where the compiler reads its environment settings; a test binds its own.
- *
- * @property config The source.
- */
-class CompilerConfig(val config: ConfigSource)

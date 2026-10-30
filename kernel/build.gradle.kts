@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The shared kernel every functional module builds on: configuration, logs, database and migrations, uniform
 // HTTP errors, token authentication, the instance signing key and the ServerModule contract.
 plugins {

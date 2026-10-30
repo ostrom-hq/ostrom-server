@@ -9,6 +9,7 @@ import dev.ostrom.core.api.models.WorkflowNodeKind.GATE
 import dev.ostrom.core.api.models.WorkflowNodeKind.TRIGGER
 import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.core.receipts.Digests
+import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompilerSettings
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.PackageAudit
@@ -32,10 +33,14 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.presentation.GateScopes
+import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.EnvironmentConfigSource
+import dev.ostrom.server.kernel.config.LayeredConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
@@ -108,13 +113,7 @@ class CompilerPostgresTest {
             }
         }
         config?.let { values ->
-            single {
-                CompilerConfig(
-                    object : ConfigSource {
-                        override fun get(key: String): String? = values[key]
-                    },
-                )
-            }
+            single<ConfigSource> { LayeredConfigSource(listOf(MapConfigSource(values), EnvironmentConfigSource())) }
         }
         sources?.let { fixed -> single<CompilerSources> { fixed } }
     }
@@ -123,7 +122,9 @@ class CompilerPostgresTest {
         config: Map<String, String>? = mapOf("OSTROM_PUBLIC_URL" to "https://ostrom.example/"),
         sources: CompilerSources? = null,
         block: suspend (TestServer) -> Unit,
-    ) = serverTest(listOf(ReceiptsModule, GatesModule, CompilerModule), overrides(config, sources)) { block(it) }
+    ) = serverTest(listOf(InstanceModule, ReceiptsModule, GatesModule, CompilerModule), overrides(config, sources)) {
+        block(it)
+    }
 
     private suspend fun TestServer.call(
         token: String?,
@@ -358,7 +359,7 @@ class CompilerPostgresTest {
         assertEquals("ops", repository.pin(orgA, "acme-api")?.by)
         repository.setPin(orgA, "acme-api", null)
         assertNull(repository.pin(orgA, "acme-api"))
-        assertNull(repository.saveWorkflow(orgA, "w", release(), 3, "lead", NOW), "no such version")
+        assertNull(repository.saveWorkflow(orgA, "w", release(), 3, Authorship("lead", NOW)), "no such version")
         assertFalse(repository.deleteWorkflow(orgA, "w"))
     }
 

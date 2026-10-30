@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions
 
 import dev.ostrom.core.receipts.Digests
@@ -105,6 +106,11 @@ class CloseSessionTest {
         assertEquals(ended, bench.repository.get(ORG, "s-1"))
 
         val draft = bench.sign.signed.getValue("rcpt_session_s-1")
+        assertReceiptDraft(draft)
+        assertGatesPreimage(bench, session, ended, gateA to gateB, draft)
+    }
+
+    private fun assertReceiptDraft(draft: JsonObject) {
         assertEquals("lyes", draft.text("initiator"))
         assertEquals("claude-code", draft.text("agent"))
         assertEquals("opus", draft.text("model"))
@@ -115,7 +121,16 @@ class CloseSessionTest {
         assertEquals("2026-10-30T09:05:00.000Z", decisions[0].text("at"))
         assertEquals("true", decisions[0].text("selfApproved"))
         assertFalse("selfApproved" in decisions[1])
+    }
 
+    private fun assertGatesPreimage(
+        bench: SessionBench,
+        session: Session,
+        ended: Session,
+        gates: Pair<Uuid, Uuid>,
+        draft: JsonObject,
+    ) {
+        val (gateA, gateB) = gates
         val preimage = CloseSessionUseCaseImpl.preimage(
             session,
             ended.endedAt ?: error("ended"),

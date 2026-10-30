@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.models
 
 import kotlin.time.Duration
@@ -71,6 +72,7 @@ data class Gate(
     fun yesExpired(now: Instant): Boolean =
         status == GateStatus.APPROVED && decidedAt?.let { now - it >= YES_LIFETIME } == true
 
+    /** The gate's constants. */
     companion object {
         /** How long a yes waits for its action: one yes is one head commit and one destination, used soon. */
         val YES_LIFETIME: Duration = 15.minutes

@@ -16,6 +16,8 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            // The receipts module signs with the instance's keys.
+            implementation(project(":modules:instance"))
         }
     }
 }

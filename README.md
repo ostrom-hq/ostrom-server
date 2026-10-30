@@ -32,7 +32,7 @@ Adding a module: [`docs/MODULES.md`](docs/MODULES.md).
 
 ## Build and run
 
-Builds run in GitHub Actions (Linux, job `linux`), exactly:
+Builds run in GitHub Actions (Linux, one job `ci`; none on a draft pull request), exactly:
 
 ```sh
 python3 scripts/check-conventions.py
