@@ -7,6 +7,9 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            implementation(project(":modules:receipts"))
+            // The workflow and session package models of the contract.
+            api(libs.ostrom.api)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
