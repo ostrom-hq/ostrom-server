@@ -64,6 +64,8 @@ data class RunnersConfig(
                     storageClass = source["OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS"],
                     workspaceSize = source["OSTROM_RUNNERS_WORKSPACE_SIZE"] ?: "10Gi",
                     imagePullSecret = source["OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET"],
+                    priorityClass = source["OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS"],
+                    serverSelector = serverSelector(source["OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR"]),
                 ),
                 docker = DockerSettings(
                     apiUrl = source["OSTROM_RUNNERS_DOCKER_API_URL"] ?: "http://127.0.0.1:2375",
@@ -72,6 +74,19 @@ data class RunnersConfig(
                 allowedOrgs = allowedOrgs(source["OSTROM_RUNNERS_ALLOWED_ORGS"].orEmpty()),
             )
         }
+
+        /** `key=value` labels separated by commas; the chart's server labels when unset. */
+        private fun serverSelector(raw: String?): Map<String, String> {
+            if (raw == null) return KubernetesSettings.DEFAULT_SERVER_SELECTOR
+            return raw.split(',').associate { entry ->
+                val match = LABEL.matchEntire(entry.trim()) ?: throw InvalidConfigException(
+                    "OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR must be key=value labels separated by commas.",
+                )
+                match.groupValues[1] to match.groupValues[2]
+            }
+        }
+
+        private val LABEL = Regex("([A-Za-z0-9./_-]+)=([A-Za-z0-9._-]+)")
 
         private fun driverKind(raw: String?): DriverKind = when (raw) {
             null, "none" -> DriverKind.NONE
@@ -103,6 +118,9 @@ data class RunnersConfig(
  * @property storageClass The workspace volumes' storage class; the cluster default when null.
  * @property workspaceSize The size of a workspace volume.
  * @property imagePullSecret The pull secret of a private runner image.
+ * @property priorityClass The session pods' priority class, an existing low one so they never preempt the cluster's
+ *   other pods; none when null (priority 0, which preempts nothing either).
+ * @property serverSelector The labels of the server's pods, the only pods sessions may reach.
  */
 data class KubernetesSettings(
     val apiUrl: String,
@@ -112,9 +130,17 @@ data class KubernetesSettings(
     val storageClass: String?,
     val workspaceSize: String,
     val imagePullSecret: String?,
+    val priorityClass: String? = null,
+    val serverSelector: Map<String, String> = DEFAULT_SERVER_SELECTOR,
 ) {
     /** Constants and readers of the enclosing type. */
     companion object {
+        /** The labels the Helm chart puts on the server's pods. */
+        val DEFAULT_SERVER_SELECTOR = mapOf(
+            "app.kubernetes.io/name" to "ostrom",
+            "app.kubernetes.io/component" to "server",
+        )
+
         /** The API server, seen from a pod. */
         const val IN_CLUSTER_API_URL = "https://kubernetes.default.svc"
 
