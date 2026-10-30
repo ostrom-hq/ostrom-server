@@ -22,6 +22,7 @@ import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.orgs.domain.People
@@ -390,14 +391,7 @@ class OrgsPostgresTest {
             val orgId = Uuid.random()
             server.koin
                 .get<OrgAudit>()
-                .record(
-                    orgId,
-                    ada.id,
-                    "org.member.removed",
-                    "member",
-                    "m-1",
-                    mapOf("login" to "bob"),
-                )
+                .record(OrgEvent(orgId, ada.id, "org.member.removed", "member", "m-1", mapOf("login" to "bob")))
             val event = server.koin.get<AuditRepository>().list(orgId, null, null, 10).single()
             assertEquals("org.member.removed", event.entry.action)
             assertEquals(mapOf("login" to "bob"), event.entry.details)

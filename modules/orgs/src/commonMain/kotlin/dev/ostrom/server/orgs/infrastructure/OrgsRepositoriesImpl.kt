@@ -127,7 +127,7 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
                     .bind("slug", slug)
             )
             .getOrThrow()
-            .isNotEmpty()
+            .firstOrNull() != null
 
     override suspend fun rename(id: Uuid, name: String) {
         driver.inOrg(id) {

@@ -15,6 +15,7 @@ import dev.ostrom.server.orgs.domain.InvitationMailer
 import dev.ostrom.server.orgs.domain.InvitationTokens
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.People
 import dev.ostrom.server.orgs.domain.Person
@@ -46,15 +47,10 @@ class IdentityPeople(private val users: UsersRepository) : People {
  * @param log The audit log.
  */
 class IdentityOrgAudit(private val log: AuditLog) : OrgAudit {
-    override suspend fun record(
-        orgId: Uuid,
-        actorId: Uuid,
-        action: String,
-        targetType: String,
-        targetId: String,
-        details: Map<String, String>,
-    ) {
-        log.record(AuditEntry(orgId, actorId, action, targetType, targetId, details))
+    override suspend fun record(event: OrgEvent) {
+        log.record(
+            AuditEntry(event.orgId, event.actorId, event.action, event.targetType, event.targetId, event.details),
+        )
     }
 }
 

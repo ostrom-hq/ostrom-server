@@ -13,6 +13,7 @@ import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.orgs.domain.People
@@ -189,15 +190,8 @@ class FakeSeats(var limit: Int = 5, val paying: MutableSet<Uuid> = mutableSetOf(
 class RecordingAudit : OrgAudit {
     val events = mutableListOf<Pair<String, Map<String, String>>>()
 
-    override suspend fun record(
-        orgId: Uuid,
-        actorId: Uuid,
-        action: String,
-        targetType: String,
-        targetId: String,
-        details: Map<String, String>,
-    ) {
-        events += action to details
+    override suspend fun record(event: OrgEvent) {
+        events += event.action to event.details
     }
 }
 
