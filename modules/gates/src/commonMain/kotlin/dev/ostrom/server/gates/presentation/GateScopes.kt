@@ -17,7 +17,7 @@ object GateScopes {
     /** One agent session's token: it asks and uses the gates of its own session. */
     const val AGENT_SESSION: String = "agent:session"
 
-    /** A CI or runner key: it asks a gate and uses its yes, never answers one. */
+    /** A CI or runner key: it asks a gate and reads it, never uses a yes (a session's) nor answers one. */
     const val ASK: String = "gates:ask"
 
     /** Reads gates and approvals. */
@@ -29,8 +29,11 @@ object GateScopes {
      */
     const val ANSWER: String = "gates:answer"
 
-    /** Who opens a gate and moves its yes. */
+    /** Who opens a gate. */
     val asking: Set<String> = setOf(AGENT_SESSION, ASK)
+
+    /** Who moves a yes: reserve, consume, release. Only a session holds a launch to bind it to. */
+    val using: Set<String> = setOf(AGENT_SESSION)
 
     /** Who reads a gate. */
     val readingGates: Set<String> = setOf(ALL_USER, AGENT_SESSION, ASK, READ)
