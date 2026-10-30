@@ -45,11 +45,27 @@ rolls back on any failure.
 ## Cross-organization operations
 
 What must run before or across organizations (resolving a token, sign-in, creating an organization, invitations,
-billing webhooks…) goes through narrow `SECURITY DEFINER` functions, each listed here with its test. None exists yet:
-the module that adds the first one lists it below, with its owner role and grants.
+billing webhooks…) goes through narrow `SECURITY DEFINER` functions, each listed here with its test.
+
+They are owned by **`ostrom_router`** (`NOLOGIN`, owner of no table, never granted to the serving role), created by
+the kernel's `ROUTER_ROLE_SQL` (`database/CrossOrganization.kt`) when missing; the owner of the schema is a member, to
+hand the functions over (`routerFunctionsSql`, which grants `CREATE` on the schema for the handover only). Each
+function is `SECURITY DEFINER` with `SET search_path = pg_catalog, public`, takes exactly the key of its operation,
+and returns nothing for an unknown or `NULL` key. A routing table (`routedTableSql`) has the tenant policy of every
+table plus a policy that lets `ostrom_router` alone reach every row, with only the privileges its functions need.
+`CREATE OR REPLACE` keeps the owner; a function re-created under a new name is handed over again.
 
 | Function | Module | What it touches | Test |
 |---|---|---|---|
+| `artifacts_route_by_id(UUID)`, `artifacts_route_by_slug(TEXT)` | artifacts | reads the id and organization of one `artifacts_routes` row, by signed id or link slug (the content origin) | `ArtifactsPostgresTest.anotherOrganizationsRowsAreNeitherSeenNorWritten`, `aServingRoleFindsAnArtifactOnlyThroughTheRoutersFunctions` |
+| `runners_route_by_session(UUID)`, `runners_route_by_token(TEXT)` | runners | reads the id and organization of one `runners_session_routes` row, by session id or runner token hash (the runner channel) | `CloudSessionsPostgresTest.anotherOrganizationsRowsAreNeitherSeenNorWritten`, `aServingRoleReachesRoutesOnlyThroughTheRoutersFunctions` |
+| `runners_claim_due(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)`, `runners_release(UUID, TEXT, BOOLEAN, TIMESTAMPTZ)` | runners | leases due `runners_session_routes` rows to a reconciler, at most the limit, and releases its own lease | same |
+| `billing_org_of_customer(TEXT)` | billing | reads the organization of one `billing_customers` row, by Stripe customer id (the signed webhook) | `BillingPostgresTest.rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause`, `aServingRoleReachesCustomersAndTheOutboxOnlyThroughTheRoutersFunctions` |
+| `billing_claim_outbox(TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)`, `billing_complete_outbox(UUID, TIMESTAMPTZ)`, `billing_fail_outbox(UUID, TIMESTAMPTZ)` | billing | leases due `billing_outbox` tasks to the worker, at most the limit, then marks one done or retried | same |
+
+The kernel's `KernelPostgresTest.aRoutedTableIsConfinedAndOnlyTheRoutersFunctionsCrossOrganizations` proves the
+mechanism itself: the function's owner is `ostrom_router`, a plain role reads its own organization's rows only, the
+function answers a known key and nothing else.
 
 ## The proof
 

@@ -11,9 +11,11 @@ import org.koin.core.Koin
  * @property koin The test server's Koin, to reach a repository or use case directly.
  * @property driver The test database.
  * @property client An HTTP client to the test server that reads and writes JSON.
+ * @property database The test database, to run a repository as a serving role ([TestDatabase.withRole]).
  */
 class TestServer(
     val koin: Koin,
     val driver: Driver,
     val client: HttpClient,
+    val database: TestDatabase,
 )

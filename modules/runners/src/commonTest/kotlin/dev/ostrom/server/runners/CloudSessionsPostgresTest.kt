@@ -13,6 +13,7 @@ import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.ALICE
 import dev.ostrom.server.runners.fakes.testIdentities
 import dev.ostrom.server.runners.fakes.session
+import dev.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import dev.ostrom.server.runners.infrastructure.TENANT_ROLE
 import dev.ostrom.server.runners.infrastructure.inTenant
 import dev.ostrom.server.runners.presentation.CloudSessionResponse
@@ -150,6 +151,30 @@ class CloudSessionsPostgresTest {
             "SELECT reconcile_owner FROM runners_session_routes WHERE session_id = '${ofA.id}'",
         ).getOrThrow().single().get("reconcile_owner").asStringOrNull()
         assertNull(owner, "Released")
+    }
+
+    @Test
+    fun aServingRoleReachesRoutesOnlyThroughTheRoutersFunctions() = serverTest(listOf(RunnersModule)) { server ->
+        // S2-51, as deployed: a role that is not a superuser, where row-level security applies to every query.
+        server.database.withRole { role, driver ->
+            server.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
+                .getOrThrow()
+            server.driver.execute("GRANT $TENANT_ROLE TO $role").getOrThrow()
+            val repository = CloudSessionsRepositoryImpl(driver)
+            val mine = session(createdAt = t0).copy(runnerTokenHash = "hash(serving)")
+            assertTrue(repository.createWithinCap(mine, 5))
+            assertEquals(mine.id, repository.getById(mine.id)?.id)
+            assertEquals(mine.id, repository.findByRunnerTokenHash("hash(serving)")?.id)
+            assertNull(repository.findByRunnerTokenHash("hash(forged)"))
+            assertNull(repository.getById(Uuid.random()))
+            val claimed = repository.claimDue("serving", t0 + 1.minutes, t0 + 5.minutes, 10)
+            assertEquals(listOf(mine.id), claimed.map { it.id })
+            repository.release(mine.id, "serving", null)
+            repository.touchActivity(mine.id, t0 + 2.minutes)
+            assertEquals(t0 + 2.minutes, repository.get(ORG_A, mine.id)?.lastActivityAt)
+            val unconfined = driver.fetchAll("SELECT COUNT(*) AS n FROM runners_session_routes").getOrThrow()
+            assertEquals(0L, unconfined.single().get("n").asLong(), "Outside an organization, no route is read")
+        }
     }
 
     @Test

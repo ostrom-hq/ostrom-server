@@ -18,6 +18,7 @@ import dev.ostrom.server.billing.fakes.FakeStripeGateway
 import dev.ostrom.server.billing.fakes.FixedClock
 import dev.ostrom.server.billing.fakes.NOW
 import dev.ostrom.server.billing.fakes.stripeSubscription
+import dev.ostrom.server.billing.infrastructure.BillingRepositoryImpl
 import dev.ostrom.server.billing.infrastructure.hmacSha256Hex
 import dev.ostrom.server.billing.presentation.BillingOverviewResponse
 import dev.ostrom.server.billing.presentation.InvoicesResponse
@@ -202,6 +203,31 @@ class BillingPostgresTest {
             assertEquals(emptyList(), asProbe(null, "SELECT org_id FROM billing_org_of_customer(NULL)"))
             val claimed = asProbe(null, "SELECT org_id FROM billing_claim_outbox('$NOW', '$NOW', 10)")
             assertEquals(listOf(ORG_A), claimed, "The worker claims the due tasks of every organization")
+        }
+
+    @Test
+    fun aServingRoleReachesCustomersAndTheOutboxOnlyThroughTheRoutersFunctions() =
+        serverTest(listOf(BillingModule), overrides) { server ->
+            // S2-51, as deployed: a role that is not a superuser, where row-level security applies to every query.
+            server.database.withRole { role, driver ->
+                server.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
+                    .getOrThrow()
+                val repository = BillingRepositoryImpl(driver)
+                repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_serving", updatedAt = NOW))
+                assertEquals(ORG_A, repository.findByCustomer("cus_serving")?.orgId)
+                assertNull(repository.findByCustomer("cus_other"))
+                val task = OutboxTask(Uuid.random(), ORG_A, OutboxKind.entries.first(), "evt_serving", NOW, 0)
+                repository.enqueue(task)
+                assertEquals(listOf(task.id), repository.claimDueTasks(NOW, NOW, 10).map { it.id })
+                repository.failTask(task.id, NOW)
+                assertEquals(listOf(1), repository.claimDueTasks(NOW, NOW, 10).map { it.attempts })
+                repository.completeTask(task.id, NOW)
+                assertEquals(emptyList(), repository.claimDueTasks(NOW, NOW, 10))
+                for (table in listOf("billing_customers", "billing_outbox")) {
+                    val unconfined = driver.fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow()
+                    assertEquals("0", unconfined.single().get("n").asString(), "Outside an organization: $table")
+                }
+            }
         }
 
     @Test

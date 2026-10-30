@@ -26,6 +26,7 @@ import dev.ostrom.server.artifacts.presentation.FileDto
 import dev.ostrom.server.artifacts.presentation.PublishArtifactRequest
 import dev.ostrom.server.artifacts.presentation.PublishVersionRequest
 import dev.ostrom.server.artifacts.presentation.UpdateArtifactRequest
+import dev.ostrom.server.artifacts.infrastructure.ArtifactsRepositoryImpl
 import dev.ostrom.server.artifacts.infrastructure.inTenant
 import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -178,6 +179,25 @@ class ArtifactsPostgresTest {
         assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_route_by_slug(NULL)"), "No slug: no artifact")
         assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_route_by_slug('not-a-slug')"))
         assertEquals(ORG_A, repository.getById(mine.id)?.orgId)
+    }
+
+    @Test
+    fun aServingRoleFindsAnArtifactOnlyThroughTheRoutersFunctions() = serverTest(listOf(ArtifactsModule)) { server ->
+        // S2-51, as deployed: a role that is not a superuser, where row-level security applies to every query.
+        server.database.withRole { role, driver ->
+            server.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
+                .getOrThrow()
+            server.driver.execute("GRANT ostrom_tenant TO $role").getOrThrow()
+            val repository = ArtifactsRepositoryImpl(driver)
+            val linked = artifact(access = ArtifactAccess.LINK).copy(linkSlug = "serving-slug")
+            repository.create(linked, version(linked, 1, "a" to "s"), emptyMap())
+            assertEquals(linked.id, repository.getById(linked.id)?.id)
+            assertEquals(linked.id, repository.getByLinkSlug("serving-slug")?.id)
+            assertNull(repository.getByLinkSlug("other-slug"))
+            assertNull(repository.getById(Uuid.random()))
+            val unconfined = driver.fetchAll("SELECT COUNT(*) AS n FROM artifacts_routes").getOrThrow()
+            assertEquals(0L, unconfined.single().get("n").asLong(), "Outside an organization, no route is read")
+        }
     }
 
     @Test
