@@ -3,6 +3,7 @@ package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -53,6 +54,7 @@ class BrowserSessionAuthenticationTest {
             sessionToken: String,
             csrfToken: String?,
             requireCsrf: Boolean,
+            origin: String?,
         ): AuthenticatedPrincipal? {
             val csrfHolds = !requireCsrf || csrfToken == "good-csrf"
             return if (sessionToken == "good-session" && csrfHolds) {
@@ -104,6 +106,7 @@ class BrowserSessionAuthenticationTest {
 
         val written = client.post("/probe/write") {
             cookie(SESSION_COOKIE, "good-session")
+            cookie(CSRF_COOKIE, "good-csrf")
             header(CSRF_HEADER, "good-csrf")
         }
         assertEquals(HttpStatusCode.OK, written.status)
