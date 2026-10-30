@@ -72,6 +72,9 @@ kover {
                 // deserialization constructor whose missing-field check can never fail for a class without required
                 // fields, a branch no test can reach. Its JSON shape is tested by the round-trip of its routes.
                 annotatedBy("kotlinx.serialization.Serializable")
+                // Compatibility bridges the compiler writes for an interface's default methods on the JVM: the test
+                // target never calls them (the default methods themselves are measured).
+                classes("*\$DefaultImpls")
             }
         }
         verify {
