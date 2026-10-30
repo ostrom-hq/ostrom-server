@@ -78,7 +78,12 @@ val testIdentities = module {
                     AuthenticatedPrincipal(token, PrincipalKind.USER, allUserScopes, channel = PrincipalChannel.BROWSER)
                 "alicekey" -> AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("waits:write"))
                 "aliceapp" ->
-                    AuthenticatedPrincipal("alice", PrincipalKind.USER, allUserScopes, channel = PrincipalChannel.MOBILE_APP)
+                    AuthenticatedPrincipal(
+                        "alice",
+                        PrincipalKind.USER,
+                        allUserScopes,
+                        channel = PrincipalChannel.MOBILE_APP,
+                    )
                 "reader" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:read"))
                 "agent" -> AuthenticatedPrincipal("bob", PrincipalKind.DEVICE, setOf("waits:ask"))
                 "writer" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:write"))
