@@ -31,6 +31,18 @@ import dev.ostrom.server.runners.infrastructure.RunnersMigrations
 import dev.ostrom.server.runners.infrastructure.RuntimeDrivers
 import dev.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
 import dev.ostrom.server.runners.presentation.cloudSessionsRoutes
+import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
+import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
+import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCase
+import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCaseImpl
+import dev.ostrom.server.runners.domain.OpenTerminalUseCase
+import dev.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
+import dev.ostrom.server.runners.domain.TerminalActivity
+import dev.ostrom.server.runners.domain.TerminalTickets
+import dev.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
+import dev.ostrom.server.runners.infrastructure.TerminalRelay
+import dev.ostrom.server.runners.presentation.TerminalRoutesDependencies
+import dev.ostrom.server.runners.presentation.terminalRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -62,12 +74,20 @@ object RunnersModule : ServerModule {
         single<ReconcileCloudSessionUseCase> { ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get()) }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get()) }
+        single { TerminalRelay() }
+        single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }
+        single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
+        single<OpenTerminalUseCase> { OpenTerminalUseCaseImpl(get()) }
+        single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }
+        single { TerminalActivity(get(), get()) }
+        single { TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = RunnersMigrations
 
     override fun routes(route: Route, koin: Koin) {
         route.cloudSessionsRoutes(koin.get())
+        route.terminalRoutes(koin.get())
     }
 
     override fun start(scope: CoroutineScope, koin: Koin) {

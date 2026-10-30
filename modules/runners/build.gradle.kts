@@ -12,10 +12,12 @@ kotlin {
             implementation(libs.cryptography.openssl)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.curl)
+            implementation(libs.ktor.server.websockets)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
             implementation(libs.ktor.client.mock)
+            implementation(libs.ktor.client.websockets)
         }
     }
 }

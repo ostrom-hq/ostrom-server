@@ -39,6 +39,24 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
         @Serializable
         @Resource("resume")
         class Resume(val parent: Id)
+
+        /**
+         * `/v1/cloud/sessions/{id}/terminal` (the WebSocket itself is a plain route).
+         *
+         * @property parent The session.
+         */
+        @Serializable
+        @Resource("terminal")
+        class Terminal(val parent: Id) {
+            /**
+             * `POST /v1/cloud/sessions/{id}/terminal/ticket`.
+             *
+             * @property parent The terminal.
+             */
+            @Serializable
+            @Resource("ticket")
+            class Ticket(val parent: Terminal)
+        }
     }
 }
 
