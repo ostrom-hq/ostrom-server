@@ -9,6 +9,8 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            // The port automations start their runs through ([AutomationLauncher]), bound here.
+            implementation(project(":modules:automations"))
             implementation(libs.cryptography.core)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.server.websockets)
