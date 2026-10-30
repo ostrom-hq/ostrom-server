@@ -14,7 +14,7 @@ first: it wins over this page wherever they differ.
 
 ```
 modules/<name>/
-  build.gradle.kts                      # plugins { id("ostrom.native-module") } + project(":kernel")
+  build.gradle.kts                      # plugins { id("ostrom.native-module") } (= ostrom.kmp) + project(":kernel")
   src/commonMain/kotlin/dev/ostrom/server/<pkg>/
     <Name>Module.kt                     # object <Name>Module : ServerModule
     domain/                             # models, repository interfaces, use cases (XXX + XXXImpl)
@@ -49,14 +49,16 @@ object OrgsModule : ServerModule {
 ```
 
 The kernel binds, for every module: `Logger`, `Driver` (database), `InstanceSigner`, `kotlin.time.Clock`,
-`TokenAuthenticator`, `MigrationRunner`, and the `HealthCheck`s. Use `Clock` from Koin, never `Clock.System`
+`TokenAuthenticator`, `PrincipalOrgResolver`, `MigrationRunner`, and the `HealthCheck`s. Use `Clock` from Koin, never `Clock.System`
 directly, so tests can fix the time.
 
 **Koin**: the app and the tests build Koin with `serverKoin(...)` (a local `koinApplication`, never `startKoin`,
 never `install(Koin)`), **without overrides**: two modules binding the same type, or a module rebinding a kernel
-type, fail the start. The one exception is the `TokenAuthenticator`: the identity module binds it
-(`single<TokenAuthenticator> { … }`); until then `serverKoin` binds `RejectingTokenAuthenticator` and every protected
-route answers 401. Only tests replace bindings, through `serverTest(overrides = …)`.
+type, fail the start. Two exceptions: the `TokenAuthenticator` and the `PrincipalOrgResolver`, bound by the
+identity and orgs modules (`single<TokenAuthenticator> { … }`); until then `serverKoin` binds
+`RejectingTokenAuthenticator` (every protected route answers 401) and `RejectingPrincipalOrgResolver` (no one is a
+member of any organization: every org route answers 404). Only tests replace bindings, through
+`serverTest(overrides = …)`.
 
 ## 3. Migrations
 
@@ -106,9 +108,9 @@ driver.fetchAll(Statement.create("SELECT id, name, created_at FROM orgs_organiza
 
 fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) {
     authenticated {
-        post<OrgsApi, CreateOrgRequest> { _, request ->
-            val principal = call.requirePrincipal()
-            call.respond(HttpStatusCode.Created, createOrg(principal.subjectId, request.name).toOrgResponse())
+        get<OrgsApi.Id> { resource ->
+            val member = call.requireOrgPrincipal(orgResolver, Uuid.parse(resource.id)) // 404 if not a member
+            call.respond(getOrg(member).toOrgResponse())
         }
     }
 }
@@ -117,10 +119,14 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) 
 - Every route is under `/v1/…`, except `/health`.
 - **Errors are thrown, never answered by hand**: a domain error subclasses `OstromException(ErrorKind.X, "message safe
   for the client")` (`class OrgNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")`).
-  The kernel answers `{"error":{"code","message","requestId"}}` with the kind's status. Any other exception is a 500
-  whose message is logged, never sent. A unique-constraint violation is a 409.
-- Protected routes go in `authenticated { }`; `call.requirePrincipal()` gives the `AuthenticatedPrincipal`. Its
-  `scopes` are explicit: an empty set grants no scope, never "everything".
+  The kernel answers `{"error":{"type":"not_found","message":"…"}}` (CONVENTIONS section 3.3) with the kind's status;
+  the request id is in the `X-Request-Id` header. A quota or plan limit is `ErrorKind.PAYMENT_REQUIRED` (402). Any
+  other exception is a 500 whose message is logged, never sent. A unique-constraint violation is a 409.
+- Protected routes go in `authenticated { }`; `call.requirePrincipal()` gives the `AuthenticatedPrincipal` (who the
+  credential belongs to). Its `scopes` are explicit: an empty set grants no scope, never "everything".
+- Org routes resolve the member the caller acts for with `call.requireOrgPrincipal(resolver, orgId)`: an
+  `OrgPrincipal(orgId, memberId, role)`, `role` one of `OWNER`, `ADMIN`, `MEMBER`, `APPROVER`, `BILLING`; a caller who
+  is not a member gets a 404, so the organization's existence does not leak. Every org query filters on `orgId`.
 - A body that is not JSON is a 415, a malformed one a 400.
 - DTOs and `@Resource` classes are `@Serializable`; they move to `ostrom-core` (the API contract) as soon as it is
   published, and the web/app/cli clients use them from there.
@@ -133,6 +139,10 @@ Every request is already logged once by the kernel (method, path, status, durati
 
 ## 7. Tests
 
+- Tests live in `commonTest` and run twice: on the **JVM** (`jvmTest`, a test-only target never shipped) where Kover
+  requires **100 % of the lines and branches** of the module (`koverVerify`), and **natively** (`linuxX64Test`), which
+  proves the real binary's behaviour. Native-only code (`nativeMain`) stays thin. Each module's own tests must cover
+  it: another module's tests do not count.
 - **TDD**: the failing test first, for every behaviour ported from the prototype (`~/git/ostrom/mvp/server`, reuse its
   test cases).
 - **Unit tests** (use cases): hand-written fakes (`InMemoryOrgsRepository`); MockK does not exist on Kotlin/Native.
@@ -141,14 +151,18 @@ Every request is already logged once by the kernel (method, path, status, durati
   a fresh PostgreSQL database, applies the migrations, runs `initialize`, serves the routes, and drops the database
   afterwards. Fakes replace real bindings through `overrides = module { single<TokenAuthenticator> { … } }`.
   Name these classes `*PostgresTest`.
-- Locally: `docker compose up -d postgres`, `export OSTROM_TEST_DATABASE_URL=postgresql://localhost:5432/postgres`,
-  `./gradlew :modules:orgs:macosArm64Test` (through `.coord/build-lock.sh` during the night measurements). Without the
+- Locally: `docker compose up -d postgres`,
+  `export OSTROM_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres`, then
+  `./gradlew :modules:orgs:jvmTest :modules:orgs:koverHtmlReport` (always through `.coord/build-lock.sh` on the shared
+  Mac). Without the
   variable, database tests are skipped locally; CI sets `OSTROM_TEST_DATABASE_REQUIRED=true` so they can never be
   skipped there.
 
 ## 8. Before the PR
 
-- `./gradlew linuxX64Test` passes in CI (tests run on Linux in CI; macOS only locally).
+- CI job `linux` green: `scripts/check-conventions.py`, then
+  `./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test`, the binaries (`ci/build-linux.sh` leaves
+  `dist/ostrom-server`) and the image smoke test.
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
 - `ee/` code: same shape, under `ee/modules/<name>/`, AGPL code never depends on it. The build does not include
   `ee/` yet: the first enterprise module adds its discovery and registration (see `ee/README.md`).
@@ -160,9 +174,9 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_CONFIG_FILE` | — | Optional `KEY=value` file; the environment wins over it |
 | `OSTROM_HOST` | `0.0.0.0` | Listen address |
 | `OSTROM_PORT` | `8080` | HTTP port |
-| `OSTROM_DATABASE_URL` | required | `postgresql://host:5432/db` (no credentials in the URL) |
-| `OSTROM_DATABASE_USER` | required | Database user |
-| `OSTROM_DATABASE_PASSWORD` | required | Database password |
+| `OSTROM_DATABASE_URL` | required | `postgresql://[user[:password]@]host:5432/db`, no query string |
+| `OSTROM_DATABASE_USER` | the URL's | Database user; wins over the URL's |
+| `OSTROM_DATABASE_PASSWORD` | the URL's | Database password; wins over the URL's (required to use one with `%`, `@`, `:` or `/`) |
 | `OSTROM_DATABASE_MAX_CONNECTIONS` | `10` | Pool size |
 | `OSTROM_SIGNING_KEY_FILE` | `data/instance-key.pem` | Ed25519 key (PKCS#8 PEM), created with mode 0600 at first start; keep it on a persistent volume |
 | `OSTROM_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
