@@ -53,3 +53,6 @@ class MissingAutomationScopeException(scope: String) :
 internal inline fun requireAutomation(condition: Boolean, message: () -> String) {
     if (!condition) throw InvalidAutomationException(message())
 }
+
+/** A webhook delivery already received (S2-50): a retry or a replay, never run twice. */
+class WebhookReplayException : OstromException(ErrorKind.CONFLICT, "This delivery was already received.")

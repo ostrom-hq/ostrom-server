@@ -19,7 +19,7 @@ import kotlin.uuid.Uuid
  *
  * @property timestamp `Ostrom-Timestamp`, Unix seconds.
  * @property signature `Ostrom-Signature`, `v1=<hex>` (several separated by commas).
- * @property deliveryKey `Idempotency-Key` or `Ostrom-Delivery`, which deduplicates retries.
+ * @property deliveryKey `Idempotency-Key` or `Ostrom-Delivery`: a delivery is accepted once (S2-50).
  */
 data class WebhookDelivery(val timestamp: String?, val signature: String?, val deliveryKey: String?)
 
@@ -111,8 +111,7 @@ class RunAutomationsUseCaseImpl(
         verify(automation, delivery, body, now)
         if (!automation.enabled) throw AutomationDisabledException()
         val payload = payloadOf(body)
-        val key = deliveryKey(delivery.deliveryKey, body, now)
-        repository.findRunByDelivery(automation.orgId, id, key)?.let { return Triggered(it, deduplicated = true) }
+        val key = deliveryKey(delivery, body)
         val recent = repository.countRuns(
             automation.orgId,
             id,
@@ -122,6 +121,9 @@ class RunAutomationsUseCaseImpl(
         )
         if (recent >= MAX_PER_MINUTE) throw AutomationRateLimitException("At most $MAX_PER_MINUTE requests a minute.")
         val triggered = record(automation, RunSource.WEBHOOK, key, payload, now)
+        // A delivery is accepted once (S2-50): its key is kept with its run, far longer than the 5 minutes a signed
+        // timestamp is valid, so a captured request cannot be replayed.
+        if (triggered.deduplicated) throw WebhookReplayException()
         if (triggered.run.status == RunStatus.SKIPPED_BUDGET) {
             throw AutomationRateLimitException("This automation used its runs of the day.")
         }
@@ -286,8 +288,10 @@ class RunAutomationsUseCaseImpl(
         if (!valid) throw InvalidSignatureException()
     }
 
-    private suspend fun deliveryKey(header: String?, body: ByteArray, now: Instant): String {
-        if (header == null) return "body:" + secrets.digest(body) + ":" + now.epochSeconds / SECONDS_PER_MINUTE
+    /** The sender's delivery id, or else the signed request itself: its timestamp and body. */
+    private suspend fun deliveryKey(delivery: WebhookDelivery, body: ByteArray): String {
+        val header = delivery.deliveryKey
+        if (header == null) return "signed:" + secrets.digest("${delivery.timestamp}.".encodeToByteArray() + body)
         if (!DELIVERY_KEY.matches(header)) {
             throw InvalidWebhookPayloadException("A delivery key has 1 to 128 characters of A-Za-z0-9._:-.")
         }
@@ -320,7 +324,6 @@ class RunAutomationsUseCaseImpl(
         private val LATE = 2.minutes
 
         private const val MAX_SKEW_SECONDS = 300L
-        private const val SECONDS_PER_MINUTE = 60
         private const val SIGNATURE_PREFIX = "v1="
         private const val MASK = "••••"
         private const val NEXT_RUNS = 3

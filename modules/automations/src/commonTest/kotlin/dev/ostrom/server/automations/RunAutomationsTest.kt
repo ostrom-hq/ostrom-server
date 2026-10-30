@@ -21,6 +21,7 @@ import dev.ostrom.server.automations.domain.RunAutomationsUseCaseImpl
 import dev.ostrom.server.automations.domain.RunSource
 import dev.ostrom.server.automations.domain.RunStatus
 import dev.ostrom.server.automations.domain.WebhookDelivery
+import dev.ostrom.server.automations.domain.WebhookReplayException
 import dev.ostrom.server.automations.domain.AutomationVariable
 import dev.ostrom.server.automations.fakes.InMemoryAutomations
 import dev.ostrom.server.automations.fakes.PlainSecrets
@@ -148,16 +149,23 @@ class RunAutomationsTest {
     }
 
     @Test
-    fun aRetryWithTheSameDeliveryOrBodyWithinTheMinuteIsDeduplicated() = runTest {
+    fun aDeliveryIsAcceptedOnceAndAReplayIsRefused() = runTest {
         val automation = hook()
-        val first = runs.trigger(automation.id, signed(automation, key = "delivery-1"), body)
-        val again = runs.trigger(automation.id, signed(automation, key = "delivery-1"), body)
-        assertTrue(again.deduplicated)
-        assertEquals(first.run.id, again.run.id)
-        val unkeyed = runs.trigger(automation.id, signed(automation), body)
-        assertEquals(unkeyed.run.id, runs.trigger(automation.id, signed(automation), body).run.id)
+        assertFalse(runs.trigger(automation.id, signed(automation, key = "delivery-1"), body).deduplicated)
         clock.now += 1.minutes
-        assertFalse(runs.trigger(automation.id, signed(automation), body).deduplicated)
+        assertFailsWith<WebhookReplayException> {
+            runs.trigger(automation.id, signed(automation, key = "delivery-1"), body)
+        }
+        // Without a delivery id, the signed request is the id: the same request again is a replay (S2-50)…
+        val captured = signed(automation)
+        runs.trigger(automation.id, captured, body)
+        clock.now += 4.minutes
+        assertFailsWith<WebhookReplayException> { runs.trigger(automation.id, captured, body) }
+        // …and past 5 minutes its signed timestamp no longer verifies at all.
+        clock.now += 2.minutes
+        assertFailsWith<InvalidSignatureException> { runs.trigger(automation.id, captured, body) }
+        // The same body signed again is a new delivery.
+        runs.trigger(automation.id, signed(automation), body)
         assertEquals(3, launcher.launched.size)
         assertFailsWith<InvalidWebhookPayloadException> {
             runs.trigger(automation.id, signed(automation, key = "with space"), body)

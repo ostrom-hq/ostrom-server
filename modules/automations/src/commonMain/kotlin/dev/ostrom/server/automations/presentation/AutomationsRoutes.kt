@@ -44,7 +44,6 @@ fun Route.automationsRoutes(dependencies: AutomationsRoutesDependencies) = with(
         // An id that cannot exist answers like a wrong signature: the webhook never says which automations exist.
         val id = Uuid.parseOrNull(params.parent.id) ?: throw InvalidSignatureException()
         val triggered = runs.trigger(id, delivery, body)
-        if (triggered.deduplicated) call.response.header(IDEMPOTENCY_REPLAYED, "true")
         val run = triggered.run
         val response = TriggerResponse(run.id.toString(), run.status.wire, triggered.deduplicated)
         call.respond(HttpStatusCode.Accepted, response)

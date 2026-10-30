@@ -166,9 +166,8 @@ class AutomationsApiTest {
             val run = first.body<TriggerResponse>()
             assertEquals("started", run.status)
             assertEquals("Fix SUP-7", launcher.launched.single().prompt)
-            val again = client.trigger(secrets, created.id, secret, key = "d1")
-            assertEquals("true", again.headers["Idempotency-Replayed"])
-            assertEquals(run.copy(deduplicated = true), again.body<TriggerResponse>())
+            // A delivery is accepted once: a retry or a replay answers 409 (S2-50).
+            assertEquals(HttpStatusCode.Conflict, client.trigger(secrets, created.id, secret, key = "d1").status)
             assertEquals(HttpStatusCode.Unauthorized, client.trigger(secrets, created.id, "whsec_wrong").status)
             val large = "{\"x\":\"" + "y".repeat(64 * 1024) + "\"}"
             assertEquals(HttpStatusCode.BadRequest, client.trigger(secrets, created.id, secret, large).status)
@@ -182,7 +181,7 @@ class AutomationsApiTest {
             assertEquals(HttpStatusCode.Accepted, current.status)
             assertEquals(HttpStatusCode.Accepted, client.trigger(secrets, created.id, secret, key = "d3").status)
             val keyed = client.trigger(secrets, created.id, rotated.secret, key = "idem:d3")
-            assertEquals("true", keyed.headers["Idempotency-Replayed"])
+            assertEquals(HttpStatusCode.Conflict, keyed.status)
 
             val test = TestRunRequest(buildJsonObject { putJsonObject("ticket") { put("number", "SUP-8") } })
             val tested = client.run("alice", path, test, key = "t1")
