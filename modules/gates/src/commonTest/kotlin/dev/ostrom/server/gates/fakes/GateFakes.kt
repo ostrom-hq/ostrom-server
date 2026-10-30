@@ -33,6 +33,9 @@ class InMemoryGatesRepository : GatesRepository {
     var gateUpdates = 0
     var transactions = 0
 
+    /** When set, `byKey` returns this snapshot in place of the stored gate: a row read before another commit. */
+    var staleSnapshot: Gate? = null
+
     /** When set, `lockGate` of this gate returns null once (the row vanished between two transactions). */
     var vanishOnLock: Uuid? = null
     private val mutex = Mutex()
@@ -67,7 +70,7 @@ class InMemoryGatesRepository : GatesRepository {
     ): List<ApprovalView> =
         requests.values.filter {
             it.orgId == orgId &&
-                (approverId == null || it.approverId == approverId) &&
+                (approverId == null || it.approverId.equals(approverId, ignoreCase = true)) &&
                 (status == null || it.status == status)
         }.reversed().take(limit).mapNotNull { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
 
@@ -78,6 +81,17 @@ class InMemoryGatesRepository : GatesRepository {
 
         override suspend fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate> =
             gates.values.filter { it.orgId == orgId && it.key == key }.reversed().take(limit)
+                .map { gate -> staleSnapshot?.takeIf { it.id == gate.id } ?: gate }
+
+        override suspend fun addAskers(gate: Gate) {
+            gateUpdates++
+            gates[gate.id] = gates.getValue(gate.id).copy(
+                askedBy = gate.askedBy,
+                askedVia = gate.askedVia,
+                sessionIds = gate.sessionIds,
+                launchIds = gate.launchIds,
+            )
+        }
 
         override suspend fun lockGate(orgId: Uuid, id: Uuid): Gate? {
             if (vanishOnLock == id) {
