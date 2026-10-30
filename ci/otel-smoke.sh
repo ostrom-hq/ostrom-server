@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Proves the server's telemetry reaches a real OpenTelemetry collector (BRIEF, rule TESTS: integration with a collector
 # in CI): one traced request, then its span, the request metrics and a log line are read back from the collector's
-# files. Needs the image ostrom-server:ci and the CI job's PostgreSQL service (ostrom/ostrom on localhost:5432).
+# files; a request whose path holds a secret slug leaves no trace of it there (S2-45). Needs the image ostrom-server:ci
+# and a migrated database reached as the serving role, in OSTROM_SMOKE_DATABASE_URL (the image smoke step makes it).
 set -euo pipefail
 
 out="$(mktemp -d)"
@@ -24,11 +25,14 @@ docker run -d --name otel-collector --network host \
 
 docker run -d --name ostrom-otel --network host \
   -e OSTROM_PORT=8081 \
-  -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom_test \
+  -e OSTROM_DATABASE_URL="${OSTROM_SMOKE_DATABASE_URL:?}" \
   -e OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
   -e OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=ci \
   ostrom-server:ci >/dev/null
-for _ in $(seq 1 30); do curl -fsS localhost:8081/health >/dev/null 2>&1 && break; sleep 1; done
+for _ in $(seq 1 30); do curl -fsS localhost:8081/ready >/dev/null 2>&1 && break; sleep 1; done
+
+# A share link whose slug and path must never leave the server: only the route template may.
+curl -sS -o /dev/null localhost:8081/l/smokeSECRETslug/smokeSECRETpath || true
 
 trace_id="4bf92f3577b34da6a3ce929d0e0e4736"
 headers="$(curl -fsS -D - -o /dev/null -H "traceparent: 00-${trace_id}-00f067aa0ba902b7-01" localhost:8081/api/v1/instance)"
@@ -46,9 +50,11 @@ wait_for() {
 wait_for traces.json "\"traceId\":\"${trace_id}\""
 wait_for traces.json '"name":"GET /api/v1/instance"'
 wait_for logs.json '"service.name"'
+wait_for logs.json 'l/{slug}/{path'
 wait_for metrics.json '"name":"http.server.request.duration"'
 wait_for metrics.json '"name":"process.cpu.time"'
 grep -q '"key":"service.namespace","value":{"stringValue":"ostrom"}' "$out/traces.json"
 grep -q '"key":"deployment.environment.name","value":{"stringValue":"ci"}' "$out/traces.json"
 if grep -q '/health' "$out/traces.json"; then echo "/health must not be traced"; exit 1; fi
+if grep -l 'SECRET' "$out"/*.json; then echo "a path reached the collector"; exit 1; fi
 echo "Traces, metrics and logs reached the collector."

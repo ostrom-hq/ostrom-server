@@ -1,0 +1,104 @@
+# Builds the server binaries of a version and attaches them to its GitHub release: a bare semver tag (`1.2.3`,
+# CONVENTIONS section 12) pushed by release-please, or a manual run for an existing tag. Linux x86_64 and aarch64,
+# each a tar.gz with the binary, plus SHA256SUMS. The image is published by its own workflow from the same tag.
+#
+# release-please tags with GITHUB_TOKEN when the release App is not set up, and a tag pushed by GITHUB_TOKEN starts no
+# workflow: release-please.yml then dispatches this one (workflow_dispatch is the exception GitHub allows).
+#
+# No Gradle nor Kotlin/Native cache: a build triggered by a tag must never restore one (zizmor cache-poisoning).
+name: Release binaries
+on:
+  push:
+    tags: ['[0-9]*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version tag to build, for example 0.2.0
+        required: true
+permissions: {}
+concurrency:
+  group: release-binaries-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  # The build never holds a token that can write: Gradle and its dependencies run with read access only.
+  binaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check the tag
+        run: |
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Not a bare semver tag: $TAG" >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+      # ostrom-core at the pinned commit, read with its read-only deploy key, as in ci.yml (JOURNAL 05:50).
+      - name: ostrom-core version
+        id: core
+        run: echo "ref=$(tr -d '[:space:]' < gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.core.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: ostrom-core
+          persist-credentials: false
+      - name: Build ostrom-core from that checkout
+        run: |
+          mv ostrom-core ../ostrom-core
+          mkdir -p ~/.gradle
+          echo "ostrom.core.local=true" >> ~/.gradle/gradle.properties
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-disabled: true
+      - name: Binaries (linuxX64, linuxArm64 cross-linked)
+        run: ./gradlew :app:linkReleaseExecutableLinuxX64 :app:linkReleaseExecutableLinuxArm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Archives and checksums
+        run: |
+          mkdir -p dist/release
+          for pair in linuxX64:x86_64 linuxArm64:aarch64; do
+            target="${pair%%:*}"; arch="${pair##*:}"
+            dir="dist/ostrom-server-$TAG-linux-$arch"
+            mkdir -p "$dir"
+            cp "app/build/bin/$target/releaseExecutable/ostrom-server.kexe" "$dir/ostrom-server"
+            chmod 755 "$dir/ostrom-server"
+            cp LICENSE README.md "$dir/"
+            tar -czf "dist/release/ostrom-server-$TAG-linux-$arch.tar.gz" -C dist "ostrom-server-$TAG-linux-$arch"
+          done
+          (cd dist/release && sha256sum ./*.tar.gz > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: dist/release/
+          retention-days: 7
+  attach:
+    needs: binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # attach the binaries to the release
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+      - name: Attach to the release
+        run: gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}

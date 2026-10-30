@@ -9,6 +9,7 @@ import dev.ostrom.core.telemetry.trace.SpanContextElement
 import dev.ostrom.core.telemetry.trace.SpanKind
 import dev.ostrom.core.telemetry.trace.StatusCode
 import dev.ostrom.core.telemetry.trace.setAttribute
+import dev.ostrom.server.kernel.http.PROBE_PATHS
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
@@ -28,7 +29,6 @@ const val TRACE_RESPONSE_HEADER: String = "traceresponse"
 /** The route template of an unmatched request (404 before routing): never the concrete path. */
 const val UNMATCHED_ROUTE: String = "unmatched"
 
-private const val HEALTH_PATH = "/health"
 private const val SERVER_ERROR = 500
 private const val NOT_FOUND = 404
 private const val CLIENT_CLOSED_REQUEST = 499
@@ -39,7 +39,7 @@ private val routeKey = AttributeKey<String>("ostrom.route")
 private val routeTemplatesRecorded = AttributeKey<Unit>("ostrom.route.recorded")
 private val spanKey = AttributeKey<SpanContext>("ostrom.span")
 
-/** The span context of the request, for logs that want to link to their trace; null for `/health` and in tests. */
+/** The span context of the request, for logs that want to link to their trace; null for the probes and in tests. */
 val ApplicationCall.spanContext: SpanContext? get() = attributes.getOrNull(spanKey)
 
 /**
@@ -63,10 +63,10 @@ fun Application.recordRouteTemplates() {
 /**
  * Traces and measures every request: a SERVER span continuing the caller's `traceparent` (the CLI sends one), named
  * `METHOD /route/{template}` once routing matched, carried in the coroutine context so that a module's own spans and
- * model calls nest under it; the trace is returned in `traceresponse`. `/health` is measured but never traced (probes
- * would fill the traces). The span records the route template, method and status, never the path, the query or a
- * header value: a path may carry an artifact ticket or a share slug. Telemetry never fails a request: exporting is a
- * non-blocking queue (CONVENTIONS 16.4).
+ * model calls nest under it; the trace is returned in `traceresponse`. The probes (`/health`, `/ready`) are measured
+ * but never traced (they would fill the traces). The span records the route template, method and status, never the
+ * path, the query or a header value: a path may carry an artifact ticket or a share slug. Telemetry never fails a
+ * request: exporting is a non-blocking queue (CONVENTIONS 16.4).
  *
  * @param telemetry Where spans go.
  * @param metrics Where request durations go.
@@ -81,7 +81,7 @@ fun Application.installTelemetry(telemetry: Telemetry, metrics: OstromMetrics) {
         metrics.requestStarted()
         // Everything after the in-flight increment is inside the try: the finally always decrements it.
         try {
-            span = if (call.request.path() == HEALTH_PATH) null else startSpan(call, telemetry, method)
+            span = if (call.request.path() in PROBE_PATHS) null else startSpan(call, telemetry, method)
             if (span == null) proceed() else withContext(SpanContextElement(span.context)) { proceed() }
         } catch (cancelled: CancellationException) {
             ending = Ending.CANCELLED
