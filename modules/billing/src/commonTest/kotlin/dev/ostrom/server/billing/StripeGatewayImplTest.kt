@@ -86,6 +86,12 @@ class StripeGatewayImplTest {
     }
 
     @Test
+    fun aCancellationDateWithoutAPeriodIsNotAnEndOfPeriod() = runTest {
+        val harness = Harness(200 to """{"id":"sub_1","customer":"cus_1","status":"active","cancel_at":30}""")
+        assertFalse(harness.gateway.getSubscription("sub_1").cancelAtPeriodEnd)
+    }
+
+    @Test
     fun aSubscriptionWithoutCustomerIsRefused() = runTest {
         val harness = Harness(200 to """{"id":"sub_1","status":"active"}""")
         assertFailsWith<IllegalArgumentException> { harness.gateway.getSubscription("sub_1") }
