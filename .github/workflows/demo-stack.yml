@@ -1,0 +1,115 @@
+name: Demo stack
+
+# The local demo stack of ostrom-helm (compose/demo: Mailpit, a fake GitHub, cloud sessions on Docker, Stripe's test
+# mode), run with the REAL images: this repository's server image of the commit (or `edge`), its cloud session image,
+# and the console built from ostrom-web main. Then the customer's journey from outside (compose/demo/journey.mjs),
+# whose report becomes the job summary. It proves on a runner what the demo shows on a laptop; the film is made there.
+# This repository's token reads its own GHCR packages, which ostrom-helm's and ostrom-e2e's cannot yet.
+# Off the org's one-`ci`-job rule on purpose: it never runs on a pull request unless the pull request changes this file.
+on:
+  workflow_run:
+    workflows: [Image]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      helm_ref:
+        description: ostrom-helm ref holding compose/demo
+        default: main
+      server_image:
+        description: Server image (empty = the Image run's commit, or edge)
+        default: ""
+  pull_request:
+    paths: [.github/workflows/demo-stack.yml]
+
+concurrency:
+  group: demo-stack-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      HELM_REF: ${{ inputs.helm_ref || 'feat/compose-demo' }}
+      SERVER_IMAGE_INPUT: ${{ inputs.server_image }}
+      RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ref: ${{ env.HELM_REF }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-web
+          ssh-key: ${{ secrets.DEPLOY_KEY_WEB }}
+          path: web
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 24 }
+      - name: Images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          if [ -n "$SERVER_IMAGE_INPUT" ]; then server="$SERVER_IMAGE_INPUT"
+          elif [ -n "$RUN_SHA" ]; then server="ghcr.io/ostrom-hq/ostrom-server:sha-${RUN_SHA::7}"
+          else server=ghcr.io/ostrom-hq/ostrom-server:edge; fi
+          docker pull -q "$server"
+          docker pull -q ghcr.io/ostrom-hq/ostrom-runner:latest
+          server_digest=$(docker inspect -f '{{index .RepoDigests 0}}' "$server")
+          runner_digest=$(docker inspect -f '{{index .RepoDigests 0}}' ghcr.io/ostrom-hq/ostrom-runner:latest)
+          docker build -q -t ostrom-web:demo web > /dev/null
+          {
+            echo "OSTROM_SERVER_IMAGE=$server_digest"
+            echo "OSTROM_RUNNER_IMAGE=$runner_digest"
+            echo "OSTROM_WEB_IMAGE=ostrom-web:demo"
+          } >> "$GITHUB_ENV"
+          {
+            echo "### Images"
+            echo "- server: \`$server_digest\`"
+            echo "- cloud session: \`$runner_digest\`"
+            echo "- console: ostrom-web main $(git -C web rev-parse --short HEAD), built here"
+            echo "- ostrom-helm $(git -C helm rev-parse --short HEAD) ($HELM_REF)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Stripe test key, outside the workspace
+        env:
+          STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+        run: |
+          if [ -n "$STRIPE_TEST_KEY" ]; then
+            umask 077
+            printf %s "$STRIPE_TEST_KEY" > "$RUNNER_TEMP/stripe-test.key"
+            echo "OSTROM_DEMO_STRIPE_KEY_FILE=$RUNNER_TEMP/stripe-test.key" >> "$GITHUB_ENV"
+          fi
+      - name: The demo's names resolve to this machine
+        run: echo "127.0.0.1 api.localhost app.localhost mail.localhost" | sudo tee -a /etc/hosts > /dev/null
+      - name: Up
+        run: helm/compose/demo/demo.sh up
+      - name: The customer's journey
+        working-directory: helm/compose
+        env:
+          REPORT: ${{ runner.temp }}/demo-report.md
+          OSTROM_DEMO_SESSION_CHECK: demo/check-session.sh
+        run: node demo/journey.mjs
+      - name: Report
+        if: always()
+        run: cat "$RUNNER_TEMP/demo-report.md" >> "$GITHUB_STEP_SUMMARY" 2> /dev/null || echo "no report" >> "$GITHUB_STEP_SUMMARY"
+      - name: Logs on failure
+        if: failure()
+        run: |
+          helm/compose/demo/demo.sh logs 300 || true
+          docker ps -a --filter label=app.kubernetes.io/managed-by=ostrom || true
+      - name: Down
+        if: always()
+        run: helm/compose/demo/demo.sh down || true
