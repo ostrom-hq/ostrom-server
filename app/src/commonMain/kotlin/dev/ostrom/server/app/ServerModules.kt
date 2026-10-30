@@ -13,6 +13,7 @@ import dev.ostrom.server.integrations.github.GitHubIntegrationModule
 import dev.ostrom.server.integrations.slack.SlackIntegrationModule
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.mcprelay.McpRelayModule
+import dev.ostrom.server.notifications.NotificationsModule
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.runners.RunnersModule
@@ -43,5 +44,6 @@ fun serverModules(): List<ServerModule> = listOf(
     ArtifactsModule,
     GitHubIntegrationModule,
     SlackIntegrationModule,
+    NotificationsModule,
     SharingModule,
 )
