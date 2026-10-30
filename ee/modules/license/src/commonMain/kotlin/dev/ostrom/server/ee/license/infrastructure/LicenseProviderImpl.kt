@@ -3,6 +3,7 @@ package dev.ostrom.server.ee.license.infrastructure
 
 import dev.ostrom.server.billing.domain.LicenseGrant
 import dev.ostrom.server.ee.license.domain.License
+import dev.ostrom.server.ee.license.domain.LicenseException
 import dev.ostrom.server.ee.license.domain.LicenseInstanceMismatchException
 import dev.ostrom.server.ee.license.domain.LicenseVerifier
 import dev.ostrom.server.ee.license.domain.VerifiedLicenseProvider
@@ -21,7 +22,7 @@ import kotlin.time.Clock
  * @param verifier Verifies the key.
  * @param getInstance This instance, for a license bound to one instance.
  * @param clock The clock.
- * @param logger Where the license's id, customer and expiry are logged (never the key).
+ * @param logger Where the license's id, customer and expiry, or the reason it is refused, are logged (never the key).
  */
 class LicenseProviderImpl(
     private val licenseKey: String?,
@@ -63,16 +64,28 @@ class LicenseProviderImpl(
     }
 
     private suspend fun verified(key: String): License {
-        val license = verifier.verify(key, clock.now())
-        val licensed = license.instanceId
-        if (licensed != null) {
-            val actual = getInstance().id.toString()
-            if (!licensed.equals(actual, ignoreCase = true)) throw LicenseInstanceMismatchException(licensed, actual)
+        val license = try {
+            accepted(key)
+        } catch (refused: LicenseException) {
+            // The server's start failure logs the exception's class only: the reason, written for the operator and
+            // never quoting the key, is logged here.
+            logger.error("license refused", mapOf("reason" to refused.message))
+            throw refused
         }
         logger.info("license verified", license.fields())
         if (clock.now() > license.expiresAt) {
             val fields = license.fields() + ("grace_ends_at" to license.graceEndsAt.toString())
             logger.warn("license expired, in grace period", fields)
+        }
+        return license
+    }
+
+    private suspend fun accepted(key: String): License {
+        val license = verifier.verify(key, clock.now())
+        val licensed = license.instanceId
+        if (licensed != null) {
+            val actual = getInstance().id.toString()
+            if (!licensed.equals(actual, ignoreCase = true)) throw LicenseInstanceMismatchException(licensed, actual)
         }
         return license
     }

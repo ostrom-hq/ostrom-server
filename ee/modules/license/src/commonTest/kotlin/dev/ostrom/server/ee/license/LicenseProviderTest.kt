@@ -76,7 +76,7 @@ class LicenseProviderTest {
     fun anInvalidKeyFailsTheLoadWithItsReason() = runTest {
         val error = assertFailsWith<MalformedLicenseException> { provider("not-a-license").load() }
         assertEquals("The license key is malformed: it does not start with ostrom-license.v1.", error.message)
-        assertEquals(emptyList(), logger.lines)
+        assertEquals(listOf("ERROR license refused {reason=${error.message}}"), logger.lines)
     }
 
     @Test
@@ -135,6 +135,7 @@ class LicenseProviderTest {
                 "to sales@ostrom.run.",
             error.message,
         )
+        assertEquals(listOf("ERROR license refused {reason=${error.message}}"), logger.lines)
     }
 
     @Test
