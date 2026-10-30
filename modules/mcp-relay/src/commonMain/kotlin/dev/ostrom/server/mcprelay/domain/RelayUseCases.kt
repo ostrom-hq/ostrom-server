@@ -157,7 +157,7 @@ class RelayMcpMessageUseCaseImpl(
             method == null || request["id"] == null -> RelayAnswer(ACCEPTED, null)
             method == "initialize" -> result(id, initialize(serverName, params))
             method == "ping" -> result(id, JsonObject(emptyMap()))
-            method == "tools/list" -> result(id, listTools(caller, effective))
+            method == "tools/list" -> listTools(caller, effective, id)
             method == "tools/call" -> callTool(caller, effective, id, params)
             else -> error(HTTP_OK, id, METHOD_NOT_FOUND, "Method not found.")
         }
@@ -175,18 +175,22 @@ class RelayMcpMessageUseCaseImpl(
         }
     }
 
-    private suspend fun listTools(caller: Caller, effective: EffectiveServer): JsonObject {
+    private suspend fun listTools(caller: Caller, effective: EffectiveServer, id: JsonElement): RelayAnswer {
         val list = RelayedOperation(caller, effective, McpOperation.LIST, null)
         val outcome = operate(list, { tools, secrets -> tools.map { it.scrubbed(secrets) as JsonObject } }) { target ->
             upstream.listTools(target, deadlines.list)
         }
-        val tools = (outcome as? UpstreamResult.Ok)?.value.orEmpty()
+        if (outcome is UpstreamResult.Failure) {
+            // An empty list would read as "no tools": the client is told the server failed, and retries.
+            return error(HTTP_OK, id, INTERNAL_ERROR, "The MCP server could not list its tools: ${outcome.message}")
+        }
+        val tools = (outcome as UpstreamResult.Ok).value
             .filter { tool ->
                 val name = (tool["name"] as? JsonPrimitive)?.content
                 name != null && McpRules.isToolName(name) && effective.assignment.policy.allows(name)
             }
             .take(McpRules.MAX_TOOLS)
-        return buildJsonObject { put("tools", JsonArray(tools)) }
+        return result(id, buildJsonObject { put("tools", JsonArray(tools)) })
     }
 
     private suspend fun callTool(
@@ -206,35 +210,39 @@ class RelayMcpMessageUseCaseImpl(
         }
         val call = RelayedOperation(caller, effective, McpOperation.CALL, tool)
         val policy = ArgumentPolicy.decide(repository.listPolicies(caller.orgId, effective.server.id), tool, arguments)
-        return result(
-            id,
-            if (policy ==
-                null
-            ) {
-                relayCall(call, tool, arguments)
-            } else {
-                refuse(call, tool, arguments, policy)
-            },
-        )
+        val answer = when (policy?.effect) {
+            null -> relayCall(call, tool, arguments)
+            PolicyEffect.DENY -> {
+                journal(call, McpOutcome.DENIED, policyId = policy.id)
+                toolError("Refused by the organization's policy: ${policy.message}")
+            }
+            PolicyEffect.REQUIRE_APPROVAL -> gated(call, tool, arguments, policy)
+        }
+        return result(id, answer)
     }
 
-    private suspend fun refuse(
+    /** Relays a call a human approved; otherwise refuses it with where to approve it, journaled either way. */
+    private suspend fun gated(
         call: RelayedOperation,
         tool: String,
         arguments: JsonObject,
         policy: ArgumentPolicy,
     ): JsonObject {
-        val text = when (policy.effect) {
-            PolicyEffect.DENY -> "Refused by the organization's policy: ${policy.message}"
-            PolicyEffect.REQUIRE_APPROVAL -> {
-                val link = approvals.request(call.caller, call.effective.server, tool, arguments, policy)
-                "This call needs a human approval: ${policy.message}" +
-                    (link?.let { " Approve it here, then retry: $it" } ?: "")
-            }
+        val decision = try {
+            approvals.request(call.caller, call.effective.server, tool, arguments, policy)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // The gates are down: the call stays held (fail closed), journaled, and the agent may retry.
+            null
         }
-        val outcome = if (policy.effect == PolicyEffect.DENY) McpOutcome.DENIED else McpOutcome.APPROVAL_REQUIRED
-        journal(call, outcome, policyId = policy.id)
-        return toolError(text)
+        val next = when (decision) {
+            ApprovalDecision.Approved -> return relayCall(call, tool, arguments)
+            is ApprovalDecision.Pending -> decision.link?.let { " Approve it here, then retry: $it" }.orEmpty()
+            null -> " No approval could be opened right now; retry shortly."
+        }
+        journal(call, McpOutcome.APPROVAL_REQUIRED, policyId = policy.id)
+        return toolError("This call needs a human approval: ${policy.message}$next")
     }
 
     private suspend fun relayCall(call: RelayedOperation, tool: String, arguments: JsonObject): JsonObject {
@@ -281,6 +289,12 @@ class RelayMcpMessageUseCaseImpl(
             }
         } catch (error: CancellationException) {
             throw error
+        } catch (_: McpSecretNotFoundException) {
+            outcome = McpOutcome.UPSTREAM_ERROR
+            UpstreamResult.Failure(
+                outcome,
+                "A secret this MCP server uses no longer exists. Ask an admin to set it again.",
+            )
         } catch (_: Exception) {
             // An upstream adapter answers failures as results; anything else (a credential that no longer decrypts)
             // is still the agent's tool error, never a 500 that drops the conversation.
@@ -300,6 +314,8 @@ class RelayMcpMessageUseCaseImpl(
         val credentialId = effective.assignment.credentialSecretId ?: server.credentialSecretId
         val ids = listOfNotNull(credentialId) + server.stdio?.secretEnv?.values.orEmpty()
         val values = revealSecrets(caller.orgId, ids)
+        // Fail closed: a server never runs nor is called without a credential or variable it was declared with.
+        if (!values.keys.containsAll(ids)) throw McpSecretNotFoundException()
         val shared = "${server.orgId}:${server.id}:${server.version}"
         val processKey = when (server.sharing) {
             McpSharing.SHARED -> shared
@@ -307,10 +323,8 @@ class RelayMcpMessageUseCaseImpl(
         }
         return UpstreamTarget(
             server = server,
-            credential = credentialId?.let { values[it] },
-            secretEnv = server.stdio?.secretEnv.orEmpty()
-                .mapNotNull { (name, secretId) -> values[secretId]?.let { name to it } }
-                .toMap(),
+            credential = credentialId?.let(values::getValue),
+            secretEnv = server.stdio?.secretEnv.orEmpty().mapValues { (_, secretId) -> values.getValue(secretId) },
             processKey = processKey,
         )
     }
@@ -354,6 +368,7 @@ class RelayMcpMessageUseCaseImpl(
         private const val INVALID_REQUEST = -32600
         private const val METHOD_NOT_FOUND = -32601
         private const val INVALID_PARAMS = -32602
+        private const val INTERNAL_ERROR = -32603
         private const val ACCEPTED = 202
         private const val BAD_REQUEST = 400
         private const val NOT_FOUND = 404

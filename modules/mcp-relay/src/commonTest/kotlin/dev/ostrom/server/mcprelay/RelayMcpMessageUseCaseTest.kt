@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay
 
+import dev.ostrom.server.mcprelay.domain.ApprovalDecision
 import dev.ostrom.server.mcprelay.domain.ApprovalRequester
 import dev.ostrom.server.mcprelay.domain.ArgumentCondition
 import dev.ostrom.server.mcprelay.domain.ArgumentPolicy
@@ -37,6 +38,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -192,11 +194,15 @@ class RelayMcpMessageUseCaseTest {
     }
 
     @Test
-    fun aFailedListingIsAnEmptyListAndJournaled() = runTest {
+    fun aFailedListingIsAJsonRpcErrorAndJournaled() = runTest {
         grafana()
         upstream.tools = UpstreamResult.Failure(McpOutcome.TIMEOUT, "late")
         val answer = relay()(Relay.memberA, "grafana", message("tools/list"))
-        assertEquals(JsonArray(emptyList()), answer.body!!.jsonObject["result"]!!.jsonObject["tools"])
+        // An empty list would read as "this server has no tools": the client must see that the server failed.
+        assertEquals(200, answer.status)
+        val error = answer.body!!.jsonObject["error"]!!.jsonObject
+        assertEquals(-32603, error["code"]!!.jsonPrimitive.content.toInt())
+        assertEquals("The MCP server could not list its tools: late", error["message"]!!.jsonPrimitive.content)
         assertEquals(McpOutcome.TIMEOUT, repository.journal.single().outcome)
     }
 
@@ -298,7 +304,27 @@ class RelayMcpMessageUseCaseTest {
     }
 
     @Test
-    fun aSharedStdioServerGetsItsSecretVariablesAndSkipsTheMissingOnes() = runTest {
+    fun aSharedStdioServerGetsItsSecretVariables() = runTest {
+        val token = Uuid.random()
+        reveal.values[token] = "acme_token_value"
+        val server = Relay.server(transport = McpTransport.STDIO).copy(
+            stdio = dev.ostrom.server.mcprelay.domain.StdioSpec(
+                dev.ostrom.server.mcprelay.domain.StdioLauncher.NPM,
+                "@acme/mcp@1.0.0",
+                secretEnv = mapOf("ACME_TOKEN" to token),
+            ),
+        )
+        repository.servers += server
+        repository.assign(server, null)
+        relay()(Relay.memberA, "grafana", message("tools/call", callParams("x")))
+        val target = upstream.targets.single()
+        assertNull(target.credential)
+        assertEquals("acme_token_value", target.secretEnv.getValue("ACME_TOKEN").reveal())
+        assertEquals("${server.orgId}:${server.id}:1", target.processKey)
+    }
+
+    @Test
+    fun aSecretDeletedSinceStopsTheCallInsteadOfRunningWithoutIt() = runTest {
         val token = Uuid.random()
         reveal.values[token] = "acme_token_value"
         val server = Relay.server(transport = McpTransport.STDIO).copy(
@@ -310,11 +336,23 @@ class RelayMcpMessageUseCaseTest {
         )
         repository.servers += server
         repository.assign(server, null)
-        relay()(Relay.memberA, "grafana", message("tools/call", callParams("x")))
-        val target = upstream.targets.single()
-        assertNull(target.credential)
-        assertEquals(setOf("ACME_TOKEN"), target.secretEnv.keys, "A secret deleted since is left out")
-        assertEquals("${server.orgId}:${server.id}:1", target.processKey)
+        val answer = relay()(Relay.memberA, "grafana", message("tools/call", callParams("x")))
+        assertEquals(
+            "A secret this MCP server uses no longer exists. Ask an admin to set it again.",
+            text(answer.body),
+        )
+        assertTrue(upstream.targets.isEmpty(), "Fail closed: never started without its variable")
+        assertEquals(McpOutcome.UPSTREAM_ERROR, repository.journal.single().outcome)
+        val credential = Uuid.random()
+        val http = Relay.server("http", credential = credential)
+        repository.servers += http
+        repository.assign(http, null)
+        val missing = relay()(Relay.memberA, "http", message("tools/call", callParams("x")))
+        assertEquals(
+            "A secret this MCP server uses no longer exists. Ask an admin to set it again.",
+            text(missing.body),
+        )
+        assertTrue(upstream.targets.isEmpty(), "Nor called without its credential")
     }
 
     @Test
@@ -389,9 +427,9 @@ class RelayMcpMessageUseCaseTest {
                 tool: String,
                 arguments: JsonObject,
                 policy: ArgumentPolicy,
-            ): String? {
+            ): ApprovalDecision {
                 seen += tool
-                return "https://app.ostrom.run/gates/1"
+                return ApprovalDecision.Pending("https://app.ostrom.run/gates/1")
             }
         }
         val answer =
@@ -430,6 +468,38 @@ class RelayMcpMessageUseCaseTest {
                 ),
             )
         assertEquals("This call needs a human approval: Ask first.", text(noGate.body))
+    }
+
+    @Test
+    fun anApprovedRetryIsRelayedAndAFailingApproverHoldsTheCall() = runTest {
+        val server = grafana()
+        policy(server, PolicyEffect.REQUIRE_APPROVAL, "Ask first.", ArgumentCondition("env", ConditionOperator.EXISTS))
+        var decide: () -> ApprovalDecision = { ApprovalDecision.Approved }
+        approvals = object : ApprovalRequester {
+            override suspend fun request(
+                caller: Caller,
+                server: McpServer,
+                tool: String,
+                arguments: JsonObject,
+                policy: ArgumentPolicy,
+            ): ApprovalDecision = decide()
+        }
+        val arguments = buildJsonObject { put("env", "prod") }
+        relay()(Relay.memberA, "grafana", message("tools/call", callParams("delete", arguments)))
+        assertEquals(listOf("delete" to arguments), upstream.calls, "Approved: the retry reaches the upstream")
+        assertEquals(McpOutcome.OK, repository.journal.single().outcome)
+        decide = { error("gates down") }
+        val held = relay()(Relay.memberA, "grafana", message("tools/call", callParams("delete", arguments)))
+        assertEquals(
+            "This call needs a human approval: Ask first. No approval could be opened right now; retry shortly.",
+            text(held.body),
+        )
+        assertEquals(1, upstream.calls.size, "Fail closed: a failing approver never lets the call through")
+        assertEquals(McpOutcome.APPROVAL_REQUIRED, repository.journal.last().outcome)
+        decide = { throw kotlinx.coroutines.CancellationException("gone") }
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            relay()(Relay.memberA, "grafana", message("tools/call", callParams("delete", arguments)))
+        }
     }
 
     @Test
