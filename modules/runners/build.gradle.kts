@@ -10,9 +10,12 @@ kotlin {
             implementation(project(":kernel"))
             implementation(libs.cryptography.core)
             implementation(libs.cryptography.openssl)
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.curl)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            implementation(libs.ktor.client.mock)
         }
     }
 }

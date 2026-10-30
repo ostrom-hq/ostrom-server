@@ -1,0 +1,199 @@
+package dev.ostrom.server.runners
+
+import dev.ostrom.server.runners.domain.AgentKind
+import dev.ostrom.server.runners.domain.CloudPlan
+import dev.ostrom.server.runners.domain.ExecutionSpec
+import dev.ostrom.server.runners.domain.ExecutionStatus
+import dev.ostrom.server.runners.domain.RepositorySpec
+import dev.ostrom.server.runners.fakes.FakeApi
+import dev.ostrom.server.runners.fakes.ORG_A
+import dev.ostrom.server.runners.fakes.session
+import dev.ostrom.server.runners.infrastructure.KubernetesApiException
+import dev.ostrom.server.runners.infrastructure.KubernetesRuntimeDriver
+import dev.ostrom.server.runners.infrastructure.KubernetesSettings
+import dev.ostrom.server.runners.infrastructure.SessionNetworkPolicy
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class KubernetesRuntimeDriverTest {
+    private val api = FakeApi()
+    private var tokenReads = 0
+    private val settings = KubernetesSettings("https://k8s/", "ostrom", "/t", "/c", "fast", "5Gi", "ghcr")
+    private val driver = KubernetesRuntimeDriver(api.client, settings, "http://ostrom-server.ostrom.svc:8080", "img:1") { "sa-${++tokenReads}" }
+    private val session = session().copy(epoch = 4)
+    private val hex = session.id.toHexString()
+    private val ns = "/api/v1/namespaces/ostrom"
+
+    private fun spec(restricted: Boolean = true, repository: RepositorySpec? = RepositorySpec("https://github.com/acme/api", "main")) =
+        ExecutionSpec(session.id, ORG_A, 4, AgentKind.CLAUDE, repository, "ostrom_runner_abc", CloudPlan.FREE.sessionLimits().copy(restrictedEgress = restricted))
+
+    private fun body(index: Int): JsonObject = Json.parseToJsonElement(api.calls[index].body!!).jsonObject
+
+    @Test
+    fun aWorkspaceIsAClaimInTheNamespaceAndAnExistingOneIsFine() = runTest {
+        driver.ensureWorkspace(session)
+        api.on("POST", "$ns/persistentvolumeclaims", HttpStatusCode.Conflict to "{}")
+        driver.ensureWorkspace(session)
+
+        assertEquals(listOf("POST $ns/persistentvolumeclaims", "POST $ns/persistentvolumeclaims"), api.lines())
+        val claim = body(0)
+        assertEquals("ostrom-ws-$hex", claim["metadata"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals(hex, claim["metadata"]!!.jsonObject["labels"]!!.jsonObject["ostrom.run/session"]!!.jsonPrimitive.content)
+        assertEquals("fast", claim["spec"]!!.jsonObject["storageClassName"]!!.jsonPrimitive.content)
+        assertEquals("5Gi", claim["spec"]!!.jsonObject["resources"]!!.jsonObject["requests"]!!.jsonObject["storage"]!!.jsonPrimitive.content)
+        assertEquals("Bearer sa-1", api.calls[0].authorization)
+        assertEquals("Bearer sa-2", api.calls[1].authorization)
+    }
+
+    @Test
+    fun aClaimWithoutStorageClassUsesTheClusterDefault() = runTest {
+        KubernetesRuntimeDriver(api.client, settings.copy(storageClass = null, imagePullSecret = null), "http://s", "img") { "t" }.ensureWorkspace(session)
+        assertNull(body(0)["spec"]!!.jsonObject["storageClassName"])
+    }
+
+    @Test
+    fun anExecutionIsPoliciesThenASecretThenABarePod() = runTest {
+        driver.startExecution(spec())
+
+        val policies = "/apis/networking.k8s.io/v1/namespaces/ostrom/networkpolicies"
+        assertEquals(listOf("POST $policies", "POST $policies", "POST $ns/secrets", "POST $ns/pods"), api.lines())
+        val secret = body(2)
+        assertEquals("ostrom_runner_abc", secret["stringData"]!!.jsonObject["token"]!!.jsonPrimitive.content)
+        val pod = body(3)
+        val metadata = pod["metadata"]!!.jsonObject
+        assertEquals("ostrom-s-$hex-e4", metadata["name"]!!.jsonPrimitive.content)
+        assertEquals("restricted", metadata["labels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
+        assertEquals("4", metadata["labels"]!!.jsonObject["ostrom.run/epoch"]!!.jsonPrimitive.content)
+        assertEquals("20M", metadata["annotations"]!!.jsonObject["kubernetes.io/egress-bandwidth"]!!.jsonPrimitive.content)
+        val spec = pod["spec"]!!.jsonObject
+        assertEquals("Never", spec["restartPolicy"]!!.jsonPrimitive.content)
+        assertEquals("false", spec["automountServiceAccountToken"]!!.jsonPrimitive.content)
+        assertEquals("ghcr", spec["imagePullSecrets"]!!.jsonArray[0].jsonObject["name"]!!.jsonPrimitive.content)
+        val container = spec["containers"]!!.jsonArray[0].jsonObject
+        assertEquals("img:1", container["image"]!!.jsonPrimitive.content)
+        val env = container["env"]!!.jsonArray.associate { it.jsonObject["name"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content }
+        assertEquals("/run/ostrom/token", env["OSTROM_RUNNER_TOKEN_FILE"])
+        assertNull(env["OSTROM_RUNNER_TOKEN"])
+        assertEquals("https://github.com/acme/api", env["OSTROM_REPOSITORY_URL"])
+        assertEquals("main", env["OSTROM_REPOSITORY_REF"])
+        assertEquals("claude", env["OSTROM_AGENT_COMMAND"])
+        assertEquals("4", env["OSTROM_EPOCH"])
+        assertFalse("ostrom_runner_abc" in pod.toString())
+        assertEquals("ostrom-ws-$hex", spec["volumes"]!!.jsonArray[0].jsonObject["persistentVolumeClaim"]!!.jsonObject["claimName"]!!.jsonPrimitive.content)
+        assertEquals("ostrom-s-$hex-e4", spec["volumes"]!!.jsonArray[1].jsonObject["secret"]!!.jsonObject["secretName"]!!.jsonPrimitive.content)
+
+        // The policies are applied once per process.
+        driver.startExecution(spec(restricted = false, repository = RepositorySpec("https://github.com/acme/api", null)))
+        assertEquals(listOf("POST $ns/secrets", "POST $ns/pods"), api.lines().drop(4))
+        val open = body(5)
+        assertEquals("open", open["metadata"]!!.jsonObject["labels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
+        assertNull(open["metadata"]!!.jsonObject["annotations"])
+        assertFalse("OSTROM_REPOSITORY_REF" in open["spec"]!!.jsonObject["containers"]!!.jsonArray[0].toString())
+    }
+
+    @Test
+    fun existingPoliciesAreReplacedAtTheirVersion() = runTest {
+        val policies = "/apis/networking.k8s.io/v1/namespaces/ostrom/networkpolicies"
+        api.on("POST", policies, HttpStatusCode.Conflict to "{}")
+        api.on("GET", "$policies/ostrom-sessions-restricted", HttpStatusCode.OK to """{"metadata":{"resourceVersion":"41"}}""")
+        api.on("GET", "$policies/ostrom-sessions-open", HttpStatusCode.OK to """{"metadata":{}}""")
+        driver.startExecution(spec(repository = null))
+
+        assertEquals("PUT $policies/ostrom-sessions-restricted", api.lines()[2])
+        assertEquals("41", body(2)["metadata"]!!.jsonObject["resourceVersion"]!!.jsonPrimitive.content)
+        assertEquals("PUT $policies/ostrom-sessions-open", api.lines()[5])
+    }
+
+    @Test
+    fun aRefusedCallFailsWithoutTheApisBody() = runTest {
+        api.on("POST", "$ns/pods", HttpStatusCode.Forbidden to """{"message":"secret detail"}""")
+        val error = assertFailsWith<KubernetesApiException> { driver.startExecution(spec()) }
+        assertEquals("Kubernetes API: create Pod answered 403.", error.message)
+
+        val policies = "/apis/networking.k8s.io/v1/namespaces/ostrom/networkpolicies"
+        val other = KubernetesRuntimeDriver(api.client, settings, "http://s", "img") { "t" }
+        api.on("POST", policies, HttpStatusCode.Conflict to "{}")
+        api.on("GET", "$policies/ostrom-sessions-restricted", HttpStatusCode.Forbidden to "{}")
+        assertFailsWith<KubernetesApiException> { other.startExecution(spec()) }
+        api.on("POST", policies, HttpStatusCode.Forbidden to "{}")
+        assertFailsWith<KubernetesApiException> { other.startExecution(spec()) }
+    }
+
+    @Test
+    fun podPhasesMapToExecutionStates() = runTest {
+        val path = "$ns/pods/ostrom-s-$hex-e4"
+        fun pod(phase: String, waiting: String? = null) = HttpStatusCode.OK to
+            """{"status":{"phase":"$phase","containerStatuses":[{"state":${if (waiting != null) """{"waiting":{"reason":"$waiting"}}""" else "{}"}}]}}"""
+        val cases = listOf(
+            pod("Pending") to ExecutionStatus.PENDING,
+            pod("Pending", "ContainerCreating") to ExecutionStatus.PENDING,
+            pod("Pending", "InvalidImageName") to ExecutionStatus.FAILED,
+            pod("Running") to ExecutionStatus.RUNNING,
+            pod("Succeeded") to ExecutionStatus.ENDED,
+            pod("Failed") to ExecutionStatus.ENDED,
+            (HttpStatusCode.OK to "{}") to ExecutionStatus.PENDING,
+            (HttpStatusCode.OK to """{"status":{}}""") to ExecutionStatus.PENDING,
+            (HttpStatusCode.NotFound to "{}") to ExecutionStatus.MISSING,
+        )
+        for ((answer, expected) in cases) {
+            api.on("GET", path, answer)
+            assertEquals(expected, driver.executionStatus(session), answer.second)
+        }
+        api.on("GET", path, HttpStatusCode.InternalServerError to "{}")
+        assertFailsWith<KubernetesApiException> { driver.executionStatus(session) }
+    }
+
+    @Test
+    fun stoppingDeletesThePodsAndSecretsOfTheSessionOnly() = runTest {
+        driver.stopExecutions(session)
+
+        assertEquals(listOf("DELETE $ns/pods", "DELETE $ns/secrets"), api.lines())
+        assertEquals("ostrom.run/session=$hex", api.calls[0].query["labelSelector"])
+        assertEquals("20", api.calls[0].query["gracePeriodSeconds"])
+        assertNull(api.calls[1].query["gracePeriodSeconds"])
+        api.on("DELETE", "$ns/secrets", HttpStatusCode.Forbidden to "{}")
+        assertFailsWith<KubernetesApiException> { driver.stopExecutions(session) }
+    }
+
+    @Test
+    fun aWorkspaceIsGoneOnlyOnceTheApiNoLongerHasIt() = runTest {
+        val path = "$ns/persistentvolumeclaims/ostrom-ws-$hex"
+        api.on("GET", path, HttpStatusCode.OK to "{}")
+        assertFalse(driver.deleteWorkspace(session))
+        api.on("GET", path, HttpStatusCode.NotFound to "{}")
+        assertTrue(driver.deleteWorkspace(session))
+        api.on("DELETE", path, HttpStatusCode.NotFound to "{}")
+        assertTrue(driver.deleteWorkspace(session))
+        api.on("DELETE", path, HttpStatusCode.Forbidden to "{}")
+        assertFailsWith<KubernetesApiException> { driver.deleteWorkspace(session) }
+    }
+
+    @Test
+    fun thePoliciesBlockPrivateRangesAndRestrictPorts() {
+        val restricted = SessionNetworkPolicy.manifest("r", restricted = true)
+        val egress = restricted["spec"]!!.jsonObject["egress"]!!.jsonArray
+        assertEquals(3, egress.size)
+        val internet = egress[2].jsonObject
+        val v4 = internet["to"]!!.jsonArray[0].jsonObject["ipBlock"]!!.jsonObject
+        assertEquals("0.0.0.0/0", v4["cidr"]!!.jsonPrimitive.content)
+        val blocked = v4["except"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue("10.0.0.0/8" in blocked && "169.254.0.0/16" in blocked && "172.16.0.0/12" in blocked && "192.168.0.0/16" in blocked)
+        assertEquals(listOf(80, 443, 22, 9418), internet["ports"]!!.jsonArray.map { it.jsonObject["port"]!!.jsonPrimitive.content.toInt() })
+        assertEquals("restricted", restricted["spec"]!!.jsonObject["podSelector"]!!.jsonObject["matchLabels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
+        assertEquals(0, restricted["spec"]!!.jsonObject["ingress"]!!.jsonArray.size)
+
+        val open = SessionNetworkPolicy.manifest("o", restricted = false)
+        assertNull(open["spec"]!!.jsonObject["egress"]!!.jsonArray[2].jsonObject["ports"])
+    }
+}

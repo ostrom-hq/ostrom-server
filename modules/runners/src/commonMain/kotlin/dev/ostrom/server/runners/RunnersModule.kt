@@ -24,11 +24,11 @@ import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerTokens
 import dev.ostrom.server.runners.domain.RuntimeDriver
 import dev.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
-import dev.ostrom.server.runners.infrastructure.DisabledRuntimeDriver
 import dev.ostrom.server.runners.infrastructure.ReconcilerWorker
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.infrastructure.RunnersMigrations
+import dev.ostrom.server.runners.infrastructure.RuntimeDrivers
 import dev.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
 import dev.ostrom.server.runners.presentation.cloudSessionsRoutes
 import io.ktor.server.routing.Route
@@ -52,7 +52,7 @@ object RunnersModule : ServerModule {
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
         single<RunnerTokens> { RunnerTokensImpl() }
         single<CloudPlanProvider> { FreeCloudPlanProvider() }
-        single<RuntimeDriver> { DisabledRuntimeDriver() }
+        single<RuntimeDriver> { RuntimeDrivers.create(get()) }
         single<CreateCloudSessionUseCase> { CreateCloudSessionUseCaseImpl(get(), get(), get()) }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
