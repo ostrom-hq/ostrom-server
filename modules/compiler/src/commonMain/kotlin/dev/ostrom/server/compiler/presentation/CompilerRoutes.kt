@@ -11,16 +11,12 @@ import dev.ostrom.server.compiler.domain.usecases.PreviewPackageUseCase
 import dev.ostrom.server.compiler.domain.usecases.PublishPackageUseCase
 import dev.ostrom.server.compiler.domain.usecases.RevokePackageUseCase
 import dev.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
-import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.kernel.auth.authenticated
-import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.ApplicationCall
-import io.ktor.server.plugins.origin
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -73,7 +69,7 @@ fun Route.compilerRoutes(dependencies: CompilerRoutesDependencies) {
 
 private fun Route.catalogRoutes(dependencies: CompilerRoutesDependencies) = with(dependencies) {
     get<GateCatalogApi> { params ->
-        val actor = actorOf(call)
+        val actor = actorOf(call, CompilerScopes.readingPackages)
         val entries = catalog(actor.orgId, params.repo)
         call.respond(
             buildJsonObject {
@@ -89,70 +85,77 @@ private fun Route.catalogRoutes(dependencies: CompilerRoutesDependencies) = with
 
 private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = with(dependencies) {
     get<PackagesApi.Current> { params ->
-        val actor = actorOf(call)
+        val actor = actorOf(call, CompilerScopes.readingPackages)
         val served = publish(actor.orgId, params.parent.repo, urlOf(call), actor.id)
         call.respond(served.envelope)
     }
     get<PackagesApi> { params ->
-        val actor = actorOf(call)
+        val actor = actorOf(call, CompilerScopes.readingPackages)
         call.respond(PackagesPage(repository.packages(actor.orgId, params.repo).map { summary(actor, it) }))
     }
     post<PackagesApi.Preview> {
-        val actor = actorOf(call)
+        val actor = actorOf(call, CompilerScopes.readingPackages)
         call.respond(preview(actor.orgId, call.receive<PreviewRequest>().repo, urlOf(call)))
     }
     get<PackagesApi.Audit> { params ->
-        val actor = actorOf(call)
+        val actor = actorOf(call, CompilerScopes.readingPackages)
         val limit = (params.limit ?: MAX_AUDIT).coerceIn(1, MAX_AUDIT)
         val lines = repository.auditLog(actor.orgId, limit)
         call.respond(AuditPage(lines.map { AuditEvent(it.id, it.at, it.event, it.actor, it.subject, it.meta) }))
     }
     get<PackagesApi.Digest> { params ->
-        val actor = actorOf(call)
+        val actor = actorOf(call, CompilerScopes.readingPackages)
         val stored = find(actor, params.digest)
         call.respond(stored.envelope.copy(pinned = pinned(actor, stored)))
     }
     get<PackagesApi.Digest.Status> { params ->
-        val actor = actorOf(call)
+        val actor = actorOf(call, CompilerScopes.readingPackages)
         call.respond(summary(actor, find(actor, params.parent.digest)))
     }
     post<PackagesApi.Digest.Revoke> { params ->
-        val actor = personOf(call)
+        val actor = personOf(call, CompilerScopes.writingPackages)
         val reason = call.receive<RevokeRequest>().reason
         call.respond(summary(actor, revoke.revoke(actor.orgId, params.parent.digest, actor.id, reason)))
     }
     post<PackagesApi.Digest.Restore> { params ->
-        val actor = personOf(call)
+        val actor = personOf(call, CompilerScopes.writingPackages)
         call.respond(summary(actor, revoke.restore(actor.orgId, params.parent.digest, actor.id)))
     }
 }
 
 private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = with(dependencies) {
     get<WorkflowsApi> { params ->
-        val actor = actorOf(call)
+        val actor = actorOf(call, CompilerScopes.readingWorkflows)
         val status = params.status?.let(::statusOf)
         call.respond(WorkflowsPage(workflows.list(actor.orgId, params.repo, status).map(::documentOf)))
     }
     post<WorkflowsApi> {
-        val actor = personOf(call)
-        val saved = workflows.save(actor.orgId, call.receive<JsonObject>(), null, actor.id, create = true)
+        val actor = personOf(call, CompilerScopes.writingWorkflows)
+        val body = call.receive<JsonObject>()
+        if (!call.decides()) onlyProposed(body)
+        val saved = workflows.save(actor.orgId, body, null, actor.id, create = true)
         call.respond(HttpStatusCode.Created, documentOf(saved))
     }
     get<WorkflowsApi.Id> { params ->
-        call.respond(documentOf(workflows.get(actorOf(call).orgId, params.id)))
+        call.respond(documentOf(workflows.get(actorOf(call, CompilerScopes.readingWorkflows).orgId, params.id)))
     }
     put<WorkflowsApi.Id> { params ->
-        val actor = personOf(call)
+        val actor = personOf(call, CompilerScopes.writingWorkflows)
         val body = call.receive<SaveWorkflowRequest>()
         val id = (body.workflow["id"] as? JsonPrimitive)?.content
         if (id != params.id) {
             throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
         }
+        if (!call.decides()) {
+            onlyProposed(body.workflow)
+            onlyProposed(workflows.get(actor.orgId, params.id).doc.raw)
+        }
         val saved = workflows.save(actor.orgId, body.workflow, body.expectedVersion, actor.id, create = false)
         call.respond(documentOf(saved))
     }
     delete<WorkflowsApi.Id> { params ->
-        val actor = personOf(call)
+        val actor = personOf(call, CompilerScopes.writingWorkflows)
+        if (!call.decides()) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
         workflows.delete(actor.orgId, params.id)
         call.respond(HttpStatusCode.NoContent)
     }
@@ -160,27 +163,6 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
 
 private const val MAX_AUDIT = 200
 private const val WAIT_SECONDS = 300
-
-private suspend fun CompilerRoutesDependencies.actorOf(call: ApplicationCall): GateActor =
-    actors.resolve(call.requirePrincipal())
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
-
-private suspend fun CompilerRoutesDependencies.personOf(call: ApplicationCall): GateActor =
-    actorOf(call).takeIf { it.kind == ActorKind.USER }
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "Only a person changes workflows and packages.")
-
-private fun CompilerRoutesDependencies.urlOf(call: ApplicationCall): String = serverUrlOf(publicUrl) {
-    call.request.origin.let { "${it.scheme}://${it.serverHost}:${it.serverPort}" }
-}
-
-/**
- * The address sessions call back.
- *
- * @param publicUrl `OSTROM_PUBLIC_URL`, when set.
- * @param origin The request's origin.
- * @return The public URL without its trailing slash, else the origin.
- */
-internal fun serverUrlOf(publicUrl: String?, origin: () -> String): String = publicUrl?.trimEnd('/') ?: origin()
 
 private suspend fun CompilerRoutesDependencies.find(actor: GateActor, digest: String): StoredPackage =
     repository.findPackage(actor.orgId, digest) ?: throw OstromException(ErrorKind.NOT_FOUND, "Package not found.")
