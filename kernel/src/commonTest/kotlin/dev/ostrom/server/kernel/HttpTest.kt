@@ -59,6 +59,8 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.CancellationException
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.delay
@@ -75,6 +77,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -139,7 +142,6 @@ class HttpTest {
             route.get("/a/{id}/{ticket}/{path...}") { call.respondText("page") }
             route.bodyLimit(SMALL_LIMIT) {
                 post("/probe/small") { call.respondText(call.receiveText()) }
-                get("/probe/upgrade") { call.respondText("[${call.receiveText()}]") }
             }
             route.bodyLimit(LARGE_LIMIT) {
                 post("/probe/large") { call.respondText("${call.receiveText().length}") }
@@ -538,24 +540,17 @@ class HttpTest {
     }
 
     @Test
-    fun anUpgradeWithoutABodyIsReadAsItIs() = probeServer {
-        // What the engine does with a WebSocket's stream: it goes through receive without being read to its end.
-        assertEquals("[]", client.get("/probe/upgrade") { header(HttpHeaders.Upgrade, "websocket") }.bodyAsText())
-    }
-
-    @Test
-    fun anUpgradeWithABodyIsStillCapped() = probeServer {
-        val refused = client.post("/probe/small") {
-            header(HttpHeaders.Upgrade, "websocket")
-            contentType(ContentType.Application.Json)
-            setBody("x".repeat(SMALL_LIMIT.toInt() + 1))
-        }
-        assertEquals(HttpStatusCode.PayloadTooLarge, refused.status)
+    fun aBodilessUpgradeKeepsItsStreamAndABodyIsCappedAllTheSame() = runTest {
+        // The engine hands a WebSocket's stream, which never ends, to the upgrade through receive: it is not read.
+        val stream = ByteChannel()
+        assertSame(stream, limitedBody(stream, 1, headersOf(HttpHeaders.Upgrade, "websocket")))
+        val withBody = headersOf(HttpHeaders.Upgrade to listOf("h2c"), HttpHeaders.ContentLength to listOf("5"))
+        assertFailsWith<PayloadTooLargeException> { limitedBody(ByteReadChannel("hello"), 1, withBody) }
     }
 
     @Test
     fun aBodyThatIsNotTheRequestChannelIsLeftAlone() = runTest {
-        assertEquals("already read", limitedBody("already read", 1, 100))
+        assertEquals("already read", limitedBody("already read", 1, headersOf(HttpHeaders.ContentLength, "100")))
     }
 
     @Test

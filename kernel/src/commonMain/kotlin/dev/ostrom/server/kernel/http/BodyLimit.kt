@@ -11,7 +11,6 @@ import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.plugins.PayloadTooLargeException
 import io.ktor.server.request.ApplicationReceivePipeline
-import io.ktor.server.request.contentLength
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RouteSelector
 import io.ktor.server.routing.RouteSelectorEvaluation
@@ -37,12 +36,7 @@ private val bodyLimitKey = AttributeKey<Long>("ostrom.body.limit")
  */
 val BodyLimit = createApplicationPlugin("BodyLimit") {
     on(ReceiveBody) { call, body ->
-        if (isBodilessUpgrade(call.request.headers)) {
-            body
-        } else {
-            val limit = call.attributes.getOrNull(bodyLimitKey) ?: DEFAULT_BODY_LIMIT
-            limitedBody(body, limit, call.request.contentLength())
-        }
+        limitedBody(body, call.attributes.getOrNull(bodyLimitKey) ?: DEFAULT_BODY_LIMIT, call.request.headers)
     }
 }
 
@@ -59,18 +53,20 @@ internal fun isBodilessUpgrade(headers: Headers): Boolean =
     HttpHeaders.Upgrade in headers && HttpHeaders.ContentLength !in headers && HttpHeaders.TransferEncoding !in headers
 
 /**
- * The body a route is given: [body] itself unless it is the raw request channel, which is read up to [limit] bytes.
+ * The body a route is given: [body] itself when it is not the raw request channel or when the request is a bodiless
+ * upgrade ([isBodilessUpgrade]), otherwise the channel read up to [limit] bytes.
  *
  * @param body The body as the receive pipeline has it.
  * @param limit The most bytes accepted.
- * @param declaredLength The request's `Content-Length`, if any.
+ * @param headers The request headers.
  *
  * @return The body, at most [limit] bytes.
  *
  * @throws PayloadTooLargeException When the declared or the actual length is over [limit].
  */
-internal suspend fun limitedBody(body: Any, limit: Long, declaredLength: Long?): Any {
-    if (body !is ByteReadChannel) return body
+internal suspend fun limitedBody(body: Any, limit: Long, headers: Headers): Any {
+    if (body !is ByteReadChannel || isBodilessUpgrade(headers)) return body
+    val declaredLength = headers[HttpHeaders.ContentLength]?.toLongOrNull()
     if (declaredLength != null && declaredLength > limit) throw PayloadTooLargeException(limit)
     val bytes = body.readRemaining(limit + 1).readByteArray()
     if (bytes.size > limit) throw PayloadTooLargeException(limit)
