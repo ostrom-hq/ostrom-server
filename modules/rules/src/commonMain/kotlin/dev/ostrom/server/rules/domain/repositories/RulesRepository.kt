@@ -22,6 +22,22 @@ interface RulesRepository {
     suspend fun rules(orgId: Uuid, query: RuleQuery, limit: Int): List<Rule>
 
     /**
+     * Lists the rules that put a gate on boundary actions and are not rejected, for the gates catalogue.
+     *
+     * @param orgId The organization.
+     * @return The rules, by id.
+     */
+    suspend fun gatedRules(orgId: Uuid): List<Rule>
+
+    /**
+     * Lists the last decision on each rule, for the receipts the rules harness cites.
+     *
+     * @param orgId The organization.
+     * @return One decision per rule still decided on, the latest.
+     */
+    suspend fun lastRuleDecisions(orgId: Uuid): List<Decision>
+
+    /**
      * Reads a rule.
      *
      * @param orgId The organization.

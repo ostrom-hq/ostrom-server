@@ -43,6 +43,24 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
             tx.fetchAll(statement).getOrThrow().map { it.toRule() }.filter { covers(it, query.repo) }
         }
 
+    override suspend fun gatedRules(orgId: Uuid): List<Rule> = driver.withOrganization(orgId) { tx ->
+        tx.fetchAll(
+            Statement.create(
+                "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org AND gate IS NOT NULL " +
+                    "AND status <> 'rejected' ORDER BY id",
+            ).bind("org", orgId),
+        ).getOrThrow().map { it.toRule() }
+    }
+
+    override suspend fun lastRuleDecisions(orgId: Uuid): List<Decision> = driver.withOrganization(orgId) { tx ->
+        tx.fetchAll(
+            Statement.create(
+                "SELECT DISTINCT ON (subject_id) $DECISION_COLUMNS FROM rules_decisions " +
+                    "WHERE org_id = :org AND subject_kind = 'rule' ORDER BY subject_id, decided_at DESC, id DESC",
+            ).bind("org", orgId),
+        ).getOrThrow().map { it.toDecision() }
+    }
+
     override suspend fun rule(orgId: Uuid, id: String): Rule? = driver.withOrganization(orgId) { tx ->
         tx.selectRule(orgId, id, lock = false)
     }

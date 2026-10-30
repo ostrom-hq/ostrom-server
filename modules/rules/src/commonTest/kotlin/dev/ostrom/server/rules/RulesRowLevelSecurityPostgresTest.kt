@@ -29,6 +29,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * The rules tables under the serving role, as a deployment connects (neither superuser nor `BYPASSRLS`, owning
@@ -125,6 +126,35 @@ class RulesRowLevelSecurityPostgresTest {
         assertEquals(bare, rules.rule(orgA, "rule_bare"))
         rules.transaction(orgA) { updateRule(written.copy(statement = "Changed", gate = null)) }
         assertEquals(written.copy(statement = "Changed", gate = null), rules.rule(orgA, "rule_full"))
+    }
+
+    @Test
+    fun theCompilerReadsOnlyItsOrganizationsGatesAndLastDecisions() = asServingRole { _, rules, _ ->
+        val push = RuleGateAction("push-main", "Push", emptyList(), emptyList(), null)
+        val gate = RuleGate(listOf(push), listOf("mia"), null)
+        rules.transaction(orgA) {
+            insertRule(RulesFixtures.rule("rule_b", status = RuleStatus.ACCEPTED).copy(gate = gate))
+            insertRule(RulesFixtures.rule("rule_a").copy(gate = gate))
+            insertRule(RulesFixtures.rule("rule_no", status = RuleStatus.REJECTED).copy(gate = gate))
+            insertRule(RulesFixtures.rule("rule_plain", status = RuleStatus.ACCEPTED))
+            insertDecision(decision("dec_1", orgA).copy(subject = DecisionSubject("rule", "rule_a", null)))
+            insertDecision(
+                decision("dec_2", orgA).copy(
+                    at = RulesFixtures.epoch + 1.minutes,
+                    subject = DecisionSubject("rule", "rule_a", null),
+                ),
+            )
+            insertDecision(decision("dec_3", orgA).copy(subject = DecisionSubject("rule", "rule_b", null)))
+            insertDecision(decision("dec_p", orgA).copy(subject = DecisionSubject("policy", "self-approval", null)))
+        }
+        rules.transaction(orgB) {
+            insertRule(RulesFixtures.rule("rule_c", orgB, status = RuleStatus.ACCEPTED).copy(gate = gate))
+            insertDecision(decision("dec_b", orgB))
+        }
+        assertEquals(listOf("rule_a", "rule_b"), rules.gatedRules(orgA).map { it.id }, "Rejected or gateless: no gate")
+        assertEquals(listOf("rule_c"), rules.gatedRules(orgB).map { it.id })
+        assertEquals(listOf("dec_2", "dec_3"), rules.lastRuleDecisions(orgA).map { it.id }, "The last one per rule")
+        assertEquals(listOf("dec_b"), rules.lastRuleDecisions(orgB).map { it.id })
     }
 
     @Test

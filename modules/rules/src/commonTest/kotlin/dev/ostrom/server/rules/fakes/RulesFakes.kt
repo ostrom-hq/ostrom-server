@@ -115,6 +115,15 @@ class FakeRulesRepository : RulesRepository {
         return rules.values.filter { it.orgId == orgId }.sortedBy { it.group + it.id }.take(limit)
     }
 
+    override suspend fun gatedRules(orgId: Uuid): List<Rule> = rules.values
+        .filter { it.orgId == orgId && it.gate != null && it.status != RuleStatus.REJECTED }
+        .sortedBy { it.id }
+
+    override suspend fun lastRuleDecisions(orgId: Uuid): List<Decision> = decisions
+        .filter { it.orgId == orgId && it.subject.kind == "rule" }
+        .groupBy { it.subject.id }
+        .map { (_, all) -> all.maxWith(compareBy<Decision> { it.at }.thenBy { it.id }) }
+
     override suspend fun rule(orgId: Uuid, id: String): Rule? = rules[orgId to id]
 
     override suspend fun decisions(orgId: Uuid, query: DecisionQuery): List<Decision> =
