@@ -102,15 +102,15 @@ class WaitsMcpTest {
             val listed = client.call("list_waits", "{}").text()
             assertTrue(listed.startsWith("$id  open  Which region?"), listed)
             assertEquals("No waits.", client.call("list_waits", """{"status":"cancelled"}""").text())
-            assertEquals("No waits.", client.call("list_waits", "{}", path = "$MCP?session=s2").text())
+            assertEquals("No waits.", client.call("list_waits", "{}", path = OTHER_SESSION).text())
             val read = Json.parseToJsonElement(client.call("get_wait", """{"wait":"$id"}""").text()).jsonObject
             assertEquals("s1", read.getValue("sessionId").jsonPrimitive.content)
             assertEquals("r1", read.getValue("runId").jsonPrimitive.content)
 
-            val elsewhere = client.call("get_wait", """{"wait":"$id"}""", path = "$MCP?session=s2")
+            val elsewhere = client.call("get_wait", """{"wait":"$id"}""", path = OTHER_SESSION)
             assertTrue(elsewhere.isError())
             assertEquals("Wait not found.", elsewhere.text())
-            assertTrue(client.call("cancel_wait", """{"wait":"$id"}""", path = "$MCP?session=s2").isError())
+            assertTrue(client.call("cancel_wait", """{"wait":"$id"}""", path = OTHER_SESSION).isError())
             assertTrue(client.call("get_wait", """{"wait":"nope"}""").isError())
 
             assertEquals("Cancelled wait $id.", client.call("cancel_wait", """{"wait":"$id"}""").text())
@@ -125,5 +125,6 @@ class WaitsMcpTest {
 
     private companion object {
         const val MCP = "/api/v1/waits/mcp?session=s1&run=r1"
+        const val OTHER_SESSION = "/api/v1/waits/mcp?session=s2&run=r1"
     }
 }

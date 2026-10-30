@@ -156,7 +156,7 @@ class WaitRulesTest {
             "many" to "[\"a\",\"b\"]",
             "yes" to "false",
             "count" to "-2.5",
-            "day" to "2024-02-29",
+            "day" to "\"2024-02-29\"",
             "note" to "null",
         )
         answer("approve", "many" to "[]", "text" to "null", "other" to "\"a\"")
