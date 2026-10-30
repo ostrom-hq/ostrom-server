@@ -155,6 +155,38 @@ class NetworkTest {
         assertEquals("10.0.0.5", proxies.clientAddress("10.0.0.5", listOf(" , ")))
     }
 
+    private val cloudflare = TrustedProxies.parse("10.0.0.0/8", "CF-Connecting-IP")
+
+    @Test
+    fun behindATrustedProxyTheClientAddressHeaderWins() {
+        assertEquals("CF-Connecting-IP", cloudflare.clientHeader)
+        assertEquals("203.0.113.7", cloudflare.clientAddress("10.0.0.5", listOf("10.1.1.1"), " 203.0.113.7 "))
+        assertEquals("2001:db8::7", cloudflare.clientAddress("10.0.0.5", emptyList(), "2001:DB8:0::7"))
+        // Absent or unreadable, the header gives way to X-Forwarded-For.
+        assertEquals("198.51.100.1", cloudflare.clientAddress("10.0.0.5", listOf("198.51.100.1"), null))
+        assertEquals("198.51.100.1", cloudflare.clientAddress("10.0.0.5", listOf("198.51.100.1"), "unknown"))
+    }
+
+    @Test
+    fun fromAnUntrustedPeerTheClientAddressHeaderIsIgnored() {
+        assertEquals("203.0.113.9", cloudflare.clientAddress("203.0.113.9", listOf("1.1.1.1"), "6.6.6.6"))
+    }
+
+    @Test
+    fun readsTheClientAddressHeaderSetting() {
+        assertNull(proxies.clientHeader)
+        assertNull(TrustedProxies.parse("10.0.0.0/8", " ").clientHeader)
+        assertNull(TrustedProxies.parse(null, null).clientHeader)
+        val badName = assertFailsWith<InvalidConfigException> { TrustedProxies.parse("10.0.0.0/8", "CF Connecting") }
+        assertEquals("OSTROM_CLIENT_ADDRESS_HEADER: 'CF Connecting' is not a header name.", badName.message)
+        // Without a trusted proxy the header would never be read: refusing says so at start.
+        val alone = assertFailsWith<InvalidConfigException> { TrustedProxies.parse(null, "CF-Connecting-IP") }
+        assertEquals(
+            "OSTROM_CLIENT_ADDRESS_HEADER needs OSTROM_TRUSTED_PROXIES: the header is only read from a trusted proxy.",
+            alone.message,
+        )
+    }
+
     @Test
     fun readsTheTrustedProxiesSetting() {
         assertSame(TrustedProxies.NONE, TrustedProxies.parse(null))
