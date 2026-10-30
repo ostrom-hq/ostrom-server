@@ -80,8 +80,9 @@ class ReceiptsGateSigner(
     internal fun preimage(gate: Gate): JsonObject {
         val subject = gate.subject
         val pr = subject.pullRequest
+        val node = gate.node
         return SubjectPreimages.gate(
-            gate = gate.node?.let(::nodeJson) ?: JsonNull,
+            gate = if (node == null) JsonNull else nodeJson(node),
             cls = subject.actionClass,
             command = subject.command,
             repo = subject.repo,
