@@ -48,7 +48,7 @@ data class HeartbeatAnswer(
  * authentication, so without this a forged `Authorization` header would make the server read and parse a body
  * (SECURITY-AUDIT S2-46).
  */
-interface AuthenticateRunnerUseCase {
+interface CheckRunnerTokenUseCase {
     /**
      * Checks a token.
      *
@@ -60,15 +60,15 @@ interface AuthenticateRunnerUseCase {
 }
 
 /**
- * [AuthenticateRunnerUseCase] on the repository.
+ * [CheckRunnerTokenUseCase] on the repository.
  *
  * @param repository The sessions.
  * @param tokens Hashes the presented token.
  */
-class AuthenticateRunnerUseCaseImpl(
+class CheckRunnerTokenUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val tokens: RunnerTokens,
-) : AuthenticateRunnerUseCase {
+) : CheckRunnerTokenUseCase {
     override suspend fun invoke(token: String) {
         repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
     }

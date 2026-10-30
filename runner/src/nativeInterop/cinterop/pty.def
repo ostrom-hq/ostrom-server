@@ -1,0 +1,49 @@
+package = dev.ostrom.runner.pty
+headers = stdlib.h
+linkerOpts.linux = -lutil
+---
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/ioctl.h>
+#include <termios.h>
+#ifdef __APPLE__
+#include <util.h>
+#else
+#include <pty.h>
+#endif
+
+/*
+ * Starts `file` with `argv` and `envp` in a new session on a new PTY of `columns` x `rows`, in `dir`. Everything
+ * between fork and exec runs here, in C: the Kotlin runtime never runs in the child.
+ * Returns the child's pid (and the PTY's master in *master), or -1.
+ */
+static inline int ostrom_pty_spawn(const char *file, char *const argv[], char *const envp[], const char *dir,
+                                   int columns, int rows, int *master) {
+    struct winsize size = {0};
+    size.ws_col = (unsigned short) columns;
+    size.ws_row = (unsigned short) rows;
+    pid_t pid = forkpty(master, NULL, NULL, &size);
+    if (pid == 0) {
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        signal(SIGPIPE, SIG_DFL);
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
+        if (dir != NULL && chdir(dir) != 0) _exit(126);
+        execve(file, argv, envp);
+        _exit(127);
+    }
+    return pid;
+}
+
+/* Sets the PTY's size; the kernel sends SIGWINCH to its foreground process group. */
+static inline int ostrom_pty_resize(int master, int columns, int rows) {
+    struct winsize size = {0};
+    size.ws_col = (unsigned short) columns;
+    size.ws_row = (unsigned short) rows;
+    return ioctl(master, TIOCSWINSZ, &size);
+}

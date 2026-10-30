@@ -82,7 +82,7 @@ private fun Route.runnerChannelRoutes(dependencies: CloudSessionsRoutesDependenc
         post<RunnerHeartbeatApi> {
             val token = call.runnerToken()
             // The token first, the body after (S2-46): an unknown token never makes the server read a byte.
-            authenticateRunner(token)
+            checkRunnerToken(token)
             val request = call.receive<RunnerHeartbeatRequest>()
             val heartbeat = RunnerHeartbeat(
                 sessionId = parseId(request.sessionId),
