@@ -107,7 +107,7 @@ class GateBench {
         answer: Answer = Answer.YES,
         actor: GateActor = user(approver),
     ) = this.answer(
-        actor,
+        actor.copy(authenticatedAt = actor.authenticatedAt ?: clock.now()),
         view.requests.first { it.approverId.equals(approver, ignoreCase = true) }.id,
         answer,
         view.gate.shownDigest,

@@ -28,6 +28,8 @@ import dev.ostrom.server.gates.presentation.Approval
 import dev.ostrom.server.gates.presentation.ApprovalAnswer
 import dev.ostrom.server.gates.presentation.ApprovalsPage
 import dev.ostrom.server.gates.presentation.GateAskRequest
+import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
+import dev.ostrom.server.gates.presentation.GatePush as PushDto
 import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.gates.presentation.GateScopes
@@ -57,10 +59,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
-import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
-import dev.ostrom.server.gates.presentation.GatePush as PushDto
 
 /** The gates against a real PostgreSQL and real HTTP: every parcours of a gate, and the isolation of organizations. */
 class GatesPostgresTest {
@@ -76,17 +78,21 @@ class GatesPostgresTest {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
-                    "user" -> AuthenticatedPrincipal(
+                    // A browser session signed in just now; `stale` signed in ten minutes ago (S2-54).
+                    "user", "stale" -> AuthenticatedPrincipal(
                         token,
                         PrincipalKind.USER,
                         setOf(GateScopes.ALL_USER),
                         PrincipalChannel.BROWSER,
+                        Clock.System.now() - if (token.startsWith("stale")) 10.minutes else 0.minutes,
                     )
+                    // The app: the biometric unlock is its fresh proof.
                     "app" -> AuthenticatedPrincipal(
                         token,
                         PrincipalKind.USER,
                         setOf(GateScopes.ANSWER),
                         PrincipalChannel.MOBILE_APP,
+                        Clock.System.now(),
                     )
                     // A personal token of the CLI: a person's, with every scope, yet readable by the agent (S2-31).
                     "cli" ->
@@ -111,7 +117,7 @@ class GatesPostgresTest {
                     val (kind, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
-                        "user", "reader", "app", "cli" -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        "user", "reader", "app", "cli", "stale" -> GateActor(id, orgId, ActorKind.USER, personId = id)
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
                         "runner" -> GateActor(id, orgId, ActorKind.SERVICE, personId = "lyes")
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
@@ -518,6 +524,17 @@ class GatesPostgresTest {
         val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
         assertEquals("pending", still.gate.status)
         assertEquals(HttpStatusCode.OK, server.answer("app:a:rev-b", opened, "rev-b").status, "the app, unlocked")
+    }
+
+    @Test
+    fun s254ABrowserSessionOlderThanFiveMinutesSignsInAgainBeforeAYes() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val stale = server.answer("stale:a:rev-b", opened, "rev-b")
+        assertEquals(HttpStatusCode.Forbidden, stale.status)
+        assertTrue(stale.bodyAsText().contains("Sign in again"))
+        val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
+        assertEquals("pending", still.gate.status)
+        assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status, "signed in just now")
     }
 
     @Test
