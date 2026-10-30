@@ -82,12 +82,12 @@ class OrgsRoutesPostgresTest {
         return user to koin.get<StartWebSessionUseCase>()(user.id)
     }
 
-    // What the console sends (S2-08, #58): the session cookie, the readable CSRF cookie, the same token in
-    // X-CSRF-Token, and its Origin (the default console URL).
     private fun HttpRequestBuilder.session(started: StartedSession) {
+        // #58: a browser write needs the CSRF header repeating the readable cookie (double submit), from the console's
+        // origin (the default console URL of the test configuration).
         header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}; $CSRF_COOKIE=${started.csrfToken}")
         header(CSRF_HEADER, started.csrfToken)
-        header(HttpHeaders.Origin, "http://localhost:5173")
+        header(HttpHeaders.Origin, CONSOLE_ORIGIN)
     }
 
     private fun HttpRequestBuilder.json(body: Any) {
@@ -507,3 +507,5 @@ class OrgsRoutesPostgresTest {
             assertEquals(HttpStatusCode.PaymentRequired, sixth.status)
         }
 }
+
+private const val CONSOLE_ORIGIN = "http://localhost:5173"

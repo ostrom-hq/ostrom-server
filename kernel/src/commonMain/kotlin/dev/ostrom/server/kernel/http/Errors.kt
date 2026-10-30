@@ -73,7 +73,7 @@ fun Application.configureErrors(logger: Logger) {
 private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logger) {
     val fields = mapOf("request_id" to callId)
     when (cause) {
-        is OstromException -> respondError(cause.kind, cause.message)
+        is OstromException -> respond(cause.kind.httpStatus, ApiError(ErrorDetail(cause.type, cause.message)))
         is PayloadTooLargeException -> respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
         // No converter for the request's Content-Type: `receive` throws CannotTransformContentToTypeException, a
         // sibling of UnsupportedMediaTypeException under this base (PayloadTooLargeException too, matched above).
