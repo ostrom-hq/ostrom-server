@@ -34,14 +34,17 @@ class UsageQueryPlansTest {
     private val account = Uuid.parse("000000ac-0000-0000-0000-000000000001")
 
     /** [count] model events of [org] over the last 60 days, across 30 members, a third of them on [account]. */
-    private fun seed(org: Uuid, count: Int) =
-        "INSERT INTO usage_events (id, org_id, member_id, kind, name, provider, " +
-            "account_id, session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, " +
-            "cost_micros, " +
-            "duration_ms, outcome, at) SELECT gen_random_uuid(), '$org', CASE WHEN i % 30 = 0 " +
-            "THEN '${TestCallers.memberA.memberId}'::uuid ELSE md5('m' || (i % 30))::uuid END, 'MODEL', 'claude', " +
-            "'anthropic', CASE WHEN i % 3 = 0 THEN '$account'::uuid END, NULL, 10, 10, 0, 0, i % 1000, 5, 'ok', " +
-            "TIMESTAMPTZ '${TestCallers.epoch}' - (i % 1440) * INTERVAL '1 hour' FROM generate_series(1, $count) AS i"
+    private fun seed(org: Uuid, count: Int): String {
+        val member = TestCallers.memberA.memberId
+        // No `::` cast and no colon at all: the driver would read `:x` as a named parameter.
+        return "INSERT INTO usage_events (id, org_id, member_id, kind, name, provider, account_id, session_id, " +
+            "input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, " +
+            "at) SELECT gen_random_uuid(), CAST('$org' AS uuid), CASE WHEN i % 30 = 0 THEN CAST('$member' AS uuid) " +
+            "ELSE CAST(md5('m' || (i % 30)) AS uuid) END, 'MODEL', 'claude', 'anthropic', " +
+            "CASE WHEN i % 3 = 0 THEN CAST('$account' AS uuid) END, NULL, 10, 10, 0, 0, i % 1000, 5, 'ok', " +
+            "to_timestamp(${TestCallers.epoch.epochSeconds}) - (i % 1440) * INTERVAL '1 hour' " +
+            "FROM generate_series(1, $count) AS i"
+    }
 
     @Test
     fun theLedgersRequestPathReadsUseTheirIndexes() =
