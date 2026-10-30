@@ -350,9 +350,12 @@ class BudgetGuardTest {
         // An untimed pass first: on the JVM the first calls also pay class loading and the JIT, not the cache.
         repeat(10_000) { guard.check(orgA, member) }
 
-        val mark = TimeSource.Monotonic.markNow()
-        repeat(10_000) { guard.check(orgA, member) }
-        val elapsed = mark.elapsedNow()
+        // The best of five passes: the cost of the cache, not a pause of the shared CI runner.
+        val elapsed = List(5) {
+            val mark = TimeSource.Monotonic.markNow()
+            repeat(10_000) { guard.check(orgA, member) }
+            mark.elapsedNow()
+        }.min()
 
         assertTrue(elapsed < 50.milliseconds, "10 000 cached checks took $elapsed")
         assertEquals(1, repository.limitReads)

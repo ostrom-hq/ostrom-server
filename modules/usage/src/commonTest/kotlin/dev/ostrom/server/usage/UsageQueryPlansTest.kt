@@ -5,6 +5,7 @@ import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
+import dev.ostrom.server.testing.serverTest
 import dev.ostrom.server.usage.domain.UsageGroupBy
 import dev.ostrom.server.usage.infrastructure.UsageQueries
 import io.github.smyrgeorge.sqlx4k.Driver
