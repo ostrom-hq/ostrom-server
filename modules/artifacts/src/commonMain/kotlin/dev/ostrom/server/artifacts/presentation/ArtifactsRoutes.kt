@@ -2,15 +2,9 @@
 package dev.ostrom.server.artifacts.presentation
 
 import dev.ostrom.server.artifacts.domain.Artifact
-import dev.ostrom.server.artifacts.domain.ArtifactLocations
 import dev.ostrom.server.artifacts.domain.ArtifactNotFoundException
 import dev.ostrom.server.artifacts.domain.ArtifactVersion
 import dev.ostrom.server.artifacts.domain.InvalidArtifactRequestException
-import dev.ostrom.server.artifacts.domain.ManageArtifactUseCase
-import dev.ostrom.server.artifacts.domain.PublishArtifactUseCase
-import dev.ostrom.server.artifacts.domain.ReadArtifactsUseCase
-import dev.ostrom.server.artifacts.domain.ViewArtifactUseCase
-import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.OstromJson
@@ -32,25 +26,6 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import kotlinx.serialization.SerializationException
 import kotlin.uuid.Uuid
-
-/**
- * What the artifact routes need.
- *
- * @property publish Publishes artifacts and versions.
- * @property read Reads them.
- * @property manage Changes settings and shares, deletes.
- * @property view Mints tickets and serves pages.
- * @property locations Where artifacts are read.
- * @property orgResolver The member a request acts for.
- */
-data class ArtifactsRoutesDependencies(
-    val publish: PublishArtifactUseCase,
-    val read: ReadArtifactsUseCase,
-    val manage: ManageArtifactUseCase,
-    val view: ViewArtifactUseCase,
-    val locations: ArtifactLocations,
-    val orgResolver: PrincipalOrgResolver,
-)
 
 /**
  * The artifact API under `/api/v1/artifacts`, for members and their CLI, agents and apps.
