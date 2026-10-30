@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets
 
 import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -9,19 +9,19 @@ import dev.ostrom.server.secrets.domain.CreateSecretUseCase
 import dev.ostrom.server.secrets.domain.CreateSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.DeleteSecretUseCase
 import dev.ostrom.server.secrets.domain.DeleteSecretUseCaseImpl
-import dev.ostrom.server.secrets.domain.ListSecretsUseCase
-import dev.ostrom.server.secrets.domain.ListSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.FindSecretUseCase
 import dev.ostrom.server.secrets.domain.FindSecretUseCaseImpl
+import dev.ostrom.server.secrets.domain.ListSecretsUseCase
+import dev.ostrom.server.secrets.domain.ListSecretsUseCaseImpl
+import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
-import dev.ostrom.server.secrets.domain.SecretDirectoryUseCase
-import dev.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.RotateSecretUseCase
 import dev.ostrom.server.secrets.domain.RotateSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.SecretCipher
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCase
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import dev.ostrom.server.secrets.domain.SecretsRepository
-import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.secrets.infrastructure.SecretsKey
 import dev.ostrom.server.secrets.infrastructure.SecretsMigrations
@@ -41,7 +41,9 @@ object SecretsModule : ServerModule {
     override val name: String = "secrets"
 
     override val koinModule: Module = module {
-        single<SecretCipher> { AesGcmSecretCipher(SecretsKey.load(getOrNull<ConfigSource>() ?: EnvironmentConfigSource())) }
+        single<SecretCipher> {
+            AesGcmSecretCipher(SecretsKey.load(get<ConfigSource>()))
+        }
         single<SecretsRepository> { SecretsRepositoryImpl(get()) }
         single<CreateSecretUseCase> { CreateSecretUseCaseImpl(get(), get(), get()) }
         single<ListSecretsUseCase> { ListSecretsUseCaseImpl(get()) }
@@ -50,7 +52,16 @@ object SecretsModule : ServerModule {
         single<RevealSecretsUseCase> { RevealSecretsUseCaseImpl(get(), get()) }
         single<FindSecretUseCase> { FindSecretUseCaseImpl(get()) }
         single<SecretDirectoryUseCase> { SecretDirectoryUseCaseImpl(get()) }
-        single { SecretsRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get(), get(), get(), get(), get()) }
+        single {
+            SecretsRoutesDependencies(
+                getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+            )
+        }
     }
 
     override val migrations: List<SchemaMigration> = SecretsMigrations

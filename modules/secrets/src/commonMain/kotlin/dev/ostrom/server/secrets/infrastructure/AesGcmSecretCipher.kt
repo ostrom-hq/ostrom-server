@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets.infrastructure
 
 import dev.ostrom.server.secrets.domain.SecretCipher
@@ -30,23 +31,26 @@ class AesGcmSecretCipher(key: ByteArray) : SecretCipher {
     }
 
     override suspend fun open(envelope: String, context: String): ByteArray? {
-        if (!envelope.startsWith(PREFIX) || context.isBlank()) return null
-        val bytes = try {
-            base64.decode(envelope.substring(PREFIX.length))
-        } catch (_: IllegalArgumentException) {
-            return null
-        }
-        if (bytes.size < NONCE_BYTES + TAG_BYTES) return null
-        return try {
-            cipher.decrypt(bytes, context.encodeToByteArray())
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            // OpenSSL reports a failed tag check as a provider exception: a wrong key, context or a tampered envelope.
-            null
-        }
+        val bytes = if (envelope.startsWith(PREFIX) && context.isNotBlank()) decodeOrNull(envelope) else null
+        return bytes?.takeIf { it.size >= NONCE_BYTES + TAG_BYTES }?.let { decryptOrNull(it, context) }
     }
 
+    private fun decodeOrNull(envelope: String): ByteArray? = try {
+        base64.decode(envelope.substring(PREFIX.length))
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+
+    private suspend fun decryptOrNull(bytes: ByteArray, context: String): ByteArray? = try {
+        cipher.decrypt(bytes, context.encodeToByteArray())
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        // OpenSSL reports a failed tag check as a provider exception: a wrong key, context or a tampered envelope.
+        null
+    }
+
+    /** The envelope's format. */
     companion object {
         /** The key size, in bytes. */
         const val KEY_BYTES: Int = 32

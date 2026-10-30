@@ -1,15 +1,20 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets
 
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.secrets.infrastructure.SecretsKey
+import dev.ostrom.server.secrets.infrastructure.createOwnerOnlyFile
+import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.files.SystemTemporaryDirectory
+import kotlinx.io.readString
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -48,5 +53,36 @@ class SecretsKeyTest {
     fun malformedKeysStopTheStart() {
         assertFailsWith<InvalidConfigException> { SecretsKey.decode("not base64 !", "x") }
         assertFailsWith<InvalidConfigException> { SecretsKey.decode("AAAA", "x") }
+    }
+
+    @Test
+    fun anExistingKeyFileIsNeverOverwritten() {
+        val path = Path(SystemTemporaryDirectory, "ostrom-secrets-${Uuid.random()}.key").toString()
+        try {
+            assertTrue(createOwnerOnlyFile(path, "first"))
+            assertFalse(createOwnerOnlyFile(path, "second"), "A second writer loses")
+            assertEquals("first", SystemFileSystem.source(Path(path)).buffered().use { it.readString() })
+        } finally {
+            SystemFileSystem.delete(Path(path), mustExist = false)
+        }
+    }
+
+    @Test
+    fun blankVariablesFallBackToTheDefaultFile() =
+        assertTheDefaultFileIsUsed(mapOf(SecretsKey.KEY_VARIABLE to " ", SecretsKey.FILE_VARIABLE to " "))
+
+    @Test
+    fun noVariablesFallBackToTheDefaultFile() = assertTheDefaultFileIsUsed(emptyMap())
+
+    private fun assertTheDefaultFileIsUsed(variables: Map<String, String>) {
+        // A bare file name: the key file has no parent directory to create.
+        val path = "ostrom-secrets-${Uuid.random()}.key"
+        try {
+            val created = SecretsKey.load(MapConfigSource(variables), defaultFile = path)
+            assertEquals(32, created.size)
+            assertTrue(SystemFileSystem.exists(Path(path)))
+        } finally {
+            SystemFileSystem.delete(Path(path), mustExist = false)
+        }
     }
 }

@@ -1,16 +1,14 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets.infrastructure
 
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.AES
-import kotlinx.cinterop.convert
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readString
-import kotlinx.io.writeString
-import platform.posix.chmod
 import kotlin.io.encoding.Base64
 
 /**
@@ -32,24 +30,30 @@ object SecretsKey {
      * Reads the key, or creates the file the first time.
      *
      * @param config The configuration.
+     * @param defaultFile The key file when [FILE_VARIABLE] is not set (tests use a temporary one).
      *
      * @return The 32-byte key.
      *
      * @throws InvalidConfigException When a configured key is not base64 of 32 bytes.
      */
-    fun load(config: ConfigSource): ByteArray {
-        config[KEY_VARIABLE]?.takeIf { it.isNotBlank() }?.let { return decode(it, KEY_VARIABLE) }
-        val path = config[FILE_VARIABLE]?.takeIf { it.isNotBlank() } ?: DEFAULT_FILE
+    fun load(config: ConfigSource, defaultFile: String = DEFAULT_FILE): ByteArray {
+        val inline = config[KEY_VARIABLE]
+        if (!inline.isNullOrBlank()) return decode(inline, KEY_VARIABLE)
+        val file = config[FILE_VARIABLE]
+        return loadFile(if (file.isNullOrBlank()) defaultFile else file)
+    }
+
+    private fun loadFile(path: String): ByteArray {
         val file = Path(path)
-        if (SystemFileSystem.exists(file)) {
-            return decode(SystemFileSystem.source(file).buffered().use { it.readString() }, path)
+        if (!SystemFileSystem.exists(file)) {
+            val key = CryptographyProvider.Default.get(AES.GCM).keyGenerator(AES.Key.Size.B256).generateKeyBlocking()
+                .encodeToByteArrayBlocking(AES.Key.Format.RAW)
+            file.parent?.let { SystemFileSystem.createDirectories(it) }
+            // Created with mode 0600, never over an existing file: when another replica creates it at the same time,
+            // the first file wins and every replica reads it back.
+            createOwnerOnlyFile(path, Base64.encode(key) + "\n")
         }
-        val key = CryptographyProvider.Default.get(AES.GCM).keyGenerator(AES.Key.Size.B256).generateKeyBlocking()
-            .encodeToByteArrayBlocking(AES.Key.Format.RAW)
-        file.parent?.let { SystemFileSystem.createDirectories(it) }
-        SystemFileSystem.sink(file).buffered().use { it.writeString(Base64.encode(key) + "\n") }
-        chmod(path, OWNER_READ_WRITE.convert())
-        return key
+        return decode(SystemFileSystem.source(file).buffered().use { it.readString() }, path)
     }
 
     /**
@@ -68,9 +72,11 @@ object SecretsKey {
         } catch (_: IllegalArgumentException) {
             throw InvalidConfigException("$origin is not base64.")
         }
-        if (key.size != AesGcmSecretCipher.KEY_BYTES) throw InvalidConfigException("$origin must hold 32 bytes (base64).")
+        if (key.size !=
+            AesGcmSecretCipher.KEY_BYTES
+        ) {
+            throw InvalidConfigException("$origin must hold 32 bytes (base64).")
+        }
         return key
     }
-
-    private const val OWNER_READ_WRITE = 0x180 // 0600
 }

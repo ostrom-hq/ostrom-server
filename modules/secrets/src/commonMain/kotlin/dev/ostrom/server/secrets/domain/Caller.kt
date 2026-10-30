@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets.domain
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -38,7 +39,8 @@ data class Caller(val orgId: Uuid, val memberId: Uuid, val role: MemberRole) {
 
 /**
  * Turns a principal into the member it acts for. The modules use [OrgPrincipalCallerResolver], on the kernel's
- * [PrincipalOrgResolver]: until identity binds it, the kernel's default refuses everyone, so no route is open by mistake.
+ * [PrincipalOrgResolver]: until identity binds it, the kernel's default refuses everyone, so no route is open by
+ * mistake.
  */
 interface CallerResolver {
     /**
@@ -64,17 +66,18 @@ class UnresolvedCallerResolver : CallerResolver {
  * @param orgs The kernel's resolver.
  */
 class OrgPrincipalCallerResolver(private val orgs: PrincipalOrgResolver) : CallerResolver {
-    override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? = orgs.resolve(principal, orgId)?.let {
-        Caller(
-            orgId = it.orgId,
-            memberId = it.memberId,
-            role = when (it.role) {
-                OrgRole.OWNER -> MemberRole.OWNER
-                OrgRole.ADMIN -> MemberRole.ADMIN
-                OrgRole.MEMBER, OrgRole.APPROVER, OrgRole.BILLING -> MemberRole.MEMBER
-            },
-        )
-    }
+    override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
+        orgs.resolve(principal, orgId)?.let {
+            Caller(
+                orgId = it.orgId,
+                memberId = it.memberId,
+                role = when (it.role) {
+                    OrgRole.OWNER -> MemberRole.OWNER
+                    OrgRole.ADMIN -> MemberRole.ADMIN
+                    OrgRole.MEMBER, OrgRole.APPROVER, OrgRole.BILLING -> MemberRole.MEMBER
+                },
+            )
+        }
 }
 
 /** The caller is not a member of the org: answered like an unknown org, so existence does not leak. */

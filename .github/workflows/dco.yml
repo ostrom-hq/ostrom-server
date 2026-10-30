@@ -1,0 +1,45 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: dco-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Every commit is signed off
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+        run: |
+          # Maintainers (write access or more) have signed the DCO once for all; bots do not hold copyright.
+          # The permission is read from the API: author_association says CONTRIBUTOR for a private org membership.
+          if [ "$AUTHOR_TYPE" = "Bot" ]; then echo "dco: bot author"; exit 0; fi
+          perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$AUTHOR/permission" --jq .permission 2>/dev/null || echo none)
+          case "$perm" in admin|maintain|write) echo "dco: $AUTHOR is a maintainer ($perm)"; exit 0;; esac
+          missing=0
+          while IFS=$'\t' read -r sha email msg; do
+            if ! printf '%s' "$msg" | base64 -d | grep -i '^Signed-off-by: ' | grep -qiF "<$email>"; then
+              echo "::error::commit ${sha:0:12} has no 'Signed-off-by: ... <$email>' line"
+              missing=1
+            fi
+          done < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/commits" --paginate \
+            --jq '.[] | select(.parents | length == 1) | [.sha, .commit.author.email, (.commit.message | @base64)] | @tsv')
+          if [ "$missing" = 1 ]; then
+            echo "Sign off with: git rebase --signoff origin/main && git push --force-with-lease (see CONTRIBUTING.md)"
+            exit 1
+          fi
+          echo "dco: every commit is signed off"

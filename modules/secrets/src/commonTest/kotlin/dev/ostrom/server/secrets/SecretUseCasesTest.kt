@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets
 
 import dev.ostrom.server.secrets.domain.AdminRequiredException
@@ -6,7 +7,6 @@ import dev.ostrom.server.secrets.domain.CreateSecretPayload
 import dev.ostrom.server.secrets.domain.CreateSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.DeleteSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.FindSecretUseCaseImpl
-import dev.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import dev.ostrom.server.secrets.domain.InvalidSecretException
 import dev.ostrom.server.secrets.domain.ListSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.MemberRole
@@ -14,6 +14,7 @@ import dev.ostrom.server.secrets.domain.RevealSecretsUseCaseImpl
 import dev.ostrom.server.secrets.domain.RotateSecretUseCaseImpl
 import dev.ostrom.server.secrets.domain.Secret
 import dev.ostrom.server.secrets.domain.SecretCipher
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCaseImpl
 import dev.ostrom.server.secrets.domain.SecretNameTakenException
 import dev.ostrom.server.secrets.domain.SecretNotFoundException
 import dev.ostrom.server.secrets.domain.SecretUnreadableException
@@ -66,9 +67,13 @@ class SecretUseCasesTest {
 
     @Test
     fun namesAndValuesAreValidated() = runTest {
-        assertFailsWith<InvalidSecretException> { create(admin, CreateSecretPayload("bad name", SecretValue("v"), false)) }
+        assertFailsWith<InvalidSecretException> {
+            create(admin, CreateSecretPayload("bad name", SecretValue("v"), false))
+        }
         assertFailsWith<InvalidSecretException> { create(admin, CreateSecretPayload("OK", SecretValue(""), false)) }
-        assertFailsWith<InvalidSecretException> { create(admin, CreateSecretPayload("OK", SecretValue("a\u0000b"), false)) }
+        assertFailsWith<InvalidSecretException> {
+            create(admin, CreateSecretPayload("OK", SecretValue("a\u0000b"), false))
+        }
         assertFailsWith<InvalidSecretException> {
             create(admin, CreateSecretPayload("OK", SecretValue("x".repeat(16 * 1024 + 1)), false))
         }
@@ -111,7 +116,12 @@ class SecretUseCasesTest {
         assertEquals(mine.id, find(member, "TOKEN", personal = true).id)
         assertEquals(member.memberId, mine.updatedBy)
         assertFailsWith<SecretNotFoundException> { find(otherMember, "TOKEN", personal = true) }
-        assertEquals(mapOf("TOKEN" to "org-value-1"), reveal.byName(org, listOf("TOKEN", "TOKEN", "MISSING")).mapValues { it.value.reveal() })
+        assertEquals(
+            mapOf("TOKEN" to "org-value-1"),
+            reveal.byName(org, listOf("TOKEN", "TOKEN", "MISSING")).mapValues {
+                it.value.reveal()
+            },
+        )
         assertEquals(emptyMap(), reveal.byName(org, emptyList()))
         val directory = SecretDirectoryUseCaseImpl(repository)
         assertEquals(mapOf("TOKEN" to orgSecret.id), directory.idsByName(org, null, listOf("TOKEN", "MISSING")))
@@ -143,7 +153,9 @@ class SecretUseCasesTest {
         val secret = create(admin, CreateSecretPayload("GONE", SecretValue("gone-value"), false))
         repository.vanishOnWrite = true
 
-        assertFailsWith<SecretNotFoundException> { RotateSecretUseCaseImpl(repository, cipher, clock)(admin, secret.id, SecretValue("next-value")) }
+        assertFailsWith<SecretNotFoundException> {
+            RotateSecretUseCaseImpl(repository, cipher, clock)(admin, secret.id, SecretValue("next-value"))
+        }
         assertFailsWith<SecretNotFoundException> { DeleteSecretUseCaseImpl(repository)(admin, secret.id) }
     }
 
@@ -167,7 +179,8 @@ class SecretUseCasesTest {
 class ReversingCipher : SecretCipher {
     var broken = false
 
-    override suspend fun seal(plaintext: ByteArray, context: String): String = plaintext.decodeToString().reversed() + "|" + context
+    override suspend fun seal(plaintext: ByteArray, context: String): String =
+        plaintext.decodeToString().reversed() + "|" + context
 
     override suspend fun open(envelope: String, context: String): ByteArray? {
         if (broken || !envelope.endsWith("|$context")) return null
@@ -182,7 +195,8 @@ class InMemorySecretsRepository : SecretsRepository {
 
     override suspend fun create(stored: StoredSecret): Boolean {
         val taken = rows.values.any {
-            it.secret.orgId == stored.secret.orgId && it.secret.name == stored.secret.name &&
+            it.secret.orgId == stored.secret.orgId &&
+                it.secret.name == stored.secret.name &&
                 it.secret.ownerMemberId == stored.secret.ownerMemberId
         }
         if (taken) return false
@@ -192,25 +206,37 @@ class InMemorySecretsRepository : SecretsRepository {
 
     override suspend fun get(orgId: Uuid, id: Uuid): StoredSecret? = rows[id]?.takeIf { it.secret.orgId == orgId }
 
-    override suspend fun getMany(orgId: Uuid, ids: Collection<Uuid>): List<StoredSecret> = ids.mapNotNull { get(orgId, it) }
+    override suspend fun getMany(orgId: Uuid, ids: Collection<Uuid>): List<StoredSecret> = ids.mapNotNull {
+        get(orgId, it)
+    }
 
     override suspend fun list(orgId: Uuid, memberId: Uuid?, afterName: String?, limit: Int): List<Secret> =
         rows.values.map { it.secret }
-            .filter { it.orgId == orgId && (memberId == null || it.ownerMemberId == null || it.ownerMemberId == memberId) }
+            .filter {
+                it.orgId == orgId &&
+                    (memberId == null || it.ownerMemberId == null || it.ownerMemberId == memberId)
+            }
             .filter { afterName == null || it.name > afterName }
             .sortedBy { it.name }
             .take(limit)
 
     override suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant, updatedBy: Uuid): Secret? {
-        if (vanishOnWrite) return null
-        val current = get(orgId, id) ?: return null
-        val next = current.secret.copy(version = current.secret.version + 1, updatedAt = updatedAt, updatedBy = updatedBy)
+        val current = get(orgId, id)?.takeUnless { vanishOnWrite } ?: return null
+        val next = current.secret.copy(
+            version = current.secret.version + 1,
+            updatedAt = updatedAt,
+            updatedBy = updatedBy,
+        )
         rows[id] = StoredSecret(next, envelope)
         return next
     }
 
     override suspend fun findByName(orgId: Uuid, ownerMemberId: Uuid?, name: String): Secret? =
-        rows.values.map { it.secret }.firstOrNull { it.orgId == orgId && it.ownerMemberId == ownerMemberId && it.name == name }
+        rows.values.map { it.secret }.firstOrNull {
+            it.orgId == orgId &&
+                it.ownerMemberId == ownerMemberId &&
+                it.name == name
+        }
 
     override suspend fun getOrgSecretsByName(orgId: Uuid, names: Collection<String>): List<StoredSecret> =
         rows.values.filter { it.secret.orgId == orgId && it.secret.ownerMemberId == null && it.secret.name in names }
