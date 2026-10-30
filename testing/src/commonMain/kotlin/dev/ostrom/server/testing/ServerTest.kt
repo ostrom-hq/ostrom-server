@@ -59,7 +59,7 @@ internal fun serverTest(
             // the application after the finally below has closed Koin.
             startApplication()
             val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
-            block(TestServer(koin, database.driver, client))
+            block(TestServer(koin, database.driver, client, database))
         } finally {
             koin.close()
         }

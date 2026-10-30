@@ -12,7 +12,6 @@ import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
-import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -53,12 +52,6 @@ class NoGateNodes : GateNodeResolver {
 /** Without the GitHub integration, a pull request's head is unknown: the merge is bound to its command. */
 class UnknownPullRequestHeads : PullRequestHeads {
     override suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest? = null
-}
-
-/** Without the receipts module, a decision is not signed yet; the next read signs it once the signer exists. */
-class UnavailableGateReceiptSigner : GateReceiptSigner {
-    override suspend fun sign(gate: Gate): String =
-        throw OstromException(ErrorKind.UNAVAILABLE, "Receipts are not available on this server.")
 }
 
 /**

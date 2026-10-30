@@ -23,6 +23,7 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
+import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
 import dev.ostrom.server.gates.presentation.AnswerApprovalResponse
 import dev.ostrom.server.gates.presentation.Approval
@@ -56,6 +57,9 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -132,6 +136,8 @@ class GatesPostgresTest {
         single<GateSessions> {
             object : GateSessions {
                 override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) = Unit
+
+                override suspend fun agentOf(orgId: Uuid, sessionId: String): String? = "claude-code"
             }
         }
         single<GateNodeResolver> {
@@ -192,6 +198,13 @@ class GatesPostgresTest {
     private suspend fun TestServer.move(token: String, gate: GateResponse, move: String): HttpResponse =
         call(token, "/api/v1/gates/${gate.gate.id}/$move", post = true)
 
+    // The status and `error.type`, the key of the contract (core api/openapi.yaml) that a client branches on.
+    private suspend fun HttpResponse.assertRefused(expected: HttpStatusCode, type: String, why: String? = null) {
+        assertEquals(expected, status, why)
+        val error = Json.parseToJsonElement(bodyAsText()).jsonObject.getValue("error").jsonObject
+        assertEquals(type, error.getValue("type").jsonPrimitive.content, why)
+    }
+
     private suspend fun TestServer.answer(
         token: String,
         gate: GateResponse,
@@ -225,7 +238,7 @@ class GatesPostgresTest {
         assertEquals(listOf(sha), approvals.first().commits)
 
         val self = server.answer("user:a:lyes", opened, "lyes")
-        assertEquals(HttpStatusCode.Forbidden, self.status, "The asker never approves while someone else can")
+        self.assertRefused(HttpStatusCode.Forbidden, "self_approval_refused", "The asker never approves")
         assertTrue(self.bodyAsText().contains("rev-b or rev-c must say yes"))
         val revB = approvals.first { it.requestedFrom == "rev-b" }
         val admin = server.call(
@@ -245,7 +258,7 @@ class GatesPostgresTest {
             "/api/v1/approvals/${revB.id}/answer",
             AnswerApprovalRequest(ApprovalAnswer.APPROVE, "x"),
         )
-        assertEquals(HttpStatusCode.Conflict, stale.status, "A yes names what was shown")
+        stale.assertRefused(HttpStatusCode.Conflict, "shown_digest_mismatch", "A yes names what was shown")
 
         val answered = server.answer("user:a:rev-b", opened, "rev-b").body<AnswerApprovalResponse>()
         assertEquals("approved", answered.approval.status)
@@ -258,7 +271,7 @@ class GatesPostgresTest {
             mapOf("lyes" to "expired", "rev-b" to "approved", "rev-c" to "expired"),
             server.approvalsOf(opened).associate { it.requestedFrom to it.status },
         )
-        assertEquals(HttpStatusCode.Conflict, server.answer("user:a:rev-c", opened, "rev-c").status)
+        server.answer("user:a:rev-c", opened, "rev-c").assertRefused(HttpStatusCode.Conflict, "approval_closed")
 
         assertEquals("approved", server.move(agent, opened, "reserve").body<GateResponse>().gate.status)
         assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "reserve").status)
@@ -345,6 +358,21 @@ class GatesPostgresTest {
             }.awaitAll()
         }
         assertEquals(listOf(HttpStatusCode.OK, HttpStatusCode.Conflict), statuses.sortedBy { it.value })
+    }
+
+    @Test
+    fun aSessionFindsItsGates() = gatesTest { server ->
+        val agent = "agent:a:$session"
+        val first = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        server.answer("user:a:rev-b", first, "rev-b")
+        val second = server.call(agent, "/api/v1/gates", push(commit = nextSha)).body<GateResponse>()
+        server.call("agent:a:other", "/api/v1/gates", push().copy(sessionId = "other-session"))
+
+        val list = server.koin.get<ListSessionGatesUseCase>()
+        val gates = list(orgA, session)
+        assertEquals(listOf(first.gate.id, second.gate.id), gates.map { it.id.toString() })
+        assertEquals(listOf("rev-b"), gates.first().decisions.map { it.by })
+        assertEquals(emptyList(), list(orgB, session), "Another organization's session has none of them")
     }
 
     @Test
@@ -534,7 +562,7 @@ class GatesPostgresTest {
     fun s254ABrowserSessionOlderThanFiveMinutesSignsInAgainBeforeAYes() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         val stale = server.answer("stale:a:rev-b", opened, "rev-b")
-        assertEquals(HttpStatusCode.Forbidden, stale.status)
+        stale.assertRefused(HttpStatusCode.Forbidden, "step_up_required")
         assertTrue(stale.bodyAsText().contains("Sign in again"))
         val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
         assertEquals("pending", still.gate.status)
