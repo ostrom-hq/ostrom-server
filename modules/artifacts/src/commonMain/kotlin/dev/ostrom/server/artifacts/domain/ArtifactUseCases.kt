@@ -71,7 +71,7 @@ internal class PublishArtifactUseCaseImpl(
         val artifact = rules.writable(caller, id)
         ArtifactRules.check(files)
         val (recorded, blobs) = record(files)
-        val known = repository.blobDigests(id)
+        val known = repository.blobDigests(artifact.orgId, id)
         val now = clock.now()
         val version = ArtifactVersion(
             artifactId = id,
@@ -149,12 +149,12 @@ internal class ReadArtifactsUseCaseImpl(private val repository: ArtifactsReposit
 
     override suspend fun versions(caller: ArtifactCaller, id: Uuid): List<ArtifactVersion> {
         rules.readable(caller, id)
-        return repository.versions(id)
+        return repository.versions(caller.orgId, id)
     }
 
     override suspend fun file(caller: ArtifactCaller, id: Uuid, number: Int?, path: String?): ServedFile {
         val artifact = rules.readable(caller, id)
-        return serveFile(repository, artifact.id, number ?: artifact.latestVersion, path)
+        return serveFile(repository, artifact, number ?: artifact.latestVersion, path)
             ?: throw ArtifactNotFoundException()
     }
 
@@ -171,11 +171,18 @@ internal class ReadArtifactsUseCaseImpl(private val repository: ArtifactsReposit
  *
  * @return The file, or null when the version or the file does not exist.
  */
-internal suspend fun serveFile(repository: ArtifactsRepository, id: Uuid, number: Int, path: String?): ServedFile? {
-    val version = repository.version(id, number) ?: return null
+internal suspend fun serveFile(
+    repository: ArtifactsRepository,
+    artifact: Artifact,
+    number: Int,
+    path: String?,
+): ServedFile? {
+    val version = repository.version(artifact.orgId, artifact.id, number) ?: return null
     val wanted = path?.takeIf { it.isNotEmpty() } ?: version.entry
     return version.files.firstOrNull { it.path == wanted }
-        ?.let { file -> repository.blob(id, file.sha256)?.let { ServedFile(it, file.contentType) } }
+        ?.let { file ->
+            repository.blob(artifact.orgId, artifact.id, file.sha256)?.let { ServedFile(it, file.contentType) }
+        }
 }
 
 /**

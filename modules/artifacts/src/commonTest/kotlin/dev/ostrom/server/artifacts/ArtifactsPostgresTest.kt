@@ -26,7 +26,10 @@ import dev.ostrom.server.artifacts.presentation.FileDto
 import dev.ostrom.server.artifacts.presentation.PublishArtifactRequest
 import dev.ostrom.server.artifacts.presentation.PublishVersionRequest
 import dev.ostrom.server.artifacts.presentation.UpdateArtifactRequest
+import dev.ostrom.server.artifacts.infrastructure.inTenant
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -46,6 +49,7 @@ import io.ktor.http.contentType
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -80,8 +84,8 @@ class ArtifactsPostgresTest {
         assertEquals(mine, repository.getById(mine.id))
         assertEquals(mine, repository.getByLinkSlug("slug-1"))
         assertNull(repository.getByLinkSlug("nope"))
-        assertContentEquals(byteArrayOf(0, 1, 2), repository.blob(mine.id, "sha-a"))
-        assertNull(repository.blob(mine.id, "sha-z"))
+        assertContentEquals(byteArrayOf(0, 1, 2), repository.blob(ORG_A, mine.id, "sha-a"))
+        assertNull(repository.blob(ORG_A, mine.id, "sha-z"))
 
         val second = version(mine, 2, "a.txt" to "sha-a", "b.txt" to "sha-b")
         val updated = assertNotNull(
@@ -91,15 +95,15 @@ class ArtifactsPostgresTest {
         assertEquals(t0 + 1.minutes, updated.updatedAt)
         assertNull(repository.addVersion(ORG_A, second, emptyMap(), t0))
         assertNull(repository.addVersion(ORG_B, version(mine, 3, "a.txt" to "sha-a"), emptyMap(), t0))
-        assertEquals(setOf("sha-a", "sha-b"), repository.blobDigests(mine.id))
-        assertEquals(listOf(2, 1), repository.versions(mine.id).map { it.number })
-        assertEquals(second, repository.version(mine.id, 2))
-        assertNull(repository.version(mine.id, 3))
+        assertEquals(setOf("sha-a", "sha-b"), repository.blobDigests(ORG_A, mine.id))
+        assertEquals(listOf(2, 1), repository.versions(ORG_A, mine.id).map { it.number })
+        assertEquals(second, repository.version(ORG_A, mine.id, 2))
+        assertNull(repository.version(ORG_A, mine.id, 3))
 
         repository.setMember(ORG_A, mine.id, BOB.toString(), share = true)
         repository.setMember(ORG_A, mine.id, BOB.toString(), share = true)
         repository.setMember(ORG_B, mine.id, "intruder", share = true)
-        assertEquals(listOf(BOB.toString()), repository.members(mine.id))
+        assertEquals(listOf(BOB.toString()), repository.members(ORG_A, mine.id))
 
         repository.updateSettings(updated.copy(title = "U", access = ArtifactAccess.TEAM, linkSlug = null))
         assertEquals("U", repository.get(ORG_A, mine.id)?.title)
@@ -107,12 +111,43 @@ class ArtifactsPostgresTest {
 
         assertFalse(repository.delete(ORG_B, mine.id))
         repository.setMember(ORG_B, mine.id, BOB.toString(), share = false)
-        assertEquals(listOf(BOB.toString()), repository.members(mine.id))
+        assertEquals(listOf(BOB.toString()), repository.members(ORG_A, mine.id))
         repository.setMember(ORG_A, mine.id, BOB.toString(), share = false)
-        assertEquals(emptyList(), repository.members(mine.id))
+        assertEquals(emptyList(), repository.members(ORG_A, mine.id))
         assertTrue(repository.delete(ORG_A, mine.id))
-        assertNull(repository.blob(mine.id, "sha-a"))
-        assertEquals(emptyList(), repository.versions(mine.id))
+        assertNull(repository.blob(ORG_A, mine.id, "sha-a"))
+        assertEquals(emptyList(), repository.versions(ORG_A, mine.id))
+    }
+
+    @Test
+    fun anotherOrganizationsRowsAreNeitherSeenNorWritten() = serverTest(listOf(ArtifactsModule)) { server ->
+        val repository = server.koin.get<ArtifactsRepository>()
+        val mine = artifact()
+        repository.create(mine, version(mine, 1, "a.txt" to "sha-a"), mapOf("sha-a" to byteArrayOf(1)))
+        repository.setMember(ORG_A, mine.id, BOB.toString(), share = true)
+        suspend fun count(org: Uuid, table: String) = server.driver.inTenant(org) {
+            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
+        }
+        for (table in listOf("artifacts_artifacts", "artifacts_versions", "artifacts_blobs", "artifacts_members")) {
+            assertEquals(1L, count(ORG_A, table), table)
+            // No WHERE org_id: the policy alone hides organization A's rows.
+            assertEquals(0L, count(ORG_B, table), table)
+        }
+        // A write for another organization is refused, and no row of B points at an artifact of A.
+        for (org in listOf(ORG_A, ORG_B)) {
+            assertFailsWith<Exception> {
+                server.driver.inTenant(ORG_B) {
+                    execute(
+                        Statement.create(
+                            "INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, bytes) VALUES (:id, :org, " +
+                                "'sha-x', CAST('' AS BYTEA))",
+                        ).bind("id", mine.id).bind("org", org),
+                    ).getOrThrow()
+                }
+            }
+        }
+        assertEquals(emptyList(), repository.members(ORG_B, mine.id))
+        assertNull(repository.blob(ORG_B, mine.id, "sha-a"))
     }
 
     @Test

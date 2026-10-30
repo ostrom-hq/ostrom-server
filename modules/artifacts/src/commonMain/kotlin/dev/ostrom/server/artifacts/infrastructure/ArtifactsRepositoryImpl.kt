@@ -26,12 +26,16 @@ import kotlin.uuid.Uuid
  * `artifacts_versions.files`; each distinct content is one `artifacts_blobs` row per artifact, so republishing an
  * unchanged file stores nothing.
  *
+ * Every read and write runs confined to the artifact's organization ([inTenant], S2-01). Only `artifacts_routes` is
+ * read across organizations: the content origin finds an artifact's organization there by its id or its link slug,
+ * then reads the artifact in its organization.
+ *
  * @param driver The database.
  */
 @Suppress("TooManyFunctions") // One implementation of the module's one port.
 internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRepository {
     override suspend fun create(artifact: Artifact, version: ArtifactVersion, blobs: Map<String, ByteArray>) {
-        driver.transaction {
+        driver.inTenant(artifact.orgId) {
             execute(
                 Statement.create(
                     """
@@ -48,7 +52,12 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
                     .bind("created_at", artifact.createdAt)
                     .bind("updated_at", artifact.updatedAt),
             ).getOrThrow()
-            insertContent(version, blobs)
+            execute(
+                Statement.create(
+                    """INSERT INTO artifacts_routes (artifact_id, org_id, link_slug) VALUES (:id, :org_id, :slug)""",
+                ).bind("id", artifact.id).bind("org_id", artifact.orgId).bind("slug", artifact.linkSlug),
+            ).getOrThrow()
+            insertContent(artifact.orgId, version, blobs)
         }
     }
 
@@ -57,7 +66,7 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         version: ArtifactVersion,
         blobs: Map<String, ByteArray>,
         now: Instant,
-    ): Artifact? = driver.transaction {
+    ): Artifact? = driver.inTenant(orgId) {
         val updated = fetchAll(
             Statement.create(
                 """
@@ -70,38 +79,41 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
                 .bind("org_id", orgId)
                 .bind("previous", version.number - 1),
         ).getOrThrow().firstOrNull()?.toArtifact()
-        if (updated != null) insertContent(version, blobs)
+        if (updated != null) insertContent(orgId, version, blobs)
         updated
     }
 
     override suspend fun updateSettings(artifact: Artifact) {
-        driver.execute(
-            Statement.create(
-                """
-                UPDATE artifacts_artifacts SET title = :title, access = :access, link_slug = :link_slug, updated_at =
-                :updated_at WHERE id = :id AND org_id = :org_id
-                """,
-            ).bind("title", artifact.title)
-                .bind("access", artifact.access.wire)
-                .bind("link_slug", artifact.linkSlug)
-                .bind("updated_at", artifact.updatedAt)
-                .bind("id", artifact.id)
-                .bind("org_id", artifact.orgId),
-        ).getOrThrow()
+        driver.inTenant(artifact.orgId) {
+            execute(
+                Statement.create(
+                    """
+                    UPDATE artifacts_artifacts SET title = :title, access = :access, link_slug = :link_slug,
+                    updated_at = :updated_at WHERE id = :id AND org_id = :org_id
+                    """,
+                ).bind("title", artifact.title)
+                    .bind("access", artifact.access.wire)
+                    .bind("link_slug", artifact.linkSlug)
+                    .bind("updated_at", artifact.updatedAt)
+                    .bind("id", artifact.id)
+                    .bind("org_id", artifact.orgId),
+            ).getOrThrow()
+            execute(
+                Statement.create("""UPDATE artifacts_routes SET link_slug = :slug WHERE artifact_id = :id""")
+                    .bind("slug", artifact.linkSlug).bind("id", artifact.id),
+            ).getOrThrow()
+        }
     }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): Artifact? = driver.fetchAll(
+    override suspend fun get(orgId: Uuid, id: Uuid): Artifact? = driver.fetchInOrg(
+        orgId,
         Statement.create("""SELECT $COLUMNS FROM artifacts_artifacts WHERE id = :id AND org_id = :org_id""")
             .bind("id", id).bind("org_id", orgId),
     ).getOrThrow().firstOrNull()?.toArtifact()
 
-    override suspend fun getById(id: Uuid): Artifact? = driver.fetchAll(
-        Statement.create("""SELECT $COLUMNS FROM artifacts_artifacts WHERE id = :id""").bind("id", id),
-    ).getOrThrow().firstOrNull()?.toArtifact()
+    override suspend fun getById(id: Uuid): Artifact? = route("artifact_id = :key", id)
 
-    override suspend fun getByLinkSlug(slug: String): Artifact? = driver.fetchAll(
-        Statement.create("""SELECT $COLUMNS FROM artifacts_artifacts WHERE link_slug = :slug""").bind("slug", slug),
-    ).getOrThrow().firstOrNull()?.toArtifact()
+    override suspend fun getByLinkSlug(slug: String): Artifact? = route("link_slug = :key", slug)
 
     override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> {
         val cursor = if (before == null) {
@@ -122,10 +134,11 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
             .bind("member", caller.memberId)
             .bind("limit", limit)
         if (before != null) statement.bind("before", before)
-        return driver.fetchAll(statement).getOrThrow().map { it.toArtifact() }
+        return driver.fetchInOrg(caller.orgId, statement).getOrThrow().map { it.toArtifact() }
     }
 
-    override suspend fun versions(artifactId: Uuid): List<ArtifactVersion> = driver.fetchAll(
+    override suspend fun versions(orgId: Uuid, artifactId: Uuid): List<ArtifactVersion> = driver.fetchInOrg(
+        orgId,
         Statement.create(
             """
             SELECT $VERSION_COLUMNS FROM artifacts_versions WHERE artifact_id = :id ORDER BY number DESC
@@ -133,7 +146,8 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         ).bind("id", artifactId),
     ).getOrThrow().map { it.toVersion() }
 
-    override suspend fun version(artifactId: Uuid, number: Int): ArtifactVersion? = driver.fetchAll(
+    override suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion? = driver.fetchInOrg(
+        orgId,
         Statement.create(
             """
             SELECT $VERSION_COLUMNS FROM artifacts_versions WHERE artifact_id = :id AND number = :number
@@ -141,16 +155,19 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         ).bind("id", artifactId).bind("number", number),
     ).getOrThrow().firstOrNull()?.toVersion()
 
-    override suspend fun blob(artifactId: Uuid, sha256: String): ByteArray? = driver.fetchAll(
+    override suspend fun blob(orgId: Uuid, artifactId: Uuid, sha256: String): ByteArray? = driver.fetchInOrg(
+        orgId,
         Statement.create("""SELECT bytes FROM artifacts_blobs WHERE artifact_id = :id AND sha256 = :sha""")
             .bind("id", artifactId).bind("sha", sha256),
     ).getOrThrow().firstOrNull()?.get("bytes")?.asByteArray()
 
-    override suspend fun blobDigests(artifactId: Uuid): Set<String> = driver.fetchAll(
+    override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> = driver.fetchInOrg(
+        orgId,
         Statement.create("""SELECT sha256 FROM artifacts_blobs WHERE artifact_id = :id""").bind("id", artifactId),
     ).getOrThrow().map { it.get("sha256").asString() }.toSet()
 
-    override suspend fun members(artifactId: Uuid): List<String> = driver.fetchAll(
+    override suspend fun members(orgId: Uuid, artifactId: Uuid): List<String> = driver.fetchInOrg(
+        orgId,
         Statement.create(
             """SELECT member_id FROM artifacts_members WHERE artifact_id = :id ORDER BY member_id""",
         ).bind("id", artifactId),
@@ -159,8 +176,8 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
     override suspend fun setMember(orgId: Uuid, artifactId: Uuid, memberId: String, share: Boolean) {
         val sql = if (share) {
             """
-            INSERT INTO artifacts_members (artifact_id, member_id) SELECT id, :member FROM artifacts_artifacts WHERE
-            id = :id AND org_id = :org_id ON CONFLICT DO NOTHING
+            INSERT INTO artifacts_members (artifact_id, org_id, member_id) SELECT id, org_id, :member FROM
+            artifacts_artifacts WHERE id = :id AND org_id = :org_id ON CONFLICT DO NOTHING
             """
         } else {
             """
@@ -168,35 +185,52 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
             artifacts_artifacts WHERE id = :id AND org_id = :org_id)
             """
         }
-        driver.execute(
-            Statement.create(sql).bind("member", memberId).bind("id", artifactId).bind("org_id", orgId),
-        ).getOrThrow()
+        driver.inTenant(orgId) {
+            execute(
+                Statement.create(sql).bind("member", memberId).bind("id", artifactId).bind("org_id", orgId),
+            ).getOrThrow()
+        }
     }
 
-    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.execute(
-        Statement.create("""DELETE FROM artifacts_artifacts WHERE id = :id AND org_id = :org_id""")
-            .bind("id", id).bind("org_id", orgId),
-    ).getOrThrow() > 0
+    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.inTenant(orgId) {
+        execute(
+            Statement.create("""DELETE FROM artifacts_artifacts WHERE id = :id AND org_id = :org_id""")
+                .bind("id", id).bind("org_id", orgId),
+        ).getOrThrow() > 0
+    }
 
-    private suspend fun QueryExecutor.insertContent(version: ArtifactVersion, blobs: Map<String, ByteArray>) {
+    /** The artifact a route matches ([condition] on `:key`), read in its organization. */
+    private suspend fun route(condition: String, key: Any): Artifact? {
+        val row = driver.fetchAll(
+            Statement.create("""SELECT artifact_id, org_id FROM artifacts_routes WHERE $condition""").bind("key", key),
+        ).getOrThrow().firstOrNull() ?: return null
+        return get(row.get("org_id").asUuid(), row.get("artifact_id").asUuid())
+    }
+
+    private suspend fun QueryExecutor.insertContent(
+        orgId: Uuid,
+        version: ArtifactVersion,
+        blobs: Map<String, ByteArray>,
+    ) {
         blobs.forEach { (sha, bytes) ->
             execute(
                 Statement.create(
                     """
-                    INSERT INTO artifacts_blobs (artifact_id, sha256, bytes) VALUES (:id, :sha, CAST(:bytes AS
-                    BYTEA)) ON CONFLICT DO NOTHING
+                    INSERT INTO artifacts_blobs (artifact_id, org_id, sha256, bytes) VALUES (:id, :org_id, :sha,
+                    CAST(:bytes AS BYTEA)) ON CONFLICT DO NOTHING
                     """,
-                ).bind("id", version.artifactId).bind("sha", sha).bind("bytes", bytes),
+                ).bind("id", version.artifactId).bind("org_id", orgId).bind("sha", sha).bind("bytes", bytes),
             ).getOrThrow()
         }
         val files = version.files.map { FileRow(it.path, it.sha256, it.size, it.contentType) }
         execute(
             Statement.create(
                 """
-                INSERT INTO artifacts_versions ($VERSION_COLUMNS) VALUES (:id, :number, :entry, :files,
-                :created_at, :created_by)
+                INSERT INTO artifacts_versions (org_id, $VERSION_COLUMNS) VALUES (:org_id, :id, :number, :entry,
+                :files, :created_at, :created_by)
                 """,
-            ).bind("id", version.artifactId)
+            ).bind("org_id", orgId)
+                .bind("id", version.artifactId)
                 .bind("number", version.number)
                 .bind("entry", version.entry)
                 .bind("files", JSON.encodeToString(FILES, files))

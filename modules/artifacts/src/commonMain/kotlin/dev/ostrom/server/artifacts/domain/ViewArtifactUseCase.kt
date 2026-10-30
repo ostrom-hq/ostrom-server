@@ -80,7 +80,7 @@ internal class ViewArtifactUseCaseImpl(
         val origin = locations.contentOrigin ?: throw ArtifactPagesUnavailableException()
         val artifact = rules.readable(caller, id)
         val number = version ?: artifact.latestVersion
-        val found = repository.version(id, number) ?: throw ArtifactNotFoundException()
+        val found = repository.version(artifact.orgId, id, number) ?: throw ArtifactNotFoundException()
         val expiry = clock.now() + LIFETIME
         val rounded = Instant.fromEpochSeconds(expiry.epochSeconds - expiry.epochSeconds % ROUNDING.inWholeSeconds)
         val signature = signer.sign(signed(id, number, rounded.epochSeconds)).toHexString()
@@ -96,13 +96,14 @@ internal class ViewArtifactUseCaseImpl(
         val valid = number != null && expiry != null && signature != null &&
             expiry > clock.now().epochSeconds &&
             signer.verify(signed(id, number, expiry), signature.hexToByteArray())
-        if (!valid || repository.getById(id) == null) return null
-        return serveFile(repository, id, number, path)
+        val artifact = if (valid) repository.getById(id) else null
+        if (!valid || artifact == null) return null
+        return serveFile(repository, artifact, number, path)
     }
 
     override suspend fun byLink(slug: String, path: String): ServedFile? {
         val artifact = repository.getByLinkSlug(slug)?.takeIf { it.access == ArtifactAccess.LINK } ?: return null
-        return serveFile(repository, artifact.id, artifact.latestVersion, path)
+        return serveFile(repository, artifact, artifact.latestVersion, path)
     }
 
     override fun publicUrl(artifact: Artifact): String? {

@@ -124,17 +124,18 @@ class InMemoryArtifacts : ArtifactsRepository {
     override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> =
         artifacts.values.filter { it.orgId == caller.orgId }.take(limit)
 
-    override suspend fun versions(artifactId: Uuid): List<ArtifactVersion> =
+    override suspend fun versions(orgId: Uuid, artifactId: Uuid): List<ArtifactVersion> =
         versions.values.filter { it.artifactId == artifactId }.sortedByDescending { it.number }
 
-    override suspend fun version(artifactId: Uuid, number: Int): ArtifactVersion? = versions[artifactId to number]
+    override suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion? =
+        versions[artifactId to number]
 
-    override suspend fun blob(artifactId: Uuid, sha256: String): ByteArray? = blobs[artifactId to sha256]
+    override suspend fun blob(orgId: Uuid, artifactId: Uuid, sha256: String): ByteArray? = blobs[artifactId to sha256]
 
-    override suspend fun blobDigests(artifactId: Uuid): Set<String> =
+    override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> =
         blobs.keys.filter { it.first == artifactId }.map { it.second }.toSet()
 
-    override suspend fun members(artifactId: Uuid): List<String> = shares[artifactId].orEmpty().sorted()
+    override suspend fun members(orgId: Uuid, artifactId: Uuid): List<String> = shares[artifactId].orEmpty().sorted()
 
     override suspend fun setMember(orgId: Uuid, artifactId: Uuid, memberId: String, share: Boolean) {
         val set = shares.getOrPut(artifactId) { mutableSetOf() }

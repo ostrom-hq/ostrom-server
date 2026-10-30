@@ -63,7 +63,7 @@ internal class ManageArtifactUseCaseImpl(
 
     override suspend fun members(caller: ArtifactCaller, id: Uuid): List<String> {
         rules.readable(caller, id)
-        return repository.members(id)
+        return repository.members(caller.orgId, id)
     }
 
     override suspend fun share(caller: ArtifactCaller, id: Uuid, member: String, share: Boolean) {

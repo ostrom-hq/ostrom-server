@@ -19,7 +19,8 @@ internal class ArtifactAccessRules(private val repository: ArtifactsRepository) 
     suspend fun readable(caller: ArtifactCaller, id: Uuid): Artifact {
         val artifact = repository.get(caller.orgId, id) ?: throw ArtifactNotFoundException()
         val reads = artifact.ownerId == caller.memberId || caller.admin ||
-            artifact.access != ArtifactAccess.PERSONAL || caller.memberId in repository.members(artifact.id)
+            artifact.access != ArtifactAccess.PERSONAL ||
+            caller.memberId in repository.members(artifact.orgId, artifact.id)
         if (!reads) throw ArtifactNotFoundException()
         return artifact
     }

@@ -79,35 +79,35 @@ interface ArtifactsRepository {
      *
      * @return The versions.
      */
-    suspend fun versions(artifactId: Uuid): List<ArtifactVersion>
+    suspend fun versions(orgId: Uuid, artifactId: Uuid): List<ArtifactVersion>
 
     /**
      * Reads one version.
      *
      * @return The version, or null.
      */
-    suspend fun version(artifactId: Uuid, number: Int): ArtifactVersion?
+    suspend fun version(orgId: Uuid, artifactId: Uuid, number: Int): ArtifactVersion?
 
     /**
      * Reads the bytes of a file.
      *
      * @return The bytes, or null.
      */
-    suspend fun blob(artifactId: Uuid, sha256: String): ByteArray?
+    suspend fun blob(orgId: Uuid, artifactId: Uuid, sha256: String): ByteArray?
 
     /**
      * The digests the artifact already holds.
      *
      * @return The SHA-256s.
      */
-    suspend fun blobDigests(artifactId: Uuid): Set<String>
+    suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String>
 
     /**
      * The members an artifact is shared with.
      *
      * @return Their ids.
      */
-    suspend fun members(artifactId: Uuid): List<String>
+    suspend fun members(orgId: Uuid, artifactId: Uuid): List<String>
 
     /**
      * Shares or stops sharing an artifact with a member.
