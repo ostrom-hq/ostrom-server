@@ -167,6 +167,21 @@ class OpenGateUseCaseTest {
     }
 
     @Test
+    fun aShadowOrUngatedActionIsRecordedOnceAndNeverCoversAnEnforcedOne() = runTest {
+        val bench = GateBench()
+        val shadowNode = bench.node("rev-b", enforced = false)
+        val shadow = bench.open(bench.pushRequest(node = shadowNode))
+        assertEquals(shadow.gate.id, bench.open(bench.pushRequest(node = shadowNode)).gate.id)
+        val ungated = bench.open(bench.pushRequest(node = null))
+        assertEquals(ungated.gate.id, bench.open(bench.pushRequest(node = null)).gate.id)
+        assertEquals(2, bench.repository.gates.size, "one row per recorded action, not one per ask")
+
+        val enforced = bench.open(bench.pushRequest(node = shadowNode.copy(enforced = true)))
+        assertNotEquals(shadow.gate.id, enforced.gate.id, "the workflow now blocks: the record is no yes")
+        assertEquals(GateStatus.PENDING, enforced.gate.status)
+    }
+
+    @Test
     fun aNoHoldsForTheScope() = runTest {
         val bench = GateBench()
         val first = bench.open(bench.pushRequest())
