@@ -4,6 +4,7 @@ package dev.ostrom.server.identity.presentation
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.trimmedOrNull
 import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.auth.HOST_COOKIE_PREFIX
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import io.ktor.http.Url
 import io.ktor.http.hostWithPortIfSpecified
@@ -25,6 +26,9 @@ data class IdentityConfig(
 ) {
     /** Cookies are `Secure` whenever the API is served over HTTPS (always, outside a developer's machine). */
     val secureCookies: Boolean get() = publicUrl.startsWith("https://")
+
+    /** `__Host-` on the session cookies over HTTPS, nothing on a plain-HTTP development server (audit S2-12). */
+    val sessionCookiePrefix: String get() = if (secureCookies) HOST_COOKIE_PREFIX else ""
 
     /**
      * The server's callback URL for a provider, registered in the provider's settings (GESTES-LYES.md).

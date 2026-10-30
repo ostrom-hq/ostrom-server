@@ -4,6 +4,7 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
+import dev.ostrom.server.kernel.auth.HOST_COOKIE_PREFIX
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.RejectingTokenAuthenticator
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
@@ -38,7 +39,7 @@ import kotlin.test.assertNull
 /** The browser-session path of the token provider: what the kernel hands the authenticator (audit S2-08). */
 class SessionCookieAuthenticationTest {
     /** What the provider passed, and a session that is valid whenever the CSRF token is the expected one. */
-    private class RecordingAuthenticator : TokenAuthenticator {
+    private class RecordingAuthenticator(override val sessionCookiePrefix: String = "") : TokenAuthenticator {
         val calls = mutableListOf<List<Any?>>()
 
         override suspend fun authenticate(token: String): AuthenticatedPrincipal? = null
@@ -121,7 +122,35 @@ class SessionCookieAuthenticationTest {
     }
 
     @Test
+    fun overHttpsOnlyTheHostPrefixedCookiesCount() {
+        val authenticator = RecordingAuthenticator(HOST_COOKIE_PREFIX)
+        sessionTest(authenticator) {
+            // S2-12: a cookie without the prefix (set by a sibling subdomain, say) is not a session at all.
+            val plain = client.get("/probe/session") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=oss_1") }
+            assertEquals(HttpStatusCode.Unauthorized, plain.status)
+            assertEquals(0, authenticator.calls.size)
+
+            val mixed = client.post("/probe/session") {
+                header(HttpHeaders.Cookie, "$HOST_COOKIE_PREFIX$SESSION_COOKIE=oss_1; $CSRF_COOKIE=csrf-1")
+                header(CSRF_HEADER, "csrf-1")
+                header(HttpHeaders.Origin, "https://app.test")
+            }
+            assertEquals(HttpStatusCode.Unauthorized, mixed.status)
+            assertEquals(listOf("oss_1", null, true, "https://app.test"), authenticator.calls.last())
+
+            val prefixed = client.post("/probe/session") {
+                val cookies = "$HOST_COOKIE_PREFIX$SESSION_COOKIE=oss_1; $HOST_COOKIE_PREFIX$CSRF_COOKIE=csrf-1"
+                header(HttpHeaders.Cookie, cookies)
+                header(CSRF_HEADER, "csrf-1")
+                header(HttpHeaders.Origin, "https://app.test")
+            }
+            assertEquals(HttpStatusCode.OK, prefixed.status)
+        }
+    }
+
+    @Test
     fun theDefaultAuthenticatorRefusesEverySession() = runTest {
         assertNull(RejectingTokenAuthenticator().authenticateSession("oss_1", "csrf-1", true, "https://app.test"))
+        assertEquals("", RejectingTokenAuthenticator().sessionCookiePrefix, "Plain names by default")
     }
 }

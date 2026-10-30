@@ -33,7 +33,7 @@ class CredentialAuthenticatorTest {
     private val tokens = InMemoryApiTokensRepository()
     private val sessions = InMemoryWebSessionsRepository()
     private val clock = SettableClock()
-    private val authenticator = CredentialAuthenticatorImpl(tokens, sessions, FakeHasher(), clock, setOf(CONSOLE))
+    private val authenticator = CredentialAuthenticatorImpl(tokens, sessions, FakeHasher(), clock, setOf(CONSOLE), "")
     private val userId = Uuid.parse("00000000-0000-4000-8000-0000000000aa")
     private val orgId = Uuid.parse("00000000-0000-4000-8000-0000000000bb")
 

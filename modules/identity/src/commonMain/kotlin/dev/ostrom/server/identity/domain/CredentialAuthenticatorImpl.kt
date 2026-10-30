@@ -25,6 +25,7 @@ import kotlin.time.Instant
  * @param hasher Hashes secrets and derives CSRF tokens.
  * @param clock The clock.
  * @param allowedOrigins The origins a session may change state from (`IdentityConfig.allowedOrigins`).
+ * @property sessionCookiePrefix `__Host-` over HTTPS (`IdentityConfig.sessionCookiePrefix`, audit S2-12).
  */
 class CredentialAuthenticatorImpl(
     private val tokens: ApiTokensRepository,
@@ -32,6 +33,7 @@ class CredentialAuthenticatorImpl(
     private val hasher: SecretHasher,
     private val clock: Clock,
     private val allowedOrigins: Set<String>,
+    override val sessionCookiePrefix: String,
 ) : TokenAuthenticator {
     override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
         val stored = liveToken(token) ?: return null

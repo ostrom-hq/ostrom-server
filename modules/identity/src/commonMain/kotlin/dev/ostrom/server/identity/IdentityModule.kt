@@ -142,7 +142,8 @@ object IdentityModule : ServerModule {
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
         single<TokenAuthenticator> {
-            CredentialAuthenticatorImpl(get(), get(), get(), get(), get<IdentityConfig>().allowedOrigins)
+            val config = get<IdentityConfig>()
+            CredentialAuthenticatorImpl(get(), get(), get(), get(), config.allowedOrigins, config.sessionCookiePrefix)
         }
         single<ResolveUserUseCase> { ResolveUserUseCaseImpl(get(), get(), get()) }
         single<LinkIdentityUseCase> { LinkIdentityUseCaseImpl(get(), get(), get()) }

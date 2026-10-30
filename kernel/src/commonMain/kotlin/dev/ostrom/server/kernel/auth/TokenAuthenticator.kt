@@ -58,6 +58,13 @@ interface TokenAuthenticator {
     suspend fun authenticate(token: String): AuthenticatedPrincipal?
 
     /**
+     * The prefix of the browser session's cookie names: [HOST_COOKIE_PREFIX] when the API is served over HTTPS (audit
+     * S2-12), so that no sibling subdomain can set or shadow them; empty on a plain-HTTP development server, where a
+     * browser refuses a `__Host-` cookie. The kernel reads only the names with this prefix, never the others.
+     */
+    val sessionCookiePrefix: String get() = ""
+
+    /**
      * Resolves a browser session cookie. A request that changes state must also carry the session's CSRF token
      * in the `X-CSRF-Token` header ([CSRF_HEADER]), equal to the readable [CSRF_COOKIE] (the kernel passes it only
      * then), and come from an allowed `Origin`; the authenticator checks the token against the session and the origin
@@ -81,6 +88,12 @@ interface TokenAuthenticator {
 
 /** The cookie that carries a browser session (HttpOnly, Secure, SameSite=Lax; set by the identity module). */
 const val SESSION_COOKIE = "ostrom_session"
+
+/**
+ * The cookie-name prefix that binds a cookie to the exact host that set it: the browser keeps it only when it is
+ * Secure, has `Path=/` and no `Domain` (audit S2-12).
+ */
+const val HOST_COOKIE_PREFIX = "__Host-"
 
 /** The header that carries the CSRF token of a browser session on state-changing requests. */
 const val CSRF_HEADER = "X-CSRF-Token"

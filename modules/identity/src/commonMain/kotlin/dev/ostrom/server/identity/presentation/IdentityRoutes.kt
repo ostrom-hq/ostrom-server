@@ -71,7 +71,8 @@ private fun Route.deviceLoginRoutes(dependencies: IdentityRoutesDependencies) = 
 private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with(dependencies) {
     get<MeApi> {
         val principal = call.requireScope("profile:read")
-        val session = call.request.cookies[SESSION_COOKIE]?.takeIf { principal.isBrowserSession }
+        val cookie = call.request.cookies[config.sessionCookiePrefix + SESSION_COOKIE]
+        val session = cookie?.takeIf { principal.isBrowserSession }
         val csrf = session?.let { hasher.csrfToken(it) }
         call.respond(getProfile(principal.userId()).toProfileResponse(csrf))
     }
@@ -149,15 +150,13 @@ private fun Route.deviceAnswerRoutes(dependencies: IdentityRoutesDependencies) =
  * [CSRF_COOKIE], readable by the console's script, which copies it into the `X-CSRF-Token` header of every request
  * that changes state. Both are Secure when the API is served over HTTPS, SameSite=Lax (sent on the console's own
  * requests and top-level navigations, not on another site's forms), for the whole API, until the session expires. The
- * session's secret is never in a response body.
+ * session's secret is never in a response body. Over HTTPS both names carry the `__Host-` prefix (S2-12).
  *
  * @param started The session.
  * @param config Where the API is served.
  */
 fun ApplicationCall.setSessionCookie(started: StartedSession, config: IdentityConfig) {
-    val maxAge = (started.session.expiresAt - started.session.createdAt).inWholeSeconds.toInt()
-    response.cookies.append(sessionCookie(SESSION_COOKIE, started.secret, maxAge, config, httpOnly = true))
-    response.cookies.append(sessionCookie(CSRF_COOKIE, started.csrfToken, maxAge, config, httpOnly = false))
+    sessionCookies(started, config).forEach(response.cookies::append)
 }
 
 /**
@@ -166,8 +165,25 @@ fun ApplicationCall.setSessionCookie(started: StartedSession, config: IdentityCo
  * @param config Where the API is served.
  */
 fun ApplicationCall.clearSessionCookie(config: IdentityConfig) {
-    response.cookies.append(sessionCookie(SESSION_COOKIE, "", 0, config, httpOnly = true))
-    response.cookies.append(sessionCookie(CSRF_COOKIE, "", 0, config, httpOnly = false))
+    sessionCookies(null, config).forEach(response.cookies::append)
+}
+
+/**
+ * The two session cookies, named `__Host-ostrom_session` and `__Host-ostrom_csrf` over HTTPS (Secure, `Path=/`, no
+ * `Domain`: audit S2-12), without the prefix on a plain-HTTP development server.
+ *
+ * @param started The session, or null to expire both.
+ * @param config Where the API is served.
+ *
+ * @return The session cookie, then the CSRF cookie.
+ */
+internal fun sessionCookies(started: StartedSession?, config: IdentityConfig): List<Cookie> {
+    val prefix = config.sessionCookiePrefix
+    val maxAge = started?.let { (it.session.expiresAt - it.session.createdAt).inWholeSeconds.toInt() } ?: 0
+    return listOf(
+        sessionCookie(prefix + SESSION_COOKIE, started?.secret.orEmpty(), maxAge, config, httpOnly = true),
+        sessionCookie(prefix + CSRF_COOKIE, started?.csrfToken.orEmpty(), maxAge, config, httpOnly = false),
+    )
 }
 
 private fun sessionCookie(name: String, value: String, maxAge: Int, config: IdentityConfig, httpOnly: Boolean) = Cookie(
