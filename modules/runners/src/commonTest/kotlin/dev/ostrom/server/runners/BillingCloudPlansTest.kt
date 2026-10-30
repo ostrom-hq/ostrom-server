@@ -18,6 +18,7 @@ import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import kotlinx.coroutines.test.runTest
+import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
@@ -52,7 +53,11 @@ private class FakeBilling : GetPlanLimitsUseCase, RecordAgentUsageUseCase {
 class BillingCloudPlansTest {
     private val billing = FakeBilling()
 
-    private fun koin(withBilling: Boolean): org.koin.core.Koin {
+    /**
+     * Runs [block] on the module's bindings, then closes the Koin: a module keeps its singletons until then, and the
+     * next test would read this one's.
+     */
+    private suspend fun withKoin(withBilling: Boolean, block: suspend (Koin) -> Unit) {
         val ports: Module = module {
             single<ConfigSource> { MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to ORG_A.toString())) }
             single<CloudSessionsRepository> { InMemoryCloudSessionsRepository() }
@@ -62,15 +67,23 @@ class BillingCloudPlansTest {
                 single<RecordAgentUsageUseCase> { billing }
             }
         }
-        return koinApplication {
+        val application = koinApplication {
             allowOverride(true)
             modules(RunnersModule.koinModule, ports)
-        }.koin
+        }
+        try {
+            block(application.koin)
+        } finally {
+            application.close()
+        }
     }
 
     @Test
     fun aPaidPlanGivesItsAgentsAndHoursWithTheFreeGuards() = runTest {
-        val plans = koin(withBilling = true).get<CloudPlanProvider>()
+        withKoin(withBilling = true) { koin -> paidPlans(koin.get()) }
+    }
+
+    private suspend fun paidPlans(plans: CloudPlanProvider) {
         billing.limits = billing.limits.copy(maxConcurrentCloudAgents = 15, agentHoursPerPeriod = 300 * 3)
         assertEquals(CloudPlan.FREE.copy(maxRunningSessions = 15, monthlyHours = 900), plans.planFor(ORG_A))
         // Enterprise, or a self-hosted license: no limit.
@@ -84,7 +97,10 @@ class BillingCloudPlansTest {
 
     @Test
     fun theHoursAreBillingsCounterAndEachExecutionCountsOneSession() = runTest {
-        val meter = koin(withBilling = true).get<CloudUsageMeter>()
+        withKoin(withBilling = true) { koin -> billingMeter(koin.get()) }
+    }
+
+    private suspend fun billingMeter(meter: CloudUsageMeter) {
         assertIs<BillingCloudUsageMeter>(meter)
         meter.record(ORG_A, 20, newExecution = true, PERIOD)
         meter.record(ORG_A, 15, newExecution = false, PERIOD)
@@ -94,7 +110,10 @@ class BillingCloudPlansTest {
 
     @Test
     fun withoutBillingTheFreePlanAndTheMonthlyCounterApply() = runTest {
-        val koin = koin(withBilling = false)
+        withKoin(withBilling = false) { koin -> withoutBilling(koin) }
+    }
+
+    private suspend fun withoutBilling(koin: Koin) {
         assertEquals(CloudPlan.FREE, koin.get<CloudPlanProvider>().planFor(ORG_A))
         val meter = koin.get<CloudUsageMeter>()
         assertIs<RepositoryCloudUsageMeter>(meter)
