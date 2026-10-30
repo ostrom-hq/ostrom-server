@@ -12,15 +12,16 @@ val eeProjects = rootProject.subprojects.filter { it.path.startsWith(":ee:module
 val eeModuleObjects: List<String> = eeProjects.map { ee ->
     val file = ee.projectDir.resolve("ee-module.properties")
     require(file.isFile) { "${ee.path} has no ee-module.properties naming its ServerModule (see ee/README.md)." }
-    val properties = java.util.Properties().apply { file.inputStream().use { load(it) } }
-    val name = properties.getProperty("serverModule")?.trim().orEmpty()
+    // `key=value` lines and `#` comments; read by hand because `java` names the Java extension in this script.
+    val name = file.readLines().map(String::trim).firstOrNull { it.startsWith("serverModule=") }
+        ?.substringAfter('=')?.trim().orEmpty()
     require(Regex("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.[A-Z][A-Za-z0-9_]*").matches(name)) {
         "$file must set serverModule=<fully qualified ServerModule object>, not \"$name\"."
     }
     name
 }
 
-val generateEeModules by tasks.registering {
+val generateEeModules = tasks.register("generateEeModules") {
     val objects = eeModuleObjects
     val output = layout.buildDirectory.dir("generated/ee-modules/kotlin")
     inputs.property("modules", objects)
