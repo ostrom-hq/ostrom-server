@@ -8,6 +8,7 @@ import dev.ostrom.server.billing.domain.PlanCatalog
 import dev.ostrom.server.billing.domain.PlanLimits
 import dev.ostrom.server.billing.domain.SubscriptionStatus
 import dev.ostrom.server.billing.domain.Usage
+import dev.ostrom.server.billing.domain.addMonths
 import dev.ostrom.server.billing.domain.billingPeriod
 import dev.ostrom.server.billing.domain.calendarMonth
 import dev.ostrom.server.billing.domain.displayName
@@ -116,7 +117,9 @@ class PlansAndPeriodsTest {
             updatedAt = NOW,
         )
         assertEquals(period("2026-10-15", "2026-11-15"), billingPeriod(live, NOW))
-        assertEquals(period("2026-11-01", "2026-12-01"), billingPeriod(live, Instant.parse("2026-11-20T00:00:00Z")))
+        assertEquals(period("2026-11-15", "2026-12-15"), billingPeriod(live, Instant.parse("2026-11-20T00:00:00Z")))
+        assertEquals(period("2026-11-15", "2026-12-15"), billingPeriod(live, Instant.parse("2026-11-15T00:00:00Z")))
+        assertEquals(period("2027-01-15", "2027-02-15"), billingPeriod(live, Instant.parse("2027-02-14T23:59:59Z")))
         assertEquals(period("2026-10-01", "2026-11-01"), billingPeriod(live, Instant.parse("2026-10-14T00:00:00Z")))
         assertEquals(period("2026-10-01", "2026-11-01"), billingPeriod(live.copy(currentPeriodEnd = null), NOW))
         assertEquals(period("2026-10-01", "2026-11-01"), billingPeriod(live.copy(currentPeriodStart = null), NOW))
@@ -127,6 +130,31 @@ class PlansAndPeriodsTest {
     @Test
     fun usageRoundsHoursDown() {
         assertEquals(1, Usage(NOW, 7_199, 2).agentHours)
+    }
+
+    @Test
+    fun aRenewedYearlySubscriptionRollsByYears() {
+        val yearly = OrgBilling(
+            orgId = Uuid.random(),
+            stripeSubscriptionId = "sub",
+            interval = BillingInterval.YEAR,
+            status = SubscriptionStatus.ACTIVE,
+            currentPeriodStart = Instant.parse("2026-10-15T00:00:00Z"),
+            currentPeriodEnd = Instant.parse("2027-10-15T00:00:00Z"),
+            updatedAt = NOW,
+        )
+        assertEquals(period("2027-10-15", "2028-10-15"), billingPeriod(yearly, Instant.parse("2027-10-16T00:00:00Z")))
+    }
+
+    @Test
+    fun monthsAreAddedOnTheAnchorDayOrTheLastDay() {
+        val jan31 = Instant.parse("2027-01-31T08:30:15.250Z")
+        assertEquals(Instant.parse("2027-02-28T08:30:15.250Z"), addMonths(jan31, 1))
+        assertEquals(Instant.parse("2028-02-29T08:30:15.250Z"), addMonths(jan31, 13))
+        assertEquals(Instant.parse("2027-03-31T08:30:15.250Z"), addMonths(jan31, 2))
+        assertEquals(Instant.parse("2026-12-31T08:30:15.250Z"), addMonths(jan31, -1))
+        assertEquals(Instant.parse("2027-12-31T08:30:15.250Z"), addMonths(jan31, 11))
+        assertEquals(Instant.parse("1969-12-31T00:00:00Z"), addMonths(Instant.parse("1970-01-31T00:00:00Z"), -1))
     }
 
     private fun period(start: String, end: String) =
