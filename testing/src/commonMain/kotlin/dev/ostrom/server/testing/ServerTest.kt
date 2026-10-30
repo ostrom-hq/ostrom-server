@@ -58,6 +58,9 @@ fun serverTest(
         modules.forEach { migrations.migrate(it.name, it.migrations) }
         modules.forEach { it.initialize(koin) }
         application { configureHttp(koin, modules) }
+        // Started now, not lazily at the first request: a test that never calls the client would otherwise start
+        // the application after the finally below has closed Koin.
+        startApplication()
         val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
         block(TestServer(koin, database.driver, client))
     } finally {
