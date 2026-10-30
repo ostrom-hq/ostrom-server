@@ -5,6 +5,7 @@ import dev.ostrom.server.billing.domain.BillingMetrics
 import dev.ostrom.server.kernel.logging.Logger
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.incrementAndFetch
 
 /**
  * [BillingMetrics] that logs each event, with its running count, until the observability module binds its
