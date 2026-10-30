@@ -32,6 +32,7 @@ class AutomationCallersTest {
         assertTrue(login.allowsAutomations(AUTOMATIONS_WRITE))
         assertFalse(principal(PrincipalKind.DEVICE, "user:*").allowsAutomations(AUTOMATIONS_READ))
         assertFalse(principal(PrincipalKind.DEVICE, AUTOMATIONS_WRITE).allowsAutomations(AUTOMATIONS_READ))
+        assertFalse(principal(PrincipalKind.AGENT, AUTOMATIONS_WRITE).allowsAutomations(AUTOMATIONS_READ))
         assertTrue(principal(PrincipalKind.USER, AUTOMATIONS_READ).allowsAutomations(AUTOMATIONS_READ))
         assertTrue(principal(PrincipalKind.USER, AUTOMATIONS_WRITE).allowsAutomations(AUTOMATIONS_READ))
         assertFalse(principal(PrincipalKind.USER).allowsAutomations(AUTOMATIONS_READ))
