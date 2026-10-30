@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing
 
 import dev.ostrom.server.sharing.domain.AccountCredentials
@@ -81,7 +82,8 @@ class SharedAccountPoolTest {
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s1"),
         ).lease
         first.release()
-        repository.accounts.replaceAll { if (it.label == "b") it.copy(priority = 5) else it }
+        val b = repository.accounts.indexOfFirst { it.label == "b" }
+        repository.accounts[b] = repository.accounts[b].copy(priority = 5)
         val again = assertIs<LeaseResult.Leased>(
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s1"),
         ).lease

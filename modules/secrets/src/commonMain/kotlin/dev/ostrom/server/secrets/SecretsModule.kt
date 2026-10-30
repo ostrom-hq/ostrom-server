@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets
 
 import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -42,7 +42,7 @@ object SecretsModule : ServerModule {
 
     override val koinModule: Module = module {
         single<SecretCipher> {
-            AesGcmSecretCipher(SecretsKey.load(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()))
+            AesGcmSecretCipher(SecretsKey.load(get<ConfigSource>()))
         }
         single<SecretsRepository> { SecretsRepositoryImpl(get()) }
         single<CreateSecretUseCase> { CreateSecretUseCaseImpl(get(), get(), get()) }

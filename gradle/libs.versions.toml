@@ -15,6 +15,7 @@ okio = "3.18.2"
 clikt = "5.1.0"
 mordant = "3.0.2"
 cryptography = "0.6.0"
+bouncycastle = "1.86"
 sqlx4k = "1.17.0"
 junit = "5.11.4"
 junit-platform = "1.11.4"
@@ -77,6 +78,8 @@ cryptography-core = { module = "dev.whyoleg.cryptography:cryptography-core", ver
 cryptography-openssl3-prebuilt = { module = "dev.whyoleg.cryptography:cryptography-provider-openssl3-prebuilt", version.ref = "cryptography" }
 cryptography-openssl3-shared = { module = "dev.whyoleg.cryptography:cryptography-provider-openssl3-shared", version.ref = "cryptography" }
 cryptography-jdk = { module = "dev.whyoleg.cryptography:cryptography-provider-jdk", version.ref = "cryptography" }
+# The JDK provider derives an Ed25519 public key from its private key only with BouncyCastle on the classpath.
+bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 
 # Database (server infrastructure only)
 sqlx4k-postgres = { module = "io.github.smyrgeorge:sqlx4k-postgres", version.ref = "sqlx4k" }

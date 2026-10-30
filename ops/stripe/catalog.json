@@ -1,0 +1,69 @@
+{
+  "apiVersion": "2026-09-30.endive",
+  "taxCode": "txcd_10103001",
+  "headOffice": {
+    "line1": "60 rue François 1er",
+    "postal_code": "75008",
+    "city": "Paris",
+    "country": "FR"
+  },
+  "taxRegistrations": [
+    { "country": "FR", "type": "standard", "options": { "place_of_supply_scheme": "small_seller" } }
+  ],
+  "meter": {
+    "eventName": "ostrom_active_person",
+    "displayName": "Ostrom active people",
+    "valueKey": "value"
+  },
+  "products": [
+    {
+      "id": "ostrom_team",
+      "name": "Ostrom Team",
+      "description": "Per active person per month: everyone who launched an agent or answered a gate in the period.",
+      "plan": "team"
+    },
+    {
+      "id": "ostrom_business",
+      "name": "Ostrom Business",
+      "description": "Team, plus SSO, organization policies and long receipt retention. Per active person per month.",
+      "plan": "business"
+    },
+    {
+      "id": "ostrom_enterprise",
+      "name": "Ostrom Enterprise",
+      "description": "Self-hosted with an enterprise license key, on quote.",
+      "plan": "enterprise"
+    }
+  ],
+  "prices": [
+    { "lookupKey": "ostrom_team_monthly", "product": "ostrom_team", "unitAmount": 3500, "interval": "month", "metered": true },
+    { "lookupKey": "ostrom_team_yearly", "product": "ostrom_team", "unitAmount": 33600, "interval": "year", "metered": false },
+    { "lookupKey": "ostrom_business_monthly", "product": "ostrom_business", "unitAmount": 6500, "interval": "month", "metered": true },
+    { "lookupKey": "ostrom_business_yearly", "product": "ostrom_business", "unitAmount": 62400, "interval": "year", "metered": false }
+  ],
+  "currency": "usd",
+  "portal": {
+    "headline": "Ostrom billing",
+    "privacyPolicyUrl": "https://ostrom.run/legal/privacy",
+    "termsOfServiceUrl": "https://ostrom.run/legal/terms",
+    "returnUrl": "https://app.ostrom.run/settings/billing"
+  },
+  "webhook": {
+    "url": "https://api.ostrom.run/v1/billing/stripe/webhook",
+    "events": [
+      "checkout.session.completed",
+      "checkout.session.async_payment_succeeded",
+      "checkout.session.async_payment_failed",
+      "customer.subscription.created",
+      "customer.subscription.updated",
+      "customer.subscription.deleted",
+      "customer.subscription.paused",
+      "customer.subscription.resumed",
+      "invoice.paid",
+      "invoice.payment_failed",
+      "invoice.payment_action_required",
+      "invoice.finalized",
+      "customer.updated"
+    ]
+  }
+}

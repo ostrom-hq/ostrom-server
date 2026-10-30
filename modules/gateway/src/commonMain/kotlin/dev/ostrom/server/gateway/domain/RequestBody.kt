@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gateway.domain
 
 import kotlinx.serialization.json.JsonPrimitive

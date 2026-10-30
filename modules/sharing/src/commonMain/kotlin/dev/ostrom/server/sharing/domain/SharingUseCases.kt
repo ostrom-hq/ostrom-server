@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing.domain
 
 import dev.ostrom.server.kernel.errors.ErrorKind

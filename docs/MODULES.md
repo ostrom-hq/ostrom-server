@@ -26,7 +26,8 @@ modules/<name>/
 
 - **domain** depends on nothing but the kernel's `errors` and `signing` interfaces: no Ktor, no SQL.
 - **infrastructure** implements the domain's interfaces; only it sees `io.github.smyrgeorge.sqlx4k`.
-- **presentation** maps HTTP to use cases; routes receive a `<Name>RoutesDependencies` data class.
+- **presentation** maps HTTP to use cases; routes receive a `<Name>RoutesDependencies` data class, in its own file
+  (detekt `MatchingDeclarationName`: a file whose only class is not its name fails).
 - A module never imports another module's `infrastructure` or `presentation`, never reads another module's tables.
   To use another domain, depend on its Gradle module and inject the **interface** it binds in Koin
   (`implementation(project(":modules:orgs"))`, then `get<GetOrgUseCase>()`); keep that graph acyclic.
@@ -104,7 +105,7 @@ driver.fetchAll(Statement.create("SELECT id, name, created_at FROM orgs_organiza
 ## 5. Routes and errors
 
 ```kotlin
-@Serializable @Resource("/v1/orgs") class OrgsApi { @Serializable @Resource("{id}") class Id(val parent: OrgsApi = OrgsApi(), val id: String) }
+@Serializable @Resource("/api/v1/orgs") class OrgsApi { @Serializable @Resource("{id}") class Id(val parent: OrgsApi = OrgsApi(), val id: String) }
 
 fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) {
     authenticated {
@@ -116,7 +117,8 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) 
 }
 ```
 
-- Every route is under `/v1/…`, except `/health`.
+- Every route is under `/api/v1/…` (the prefix of ostrom-core's `api/openapi.yaml`), except `/health`, which the
+  kernel also serves as `/api/v1/health`.
 - **Errors are thrown, never answered by hand**: a domain error subclasses `OstromException(ErrorKind.X, "message safe
   for the client")` (`class OrgNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")`).
   The kernel answers `{"error":{"type":"not_found","message":"…"}}` (CONVENTIONS section 3.3) with the kind's status;
@@ -142,12 +144,15 @@ Every request is already logged once by the kernel (method, path, status, durati
 - Tests live in `commonTest` and run twice: on the **JVM** (`jvmTest`, a test-only target never shipped) where Kover
   requires **100 % of the lines and branches** of the module (`koverVerify`), and **natively** (`linuxX64Test`), which
   proves the real binary's behaviour. Native-only code (`nativeMain`) stays thin. Each module's own tests must cover
-  it: another module's tests do not count.
+  it: another module's tests do not count. `@Serializable` classes are left out of the measure (a plugin-written
+  branch in them cannot be reached): keep them free of logic, and test their JSON through the routes.
+- A test that waits on real I/O with a timeout (`withTimeout`, the database health check) runs on
+  `withContext(Dispatchers.Default)` inside `runTest`: `runTest`'s virtual clock would fire the timeout at once.
 - **TDD**: the failing test first, for every behaviour ported from the prototype (`~/git/ostrom/mvp/server`, reuse its
   test cases).
 - **Unit tests** (use cases): hand-written fakes (`InMemoryOrgsRepository`); MockK does not exist on Kotlin/Native.
   Coroutines with `runTest`; time from an injected `Clock`.
-- **Database and route tests**: `serverTest(listOf(OrgsModule)) { server -> server.client.get("/v1/orgs") … }` starts
+- **Database and route tests**: `serverTest(listOf(OrgsModule)) { server -> server.client.get("/api/v1/orgs") … }` starts
   a fresh PostgreSQL database, applies the migrations, runs `initialize`, serves the routes, and drops the database
   afterwards. Fakes replace real bindings through `overrides = module { single<TokenAuthenticator> { … } }`.
   Name these classes `*PostgresTest`.
@@ -160,7 +165,7 @@ Every request is already logged once by the kernel (method, path, status, durati
 
 ## 8. Before the PR
 
-- CI job `linux` green: `scripts/check-conventions.py`, then
+- CI job `ci` green: `scripts/check-conventions.py`, then
   `./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test`, the binaries (`ci/build-linux.sh` leaves
   `dist/ostrom-server`) and the image smoke test.
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
@@ -183,8 +188,9 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_SECRETS_KEY` | — | The secrets key, base64 of 32 bytes (AES-256-GCM); wins over the file. Losing it loses every stored secret |
 | `OSTROM_SECRETS_KEY_FILE` | `data/secrets.key` | File of the secrets key, created with mode 0600 at first start when `OSTROM_SECRETS_KEY` is unset; keep it on a persistent volume |
 
-A module that needs its own keys reads them from the `ConfigSource` with the `OSTROM_<MODULE>_…` prefix and adds them
-to this table.
+A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
+environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
+`serverTest`, give it values with `overrides = module { single<ConfigSource> { MapConfigSource(mapOf(…)) } }`.
 
 ### Module `gateway`
 
