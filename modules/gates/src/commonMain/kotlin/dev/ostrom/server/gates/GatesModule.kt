@@ -61,7 +61,7 @@ object GatesModule : ServerModule {
         single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<AskGateUseCase> { AskGateUseCaseImpl(get(), get(), get(), get()) }
         single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get()) }
-        single<UseGateUseCase> { UseGateUseCaseImpl(get(), get()) }
+        single<UseGateUseCase> { UseGateUseCaseImpl(get(), get(), get()) }
         single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get()) }
         single<ListApprovalsUseCase> { ListApprovalsUseCaseImpl(get()) }
         single<GetApprovalUseCase> { GetApprovalUseCaseImpl(get()) }
