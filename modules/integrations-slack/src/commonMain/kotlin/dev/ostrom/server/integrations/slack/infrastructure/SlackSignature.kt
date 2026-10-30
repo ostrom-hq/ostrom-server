@@ -24,7 +24,8 @@ class SlackSignature(private val secret: String?, private val clock: Clock) {
      */
     suspend fun verify(body: ByteArray, timestamp: String?, signature: String?): Boolean {
         val seconds = timestamp?.toLongOrNull()
-        if (secret == null || seconds == null || signature == null || stale(seconds)) return false
+        val fresh = seconds != null && !stale(seconds)
+        if (secret == null || signature == null || !fresh) return false
         val key = CryptographyProvider.Default.get(HMAC).keyDecoder(SHA256)
             .decodeFromByteArray(HMAC.Key.Format.RAW, secret.encodeToByteArray())
         val mac = key.signatureGenerator().generateSignature("v0:$timestamp:".encodeToByteArray() + body)
