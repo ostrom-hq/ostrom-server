@@ -55,13 +55,15 @@ class UsageUseCasesTest {
     fun aClientEventIsRecordedForTheCallersOrgAndMemberWithoutCost() = runTest {
         val accepted = ingest(
             TestCallers.memberA,
-            listOf(ClientUsageEvent(
-                UsageKind.SKILL,
-                "deploy",
-                sessionId = "s-1",
-                durationMillis = 1200,
-                outcome = "error",
-            )),
+            listOf(
+                ClientUsageEvent(
+                    UsageKind.SKILL,
+                    "deploy",
+                    sessionId = "s-1",
+                    durationMillis = 1200,
+                    outcome = "error",
+                ),
+            ),
         )
 
         assertEquals(1, accepted)
@@ -190,7 +192,8 @@ class UsageUseCasesTest {
 
         assertEquals(300L, spend.spentMicros(TestCallers.orgA, null, since))
         assertEquals(200L, spend.spentMicros(TestCallers.orgA, TestCallers.memberA.memberId, since))
-        assertEquals(1000L, spend.accountSpentMicros(account, since))
+        assertEquals(200L, spend.accountSpentMicros(TestCallers.orgA, account, since))
+        assertEquals(800L, spend.accountSpentMicros(TestCallers.orgB, account, since), "An account is read in its org")
     }
 
     @Test
@@ -231,11 +234,13 @@ class UsageUseCasesTest {
 
     @Test
     fun aMemberListsOnlyTheirOwnEventsAndTheLimitIsBounded() = runTest {
-        repository.events += List(3) { modelEvent(
-            1,
-            memberId = TestCallers.adminA.memberId,
-            at = TestCallers.epoch - it.minutes,
-        ) }
+        repository.events += List(3) {
+            modelEvent(
+                1,
+                memberId = TestCallers.adminA.memberId,
+                at = TestCallers.epoch - it.minutes,
+            )
+        }
         repository.events += modelEvent(2, memberId = TestCallers.memberA.memberId)
         val list = ListUsageEventsUseCaseImpl(repository)
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.BudgetAlert
 import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetGuard
 import dev.ostrom.server.budgets.domain.BudgetPeriod
@@ -17,7 +18,6 @@ import dev.ostrom.server.budgets.domain.NoBudgetAlerts
 import dev.ostrom.server.budgets.domain.PutBudgetsUseCaseImpl
 import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCaseImpl
 import dev.ostrom.server.budgets.presentation.toResponse
-import dev.ostrom.server.budgets.domain.BudgetAlert
 import dev.ostrom.server.secrets.domain.AdminRequiredException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -56,11 +56,13 @@ class BudgetUseCasesTest {
     @Test
     fun limitsAreZeroToOneBillionDollars() = runTest {
         assertFailsWith<InvalidBudgetException> { putBudgets(TestCallers.adminA, -1, null) }
-        assertFailsWith<InvalidBudgetException> { putBudgets(
-            TestCallers.adminA,
-            null,
-            BudgetRules.MAX_LIMIT_MICROS + 1,
-        ) }
+        assertFailsWith<InvalidBudgetException> {
+            putBudgets(
+                TestCallers.adminA,
+                null,
+                BudgetRules.MAX_LIMIT_MICROS + 1,
+            )
+        }
         assertFailsWith<InvalidBudgetException> { putMember(TestCallers.adminA, member, -5) }
         assertEquals(0L, putBudgets(TestCallers.adminA, 0, BudgetRules.MAX_LIMIT_MICROS).settings.orgLimitMicros)
         assertEquals(emptyList(), repository.memberLimits.values.toList())
@@ -89,11 +91,13 @@ class BudgetUseCasesTest {
 
     @Test
     fun aMemberReadsTheirLimitSpendAndTheGatewaysDecision() = runTest {
-        val decisions = mutableListOf<BudgetDecision>(BudgetDecision.Exhausted(
-            BudgetScope.ORG,
-            9,
-            TestCallers.nextMonth,
-        ))
+        val decisions = mutableListOf<BudgetDecision>(
+            BudgetDecision.Exhausted(
+                BudgetScope.ORG,
+                9,
+                TestCallers.nextMonth,
+            ),
+        )
         val guard = object : BudgetGuard {
             override suspend fun check(orgId: Uuid, memberId: Uuid): BudgetDecision = decisions.removeFirst()
         }

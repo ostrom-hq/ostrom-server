@@ -31,7 +31,7 @@ class UsageRecorderImpl(
 ) : UsageRecorder {
     override suspend fun record(event: UsageEvent) {
         try {
-            repository.insert(listOf(event))
+            repository.insert(event.orgId, listOf(event))
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

@@ -2,6 +2,8 @@
 package dev.ostrom.server.usage.infrastructure
 
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
+import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
 /**
  * The schema of the usage module; its tables start with `usage_`. The spend indexes include `cost_micros` so that the
@@ -36,4 +38,21 @@ val UsageMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX usage_events_at ON usage_events (at)
         """.trimIndent(),
     ),
+    SchemaMigration(
+        version = 2,
+        name = "confine_usage_events_to_their_org",
+        sql = listOf(
+            TENANT_ROLE_SQL,
+            tenantTableSql("usage_events"),
+            // Retention deletes old events of every org, and nothing else (UsageRepositoryImpl.purge); a DELETE with a
+            // WHERE also needs the rows to pass a SELECT policy.
+            "CREATE POLICY usage_events_retention_read ON usage_events FOR SELECT " +
+                "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
+            "CREATE POLICY usage_events_retention ON usage_events FOR DELETE " +
+                "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
+        ).joinToString("\n"),
+    ),
 )
+
+/** The transaction-local setting that opens the retention policies of `usage_events`. */
+const val RETENTION_SETTING: String = "ostrom.usage_retention"

@@ -10,7 +10,7 @@ interface SpendReader {
     suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long
 
     /** Same, for one pooled account (per-account limits of personal account sharing). */
-    suspend fun accountSpentMicros(accountId: Uuid, since: Instant): Long
+    suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long
 }
 
 /**
@@ -22,6 +22,6 @@ class SpendReaderImpl(private val repository: UsageRepository) : SpendReader {
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long =
         repository.spentMicros(orgId, memberId, since)
 
-    override suspend fun accountSpentMicros(accountId: Uuid, since: Instant): Long =
-        repository.accountSpentMicros(accountId, since)
+    override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long =
+        repository.accountSpentMicros(orgId, accountId, since)
 }

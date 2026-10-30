@@ -4,19 +4,18 @@ package dev.ostrom.server.usage.presentation
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
-/** `POST /v1/usage/events`: the CLI declares its members' skills, hooks, sessions and MCP calls. */
-@Serializable
-@Resource("/v1/usage/events")
-class UsageIngestApi
-
 /**
- * `/v1/orgs/{orgId}/usage`: the org's ledger. To move to ostrom-core with the API contract.
+ * `/api/v1/usage`: the ledger of the caller's org (from the token). The query of `/api/v1/usage` itself is
+ * ostrom-core's `getUsage`; `/summary`, `/events` and `/live` are additions. An admin reads the whole org, a member
+ * only their own usage.
  *
- * @property orgId The org.
+ * @property from The start: an ISO 8601 instant or date (UTC); 30 days before `to` when absent.
+ * @property to The end, excluded; now when absent.
+ * @property member For an admin, one member only.
  */
 @Serializable
-@Resource("/v1/orgs/{orgId}/usage")
-class OrgUsageApi(val orgId: String) {
+@Resource("/api/v1/usage")
+class UsageApi(val from: String? = null, val to: String? = null, val member: String? = null) {
     /**
      * `/summary`: totals of the last days per group.
      *
@@ -26,10 +25,10 @@ class OrgUsageApi(val orgId: String) {
      */
     @Serializable
     @Resource("summary")
-    class Summary(val parent: OrgUsageApi, val days: Int = 7, val groupBy: String = "member")
+    class Summary(val parent: UsageApi = UsageApi(), val days: Int = 7, val groupBy: String = "member")
 
     /**
-     * `/events`: the events, newest first.
+     * `/events`: GET pages the events, newest first; POST records the client's events (skills, hooks, sessions, MCP).
      *
      * @property parent The ledger.
      * @property before Keyset cursor: the `next` of the previous page, or an ISO 8601 time.
@@ -37,17 +36,54 @@ class OrgUsageApi(val orgId: String) {
      */
     @Serializable
     @Resource("events")
-    class Events(val parent: OrgUsageApi, val before: String? = null, val limit: Int = 50)
+    class Events(val parent: UsageApi = UsageApi(), val before: String? = null, val limit: Int = 50)
 
     /**
-     * `/live`: server-sent events of the org's new events.
+     * `/live`: server-sent events of the org's new events (the live spending map).
      *
      * @property parent The ledger.
      */
     @Serializable
     @Resource("live")
-    class Live(val parent: OrgUsageApi)
+    class Live(val parent: UsageApi = UsageApi())
 }
+
+/** Scopes of a console token on the usage routes (a browser session has every user scope). */
+object UsageScopes {
+    /** Reads the ledger. */
+    const val READ: String = "usage:read"
+
+    /** Records client events. */
+    const val WRITE: String = "usage:write"
+}
+
+/**
+ * Spending over a period (contract `Usage`, with additions).
+ *
+ * @property from The start (ISO 8601).
+ * @property to The end, excluded (ISO 8601).
+ * @property usd The cost in US dollars.
+ * @property tokensIn Input tokens, cache reads and writes excluded.
+ * @property tokensOut Output tokens.
+ * @property byMember US dollars per member id (`unattributed` for events of no member).
+ * @property byModel US dollars per model, model calls only.
+ * @property cacheReadTokens Cached input tokens read (addition).
+ * @property cacheWriteTokens Input tokens written to the cache (addition).
+ * @property events The number of events (addition).
+ */
+@Serializable
+data class UsageResponse(
+    val from: String,
+    val to: String,
+    val usd: Double,
+    val tokensIn: Long,
+    val tokensOut: Long,
+    val byMember: Map<String, Double>,
+    val byModel: Map<String, Double>,
+    val cacheReadTokens: Long,
+    val cacheWriteTokens: Long,
+    val events: Long,
+)
 
 /**
  * Events declared by a client.

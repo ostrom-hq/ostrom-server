@@ -36,14 +36,25 @@ data class UsageTotal(
  */
 data class UsageCursor(val at: Instant, val id: Uuid?)
 
+/**
+ * The events a summary totals.
+ *
+ * @property orgId The org.
+ * @property memberId One member, or null for the whole org.
+ * @property since The start, included.
+ * @property until The end, excluded, or null for now.
+ */
+data class UsageWindow(val orgId: Uuid, val memberId: Uuid?, val since: Instant, val until: Instant? = null)
+
 /** The ledger. Every read is scoped by org (or by pooled account) and bounded. */
 interface UsageRepository {
     /**
-     * Writes events, all in one statement.
+     * Writes events of one org, all in one statement.
      *
+     * @param orgId The org of every event.
      * @param events The events.
      */
-    suspend fun insert(events: List<UsageEvent>)
+    suspend fun insert(orgId: Uuid, events: List<UsageEvent>)
 
     /**
      * Sums the cost of the org, or of one member, since a time.
@@ -57,33 +68,26 @@ interface UsageRepository {
     suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long
 
     /**
-     * Sums the cost spent on one pooled account since a time.
+     * Sums the cost spent on one pooled account of the org since a time.
      *
+     * @param orgId The org that shares the account.
      * @param accountId The account.
      * @param since The start, included.
      *
      * @return USD millionths.
      */
-    suspend fun accountSpentMicros(accountId: Uuid, since: Instant): Long
+    suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long
 
     /**
-     * Totals the org's events (or one member's) per group, most expensive first.
+     * Totals the events of a window per group, most expensive first.
      *
-     * @param orgId The org.
-     * @param memberId The member, or null for the whole org.
-     * @param since The start, included.
+     * @param window The org, the member (or the whole org) and the times.
      * @param groupBy The grouping; [UsageGroupBy.MODEL] only counts model events.
      * @param limit The maximum number of groups.
      *
      * @return The groups.
      */
-    suspend fun summary(
-        orgId: Uuid,
-        memberId: Uuid?,
-        since: Instant,
-        groupBy: UsageGroupBy,
-        limit: Int,
-    ): List<UsageTotal>
+    suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal>
 
     /**
      * Lists events, newest first.

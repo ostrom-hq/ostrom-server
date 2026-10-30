@@ -45,11 +45,13 @@ class UsagePresentationTest {
     @Test
     fun anUnknownKindOrTimeIsRefused() {
         assertFailsWith<InvalidUsageEventException> { UsageEventRequest("payment", "x").toClientEvent() }
-        assertFailsWith<InvalidUsageEventException> { UsageEventRequest(
-            "hook",
-            "Stop",
-            at = "yesterday",
-        ).toClientEvent() }
+        assertFailsWith<InvalidUsageEventException> {
+            UsageEventRequest(
+                "hook",
+                "Stop",
+                at = "yesterday",
+            ).toClientEvent()
+        }
     }
 
     @Test

@@ -17,6 +17,8 @@ import dev.ostrom.server.budgets.domain.PutBudgetsUseCase
 import dev.ostrom.server.budgets.domain.PutBudgetsUseCaseImpl
 import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCase
 import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCaseImpl
+import dev.ostrom.server.budgets.domain.SetBudgetUseCase
+import dev.ostrom.server.budgets.domain.SetBudgetUseCaseImpl
 import dev.ostrom.server.budgets.infrastructure.BudgetsMigrations
 import dev.ostrom.server.budgets.infrastructure.BudgetsRepositoryImpl
 import dev.ostrom.server.budgets.presentation.BudgetsRoutesDependencies
@@ -50,9 +52,8 @@ object BudgetsModule : ServerModule {
         single<PutMemberBudgetUseCase> { PutMemberBudgetUseCaseImpl(get(), get(), get()) }
         single<DeleteMemberBudgetUseCase> { DeleteMemberBudgetUseCaseImpl(get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
-        single {
-            BudgetsRoutesDependencies(callerResolver(), get(), get(), get(), get(), get())
-        }
+        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get()) }
+        single { BudgetsRoutesDependencies(callerResolver(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = BudgetsMigrations

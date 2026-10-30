@@ -20,6 +20,8 @@ import dev.ostrom.server.usage.domain.SpendReaderImpl
 import dev.ostrom.server.usage.domain.UsageFeed
 import dev.ostrom.server.usage.domain.UsageRecorder
 import dev.ostrom.server.usage.domain.UsageRecorderImpl
+import dev.ostrom.server.usage.domain.UsageReportUseCase
+import dev.ostrom.server.usage.domain.UsageReportUseCaseImpl
 import dev.ostrom.server.usage.domain.UsageRepository
 import dev.ostrom.server.usage.domain.UsageSummaryUseCase
 import dev.ostrom.server.usage.domain.UsageSummaryUseCaseImpl
@@ -90,11 +92,12 @@ object UsageModule : ServerModule {
         single<SpendReader> { SpendReaderImpl(get()) }
         single<IngestUsageEventsUseCase> { IngestUsageEventsUseCaseImpl(get(), get(), get()) }
         single<UsageSummaryUseCase> { UsageSummaryUseCaseImpl(get(), get()) }
+        single<UsageReportUseCase> { UsageReportUseCaseImpl(get(), get()) }
         single<ListUsageEventsUseCase> { ListUsageEventsUseCaseImpl(get()) }
         single<WatchUsageUseCase> { WatchUsageUseCaseImpl(get()) }
         single<PurgeUsageUseCase> { PurgeUsageUseCaseImpl(get(), get(), get<UsageConfig>().retention) }
         single {
-            UsageRoutesDependencies(callerResolver(), get(), get(), get(), get())
+            UsageRoutesDependencies(callerResolver(), get(), get(), get(), get(), get())
         }
     }
 

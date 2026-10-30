@@ -16,6 +16,7 @@ import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.MemberRole
+import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.usage.domain.SpendReader
 import org.koin.core.module.Module
 import org.koin.dsl.module
@@ -31,7 +32,26 @@ object TestCallers {
     val adminA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000a1"), MemberRole.ADMIN)
     val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
-    private val byToken = mapOf("admin-a" to adminA, "member-a" to memberA, "admin-b" to adminB)
+    private val byToken = mapOf(
+        "admin-a" to adminA,
+        "member-a" to memberA,
+        "admin-b" to adminB,
+        "agent-a" to memberA,
+        "device-a" to adminA,
+        "cli-read" to adminA,
+        "cli-write" to adminA,
+        "cli-other" to adminA,
+        "stranger" to null,
+    )
+
+    /** The scopes and kind of each token: a browser session has every user scope (`user:*`). */
+    private val principals = mapOf(
+        "agent-a" to (PrincipalKind.SERVICE to setOf(RelayScopes.AGENT_SESSION)),
+        "device-a" to (PrincipalKind.DEVICE to setOf(RelayScopes.ALL_USER)),
+        "cli-read" to (PrincipalKind.USER to setOf("budgets:read")),
+        "cli-write" to (PrincipalKind.USER to setOf("budgets:write")),
+        "cli-other" to (PrincipalKind.USER to setOf(RelayScopes.MCP_READ)),
+    )
 
     /** 30 October 2026, 12:00 UTC: the month runs from 1 October to 1 November. */
     val epoch: Instant = Instant.parse("2026-10-30T12:00:00Z")
@@ -47,14 +67,17 @@ object TestCallers {
         single<Clock> { clock }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) =
-                    byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()) }
+                override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
+                    if (token !in byToken) return null
+                    val (kind, scopes) = principals[token] ?: (PrincipalKind.USER to setOf(RelayScopes.ALL_USER))
+                    return AuthenticatedPrincipal(token, kind, scopes)
+                }
             }
         }
         single<CallerResolver> {
             object : CallerResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
-                    byToken[principal.subjectId]?.takeIf { orgId == null || it.orgId == orgId }
+                    byToken[principal.subjectId]
             }
         }
     }
@@ -92,7 +115,7 @@ class FakeSpendReader : SpendReader {
         return spent[orgId to memberId] ?: 0
     }
 
-    override suspend fun accountSpentMicros(accountId: Uuid, since: Instant): Long = 0
+    override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long = 0
 }
 
 /** Keeps every alert published; can fail. */
@@ -152,10 +175,8 @@ class InMemoryBudgetsRepository : BudgetsRepository {
     override suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget =
         MemberBudget(memberId, limitMicros, at).also { memberLimits[orgId to memberId] = it }
 
-    override suspend fun deleteMemberLimit(
-        orgId: Uuid,
-        memberId: Uuid,
-    ): Boolean = memberLimits.remove(orgId to memberId) != null
+    override suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean =
+        memberLimits.remove(orgId to memberId) != null
 
     override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
         markFailure?.let { throw it }

@@ -94,7 +94,7 @@ class IngestUsageEventsUseCaseImpl(
         if (events.isEmpty()) return 0
         val now = clock.now()
         val recorded = events.map { it.validated(now).toEvent(caller, now) }
-        repository.insert(recorded)
+        repository.insert(caller.orgId, recorded)
         recorded.forEach { feed.publish(it) }
         return recorded.size
     }
@@ -174,7 +174,11 @@ class UsageSummaryUseCaseImpl(private val repository: UsageRepository, private v
     override suspend fun invoke(caller: Caller, days: Int, groupBy: UsageGroupBy): UsageSummary {
         if (days !in UsageRules.SUMMARY_DAYS) throw InvalidUsageQueryException("days is 1 to 90.")
         val since = clock.now() - days.days
-        val groups = repository.summary(caller.orgId, caller.visibleMember(), since, groupBy, UsageRules.MAX_GROUPS)
+        val groups = repository.summary(
+            UsageWindow(caller.orgId, caller.visibleMember(), since),
+            groupBy,
+            UsageRules.MAX_GROUPS,
+        )
         return UsageSummary(since, groupBy, groups)
     }
 }

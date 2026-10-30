@@ -5,76 +5,63 @@ import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
 /**
- * `/v1/orgs/{orgId}/budgets`: the org's monthly limits, for its admins. To move to ostrom-core with the API contract.
- *
- * @property orgId The org.
+ * `/api/v1/budgets`: the limits of the caller's org (from the token), as in ostrom-core's `openapi.yaml`
+ * (`listBudgets`, `setBudget`); `/me` is an addition.
  */
 @Serializable
-@Resource("/v1/orgs/{orgId}/budgets")
-class BudgetsApi(val orgId: String) {
+@Resource("/api/v1/budgets")
+class BudgetsApi {
     /**
-     * `/members/{memberId}`: one member's own limit.
-     *
-     * @property parent The budgets.
-     * @property memberId The member.
-     */
-    @Serializable
-    @Resource("members/{memberId}")
-    class Member(val parent: BudgetsApi, val memberId: String)
-
-    /**
-     * `/me`: the caller's own budget, for any member.
+     * `/me`: the caller's own budget, for any member and for an agent session.
      *
      * @property parent The budgets.
      */
     @Serializable
     @Resource("me")
-    class Me(val parent: BudgetsApi)
+    class Me(val parent: BudgetsApi = BudgetsApi())
+}
+
+/** Scopes of a console token on the budgets routes (a browser session has every user scope). */
+object BudgetScopes {
+    /** Reads the budgets. */
+    const val READ: String = "budgets:read"
+
+    /** Sets them. */
+    const val WRITE: String = "budgets:write"
 }
 
 /**
- * Replaces the org limit and the default member limit; an absent limit removes it.
+ * A spending limit (contract `Budget`): per calendar month (UTC), always a hard stop.
  *
- * @property orgLimitMicros What the org may spend per calendar month (UTC), USD millionths.
- * @property defaultMemberLimitMicros What each member may spend per month, unless they have their own limit.
+ * @property scope `organization` (also `org`) or `member`.
+ * @property subject For `member`: the member's id, or absent for every member without a limit of their own.
+ * @property usdPerMonth The limit in US dollars; absent removes it.
+ * @property usdPerDay Daily limits are not supported: must be absent.
+ * @property hardStop Must be true: a reached limit refuses model calls.
  */
 @Serializable
-data class PutBudgetsRequest(val orgLimitMicros: Long? = null, val defaultMemberLimitMicros: Long? = null)
+data class BudgetDto(
+    val scope: String,
+    val subject: String? = null,
+    val usdPerMonth: Double? = null,
+    val usdPerDay: Double? = null,
+    val hardStop: Boolean = true,
+)
 
 /**
- * Sets a member's own limit.
+ * The org's budgets (contract `listBudgets`, with additions).
  *
- * @property limitMicros USD millionths per month.
+ * @property items The limits: the org's, the default member's, then members' own.
+ * @property next Always absent: every limit fits in one page.
+ * @property orgSpentUsd What the org spent this month (addition).
+ * @property periodStart The start of this month, ISO 8601 (addition).
+ * @property resetsAt The start of next month, ISO 8601 (addition).
  */
 @Serializable
-data class PutMemberBudgetRequest(val limitMicros: Long)
-
-/**
- * A member's own limit.
- *
- * @property memberId The member.
- * @property limitMicros The limit.
- * @property updatedAt Its last change (ISO 8601).
- */
-@Serializable
-data class MemberBudgetResponse(val memberId: String, val limitMicros: Long, val updatedAt: String)
-
-/**
- * An org's budgets.
- *
- * @property orgLimitMicros The org limit, absent when none.
- * @property defaultMemberLimitMicros The default member limit, absent when none.
- * @property overrides Members with their own limit.
- * @property orgSpentMicros What the org spent this month.
- * @property periodStart The start of this month (ISO 8601).
- * @property resetsAt The start of next month (ISO 8601).
- */
-@Serializable
-data class BudgetsResponse(
-    val orgLimitMicros: Long? = null,
-    val defaultMemberLimitMicros: Long? = null,
-    val overrides: List<MemberBudgetResponse>,
-    val orgSpentMicros: Long,
+data class BudgetsPage(
+    val items: List<BudgetDto>,
+    val next: String? = null,
+    val orgSpentUsd: Double,
     val periodStart: String,
     val resetsAt: String,
 )

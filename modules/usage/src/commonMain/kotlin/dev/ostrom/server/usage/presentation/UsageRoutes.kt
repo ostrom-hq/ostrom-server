@@ -4,10 +4,12 @@ package dev.ostrom.server.usage.presentation
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.secrets.domain.CallerResolver
+import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
 import dev.ostrom.server.usage.domain.IngestUsageEventsUseCase
 import dev.ostrom.server.usage.domain.ListUsageEventsUseCase
 import dev.ostrom.server.usage.domain.TooManyUsageEventsException
+import dev.ostrom.server.usage.domain.UsageReportUseCase
 import dev.ostrom.server.usage.domain.UsageRules
 import dev.ostrom.server.usage.domain.UsageSummaryUseCase
 import dev.ostrom.server.usage.domain.WatchUsageUseCase
@@ -33,6 +35,7 @@ private const val MAX_INGEST_BYTES: Long = 1_048_576
  * What the usage routes need.
  *
  * @property callers Resolves the member of each call.
+ * @property report Spending over a period.
  * @property ingest Records client events.
  * @property summary Totals.
  * @property listEvents Pages the ledger.
@@ -41,6 +44,7 @@ private const val MAX_INGEST_BYTES: Long = 1_048_576
  */
 data class UsageRoutesDependencies(
     val callers: CallerResolver,
+    val report: UsageReportUseCase,
     val ingest: IngestUsageEventsUseCase,
     val summary: UsageSummaryUseCase,
     val listEvents: ListUsageEventsUseCase,
@@ -49,32 +53,40 @@ data class UsageRoutesDependencies(
 )
 
 /**
- * The usage routes: authenticated; an admin reads the whole org, a member only their own usage.
+ * The usage routes, on the org of the caller's token: an admin reads the whole org, a member only their own usage.
+ * Reading takes a browser session or a console token with [UsageScopes.READ]; recording takes [UsageScopes.WRITE] or
+ * an agent session (the CLI's hooks). Device tokens are refused (SECURITY-AUDIT S2-03).
  *
  * @param dependencies The use cases.
  */
 fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies) {
     authenticated {
-        post<UsageIngestApi> {
-            val caller = call.requireCaller(callers, null)
+        get<UsageApi> { params ->
+            val caller = call.requireCaller(callers, UsageScopes.READ)
+            val from = params.from?.toInstantParameter("from")
+            val to = params.to?.toInstantParameter("to")
+            call.respond(report(caller, from, to, params.member?.toMemberParameter()).toResponse())
+        }
+        post<UsageApi.Events> {
+            val caller = call.requireCaller(callers, UsageScopes.WRITE, RelayScopes.AGENT_SESSION)
             if ((call.request.contentLength() ?: 0) > MAX_INGEST_BYTES) throw TooManyUsageEventsException()
             val request = call.receive<UsageEventsRequest>()
             val accepted = ingest(caller, request.events.map { it.toClientEvent() })
             call.respond(HttpStatusCode.Accepted, UsageAcceptedResponse(accepted))
         }
-        get<OrgUsageApi.Summary> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
+        get<UsageApi.Summary> { params ->
+            val caller = call.requireCaller(callers, UsageScopes.READ)
             call.respond(summary(caller, params.days, params.groupBy.toGroupBy()).toResponse())
         }
-        get<OrgUsageApi.Events> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
+        get<UsageApi.Events> { params ->
+            val caller = call.requireCaller(callers, UsageScopes.READ)
             val limit = params.limit.coerceIn(1, UsageRules.MAX_PAGE)
             val page = listEvents(caller, params.before?.toUsageCursor(), limit)
-            val next = page.takeIf { it.size == limit }?.last()?.toCursor()
+            val next = if (page.size == limit) page.last().toCursor() else null
             call.respond(UsageEventsPageResponse(page.map { it.toResponse() }, next))
         }
-        get<OrgUsageApi.Live> { params ->
-            val caller = call.requireCaller(callers, params.parent.orgId)
+        get<UsageApi.Live> {
+            val caller = call.requireCaller(callers, UsageScopes.READ)
             call.response.header(HttpHeaders.CacheControl, "no-cache")
             // nginx (the web image proxies /api/) buffers responses unless told not to: the events would arrive late.
             call.response.header("X-Accel-Buffering", "no")

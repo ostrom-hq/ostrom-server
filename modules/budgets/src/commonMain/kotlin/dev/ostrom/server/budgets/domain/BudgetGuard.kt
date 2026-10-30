@@ -67,7 +67,8 @@ class BudgetGuardImpl(
     private val clock: Clock,
     private val logger: Logger,
     private val cache: BudgetCacheSettings = BudgetCacheSettings(),
-) : BudgetGuard, BudgetDecisionCache {
+) : BudgetGuard,
+    BudgetDecisionCache {
     private data class MemberKey(val orgId: Uuid, val memberId: Uuid)
 
     private class Cached<T>(val value: T, val expiresAt: Instant)

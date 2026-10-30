@@ -2,6 +2,8 @@
 package dev.ostrom.server.budgets.infrastructure
 
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
+import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
 /**
  * The schema of the budgets module; its tables start with `budgets_`. `budgets_limits.scope` is `ORG` and
@@ -33,5 +35,11 @@ val BudgetsMigrations: List<SchemaMigration> = listOf(
             );
             CREATE UNIQUE INDEX budgets_alerts_once ON budgets_alerts (org_id, scope, member_id, period_start, threshold) NULLS NOT DISTINCT
         """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 2,
+        name = "confine_budgets_to_their_org",
+        sql = listOf(TENANT_ROLE_SQL, tenantTableSql("budgets_limits"), tenantTableSql("budgets_alerts"))
+            .joinToString("\n"),
     ),
 )

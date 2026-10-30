@@ -4,6 +4,8 @@ package dev.ostrom.server.usage
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.secrets.infrastructure.executeInOrg
+import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import dev.ostrom.server.usage.domain.SpendReader
@@ -12,11 +14,14 @@ import dev.ostrom.server.usage.domain.UsageGroupBy
 import dev.ostrom.server.usage.domain.UsageKind
 import dev.ostrom.server.usage.domain.UsageRecorder
 import dev.ostrom.server.usage.domain.UsageRepository
+import dev.ostrom.server.usage.domain.UsageWindow
 import dev.ostrom.server.usage.presentation.UsageAcceptedResponse
 import dev.ostrom.server.usage.presentation.UsageEventRequest
 import dev.ostrom.server.usage.presentation.UsageEventsPageResponse
 import dev.ostrom.server.usage.presentation.UsageEventsRequest
+import dev.ostrom.server.usage.presentation.UsageResponse
 import dev.ostrom.server.usage.presentation.UsageSummaryResponse
+import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.call.body
@@ -37,6 +42,7 @@ import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
@@ -51,17 +57,17 @@ class UsagePostgresTest {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
     }
     private val modules = listOf(SecretsModule, UsageModule)
-    private val orgA = "/v1/orgs/${TestCallers.orgA}/usage"
-    private val orgB = "/v1/orgs/${TestCallers.orgB}/usage"
 
-    private suspend fun TestServer.declare(
-        token: String,
-        vararg events: UsageEventRequest,
-    ) = client.post("/v1/usage/events") {
-        bearerAuth(token)
-        contentType(ContentType.Application.Json)
-        setBody(UsageEventsRequest(events.toList()))
-    }
+    // The org comes from the token: admin-a and member-a read org A, admin-b org B.
+    private val orgA = "/api/v1/usage"
+    private val orgB = "/api/v1/usage"
+
+    private suspend fun TestServer.declare(token: String, vararg events: UsageEventRequest) =
+        client.post("/api/v1/usage/events") {
+            bearerAuth(token)
+            contentType(ContentType.Application.Json)
+            setBody(UsageEventsRequest(events.toList()))
+        }
 
     @Test
     fun theCliDeclaresEventsThatTheOrgThenReads() = serverTest(modules, overrides) { server ->
@@ -105,7 +111,7 @@ class UsagePostgresTest {
 
     @Test
     fun clientsCannotDeclareModelUsageNorMalformedBatches() = serverTest(modules, overrides) { server ->
-        assertEquals(HttpStatusCode.Unauthorized, server.client.post("/v1/usage/events").status)
+        assertEquals(HttpStatusCode.Unauthorized, server.client.post("/api/v1/usage/events").status)
         assertEquals(
             HttpStatusCode.BadRequest,
             server.declare("member-a", UsageEventRequest("model", "claude-opus-4-1")).status,
@@ -114,7 +120,7 @@ class UsagePostgresTest {
         assertEquals(HttpStatusCode.BadRequest, server.declare("member-a", UsageEventRequest("skill", "")).status)
         val tooMany = server.declare("member-a", *Array(501) { UsageEventRequest("hook", "Stop") })
         assertEquals(HttpStatusCode.PayloadTooLarge, tooMany.status)
-        val tooBig = server.client.post("/v1/usage/events") {
+        val tooBig = server.client.post("/api/v1/usage/events") {
             bearerAuth("member-a")
             contentType(ContentType.Application.Json)
             setBody("""{"events":[],"padding":"${"x".repeat(1_048_577)}"}""")
@@ -128,25 +134,34 @@ class UsagePostgresTest {
         val recorder = server.koin.get<UsageRecorder>()
         val account = Uuid.random()
         recorder.record(modelEvent(1_500, memberId = TestCallers.adminA.memberId).copy(accountId = account))
-        recorder.record(modelEvent(
-            2_500,
-            memberId = TestCallers.memberA.memberId,
-            name = "gpt-5",
-        ).copy(provider = "openrouter"))
+        recorder.record(
+            modelEvent(
+                2_500,
+                memberId = TestCallers.memberA.memberId,
+                name = "gpt-5",
+            ).copy(provider = "openrouter"),
+        )
         recorder.record(modelEvent(4_000, memberId = null).copy(provider = null))
         recorder.record(modelEvent(8_000, memberId = TestCallers.memberA.memberId, at = TestCallers.epoch - 40.days))
-        recorder.record(modelEvent(
-            16_000,
-            orgId = TestCallers.orgB,
-            memberId = TestCallers.adminB.memberId,
-        ).copy(accountId = account))
+        recorder.record(
+            modelEvent(
+                16_000,
+                orgId = TestCallers.orgB,
+                memberId = TestCallers.adminB.memberId,
+            ).copy(accountId = account),
+        )
 
         val spend = server.koin.get<SpendReader>()
         val month = TestCallers.epoch - 30.days
         assertEquals(8_000L, spend.spentMicros(TestCallers.orgA, null, month))
         assertEquals(2_500L, spend.spentMicros(TestCallers.orgA, TestCallers.memberA.memberId, month))
         assertEquals(0L, spend.spentMicros(TestCallers.orgA, Uuid.random(), month))
-        assertEquals(17_500L, spend.accountSpentMicros(account, month), "An account is pooled across its uses")
+        assertEquals(
+            1_500L,
+            spend.accountSpentMicros(TestCallers.orgA, account, month),
+            "An account is read in its org",
+        )
+        assertEquals(16_000L, spend.accountSpentMicros(TestCallers.orgB, account, month))
 
         suspend fun groups(groupBy: String, token: String = "admin-a") =
             server.client.get("$orgA/summary?days=30&groupBy=$groupBy") { bearerAuth(token) }
@@ -165,8 +180,10 @@ class UsagePostgresTest {
         assertEquals(mapOf("anthropic" to 1_500L, "openrouter" to 2_500L, null to 4_000L), groups("provider"))
         assertEquals(mapOf(null to 6_500L, account.toString() to 1_500L), groups("account"))
         assertEquals(
-            mapOf<String?,
-            Long>(TestCallers.memberA.memberId.toString() to 2_500L),
+            mapOf<
+                String?,
+                Long,
+                >(TestCallers.memberA.memberId.toString() to 2_500L),
             groups("member", "member-a"),
             "A member sees only themselves",
         )
@@ -174,6 +191,10 @@ class UsagePostgresTest {
         val summary = server.client.get("$orgA/summary?days=30") { bearerAuth("admin-a") }.body<UsageSummaryResponse>()
         assertEquals(8_000L, summary.total.costMicros)
         assertEquals(300L, summary.total.inputTokens)
+    }
+
+    @Test
+    fun malformedQueriesAreRefused() = serverTest(modules, overrides) { server ->
         assertEquals(
             HttpStatusCode.BadRequest,
             server.client.get("$orgA/summary?days=91") { bearerAuth("admin-a") }.status,
@@ -192,8 +213,8 @@ class UsagePostgresTest {
     fun theRepositoryPagesTiesByIdAndPurgesInBatches() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<UsageRepository>()
         val sameInstant = List(3) { modelEvent(it.toLong()) }
-        repository.insert(sameInstant + modelEvent(9, at = TestCallers.epoch - 500.days))
-        repository.insert(emptyList())
+        repository.insert(TestCallers.orgA, sameInstant + modelEvent(9, at = TestCallers.epoch - 500.days))
+        repository.insert(TestCallers.orgA, emptyList())
 
         val first = repository.list(TestCallers.orgA, null, null, 2)
         val second = repository.list(TestCallers.orgA, null, UsageCursor(first.last().at, first.last().id), 2)
@@ -206,14 +227,16 @@ class UsagePostgresTest {
         val adminEvents = repository.list(TestCallers.orgA, TestCallers.adminA.memberId, null, 10)
         assertEquals(sameInstant.first(), adminEvents.first { it.id == sameInstant.first().id })
         assertEquals(UsageKind.MODEL, first.first().kind)
-        val adminKinds = repository.summary(
-            TestCallers.orgA,
-            TestCallers.adminA.memberId,
-            TestCallers.epoch - 1.days,
-            UsageGroupBy.KIND,
-            10,
+        val today = UsageWindow(TestCallers.orgA, TestCallers.adminA.memberId, TestCallers.epoch - 1.days)
+        assertEquals(1, repository.summary(today, UsageGroupBy.KIND, 10).size)
+        val past = UsageWindow(TestCallers.orgA, null, TestCallers.epoch - 600.days, until = TestCallers.epoch - 1.days)
+        assertEquals(
+            listOf(9L),
+            repository.summary(past, UsageGroupBy.KIND, 10).map {
+                it.costMicros
+            },
+            "until excludes",
         )
-        assertEquals(1, adminKinds.size)
 
         assertEquals(1L, repository.purge(TestCallers.epoch - 400.days, 10))
         assertEquals(0L, repository.purge(TestCallers.epoch - 400.days, 10))
@@ -224,19 +247,13 @@ class UsagePostgresTest {
     fun anotherOrgNeitherSeesNorReadsTheUsage() = serverTest(modules, overrides) { server ->
         server.koin.get<UsageRecorder>().record(modelEvent(1_000))
 
-        assertEquals(HttpStatusCode.NotFound, server.client.get("$orgA/summary") { bearerAuth("admin-b") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.get("$orgA/events") { bearerAuth("admin-b") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.get("$orgA/live") { bearerAuth("admin-b") }.status)
-        assertEquals(
-            HttpStatusCode.NotFound,
-            server.client.get("/v1/orgs/not-a-uuid/usage/summary") { bearerAuth("admin-a") }.status,
-        )
         val own = server.client.get("$orgB/summary?days=1") { bearerAuth("admin-b") }.body<UsageSummaryResponse>()
-        assertEquals(emptyList(), own.groups)
+        assertEquals(emptyList(), own.groups, "Org B's admin reads org B, which has nothing")
         assertEquals(
             emptyList(),
             server.client.get("$orgB/events") { bearerAuth("admin-b") }.body<UsageEventsPageResponse>().events,
         )
+        assertEquals(0.0, server.client.get(orgB) { bearerAuth("admin-b") }.body<UsageResponse>().usd)
         server.declare("admin-b", UsageEventRequest("skill", "org-b-skill"))
         val orgAEvents = server.client.get("$orgA/events") { bearerAuth("admin-a") }
             .body<UsageEventsPageResponse>().events
@@ -245,6 +262,102 @@ class UsagePostgresTest {
             orgAEvents.map { it.name },
             "Org B's declaration never lands in org A",
         )
+    }
+
+    @Test
+    fun rowLevelSecurityConfinesEveryQueryToItsOrg() = serverTest(modules, overrides) { server ->
+        val repository = server.koin.get<UsageRepository>()
+        repository.insert(TestCallers.orgA, listOf(modelEvent(1_000)))
+        val count = Statement.create("SELECT COUNT(*) AS n FROM usage_events")
+        suspend fun visibleTo(org: Uuid) = server.driver.fetchInOrg(org, count).getOrThrow().first().get("n").asLong()
+        assertEquals(1L, visibleTo(TestCallers.orgA))
+        assertEquals(0L, visibleTo(TestCallers.orgB), "Even a query without an org filter sees only its org")
+        assertFails("A row of another org is refused") {
+            repository.insert(TestCallers.orgB, listOf(modelEvent(5, orgId = TestCallers.orgA)))
+        }
+        assertEquals(
+            0L,
+            server.driver.executeInOrg(TestCallers.orgB, Statement.create("DELETE FROM usage_events"))
+                .getOrThrow(),
+            "Nor deleted by another org",
+        )
+        assertEquals(1L, visibleTo(TestCallers.orgA))
+    }
+
+    @Test
+    fun theReportSumsAPeriodPerMemberAndPerModel() = serverTest(modules, overrides) { server ->
+        val recorder = server.koin.get<UsageRecorder>()
+        recorder.record(modelEvent(1_000_000, memberId = TestCallers.adminA.memberId))
+        recorder.record(modelEvent(2_500_000, memberId = TestCallers.memberA.memberId, name = "gpt-5"))
+        recorder.record(modelEvent(500_000, memberId = null))
+        recorder.record(
+            modelEvent(9_000_000, memberId = TestCallers.memberA.memberId, at = TestCallers.epoch - 40.days),
+        )
+        server.declare("member-a", UsageEventRequest("skill", "deploy"))
+
+        val all = server.client.get(orgA) { bearerAuth("admin-a") }.body<UsageResponse>()
+        assertEquals((TestCallers.epoch - 30.days).toString(), all.from)
+        assertEquals(TestCallers.epoch.toString(), all.to)
+        assertEquals(4.0, all.usd)
+        assertEquals(4L, all.events, "Three model calls and the skill of the last 30 days")
+        assertEquals(
+            mapOf(
+                TestCallers.adminA.memberId.toString() to 1.0,
+                TestCallers.memberA.memberId.toString() to 2.5,
+                "unattributed" to 0.5,
+            ),
+            all.byMember,
+        )
+        assertEquals(mapOf("claude-sonnet-4-5" to 1.5, "gpt-5" to 2.5), all.byModel)
+
+        val longer = server.client.get("$orgA?from=2026-09-01&to=2026-10-30T13:00:00Z") { bearerAuth("admin-a") }
+        assertEquals(13.0, longer.body<UsageResponse>().usd)
+        val one = server.client.get(orgA) {
+            url.parameters.append("member", TestCallers.memberA.memberId.toString())
+            bearerAuth("admin-a")
+        }.body<UsageResponse>()
+        assertEquals(2.5, one.usd, "An admin may read one member")
+        val mine = server.client.get(orgA) {
+            url.parameters.append("member", TestCallers.adminA.memberId.toString())
+            bearerAuth("member-a")
+        }.body<UsageResponse>()
+        assertEquals(2.5, mine.usd, "A member always reads their own usage")
+
+        for (query in listOf(
+            "from=soon",
+            "to=later",
+            "member=me",
+            "from=2026-10-30&to=2026-10-01",
+            "from=2025-01-01",
+        )) {
+            assertEquals(
+                HttpStatusCode.BadRequest,
+                server.client.get("$orgA?$query") { bearerAuth("admin-a") }.status,
+                query,
+            )
+        }
+    }
+
+    @Test
+    fun eachRouteChecksTheCredentialAndItsScope() = serverTest(modules, overrides) { server ->
+        val reads = listOf(orgA, "$orgA/summary", "$orgA/events", "$orgA/live")
+        for (path in reads) {
+            assertEquals(HttpStatusCode.Unauthorized, server.client.get(path).status, path)
+            assertEquals(HttpStatusCode.NotFound, server.client.get(path) { bearerAuth("stranger") }.status, path)
+            for (token in listOf("device-a", "agent-a", "cli-write", "cli-other")) {
+                assertEquals(HttpStatusCode.Forbidden, server.client.get(path) { bearerAuth(token) }.status, token)
+            }
+        }
+        assertEquals(HttpStatusCode.OK, server.client.get("$orgA/summary") { bearerAuth("cli-read") }.status)
+
+        val skill = UsageEventRequest("skill", "deploy")
+        assertEquals(HttpStatusCode.NotFound, server.declare("stranger", skill).status)
+        for (token in listOf("device-a", "cli-read", "cli-other")) {
+            assertEquals(HttpStatusCode.Forbidden, server.declare(token, skill).status, token)
+        }
+        for (token in listOf("agent-a", "cli-write")) {
+            assertEquals(HttpStatusCode.Accepted, server.declare(token, skill).status, "$token records events")
+        }
     }
 
     @Test
@@ -258,11 +371,13 @@ class UsagePostgresTest {
                 assertEquals(": connected", stream.readUTF8Line())
                 assertEquals("", stream.readUTF8Line())
                 recorder.record(modelEvent(111, memberId = TestCallers.adminA.memberId))
-                recorder.record(modelEvent(
-                    222,
-                    memberId = TestCallers.memberA.memberId,
-                    at = TestCallers.epoch + 1.minutes,
-                ))
+                recorder.record(
+                    modelEvent(
+                        222,
+                        memberId = TestCallers.memberA.memberId,
+                        at = TestCallers.epoch + 1.minutes,
+                    ),
+                )
                 val line = requireNotNull(stream.readUTF8Line())
                 assertTrue(line.startsWith("data: {"), line)
                 assertTrue("\"costMicros\":222" in line, "A member only follows their own events: $line")

@@ -6,6 +6,9 @@ import dev.ostrom.server.budgets.domain.BudgetLimits
 import dev.ostrom.server.budgets.domain.BudgetSettings
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.MemberBudget
+import dev.ostrom.server.secrets.infrastructure.executeInOrg
+import dev.ostrom.server.secrets.infrastructure.fetchInOrg
+import dev.ostrom.server.secrets.infrastructure.inTenant
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -23,7 +26,8 @@ import kotlin.uuid.Uuid
 class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
     override suspend fun settings(orgId: Uuid, maxOverrides: Int): BudgetSettings {
         // The two org-wide rows sort first, so that the limit only ever cuts member overrides.
-        val rows = driver.fetchAll(
+        val rows = driver.fetchInOrg(
+            orgId,
             Statement.create(
                 "SELECT scope, member_id, limit_micros, updated_at FROM budgets_limits WHERE org_id = :org_id " +
                     "ORDER BY scope = 'MEMBER', scope, member_id LIMIT :limit",
@@ -46,7 +50,8 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
     }
 
     override suspend fun limits(orgId: Uuid, memberId: Uuid): BudgetLimits {
-        val rows = driver.fetchAll(
+        val rows = driver.fetchInOrg(
+            orgId,
             Statement.create(
                 "SELECT scope, limit_micros FROM budgets_limits WHERE org_id = :org_id " +
                     "AND (member_id IS NULL OR member_id = :member_id) LIMIT 3",
@@ -61,14 +66,15 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         defaultMemberLimitMicros: Long?,
         at: Instant,
     ) {
-        driver.transaction {
+        driver.inTenant(orgId) {
             putShared(orgId, ORG, orgLimitMicros, at)
             putShared(orgId, DEFAULT_MEMBER, defaultMemberLimitMicros, at)
         }
     }
 
     override suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget {
-        driver.execute(
+        driver.executeInOrg(
+            orgId,
             Statement.create(
                 "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) " +
                     "VALUES (:org_id, :member_id, 'MEMBER', :limit, :at) " + UPSERT,
@@ -77,7 +83,8 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         return MemberBudget(memberId, limitMicros, at)
     }
 
-    override suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean = driver.execute(
+    override suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean = driver.executeInOrg(
+        orgId,
         Statement.create(
             "DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = 'MEMBER' AND member_id = :member_id",
         )
@@ -97,7 +104,7 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
             .bind("at", at)
         val member = alert.memberId
         if (member == null) statement.bindNull("member_id", Uuid::class) else statement.bind("member_id", member)
-        return driver.execute(statement).getOrThrow() == 1L
+        return driver.executeInOrg(alert.orgId, statement).getOrThrow() == 1L
     }
 
     private suspend fun QueryExecutor.putShared(orgId: Uuid, scope: String, limitMicros: Long?, at: Instant) {

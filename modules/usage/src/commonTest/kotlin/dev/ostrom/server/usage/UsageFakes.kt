@@ -9,12 +9,14 @@ import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.MemberRole
+import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.usage.domain.UsageCursor
 import dev.ostrom.server.usage.domain.UsageEvent
 import dev.ostrom.server.usage.domain.UsageGroupBy
 import dev.ostrom.server.usage.domain.UsageKind
 import dev.ostrom.server.usage.domain.UsageRepository
 import dev.ostrom.server.usage.domain.UsageTotal
+import dev.ostrom.server.usage.domain.UsageWindow
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.time.Clock
@@ -29,7 +31,26 @@ object TestCallers {
     val adminA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000a1"), MemberRole.ADMIN)
     val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
-    private val byToken = mapOf("admin-a" to adminA, "member-a" to memberA, "admin-b" to adminB)
+    private val byToken = mapOf(
+        "admin-a" to adminA,
+        "member-a" to memberA,
+        "admin-b" to adminB,
+        "agent-a" to memberA,
+        "device-a" to adminA,
+        "cli-read" to adminA,
+        "cli-write" to memberA,
+        "cli-other" to adminA,
+        "stranger" to null,
+    )
+
+    /** The scopes and kind of each token: a browser session has every user scope (`user:*`). */
+    private val principals = mapOf(
+        "agent-a" to (PrincipalKind.SERVICE to setOf(RelayScopes.AGENT_SESSION)),
+        "device-a" to (PrincipalKind.DEVICE to setOf(RelayScopes.ALL_USER)),
+        "cli-read" to (PrincipalKind.USER to setOf("usage:read")),
+        "cli-write" to (PrincipalKind.USER to setOf("usage:write")),
+        "cli-other" to (PrincipalKind.USER to setOf(RelayScopes.MCP_READ)),
+    )
 
     /** The fixed time of the tests: 30 October 2026, 12:00 UTC. */
     val epoch: Instant = Instant.parse("2026-10-30T12:00:00Z")
@@ -43,14 +64,17 @@ object TestCallers {
         single<Clock> { clock }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) =
-                    byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()) }
+                override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
+                    if (token !in byToken) return null
+                    val (kind, scopes) = principals[token] ?: (PrincipalKind.USER to setOf(RelayScopes.ALL_USER))
+                    return AuthenticatedPrincipal(token, kind, scopes)
+                }
             }
         }
         single<CallerResolver> {
             object : CallerResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
-                    byToken[principal.subjectId]?.takeIf { orgId == null || it.orgId == orgId }
+                    byToken[principal.subjectId]
             }
         }
     }
@@ -109,27 +133,22 @@ class InMemoryUsageRepository : UsageRepository {
     /** The batch sizes purge was called with. */
     val purges = mutableListOf<Int>()
 
-    override suspend fun insert(events: List<UsageEvent>) {
+    override suspend fun insert(orgId: Uuid, events: List<UsageEvent>) {
         failure?.let { throw it }
+        // As the policy's WITH CHECK: a row of another org is refused.
+        require(events.all { it.orgId == orgId }) { "new row violates row-level security policy" }
         this.events += events
     }
 
-    override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long =
-        events
-            .filter { it.orgId == orgId && it.at >= since && (memberId == null || it.memberId == memberId) }
-            .sumOf { it.costMicros }
+    override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long = events
+        .filter { it.orgId == orgId && it.at >= since && (memberId == null || it.memberId == memberId) }
+        .sumOf { it.costMicros }
 
-    override suspend fun accountSpentMicros(accountId: Uuid, since: Instant): Long =
-        events.filter { it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
+    override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long =
+        events.filter { it.orgId == orgId && it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
 
-    override suspend fun summary(
-        orgId: Uuid,
-        memberId: Uuid?,
-        since: Instant,
-        groupBy: UsageGroupBy,
-        limit: Int,
-    ): List<UsageTotal> =
-        events.filter { it.orgId == orgId && it.at >= since && (memberId == null || it.memberId == memberId) }
+    override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> =
+        events.filter { it in window }
             .filter { groupBy != UsageGroupBy.MODEL || it.kind == UsageKind.MODEL }
             .groupBy {
                 when (groupBy) {
@@ -168,6 +187,11 @@ class InMemoryUsageRepository : UsageRepository {
         return old.size.toLong()
     }
 }
+
+private operator fun UsageWindow.contains(event: UsageEvent): Boolean = event.orgId == orgId &&
+    event.at >= since &&
+    (until == null || event.at < until) &&
+    (memberId == null || event.memberId == memberId)
 
 /** Keyset order: newest first, then the id; an id-less cursor keeps every event strictly older. */
 private fun UsageEvent.isBefore(cursor: UsageCursor?): Boolean = when {

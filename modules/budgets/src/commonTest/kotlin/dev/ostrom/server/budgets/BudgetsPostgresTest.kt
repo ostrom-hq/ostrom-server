@@ -7,23 +7,24 @@ import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetGuard
 import dev.ostrom.server.budgets.domain.BudgetScope
 import dev.ostrom.server.budgets.domain.BudgetsRepository
-import dev.ostrom.server.budgets.presentation.BudgetsResponse
-import dev.ostrom.server.budgets.presentation.MemberBudgetResponse
+import dev.ostrom.server.budgets.presentation.BudgetDto
+import dev.ostrom.server.budgets.presentation.BudgetsPage
 import dev.ostrom.server.budgets.presentation.MyBudgetResponse
-import dev.ostrom.server.budgets.presentation.PutBudgetsRequest
-import dev.ostrom.server.budgets.presentation.PutMemberBudgetRequest
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.secrets.infrastructure.executeInOrg
+import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import dev.ostrom.server.usage.UsageModule
 import dev.ostrom.server.usage.domain.UsageEvent
 import dev.ostrom.server.usage.domain.UsageKind
 import dev.ostrom.server.usage.domain.UsageRecorder
+import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
-import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -36,6 +37,8 @@ import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -51,31 +54,19 @@ class BudgetsPostgresTest {
         single<BudgetAlerts> { alerts }
     }
     private val modules = listOf(SecretsModule, UsageModule, BudgetsModule)
-    private val base = "/v1/orgs/${TestCallers.orgA}/budgets"
+
+    // The org comes from the token: admin-a and member-a are in org A, admin-b in org B.
+    private val base = "/api/v1/budgets"
     private val member = TestCallers.memberA.memberId
 
-    private suspend fun TestServer.putBudgets(
-        token: String,
-        request: PutBudgetsRequest,
-        path: String = base,
-    ): HttpResponse =
-        client.put(path) {
-            bearerAuth(token)
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }
+    private suspend fun TestServer.putBudget(token: String, budget: BudgetDto): HttpResponse = client.put(base) {
+        bearerAuth(token)
+        contentType(ContentType.Application.Json)
+        setBody(budget)
+    }
 
-    private suspend fun TestServer.putMember(
-        token: String,
-        memberId: String,
-        limit: Long,
-        path: String = base,
-    ): HttpResponse =
-        client.put("$path/members/$memberId") {
-            bearerAuth(token)
-            contentType(ContentType.Application.Json)
-            setBody(PutMemberBudgetRequest(limit))
-        }
+    private suspend fun TestServer.budgets(token: String = "admin-a") =
+        client.get(base) { bearerAuth(token) }.body<BudgetsPage>()
 
     private suspend fun TestServer.spend(
         costMicros: Long,
@@ -98,48 +89,47 @@ class BudgetsPostgresTest {
 
     @Test
     fun anAdminManagesTheLimitsAndTheOverrides() = serverTest(modules, overrides) { server ->
-        assertEquals(HttpStatusCode.OK, server.putBudgets("admin-a", PutBudgetsRequest(100_000_000, 20_000_000)).status)
-        val created = server.putMember("admin-a", member.toString(), 50_000_000)
-        assertEquals(HttpStatusCode.OK, created.status, created.bodyAsText())
-        assertEquals(50_000_000L, created.body<MemberBudgetResponse>().limitMicros)
+        val org = BudgetDto("organization", usdPerMonth = 100.0)
+        val saved = server.putBudget("admin-a", org)
+        assertEquals(HttpStatusCode.OK, saved.status, saved.bodyAsText())
+        assertEquals(org, saved.body<BudgetDto>())
         assertEquals(
-            HttpStatusCode.OK,
-            server.putMember("admin-a", member.toString(), 40_000_000).status,
-            "An override is replaced",
+            BudgetDto("member", usdPerMonth = 20.0),
+            server.putBudget("admin-a", BudgetDto("MEMBER", usdPerMonth = 20.0)).body<BudgetDto>(),
+            "The scope is answered as the API lists it",
         )
+        server.putBudget("admin-a", BudgetDto("member", member.toString(), 50.0))
+        server.putBudget("admin-a", BudgetDto("member", member.toString(), 40.0))
         server.spend(3_000_000, member)
         server.spend(9_000_000, member, at = TestCallers.monthStart - 1.days)
 
-        val budgets = server.client.get(base) { bearerAuth("admin-a") }.body<BudgetsResponse>()
-        assertEquals(100_000_000L, budgets.orgLimitMicros)
-        assertEquals(20_000_000L, budgets.defaultMemberLimitMicros)
-        assertEquals(listOf(member.toString() to 40_000_000L), budgets.overrides.map { it.memberId to it.limitMicros })
-        assertEquals(3_000_000L, budgets.orgSpentMicros, "Only this month counts")
+        val budgets = server.budgets()
+        assertEquals(
+            listOf(
+                BudgetDto("organization", usdPerMonth = 100.0),
+                BudgetDto("member", usdPerMonth = 20.0),
+                BudgetDto("member", member.toString(), 40.0),
+            ),
+            budgets.items,
+            "An override is replaced",
+        )
+        assertEquals(3.0, budgets.orgSpentUsd, "Only this month counts")
+        assertEquals("2026-10-01T00:00:00Z", budgets.periodStart)
         assertEquals("2026-11-01T00:00:00Z", budgets.resetsAt)
 
-        assertEquals(
-            HttpStatusCode.NoContent,
-            server.client.delete("$base/members/$member") { bearerAuth("admin-a") }.status,
-        )
-        assertEquals(
-            HttpStatusCode.NotFound,
-            server.client.delete("$base/members/$member") { bearerAuth("admin-a") }.status,
-        )
-        assertEquals(
-            HttpStatusCode.NotFound,
-            server.client.delete("$base/members/not-a-uuid") { bearerAuth("admin-a") }.status,
-        )
-        assertEquals(emptyList(), server.client.get(base) { bearerAuth("admin-a") }.body<BudgetsResponse>().overrides)
-
-        server.putBudgets("admin-a", PutBudgetsRequest())
-        val cleared = server.client.get(base) { bearerAuth("admin-a") }.body<BudgetsResponse>()
-        assertEquals(null, cleared.orgLimitMicros)
-        assertEquals(null, cleared.defaultMemberLimitMicros)
+        repeat(2) {
+            val removed = server.putBudget("admin-a", BudgetDto("member", member.toString()))
+            assertEquals(HttpStatusCode.OK, removed.status, "Removing an absent override is a no-op")
+        }
+        server.putBudget("admin-a", BudgetDto("org"))
+        assertEquals(listOf(BudgetDto("member", usdPerMonth = 20.0)), server.budgets().items)
+        server.putBudget("admin-a", BudgetDto("member"))
+        assertEquals(emptyList(), server.budgets().items)
     }
 
     @Test
     fun aMemberSeesTheirOwnBudgetButCannotChangeAny() = serverTest(modules, overrides) { server ->
-        server.putBudgets("admin-a", PutBudgetsRequest(defaultMemberLimitMicros = 1_000_000))
+        server.putBudget("admin-a", BudgetDto("member", usdPerMonth = 1.0))
         server.spend(400_000, member)
         server.spend(900_000, TestCallers.adminA.memberId)
 
@@ -147,23 +137,59 @@ class BudgetsPostgresTest {
         assertEquals(MyBudgetResponse(1_000_000, 400_000, 600_000, "2026-11-01T00:00:00Z", exhausted = false), mine)
 
         assertEquals(HttpStatusCode.Forbidden, server.client.get(base) { bearerAuth("member-a") }.status)
-        assertEquals(HttpStatusCode.Forbidden, server.putBudgets("member-a", PutBudgetsRequest(1, 1)).status)
-        assertEquals(HttpStatusCode.Forbidden, server.putMember("member-a", member.toString(), 9_000_000).status)
         assertEquals(
             HttpStatusCode.Forbidden,
-            server.client.delete("$base/members/$member") { bearerAuth("member-a") }.status,
+            server.putBudget("member-a", BudgetDto("organization", null, 1.0)).status,
+        )
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.putBudget("member-a", BudgetDto("member", member.toString(), 9.0)).status,
         )
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("$base/me").status)
-        assertEquals(
-            HttpStatusCode.BadRequest,
-            server.putBudgets("admin-a", PutBudgetsRequest(orgLimitMicros = -1)).status,
+        val refused = listOf(
+            BudgetDto("organization", usdPerMonth = -1.0),
+            BudgetDto("organization", usdPerMonth = 1.0, usdPerDay = 1.0),
+            BudgetDto("organization", usdPerMonth = 1.0, hardStop = false),
+            BudgetDto("workflow", "deploy", 1.0),
+            BudgetDto("member", "not-a-uuid", 1.0),
         )
-        assertEquals(HttpStatusCode.NotFound, server.putMember("admin-a", "not-a-uuid", 1).status)
+        for (budget in refused) {
+            assertEquals(HttpStatusCode.BadRequest, server.putBudget("admin-a", budget).status, budget.toString())
+        }
+        assertEquals(
+            listOf(BudgetDto("member", usdPerMonth = 1.0)),
+            server.budgets().items,
+            "A refused budget changes nothing",
+        )
+    }
+
+    @Test
+    fun eachRouteChecksTheCredentialAndItsScope() = serverTest(modules, overrides) { server ->
+        val budget = BudgetDto("organization", usdPerMonth = 5.0)
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get(base).status)
+        for (token in listOf("stranger")) {
+            assertEquals(HttpStatusCode.NotFound, server.client.get(base) { bearerAuth(token) }.status)
+            assertEquals(HttpStatusCode.NotFound, server.putBudget(token, budget).status)
+            assertEquals(HttpStatusCode.NotFound, server.client.get("$base/me") { bearerAuth(token) }.status)
+        }
+        for (token in listOf("device-a", "agent-a", "cli-write", "cli-other")) {
+            assertEquals(HttpStatusCode.Forbidden, server.client.get(base) { bearerAuth(token) }.status, token)
+        }
+        for (token in listOf("device-a", "agent-a", "cli-read", "cli-other")) {
+            assertEquals(HttpStatusCode.Forbidden, server.putBudget(token, budget).status, token)
+        }
+        for (token in listOf("device-a", "cli-write", "cli-other")) {
+            assertEquals(HttpStatusCode.Forbidden, server.client.get("$base/me") { bearerAuth(token) }.status, token)
+        }
+        assertEquals(HttpStatusCode.OK, server.putBudget("cli-write", budget).status)
+        assertEquals(listOf(budget), server.budgets("cli-read").items)
+        assertEquals(HttpStatusCode.OK, server.client.get("$base/me") { bearerAuth("agent-a") }.status)
+        assertEquals(HttpStatusCode.OK, server.client.get("$base/me") { bearerAuth("cli-read") }.status)
     }
 
     @Test
     fun theGuardStopsSpendingAtTheLimitAndAlertsOnce() = serverTest(modules, overrides) { server ->
-        server.putBudgets("admin-a", PutBudgetsRequest(orgLimitMicros = 1_000_000))
+        server.putBudget("admin-a", BudgetDto("organization", usdPerMonth = 1.0))
         val guard = server.koin.get<BudgetGuard>()
         assertEquals(BudgetDecision.Allowed(1_000_000), guard.check(TestCallers.orgA, member))
 
@@ -187,7 +213,7 @@ class BudgetsPostgresTest {
         assertEquals(true, mine.exhausted)
         assertEquals("org", mine.exhaustedScope)
 
-        server.putBudgets("admin-a", PutBudgetsRequest(orgLimitMicros = 2_000_000))
+        server.putBudget("admin-a", BudgetDto("organization", usdPerMonth = 2.0))
         assertEquals(
             BudgetDecision.Allowed(1_000_000),
             guard.check(TestCallers.orgA, member),
@@ -222,35 +248,54 @@ class BudgetsPostgresTest {
 
     @Test
     fun anotherOrgNeitherSeesNorChangesTheBudgets() = serverTest(modules, overrides) { server ->
-        server.putBudgets("admin-a", PutBudgetsRequest(orgLimitMicros = 7_000_000))
-        server.putMember("admin-a", member.toString(), 3_000_000)
+        server.putBudget("admin-a", BudgetDto("organization", usdPerMonth = 7.0))
+        server.putBudget("admin-a", BudgetDto("member", member.toString(), 3.0))
 
-        assertEquals(HttpStatusCode.NotFound, server.client.get(base) { bearerAuth("admin-b") }.status)
+        val own = server.budgets("admin-b")
+        assertEquals(emptyList(), own.items, "Org B's admin reads org B, which has no budget")
         assertEquals(
-            HttpStatusCode.NotFound,
-            server.putBudgets("admin-b", PutBudgetsRequest(orgLimitMicros = 1)).status,
+            HttpStatusCode.OK,
+            server.putBudget("admin-b", BudgetDto("member", member.toString())).status,
+            "Removing org A's override from org B is a no-op",
         )
-        assertEquals(HttpStatusCode.NotFound, server.putMember("admin-b", member.toString(), 1).status)
-        assertEquals(
-            HttpStatusCode.NotFound,
-            server.client.delete("$base/members/$member") { bearerAuth("admin-b") }.status,
-        )
-        assertEquals(HttpStatusCode.NotFound, server.client.get("$base/me") { bearerAuth("admin-b") }.status)
-
-        val orgB = "/v1/orgs/${TestCallers.orgB}/budgets"
-        assertEquals(
-            HttpStatusCode.NotFound,
-            server.client.delete("$orgB/members/$member") { bearerAuth("admin-b") }.status,
-            "Org A's override is not org B's",
-        )
-        val own = server.client.get(orgB) { bearerAuth("admin-b") }.body<BudgetsResponse>()
-        assertEquals(null, own.orgLimitMicros)
-        assertEquals(emptyList(), own.overrides)
+        server.putBudget("admin-b", BudgetDto("organization", usdPerMonth = 1.0))
         server.spend(5_000_000, TestCallers.adminB.memberId, orgId = TestCallers.orgB)
+        assertEquals(listOf(BudgetDto("organization", usdPerMonth = 1.0)), server.budgets("admin-b").items)
 
-        val budgets = server.client.get(base) { bearerAuth("admin-a") }.body<BudgetsResponse>()
-        assertEquals(7_000_000L, budgets.orgLimitMicros, "Unchanged by org B")
-        assertEquals(0L, budgets.orgSpentMicros, "Org B's spend never counts for org A")
-        assertEquals(listOf(3_000_000L), budgets.overrides.map { it.limitMicros })
+        val budgets = server.budgets()
+        assertEquals(
+            listOf(BudgetDto("organization", usdPerMonth = 7.0), BudgetDto("member", member.toString(), 3.0)),
+            budgets.items,
+            "Unchanged by org B",
+        )
+        assertEquals(0.0, budgets.orgSpentUsd, "Org B's spend never counts for org A")
+    }
+
+    @Test
+    fun rowLevelSecurityConfinesEveryQueryToItsOrg() = serverTest(modules, overrides) { server ->
+        val repository = server.koin.get<BudgetsRepository>()
+        repository.putOrgLimits(TestCallers.orgA, 5_000, 1_000, TestCallers.epoch)
+        repository.putMemberLimit(TestCallers.orgA, member, 10, TestCallers.epoch)
+        val alert = BudgetAlert(TestCallers.orgA, null, BudgetScope.ORG, 80, 1_000, 900, TestCallers.monthStart)
+        repository.markAlerted(alert, TestCallers.epoch)
+        for (table in listOf("budgets_limits", "budgets_alerts")) {
+            val count = Statement.create("SELECT COUNT(*) AS n FROM $table")
+            suspend fun visibleTo(org: Uuid) =
+                server.driver.fetchInOrg(org, count).getOrThrow().first().get("n").asLong()
+            assertEquals(0L, visibleTo(TestCallers.orgB), "$table: a query without an org filter sees only its org")
+            assertEquals(
+                0L,
+                server.driver.executeInOrg(TestCallers.orgB, Statement.create("DELETE FROM $table")).getOrThrow(),
+                "$table: nor deleted by another org",
+            )
+            assertTrue(visibleTo(TestCallers.orgA) > 0, table)
+        }
+        val foreign = Statement.create(
+            "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) " +
+                "VALUES (:org, :member, 'MEMBER', 1, now())",
+        ).bind("org", TestCallers.orgA).bind("member", Uuid.random())
+        assertFails("A row of another org is refused") {
+            server.driver.executeInOrg(TestCallers.orgB, foreign).getOrThrow()
+        }
     }
 }
