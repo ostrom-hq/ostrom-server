@@ -67,8 +67,12 @@ ktor-client-engine-defaults = { module = "io.ktor:ktor-client-engine-defaults", 
 ktor-client-resources = { module = "io.ktor:ktor-client-resources", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
-# The server's own client engine (telemetry export): pure Kotlin with TLS, no libcurl in the distroless image.
+# Explicit client engines. Runners: Curl on native (TLS, a custom CA), CIO on the test-only JVM target. Telemetry
+# export: CIO, pure Kotlin with its own TLS.
+ktor-client-curl = { module = "io.ktor:ktor-client-curl", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
+ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
 
 # ostrom-core
 ostrom-telemetry = { module = "dev.ostrom:ostrom-telemetry", version.ref = "ostrom-core" }
