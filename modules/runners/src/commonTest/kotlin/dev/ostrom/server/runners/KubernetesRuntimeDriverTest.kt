@@ -114,17 +114,25 @@ class KubernetesRuntimeDriverTest {
         assertEquals("ghcr", spec["imagePullSecrets"]!!.jsonArray[0].jsonObject["name"]!!.jsonPrimitive.content)
         val container = spec["containers"]!!.jsonArray[0].jsonObject
         assertEquals("img:1", container["image"]!!.jsonPrimitive.content)
-        val env = container["env"]!!.jsonArray.associate {
-            it.jsonObject["name"]!!.jsonPrimitive.content to it.jsonObject["value"]!!.jsonPrimitive.content
+        val variables = container["env"]!!.jsonArray.map { it.jsonObject }
+        val env = variables.filter { "value" in it }.associate {
+            it["name"]!!.jsonPrimitive.content to it["value"]!!.jsonPrimitive.content
         }
-        assertEquals("/run/ostrom/token", env["OSTROM_RUNNER_TOKEN_FILE"])
+        // The token and the first message come from the Secret, by reference: in neither the spec nor a file.
+        val fromSecret = variables.filter { "valueFrom" in it }.associate {
+            val reference = it["valueFrom"]!!.jsonObject["secretKeyRef"]!!.jsonObject
+            it["name"]!!.jsonPrimitive.content to
+                (reference["name"]!!.jsonPrimitive.content to reference["key"]!!.jsonPrimitive.content)
+        }
+        assertEquals("ostrom-s-$hex-e4" to "token", fromSecret["OSTROM_RUNNER_TOKEN"])
+        assertEquals("ostrom-s-$hex-e4" to "prompt", fromSecret["OSTROM_AGENT_PROMPT"])
         assertNull(env["OSTROM_RUNNER_TOKEN"])
+        assertEquals("/run/ostrom/agent.sock", env["OSTROM_AGENT_SOCKET"])
         assertEquals("https://github.com/acme/api", env["OSTROM_REPOSITORY_URL"])
         assertEquals("main", env["OSTROM_REPOSITORY_REF"])
         assertEquals("claude", env["OSTROM_AGENT_COMMAND"])
         assertEquals("4", env["OSTROM_EPOCH"])
         assertEquals("claude-opus-5-5", env["OSTROM_AGENT_MODEL"])
-        assertEquals("/run/ostrom/prompt", env["OSTROM_AGENT_PROMPT_FILE"])
         assertFalse("Fix the tests" in pod.toString())
         assertFalse("ostrom_runner_abc" in pod.toString())
     }
@@ -133,17 +141,15 @@ class KubernetesRuntimeDriverTest {
     fun theSessionPodIsHardened() = runTest {
         driver.startExecution(spec())
         val spec = body(3)["spec"]!!.jsonObject
-        val container = spec["containers"]!!.jsonArray[0].jsonObject
+        val container = spec["initContainers"]!!.jsonArray[0].jsonObject
         val claimName = spec["volumes"]!!.jsonArray[0].jsonObject["persistentVolumeClaim"]!!.jsonObject["claimName"]
         assertEquals("ostrom-ws-$hex", claimName!!.jsonPrimitive.content)
         assertEquals(
-            "ostrom-s-$hex-e4",
-            spec["volumes"]!!.jsonArray[1].jsonObject["secret"]!!.jsonObject["secretName"]!!.jsonPrimitive.content,
-        )
-        assertEquals(
             "1Gi",
-            spec["volumes"]!!.jsonArray[2].jsonObject["emptyDir"]!!.jsonObject["sizeLimit"]!!.jsonPrimitive.content,
+            spec["volumes"]!!.jsonArray[1].jsonObject["emptyDir"]!!.jsonObject["sizeLimit"]!!.jsonPrimitive.content,
         )
+        // No volume carries the token.
+        assertFalse(spec["volumes"]!!.jsonArray.any { "secret" in it.jsonObject })
         assertEquals(
             "true",
             container["securityContext"]!!.jsonObject["readOnlyRootFilesystem"]!!.jsonPrimitive.content,
@@ -163,6 +169,35 @@ class KubernetesRuntimeDriverTest {
     }
 
     @Test
+    fun theAgentRunsInItsOwnContainerUnderItsOwnUidWithoutTheToken() = runTest {
+        driver.startExecution(spec())
+        val spec = body(3)["spec"]!!.jsonObject
+        assertEquals("false", spec["shareProcessNamespace"]!!.jsonPrimitive.content)
+        val pod = spec["securityContext"]!!.jsonObject
+        assertNull(pod["runAsUser"])
+        assertEquals("2000", pod["fsGroup"]!!.jsonPrimitive.content)
+        val agent = spec["initContainers"]!!.jsonArray.single().jsonObject
+        val runner = spec["containers"]!!.jsonArray.single().jsonObject
+        assertEquals("agent", agent["name"]!!.jsonPrimitive.content)
+        assertEquals("Always", agent["restartPolicy"]!!.jsonPrimitive.content)
+        assertEquals(
+            listOf("/usr/local/bin/ostrom-runner", "agent-host"),
+            agent["command"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        fun uid(container: JsonObject) = container["securityContext"]!!.jsonObject["runAsUser"]!!.jsonPrimitive.content
+        assertEquals("1000", uid(agent))
+        assertEquals("1001", uid(runner))
+        // The agent's container has no variable from the Secret, and only the runner's has the server's address.
+        assertFalse("secretKeyRef" in agent.toString())
+        assertFalse("OSTROM_SERVER_URL" in agent.toString())
+        assertTrue("secretKeyRef" in runner.toString())
+        fun mounts(container: JsonObject) =
+            container["volumeMounts"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
+        assertEquals(listOf("workspace", "tmp", "agent-socket"), mounts(agent))
+        assertEquals(listOf("agent-socket"), mounts(runner))
+    }
+
+    @Test
     fun thePoliciesAreAppliedOncePerProcess() = runTest {
         driver.startExecution(spec())
         driver.startExecution(
@@ -176,7 +211,7 @@ class KubernetesRuntimeDriverTest {
         )
         assertNull(open["metadata"]!!.jsonObject["annotations"])
         assertNull(body(4)["stringData"]!!.jsonObject["prompt"])
-        assertFalse("OSTROM_AGENT_PROMPT_FILE" in open.toString())
+        assertFalse("OSTROM_AGENT_PROMPT" in open.toString())
         assertFalse("OSTROM_REPOSITORY_REF" in open["spec"]!!.jsonObject["containers"]!!.jsonArray[0].toString())
     }
 

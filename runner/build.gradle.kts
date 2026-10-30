@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The runner: the process of a cloud session's pod. It opens a PTY running the agent (after cloning the
-// repository), relays it to the server's terminal WebSocket, and heartbeats the execution. Native, no JVM.
+// The runner: the process of a cloud session's pod. Its agent host, in the agent's own container, opens the PTY
+// running the agent (after cloning the repository); the runner relays it to the server's terminal WebSocket and
+// heartbeats the execution. Native, no JVM.
 plugins {
     id("ostrom.native-module")
 }
@@ -21,6 +22,7 @@ kotlin {
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.cio)
             implementation(libs.ktor.client.websockets)
+            implementation(libs.ktor.network)
         }
         commonTest.dependencies {
             implementation(libs.ktor.client.mock)

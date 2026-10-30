@@ -66,8 +66,14 @@ class FakeOAuthProvider(
 ) : OAuthProvider {
     val exchanges = mutableListOf<List<String>>()
 
-    override fun authorizationUrl(state: String, codeChallenge: String, nonce: String, redirectUri: String): String =
-        "https://idp.example/authorize?state=$state&challenge=$codeChallenge&nonce=$nonce&redirect=$redirectUri"
+    override fun authorizationUrl(
+        state: String,
+        codeChallenge: String,
+        nonce: String,
+        redirectUri: String,
+        reauthenticate: Boolean,
+    ): String = "https://idp.example/authorize?state=$state&challenge=$codeChallenge&nonce=$nonce" +
+        "&redirect=$redirectUri&reauth=$reauthenticate"
 
     override suspend fun identity(
         code: String,

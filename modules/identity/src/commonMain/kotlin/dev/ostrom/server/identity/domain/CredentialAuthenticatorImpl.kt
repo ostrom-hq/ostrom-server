@@ -3,6 +3,7 @@ package dev.ostrom.server.identity.domain
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import kotlin.time.Clock
@@ -16,19 +17,24 @@ import kotlin.time.Instant
  *   for its kind: whatever its row says, a token never answers a gate (S2-04, S2-31).
  * - An agent token is an [PrincipalKind.AGENT] whose subject is its agent session, with the single [AGENT_SCOPE]:
  *   it never passes a console route (audit A2) and can only act on that session.
- * - A browser session acts as its user with all their rights, and needs the CSRF token on state-changing requests.
+ * - A browser session acts as its user with all their rights, and needs the CSRF token and an allowed `Origin` on
+ *   state-changing requests (S2-08).
  * - A session secret is never accepted as a bearer token, nor a token as a cookie.
  *
  * @param tokens The API tokens.
  * @param sessions The browser sessions.
  * @param hasher Hashes secrets and derives CSRF tokens.
  * @param clock The clock.
+ * @param allowedOrigins The origins a session may change state from (`IdentityConfig.allowedOrigins`).
+ * @property sessionCookiePrefix `__Host-` over HTTPS (`IdentityConfig.sessionCookiePrefix`, audit S2-12).
  */
 class CredentialAuthenticatorImpl(
     private val tokens: ApiTokensRepository,
     private val sessions: WebSessionsRepository,
     private val hasher: SecretHasher,
     private val clock: Clock,
+    private val allowedOrigins: Set<String>,
+    override val sessionCookiePrefix: String,
 ) : TokenAuthenticator {
     override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
         val stored = liveToken(token) ?: return null
@@ -55,14 +61,19 @@ class CredentialAuthenticatorImpl(
         sessionToken: String,
         csrfToken: String?,
         requireCsrf: Boolean,
+        origin: String?,
     ): AuthenticatedPrincipal? {
-        val session = liveSession(sessionToken, csrfToken, requireCsrf) ?: return null
+        val session = liveSession(sessionToken, csrfToken, requireCsrf, origin) ?: return null
         if (stale(session.lastSeenAt, clock.now())) sessions.touch(session.id, clock.nowMillis())
         return AuthenticatedPrincipal(
             subjectId = session.userId.toString(),
             kind = PrincipalKind.USER,
             scopes = setOf(ALL_USER_SCOPES),
             credentialId = session.id.toString(),
+            // A session is only started by a sign-in (OAuth, e-mail link, SSO): its start is when the person proved
+            // who they are. Signing in again starts a new one, which a yes to a high-risk action asks for (S2-54).
+            channel = PrincipalChannel.BROWSER,
+            authenticatedAt = session.createdAt,
         )
     }
 
@@ -75,17 +86,26 @@ class CredentialAuthenticatorImpl(
             ?.takeIf { it.kind == kind && it.revokedAt == null && it.expiresAt?.let { end -> end <= now } != true }
     }
 
-    /** The live session a cookie names; a state-changing request must also carry the session's CSRF token. */
-    private suspend fun liveSession(sessionToken: String, csrfToken: String?, requireCsrf: Boolean): WebSession? {
+    /**
+     * The live session a cookie names; a state-changing request must also carry the session's CSRF token and come from
+     * an allowed origin (S2-08).
+     */
+    private suspend fun liveSession(
+        sessionToken: String,
+        csrfToken: String?,
+        requireCsrf: Boolean,
+        origin: String?,
+    ): WebSession? {
         val wellFormed = sessionToken.startsWith(SESSION_PREFIX + "_") && sessionToken.length <= MAX_SECRET_LENGTH
-        if (!wellFormed || requireCsrf && !csrfHolds(sessionToken, csrfToken)) return null
+        if (!wellFormed || requireCsrf && !csrfHolds(sessionToken, csrfToken, origin)) return null
         val now = clock.now()
         return sessions.findBySecretHash(hasher.hash(sessionToken))
             ?.takeIf { it.revokedAt == null && it.expiresAt > now }
     }
 
-    private suspend fun csrfHolds(sessionToken: String, csrfToken: String?): Boolean =
-        csrfToken != null && constantTimeEquals(csrfToken, hasher.csrfToken(sessionToken))
+    /** The kernel passes the CSRF token only when the header repeats the readable cookie (double submit). */
+    private suspend fun csrfHolds(sessionToken: String, csrfToken: String?, origin: String?): Boolean =
+        origin in allowedOrigins && csrfToken != null && constantTimeEquals(csrfToken, hasher.csrfToken(sessionToken))
 
     private fun stale(lastUse: Instant?, now: Instant) = lastUse == null || now - lastUse >= SESSION_TOUCH_INTERVAL
 
