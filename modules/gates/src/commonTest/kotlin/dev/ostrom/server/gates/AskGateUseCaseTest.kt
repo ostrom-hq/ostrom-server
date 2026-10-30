@@ -147,7 +147,7 @@ class AskGateUseCaseTest {
                     "ostrom-hq/gate-demo: NOT the repository this command runs in (evil/fork). " +
                         "Check before saying yes.",
                 ),
-                Evidence("Asked by", "agent-$SESSION · session s-000005"),
+                Evidence("Asked by", "lyes · session s-000005"),
             ),
             view.gate.evidence,
         )
@@ -193,7 +193,7 @@ class AskGateUseCaseTest {
         assertNull(view.gate.subject.diffDigest)
         assertEquals("mcp", view.gate.subject.tool)
         assertEquals(
-            Evidence("Asked by", "agent-$SESSION · session s-000005 · PR #6 @ aaaaaaa into main"),
+            Evidence("Asked by", "lyes · session s-000005 · PR #6 @ aaaaaaa into main"),
             view.gate.evidence[3],
         )
 
@@ -254,7 +254,7 @@ class AskGateUseCaseTest {
         assertEquals("push-main", view.gate.label)
         assertEquals(GateStatus.UNGATED, view.gate.status)
         assertEquals("session:-", view.gate.subject.scope)
-        assertEquals(listOf(Evidence("Command", "Bash"), Evidence("Asked by", "device-lyes")), view.gate.evidence)
+        assertEquals(listOf(Evidence("Command", "Bash"), Evidence("Asked by", "lyes")), view.gate.evidence)
     }
 
     @Test
