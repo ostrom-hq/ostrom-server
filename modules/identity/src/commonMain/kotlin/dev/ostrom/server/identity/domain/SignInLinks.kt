@@ -89,7 +89,8 @@ class CreateSignInLinkUseCaseImpl(
     private val clock: Clock,
 ) : CreateSignInLinkUseCase {
     override suspend fun invoke(userId: Uuid): CreatedSignInLink {
-        if (!limiter.tryAcquire("sign-in-link:$userId", LIMIT, LIMIT_WINDOW)) throw RateLimitedException()
+        val allowed = limiter.tryAcquire("sign-in-link:$userId", LIMIT, LIMIT_WINDOW_MINUTES.minutes)
+        if (!allowed) throw RateLimitedException()
         val now = clock.nowMillis()
         val token = SIGN_IN_LINK_PREFIX + "_" + secrets.secret()
         val link = SignInLink(Uuid.random(), userId, now, now + SIGN_IN_LINK_LIFETIME)
@@ -100,7 +101,7 @@ class CreateSignInLinkUseCaseImpl(
 
     private companion object {
         const val LIMIT = 10
-        val LIMIT_WINDOW = 10.minutes
+        const val LIMIT_WINDOW_MINUTES = 10
     }
 }
 
@@ -140,7 +141,8 @@ class ExchangeSignInLinkUseCaseImpl(
 ) : ExchangeSignInLinkUseCase {
     override suspend fun invoke(token: String, source: String): StartedSession {
         if (!token.startsWith(SIGN_IN_LINK_PREFIX + "_") || token.length > MAX_TOKEN) throw InvalidSignInLinkException()
-        if (!limiter.tryAcquire("sign-in-link-use:$source", LIMIT, LIMIT_WINDOW)) throw RateLimitedException()
+        val allowed = limiter.tryAcquire("sign-in-link-use:$source", LIMIT, LIMIT_WINDOW_MINUTES.minutes)
+        if (!allowed) throw RateLimitedException()
         val link = links.consume(hasher.hash(token), clock.nowMillis()) ?: throw InvalidSignInLinkException()
         val started = startSession(link.userId)
         audit.record(AuditEntry(null, link.userId, "sign_in_link.used", "sign_in_link", link.id.toString()))
@@ -151,7 +153,7 @@ class ExchangeSignInLinkUseCaseImpl(
         /** No token we issue is longer: a longer value is refused before it is hashed. */
         const val MAX_TOKEN = 128
         const val LIMIT = 20
-        val LIMIT_WINDOW = 10.minutes
+        const val LIMIT_WINDOW_MINUTES = 10
     }
 }
 
