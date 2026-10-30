@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches.domain.models
 
+import dev.ostrom.server.kernel.auth.OrgRole
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -35,9 +36,10 @@ data class Launch(
  *
  * @property orgId The organization the credential acts in.
  * @property userId The person.
- * @property login Their login.
+ * @property login Their login: the `dev` of their sessions.
+ * @property role Their role in the organization, read at each request.
  */
-data class Launcher(val orgId: Uuid, val userId: Uuid, val login: String)
+data class Launcher(val orgId: Uuid, val userId: Uuid, val login: String, val role: OrgRole)
 
 /**
  * What a launch asks for (contract `createLaunch`).

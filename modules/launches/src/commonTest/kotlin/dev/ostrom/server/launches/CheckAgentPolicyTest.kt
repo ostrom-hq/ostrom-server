@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.launches.domain.models.AgentVerdict
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.fakes.ADA
 import dev.ostrom.server.launches.fakes.FakeModelRules
 import dev.ostrom.server.launches.fakes.ORG
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
 
 class CheckAgentPolicyTest {
     private val rules = FakeModelRules(mapOf("gpt-5" to "gpt-5 is not on the allowlist."))
@@ -44,6 +45,15 @@ class CheckAgentPolicyTest {
         assertEquals(AgentVerdict(false, "The model name is not valid."), check(ADA, "codex", "model; rm -rf /"))
         assertEquals(AgentVerdict(false, "The model name is not valid."), check(ADA, "codex", "m".repeat(201)))
         assertTrue(rules.asked.isEmpty(), "A malformed name never reaches the rules")
+    }
+
+    @Test
+    fun aBillingMemberRunsNoAgentAndEveryOtherRoleDoes() = runTest {
+        val billing = check(ADA.copy(role = OrgRole.BILLING), "codex", "gpt-5")
+        assertEquals(AgentVerdict(false, "A billing member does not run agents."), billing)
+        for (role in OrgRole.entries - OrgRole.BILLING) {
+            assertEquals(AgentVerdict(allowed = true), check(ADA.copy(role = role), "codex", null), role.name)
+        }
     }
 
     @Test

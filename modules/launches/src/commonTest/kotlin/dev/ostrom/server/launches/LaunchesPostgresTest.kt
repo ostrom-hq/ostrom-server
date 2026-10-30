@@ -154,13 +154,17 @@ class LaunchesPostgresTest {
             assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/policy/agents?agent=codex").status)
             assertEquals(HttpStatusCode.Unauthorized, server.call("osc_unknown", "/api/v1/launches", LAUNCH).status)
 
-            // A person whose organization is gone (or who left it) is a member of nothing.
+            // A person whose organization is gone (or who left it) is a member of nothing, and their agents stop.
             val ada = server.person("ada")
+            val running = server.launch(ada)
+            assertEquals(HttpStatusCode.OK, server.call(running.agentToken, "/api/v1/sessions", SESSION).status)
             server.koin.get<OrgsRepository>().delete(ada.org.id, now)
+            val stopped = server.call(running.agentToken, "/api/v1/sessions/s-1/alive", "{}")
+            assertEquals(HttpStatusCode.Forbidden, stopped.status, stopped.bodyAsText())
             val orphan = server.call(ada.cliToken, "/api/v1/launches", LAUNCH)
             assertEquals(HttpStatusCode.NotFound, orphan.status, orphan.bodyAsText())
             assertEquals(HttpStatusCode.NotFound, server.call(ada.cliToken, "/api/v1/policy/agents").status)
-            assertEquals(0, server.launchesSeenBy(ada.org.id))
+            assertEquals(1, server.launchesSeenBy(ada.org.id), "Only the launch made while a member")
         }
 
     @Test
@@ -171,7 +175,7 @@ class LaunchesPostgresTest {
             val refusal = AgentPolicyResponse(false, "The agent name is not valid.")
             assertEquals(refusal, verdict.body<AgentPolicyResponse>())
             val refused = server.call(ada.cliToken, "/api/v1/launches", """{"agent":"Claude Code"}""")
-            assertEquals(HttpStatusCode.Forbidden, refused.status)
+            assertEquals(HttpStatusCode.BadRequest, refused.status, "A malformed name is the client's mistake")
             assertTrue("The agent name is not valid." in refused.bodyAsText(), refused.bodyAsText())
             val malformed = server.call(ada.cliToken, "/api/v1/launches", """{"repo":"","agent":"codex"}""")
             assertEquals(HttpStatusCode.BadRequest, malformed.status)
