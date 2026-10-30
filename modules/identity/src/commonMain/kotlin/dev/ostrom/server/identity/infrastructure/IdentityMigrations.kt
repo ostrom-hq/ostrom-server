@@ -31,6 +31,7 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             $$;
             CREATE TABLE identity_users (
                 id UUID PRIMARY KEY,
+                login TEXT NOT NULL UNIQUE,
                 display_name TEXT NOT NULL,
                 primary_email TEXT,
                 avatar_url TEXT,

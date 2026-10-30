@@ -80,6 +80,8 @@ class InMemoryUsersRepository : UsersRepository {
     override suspend fun findByVerifiedEmail(email: String): User? =
         emails.entries.firstOrNull { it.value[email] == true }?.key?.let(users::get)
 
+    override suspend fun loginTaken(login: String): Boolean = users.values.any { it.login == login }
+
     override suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant) {
         if (duplicatesToThrow > 0) {
             duplicatesToThrow--
@@ -91,7 +93,7 @@ class InMemoryUsersRepository : UsersRepository {
     }
 
     override suspend fun link(userId: Uuid, identity: VerifiedIdentity, email: UserEmail?, at: Instant) {
-        identities.getOrPut(identity.issuer to identity.subject) { userId }
+        if (identities.getOrPut(identity.issuer to identity.subject) { userId } != userId) throw DuplicateIdentityException()
         if (email != null) {
             val mine = emails.getOrPut(userId) { mutableMapOf() }
             mine[email.email] = (mine[email.email] ?: false) || email.verified

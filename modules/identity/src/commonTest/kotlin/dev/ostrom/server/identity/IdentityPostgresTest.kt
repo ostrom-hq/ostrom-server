@@ -36,7 +36,7 @@ import kotlin.uuid.Uuid
 class IdentityPostgresTest {
     private val now = Instant.parse("2026-10-30T10:00:00.123Z")
 
-    private fun user(name: String = "Ada") = User(Uuid.random(), name, null, null, now)
+    private fun user(name: String = "Ada") = User(Uuid.random(), "$name-${Uuid.random().toHexString().take(6)}".lowercase(), name, null, null, now)
 
     private fun github(subject: String, email: String? = null) =
         VerifiedIdentity(IdentityProvider.GITHUB, subject, email, email != null)
@@ -61,6 +61,8 @@ class IdentityPostgresTest {
         assertNull(users.findByIdentity("google", "1"))
         assertEquals(ada, users.findByVerifiedEmail("ada@example.com"))
         assertNull(users.findByVerifiedEmail("bob@example.com"))
+        assertTrue(users.loginTaken(ada.login))
+        assertTrue(!users.loginTaken("nobody"))
 
         users.link(bob.id, VerifiedIdentity(IdentityProvider.GOOGLE, "g", "bob@example.com", true), UserEmail("bob@example.com", true), now)
         users.link(bob.id, github("2"), UserEmail("bob@example.com", false), now)
@@ -74,7 +76,9 @@ class IdentityPostgresTest {
     @Test
     fun twoUsersCannotVerifyTheSameEmail() = serverTest(listOf(IdentityModule)) { server ->
         val users = server.koin.get<UsersRepository>()
-        users.create(user(), github("1"), UserEmail("ada@example.com", true), now)
+        val ada = user()
+        users.create(ada, github("1"), UserEmail("ada@example.com", true), now)
+        assertFailsWith<DuplicateIdentityException>("Logins are unique") { users.create(ada.copy(id = Uuid.random()), github("9"), null, now) }
 
         assertFailsWith<DuplicateIdentityException> {
             users.create(user(), github("2"), UserEmail("ada@example.com", true), now)

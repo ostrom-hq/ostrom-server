@@ -40,13 +40,17 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
         ).bind("email", email),
     ).getOrThrow().firstOrNull()?.toUser()
 
+    override suspend fun loginTaken(login: String): Boolean = driver.fetchAll(
+        Statement.create("SELECT 1 FROM identity_users WHERE login = :login").bind("login", login),
+    ).getOrThrow().isNotEmpty()
+
     override suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant) = uniqueGuard {
         driver.transaction {
             execute(
                 Statement.create(
-                    "INSERT INTO identity_users (id, display_name, primary_email, avatar_url, created_at) " +
-                        "VALUES (:id, :name, :email, :avatar, :at)",
-                ).bind("id", user.id).bind("name", user.displayName).bind("email", user.primaryEmail)
+                    "INSERT INTO identity_users (id, login, display_name, primary_email, avatar_url, created_at) " +
+                        "VALUES (:id, :login, :name, :email, :avatar, :at)",
+                ).bind("id", user.id).bind("login", user.login).bind("name", user.displayName).bind("email", user.primaryEmail)
                     .bind("avatar", user.avatarUrl).bind("at", user.createdAt),
             ).getOrThrow()
             insertIdentity(this, user.id, identity, at)
@@ -107,6 +111,7 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
 
     private fun ResultSet.Row.toUser() = User(
         id = get("id").asUuid(),
+        login = get("login").asString(),
         displayName = get("display_name").asString(),
         primaryEmail = get("primary_email").asStringOrNull(),
         avatarUrl = get("avatar_url").asStringOrNull(),
@@ -114,6 +119,6 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
     )
 
     private companion object {
-        const val USER_COLUMNS = "u.id, u.display_name, u.primary_email, u.avatar_url, u.created_at"
+        const val USER_COLUMNS = "u.id, u.login, u.display_name, u.primary_email, u.avatar_url, u.created_at"
     }
 }

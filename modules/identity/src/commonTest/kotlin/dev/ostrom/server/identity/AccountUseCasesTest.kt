@@ -10,6 +10,7 @@ import dev.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import dev.ostrom.server.identity.domain.UserEmail
 import dev.ostrom.server.identity.domain.UserNotFoundException
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.identity.domain.loginOf
 import dev.ostrom.server.identity.domain.nowMillis
 import dev.ostrom.server.identity.fakes.CountingSecretGenerator
 import dev.ostrom.server.identity.fakes.FakeHasher
@@ -23,6 +24,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -198,5 +200,36 @@ class AccountUseCasesTest {
     fun providerKeysRoundTrip() {
         IdentityProvider.entries.forEach { assertEquals(it, IdentityProvider.of(it.key)) }
         assertFailsWith<IllegalArgumentException> { IdentityProvider.of("myspace") }
+    }
+
+    @Test
+    fun theLoginComesFromGitHubThenTheEmailThenTheName() = runTest {
+        assertEquals("ada-l", resolve(github("1", "x@example.com").copy(login = "Ada-L")).login)
+        assertEquals("grace-hopper", resolve(google("2", "Grace.Hopper@example.com")).login)
+        assertEquals("linus", resolve(VerifiedIdentity(IdentityProvider.OIDC, "3", null, false, "Linus")).login)
+        assertEquals("user", resolve(VerifiedIdentity(IdentityProvider.OIDC, "4", null, false, "李")).login)
+    }
+
+    @Test
+    fun aTakenLoginGetsANumberThenARandomSuffix() = runTest {
+        assertEquals("ada", resolve(github("1", null, name = null).copy(login = "ada")).login)
+        assertEquals("ada-2", resolve(github("2", null, name = null).copy(login = "ada")).login)
+        (3..20).forEach { resolve(github("n$it", null, name = null).copy(login = "ada")) }
+        val random = resolve(github("21", null, name = null).copy(login = "ada")).login
+
+        assertTrue(Regex("ada-[0-9a-f]{8}").matches(random), random)
+        val long = "a".repeat(39)
+        assertEquals(long, resolve(github("22", null).copy(login = long)).login)
+        assertEquals("a".repeat(37) + "-2", resolve(github("23", null).copy(login = long)).login)
+    }
+
+    @Test
+    fun loginsAreCleanedUp() {
+        assertEquals("ada-lovelace", loginOf("  Ada  Lovelace!! "))
+        assertEquals("a-b", loginOf("--a__b--"))
+        assertEquals("a".repeat(39), loginOf("a".repeat(50)))
+        assertEquals("a".repeat(38), loginOf("a".repeat(38) + "-b"))
+        assertNull(loginOf("___"))
+        assertNull(loginOf(""))
     }
 }
