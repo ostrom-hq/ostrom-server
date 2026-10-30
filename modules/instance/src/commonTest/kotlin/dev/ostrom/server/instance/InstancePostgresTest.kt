@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.instance
 
 import dev.ostrom.server.instance.domain.Instance
@@ -35,14 +36,14 @@ class InstancePostgresTest {
     fun instanceRouteReturnsAStableIdAndTheCurrentKey() = serverTest(listOf(InstanceModule)) { server ->
         val signer = server.koin.get<InstanceSigner>()
 
-        val first = server.client.get("/v1/instance")
+        val first = server.client.get("/api/v1/instance")
         assertEquals(HttpStatusCode.OK, first.status)
         val instance = first.body<InstanceResponse>()
-        assertEquals(instance.id, server.client.get("/v1/instance").body<InstanceResponse>().id)
+        assertEquals(instance.id, server.client.get("/api/v1/instance").body<InstanceResponse>().id)
         assertEquals(signer.keyId, instance.signingKey.keyId)
         assertEquals(signer.publicKeyPem, instance.signingKey.publicKeyPem)
 
-        val keys = server.client.get("/v1/instance/keys").body<SigningKeysResponse>()
+        val keys = server.client.get("/api/v1/instance/keys").body<SigningKeysResponse>()
         assertEquals(listOf(signer.keyId), keys.keys.map { it.keyId })
     }
 

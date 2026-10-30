@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -25,7 +26,7 @@ private val requestStart = AttributeKey<TimeSource.Monotonic.ValueTimeMark>("ost
 
 /**
  * One structured line per answered request: method, path (never the query string, which may carry a token),
- * status, duration and request id. `/health` is logged at DEBUG so probes do not flood the logs.
+ * status, duration and request id. The health route is logged at DEBUG so probes do not flood the logs.
  */
 val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingConfig) {
     val logger = pluginConfig.logger
@@ -33,7 +34,7 @@ val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingC
     on(ResponseSent) { call ->
         val path = call.request.path()
         logger.log(
-            if (path == "/health") LogLevel.DEBUG else LogLevel.INFO,
+            if (path in HEALTH_PATHS) LogLevel.DEBUG else LogLevel.INFO,
             "request served",
             requestFields(
                 method = call.request.httpMethod.value,

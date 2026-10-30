@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -108,7 +109,11 @@ class HttpTest {
                 throw SQLError(SQLError.Code.Database, kind = SQLError.Kind.UniqueViolation)
             }
             route.get("/probe/deadlock") {
-                throw SQLError(SQLError.Code.Database, "deadlock", kind = SQLError.Kind.Deadlock)
+                throw SQLError(
+                    SQLError.Code.Database,
+                    "Key (email)=(alice@example.com) is locked",
+                    kind = SQLError.Kind.Deadlock,
+                )
             }
             route.get("/probe/cancelled") { throw CancellationException("client gone") }
             route.get("/probe/unprotected-me") { call.respondText(call.requirePrincipal().subjectId) }
@@ -172,6 +177,13 @@ class HttpTest {
         assertEquals(HttpStatusCode.OK, response.status)
         val health = OstromJson.decodeFromString<HealthResponse>(response.bodyAsText())
         assertEquals(HealthResponse("ok", "0.1.0-dev", mapOf("database" to "ok")), health)
+    }
+
+    @Test
+    fun healthIsAlsoServedAtItsContractPath() = httpTest {
+        val response = client.get("/api/v1/health")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("ok", OstromJson.decodeFromString<HealthResponse>(response.bodyAsText()).status)
     }
 
     @Test
@@ -284,7 +296,10 @@ class HttpTest {
 
         val deadlock = client.get("/probe/deadlock")
         assertEquals(HttpStatusCode.InternalServerError, deadlock.status)
-        assertTrue(logged("database failure"))
+        val line = lines.single { "database failure" in it }
+        assertTrue("\"error\":\"SQLError\"" in line, line)
+        assertTrue("\"sql_kind\":\"Deadlock\"" in line, line)
+        assertFalse("alice@example.com" in line, "A database error message quotes row values: never logged")
     }
 
     @Test
@@ -293,7 +308,9 @@ class HttpTest {
         assertEquals(HttpStatusCode.InternalServerError, response.status)
         assertFalse("hunter2" in response.bodyAsText())
         assertEquals("internal_error", response.error().error.type)
-        assertTrue(logged("unexpected failure"))
+        val line = lines.single { "unexpected failure" in it }
+        assertTrue("\"error\":\"IllegalStateException\"" in line, line)
+        assertFalse("hunter2" in line, "An unexpected error's message is never logged")
     }
 
     @Test

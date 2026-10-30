@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.config
 
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -53,8 +54,22 @@ data class ServerConfig(
         )
 
         /**
-         * Reads the configuration from the environment, then from the file named by `OSTROM_CONFIG_FILE` if set.
-         * The environment wins over the file.
+         * The configuration source of the process: the environment, then the file named by `OSTROM_CONFIG_FILE` if
+         * set. The environment wins over the file. Bound in Koin, so modules read their own keys from it.
+         *
+         * @param environment The process environment; replaced in tests.
+         *
+         * @return The layered source.
+         *
+         * @throws InvalidConfigException When the configuration file is missing or malformed.
+         */
+        fun source(environment: ConfigSource = EnvironmentConfigSource()): ConfigSource {
+            val file = environment["OSTROM_CONFIG_FILE"]?.let { MapConfigSource(readConfigFile(it)) }
+            return LayeredConfigSource(listOfNotNull(environment, file))
+        }
+
+        /**
+         * Reads the configuration from [source] of [environment].
          *
          * @param environment The process environment; replaced in tests.
          *
@@ -62,10 +77,7 @@ data class ServerConfig(
          *
          * @throws InvalidConfigException When a required value is missing or a value is invalid.
          */
-        fun load(environment: ConfigSource = EnvironmentConfigSource()): ServerConfig {
-            val file = environment["OSTROM_CONFIG_FILE"]?.let { MapConfigSource(readConfigFile(it)) }
-            return from(LayeredConfigSource(listOfNotNull(environment, file)))
-        }
+        fun load(environment: ConfigSource = EnvironmentConfigSource()): ServerConfig = from(source(environment))
 
         private fun logLevel(value: String): LogLevel = LogLevel.entries.firstOrNull { it.name.equals(value, true) }
             ?: throw InvalidConfigException("OSTROM_LOG_LEVEL must be one of ${LogLevel.entries.joinToString()}.")
