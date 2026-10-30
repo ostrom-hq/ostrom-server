@@ -1,7 +1,0 @@
-# zizmor configuration (https://docs.zizmor.sh/configuration/).
-# Temporary: billing-ops.yml predates the open source checks and runs stripe/stripe-mock:latest. CONVENTIONS.md
-# section 11 wants every dependency of a workflow pinned; pin the image by digest and remove this exception.
-rules:
-  unpinned-images:
-    ignore:
-      - billing-ops.yml
