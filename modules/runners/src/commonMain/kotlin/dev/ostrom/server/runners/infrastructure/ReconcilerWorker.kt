@@ -28,9 +28,9 @@ class ReconcilerWorker(
     private val logger: Logger,
     private val clock: Clock,
     private val owner: String = "replica-" + Uuid.random().toHexString(),
-    private val lease: Duration = 60.seconds,
-    private val batch: Int = 8,
-    private val idleDelay: Duration = 1.seconds,
+    private val lease: Duration = DEFAULT_LEASE,
+    private val batch: Int = DEFAULT_BATCH,
+    private val idleDelay: Duration = DEFAULT_IDLE_DELAY,
 ) {
     /** Runs passes until the calling coroutine is cancelled. */
     suspend fun run() {
@@ -71,5 +71,14 @@ class ReconcilerWorker(
 
     private companion object {
         val RETRY_DELAY = 30.seconds
+
+        /** How long a claimed session stays this replica's. */
+        val DEFAULT_LEASE = 60.seconds
+
+        /** Sessions claimed per pass. */
+        const val DEFAULT_BATCH = 8
+
+        /** The pause between two passes that found nothing to do. */
+        val DEFAULT_IDLE_DELAY = 1.seconds
     }
 }
