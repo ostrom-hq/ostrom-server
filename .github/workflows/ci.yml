@@ -81,9 +81,15 @@ jobs:
           curl -fsS localhost:8080/v1/instance | grep '"algorithm":"ed25519"'
           docker logs ostrom
 
+      - name: Telemetry reaches an OpenTelemetry collector (traces, metrics, logs)
+        timeout-minutes: 5
+        run: ci/otel-smoke.sh
+
       - name: Server logs on failure
         if: failure()
-        run: docker logs ostrom || true
+        run: |
+          docker logs ostrom || true
+          docker logs ostrom-otel || true
 
       - uses: actions/upload-artifact@v4
         with:
