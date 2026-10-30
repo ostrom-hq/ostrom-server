@@ -16,6 +16,7 @@ import dev.ostrom.server.sessions.domain.models.SessionQuery
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
 import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import dev.ostrom.server.sessions.domain.repositories.StaleSession
+import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.domain.usecases.CloseSessionUseCaseImpl
 import dev.ostrom.server.sessions.domain.usecases.EndSessionUseCaseImpl
 import dev.ostrom.server.sessions.domain.usecases.GetSessionUseCaseImpl
@@ -104,6 +105,13 @@ class FakeRules : ReceiptRules {
 }
 
 /** Signs by adding the id it is given; remembers every draft. */
+/** What the server measured a session cost; none until a test says. */
+class FakeCosts : SessionCosts {
+    var cost: Double? = null
+
+    override suspend fun costOf(orgId: Uuid, sessionId: String): Double? = cost
+}
+
 class FakeSign : SignReceiptUseCase, GetReceiptUseCase {
     val signed = linkedMapOf<String, JsonObject>()
 
@@ -133,7 +141,8 @@ class SessionBench {
     val sign = FakeSign()
     val clock = SettableClock()
     val logger = RecordingLogger()
-    val close = CloseSessionUseCaseImpl(repository, gates, rules, sign, clock)
+    val costs = FakeCosts()
+    val close = CloseSessionUseCaseImpl(repository, gates, rules, sign, costs, clock)
     val segments = SessionSegments(close, clock)
     val start = StartSessionUseCaseImpl(repository, segments)
     val end = EndSessionUseCaseImpl(repository, close)

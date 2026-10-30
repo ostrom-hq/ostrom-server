@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions
 
+import dev.ostrom.server.gates.domain.models.ActorKind
+import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.usecases.SessionGate
@@ -36,6 +38,26 @@ import kotlin.uuid.Uuid
 
 class SessionLifecycleTest {
     private val start = StartSession(id = "s-1", agent = "claude-code", repo = "acme/api", packageDigest = "pkg")
+
+    @Test
+    fun s248AnAgentTokenWithoutItsLaunchReadsNothing() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        val launchless = GateActor("agent", ORG, ActorKind.AGENT_SESSION, personId = "lyes")
+        assertFailsWith<SessionNotFoundException> { bench.get(launchless, session.id) }
+        assertTrue(bench.list(launchless, SessionQuery()).isEmpty(), "not every session of its person")
+        assertFailsWith<NotYourSessionException> { bench.end(launchless, session.id, EndSession()) }
+    }
+
+    @Test
+    fun s248TheCostIsTheServersNeverTheAgents() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        bench.costs.cost = 0.42
+        val ended = bench.end(agent(), session.id, EndSession(costUsd = 99.0))
+        assertEquals(0.42, ended.costUsd)
+        assertEquals("0.42", bench.sign.signed.getValue("rcpt_session_${session.id}")["costUsd"].toString())
+    }
 
     @Test
     fun onlyTheSessionsPersonAndLaunchWriteIntoIt() = runTest {
