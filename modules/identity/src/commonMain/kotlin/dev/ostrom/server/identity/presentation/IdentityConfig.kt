@@ -25,7 +25,7 @@ data class IdentityConfig(
      *
      * @return The URL.
      */
-    fun callbackUrl(provider: IdentityProvider): String = "$publicUrl/v1/auth/${provider.key}/callback"
+    fun callbackUrl(provider: IdentityProvider): String = "$publicUrl/api/v1/auth/${provider.key}/callback"
 
     /**
      * The console page an e-mailed link opens; the token is in the fragment (see `VerifyMagicLinkRequest`).

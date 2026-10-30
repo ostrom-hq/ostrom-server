@@ -34,6 +34,15 @@ interface UsersRepository {
     suspend fun findByVerifiedEmail(email: String): User?
 
     /**
+     * Whether a login is already used.
+     *
+     * @param login The login.
+     *
+     * @return True when a user has it.
+     */
+    suspend fun loginTaken(login: String): Boolean
+
+    /**
      * Creates a user with their first identity and e-mail, in one transaction.
      *
      * @param user The user.

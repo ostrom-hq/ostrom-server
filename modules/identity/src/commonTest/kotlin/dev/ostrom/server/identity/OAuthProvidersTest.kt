@@ -84,7 +84,7 @@ class OAuthProvidersTest {
         val identity = provider.identity("code", "verifier", "unused", "https://api.test/cb")
 
         assertEquals(
-            VerifiedIdentity(IdentityProvider.GITHUB, "583231", "ada@example.com", true, "Ada Lovelace", "https://a.test/1"),
+            VerifiedIdentity(IdentityProvider.GITHUB, "583231", "ada@example.com", true, "Ada Lovelace", "https://a.test/1", "ada"),
             identity,
         )
         assertEquals(
@@ -111,7 +111,7 @@ class OAuthProvidersTest {
 
         val identity = provider.identity("code", "v", "n", "r")
 
-        assertEquals(VerifiedIdentity(IdentityProvider.GITHUB, "1", "public@example.com", false, "ada", null), identity)
+        assertEquals(VerifiedIdentity(IdentityProvider.GITHUB, "1", "public@example.com", false, "ada", null, "ada"), identity)
     }
 
     @Test
@@ -172,7 +172,7 @@ class OAuthProvidersTest {
             .identity("code", "verifier", "n-1", "https://api.test/cb")
 
         assertEquals(
-            VerifiedIdentity(IdentityProvider.OIDC, "108", "ada@example.com", true, "Ada", "https://p.test/a", connection),
+            VerifiedIdentity(IdentityProvider.OIDC, "108", "ada@example.com", true, "Ada", "https://p.test/a", connectionId = connection),
             identity,
         )
         assertEquals(

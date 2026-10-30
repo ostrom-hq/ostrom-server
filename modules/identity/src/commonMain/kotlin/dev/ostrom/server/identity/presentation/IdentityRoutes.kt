@@ -31,9 +31,11 @@ import dev.ostrom.server.kernel.auth.requireScope
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.Cookie
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
+import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -81,8 +83,10 @@ data class IdentityRoutesDependencies(
  * @param dependencies The use cases.
  */
 fun Route.identityRoutes(dependencies: IdentityRoutesDependencies) = with(dependencies) {
-    post<AuthApi.Device.Code, DeviceCodeRequest> { _, request ->
-        val started = startDeviceAuthorization(request.clientName, call.request.origin.remoteAddress)
+    post<AuthApi.Device> {
+        // The body is optional: a CLI that sends none gets the default client name.
+        val request = if (call.request.headers[HttpHeaders.ContentType] != null) call.receive<DeviceCodeRequest>() else null
+        val started = startDeviceAuthorization(request?.clientName, call.request.origin.remoteAddress)
         val authorization = started.authorization
         val page = config.consoleUrl + "/device"
         call.respond(
@@ -238,6 +242,7 @@ private fun parseId(raw: String): Uuid? = Uuid.parseOrNull(raw)
 /** Maps the profile; [csrfToken] only for a browser session. */
 fun Profile.toProfileResponse(csrfToken: String?) = ProfileResponse(
     id = user.id.toString(),
+    login = user.login,
     displayName = user.displayName,
     primaryEmail = user.primaryEmail,
     avatarUrl = user.avatarUrl,

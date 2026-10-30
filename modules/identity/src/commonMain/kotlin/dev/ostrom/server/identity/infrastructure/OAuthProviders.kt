@@ -92,6 +92,7 @@ class GitHubOAuthProvider(
             emailVerified = verified != null,
             displayName = user.name?.takeIf { it.isNotBlank() } ?: user.login,
             avatarUrl = user.avatarUrl,
+            login = user.login,
         )
     }
 

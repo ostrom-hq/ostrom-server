@@ -62,16 +62,16 @@ class SignInRoutesPostgresTest {
 
     @Test
     fun theLoginPageListsTheOfferedMethods() = serverTest(listOf(IdentityModule), overrides) { server ->
-        assertEquals(listOf("github", "google", "email"), server.client.get("/v1/auth/providers").body<ProvidersResponse>().methods)
+        assertEquals(listOf("github", "google", "email"), server.client.get("/api/v1/auth/providers").body<ProvidersResponse>().methods)
     }
 
     @Test
     fun withoutConfigurationNothingIsOffered() = serverTest(listOf(IdentityModule)) { server ->
-        assertEquals(emptyList(), server.client.get("/v1/auth/providers").body<ProvidersResponse>().methods)
+        assertEquals(emptyList(), server.client.get("/api/v1/auth/providers").body<ProvidersResponse>().methods)
         val browser = createClient { followRedirects = false }
-        val start = browser.get("/v1/auth/github/start")
+        val start = browser.get("/api/v1/auth/github/start")
         assertEquals("http://localhost:5173/login?error=unavailable", start.headers[HttpHeaders.Location])
-        val email = server.client.post("/v1/auth/email") {
+        val email = server.client.post("/api/v1/auth/email") {
             contentType(ContentType.Application.Json)
             setBody(MagicLinkRequest("ada@example.com"))
         }
@@ -85,36 +85,36 @@ class SignInRoutesPostgresTest {
             install(ContentNegotiation) { json(OstromJson) }
         }
 
-        val start = browser.get("/v1/auth/github/start?redirect=/repos")
+        val start = browser.get("/api/v1/auth/github/start?redirect=/repos")
         assertEquals(HttpStatusCode.Found, start.status)
         val consent = Url(assertNotNull(start.headers[HttpHeaders.Location]))
         val state = assertNotNull(consent.parameters["state"])
-        assertEquals("http://localhost:8080/v1/auth/github/callback", consent.parameters["redirect"])
+        assertEquals("http://localhost:8080/api/v1/auth/github/callback", consent.parameters["redirect"])
         val stateCookie = assertNotNull(start.cookie(OAUTH_STATE_COOKIE))
         assertEquals(state, stateCookie.value)
-        assertEquals("/v1/auth", stateCookie.path)
+        assertEquals("/api/v1/auth", stateCookie.path)
         assertTrue(stateCookie.httpOnly)
         assertEquals(600, stateCookie.maxAge)
 
-        val callback = browser.get("/v1/auth/github/callback?code=good&state=$state") {
+        val callback = browser.get("/api/v1/auth/github/callback?code=good&state=$state") {
             header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state")
         }
         assertEquals(HttpStatusCode.Found, callback.status)
         assertEquals("http://localhost:5173/repos", callback.headers[HttpHeaders.Location])
         assertEquals("", callback.cookie(OAUTH_STATE_COOKIE)?.value, "The state cookie is cleared")
         val session = assertNotNull(callback.cookie(SESSION_COOKIE)).value
-        val profile = browser.get("/v1/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session") }.body<ProfileResponse>()
+        val profile = browser.get("/api/v1/auth/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session") }.body<ProfileResponse>()
         assertEquals("Ada", profile.displayName)
 
         // Google proves the same verified e-mail: same account, one more way in.
-        val googleStart = browser.get("/v1/auth/google/start")
+        val googleStart = browser.get("/api/v1/auth/google/start")
         val googleState = assertNotNull(Url(assertNotNull(googleStart.headers[HttpHeaders.Location])).parameters["state"])
-        val googleCallback = browser.get("/v1/auth/google/callback?code=good&state=$googleState") {
+        val googleCallback = browser.get("/api/v1/auth/google/callback?code=good&state=$googleState") {
             header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$googleState")
         }
         assertEquals("http://localhost:5173/", googleCallback.headers[HttpHeaders.Location])
         val second = assertNotNull(googleCallback.cookie(SESSION_COOKIE)).value
-        val merged = browser.get("/v1/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$second") }.body<ProfileResponse>()
+        val merged = browser.get("/api/v1/auth/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$second") }.body<ProfileResponse>()
         assertEquals(profile.id, merged.id)
         assertEquals(listOf("github", "google"), merged.providers)
     }
@@ -122,24 +122,24 @@ class SignInRoutesPostgresTest {
     @Test
     fun aCallbackFromAnotherBrowserOrARefusalSignsNobodyIn() = serverTest(listOf(IdentityModule), overrides) { server ->
         val browser = createClient { followRedirects = false }
-        val state = Url(assertNotNull(browser.get("/v1/auth/github/start").headers[HttpHeaders.Location])).parameters["state"]
+        val state = Url(assertNotNull(browser.get("/api/v1/auth/github/start").headers[HttpHeaders.Location])).parameters["state"]
 
-        val noCookie = browser.get("/v1/auth/github/callback?code=good&state=$state")
+        val noCookie = browser.get("/api/v1/auth/github/callback?code=good&state=$state")
         assertEquals("http://localhost:5173/login?error=expired", noCookie.headers[HttpHeaders.Location])
         assertNull(noCookie.cookie(SESSION_COOKIE))
-        val denied = browser.get("/v1/auth/github/callback?error=access_denied&state=$state")
+        val denied = browser.get("/api/v1/auth/github/callback?error=access_denied&state=$state")
         assertEquals("http://localhost:5173/login?error=access_denied", denied.headers[HttpHeaders.Location])
-        val badCode = browser.get("/v1/auth/github/callback?code=bad&state=$state") { header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state") }
+        val badCode = browser.get("/api/v1/auth/github/callback?code=bad&state=$state") { header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state") }
         assertEquals("http://localhost:5173/login?error=refused", badCode.headers[HttpHeaders.Location])
         // The refused code consumed the attempt: the state cannot be replayed with a good code.
-        val replay = browser.get("/v1/auth/github/callback?code=good&state=$state") { header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state") }
+        val replay = browser.get("/api/v1/auth/github/callback?code=good&state=$state") { header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state") }
         assertEquals("http://localhost:5173/login?error=expired", replay.headers[HttpHeaders.Location])
         assertNull(replay.cookie(SESSION_COOKIE))
     }
 
     @Test
     fun aMagicLinkSignsUpOnceAndTheAnswerNeverTellsIfTheAccountExists() = serverTest(listOf(IdentityModule), overrides) { server ->
-        suspend fun ask(email: String) = server.client.post("/v1/auth/email") {
+        suspend fun ask(email: String) = server.client.post("/api/v1/auth/email") {
             contentType(ContentType.Application.Json)
             setBody(MagicLinkRequest(email, "/welcome"))
         }
@@ -150,7 +150,7 @@ class SignInRoutesPostgresTest {
         assertTrue(link.startsWith("http://localhost:5173/auth/email#token="), link)
         val token = link.substringAfter("#token=")
 
-        val verified = server.client.post("/v1/auth/email/verify") {
+        val verified = server.client.post("/api/v1/auth/email/verify") {
             contentType(ContentType.Application.Json)
             setBody(VerifyMagicLinkRequest(token))
         }
@@ -158,16 +158,16 @@ class SignInRoutesPostgresTest {
         val signedIn = verified.body<SignedInResponse>()
         assertEquals("/welcome", signedIn.redirect)
         val session = assertNotNull(verified.cookie(SESSION_COOKIE)).value
-        val profile = server.client.get("/v1/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session") }.body<ProfileResponse>()
+        val profile = server.client.get("/api/v1/auth/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session") }.body<ProfileResponse>()
         assertEquals("ada@example.com", profile.primaryEmail)
         assertEquals(signedIn.csrfToken, profile.csrfToken)
-        val logout = server.client.post("/v1/auth/logout") {
+        val logout = server.client.post("/api/v1/auth/logout") {
             header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session")
             header(CSRF_HEADER, signedIn.csrfToken)
         }
         assertEquals(HttpStatusCode.NoContent, logout.status)
 
-        val reused = server.client.post("/v1/auth/email/verify") {
+        val reused = server.client.post("/api/v1/auth/email/verify") {
             contentType(ContentType.Application.Json)
             setBody(VerifyMagicLinkRequest(token))
         }

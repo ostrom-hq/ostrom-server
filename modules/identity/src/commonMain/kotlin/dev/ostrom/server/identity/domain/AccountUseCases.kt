@@ -67,6 +67,7 @@ class ResolveUserUseCaseImpl(
         }
         val user = User(
             id = Uuid.random(),
+            login = freeLogin(identity, email),
             displayName = identity.displayName?.trim()?.take(MAX_DISPLAY_NAME)?.takeIf { it.isNotEmpty() }
                 ?: email?.substringBefore('@')
                 ?: DEFAULT_DISPLAY_NAME,
@@ -77,6 +78,18 @@ class ResolveUserUseCaseImpl(
         users.create(user, identity, userEmail, now)
         audit.record(AuditEntry(null, user.id, "user.created", "user", user.id.toString(), mapOf("provider" to identity.issuer)))
         return user
+    }
+
+    private suspend fun freeLogin(identity: VerifiedIdentity, email: String?): String {
+        val base = listOfNotNull(identity.login, email?.substringBefore('@'), identity.displayName)
+            .firstNotNullOfOrNull(::loginOf) ?: DEFAULT_LOGIN
+        if (!users.loginTaken(base)) return base
+        // ada, then ada-2, ada-3…; past a few, a random suffix (a very common name), then a race is retried above.
+        (2..NUMBERED_LOGINS).forEach { number ->
+            val candidate = "${base.take(MAX_LOGIN - 1 - number.toString().length)}-$number"
+            if (!users.loginTaken(candidate)) return candidate
+        }
+        return "${base.take(MAX_LOGIN - RANDOM_SUFFIX - 1)}-${Uuid.random().toHexString().take(RANDOM_SUFFIX)}"
     }
 
     private fun normalizeOrNull(raw: String): String? = try {
@@ -90,6 +103,9 @@ class ResolveUserUseCaseImpl(
         const val MAX_DISPLAY_NAME = 100
         const val MAX_URL = 2048
         const val DEFAULT_DISPLAY_NAME = "Ostrom user"
+        const val DEFAULT_LOGIN = "user"
+        const val NUMBERED_LOGINS = 20
+        const val RANDOM_SUFFIX = 8
     }
 }
 
@@ -208,4 +224,21 @@ class EndWebSessionUseCaseImpl(
         audit.record(AuditEntry(null, userId, "sessions.revoked", "user", userId.toString(), mapOf("count" to count.toString())))
         return count
     }
+}
+
+/** The longest login (GitHub's limit). */
+const val MAX_LOGIN = 39
+
+/**
+ * Makes a login from a hint: lower case, letters and digits kept, every other run of characters becomes one dash, no
+ * dash at either end, at most [MAX_LOGIN] characters.
+ *
+ * @param hint A GitHub login, an e-mail's local part or a name.
+ *
+ * @return The login, or null when nothing usable is left.
+ */
+fun loginOf(hint: String): String? {
+    val login = hint.lowercase().map { if (it in 'a'..'z' || it in '0'..'9') it else '-' }.joinToString("")
+        .replace(Regex("-+"), "-").trim('-').take(MAX_LOGIN).trimEnd('-')
+    return login.takeIf { it.isNotEmpty() }
 }

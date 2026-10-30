@@ -8,6 +8,9 @@ import kotlin.uuid.Uuid
  * their organization's SSO, and every way in that proves the same verified e-mail lands on the same user.
  *
  * @property id The stable id of the user.
+ * @property login The user's handle, unique on the instance: lower case letters, digits and dashes, at most 39
+ *   characters (the GitHub login when the account starts with GitHub, else made from the e-mail or the name). Members
+ *   are named by it in the API (`/api/v1/members/{login}`).
  * @property displayName The name shown in the console.
  * @property primaryEmail The e-mail the user is reached at, normalized (lower case), if known.
  * @property avatarUrl The picture shown in the console, if any.
@@ -15,6 +18,7 @@ import kotlin.uuid.Uuid
  */
 data class User(
     val id: Uuid,
+    val login: String,
     val displayName: String,
     val primaryEmail: String?,
     val avatarUrl: String?,
@@ -66,6 +70,7 @@ enum class IdentityProvider(val key: String) {
  * @property emailVerified True only when the provider says it verified [email]; only then can accounts merge.
  * @property displayName A name to start the account with.
  * @property avatarUrl A picture to start the account with.
+ * @property login A handle to start the account with (the GitHub login); taken or invalid, another is made.
  * @property connectionId For [IdentityProvider.OIDC], the organization's SSO connection; null otherwise.
  */
 data class VerifiedIdentity(
@@ -75,6 +80,7 @@ data class VerifiedIdentity(
     val emailVerified: Boolean,
     val displayName: String? = null,
     val avatarUrl: String? = null,
+    val login: String? = null,
     val connectionId: Uuid? = null,
 ) {
     /** The scope in which [subject] is unique: the provider, plus the connection for organization SSO. */

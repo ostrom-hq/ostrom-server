@@ -40,13 +40,17 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
         ).bind("email", email),
     ).getOrThrow().firstOrNull()?.toUser()
 
+    override suspend fun loginTaken(login: String): Boolean = driver.fetchAll(
+        Statement.create("SELECT 1 FROM identity_users WHERE login = :login").bind("login", login),
+    ).getOrThrow().isNotEmpty()
+
     override suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant) = uniqueGuard {
         driver.transaction {
             execute(
                 Statement.create(
-                    "INSERT INTO identity_users (id, display_name, primary_email, avatar_url, created_at) " +
-                        "VALUES (:id, :name, :email, :avatar, :at)",
-                ).bind("id", user.id).bind("name", user.displayName).bind("email", user.primaryEmail)
+                    "INSERT INTO identity_users (id, login, display_name, primary_email, avatar_url, created_at) " +
+                        "VALUES (:id, :login, :name, :email, :avatar, :at)",
+                ).bind("id", user.id).bind("login", user.login).bind("name", user.displayName).bind("email", user.primaryEmail)
                     .bind("avatar", user.avatarUrl).bind("at", user.createdAt),
             ).getOrThrow()
             insertIdentity(this, user.id, identity, at)
@@ -73,9 +77,10 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
     ).getOrThrow().map { it.get("issuer").asString() }
 
     private suspend fun insertIdentity(executor: QueryExecutor, userId: Uuid, identity: VerifiedIdentity, at: Instant) {
-        // A known identity of the same user only refreshes its last use; of another user, it changes nothing (the
-        // use case found it first, so this only happens in a race, which the caller resolves).
-        executor.execute(
+        // A known identity of the same user only refreshes its last use. Of another user, nothing is written and the
+        // call fails: the use case found it free a moment ago, so another sign-in took it in between (a race), and the
+        // caller retries, which then finds it. Writing nothing silently would leave a user without a way in.
+        val written = executor.execute(
             Statement.create(
                 "INSERT INTO identity_identities (issuer, subject, user_id, email, created_at, last_used_at) " +
                     "VALUES (:issuer, :subject, :user, :email, :at, :at) " +
@@ -84,6 +89,7 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
             ).bind("issuer", identity.issuer).bind("subject", identity.subject).bind("user", userId)
                 .bind("email", identity.email).bind("at", at),
         ).getOrThrow()
+        if (written == 0L) throw DuplicateIdentityException()
     }
 
     private suspend fun upsertEmail(executor: QueryExecutor, userId: Uuid, email: UserEmail, at: Instant) {
@@ -105,6 +111,7 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
 
     private fun ResultSet.Row.toUser() = User(
         id = get("id").asUuid(),
+        login = get("login").asString(),
         displayName = get("display_name").asString(),
         primaryEmail = get("primary_email").asStringOrNull(),
         avatarUrl = get("avatar_url").asStringOrNull(),
@@ -112,6 +119,6 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
     )
 
     private companion object {
-        const val USER_COLUMNS = "u.id, u.display_name, u.primary_email, u.avatar_url, u.created_at"
+        const val USER_COLUMNS = "u.id, u.login, u.display_name, u.primary_email, u.avatar_url, u.created_at"
     }
 }

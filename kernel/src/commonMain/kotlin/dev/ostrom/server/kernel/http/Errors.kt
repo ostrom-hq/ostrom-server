@@ -52,34 +52,33 @@ internal suspend fun ApplicationCall.respondError(kind: ErrorKind, message: Stri
  */
 fun Application.configureErrors(logger: Logger) {
     install(StatusPages) {
-        exception<CancellationException> { _, cause -> throw cause }
-        exception<OstromException> { call, cause ->
-            call.respondError(cause.kind, cause.message ?: cause.kind.code)
-        }
-        exception<UnsupportedMediaTypeException> { call, _ ->
-            call.respondError(ErrorKind.UNSUPPORTED_MEDIA_TYPE, "The request body must be JSON.")
-        }
-        exception<BadRequestException> { call, cause ->
-            logger.debug("malformed request", mapOf("request_id" to call.callId, "cause" to (cause.cause ?: cause).message))
-            call.respondError(ErrorKind.INVALID_REQUEST, "The request is malformed.")
-        }
-        exception<NotFoundException> { call, _ ->
-            call.respondError(ErrorKind.NOT_FOUND, "Not found.")
-        }
-        exception<PayloadTooLargeException> { call, _ ->
-            call.respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
-        }
-        exception<SQLError> { call, cause ->
-            if (cause.kind == SQLError.Kind.UniqueViolation) {
-                call.respondError(ErrorKind.CONFLICT, "The resource already exists.")
-            } else {
-                logger.error("database failure", mapOf("request_id" to call.callId), cause)
-                call.respondError(ErrorKind.INTERNAL, "Internal error.")
-            }
-        }
+        // One handler that dispatches with `is`: on Kotlin/Native, StatusPages matches an exception's exact class
+        // only (no superclass lookup without full reflection), so `exception<OstromException>` would miss every
+        // subclass a module throws (`OrgNotFoundException`), and Ktor's own subclasses of BadRequestException.
         exception<Throwable> { call, cause ->
-            logger.error("unexpected failure", mapOf("request_id" to call.callId), cause)
-            call.respondError(ErrorKind.INTERNAL, "Internal error.")
+            when (cause) {
+                is CancellationException -> throw cause
+                is OstromException -> call.respondError(cause.kind, cause.message ?: cause.kind.code)
+                is UnsupportedMediaTypeException ->
+                    call.respondError(ErrorKind.UNSUPPORTED_MEDIA_TYPE, "The request body must be JSON.")
+                is BadRequestException -> {
+                    val reason = (cause.cause ?: cause).message
+                    logger.debug("malformed request", mapOf("request_id" to call.callId, "cause" to reason))
+                    call.respondError(ErrorKind.INVALID_REQUEST, "The request is malformed.")
+                }
+                is NotFoundException -> call.respondError(ErrorKind.NOT_FOUND, "Not found.")
+                is PayloadTooLargeException -> call.respondError(ErrorKind.PAYLOAD_TOO_LARGE, "The request body is too large.")
+                is SQLError -> if (cause.kind == SQLError.Kind.UniqueViolation) {
+                    call.respondError(ErrorKind.CONFLICT, "The resource already exists.")
+                } else {
+                    logger.error("database failure", mapOf("request_id" to call.callId), cause)
+                    call.respondError(ErrorKind.INTERNAL, "Internal error.")
+                }
+                else -> {
+                    logger.error("unexpected failure", mapOf("request_id" to call.callId), cause)
+                    call.respondError(ErrorKind.INTERNAL, "Internal error.")
+                }
+            }
         }
         status(HttpStatusCode.NotFound) { call, _ ->
             call.respondError(ErrorKind.NOT_FOUND, "Not found.")

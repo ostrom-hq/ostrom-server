@@ -155,7 +155,7 @@ class MailAndConfigTest {
     fun callbackAndLinkUrlsFollowThePublicUrls() {
         val config = IdentityConfig("https://api.ostrom.run", "https://app.ostrom.run")
 
-        assertEquals("https://api.ostrom.run/v1/auth/github/callback", config.callbackUrl(IdentityProvider.GITHUB))
+        assertEquals("https://api.ostrom.run/api/v1/auth/github/callback", config.callbackUrl(IdentityProvider.GITHUB))
         assertEquals("https://app.ostrom.run/auth/email#token=t", config.magicLinkUrl("t"))
     }
 }

@@ -6,12 +6,12 @@ import kotlinx.serialization.Serializable
 // The identity API. These classes move to ostrom-core (the API contract) once it is published (docs/MODULES.md);
 // the routes are described in ostrom-core/api/openapi.yaml.
 
-/** `GET /v1/me`: the signed-in user. */
+/** `GET /api/v1/auth/me`: the signed-in user. */
 @Serializable
-@Resource("/v1/me")
+@Resource("/api/v1/auth/me")
 class MeApi {
     /**
-     * `GET /v1/me/audit`: the user's account-level audit events, newest first.
+     * `GET /api/v1/auth/me/audit`: the user's account-level audit events, newest first.
      *
      * @property parent The user resource.
      * @property before The `sequence` of the last event of the previous page.
@@ -24,10 +24,10 @@ class MeApi {
 
 /** Sign-in, sign-out and the CLI's device login. */
 @Serializable
-@Resource("/v1/auth")
+@Resource("/api/v1/auth")
 class AuthApi {
     /**
-     * `POST /v1/auth/logout`: ends the current browser session, or revokes the calling CLI or personal token.
+     * `POST /api/v1/auth/logout`: ends the current browser session, or revokes the calling CLI or personal token.
      *
      * @property parent The auth resource.
      */
@@ -35,7 +35,7 @@ class AuthApi {
     @Resource("logout")
     class Logout(val parent: AuthApi = AuthApi()) {
         /**
-         * `POST /v1/auth/logout/everywhere`: ends every browser session of the user.
+         * `POST /api/v1/auth/logout/everywhere`: ends every browser session of the user.
          *
          * @property parent The logout resource.
          */
@@ -45,7 +45,8 @@ class AuthApi {
     }
 
     /**
-     * `GET /v1/auth/device?userCode=`: the pending `ostrom login` the user is about to approve.
+     * `POST /api/v1/auth/device`: the CLI starts a login (body optional). `GET /api/v1/auth/device?userCode=`: the
+     * pending `ostrom login` the user is about to approve.
      *
      * @property parent The auth resource.
      * @property userCode The code the CLI shows.
@@ -54,16 +55,7 @@ class AuthApi {
     @Resource("device")
     class Device(val parent: AuthApi = AuthApi(), val userCode: String? = null) {
         /**
-         * `POST /v1/auth/device/code`: the CLI starts a login.
-         *
-         * @property parent The device resource.
-         */
-        @Serializable
-        @Resource("code")
-        class Code(val parent: Device = Device())
-
-        /**
-         * `POST /v1/auth/device/token`: the CLI polls for its token.
+         * `POST /api/v1/auth/device/token`: the CLI polls for its token.
          *
          * @property parent The device resource.
          */
@@ -72,7 +64,7 @@ class AuthApi {
         class Token(val parent: Device = Device())
 
         /**
-         * `POST /v1/auth/device/answer`: the user approves or denies a login in the console.
+         * `POST /api/v1/auth/device/answer`: the user approves or denies a login in the console.
          *
          * @property parent The device resource.
          */
@@ -84,10 +76,10 @@ class AuthApi {
 
 /** Signing in: the offered methods, GitHub and Google, and e-mailed links. */
 @Serializable
-@Resource("/v1/auth")
+@Resource("/api/v1/auth")
 class SignInApi {
     /**
-     * `GET /v1/auth/providers`: the sign-in methods this instance offers.
+     * `GET /api/v1/auth/providers`: the sign-in methods this instance offers.
      *
      * @property parent The auth resource.
      */
@@ -105,7 +97,7 @@ class SignInApi {
     @Resource("{provider}")
     class Provider(val parent: SignInApi = SignInApi(), val provider: String) {
         /**
-         * `GET /v1/auth/{provider}/start?redirect=`: sends the browser to the provider's consent page.
+         * `GET /api/v1/auth/{provider}/start?redirect=`: sends the browser to the provider's consent page.
          *
          * @property parent The provider resource.
          * @property redirect The console path to return to.
@@ -115,7 +107,7 @@ class SignInApi {
         class Start(val parent: Provider, val redirect: String? = null)
 
         /**
-         * `GET /v1/auth/{provider}/callback`: where the provider sends the browser back.
+         * `GET /api/v1/auth/{provider}/callback`: where the provider sends the browser back.
          *
          * @property parent The provider resource.
          * @property code The authorization code.
@@ -128,7 +120,7 @@ class SignInApi {
     }
 
     /**
-     * `POST /v1/auth/email`: e-mails a sign-in link.
+     * `POST /api/v1/auth/email`: e-mails a sign-in link.
      *
      * @property parent The auth resource.
      */
@@ -136,7 +128,7 @@ class SignInApi {
     @Resource("email")
     class Email(val parent: SignInApi = SignInApi()) {
         /**
-         * `POST /v1/auth/email/verify`: signs in with the link's token.
+         * `POST /api/v1/auth/email/verify`: signs in with the link's token.
          *
          * @property parent The e-mail resource.
          */
@@ -182,12 +174,12 @@ data class VerifyMagicLinkRequest(val token: String)
 @Serializable
 data class SignedInResponse(val redirect: String, val csrfToken: String)
 
-/** `GET`/`POST /v1/tokens`: the user's personal and CLI tokens. */
+/** `GET`/`POST /api/v1/tokens`: the user's personal and CLI tokens. */
 @Serializable
-@Resource("/v1/tokens")
+@Resource("/api/v1/tokens")
 class TokensApi {
     /**
-     * `DELETE /v1/tokens/{id}`: revokes a token.
+     * `DELETE /api/v1/tokens/{id}`: revokes a token.
      *
      * @property parent The tokens resource.
      * @property id The token id.
@@ -196,7 +188,7 @@ class TokensApi {
     @Resource("{id}")
     class Id(val parent: TokensApi = TokensApi(), val id: String) {
         /**
-         * `POST /v1/tokens/{id}/rotate`: replaces a token's secret.
+         * `POST /api/v1/tokens/{id}/rotate`: replaces a token's secret.
          *
          * @property parent The token resource.
          */
@@ -219,6 +211,7 @@ data class EmailResponse(val email: String, val verified: Boolean)
  * The signed-in user.
  *
  * @property id The user id.
+ * @property login The handle, unique on the instance.
  * @property displayName The name.
  * @property primaryEmail The main e-mail, if any.
  * @property avatarUrl The picture, if any.
@@ -230,6 +223,7 @@ data class EmailResponse(val email: String, val verified: Boolean)
 @Serializable
 data class ProfileResponse(
     val id: String,
+    val login: String,
     val displayName: String,
     val primaryEmail: String?,
     val avatarUrl: String?,

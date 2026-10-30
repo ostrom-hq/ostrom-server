@@ -25,7 +25,7 @@ import io.ktor.server.routing.Route
 /** The cookie that binds an OAuth sign-in to the browser that started it. */
 const val OAUTH_STATE_COOKIE = "ostrom_oauth_state"
 
-private const val SIGN_IN_COOKIE_PATH = "/v1/auth"
+private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
 
 /**
  * What the sign-in routes need.
