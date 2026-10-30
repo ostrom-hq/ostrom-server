@@ -23,9 +23,9 @@ import io.ktor.server.routing.Route
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** `/api/v1/github/webhook`: GitHub's deliveries, signed with the App's webhook secret. */
+/** `/webhooks/github`: GitHub's deliveries, signed with the App's webhook secret (outside the API prefix). */
 @Serializable
-@Resource("/api/v1/github/webhook")
+@Resource("/webhooks/github")
 class GitHubWebhookPath
 
 /** `/api/v1/github/app`: the organization's installation of the App. */
