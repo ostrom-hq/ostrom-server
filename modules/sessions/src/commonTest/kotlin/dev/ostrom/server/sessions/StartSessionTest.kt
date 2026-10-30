@@ -78,8 +78,9 @@ class StartSessionTest {
         val bare = bench.start(user(), start.copy(id = "s-3", repo = null, realRepo = null))
         assertNull(bare.repo)
         assertNull(bare.realRepo)
+        // S2-48: a credential without a person opens nothing in anyone's name.
         val service = GateActor("ci", ORG, ActorKind.SERVICE)
-        assertEquals("ci", bench.start(service, start.copy(id = "s-4")).dev, "without a person, the credential's id")
+        assertFailsWith<NotYourSessionException> { bench.start(service, start.copy(id = "s-4")) }
     }
 
     @Test
@@ -97,6 +98,22 @@ class StartSessionTest {
         val named = bench.start(agent(), start.copy(packageDigest = "pkg-launcher"))
         assertEquals("launch-1", named.launchId)
         assertEquals("pkg-hook", named.packageDigest)
+    }
+
+    @Test
+    fun s248AnAgentNeverClosesALiveLaunchsSegment() = runTest {
+        val bench = SessionBench()
+        val first = bench.start(agent("launch-1"), start)
+        bench.clock.now += 1.minutes
+        bench.alive(agent("launch-1"), first.id)
+        bench.clock.now += 1.minutes
+        assertFailsWith<NotYourSessionException> { bench.start(agent("launch-2"), start) }
+        assertNull(bench.repository.get(ORG, first.id)?.endedAt, "the live launch keeps its segment and its yes")
+
+        // Its person may replace it; a launch silent for the sweep's delay is replaced by the next one.
+        assertEquals("s-1~r2", bench.start(user(), start.copy(launchId = "launch-2")).id)
+        bench.clock.now += SweepStaleSessionsUseCaseImpl.STALE_AFTER
+        assertEquals("s-1~r3", bench.start(agent("launch-3"), start).id)
     }
 
     @Test

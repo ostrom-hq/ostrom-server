@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SIGTERM and SIGINT, waited for without running Kotlin in a signal handler: the handler only writes the signal number
+# to a pipe (write(2) is async-signal-safe), and the main thread reads it. Same code on Linux and macOS.
+package = dev.ostrom.server.app.signals
+---
+#include <errno.h>
+#include <signal.h>
+#include <string.h>
+#include <unistd.h>
+
+static int ostrom_signal_pipe[2] = {-1, -1};
+
+static void ostrom_on_signal(int signal_number) {
+    int saved = errno;
+    unsigned char byte = (unsigned char) signal_number;
+    (void) write(ostrom_signal_pipe[1], &byte, 1);
+    errno = saved;
+}
+
+/* Installs the handler of SIGTERM and SIGINT. Returns 0, or -1 when the pipe or a handler cannot be set. */
+static inline int ostrom_install_signal_handlers(void) {
+    if (pipe(ostrom_signal_pipe) != 0) return -1;
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = ostrom_on_signal;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGTERM, &action, NULL) != 0) return -1;
+    if (sigaction(SIGINT, &action, NULL) != 0) return -1;
+    return 0;
+}
+
+/* Blocks until SIGTERM or SIGINT arrives. Returns the signal number, or -1 when the pipe fails. */
+static inline int ostrom_await_signal(void) {
+    unsigned char byte = 0;
+    ssize_t read_bytes;
+    do {
+        read_bytes = read(ostrom_signal_pipe[0], &byte, 1);
+    } while (read_bytes < 0 && errno == EINTR);
+    return read_bytes == 1 ? (int) byte : -1;
+}

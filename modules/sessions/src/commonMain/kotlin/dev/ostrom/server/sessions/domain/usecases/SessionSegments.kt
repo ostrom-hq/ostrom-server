@@ -4,6 +4,7 @@ package dev.ostrom.server.sessions.domain.usecases
 import dev.ostrom.server.sessions.domain.models.EndSession
 import dev.ostrom.server.sessions.domain.models.InvalidSessionRequestException
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
+import dev.ostrom.server.sessions.domain.models.Opening
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.StartSession
 import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
@@ -27,20 +28,24 @@ class SessionSegments(private val close: CloseSessionUseCase, private val clock:
      * @param orgId The organization.
      * @param dev The person.
      * @param start What the launch says.
-     * @param source Why the segment opens (`reopened: …`), when it is not a plain start.
+     * @param opening Why the segment opens, and whether the caller may replace another launch's live segment.
      * @return The open segment.
      */
-    suspend fun open(tx: SessionsTransaction, orgId: Uuid, dev: String, start: StartSession, source: String?): Session {
+    suspend fun open(
+        tx: SessionsTransaction,
+        orgId: Uuid,
+        dev: String,
+        start: StartSession,
+        opening: Opening,
+    ): Session {
         val last = tx.segments(start.id).lastOrNull()
         if (last != null && last.dev != dev) throw NotYourSessionException()
-        if (last != null && last.endedAt == null && sameLaunch(last.launchId, start.launchId)) {
-            return found(tx, last, start)
-        }
-        val previous = if (last != null && last.endedAt == null) {
-            close.closeLocked(tx, last, EndSession(source = Session.SUPERSEDED))
-        } else {
-            last
-        }
+        val open = last?.takeIf { it.endedAt == null }
+        if (open != null && sameLaunch(open.launchId, start.launchId)) return found(tx, open, start)
+        // S2-48: an agent token never closes a live launch's segment (nor its yes); a silent one, as the sweep would.
+        if (open != null && !opening.mayReplace && !silent(open)) throw NotYourSessionException()
+        val previous = if (open != null) close.closeLocked(tx, open, EndSession(source = Session.SUPERSEDED)) else last
+        val source = opening.source
         val segment = (previous?.segment ?: 0) + 1
         val session = Session(
             orgId = orgId,
@@ -72,6 +77,9 @@ class SessionSegments(private val close: CloseSessionUseCase, private val clock:
         tx.update(named)
         return named
     }
+
+    private fun silent(session: Session): Boolean =
+        now() - (session.lastSeenAt ?: session.startedAt) >= SweepStaleSessionsUseCaseImpl.STALE_AFTER
 
     private fun now(): Instant = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
 

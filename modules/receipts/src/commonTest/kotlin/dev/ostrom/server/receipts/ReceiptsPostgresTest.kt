@@ -39,18 +39,24 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class ReceiptsPostgresTest {
-    // A token is the organization's letter: `a`, `b`; any other token belongs to no organization.
+    // A token ends with its organization's letter: `a`, `b` (a person's session), `agent-a`, `device-a`,
+    // `reader-a` (receipts:read only), `profile-a` (profile:read only); any other belongs to no organization.
     private val overrides = module {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) =
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
+                override suspend fun authenticate(token: String) = when (token.substringBefore('-', "")) {
+                    "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf("agent:session"))
+                    "device" -> AuthenticatedPrincipal(token, PrincipalKind.DEVICE, setOf("user:*"))
+                    "reader" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("receipts:read"))
+                    "profile" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("profile:read"))
+                    else -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"))
+                }
             }
         }
         single<PrincipalOrgResolver> {
             object : PrincipalOrgResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
-                    when (principal.subjectId) {
+                    when (principal.subjectId.substringAfterLast('-')) {
                         "a" -> OrgPrincipal(ORG_A, Uuid.random(), OrgRole.MEMBER)
                         "b" -> OrgPrincipal(ORG_B, Uuid.random(), OrgRole.MEMBER)
                         else -> null
@@ -104,6 +110,19 @@ class ReceiptsPostgresTest {
         assertEquals(listOf(ids[2]), one.items.map { it.text("id") })
         assertNull(one.next, "A page that is not full has no next one")
         assertEquals(6, server.call("a", "/api/v1/receipts").body<ReceiptsPage>().items.size)
+    }
+
+    @Test
+    fun s247ReceiptsAreReadByAPersonWithTheReadScopeOnly() = receiptsTest { server ->
+        val id = server.sign(ORG_A, "gate-1").text("id")
+        val paths = listOf("/api/v1/receipts", "/api/v1/receipts/$id", "/api/v1/receipts/$id/verify")
+        for (path in paths) {
+            assertEquals(HttpStatusCode.Forbidden, server.call("agent-a", path).status, "an agent token: $path")
+            assertEquals(HttpStatusCode.Forbidden, server.call("device-a", path).status, "a device: $path")
+            assertEquals(HttpStatusCode.Forbidden, server.call("profile-a", path).status, "no receipts scope: $path")
+            assertEquals(HttpStatusCode.OK, server.call("reader-a", path).status, "receipts:read: $path")
+        }
+        assertEquals(HttpStatusCode.OK, server.call(null, "/api/v1/receipts/keys").status, "the keys stay public")
     }
 
     @Test

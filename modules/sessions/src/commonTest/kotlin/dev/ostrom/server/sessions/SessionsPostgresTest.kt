@@ -17,6 +17,7 @@ import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import dev.ostrom.server.sessions.fakes.SettableClock
+import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.sessions.presentation.SessionScopes
@@ -92,6 +93,12 @@ class SessionsPostgresTest {
             }
         }
         single<Clock> { clock }
+        // The server's measure of a session's cost (the usage module, later).
+        single<SessionCosts> {
+            object : SessionCosts {
+                override suspend fun costOf(orgId: Uuid, sessionId: String): Double = 0.42
+            }
+        }
     }
 
     private fun sessionsTest(block: suspend (TestServer) -> Unit) = serverTest(
@@ -134,7 +141,8 @@ class SessionsPostgresTest {
         val recorded = server.call("agent:a:launch-1", "/api/v1/sessions/s-1/seen", seen)
         assertEquals(HttpStatusCode.NoContent, recorded.status)
 
-        val end = """{"exitCode":0,"tools":3,"costUsd":0.42}"""
+        // S2-48: the agent's own figure is ignored; the cost is the server's measure.
+        val end = """{"exitCode":0,"tools":3,"costUsd":99.0}"""
         val ended = server.call("agent:a:launch-1", "/api/v1/sessions/s-1/end", end).body<SessionResponse>()
         assertEquals(0.42, ended.session.costUsd)
         val read = server.call("user:a:lyes", "/api/v1/sessions/s-1").body<SessionResponse>()
@@ -188,17 +196,20 @@ class SessionsPostgresTest {
 
     @Test
     fun twoLaunchesResumingAtOnceLeaveOneOpenSegment() = sessionsTest { server ->
-        val starts = coroutineScope {
-            (1..3).map { n -> async { server.start("agent:a:launch-$n", "s-1") } }.awaitAll()
+        // S2-48: the first live launch keeps the session; the others are refused, nobody's yes is lost.
+        val body = """{"id":"s-1","agent":"claude-code","repo":"acme/api"}"""
+        val statuses = coroutineScope {
+            (1..3).map { n -> async { server.call("agent:a:launch-$n", "/api/v1/sessions", body).status } }.awaitAll()
         }
-        assertEquals(3, starts.map { it.id }.toSet().size)
+        val expected = listOf(HttpStatusCode.OK, HttpStatusCode.Forbidden, HttpStatusCode.Forbidden)
+        assertEquals(expected, statuses.sortedBy { it.value })
 
         val noOrg = server.call("user:nobody", "/api/v1/sessions?open=true")
         assertEquals(HttpStatusCode.Forbidden, noOrg.status, "a credential of no organization")
         val page = server.call("user:a:lyes", "/api/v1/sessions?open=true").body<SessionsPage>()
-        assertEquals(1, page.items.size, "Every other segment was superseded")
+        assertEquals(1, page.items.size, "One open segment")
         val ended = server.call("user:a:lyes", "/api/v1/sessions?open=false").body<SessionsPage>().items
-        assertTrue(ended.all { it.endedBy == "superseded: the session was resumed by another launch" })
+        assertTrue(ended.isEmpty(), "No live segment was closed by another launch")
     }
 
     @Test
