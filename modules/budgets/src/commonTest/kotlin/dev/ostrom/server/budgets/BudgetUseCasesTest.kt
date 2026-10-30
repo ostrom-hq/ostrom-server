@@ -17,6 +17,8 @@ import dev.ostrom.server.budgets.domain.MyBudget
 import dev.ostrom.server.budgets.domain.NoBudgetAlerts
 import dev.ostrom.server.budgets.domain.PutBudgetsUseCaseImpl
 import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCaseImpl
+import dev.ostrom.server.budgets.presentation.BudgetDto
+import dev.ostrom.server.budgets.presentation.toPage
 import dev.ostrom.server.budgets.presentation.toResponse
 import dev.ostrom.server.secrets.domain.AdminRequiredException
 import kotlinx.coroutines.test.runTest
@@ -142,14 +144,15 @@ class BudgetUseCasesTest {
     @Test
     fun theOverviewAndAnOverrideMapToTheApi() = runTest {
         putMember(TestCallers.adminA, member, 7)
-        val response = putBudgets(TestCallers.adminA, 100, null).toResponse()
+        val page = putBudgets(TestCallers.adminA, 1_000_000, null).toPage()
 
-        assertEquals(100L, response.orgLimitMicros)
-        assertEquals(null, response.defaultMemberLimitMicros)
-        assertEquals(listOf(member.toString()), response.overrides.map { it.memberId })
-        assertEquals("2026-10-30T12:00:00Z", response.overrides.single().updatedAt)
-        assertEquals("2026-10-01T00:00:00Z", response.periodStart)
-        assertEquals("2026-11-01T00:00:00Z", response.resetsAt)
+        assertEquals(
+            listOf(BudgetDto("organization", usdPerMonth = 1.0), BudgetDto("member", member.toString(), 7e-6)),
+            page.items,
+        )
+        assertEquals(null, page.next)
+        assertEquals("2026-10-01T00:00:00Z", page.periodStart)
+        assertEquals("2026-11-01T00:00:00Z", page.resetsAt)
     }
 
     @Test

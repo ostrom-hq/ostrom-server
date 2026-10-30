@@ -28,7 +28,7 @@ fun UsageReport.toResponse() = UsageResponse(
     tokensIn = total.inputTokens,
     tokensOut = total.outputTokens,
     byMember = byMember.associate { (it.key ?: UNATTRIBUTED) to it.costMicros / MICROS_PER_USD },
-    // A model call always names its model, so no group of byModel has a null key.
+    // A model call always names its model; a row without one would still be reported, under "".
     byModel = byModel.associate { it.key.orEmpty() to it.costMicros / MICROS_PER_USD },
     cacheReadTokens = total.cacheReadTokens,
     cacheWriteTokens = total.cacheWriteTokens,

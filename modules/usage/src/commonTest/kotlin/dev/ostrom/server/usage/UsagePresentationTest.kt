@@ -8,6 +8,8 @@ import dev.ostrom.server.usage.domain.InvalidUsageQueryException
 import dev.ostrom.server.usage.domain.UsageCursor
 import dev.ostrom.server.usage.domain.UsageGroupBy
 import dev.ostrom.server.usage.domain.UsageKind
+import dev.ostrom.server.usage.domain.UsageReport
+import dev.ostrom.server.usage.domain.UsageTotal
 import dev.ostrom.server.usage.presentation.UsageEventRequest
 import dev.ostrom.server.usage.presentation.toClientEvent
 import dev.ostrom.server.usage.presentation.toCursor
@@ -84,6 +86,17 @@ class UsagePresentationTest {
         val orgLevel = modelEvent(1, memberId = null).toResponse()
         assertEquals(null, orgLevel.memberId)
         assertEquals(null, orgLevel.accountId)
+    }
+
+    @Test
+    fun aReportMapsUnattributedMembersAndUnnamedModels() {
+        val total = UsageTotal(null, 2, 10, 5, 0, 0, 1_500_000)
+        val at = Instant.parse("2026-10-01T00:00:00Z")
+        val response = UsageReport(at, at + 1.days, total, listOf(total), listOf(total)).toResponse()
+
+        assertEquals(mapOf("unattributed" to 1.5), response.byMember)
+        assertEquals(mapOf("" to 1.5), response.byModel)
+        assertEquals("2026-10-02T00:00:00Z", response.to)
     }
 
     @Test

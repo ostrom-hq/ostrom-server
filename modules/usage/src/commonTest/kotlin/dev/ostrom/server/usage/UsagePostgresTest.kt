@@ -35,8 +35,11 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.contentType
+import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.withTimeout
 import org.koin.core.module.Module
 import org.koin.dsl.module
@@ -107,6 +110,24 @@ class UsagePostgresTest {
             "Keyset paging neither repeats nor skips",
         )
         assertEquals("mcp", rest.events.single().kind, "Oldest last")
+    }
+
+    @Test
+    fun aStreamedBatchWithoutContentLengthIsAccepted() = serverTest(modules, overrides) { server ->
+        val streamed = server.client.post("$orgA/events") {
+            bearerAuth("member-a")
+            setBody(
+                object : OutgoingContent.WriteChannelContent() {
+                    override val contentType = ContentType.Application.Json
+
+                    override suspend fun writeTo(channel: ByteWriteChannel) {
+                        channel.writeStringUtf8("""{"events":[{"kind":"skill","name":"deploy"}]}""")
+                    }
+                },
+            )
+        }
+        assertEquals(HttpStatusCode.Accepted, streamed.status, streamed.bodyAsText())
+        assertEquals(1, streamed.body<UsageAcceptedResponse>().accepted)
     }
 
     @Test

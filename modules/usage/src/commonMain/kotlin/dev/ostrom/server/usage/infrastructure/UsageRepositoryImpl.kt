@@ -164,12 +164,11 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         outcome = get("outcome").asString(),
         at = get("at").asInstant(),
     )
-
-    private companion object {
-        val PARAMETERS = listOf(
-            "id", "org_id", "member_id", "kind", "name", "provider", "account_id", "session_id", "input_tokens",
-            "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micros", "duration_ms", "outcome", "at",
-        )
-        val COLUMNS = PARAMETERS.joinToString(", ")
-    }
 }
+
+// Top level rather than in a companion: a private companion leaves a synthetic constructor no test can reach.
+private val PARAMETERS = listOf(
+    "id", "org_id", "member_id", "kind", "name", "provider", "account_id", "session_id", "input_tokens",
+    "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micros", "duration_ms", "outcome", "at",
+)
+private val COLUMNS = PARAMETERS.joinToString(", ")

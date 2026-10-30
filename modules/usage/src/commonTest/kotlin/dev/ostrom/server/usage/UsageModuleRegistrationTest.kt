@@ -13,12 +13,20 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class UsageModuleRegistrationTest {
     @Test
     fun registersUnderItsNameWithDefinitionsThatLoad() {
         assertEquals("usage", UsageModule.name)
         koinApplication { modules(UsageModule.koinModule) }.close()
+    }
+
+    @Test
+    fun withoutABoundConfigSourceTheConfigurationIsReadFromTheEnvironment() {
+        val app = koinApplication { modules(UsageModule.koinModule) }
+        assertTrue(app.koin.get<UsageConfig>().retention.isPositive())
+        app.close()
     }
 
     @Test
