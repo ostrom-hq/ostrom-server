@@ -35,8 +35,9 @@ interface ReconcileCloudSessionUseCase {
  * @param plans The organizations' plans, for the monthly hours.
  * @param clock The time.
  */
-// Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches.
-@Suppress("ReturnCount")
+// Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches,
+// and one small function per state and per check keeps each table short.
+@Suppress("ReturnCount", "TooManyFunctions")
 class ReconcileCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val driver: RuntimeDriver,
@@ -126,11 +127,7 @@ class ReconcileCloudSessionUseCaseImpl(
     }
 
     private suspend fun running(session: CloudSession, now: Instant): Instant? {
-        val lastSign = session.lastHeartbeatAt ?: session.readyAt ?: now
-        val status = driver.executionStatus(session)
-        if (now - lastSign > HEARTBEAT_LOSS || status == ExecutionStatus.ENDED || status == ExecutionStatus.FAILED ||
-            status == ExecutionStatus.MISSING
-        ) {
+        if (executionLost(session, now)) {
             driver.stopExecutions(session)
             val failure = SessionFailure(
                 "execution_lost",
@@ -141,8 +138,18 @@ class ReconcileCloudSessionUseCaseImpl(
         if (session.desiredState != DesiredState.RUNNING) {
             return write(session.toPausing(now, session.failure), now + STEP_DELAY)
         }
+        val reason = limitReached(session, now) ?: planFailure(session, now) ?: return now + WATCH_DELAY
+        return write(session.toPausing(now, reason).copy(desiredState = DesiredState.PAUSED), now + STEP_DELAY)
+    }
+
+    private suspend fun executionLost(session: CloudSession, now: Instant): Boolean {
+        val lastSign = session.lastHeartbeatAt ?: session.readyAt ?: now
+        return now - lastSign > HEARTBEAT_LOSS || driver.executionStatus(session) in LOST_STATUSES
+    }
+
+    private fun limitReached(session: CloudSession, now: Instant): SessionFailure? {
         val idleSince = session.lastActivityAt ?: session.readyAt ?: now
-        val reason = when {
+        return when {
             now - idleSince >= session.limits.idleTimeoutMinutes.minutes ->
                 SessionFailure(
                     "idle_timeout",
@@ -150,9 +157,8 @@ class ReconcileCloudSessionUseCaseImpl(
                 )
             now - (session.readyAt ?: now) >= session.limits.maxRunMinutes.minutes ->
                 SessionFailure("max_duration", "Paused after ${session.limits.maxRunMinutes} minutes of running.")
-            else -> planFailure(session, now) ?: return now + WATCH_DELAY
+            else -> null
         }
-        return write(session.toPausing(now, reason).copy(desiredState = DesiredState.PAUSED), now + STEP_DELAY)
     }
 
     private suspend fun pausing(session: CloudSession, now: Instant): Instant? {
@@ -211,12 +217,16 @@ class ReconcileCloudSessionUseCaseImpl(
             failure = reason,
         )
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** A start must report ready within this time, image pull and repository clone included. */
         val START_TIMEOUT: Duration = 15.minutes
 
         /** A runner silent for this long is lost. */
         val HEARTBEAT_LOSS: Duration = 90.seconds
+
+        /** What the runtime reports for an execution that is no longer there. */
+        private val LOST_STATUSES = setOf(ExecutionStatus.ENDED, ExecutionStatus.FAILED, ExecutionStatus.MISSING)
 
         /** A pause drains the agent for at most this long. */
         val PAUSE_DEADLINE: Duration = 2.minutes

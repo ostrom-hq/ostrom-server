@@ -23,6 +23,7 @@ import kotlin.uuid.Uuid
  * @param clock The time.
  * @param owner This replica's lease owner id.
  */
+@Suppress("LongParameterList") // Four collaborators and four tunings with defaults, all named at the call sites.
 class ReconcilerWorker(
     private val repository: CloudSessionsRepository,
     private val reconcile: ReconcileCloudSessionUseCase,
