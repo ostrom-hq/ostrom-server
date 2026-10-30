@@ -68,7 +68,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ostrom-hq/ostrom-core
-          ref: chore/conventions
+          ref: main
           path: .ostrom-core
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           persist-credentials: false
