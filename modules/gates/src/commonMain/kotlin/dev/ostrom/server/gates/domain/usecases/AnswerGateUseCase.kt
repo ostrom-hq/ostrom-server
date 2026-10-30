@@ -75,15 +75,17 @@ class AnswerGateUseCaseImpl(
         shownDigest: String,
         channel: AnswerChannel,
     ): GateView {
-        if (actor.kind != ActorKind.USER) throw OnlyPeopleAnswerException()
+        // S2-15: the answerer is the credential's person, never its id.
+        val person = actor.personId
+        if (actor.kind != ActorKind.USER || person == null) throw OnlyPeopleAnswerException()
         val orgId = actor.orgId
         val policy = policies.selfApproval(orgId)
         val decided = repository.transaction {
             val request = request(orgId, requestId) ?: throw GateNotFoundException()
             val gate = lockGate(orgId, request.gateId) ?: throw GateNotFoundException()
-            checkAnswerable(actor, request, gate, shownDigest)
+            checkAnswerable(person, request, gate, shownDigest)
             val requests = requestsOf(orgId, gate.id)
-            val verdict = SelfApproval.check(gate.askedBy, requests.map { it.approverId }, actor.id, answer, policy)
+            val verdict = SelfApproval.check(gate.askedBy, requests.map { it.approverId }, person, answer, policy)
             val selfApproved = when (verdict) {
                 is SelfApproval.Verdict.Refused -> throw SelfApprovalRefusedException(verdict.others)
                 is SelfApproval.Verdict.Allowed -> verdict.selfApproved
@@ -106,9 +108,9 @@ class AnswerGateUseCaseImpl(
         return viewOf(gate, requests, policy)
     }
 
-    private fun checkAnswerable(actor: GateActor, request: ApprovalRequest, gate: Gate, shownDigest: String) {
+    private fun checkAnswerable(person: String, request: ApprovalRequest, gate: Gate, shownDigest: String) {
         val refused = when {
-            !SelfApproval.same(request.approverId, actor.id) -> NotTheApproverException()
+            !SelfApproval.same(request.approverId, person) -> NotTheApproverException()
             gate.status != GateStatus.PENDING -> GateAlreadyDecidedException()
             request.status != RequestStatus.PENDING -> GateAlreadyDecidedException()
             shownDigest != gate.shownDigest -> GateChangedException()

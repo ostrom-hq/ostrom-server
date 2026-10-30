@@ -33,7 +33,7 @@ class GateBench {
     val receipts = EnsureGateReceiptUseCaseImpl(repository, signer, logger)
     val open = OpenGateUseCaseImpl(repository, sessions, policies, notifier, IdentityDigester(), clock)
     val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock)
-    val use = UseGateUseCaseImpl(repository, clock)
+    val use = UseGateUseCaseImpl(repository, receipts, clock)
     val get = GetGateUseCaseImpl(repository, policies, receipts)
     val approvals = ListApprovalsUseCaseImpl(repository)
     val approval = GetApprovalUseCaseImpl(repository)

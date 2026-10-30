@@ -50,6 +50,12 @@ class GateNotUsableException(reason: String) : OstromException(ErrorKind.CONFLIC
 /** The caller's session did not ask for this gate: a yes serves the sessions that asked for it, nobody else. */
 class NotYourGateException : OstromException(ErrorKind.FORBIDDEN, "This gate was not asked by your session.")
 
+/** The credential belongs to no person (a key or an agent its resolver could not tie to one): it asks no gate. */
+class NoPersonException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This credential belongs to no person: a gate is asked on behalf of a person.",
+)
+
 /**
  * The push rewrites where git reads or sends (`GIT_DIR`, `--git-dir`, `-c remote.*`…): Ostrom cannot tie a yes to
  * what it would really send, so no yes is asked.
