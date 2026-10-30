@@ -1,10 +1,10 @@
 package dev.ostrom.server.billing
 
+import dev.ostrom.server.billing.domain.PaymentIssue
+import dev.ostrom.server.billing.domain.PaymentIssueKind
 import dev.ostrom.server.billing.domain.ProcessOutboxUseCase
 import dev.ostrom.server.billing.fakes.NOW
 import dev.ostrom.server.billing.infrastructure.LoggingBillingNotifier
-import dev.ostrom.server.billing.domain.PaymentIssue
-import dev.ostrom.server.billing.domain.PaymentIssueKind
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.logging.LogLevel

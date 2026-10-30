@@ -1,5 +1,7 @@
 package dev.ostrom.server.billing
 
+import dev.ostrom.server.billing.domain.BILLING_MANAGE
+import dev.ostrom.server.billing.domain.BILLING_READ
 import dev.ostrom.server.billing.domain.BillingAccessDeniedException
 import dev.ostrom.server.billing.domain.BillingAdminRequiredException
 import dev.ostrom.server.billing.domain.BillingInterval
@@ -16,15 +18,19 @@ import dev.ostrom.server.billing.domain.PlanNotPurchasableException
 import dev.ostrom.server.billing.domain.SubscriptionAlreadyActiveException
 import dev.ostrom.server.billing.domain.SubscriptionStateException
 import dev.ostrom.server.billing.domain.SubscriptionStatus
+import dev.ostrom.server.billing.domain.allowsBilling
 import dev.ostrom.server.billing.fakes.NOW
 import dev.ostrom.server.billing.fakes.stripeSubscription
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalKind
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import dev.ostrom.server.kernel.auth.OrgRole
 
 class UseCasesTest {
     // Limits ------------------------------------------------------------------------------------------------------
@@ -97,6 +103,18 @@ class UseCasesTest {
         val world = World()
         assertFailsWith<BillingAccessDeniedException> { world.overview(world.stranger, world.org) }
         assertFailsWith<BillingAccessDeniedException> { world.portal(world.stranger, world.org) }
+    }
+
+    @Test
+    fun billingScopesArePeoplesOnly() {
+        fun principal(kind: PrincipalKind, vararg scopes: String) = AuthenticatedPrincipal("u", kind, scopes.toSet())
+        assertTrue(principal(PrincipalKind.USER, "user:*").allowsBilling(BILLING_MANAGE))
+        assertTrue(principal(PrincipalKind.USER, BILLING_MANAGE).allowsBilling(BILLING_READ))
+        assertTrue(principal(PrincipalKind.USER, BILLING_READ).allowsBilling(BILLING_READ))
+        assertFalse(principal(PrincipalKind.USER, BILLING_READ).allowsBilling(BILLING_MANAGE))
+        assertFalse(principal(PrincipalKind.USER, "orgs:read").allowsBilling(BILLING_READ))
+        assertFalse(principal(PrincipalKind.DEVICE, "user:*").allowsBilling(BILLING_READ))
+        assertFalse(principal(PrincipalKind.SERVICE, BILLING_MANAGE).allowsBilling(BILLING_READ))
     }
 
     @Test

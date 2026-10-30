@@ -1,18 +1,23 @@
 package dev.ostrom.server.billing.presentation
 
+import dev.ostrom.server.billing.domain.BILLING_MANAGE
+import dev.ostrom.server.billing.domain.BILLING_READ
 import dev.ostrom.server.billing.domain.BillingAccessDeniedException
 import dev.ostrom.server.billing.domain.BillingInterval
 import dev.ostrom.server.billing.domain.BillingOverview
+import dev.ostrom.server.billing.domain.BillingScopeRequiredException
 import dev.ostrom.server.billing.domain.Invoice
 import dev.ostrom.server.billing.domain.Plan
 import dev.ostrom.server.billing.domain.PlanCatalog
+import dev.ostrom.server.billing.domain.allowsBilling
 import dev.ostrom.server.billing.domain.percentOfHours
 import dev.ostrom.server.billing.infrastructure.MAX_WEBHOOK_BYTES
 import dev.ostrom.server.billing.infrastructure.parseStripeEvent
-import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.server.application.ApplicationCall
@@ -30,36 +35,36 @@ import kotlin.uuid.Uuid
 fun Route.billingRoutes(dependencies: BillingRoutesDependencies) = with(dependencies) {
     authenticated {
         get<BillingApi> { params ->
-            val (caller, orgId) = call.caller(resolver, params.orgId)
+            val (caller, orgId) = call.caller(resolver, params.orgId, BILLING_READ)
             call.respond(getOverview(caller, orgId).toResponse())
         }
         post<BillingApi.Checkout, PlanRequest> { params, request ->
             val (plan, interval) = request.parse()
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId)
+            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
             call.respond(RedirectResponse(startCheckout(caller, orgId, null, null, plan, interval)))
         }
         post<BillingApi.Portal> { params ->
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId)
+            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
             call.respond(RedirectResponse(openPortal(caller, orgId)))
         }
         post<BillingApi.ChangePlan, PlanRequest> { params, request ->
             val (plan, interval) = request.parse()
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId)
+            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
             changePlan(caller, orgId, plan, interval)
             call.respond(getOverview(caller, orgId).toResponse())
         }
         post<BillingApi.Cancel> { params ->
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId)
+            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
             setCancellation(caller, orgId, cancel = true)
             call.respond(getOverview(caller, orgId).toResponse())
         }
         post<BillingApi.Resume> { params ->
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId)
+            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
             setCancellation(caller, orgId, cancel = false)
             call.respond(getOverview(caller, orgId).toResponse())
         }
         get<BillingApi.Invoices> { params ->
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId)
+            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_READ)
             call.respond(InvoicesResponse(listInvoices(caller, orgId, params.limit).map { it.toResponse() }))
         }
     }
@@ -76,8 +81,16 @@ fun Route.billingRoutes(dependencies: BillingRoutesDependencies) = with(dependen
 
 private fun eventTooLarge() = OstromException(ErrorKind.PAYLOAD_TOO_LARGE, "The event is too large.")
 
-/** The member the caller acts for in the organization of the path, and that organization. */
-private suspend fun ApplicationCall.caller(resolver: PrincipalOrgResolver, orgId: String): Pair<OrgPrincipal, Uuid> {
+/**
+ * The member the caller acts for in the organization of the path, and that organization. Only a person's credential
+ * with [scope] gets there: an agent, device or service token is refused (S2-03).
+ */
+private suspend fun ApplicationCall.caller(
+    resolver: PrincipalOrgResolver,
+    orgId: String,
+    scope: String,
+): Pair<OrgPrincipal, Uuid> {
+    if (!requirePrincipal().allowsBilling(scope)) throw BillingScopeRequiredException(scope)
     val id = orgId.toOrgId()
     return requireOrgPrincipal(resolver, id) to id
 }

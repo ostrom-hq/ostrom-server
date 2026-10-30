@@ -1,7 +1,9 @@
 package dev.ostrom.server.billing.domain
 
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalKind
 import kotlin.uuid.Uuid
 
 /** The roles that may buy, change or cancel the subscription and read invoices. */
@@ -26,3 +28,19 @@ fun OrgPrincipal.requireBillingAdminOf(orgId: Uuid) {
     requireMemberOf(orgId)
     if (role !in BILLING_ADMIN_ROLES) throw BillingAdminRequiredException()
 }
+
+/** Reading an organization's billing (overview, invoices). */
+const val BILLING_READ = "billing:read"
+
+/** Buying, changing and cancelling the subscription; includes [BILLING_READ]. */
+const val BILLING_MANAGE = "billing:manage"
+
+/** The full scope of a member's interactive console session (identity module). */
+private const val ALL_USER_SCOPES = "user:*"
+
+/**
+ * Whether a credential may use billing with [scope]: only a person (never a device, an agent session or a service),
+ * whose token carries [scope], [BILLING_MANAGE] for [BILLING_READ], or the console session's full scope.
+ */
+fun AuthenticatedPrincipal.allowsBilling(scope: String): Boolean = kind == PrincipalKind.USER &&
+    (scope in scopes || BILLING_MANAGE in scopes || ALL_USER_SCOPES in scopes)

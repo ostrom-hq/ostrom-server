@@ -25,12 +25,13 @@ import dev.ostrom.server.billing.presentation.RedirectResponse
 import dev.ostrom.server.billing.presentation.WebhookResponse
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
-import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -43,6 +44,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -52,12 +54,17 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
-import org.koin.dsl.module
 
 private val ORG_A = Uuid.parse("0195f7a2-0000-7000-8000-00000000000a")
 private val ORG_B = Uuid.parse("0195f7a2-0000-7000-8000-00000000000b")
 private const val WEBHOOK_SECRET = "whsec_postgres_test"
 private val TOKENS = setOf("admin-a", "member-a", "admin-b")
+
+/** A person's read-only token and a device token, both of organization A's billing admin. */
+private val SCOPED_TOKENS = mapOf(
+    "reader-a" to AuthenticatedPrincipal("admin-a", PrincipalKind.USER, setOf("billing:read")),
+    "device-a" to AuthenticatedPrincipal("admin-a", PrincipalKind.DEVICE, setOf("user:*")),
+)
 
 /** A Stripe-Signature header for [payload], signed now with the test secret. */
 private fun sign(payload: String): String {
@@ -84,10 +91,11 @@ private suspend fun HttpClient.overview(org: Uuid, token: String): BillingOvervi
 /** Posts to [path] as organization A's billing admin. */
 private suspend inline fun <reified T> HttpClient.postAs(path: String): T = post(path) { bearerAuth("admin-a") }.body()
 
-/** Tokens `admin-a`, `member-a`, `admin-b`; the subject id is the token. */
+/** Console sessions `admin-a`, `member-a`, `admin-b` (the subject id is the token), and [SCOPED_TOKENS]. */
 private class TokensAuthenticator : TokenAuthenticator {
     override suspend fun authenticate(token: String): AuthenticatedPrincipal? =
-        AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()).takeIf { token in TOKENS }
+        SCOPED_TOKENS[token]
+            ?: AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*")).takeIf { token in TOKENS }
 }
 
 class BillingPostgresTest {
@@ -112,6 +120,51 @@ class BillingPostgresTest {
             )
         }
     }
+
+    @Test
+    fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() =
+        serverTest(listOf(BillingModule), overrides) { server ->
+            val repository = server.koin.get<BillingRepository>()
+            repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_a", updatedAt = NOW))
+            repository.recordActivePerson(ORG_A, NOW, "alice", NOW)
+            assertEquals(ORG_A, repository.findByCustomer("cus_a")?.orgId, "The webhook finds the org by customer")
+            // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
+            server.driver.execute(
+                "DO \$\$ BEGIN CREATE ROLE ostrom_billing_rls_probe NOLOGIN; " +
+                    "EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
+            ).getOrThrow()
+            server.driver.execute(
+                "GRANT SELECT, INSERT ON billing_accounts, billing_active_people, billing_usage, billing_alerts " +
+                    "TO ostrom_billing_rls_probe",
+            ).getOrThrow()
+            val counts = server.driver.transaction {
+                execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
+                val seen = mutableListOf<String>()
+                for (org in listOf(null, ORG_B, ORG_A)) {
+                    org?.let {
+                        fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
+                            .getOrThrow()
+                    }
+                    val accounts = fetchAll("SELECT COUNT(*) AS n FROM billing_accounts").getOrThrow()
+                    val people = fetchAll("SELECT COUNT(*) AS n FROM billing_active_people").getOrThrow()
+                    seen += "${accounts.first().get("n").asString()}/${people.first().get("n").asString()}"
+                }
+                seen
+            }
+            assertEquals(listOf("0/0", "0/0", "1/1"), counts, "No org set: nothing; org B: nothing; org A: its rows")
+            val forged = server.driver.transaction {
+                execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
+                fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$ORG_B"))
+                    .getOrThrow()
+                execute(
+                    Statement.create(
+                        "INSERT INTO billing_alerts (org_id, period_start, percent, raised_at) " +
+                            "SELECT org_id, NOW(), 80, NOW() FROM billing_accounts LIMIT 1",
+                    ),
+                )
+            }
+            assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
+        }
 
     @Test
     fun theRepositoryRoundTripsEveryField() = serverTest(listOf(BillingModule), overrides) { server ->
@@ -214,6 +267,17 @@ class BillingPostgresTest {
         val noSubscription = client.post("/v1/orgs/$ORG_B/billing/portal") { bearerAuth("admin-b") }
         assertEquals(HttpStatusCode.Conflict, noSubscription.status)
         assertTrue(noSubscription.bodyAsText().contains("\"code\":\"conflict\""))
+    }
+
+    @Test
+    fun onlyAPersonsTokenWithTheBillingScopeGetsIn() = serverTest(listOf(BillingModule), overrides) { server ->
+        val client = server.client
+        assertEquals(HttpStatusCode.OK, client.get("/v1/orgs/$ORG_A/billing") { bearerAuth("reader-a") }.status)
+        val readOnly = client.post("/v1/orgs/$ORG_A/billing/portal") { bearerAuth("reader-a") }
+        assertEquals(HttpStatusCode.Forbidden, readOnly.status)
+        assertTrue(readOnly.bodyAsText().contains("billing:manage"))
+        assertEquals(HttpStatusCode.Forbidden, client.get("/v1/orgs/$ORG_A/billing") { bearerAuth("device-a") }.status)
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/orgs/$ORG_A/billing") { bearerAuth("nobody") }.status)
     }
 
     @Test
