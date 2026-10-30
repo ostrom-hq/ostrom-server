@@ -337,6 +337,27 @@ class SharedAccountPoolTest {
     }
 
     @Test
+    fun aRefusedRefreshWhileTheTokensVanishedRetiresTheAccount() = runTest {
+        val account = account("a", expiresAt = clock.now())
+        refresher.result = RefreshResult.Revoked
+        refresher.onRefresh = { repository.envelopes.remove(account.id) }
+        assertIs<LeaseResult.Refused>(lease())
+        assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.accounts.single().status)
+    }
+
+    @Test
+    fun aLeaseIsRefusedWhileEveryAccountIsAtItsConcurrency() = runTest {
+        account("only", limits = AccountLimits(maxConcurrent = 1))
+        val pool = pool()
+        val first = assertIs<LeaseResult.Leased>(
+            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s"),
+        ).lease
+        assertIs<LeaseResult.Refused>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s"))
+        first.release()
+        assertIs<LeaseResult.Leased>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
+    }
+
+    @Test
     fun aReleaseDuringCancellationStillGivesTheSlotBack() = runTest {
         // The release runs in the `finally` of a cancelled request: it must not be cut short there.
         val account = account("a", limits = AccountLimits(maxConcurrent = 1))

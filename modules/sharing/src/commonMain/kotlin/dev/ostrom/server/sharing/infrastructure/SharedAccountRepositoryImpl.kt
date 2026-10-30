@@ -20,22 +20,25 @@ import kotlin.uuid.Uuid
  * @param driver The database.
  */
 class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRepository {
-    override suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount = driver.fetchInOrg(
-        account.orgId,
-        Statement.create(UPSERT)
-            .bind("id", account.id)
-            .bind("org_id", account.orgId)
-            .bind("provider", account.provider.name)
-            .bind("label", account.label)
-            .bindNullable("email", account.email, String::class)
-            .bind("provider_account_id", account.providerAccountId)
-            .bindNullable("owner", account.ownerMemberId, Uuid::class)
-            .bind("priority", account.priority)
-            .bind("status", account.status.name)
-            .bindLimits(account.limits)
-            .bind("envelope", envelope)
-            .bind("created_at", account.createdAt),
-    ).getOrThrow().singleOrNull()?.toAccount() ?: throw AccountOwnedByAnotherMemberException()
+    override suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount {
+        val row = driver.fetchInOrg(
+            account.orgId,
+            Statement.create(UPSERT)
+                .bind("id", account.id)
+                .bind("org_id", account.orgId)
+                .bind("provider", account.provider.name)
+                .bind("label", account.label)
+                .bindNullable("email", account.email, String::class)
+                .bind("provider_account_id", account.providerAccountId)
+                .bindNullable("owner", account.ownerMemberId, Uuid::class)
+                .bind("priority", account.priority)
+                .bind("status", account.status.name)
+                .bindLimits(account.limits)
+                .bind("envelope", envelope)
+                .bind("created_at", account.createdAt),
+        ).getOrThrow().singleOrNull() ?: throw AccountOwnedByAnotherMemberException()
+        return row.toAccount()
+    }
 
     override suspend fun get(orgId: Uuid, id: Uuid): SharedAccount? = driver.fetchInOrg(
         orgId,

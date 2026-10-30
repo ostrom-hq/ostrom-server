@@ -90,7 +90,7 @@ private fun UpdateAccountRequest.limitsChange(): ((AccountLimits) -> AccountLimi
         null
     } else {
         { current ->
-            val patched = patch?.let(current::patchedBy) ?: current
+            val patched = if (patch == null) current else current.patchedBy(patch)
             if (sharedWith == null) patched else patched.copy(allowedMembers = members)
         }
     }
