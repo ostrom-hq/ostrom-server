@@ -23,6 +23,7 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
+import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
 import dev.ostrom.server.gates.presentation.AnswerApprovalResponse
 import dev.ostrom.server.gates.presentation.Approval
@@ -132,6 +133,8 @@ class GatesPostgresTest {
         single<GateSessions> {
             object : GateSessions {
                 override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) = Unit
+
+                override suspend fun agentOf(orgId: Uuid, sessionId: String): String? = "claude-code"
             }
         }
         single<GateNodeResolver> {
@@ -345,6 +348,21 @@ class GatesPostgresTest {
             }.awaitAll()
         }
         assertEquals(listOf(HttpStatusCode.OK, HttpStatusCode.Conflict), statuses.sortedBy { it.value })
+    }
+
+    @Test
+    fun aSessionFindsItsGates() = gatesTest { server ->
+        val agent = "agent:a:$session"
+        val first = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        server.answer("user:a:rev-b", first, "rev-b")
+        val second = server.call(agent, "/api/v1/gates", push(commit = nextSha)).body<GateResponse>()
+        server.call("agent:a:other", "/api/v1/gates", push().copy(sessionId = "other-session"))
+
+        val list = server.koin.get<ListSessionGatesUseCase>()
+        val gates = list(orgA, session)
+        assertEquals(listOf(first.gate.id, second.gate.id), gates.map { it.id.toString() })
+        assertEquals(listOf("rev-b"), gates.first().decisions.map { it.by })
+        assertEquals(emptyList(), list(orgB, session), "Another organization's session has none of them")
     }
 
     @Test
