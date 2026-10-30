@@ -16,6 +16,7 @@ import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.SessionNotFoundException
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
 import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
+import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.domain.usecases.SessionSegments.Companion.clip
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -61,6 +62,7 @@ interface CloseSessionUseCase {
  * @param sessionGates The gates of a segment.
  * @param rules The rules in force.
  * @param sign Signs and stores.
+ * @param costs The server's measure of a session's cost (S2-48: never the agent's figure).
  * @param clock The time.
  */
 class CloseSessionUseCaseImpl(
@@ -68,6 +70,7 @@ class CloseSessionUseCaseImpl(
     private val sessionGates: ListSessionGatesUseCase,
     private val rules: ReceiptRules,
     private val sign: SignReceiptUseCase,
+    private val costs: SessionCosts,
     private val clock: Clock,
 ) : CloseSessionUseCase {
     override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session = repository.transaction(orgId) {
@@ -81,7 +84,8 @@ class CloseSessionUseCaseImpl(
             session.copy(model = session.model ?: end.model, exitCode = session.exitCode ?: end.exitCode)
         } else {
             val endedAt = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
-            val draft = draft(session, endedAt, end, sessionGates(orgId, id), rules.rulesFor(orgId, session.repo))
+            val measured = end.copy(costUsd = costs.costOf(orgId, id))
+            val draft = draft(session, endedAt, measured, sessionGates(orgId, id), rules.rulesFor(orgId, session.repo))
             val receipt = sign(orgId, draft, "rcpt_session_$id")
             session.copy(
                 endedAt = endedAt,
@@ -89,7 +93,7 @@ class CloseSessionUseCaseImpl(
                 tools = end.tools,
                 source = if (end.source == null) session.source else end.source.clip(SessionSegments.TEXT),
                 model = session.model ?: end.model,
-                costUsd = end.costUsd ?: session.costUsd,
+                costUsd = measured.costUsd,
                 exitCode = end.exitCode,
             )
         }

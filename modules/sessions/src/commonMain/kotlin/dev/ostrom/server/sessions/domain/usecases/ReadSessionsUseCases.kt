@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions.domain.usecases
 
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
@@ -74,8 +75,12 @@ interface ListSessionsUseCase {
  * @param repository The sessions.
  */
 class ListSessionsUseCaseImpl(private val repository: SessionsRepository) : ListSessionsUseCase {
-    override suspend fun invoke(actor: GateActor, query: SessionQuery): List<Session> = repository.list(
-        actor.orgId,
-        query.copy(launchId = actor.launchId, limit = query.limit.coerceIn(1, SessionQuery.PAGE)),
-    )
+    override suspend fun invoke(actor: GateActor, query: SessionQuery): List<Session> {
+        // S2-48: an agent token lists its launch's sessions only, and nothing without a launch.
+        if (actor.kind == ActorKind.AGENT_SESSION && actor.launchId == null) return emptyList()
+        return repository.list(
+            actor.orgId,
+            query.copy(launchId = actor.launchId, limit = query.limit.coerceIn(1, SessionQuery.PAGE)),
+        )
+    }
 }

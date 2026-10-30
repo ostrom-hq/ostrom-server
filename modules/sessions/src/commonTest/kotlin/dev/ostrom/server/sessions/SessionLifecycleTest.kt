@@ -16,6 +16,7 @@ import dev.ostrom.server.sessions.domain.models.SessionQuery
 import dev.ostrom.server.sessions.domain.models.SessionResumedElsewhereException
 import dev.ostrom.server.sessions.domain.models.StartSession
 import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
+import dev.ostrom.server.sessions.domain.services.NoSessionCosts
 import dev.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
 import dev.ostrom.server.sessions.fakes.ORG
@@ -57,6 +58,15 @@ class SessionLifecycleTest {
         val ended = bench.end(agent(), session.id, EndSession(costUsd = 99.0))
         assertEquals(0.42, ended.costUsd)
         assertEquals("0.42", bench.sign.signed.getValue("rcpt_session_${session.id}")["costUsd"].toString())
+    }
+
+    @Test
+    fun withoutTheUsageModuleNoCostIsKnown() = runTest {
+        assertNull(NoSessionCosts().costOf(ORG, "s-1"))
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        assertNull(bench.end(agent(), session.id, EndSession(costUsd = 99.0)).costUsd, "never the agent's figure")
+        assertFalse("costUsd" in bench.sign.signed.getValue("rcpt_session_${session.id}"))
     }
 
     @Test

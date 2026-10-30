@@ -111,7 +111,7 @@ class StartSessionTest {
         assertNull(bench.repository.get(ORG, first.id)?.endedAt, "the live launch keeps its segment and its yes")
 
         // Its person may replace it; a launch silent for the sweep's delay is replaced by the next one.
-        assertEquals("s-1~r2", bench.start(user(), start.copy(launchId = null)).id)
+        assertEquals("s-1~r2", bench.start(user(), start.copy(launchId = "launch-2")).id)
         bench.clock.now += SweepStaleSessionsUseCaseImpl.STALE_AFTER
         assertEquals("s-1~r3", bench.start(agent("launch-3"), start).id)
     }
