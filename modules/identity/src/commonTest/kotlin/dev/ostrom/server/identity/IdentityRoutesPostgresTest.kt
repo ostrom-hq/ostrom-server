@@ -56,10 +56,8 @@ class IdentityRoutesPostgresTest {
     private suspend fun TestServer.pollDevice(deviceCode: String): DeviceTokenResponse =
         client.post("/api/v1/auth/device/token") { json(DeviceTokenRequest(deviceCode)) }.body<DeviceTokenResponse>()
 
-    private fun HttpRequestBuilder.session(started: StartedSession, csrf: Boolean = true) {
-        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}")
-        if (csrf) header(CSRF_HEADER, started.csrfToken)
-    }
+    private fun HttpRequestBuilder.session(started: StartedSession, csrf: Boolean = true) =
+        browserSession(started.secret, started.csrfToken.takeIf { csrf })
 
     private fun HttpRequestBuilder.json(body: Any) {
         contentType(ContentType.Application.Json)

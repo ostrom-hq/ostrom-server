@@ -102,10 +102,11 @@ class SignInApi {
          *
          * @property parent The provider resource.
          * @property redirect The console path to return to.
+         * @property reauth Whether the person signs in again before a yes (S2-54): the provider must ask again.
          */
         @Serializable
         @Resource("start")
-        class Start(val parent: Provider, val redirect: String? = null)
+        class Start(val parent: Provider, val redirect: String? = null, val reauth: Boolean = false)
 
         /**
          * `GET /api/v1/auth/{provider}/callback`: where the provider sends the browser back.

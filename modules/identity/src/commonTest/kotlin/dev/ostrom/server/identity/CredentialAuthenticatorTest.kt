@@ -28,11 +28,13 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
+private const val CONSOLE = "https://app.ostrom.run"
+
 class CredentialAuthenticatorTest {
     private val tokens = InMemoryApiTokensRepository()
     private val sessions = InMemoryWebSessionsRepository()
     private val clock = SettableClock()
-    private val authenticator = CredentialAuthenticatorImpl(tokens, sessions, FakeHasher(), clock)
+    private val authenticator = CredentialAuthenticatorImpl(tokens, sessions, FakeHasher(), clock, setOf(CONSOLE), "")
     private val userId = Uuid.parse("00000000-0000-4000-8000-0000000000aa")
     private val orgId = Uuid.parse("00000000-0000-4000-8000-0000000000bb")
 
@@ -160,11 +162,8 @@ class CredentialAuthenticatorTest {
         val principal = authenticator.authenticateSession("oss_a", null, requireCsrf = false)
         assertEquals(
             AuthenticatedPrincipal(
-                userId.toString(),
-                PrincipalKind.USER,
-                setOf(ALL_USER_SCOPES),
-                stored.id.toString(),
-                channel = PrincipalChannel.BROWSER,
+                userId.toString(), PrincipalKind.USER, setOf(ALL_USER_SCOPES), stored.id.toString(),
+                channel = PrincipalChannel.BROWSER, authenticatedAt = stored.createdAt,
             ),
             principal,
         )
@@ -177,16 +176,48 @@ class CredentialAuthenticatorTest {
     }
 
     @Test
+    fun aYesNeedsARecentSignInWhichOnlyABrowserSessionCarriesAndSigningInAgainRenews() = runTest {
+        val signedInAt = clock.now
+        session("oss_old")
+        token("osp_p", TokenKind.PERSONAL, setOf("profile:read"))
+        clock.now += 6.minutes
+
+        // Six minutes after signing in: the step-up of a yes (five minutes, S2-54) refuses this session.
+        val old = authenticator.authenticateSession("oss_old", null, requireCsrf = false)
+        assertEquals(signedInAt, old?.authenticatedAt)
+        assertEquals(PrincipalChannel.BROWSER, old?.channel)
+        // A token proves no sign-in at all, whatever its scopes.
+        val api = authenticator.authenticate("osp_p")
+        assertNull(api?.authenticatedAt)
+        assertEquals(PrincipalChannel.API_TOKEN, api?.channel)
+        // Signing in again starts a new session: its sign-in is now.
+        session("oss_new")
+        val renewed = authenticator.authenticateSession("oss_new", null, requireCsrf = false)
+        assertEquals(clock.now, renewed?.authenticatedAt)
+    }
+
+    @Test
     fun aStateChangingRequestNeedsTheSessionsCsrfToken() = runTest {
         session("oss_a")
 
-        assertNull(authenticator.authenticateSession("oss_a", null, requireCsrf = true))
-        assertNull(authenticator.authenticateSession("oss_a", "csrf(oss_b)", requireCsrf = true))
-        assertNull(authenticator.authenticateSession("oss_a", "short", requireCsrf = true))
-        assertEquals(
-            userId.toString(),
-            authenticator.authenticateSession("oss_a", "csrf(oss_a)", requireCsrf = true)?.subjectId,
-        )
+        assertNull(authenticator.authenticateSession("oss_a", null, requireCsrf = true, CONSOLE))
+        assertNull(authenticator.authenticateSession("oss_a", "csrf(oss_b)", requireCsrf = true, CONSOLE))
+        assertNull(authenticator.authenticateSession("oss_a", "short", requireCsrf = true, CONSOLE))
+        val principal = authenticator.authenticateSession("oss_a", "csrf(oss_a)", requireCsrf = true, CONSOLE)
+        assertEquals(userId.toString(), principal?.subjectId)
+    }
+
+    @Test
+    fun aStateChangingRequestFromAnotherOriginOrWithoutOneIsRefused() = runTest {
+        session("oss_a")
+
+        // S2-08: the right CSRF token is not enough, the request must come from the console.
+        val evil = "https://evil.test"
+        assertNull(authenticator.authenticateSession("oss_a", "csrf(oss_a)", requireCsrf = true, evil))
+        assertNull(authenticator.authenticateSession("oss_a", "csrf(oss_a)", requireCsrf = true, null))
+        assertNull(authenticator.authenticateSession("oss_a", "csrf(oss_a)", requireCsrf = true))
+        // A read needs neither.
+        assertNotNull(authenticator.authenticateSession("oss_a", null, requireCsrf = false, evil))
     }
 
     @Test

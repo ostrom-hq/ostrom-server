@@ -45,6 +45,21 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
         Statement.create("SELECT 1 FROM identity_users WHERE login = :login").bind("login", login),
     ).getOrThrow().firstOrNull() != null
 
+    override suspend fun findByLogin(login: String): User? = driver.fetchAll(
+        Statement.create("SELECT $USER_COLUMNS FROM identity_users u WHERE u.login = :login")
+            .bind("login", login.lowercase()),
+    ).getOrThrow().firstOrNull()?.toUser()
+
+    override suspend fun getMany(ids: Collection<Uuid>): List<User> {
+        if (ids.isEmpty()) return emptyList()
+        val distinct = ids.distinct()
+        // One bound parameter per id: no list binding, and never a value spliced into the SQL.
+        val names = distinct.indices.joinToString { ":id$it" }
+        val statement = Statement.create("SELECT $USER_COLUMNS FROM identity_users u WHERE u.id IN ($names)")
+        distinct.forEachIndexed { index, id -> statement.bind("id$index", id) }
+        return driver.fetchAll(statement).getOrThrow().map { it.toUser() }
+    }
+
     override suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant) = uniqueGuard {
         driver.transaction {
             execute(

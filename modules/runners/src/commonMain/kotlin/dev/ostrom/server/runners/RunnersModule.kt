@@ -2,51 +2,57 @@
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.automations.domain.AutomationLauncher
+import dev.ostrom.server.billing.domain.GetAgentUsageUseCase
+import dev.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
+import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
+import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
 import dev.ostrom.server.runners.domain.CloudPlanProvider
 import dev.ostrom.server.runners.domain.CloudSessionsRepository
+import dev.ostrom.server.runners.domain.CloudUsageMeter
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCase
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCase
+import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCaseImpl
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCase
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCaseImpl
+import dev.ostrom.server.runners.domain.OpenTerminalUseCase
+import dev.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCase
 import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCaseImpl
+import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerTokens
 import dev.ostrom.server.runners.domain.RuntimeDriver
+import dev.ostrom.server.runners.domain.TerminalActivity
+import dev.ostrom.server.runners.domain.TerminalTickets
+import dev.ostrom.server.runners.infrastructure.BillingCloudPlanProvider
+import dev.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import dev.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import dev.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
+import dev.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
 import dev.ostrom.server.runners.infrastructure.ReconcilerWorker
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.infrastructure.RunnersMigrations
 import dev.ostrom.server.runners.infrastructure.RuntimeDrivers
-import dev.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
-import dev.ostrom.server.runners.presentation.cloudSessionsRoutes
-import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
-import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
-import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCase
-import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCaseImpl
-import dev.ostrom.server.runners.domain.OpenTerminalUseCase
-import dev.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
-import dev.ostrom.server.runners.domain.TerminalActivity
-import dev.ostrom.server.runners.domain.TerminalTickets
-import dev.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
 import dev.ostrom.server.runners.infrastructure.TerminalRelay
+import dev.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
 import dev.ostrom.server.runners.presentation.TerminalRoutesDependencies
+import dev.ostrom.server.runners.presentation.cloudSessionsRoutes
 import dev.ostrom.server.runners.presentation.terminalRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
@@ -69,18 +75,28 @@ object RunnersModule : ServerModule {
         single<RunnersConfig> { RunnersConfig.from(get<ConfigSource>()) }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
         single<RunnerTokens> { RunnerTokensImpl() }
+        // Billing's plans and hours counter when the billing module is there (always on a full server); the free
+        // plan and the sessions' own monthly counter otherwise.
         single<CloudPlanProvider> {
-            AllowlistedCloudPlanProvider(get<RunnersConfig>().allowedOrgs, FreeCloudPlanProvider())
+            val limits = getOrNull<GetPlanLimitsUseCase>()
+            val plans = if (limits == null) FreeCloudPlanProvider() else BillingCloudPlanProvider(limits)
+            AllowlistedCloudPlanProvider(get<RunnersConfig>().allowedOrgs, plans)
+        }
+        single<CloudUsageMeter> {
+            val read = getOrNull<GetAgentUsageUseCase>()
+            if (read == null) RepositoryCloudUsageMeter(get()) else BillingCloudUsageMeter(read, get())
         }
         single<RuntimeDriver> { RuntimeDrivers.create(get()) }
-        single<CreateCloudSessionUseCase> { CreateCloudSessionUseCaseImpl(get(), get(), get()) }
+        single<CreateCloudSessionUseCase> { CreateCloudSessionUseCaseImpl(get(), get(), get(), get()) }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
-        single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get()) }
+        single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get()) }
         single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), get()) }
-        single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get()) }
+        single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
-        single<ReconcileCloudSessionUseCase> { ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<ReconcileCloudSessionUseCase> {
+            ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get())
+        }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
         single { TerminalRelay() }
