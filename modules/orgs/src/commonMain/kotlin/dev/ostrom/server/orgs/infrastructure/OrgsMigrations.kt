@@ -3,12 +3,99 @@ package dev.ostrom.server.orgs.infrastructure
 
 import dev.ostrom.server.kernel.database.SchemaMigration
 
+/** The functions' signatures, for their handover to `ostrom_router`. */
+private val ROUTER_FUNCTIONS =
+    listOf(
+        "orgs_create_organization(UUID, TEXT, TEXT, BIGINT, TEXT, TIMESTAMPTZ, UUID, UUID, TEXT, TIMESTAMPTZ)",
+        "orgs_claim_holders(TEXT)",
+        "orgs_find_by_slug(TEXT)",
+        "orgs_slug_taken(TEXT)",
+        "orgs_memberships_of(UUID)",
+        "orgs_live_invitation(TEXT, TIMESTAMPTZ)",
+    )
+
+/**
+ * The cross-organization paths of the module, as narrow `SECURITY DEFINER` functions owned by
+ * `ostrom_router` (`NOLOGIN`, never a member of the serving role, granted only these tables through a
+ * policy of its own). Each takes exactly what its operation needs. Only the serving role may run them (audit S2-60):
+ * `EXECUTE` is revoked from `PUBLIC` and granted to `ostrom_app` when the deployment has created it (the Helm chart
+ * and `ci/database-roles.sql` create it before `migrate`), and `pg_temp` comes last in their `search_path`, so a
+ * temporary object can never stand in for one of theirs.
+ */
+private val CROSS_ORGANIZATION_SQL: String =
+    """
+    DO $$ BEGIN
+        CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+    END $$;
+    DO $$ BEGIN
+        GRANT ostrom_router TO CURRENT_USER;
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END $$;
+    GRANT USAGE ON SCHEMA public TO ostrom_router;
+    CREATE POLICY orgs_organizations_router ON orgs_organizations TO ostrom_router USING (true) WITH CHECK (true);
+    GRANT SELECT, INSERT ON orgs_organizations TO ostrom_router;
+    CREATE POLICY orgs_members_router ON orgs_members TO ostrom_router USING (true) WITH CHECK (true);
+    GRANT SELECT, INSERT ON orgs_members TO ostrom_router;
+    CREATE POLICY orgs_invitations_router ON orgs_invitations TO ostrom_router USING (true);
+    GRANT SELECT ON orgs_invitations TO ostrom_router;
+    CREATE FUNCTION orgs_create_organization(
+        p_id UUID, p_slug TEXT, p_name TEXT, p_github BIGINT, p_claim TEXT, p_created TIMESTAMPTZ,
+        p_member UUID, p_user UUID, p_role TEXT, p_joined TIMESTAMPTZ
+    ) RETURNS VOID LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        INSERT INTO orgs_organizations (id, slug, name, github_org_id, free_claim, created_at)
+            VALUES (p_id, p_slug, p_name, p_github, p_claim, p_created);
+        INSERT INTO orgs_members (id, org_id, user_id, role, joined_at)
+            VALUES (p_member, p_id, p_user, p_role, p_joined);
+    $$;
+    CREATE FUNCTION orgs_claim_holders(p_claim TEXT) RETURNS SETOF orgs_organizations
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT * FROM orgs_organizations WHERE free_claim = p_claim AND deleted_at IS NULL;
+    $$;
+    CREATE FUNCTION orgs_find_by_slug(p_slug TEXT) RETURNS SETOF orgs_organizations
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT * FROM orgs_organizations WHERE slug = p_slug AND deleted_at IS NULL;
+    $$;
+    CREATE FUNCTION orgs_slug_taken(p_slug TEXT) RETURNS BOOLEAN
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT EXISTS (SELECT 1 FROM orgs_organizations WHERE slug = p_slug);
+    $$;
+    CREATE FUNCTION orgs_memberships_of(p_user UUID) RETURNS TABLE (
+        id UUID, slug TEXT, name TEXT, github_org_id BIGINT, free_claim TEXT, created_at TIMESTAMPTZ,
+        member_id UUID, org_id UUID, user_id UUID, role TEXT, joined_at TIMESTAMPTZ
+    ) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at,
+               m.id, m.org_id, m.user_id, m.role, m.joined_at
+        FROM orgs_members m JOIN orgs_organizations o ON o.id = m.org_id
+        WHERE m.user_id = p_user AND o.deleted_at IS NULL;
+    $$;
+    CREATE FUNCTION orgs_live_invitation(p_hash TEXT, p_now TIMESTAMPTZ) RETURNS SETOF orgs_invitations
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT i.* FROM orgs_invitations i
+        WHERE i.token_hash = p_hash AND i.revoked_at IS NULL AND i.expires_at > p_now
+          AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+          AND EXISTS (SELECT 1 FROM orgs_organizations o WHERE o.id = i.org_id AND o.deleted_at IS NULL);
+    $$;
+    ${ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${ROUTER_FUNCTIONS.joinToString("\n            ") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /**
  * The schema of the orgs module; its tables start with `orgs_`. Every table has row-level security
  * on the organization (`ostrom.org_id`, `dev.ostrom.server.kernel.database.inOrg`): the
  * organization's own row, its members and its invitations are only visible to a query confined to
- * it. The server's own role keeps the cross-organization paths (a user's organizations, an
- * invitation found by its token, the free-plan claim).
+ * it. The cross-organization paths (creating an organization, the free-plan claim, a short name, a
+ * user's organizations, an invitation found by its token) go through the `SECURITY DEFINER`
+ * functions of version 2, owned by `ostrom_router` (docs/tenancy.md): the serving role is subject to
+ * row-level security and could not take them otherwise.
  */
 val OrgsMigrations: List<SchemaMigration> =
     listOf(
@@ -68,5 +155,10 @@ val OrgsMigrations: List<SchemaMigration> =
             GRANT SELECT, INSERT, UPDATE, DELETE ON orgs_invitations TO ostrom_tenant
         """
                     .trimIndent(),
-        )
+        ),
+        SchemaMigration(
+            version = 2,
+            name = "orgs_cross_organization_functions",
+            sql = CROSS_ORGANIZATION_SQL,
+        ),
     )

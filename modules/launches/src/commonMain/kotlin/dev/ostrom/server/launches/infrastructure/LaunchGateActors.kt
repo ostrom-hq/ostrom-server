@@ -42,18 +42,21 @@ class LaunchGateActors(
     }
 
     private suspend fun agent(principal: AuthenticatedPrincipal): GateActor? {
-        val orgId = principal.orgId?.let(Uuid::parseOrNull) ?: return null
-        val launch = launches.find(orgId, principal.subjectId)?.takeIf { it.expiresAt > clock.now() } ?: return null
+        val orgId = principal.orgId?.let(Uuid::parseOrNull)
+        val launch = orgId?.let { launches.find(it, principal.subjectId) }?.takeIf { it.expiresAt > clock.now() }
         // The person still may: a member removed (or made billing only) stops their agents at once, like their own
         // credentials (the orgs module checks a role at each request).
-        val role = launchers.role(orgId, launch.userId) ?: return null
-        if (!LaunchPolicy.launches(role)) return null
-        return GateActor(
-            "agent-${launch.id}",
-            orgId,
-            ActorKind.AGENT_SESSION,
-            launchId = launch.id,
-            personId = launch.dev,
-        )
+        val role = launch?.let { launchers.role(it.orgId, it.userId) }
+        return if (launch == null || role == null || !LaunchPolicy.launches(role)) {
+            null
+        } else {
+            GateActor(
+                "agent-${launch.id}",
+                launch.orgId,
+                ActorKind.AGENT_SESSION,
+                launchId = launch.id,
+                personId = launch.dev,
+            )
+        }
     }
 }
