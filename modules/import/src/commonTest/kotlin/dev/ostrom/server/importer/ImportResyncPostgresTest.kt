@@ -55,7 +55,7 @@ class ImportResyncPostgresTest {
         with(server) {
             report(logs(listOf("m1", "m2")))
             val logs = servers().getValue("logs").id
-            koin.get<AssignMcpServerUseCase>()(adminA, logs, null, ToolPolicy(), null)
+            koin.get<AssignMcpServerUseCase>()(adminA, logs, null, ToolPolicy(null), null)
             val revoked = listOf("logs/${otherA.memberId}", "logs/everyone")
 
             val dry = report(logs(listOf("m1")), dryRun = true)
