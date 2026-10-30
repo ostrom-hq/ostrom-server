@@ -2,6 +2,13 @@ package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
+import dev.ostrom.server.identity.domain.GitHubTokenVerifier
+import dev.ostrom.server.identity.domain.IssueCliTokenUseCase
+import dev.ostrom.server.identity.domain.IssueCliTokenUseCaseImpl
+import dev.ostrom.server.identity.domain.LauncherLoginUseCase
+import dev.ostrom.server.identity.domain.LauncherLoginUseCaseImpl
+import dev.ostrom.server.identity.domain.LinkIdentityUseCase
+import dev.ostrom.server.identity.domain.LinkIdentityUseCaseImpl
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.MagicLinksRepository
 import dev.ostrom.server.identity.domain.MailSender
@@ -16,6 +23,7 @@ import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
 import dev.ostrom.server.identity.infrastructure.DirectoryMailSender
 import dev.ostrom.server.identity.infrastructure.GitHubOAuthProvider
+import dev.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import dev.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.OidcProvider
@@ -116,6 +124,7 @@ object IdentityModule : ServerModule {
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
         single<TokenAuthenticator> { CredentialAuthenticatorImpl(get(), get(), get(), get()) }
         single<ResolveUserUseCase> { ResolveUserUseCaseImpl(get(), get(), get()) }
+        single<LinkIdentityUseCase> { LinkIdentityUseCaseImpl(get(), get(), get()) }
         single<GetProfileUseCase> { GetProfileUseCaseImpl(get()) }
         single<StartWebSessionUseCase> { StartWebSessionUseCaseImpl(get(), get(), get(), get()) }
         single<EndWebSessionUseCase> { EndWebSessionUseCaseImpl(get(), get(), get()) }
@@ -150,14 +159,20 @@ object IdentityModule : ServerModule {
         }
         single<CompleteOAuthSignInUseCase> {
             val config = get<IdentityConfig>()
-            CompleteOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get(), config::callbackUrl)
+            CompleteOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), config::callbackUrl)
         }
         single<RequestMagicLinkUseCase> {
             val config = get<IdentityConfig>()
             RequestMagicLinkUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), ::magicLinkMail, config::magicLinkUrl)
         }
         single<VerifyMagicLinkUseCase> { VerifyMagicLinkUseCaseImpl(get(), get(), get(), get(), get()) }
-        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single<GitHubTokenVerifier> {
+            val config = get<SignInConfig>()
+            GitHubTokenVerifierImpl(config.github, get(HTTP), config.githubApiUrl)
+        }
+        single<IssueCliTokenUseCase> { IssueCliTokenUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<LauncherLoginUseCase> { LauncherLoginUseCaseImpl(get(), get(), get(), get()) }
+        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
         single {
             IdentityRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),

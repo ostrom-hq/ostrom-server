@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
@@ -171,5 +172,36 @@ class CredentialAuthenticatorTest {
         assertFalse(AuthenticatedPrincipal("a", PrincipalKind.AGENT, setOf(ALL_USER_SCOPES)).allows("orgs:read"))
         assertFalse(AuthenticatedPrincipal("u", PrincipalKind.USER, emptySet()).allows("orgs:read"))
         assertFalse(AuthenticatedPrincipal("u", PrincipalKind.USER, setOf("orgs:read")).allows("orgs:write"))
+    }
+
+    @Test
+    fun aCliTokenNeverAnswersAGateNorEditsAWorkflowEvenIfItsRowSaysSo() = runTest {
+        // S2-04 / S2-31: a CLI token issued before the fix, or a row edited by hand, still cannot say yes.
+        val everything = setOf("gates:answer", "workflows:write", "sessions:write", ALL_USER_SCOPES)
+        token("osc_old", TokenKind.CLI, scopes = everything)
+
+        val principal = assertNotNull(authenticator.authenticate("osc_old"))
+        assertEquals(setOf("sessions:write"), principal.scopes)
+        assertFalse(principal.allows("gates:answer"))
+        assertFalse(principal.allows("workflows:write"))
+        assertFalse(principal.isBrowserSession)
+    }
+
+    @Test
+    fun aPersonalTokenNeverAnswersAGateEvenIfItsRowSaysSo() = runTest {
+        val everything = setOf("gates:answer", "workflows:write", AGENT_SCOPE, ALL_USER_SCOPES)
+        token("osp_old", TokenKind.PERSONAL, scopes = everything)
+
+        val principal = assertNotNull(authenticator.authenticate("osp_old"))
+        assertEquals(setOf("workflows:write"), principal.scopes)
+        assertFalse(principal.allows("gates:answer"))
+        assertFalse(principal.isBrowserSession)
+    }
+
+    @Test
+    fun anAgentTokenOnlyHoldsItsSessionScopeWhateverItsRowSays() = runTest {
+        token("osa_b", TokenKind.AGENT, setOf("gates:answer", AGENT_SCOPE), org = orgId, session = "run-2")
+
+        assertEquals(setOf(AGENT_SCOPE), authenticator.authenticate("osa_b")?.scopes)
     }
 }

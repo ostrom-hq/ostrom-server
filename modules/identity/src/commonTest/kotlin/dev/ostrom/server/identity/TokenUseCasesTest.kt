@@ -69,6 +69,8 @@ class TokenUseCasesTest {
         assertFailsWith<InvalidScopesException> { create(userId, "t", emptyList(), null) }
         assertFailsWith<InvalidScopesException> { create(userId, "t", listOf("Orgs:Read"), null) }
         assertFailsWith<InvalidScopesException> { create(userId, "t", listOf(AGENT_SCOPE), null) }
+        // S2-04: no token is ever issued with the right to answer a gate, even when asked for.
+        assertFailsWith<InvalidScopesException> { create(userId, "t", listOf("orgs:read", "gates:answer"), null) }
         assertFailsWith<InvalidScopesException> { create(userId, "t", (1..33).map { "s$it:read" }, null) }
         assertFailsWith<InvalidTokenLifetimeException> { create(userId, "t", listOf("orgs:read"), 1.hours) }
         assertFailsWith<InvalidTokenLifetimeException> { create(userId, "t", listOf("orgs:read"), 367.days) }

@@ -48,10 +48,16 @@ import org.koin.dsl.module
 /** Every sign-in journey end to end, with fake providers and a recording mail sender in place of the real ones. */
 class SignInRoutesPostgresTest {
     private val github = FakeOAuthProvider(IdentityProvider.GITHUB)
+    // The Workspace of example.com vouches for its addresses (S2-07): signing in with it reaches Ada's account.
     private val google = FakeOAuthProvider(
-        IdentityProvider.GOOGLE, VerifiedIdentity(IdentityProvider.GOOGLE, "g-1", "ada@example.com", true, "Ada G"),
+        IdentityProvider.GOOGLE,
+        VerifiedIdentity(IdentityProvider.GOOGLE, "g-1", "ada@example.com", true, "Ada G", hostedDomain = WORKSPACE),
     )
     private val mail = RecordingMailSender()
+
+    private companion object {
+        const val WORKSPACE = "example.com"
+    }
     private val overrides = module {
         single { SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = true) }
         single<MailSender> { mail }

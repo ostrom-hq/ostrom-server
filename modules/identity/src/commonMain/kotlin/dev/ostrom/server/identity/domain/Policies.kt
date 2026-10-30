@@ -1,5 +1,6 @@
 package dev.ostrom.server.identity.domain
 
+import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Duration
@@ -32,10 +33,40 @@ val DEVICE_POLL_INTERVAL: Duration = 5.seconds
 /** The only scope of an agent token: acting on its own agent session. */
 const val AGENT_SCOPE = "agent:session"
 
-/** The scopes the CLI token gets: what `ostrom` does for its user, nothing of the console's administration. */
-val CLI_SCOPES: Set<String> = setOf(
-    "profile:read", "orgs:read", "workflows:read", "workflows:write", "sessions:write", "gates:answer",
-)
+/**
+ * The scope that answers a gate. No token ever holds it (audit S2-04, S2-31): a token lives on the developer's
+ * machine, where the agent can read it and say yes to itself. A yes comes from a browser session (the passkey
+ * step-up of the console) or the phone app after biometrics, never from the CLI.
+ */
+const val ANSWER_SCOPE = "gates:answer"
+
+/** The scope that edits workflows: the CLI never gets it (S2-04), so an agent cannot remove its own gate. */
+const val WORKFLOWS_WRITE_SCOPE = "workflows:write"
+
+/** Scopes no token holds, whatever was asked or a stored row says: answering, an agent's, a browser session's. */
+val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, ALL_USER_SCOPES)
+
+/**
+ * The scopes the CLI token gets: what `ostrom` does for its user, nothing of the console's administration, and
+ * neither [ANSWER_SCOPE] nor [WORKFLOWS_WRITE_SCOPE] (S2-04): `ostrom approve` opens the console's page instead.
+ */
+val CLI_SCOPES: Set<String> = setOf("profile:read", "orgs:read", "workflows:read", "sessions:write")
+
+/**
+ * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written
+ * before S2-04, or by hand, cannot grant more): an agent token only [AGENT_SCOPE], a CLI token at most [CLI_SCOPES],
+ * a personal token what it lists minus [NEVER_ON_A_TOKEN].
+ *
+ * @param kind The kind of the token.
+ * @param stored The scopes its row lists.
+ *
+ * @return The scopes it grants.
+ */
+fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kind) {
+    TokenKind.AGENT -> setOf(AGENT_SCOPE)
+    TokenKind.CLI -> stored intersect CLI_SCOPES
+    TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN
+}
 
 /** A scope is `resource:action`, lower case. */
 private val SCOPE_PATTERN = Regex("[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9-]{0,31}")
@@ -47,18 +78,19 @@ const val MAX_SCOPES = 32
 const val MAX_TOKENS_PER_USER = 100
 
 /**
- * Checks the scopes a user asks for a personal token: at least one, well-formed, never [AGENT_SCOPE].
+ * Checks the scopes a user asks for a personal token: at least one, well-formed, none of [NEVER_ON_A_TOKEN] (an
+ * agent's scope, or [ANSWER_SCOPE]: a token never says yes, S2-04).
  *
  * @param scopes The requested scopes.
  *
  * @return The scopes, deduplicated.
  *
- * @throws InvalidScopesException When the set is empty, too large, malformed or names the agent scope.
+ * @throws InvalidScopesException When the set is empty, too large, malformed or names a scope no token holds.
  */
 fun validateScopes(scopes: Collection<String>): Set<String> {
     val set = scopes.toSet()
     if (set.isEmpty() || set.size > MAX_SCOPES) throw InvalidScopesException()
-    if (set.any { !SCOPE_PATTERN.matches(it) || it == AGENT_SCOPE }) throw InvalidScopesException()
+    if (set.any { !SCOPE_PATTERN.matches(it) || it in NEVER_ON_A_TOKEN }) throw InvalidScopesException()
     return set
 }
 

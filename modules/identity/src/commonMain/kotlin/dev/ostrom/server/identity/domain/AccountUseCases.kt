@@ -1,11 +1,51 @@
 package dev.ostrom.server.identity.domain
 
+import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Two sign-ins created the same identity or verified the same e-mail at the same moment. */
 class DuplicateIdentityException : RuntimeException("The identity or the verified e-mail already exists.")
+
+/**
+ * A provider that is not an authority for the address (an organization's SSO, Google for an address outside Gmail
+ * and the account's Workspace) asserts the address of an existing account: nobody is signed in (S2-07). The owner
+ * signs in to that account, then links this provider from it ([LinkIdentityUseCase]).
+ */
+class AccountLinkRequiredException : OstromException(
+    ErrorKind.CONFLICT,
+    "An account already uses this e-mail. Sign in to it, then link this sign-in method from your account settings.",
+)
+
+/** The identity to link already signs another user in: it stays theirs. */
+class IdentityTakenException :
+    OstromException(ErrorKind.CONFLICT, "This sign-in method already belongs to another account.")
+
+/** The domains whose mailboxes Google itself runs: for them, Google is an authority on the address. */
+private val GOOGLE_MAIL_DOMAINS = setOf("gmail.com", "googlemail.com")
+
+/**
+ * Whether a provider is an authority for the address it gives (S2-07): only then is the address recorded as verified,
+ * and only then does a sign-in merge into the account that verified it. A sign-in link proves the mailbox; GitHub
+ * only reports addresses its user confirmed by mail; Google runs Gmail and lets a Workspace administrator assert only
+ * the addresses of their own domain (`hd`). An organization's SSO asserts whatever its administrator types: never.
+ *
+ * @param identity What the provider said.
+ * @param email The address, normalized.
+ *
+ * @return True when the address is proven.
+ */
+internal fun vouchesFor(identity: VerifiedIdentity, email: String): Boolean {
+    if (!identity.emailVerified) return false
+    val domain = email.substringAfter('@')
+    return when (identity.provider) {
+        IdentityProvider.EMAIL, IdentityProvider.GITHUB -> true
+        IdentityProvider.GOOGLE -> domain in GOOGLE_MAIL_DOMAINS || identity.hostedDomain?.lowercase() == domain
+        IdentityProvider.OIDC -> false
+    }
+}
 
 /**
  * The current time, cut to the millisecond: what PostgreSQL stores (microseconds) then reads back unchanged, so a
@@ -17,8 +57,10 @@ fun Clock.nowMillis(): Instant = Instant.fromEpochMilliseconds(now().toEpochMill
 
 /**
  * Turns a verified sign-in into a user: the user of that identity if it was seen before; else the user who verified
- * the same e-mail (accounts merge only on a verified e-mail, never on an unverified one, so nobody takes over an
- * account by claiming its address at a provider that does not check it); else a new user.
+ * the same e-mail, when the provider is an authority for it ([vouchesFor]); else a new user. Accounts never merge on
+ * an address a provider merely asserts (S2-07): an organization's SSO naming the address of an existing account is
+ * refused ([AccountLinkRequiredException]), and the address it gives is recorded unverified, so it can never become
+ * the anchor a later sign-in merges into.
  */
 interface ResolveUserUseCase {
     /**
@@ -53,7 +95,8 @@ class ResolveUserUseCaseImpl(
     private suspend fun resolve(identity: VerifiedIdentity): User {
         val now = clock.nowMillis()
         val email = identity.email?.let(::normalizeOrNull)
-        val userEmail = email?.let { UserEmail(it, identity.emailVerified) }
+        val vouched = email != null && vouchesFor(identity, email)
+        val userEmail = email?.let { UserEmail(it, vouched) }
         val owner = if (email != null && identity.emailVerified) users.findByVerifiedEmail(email) else null
         users.findByIdentity(identity.issuer, identity.subject)?.let { user ->
             // The address is recorded unless another user already verified it: two accounts never share one.
@@ -61,6 +104,8 @@ class ResolveUserUseCaseImpl(
             return user
         }
         if (owner != null) {
+            // The address is the owner's: only an authority for it may sign in to their account (S2-07).
+            if (!vouched) throw AccountLinkRequiredException()
             users.link(owner.id, identity, userEmail, now)
             audit.record(AuditEntry(null, owner.id, "identity.linked", "user", owner.id.toString(), mapOf("provider" to identity.issuer)))
             return owner
@@ -106,6 +151,50 @@ class ResolveUserUseCaseImpl(
         const val DEFAULT_LOGIN = "user"
         const val NUMBERED_LOGINS = 20
         const val RANDOM_SUFFIX = 8
+    }
+}
+
+/**
+ * Links a sign-in method to the signed-in user (S2-07): the only way an identity that is not an authority for an
+ * address joins the account of that address. The person proved the account first (a browser session), then the
+ * provider in the same browser (the OAuth state cookie of an attempt started by that session).
+ */
+interface LinkIdentityUseCase {
+    /**
+     * Links the identity.
+     *
+     * @param userId The signed-in user.
+     * @param identity What the provider proved.
+     *
+     * @return The user.
+     *
+     * @throws UserNotFoundException When the user no longer exists.
+     * @throws IdentityTakenException When the identity signs another user in.
+     */
+    suspend operator fun invoke(userId: Uuid, identity: VerifiedIdentity): User
+}
+
+/**
+ * [LinkIdentityUseCase] on the repository. The identity's address is not recorded: linking adds a way in, never an
+ * address (a provider asserting one proves nothing about it).
+ *
+ * @param users The users.
+ * @param audit The audit log (`identity.linked`).
+ * @param clock The clock.
+ */
+class LinkIdentityUseCaseImpl(
+    private val users: UsersRepository,
+    private val audit: AuditLog,
+    private val clock: Clock,
+) : LinkIdentityUseCase {
+    override suspend fun invoke(userId: Uuid, identity: VerifiedIdentity): User {
+        val user = users.get(userId) ?: throw UserNotFoundException()
+        val holder = users.findByIdentity(identity.issuer, identity.subject)
+        if (holder != null && holder.id != userId) throw IdentityTakenException()
+        users.link(userId, identity, null, clock.nowMillis())
+        val details = mapOf("provider" to identity.issuer)
+        audit.record(AuditEntry(null, userId, "identity.linked", "user", userId.toString(), details))
+        return user
     }
 }
 

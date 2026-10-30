@@ -24,13 +24,14 @@ interface StartOAuthSignInUseCase {
      * @param provider The provider key (`github`, `google`).
      * @param redirect The console path to return to after signing in; anything unsafe becomes `/`.
      * @param source Who is asking (the client address), for the rate limit.
+     * @param linkTo The signed-in user who links this provider to their account (S2-07), or null for a sign-in.
      *
      * @return The state and the consent page URL.
      *
      * @throws ProviderNotConfiguredException When the provider is unknown or not configured.
      * @throws RateLimitedException When the address starts too many sign-ins.
      */
-    suspend operator fun invoke(provider: String, redirect: String?, source: String): StartedOAuth
+    suspend operator fun invoke(provider: String, redirect: String?, source: String, linkTo: Uuid? = null): StartedOAuth
 }
 
 /**
@@ -53,7 +54,7 @@ class StartOAuthSignInUseCaseImpl(
     private val clock: Clock,
     private val callbackUrl: (IdentityProvider) -> String,
 ) : StartOAuthSignInUseCase {
-    override suspend fun invoke(provider: String, redirect: String?, source: String): StartedOAuth {
+    override suspend fun invoke(provider: String, redirect: String?, source: String, linkTo: Uuid?): StartedOAuth {
         val oauth = configuredProvider(methods, provider)
         if (!limiter.tryAcquire("oauth-start:$source", START_LIMIT, LIMIT_WINDOW)) throw RateLimitedException()
         val state = generator.secret()
@@ -61,7 +62,17 @@ class StartOAuthSignInUseCaseImpl(
         val nonce = generator.secret()
         val now = clock.nowMillis()
         attempts.create(
-            OAuthAttempt(Uuid.random(), oauth.provider, null, verifier, nonce, safeRedirectPath(redirect), now, now + OAUTH_STATE_LIFETIME),
+            OAuthAttempt(
+                id = Uuid.random(),
+                provider = oauth.provider,
+                connectionId = null,
+                codeVerifier = verifier,
+                nonce = nonce,
+                redirectPath = safeRedirectPath(redirect),
+                createdAt = now,
+                expiresAt = now + OAUTH_STATE_LIFETIME,
+                linkUserId = linkTo,
+            ),
             hasher.hash(state),
         )
         val url = oauth.authorizationUrl(state, hasher.pkceChallenge(verifier), nonce, callbackUrl(oauth.provider))
@@ -78,7 +89,8 @@ class StartOAuthSignInUseCaseImpl(
 interface CompleteOAuthSignInUseCase {
     /**
      * Checks the state against the browser's cookie, takes the attempt (once), exchanges the code with PKCE, then
-     * signs the person in: their account, a merged one (same verified e-mail) or a new one.
+     * signs the person in: their account, a merged one (same e-mail, proven by an authority for it) or a new one. An
+     * attempt started to link a provider links the identity to its user instead.
      *
      * @param provider The provider key in the callback URL.
      * @param state The state the provider returned.
@@ -91,6 +103,8 @@ interface CompleteOAuthSignInUseCase {
      * @throws InvalidSignInStateException When the state is missing, does not match the cookie, is unknown, used or
      *   expired, or belongs to another provider.
      * @throws ProviderRejectedException When the provider refuses the code.
+     * @throws AccountLinkRequiredException When the provider asserts the address of another account (S2-07).
+     * @throws IdentityTakenException When the identity to link signs another user in.
      */
     suspend operator fun invoke(provider: String, state: String?, browserState: String?, code: String?): CompletedSignIn
 }
@@ -102,6 +116,7 @@ interface CompleteOAuthSignInUseCase {
  * @param attempts Where attempts are kept.
  * @param hasher Hashes the state.
  * @param resolveUser Finds, merges or creates the account.
+ * @param linkIdentity Links an identity to the user who started the attempt to link it.
  * @param startSession Opens the browser session.
  * @param clock The clock.
  * @param callbackUrl The server's callback URL of a provider (the same as at the start).
@@ -111,6 +126,7 @@ class CompleteOAuthSignInUseCaseImpl(
     private val attempts: OAuthAttemptsRepository,
     private val hasher: SecretHasher,
     private val resolveUser: ResolveUserUseCase,
+    private val linkIdentity: LinkIdentityUseCase,
     private val startSession: StartWebSessionUseCase,
     private val clock: Clock,
     private val callbackUrl: (IdentityProvider) -> String,
@@ -124,7 +140,8 @@ class CompleteOAuthSignInUseCaseImpl(
         if (attempt == null || attempt.provider != oauth.provider) throw InvalidSignInStateException()
         if (code.isNullOrEmpty()) throw ProviderRejectedException("no authorization code.")
         val identity = oauth.identity(code, attempt.codeVerifier, attempt.nonce, callbackUrl(oauth.provider))
-        val user = resolveUser(identity)
+        val linkTo = attempt.linkUserId
+        val user = if (linkTo != null) linkIdentity(linkTo, identity) else resolveUser(identity)
         return CompletedSignIn(user, startSession(user.id), attempt.redirectPath)
     }
 }

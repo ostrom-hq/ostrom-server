@@ -1,6 +1,7 @@
 rootProject.name = "ostrom-server"
 
-enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+// No TYPESAFE_PROJECT_ACCESSORS (CONVENTIONS section 9, as on main): the module `artifacts` would generate an
+// accessor that clashes with ModuleDependency.getArtifacts(), and no build file uses `projects.`.
 
 pluginManagement {
     includeBuild("build-logic")
