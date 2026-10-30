@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.infrastructure
 
 import dev.ostrom.server.mcprelay.domain.McpOutcome
@@ -13,6 +14,7 @@ import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.CancellationException
@@ -61,18 +63,27 @@ class HostMcpUpstream(
         val first = operate(target, "list", null, null, deadline)
         val answer = if (first is HostAnswer.Retryable) operate(target, "list", null, null, deadline) else first
         return when (answer) {
-            is HostAnswer.Result -> UpstreamResult.Ok((answer.value["tools"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty(), answer.bytes)
+            is HostAnswer.Result -> UpstreamResult.Ok(
+                (answer.value["tools"] as? JsonArray)?.mapNotNull {
+                    it as? JsonObject
+                }.orEmpty(),
+                answer.bytes,
+            )
             is HostAnswer.Failed -> answer.failure
             is HostAnswer.Retryable -> answer.failure
         }
     }
 
-    override suspend fun callTool(target: UpstreamTarget, tool: String, arguments: JsonObject, deadline: Duration): UpstreamResult<JsonObject> =
-        when (val answer = operate(target, "call", tool, arguments, deadline)) {
-            is HostAnswer.Result -> UpstreamResult.Ok(answer.value, answer.bytes)
-            is HostAnswer.Failed -> answer.failure
-            is HostAnswer.Retryable -> answer.failure
-        }
+    override suspend fun callTool(
+        target: UpstreamTarget,
+        tool: String,
+        arguments: JsonObject,
+        deadline: Duration,
+    ): UpstreamResult<JsonObject> = when (val answer = operate(target, "call", tool, arguments, deadline)) {
+        is HostAnswer.Result -> UpstreamResult.Ok(answer.value, answer.bytes)
+        is HostAnswer.Failed -> answer.failure
+        is HostAnswer.Retryable -> answer.failure
+    }
 
     private sealed interface HostAnswer {
         data class Result(val value: JsonObject, val bytes: Long) : HostAnswer
@@ -80,8 +91,17 @@ class HostMcpUpstream(
         data class Retryable(val failure: UpstreamResult.Failure) : HostAnswer
     }
 
-    private suspend fun operate(target: UpstreamTarget, op: String, tool: String?, arguments: JsonObject?, deadline: Duration): HostAnswer {
-        val spec = target.server.stdio ?: return HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server has no command."))
+    private suspend fun operate(
+        target: UpstreamTarget,
+        op: String,
+        tool: String?,
+        arguments: JsonObject?,
+        deadline: Duration,
+    ): HostAnswer {
+        val spec = target.server.stdio
+            ?: return HostAnswer.Failed(
+                UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server has no command."),
+            )
         val body = buildJsonObject {
             put("key", processKey(target.processKey))
             putJsonObject("spec") {
@@ -106,20 +126,9 @@ class HostMcpUpstream(
                     contentType(ContentType.Application.Json)
                     setBody(body.toString())
                 }.execute { response ->
-                    val bytes = response.bodyAsChannel().readRemaining(maxResponseBytes.toLong() + HOST_ENVELOPE).readByteArray()
-                    val json = try {
-                        Json.parseToJsonElement(bytes.decodeToString()) as? JsonObject
-                    } catch (_: SerializationException) {
-                        null
-                    }
-                    val error = json?.get("error") as? JsonObject
-                    val result = json?.get("result") as? JsonObject
-                    when {
-                        error != null -> hostError((error["code"] as? JsonPrimitive)?.content, (error["message"] as? JsonPrimitive)?.content)
-                        response.status.value != 200 -> HostAnswer.Retryable(failure("The MCP host is unreachable (HTTP ${response.status.value})."))
-                        result != null -> HostAnswer.Result(result, bytes.size.toLong())
-                        else -> HostAnswer.Failed(failure("The MCP host sent an invalid answer."))
-                    }
+                    val bytes = response.bodyAsChannel().readRemaining(maxResponseBytes.toLong() + HOST_ENVELOPE)
+                        .readByteArray()
+                    answer(response.status, bytes)
                 }
             } ?: HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.TIMEOUT, "The MCP server did not answer in time."))
         } catch (error: CancellationException) {
@@ -129,20 +138,52 @@ class HostMcpUpstream(
         }
     }
 
+    private fun answer(status: HttpStatusCode, bytes: ByteArray): HostAnswer {
+        val json = try {
+            Json.parseToJsonElement(bytes.decodeToString()) as? JsonObject
+        } catch (_: SerializationException) {
+            null
+        }
+        val error = json?.get("error") as? JsonObject
+        val result = json?.get("result") as? JsonObject
+        return when {
+            error != null -> hostError(
+                (error["code"] as? JsonPrimitive)?.content,
+                (error["message"] as? JsonPrimitive)?.content,
+            )
+            status != HttpStatusCode.OK -> HostAnswer.Retryable(
+                failure("The MCP host is unreachable (HTTP ${status.value})."),
+            )
+            result != null -> HostAnswer.Result(result, bytes.size.toLong())
+            else -> HostAnswer.Failed(failure("The MCP host sent an invalid answer."))
+        }
+    }
+
     private fun hostError(code: String?, message: String?): HostAnswer {
-        val text = message?.take(1000) ?: "unknown error"
+        val text = message?.take(MAX_ERROR) ?: "unknown error"
         return when (code) {
             "timeout" -> HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.TIMEOUT, text))
-            "too_large" -> HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.TOO_LARGE, "The MCP server's response exceeds the relay limit."))
-            "tool_error" -> HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.TOOL_ERROR, "The MCP server returned an error: $text"))
-            "crashed", "shutting_down" -> HostAnswer.Retryable(failure(if (code == "shutting_down") "The MCP host is restarting. Retry shortly." else text))
-            "unauthorized", "unsupported_protocol" -> HostAnswer.Failed(failure("The MCP host refused the relay: deploy the server and its MCP host with the same token and protocol."))
+            "too_large" -> HostAnswer.Failed(
+                UpstreamResult.Failure(McpOutcome.TOO_LARGE, "The MCP server's response exceeds the relay limit."),
+            )
+            "tool_error" -> HostAnswer.Failed(
+                UpstreamResult.Failure(McpOutcome.TOOL_ERROR, "The MCP server returned an error: $text"),
+            )
+            "crashed" -> HostAnswer.Retryable(failure(text))
+            "shutting_down" -> HostAnswer.Retryable(failure("The MCP host is restarting. Retry shortly."))
+            "unauthorized", "unsupported_protocol" -> HostAnswer.Failed(
+                failure(
+                    "The MCP host refused the relay: deploy the server and its MCP host with the same token and " +
+                        "protocol.",
+                ),
+            )
             else -> HostAnswer.Failed(failure(text))
         }
     }
 
     private fun failure(message: String) = UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, message)
 
+    /** The protocol between the relay and its MCP host. */
     companion object {
         /** The protocol header, TeamCode's name kept for compatibility with its host image. */
         const val PROTOCOL_HEADER: String = "TeamCode-Host-Protocol"
@@ -151,6 +192,7 @@ class HostMcpUpstream(
         const val PROTOCOL_VERSION: String = "1"
 
         private const val HOST_ENVELOPE = 64 * 1024L
+        private const val MAX_ERROR = 1000
 
         /**
          * The host's process key: SHA-256 (64 hex characters) of the relay's key.

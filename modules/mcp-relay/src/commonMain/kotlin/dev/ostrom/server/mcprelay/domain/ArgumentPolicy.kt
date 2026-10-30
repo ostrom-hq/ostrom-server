@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.domain
 
 import kotlinx.serialization.json.JsonArray
@@ -29,7 +30,13 @@ enum class ConditionOperator { EQUALS, NOT_EQUALS, MATCHES, PREFIX, CONTAINS, EX
  *   [ConditionOperator.EXISTS] and [ConditionOperator.ABSENT].
  */
 data class ArgumentCondition(val path: String, val operator: ConditionOperator, val value: String? = null) {
-    private val regex: Regex? = if (operator == ConditionOperator.MATCHES) Regex(requireNotNull(value), RegexOption.IGNORE_CASE) else null
+    private val regex: Regex? = if (operator ==
+        ConditionOperator.MATCHES
+    ) {
+        Regex(requireNotNull(value), RegexOption.IGNORE_CASE)
+    } else {
+        null
+    }
 
     /**
      * Tests the condition.
@@ -52,17 +59,14 @@ data class ArgumentCondition(val path: String, val operator: ConditionOperator, 
         }
     }
 
-    private fun JsonObject.at(path: String): JsonElement? {
-        var current: JsonElement = this
-        for (segment in path.split('.')) {
-            current = when (current) {
-                is JsonObject -> current[segment] ?: return null
-                is JsonArray -> segment.toIntOrNull()?.let { current.getOrNull(it) } ?: return null
-                else -> return null
+    private fun JsonObject.at(path: String): JsonElement? =
+        path.split('.').fold<String, JsonElement?>(this) { current, segment ->
+            when (current) {
+                is JsonObject -> current[segment]
+                is JsonArray -> segment.toIntOrNull()?.let { current.getOrNull(it) }
+                else -> null
             }
         }
-        return current
-    }
 
     private fun JsonElement.asText(): String? = when (this) {
         is JsonNull -> null
@@ -103,6 +107,7 @@ data class ArgumentPolicy(
     fun matches(toolName: String, arguments: JsonObject): Boolean =
         (tool == ANY_TOOL || tool == toolName) && conditions.all { it.holds(arguments) }
 
+    /** Matching and deciding. */
     companion object {
         /** The tool name that matches every tool. */
         const val ANY_TOOL: String = "*"

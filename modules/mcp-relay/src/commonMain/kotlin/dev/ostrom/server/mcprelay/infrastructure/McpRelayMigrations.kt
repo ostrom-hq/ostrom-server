@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.infrastructure
 
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
+import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
-/** The schema of the MCP relay; its tables start with `mcp_relay_`. */
+/** The schema of the MCP relay; its tables start with `mcp_relay_`, each confined to its org by row-level security. */
 val McpRelayMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
         version = 1,
@@ -65,4 +68,25 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX mcp_relay_calls_started ON mcp_relay_calls (started_at)
         """.trimIndent(),
     ),
+    SchemaMigration(
+        version = 2,
+        name = "confine_mcp_relay_to_their_org",
+        sql = listOf(
+            TENANT_ROLE_SQL,
+            tenantTableSql("mcp_relay_servers"),
+            tenantTableSql("mcp_relay_assignments"),
+            tenantTableSql("mcp_relay_policies"),
+            tenantTableSql("mcp_relay_settings"),
+            tenantTableSql("mcp_relay_calls"),
+            // Retention deletes old calls of every org, and nothing else (McpRelayRepositoryImpl.purgeCalls); a DELETE
+            // with a WHERE also needs the rows to pass a SELECT policy.
+            "CREATE POLICY mcp_relay_calls_retention_read ON mcp_relay_calls FOR SELECT " +
+                "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
+            "CREATE POLICY mcp_relay_calls_retention ON mcp_relay_calls FOR DELETE " +
+                "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
+        ).joinToString("\n"),
+    ),
 )
+
+/** The transaction-local setting that opens the retention policy of `mcp_relay_calls`. */
+const val RETENTION_SETTING: String = "ostrom.mcp_relay_retention"

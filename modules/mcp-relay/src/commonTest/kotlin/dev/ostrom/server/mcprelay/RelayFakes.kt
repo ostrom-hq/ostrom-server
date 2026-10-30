@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay
 
 import dev.ostrom.server.mcprelay.domain.ArgumentPolicy
@@ -92,7 +93,12 @@ class FakeUpstream : McpUpstream {
         return tools
     }
 
-    override suspend fun callTool(target: UpstreamTarget, tool: String, arguments: JsonObject, deadline: Duration): UpstreamResult<JsonObject> {
+    override suspend fun callTool(
+        target: UpstreamTarget,
+        tool: String,
+        arguments: JsonObject,
+        deadline: Duration,
+    ): UpstreamResult<JsonObject> {
         targets += target
         calls += tool to arguments
         onCall()
@@ -127,9 +133,14 @@ class InMemoryRelayRepository : McpRelayRepository {
         return servers.removeAll { it.orgId == orgId && it.id == id }
     }
 
-    override suspend fun getServer(orgId: Uuid, id: Uuid): McpServer? = servers.firstOrNull { it.orgId == orgId && it.id == id }
+    override suspend fun getServer(orgId: Uuid, id: Uuid): McpServer? = servers.firstOrNull {
+        it.orgId == orgId &&
+            it.id == id
+    }
 
-    override suspend fun listServers(orgId: Uuid, limit: Int): List<McpServer> = servers.filter { it.orgId == orgId }.sortedBy { it.name }.take(limit)
+    override suspend fun listServers(orgId: Uuid, limit: Int): List<McpServer> = servers.filter {
+        it.orgId == orgId
+    }.sortedBy { it.name }.take(limit)
 
     override suspend fun putAssignment(assignment: McpAssignment) {
         assignments.removeAll { it.serverId == assignment.serverId && it.memberId == assignment.memberId }
@@ -175,11 +186,18 @@ class InMemoryRelayRepository : McpRelayRepository {
         journal += call
     }
 
-    override suspend fun listCalls(orgId: Uuid, before: Instant?, limit: Int, server: String?, memberId: Uuid?): List<McpCall> =
-        journal.filter {
-            it.orgId == orgId && (before == null || it.startedAt < before) && (server == null || it.serverName == server) &&
-                (memberId == null || it.memberId == memberId)
-        }.sortedByDescending { it.startedAt }.take(limit)
+    override suspend fun listCalls(
+        orgId: Uuid,
+        before: Instant?,
+        limit: Int,
+        server: String?,
+        memberId: Uuid?,
+    ): List<McpCall> = journal.filter {
+        it.orgId == orgId &&
+            (before == null || it.startedAt < before) &&
+            (server == null || it.serverName == server) &&
+            (memberId == null || it.memberId == memberId)
+    }.sortedByDescending { it.startedAt }.take(limit)
 
     override suspend fun usage(orgId: Uuid, since: Instant, memberId: Uuid?): List<McpUsage> =
         journal.filter { it.orgId == orgId && it.startedAt >= since && (memberId == null || it.memberId == memberId) }
@@ -191,8 +209,13 @@ class InMemoryRelayRepository : McpRelayRepository {
                     tool = key.third,
                     calls = calls.count { it.operation == McpOperation.CALL }.toLong(),
                     lists = calls.count { it.operation == McpOperation.LIST }.toLong(),
-                    errors = calls.count { it.outcome in setOf(McpOutcome.UPSTREAM_ERROR, McpOutcome.TIMEOUT, McpOutcome.TOO_LARGE) }.toLong(),
-                    denied = calls.count { it.outcome in setOf(McpOutcome.DENIED, McpOutcome.APPROVAL_REQUIRED) }.toLong(),
+                    errors = calls.count {
+                        it.outcome in
+                            setOf(McpOutcome.UPSTREAM_ERROR, McpOutcome.TIMEOUT, McpOutcome.TOO_LARGE)
+                    }.toLong(),
+                    denied = calls.count {
+                        it.outcome in setOf(McpOutcome.DENIED, McpOutcome.APPROVAL_REQUIRED)
+                    }.toLong(),
                     bytes = calls.sumOf { it.responseBytes },
                     durationMillis = calls.sumOf { it.durationMillis },
                 )

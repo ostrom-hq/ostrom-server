@@ -1,21 +1,14 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.presentation
 
-import dev.ostrom.server.mcprelay.domain.ArgumentCondition
-import dev.ostrom.server.mcprelay.domain.ArgumentPolicy
-import dev.ostrom.server.mcprelay.domain.ArgumentPolicyPayload
-import dev.ostrom.server.mcprelay.domain.ConditionOperator
 import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import dev.ostrom.server.mcprelay.domain.McpAssignment
-import dev.ostrom.server.mcprelay.domain.McpCall
-import dev.ostrom.server.mcprelay.domain.McpOutcome
 import dev.ostrom.server.mcprelay.domain.McpSecretNotFoundException
 import dev.ostrom.server.mcprelay.domain.McpServer
 import dev.ostrom.server.mcprelay.domain.McpServerPayload
 import dev.ostrom.server.mcprelay.domain.McpSharing
 import dev.ostrom.server.mcprelay.domain.McpTransport
-import dev.ostrom.server.mcprelay.domain.McpUsage
 import dev.ostrom.server.mcprelay.domain.MemberServer
-import dev.ostrom.server.mcprelay.domain.PolicyEffect
 import dev.ostrom.server.mcprelay.domain.StdioLauncher
 import dev.ostrom.server.mcprelay.domain.StdioSpec
 import kotlin.uuid.Uuid
@@ -48,7 +41,8 @@ fun McpServerDto.toPayload(secretIds: Map<String, Uuid>) = McpServerPayload(
 )
 
 /** The credential of an HTTP server: its first secret name. */
-fun McpServerDto.credentialName(): String? = if (transport.equals("http", ignoreCase = true)) secretNames.firstOrNull() else null
+fun McpServerDto.credentialName(): String? =
+    if (transport.equals("http", ignoreCase = true)) secretNames.firstOrNull() else null
 
 /** Every secret name a server uses. */
 fun McpServerDto.secretNamesUsed(): List<String> = listOfNotNull(credentialName()) + stdio?.secretEnv?.values.orEmpty()
@@ -69,7 +63,18 @@ fun McpServer.toDto(names: Map<Uuid, String>) = McpServerDto(
     scope = if (sharing == McpSharing.SHARED) "shared" else "per-member",
     credentialHeader = credentialHeader,
     stdio = stdio?.let { spec ->
-        StdioSpecDto(spec.launcher.name.lowercase(), spec.packageName, spec.args, spec.env, spec.secretEnv.mapNotNull { (key, id) -> names[id]?.let { key to it } }.toMap())
+        StdioSpecDto(
+            spec.launcher.name.lowercase(),
+            spec.packageName,
+            spec.args,
+            spec.env,
+            spec.secretEnv.mapNotNull { (key, id) ->
+                names[id]?.let {
+                    key to
+                        it
+                }
+            }.toMap(),
+        )
     },
     version = version,
     createdAt = createdAt.toString(),
@@ -84,66 +89,6 @@ fun McpAssignment.toResponse(server: String, credentialName: String?) = McpAssig
     assignedAt = assignedAt.toString(),
 )
 
-/** Maps a policy request to the domain. */
-fun ArgumentPolicyRequest.toPayload() = ArgumentPolicyPayload(
-    tool = tool,
-    conditions = conditions.map {
-        val operator = enumOf<ConditionOperator>(it.operator, "operator")
-        if (operator == ConditionOperator.MATCHES) {
-            try {
-                Regex(it.value.orEmpty())
-            } catch (_: IllegalArgumentException) {
-                throw InvalidMcpServerException("The regular expression of ${it.path} does not compile.")
-            }
-        }
-        ArgumentCondition(it.path, operator, it.value)
-    },
-    effect = enumOf<PolicyEffect>(effect, "effect"),
-    message = message,
-)
-
-/** Maps a policy to the API. */
-fun ArgumentPolicy.toResponse() = ArgumentPolicyResponse(
-    id = id.toString(),
-    tool = tool,
-    conditions = conditions.map { ArgumentConditionDto(it.path, it.operator.name, it.value) },
-    effect = effect.name,
-    message = message,
-    createdAt = createdAt.toString(),
-)
-
-/** Maps a journal row to the API. */
-fun McpCall.toDto() = McpCallDto(
-    id = id.toString(),
-    at = startedAt.toString(),
-    server = serverName,
-    tool = tool ?: "tools/list",
-    dev = memberId.toString(),
-    durationMs = durationMillis,
-    ok = outcome == McpOutcome.OK,
-    outcome = outcome.name,
-    responseBytes = responseBytes,
-    policyId = policyId?.toString(),
-)
-
-/** Totals usage rows by server and by tool, with details by member and server. */
-fun List<McpUsage>.toResponse() = McpUsageResponse(
-    byServer = groupBy { it.serverName }.mapValues { (_, rows) -> rows.sumOf { it.calls } },
-    byTool = filter { it.tool != null }.groupBy { "${it.serverName}/${it.tool}" }.mapValues { (_, rows) -> rows.sumOf { it.calls } },
-    rows = groupBy { it.memberId to it.serverName }.map { (key, rows) ->
-        McpUsageRow(
-            dev = key.first.toString(),
-            server = key.second,
-            calls = rows.sumOf { it.calls },
-            lists = rows.sumOf { it.lists },
-            errors = rows.sumOf { it.errors },
-            denied = rows.sumOf { it.denied },
-            bytes = rows.sumOf { it.bytes },
-            durationMs = rows.sumOf { it.durationMillis },
-        )
-    },
-)
-
 /** Maps a member's server to the API. */
 fun MemberServer.toDto() = McpServerDto(
     name = name,
@@ -154,6 +99,11 @@ fun MemberServer.toDto() = McpServerDto(
     path = "/api/v1/mcp/$name",
 )
 
-private inline fun <reified T : Enum<T>> enumOf(value: String, field: String): T =
+/** The enum constant named [value], case-insensitively, or a 400 naming [field]. */
+internal inline fun <reified T : Enum<T>> enumOf(value: String, field: String): T =
     enumValues<T>().firstOrNull { it.name.equals(value, ignoreCase = true) }
-        ?: throw InvalidMcpServerException("$field must be one of ${enumValues<T>().joinToString { it.name.lowercase() }}.")
+        ?: throw InvalidMcpServerException(
+            "$field must be one of ${enumValues<T>().joinToString {
+                it.name.lowercase()
+            }}.",
+        )
