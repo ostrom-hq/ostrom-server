@@ -19,6 +19,7 @@ import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.domain.services.HarnessStamp
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
+import dev.ostrom.server.compiler.presentation.ApproversGraphResponse
 import dev.ostrom.server.compiler.presentation.AuditPage
 import dev.ostrom.server.compiler.presentation.CompilerScopes
 import dev.ostrom.server.compiler.presentation.PackageSummary
@@ -340,6 +341,19 @@ class CompilerPostgresTest {
         assertEquals(HttpStatusCode.BadRequest, server.call("agent:a:l1", "/api/v1/gates/catalog/signed").status)
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, signedPath).status)
         assertEquals(HttpStatusCode.Forbidden, server.call("gates:a:x", signedPath).status)
+
+        // Who approves what, from the same catalogue: the lead answers the release gate, for a push to main.
+        val graphPath = "/api/v1/gates/approvers?repo=acme-api"
+        val graph = server.call("user:a:lead", graphPath).body<ApproversGraphResponse>()
+        val lead = graph.approvers.single()
+        assertEquals("lead", lead.approver)
+        assertEquals(listOf("release"), lead.gates.map { it.workflowId })
+        assertTrue("push-main" in lead.gates.single().actions)
+        assertTrue(graph.unanswered.isEmpty() && "commit" in graph.ungated)
+        val elsewhere = server.call("user:b:lead", graphPath).body<ApproversGraphResponse>()
+        assertTrue(elsewhere.approvers.isEmpty(), "org B sees nobody of org A")
+        assertEquals(HttpStatusCode.Unauthorized, server.call(null, graphPath).status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("gates:a:x", graphPath).status)
 
         val resolver = server.koin.get<GateNodeResolver>()
         val gate = assertNotNull(resolver.resolve(orgA, "acme-api", "push-main"))
