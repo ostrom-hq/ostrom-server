@@ -22,6 +22,7 @@ import dev.ostrom.server.kernel.http.UNMATCHED_ROUTE
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.kernel.http.configureHttp
 import dev.ostrom.server.kernel.http.httpStatus
+import dev.ostrom.server.kernel.http.isBodilessUpgrade
 import dev.ostrom.server.kernel.http.isValidRequestId
 import dev.ostrom.server.kernel.http.limitedBody
 import dev.ostrom.server.kernel.http.requestFields
@@ -44,6 +45,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.contentType
+import io.ktor.http.headersOf
 import io.ktor.server.plugins.NotFoundException
 import io.ktor.server.plugins.PayloadTooLargeException
 import io.ktor.server.plugins.origin
@@ -137,6 +139,7 @@ class HttpTest {
             route.get("/a/{id}/{ticket}/{path...}") { call.respondText("page") }
             route.bodyLimit(SMALL_LIMIT) {
                 post("/probe/small") { call.respondText(call.receiveText()) }
+                get("/probe/upgrade") { call.respondText("[${call.receiveText()}]") }
             }
             route.bodyLimit(LARGE_LIMIT) {
                 post("/probe/large") { call.respondText("${call.receiveText().length}") }
@@ -522,6 +525,32 @@ class HttpTest {
         val served = requestLines(2)
         assertTrue("\"route\":\"/probe/large\"" in served[0], served[0])
         assertTrue("\"route\":\"/probe/large/tiny\"" in served[1], served[1])
+    }
+
+    @Test
+    fun onlyAnUpgradeWithoutABodyKeepsItsRawStream() {
+        // S2-46: a WebSocket's stream never ends, the engine reads it through receive; a body is capped all the same.
+        assertTrue(isBodilessUpgrade(headersOf(HttpHeaders.Upgrade, "websocket")))
+        assertFalse(isBodilessUpgrade(headersOf()))
+        val upgrade = HttpHeaders.Upgrade to listOf("h2c")
+        assertFalse(isBodilessUpgrade(headersOf(upgrade, HttpHeaders.ContentLength to listOf("5"))))
+        assertFalse(isBodilessUpgrade(headersOf(upgrade, HttpHeaders.TransferEncoding to listOf("chunked"))))
+    }
+
+    @Test
+    fun anUpgradeWithoutABodyIsReadAsItIs() = probeServer {
+        // What the engine does with a WebSocket's stream: it goes through receive without being read to its end.
+        assertEquals("[]", client.get("/probe/upgrade") { header(HttpHeaders.Upgrade, "websocket") }.bodyAsText())
+    }
+
+    @Test
+    fun anUpgradeWithABodyIsStillCapped() = probeServer {
+        val refused = client.post("/probe/small") {
+            header(HttpHeaders.Upgrade, "websocket")
+            contentType(ContentType.Application.Json)
+            setBody("x".repeat(SMALL_LIMIT.toInt() + 1))
+        }
+        assertEquals(HttpStatusCode.PayloadTooLarge, refused.status)
     }
 
     @Test

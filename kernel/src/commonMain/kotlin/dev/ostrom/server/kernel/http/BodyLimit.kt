@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.http
 
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.Hook
@@ -30,13 +32,31 @@ private val bodyLimitKey = AttributeKey<Long>("ostrom.body.limit")
  * without one (chunked) is read up to one byte past the limit, never further. Either way the route's `receive` fails
  * with a [PayloadTooLargeException], answered 413 `payload_too_large` by [configureErrors], ahead of the 415 of a body
  * that is not JSON. The limit applies when a route reads the body: a route that must check a credential first does so
- * before calling `receive`. Installed by [configureHttp].
+ * before calling `receive`. A protocol upgrade without a body (a WebSocket) keeps its raw stream: the engine reads it
+ * through `receive`, and its frames are bounded by the WebSockets plugin. Installed by [configureHttp].
  */
 val BodyLimit = createApplicationPlugin("BodyLimit") {
     on(ReceiveBody) { call, body ->
-        limitedBody(body, call.attributes.getOrNull(bodyLimitKey) ?: DEFAULT_BODY_LIMIT, call.request.contentLength())
+        if (isBodilessUpgrade(call.request.headers)) {
+            body
+        } else {
+            val limit = call.attributes.getOrNull(bodyLimitKey) ?: DEFAULT_BODY_LIMIT
+            limitedBody(body, limit, call.request.contentLength())
+        }
     }
 }
+
+/**
+ * Whether a request asks for a protocol upgrade and carries no HTTP body: no `Content-Length` and no
+ * `Transfer-Encoding`, so by HTTP framing its body is empty and what follows the head is the upgraded stream. A body
+ * sent with an `Upgrade` header is still capped.
+ *
+ * @param headers The request headers.
+ *
+ * @return True for a bodiless upgrade.
+ */
+internal fun isBodilessUpgrade(headers: Headers): Boolean =
+    HttpHeaders.Upgrade in headers && HttpHeaders.ContentLength !in headers && HttpHeaders.TransferEncoding !in headers
 
 /**
  * The body a route is given: [body] itself unless it is the raw request channel, which is read up to [limit] bytes.

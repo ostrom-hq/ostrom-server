@@ -5,16 +5,10 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.http.OstromJson
-import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
-import dev.ostrom.server.usage.domain.IngestUsageEventsUseCase
 import dev.ostrom.server.usage.domain.InvalidUsageEventException
-import dev.ostrom.server.usage.domain.ListUsageEventsUseCase
-import dev.ostrom.server.usage.domain.UsageReportUseCase
 import dev.ostrom.server.usage.domain.UsageRules
-import dev.ostrom.server.usage.domain.UsageSummaryUseCase
-import dev.ostrom.server.usage.domain.WatchUsageUseCase
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -29,32 +23,6 @@ import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.flow.map
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
-
-/**
- * What the usage routes need.
- *
- * @property callers Resolves the member of each call.
- * @property report Spending over a period.
- * @property ingest Records client events.
- * @property summary Totals.
- * @property listEvents Pages the ledger.
- * @property watch Follows it live.
- * @property heartbeat The interval of the live stream's heartbeat comments.
- * @property liveLifetime How long one live stream lasts before the client reconnects and is checked again.
- */
-data class UsageRoutesDependencies(
-    val callers: CallerResolver,
-    val report: UsageReportUseCase,
-    val ingest: IngestUsageEventsUseCase,
-    val summary: UsageSummaryUseCase,
-    val listEvents: ListUsageEventsUseCase,
-    val watch: WatchUsageUseCase,
-    val heartbeat: Duration = 15.seconds,
-    val liveLifetime: Duration = 10.minutes,
-)
 
 /**
  * The usage routes, on the org of the caller's token: an admin reads the whole org, a member only their own usage.
