@@ -31,14 +31,12 @@ class UsageMeter(private val protocol: WireProtocol) {
 
     /** Feeds streamed bytes: the first [count] of [bytes]. */
     fun accept(bytes: ByteArray, count: Int) {
-        for (index in 0 until count) {
-            val byte = bytes[index]
-            when {
-                byte == NEWLINE -> endLine()
-                dropping -> Unit
-                length == MAX_LINE -> dropping = true
-                else -> append(byte)
-            }
+        var start = 0
+        while (start < count) {
+            val newline = newlineIn(bytes, start, count)
+            take(bytes, start, newline)
+            if (newline < count) endLine()
+            start = newline + 1
         }
     }
 
@@ -47,19 +45,31 @@ class UsageMeter(private val protocol: WireProtocol) {
         parse(body.decodeToString())?.let(::read)
     }
 
-    private fun append(byte: Byte) {
-        if (length == line.size) line = line.copyOf(minOf(line.size * 2, MAX_LINE))
-        line[length++] = byte
+    /** Adds `bytes[from until to]` to the current line, or drops the line once it outgrows [MAX_LINE]. */
+    private fun take(bytes: ByteArray, from: Int, to: Int) {
+        val size = to - from
+        when {
+            dropping || size == 0 -> Unit
+            length + size > MAX_LINE -> dropping = true
+            else -> {
+                // INITIAL and MAX_LINE are powers of two: doubling never passes MAX_LINE.
+                while (line.size < length + size) line = line.copyOf(line.size * 2)
+                bytes.copyInto(line, length, from, to)
+                length += size
+            }
+        }
     }
 
+    /** Parses the line only when it is a `data:` line naming `usage`: most lines are text and never decoded. */
     private fun endLine() {
-        if (!dropping && length > DATA.length && line[0] == DATA_START) {
-            val text = line.decodeToString(0, length)
-            if (text.startsWith(DATA) && "usage" in text) parse(text.substring(DATA.length).trim())?.let(::read)
+        if (!dropping && isUsageLine()) {
+            parse(line.decodeToString(DATA.size, length).trim())?.let(::read)
         }
         length = 0
         dropping = false
     }
+
+    private fun isUsageLine() = length > DATA.size && line.matches(DATA, 0) && line.has(USAGE, DATA.size, length)
 
     private fun read(json: JsonObject) {
         when (protocol) {
@@ -99,24 +109,42 @@ class UsageMeter(private val protocol: WireProtocol) {
             output = usage.count(outputName) ?: output
         }
     }
-
-    private fun parse(text: String): JsonObject? = try {
-        Json.parseToJsonElement(text) as? JsonObject
-    } catch (_: SerializationException) {
-        null
-    }
-
-    private fun JsonObject.child(name: String): JsonObject? = this[name] as? JsonObject
-
-    private fun JsonObject.count(name: String): Long? =
-        (this[name] as? JsonPrimitive)?.longOrNull?.takeIf { it in 0..MAX_TOKENS }
-
-    private companion object {
-        const val NEWLINE: Byte = 10
-        const val DATA = "data:"
-        const val DATA_START: Byte = 100
-        const val INITIAL = 1024
-        const val MAX_LINE = 256 * 1024
-        const val MAX_TOKENS = 100_000_000L
-    }
 }
+
+private const val NEWLINE: Byte = 10
+private const val INITIAL = 1024
+private const val MAX_LINE = 256 * 1024
+private const val MAX_TOKENS = 100_000_000L
+private val DATA = "data:".encodeToByteArray()
+private val USAGE = "\"usage\"".encodeToByteArray()
+
+/** The index of the first newline of `bytes[from until to]`, or [to]. */
+private fun newlineIn(bytes: ByteArray, from: Int, to: Int): Int {
+    var index = from
+    while (index < to && bytes[index] != NEWLINE) index++
+    return index
+}
+
+/** Whether [pattern] occurs in `this[from until to]`. */
+private fun ByteArray.has(pattern: ByteArray, from: Int, to: Int): Boolean {
+    var index = from
+    while (index + pattern.size <= to && !matches(pattern, index)) index++
+    return index + pattern.size <= to
+}
+
+private fun ByteArray.matches(pattern: ByteArray, at: Int): Boolean {
+    var index = 0
+    while (index < pattern.size && this[at + index] == pattern[index]) index++
+    return index == pattern.size
+}
+
+private fun parse(text: String): JsonObject? = try {
+    Json.parseToJsonElement(text) as? JsonObject
+} catch (_: SerializationException) {
+    null
+}
+
+private fun JsonObject.child(name: String): JsonObject? = this[name] as? JsonObject
+
+private fun JsonObject.count(name: String): Long? =
+    (this[name] as? JsonPrimitive)?.longOrNull?.takeIf { it in 0..MAX_TOKENS }

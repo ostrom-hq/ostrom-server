@@ -136,13 +136,16 @@ private class Scanner(private val text: String, private val keys: Set<String>) {
         else -> primitive(from)
     }
 
-    /** The index after the closing quote of the string opening at [from]. */
+    /**
+     * The index after the closing quote of the string opening at [from]. Jumps from quote to quote (`indexOf` is the
+     * fast path through long conversation text), skipping a quote escaped by an odd run of backslashes.
+     */
     private fun string(from: Int): Int {
         if (at(from) != '"') malformed()
-        var position = from + 1
-        while (position < text.length && text[position] != '"') position += if (text[position] == '\\') 2 else 1
-        if (position >= text.length) malformed()
-        return position + 1
+        var close = text.indexOf('"', from + 1)
+        while (close > 0 && text.escapedAt(close)) close = text.indexOf('"', close + 1)
+        if (close < 0) malformed()
+        return close + 1
     }
 
     private fun nested(from: Int): Int {
@@ -172,4 +175,11 @@ private class Scanner(private val text: String, private val keys: Set<String>) {
         const val SPACE = " \n\r\t"
         const val DELIMITERS = ",}] \n\r\t"
     }
+}
+
+/** Whether the quote at [quote] is escaped; the string's opening quote stops the walk back. */
+private fun String.escapedAt(quote: Int): Boolean {
+    var backslashes = 0
+    while (this[quote - 1 - backslashes] == '\\') backslashes++
+    return backslashes % 2 == 1
 }

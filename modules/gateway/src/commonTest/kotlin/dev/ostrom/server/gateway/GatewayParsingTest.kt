@@ -32,6 +32,11 @@ class GatewayParsingTest {
         assertEquals(true, TopLevelJson.boolean(text, fields.ranges["stream"]))
         assertEquals("""{"user_id":"u"}""", fields.ranges["metadata"]?.let { text.substring(it) })
         assertNull(fields.ranges["store"])
+        val escapedBackslash = """{"a":"b\\","c":"d\\\"e","model":"m"}"""
+        assertEquals(
+            "m",
+            TopLevelJson.string(escapedBackslash, TopLevelJson.scan(escapedBackslash, keys)?.ranges?.get("model")),
+        )
         assertEquals(TopLevelJson.Fields(0, emptyMap(), 0), TopLevelJson.scan("{}", keys))
         assertEquals(TopLevelJson.Fields(1, emptyMap(), 0), TopLevelJson.scan(" { } ", keys))
     }
@@ -164,6 +169,13 @@ class GatewayParsingTest {
         val next = "data: {\"usage\":{\"prompt_tokens\":2}}\n".encodeToByteArray()
         meter.accept(next, next.size)
         assertEquals(TokenUsage(input = 2), meter.usage)
+        val wide = (
+            "data: {\"pad\":\"" + "y".repeat(
+                4096,
+            ) + "\",\"usage\":{\"prompt_tokens\":3}}\n"
+            ).encodeToByteArray()
+        wide.toList().chunked(1000).forEach { meter.accept(it.toByteArray(), it.size) }
+        assertEquals(TokenUsage(input = 3), meter.usage, "A line longer than the first buffer grows it")
     }
 
     @Test
