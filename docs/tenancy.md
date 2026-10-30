@@ -70,4 +70,5 @@ Every PostgreSQL test runs as a deployment does (`testing/…/TestDatabase.kt`):
 role, which applies the migrations, and its own serving role, owner of nothing and member of `ostrom_tenant`, with the
 attributes and grants of `ci/database-roles.sql`. The test server and the tests' queries go through the serving role,
 which must pass the start check, so a query that forgets its organization fails in CI as it would in production. The
-configured superuser only creates the database and the roles, and seeds fixtures no request writes.
+configured user, a superuser, creates the database and the roles; tests use it only for what no request does
+(fixtures across organizations, statistics, the roles the start check must refuse, a count across organizations).

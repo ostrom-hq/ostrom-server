@@ -27,7 +27,8 @@ import kotlin.uuid.Uuid
  *
  * Configured by `OSTROM_TEST_DATABASE_URL`, an existing database to connect to with its credentials
  * (`postgresql://ostrom:ostrom@localhost:5432/ostrom_test`), or `OSTROM_TEST_DATABASE_USER` and
- * `OSTROM_TEST_DATABASE_PASSWORD`; that user must be able to create databases and roles. When the URL is unset the
+ * `OSTROM_TEST_DATABASE_PASSWORD`; that user must be a superuser (it hands the schema over and creates roles that a
+ * `CREATEROLE` role could not, `BYPASSRLS` ones included), like CI's PostgreSQL service user. When the URL is unset the
  * database tests are skipped, unless `OSTROM_TEST_DATABASE_REQUIRED=true` (set in CI), which makes them fail instead:
  * CI never passes by skipping them.
  *
@@ -107,7 +108,9 @@ class TestDatabase private constructor(
     /** Creating test databases. */
     companion object {
         private const val POOL_SIZE = 4
-        private const val OWNER_POOL_SIZE = 4
+        // KernelPostgresTest runs three migration passes at once, each pinning a connection for its lock, plus the
+        // connections their migrations use: a pool of 2 deadlocked.
+        private const val OWNER_POOL_SIZE = 6
         private const val SUPERUSER_POOL_SIZE = 2
         private const val ROLE_POOL_SIZE = 2
 
