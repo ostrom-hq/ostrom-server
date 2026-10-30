@@ -115,9 +115,9 @@ internal class ViewArtifactUseCaseImpl(
         "artifact:$id:$number:$expiry".encodeToByteArray()
 
     private companion object {
-        val LIFETIME = 1.hours
-        val ROUNDING = 10.minutes
+        private val LIFETIME = 1.hours
+        private val ROUNDING = 10.minutes
         const val TICKET_PARTS = 3
-        val HEX = Regex("(?:[0-9a-f]{2})+")
+        private val HEX = Regex("(?:[0-9a-f]{2})+")
     }
 }

@@ -274,8 +274,8 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
     private data class FileRow(val path: String, val sha256: String, val size: Long, val type: String)
 
     private companion object {
-        val JSON = Json { ignoreUnknownKeys = true }
-        val FILES = ListSerializer(FileRow.serializer())
+        private val JSON = Json { ignoreUnknownKeys = true }
+        private val FILES = ListSerializer(FileRow.serializer())
 
         const val COLUMNS = """
             id, org_id, owner_id, title, access, latest_version, link_slug, created_at, updated_at

@@ -35,6 +35,7 @@ import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -172,6 +173,15 @@ class ArtifactsPostgresTest {
         assertEquals(team.id, first.id)
         assertEquals(2, repository.listReadable(dave, first.id, 10).size)
     }
+
+    /**
+     * A request to the content origin. The test client only reaches `localhost`: the content origin's host is sent in
+     * the `Host` header, which is what the content routes read.
+     */
+    private suspend fun HttpClient.content(url: String): HttpResponse =
+        get(url.replace(CONTENT_ORIGIN, "http://localhost")) {
+            header(HttpHeaders.Host, CONTENT_ORIGIN.substringAfter("://"))
+        }
 
     private suspend fun HttpClient.publish(token: String, title: String, access: String, html: String): HttpResponse =
         post("/api/v1/artifacts") {
@@ -325,20 +335,23 @@ class ArtifactsPostgresTest {
         }
         assertEquals(HttpStatusCode.Created, versioned.status)
 
-        val page = client.get(ticket.url)
+        val page = client.content(ticket.url)
         assertEquals(HttpStatusCode.OK, page.status)
         assertEquals("<h1>page</h1>", page.bodyAsText())
         assertTrue(page.headers["Content-Security-Policy"].orEmpty().startsWith("sandbox allow-scripts"))
         assertEquals("no-referrer", page.headers["Referrer-Policy"])
-        val image = client.get(ticket.url.replace("index.html", "img/a.png"))
+        val image = client.content(ticket.url.replace("index.html", "img/a.png"))
         assertContentEquals(byteArrayOf(1, 2, 3), image.readRawBytes())
 
         val elsewhere = client.get(ticket.url.replace(CONTENT_ORIGIN, "http://localhost"))
         assertEquals(HttpStatusCode.NotFound, elsewhere.status)
         assertTrue(elsewhere.headers["Content-Security-Policy"].orEmpty().startsWith("sandbox"))
         assertEquals("no-store, no-transform", elsewhere.headers["Cache-Control"])
-        assertEquals(HttpStatusCode.NotFound, client.get("$CONTENT_ORIGIN/a/not-a-uuid/t/index.html").status)
-        assertEquals(HttpStatusCode.NotFound, client.get("$CONTENT_ORIGIN/a/${created.id}/1-1-00/index.html").status)
+        assertEquals(HttpStatusCode.NotFound, client.content("$CONTENT_ORIGIN/a/not-a-uuid/t/index.html").status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            client.content("$CONTENT_ORIGIN/a/${created.id}/1-1-00/index.html").status,
+        )
 
         val linked = client.patch("/api/v1/artifacts/${created.id}") {
             bearerAuth("alice")
@@ -346,8 +359,8 @@ class ArtifactsPostgresTest {
             setBody(UpdateArtifactRequest(access = "link"))
         }.body<ArtifactResponse>()
         val publicUrl = assertNotNull(linked.publicUrl)
-        assertEquals("<h1>page</h1>", client.get(publicUrl).bodyAsText())
-        assertEquals(HttpStatusCode.NotFound, client.get("$CONTENT_ORIGIN/l/unknown/").status)
+        assertEquals("<h1>page</h1>", client.content(publicUrl).bodyAsText())
+        assertEquals(HttpStatusCode.NotFound, client.content("$CONTENT_ORIGIN/l/unknown/").status)
         assertEquals(
             HttpStatusCode.NotFound,
             client.get(publicUrl.replace(CONTENT_ORIGIN, "http://localhost")).status,
@@ -358,7 +371,7 @@ class ArtifactsPostgresTest {
             contentType(ContentType.Application.Json)
             setBody(PublishVersionRequest(listOf(FileDto("README.md", "# Title\n\n<b>x</b>"))))
         }
-        val markdown = client.get(publicUrl)
+        val markdown = client.content(publicUrl)
         assertTrue("<h1>Title</h1>" in markdown.bodyAsText())
         assertTrue("&lt;b&gt;" in markdown.bodyAsText())
         assertTrue(markdown.headers[HttpHeaders.ContentType].orEmpty().startsWith("text/html"))

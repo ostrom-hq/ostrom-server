@@ -160,7 +160,7 @@ internal class ArtifactsMcpServer(private val dependencies: ArtifactsRoutesDepen
     )
 
     private companion object {
-        val JSON = Json { ignoreUnknownKeys = true }
+        private val JSON = Json { ignoreUnknownKeys = true }
         const val PARSE_ERROR = -32700
         const val INVALID_REQUEST = -32600
         const val METHOD_NOT_FOUND = -32601
@@ -168,8 +168,8 @@ internal class ArtifactsMcpServer(private val dependencies: ArtifactsRoutesDepen
         const val MAX_ECHO = 64
         const val LIST_LIMIT = 50
         const val NUL: Byte = 0
-        val VERSIONS = listOf("2025-06-18", "2025-03-26", "2024-11-05")
-        val TOOL_NAMES = setOf("publish", "list", "read", "share")
+        private val VERSIONS = listOf("2025-06-18", "2025-03-26", "2024-11-05")
+        private val TOOL_NAMES = setOf("publish", "list", "read", "share")
 
         const val INSTRUCTIONS = "Publish pages (HTML or Markdown, with their images, CSS, JS and data files) for " +
             "your organization to read. publish returns the address to give the member; publish again with the " +
@@ -179,7 +179,7 @@ internal class ArtifactsMcpServer(private val dependencies: ArtifactsRoutesDepen
             "(relative URLs) or data:/blob: URLs; no forms, frames, cookies or storage. Publish every file the " +
             "page uses. Never put a secret in a page: a file holding a key or a token is refused."
 
-        val TOOLS: JsonArray = buildJsonArray {
+        private val TOOLS: JsonArray = buildJsonArray {
             add(tool("publish", "Publish an artifact, or a new version of one (artifact).", PUBLISH_SCHEMA))
             add(tool("list", "List the artifacts you can read.", buildJsonObject { put("type", "object") }))
             add(tool("read", "Read a file of an artifact (the entry page by default).", READ_SCHEMA))
