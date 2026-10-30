@@ -2,8 +2,10 @@
 package dev.ostrom.server.compiler
 
 import dev.ostrom.core.api.models.NodeRun
+import dev.ostrom.core.api.models.NodeRunOn
 import dev.ostrom.core.api.models.NodeSuggestions
 import dev.ostrom.core.api.models.PackageMode
+import dev.ostrom.core.api.models.RunLocation
 import dev.ostrom.core.api.models.WorkflowNodeKind.AGENT
 import dev.ostrom.core.api.models.WorkflowNodeKind.CHECK
 import dev.ostrom.core.api.models.WorkflowNodeKind.GATE
@@ -135,6 +137,65 @@ class PackageCompilerTest {
         val context = body.body.getValue("context").jsonPrimitive.content
         val line = "\n- Ship; skill ostrom-wf-ship; enforced here: gate \"Ship it\", notify \"push\""
         assertTrue(context.endsWith(line), context)
+    }
+
+    @Test
+    fun everyOptionalFieldOfANodeCompilesSetOrNot() = runTest {
+        // A check that leads to a gate without actions of its own takes the classes the catalog gives that gate.
+        val gate = node(
+            "g",
+            GATE,
+            label = "Approve the merge",
+            detail = "Before main.",
+            suggested = NodeSuggestions(actions = texts("merge")),
+        )
+        val linked = node("c", CHECK, label = "Lint", run = NodeRun(command = "make lint", where = RunLocation.OSTROM))
+        // Its own command wins over the analysis'; a dismissed suggestion or no command at all compiles no script.
+        val own = node(
+            "k",
+            CHECK,
+            label = "Unit",
+            run = NodeRun(command = "make test", on = NodeRunOn(listOf("merge", "commit", "unknown"))),
+            suggested = NodeSuggestions(command = text("npm test")),
+        )
+        val empty = node("e", CHECK, label = "Empty", run = NodeRun(command = ""))
+        val dismissed = node(
+            "d",
+            CHECK,
+            label = "Dismissed",
+            suggested = NodeSuggestions(command = text("npm t"), dismissed = listOf("command")),
+        )
+        val notify = node(
+            "n",
+            NOTIFY,
+            label = "Merged",
+            run = NodeRun(channel = "slack:#rel", on = NodeRunOn(listOf("merge"))),
+            suggested = NodeSuggestions(channel = text("slack:#x")),
+        )
+        val agent = node("a", AGENT, label = "Review", run = NodeRun(instructions = "Read the diff."))
+        val wf = workflow("w", listOf(linked, gate, own, empty, dismissed, notify, agent), edges = chain("c", "g"))
+        val body = compiled(inputs(listOf(wf)))
+
+        val trigger = body.nodes.first { it.id == "c" }.trigger
+        assertEquals("gate", trigger?.from)
+        assertEquals("g", trigger?.gateNodeId)
+        val scripts = body.scripts.associateBy { it.nodeId }
+        assertEquals(setOf("c", "k"), scripts.keys, "no command, no script")
+        assertEquals(RunLocation.OSTROM, scripts.getValue("c").where)
+        assertEquals(RunLocation.WORKSTATION, scripts.getValue("k").where)
+        assertEquals("make test", scripts.getValue("k").command)
+        assertNull(scripts.getValue("k").suggested)
+        val unit = body.nodes.first { it.id == "k" }.trigger
+        assertEquals(listOf("merge", "commit", "unknown"), unit?.classes)
+        assertTrue("\\bgit\\s+commit\\b" in unit?.resolved.orEmpty(), "an extra class brings its patterns")
+        val note = body.notifications.single()
+        assertEquals("slack:#rel", note.channel)
+        assertNull(note.suggestedChannel, "a channel chosen by a person hides the suggestion")
+        val files = body.files.associate { it.path to it.content }
+        assertTrue(files.getValue("agents/ostrom-review.md").contains("Read the diff."))
+        val skill = files.getValue("skills/ostrom-wf-w/SKILL.md")
+        assertTrue(skill.contains("\nBefore main.\n"), skill)
+        assertTrue(skill.contains("\nRead the diff."), skill)
     }
 
     @Test

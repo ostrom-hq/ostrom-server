@@ -40,8 +40,9 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
     fun gateFor(action: ActionClass, repo: String?): CatalogGate? {
         var declared: Triple<Int, Workflow, WorkflowNode>? = null
         for (workflow in workflows) {
-            for (node in gates(workflow).filter { it.actions != null }) {
-                val covered = node.actions.orEmpty().firstOrNull { it.cls == action.cls && covers(it.repos, repo) }
+            for (node in gates(workflow)) {
+                val actions = node.actions ?: continue
+                val covered = actions.firstOrNull { it.cls == action.cls && covers(it.repos, repo) }
                 val score = decidedScore(workflow) + if (covered?.repos.orEmpty().isNotEmpty()) 1 else 0
                 if (covered != null && (declared == null || score > declared.first)) {
                     declared = Triple(score, workflow, node)

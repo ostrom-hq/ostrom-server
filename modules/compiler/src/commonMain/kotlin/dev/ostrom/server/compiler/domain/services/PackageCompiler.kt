@@ -212,7 +212,7 @@ object PackageCompiler {
         val body = buildJsonObject {
             put("format", FORMAT)
             put("compiler", VERSION)
-            put("repo", repo?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("repo", if (repo == null) JsonNull else JsonPrimitive(repo))
             put("server", inputs.serverUrl)
             put("harness", json.encodeToJsonElement(harness))
             put("workflows", json.encodeToJsonElement(workflows))
@@ -320,8 +320,12 @@ object PackageCompiler {
         private fun patternsOf(classes: List<String>, extra: List<String>): List<String> {
             val out = LinkedHashSet(extra)
             for (cls in classes) {
-                val patterns = catalog.firstOrNull { it.action.cls == cls }?.action?.patterns
-                    ?: ActionClasses.extra.firstOrNull { it.cls == cls }?.patterns.orEmpty()
+                val entry = catalog.firstOrNull { it.action.cls == cls }
+                val patterns = if (entry != null) {
+                    entry.action.patterns
+                } else {
+                    ActionClasses.extra.firstOrNull { it.cls == cls }?.patterns.orEmpty()
+                }
                 out += patterns
             }
             return out.toList()
@@ -329,8 +333,9 @@ object PackageCompiler {
 
         private fun compiledTrigger(node: WorkflowNode, workflow: Workflow, suggested: Boolean): CompiledTrigger {
             val trigger = NodeRules.triggerOf(node, workflow, suggested)
-            val fromGate = trigger.from == "gate" && trigger.classes.isEmpty() && trigger.gateNodeId != null
-            val classes = if (fromGate) gateClasses(trigger.gateNodeId.orEmpty()) else trigger.classes
+            // A linked gate (the only trigger with a gate node) without actions of its own: the catalog's classes.
+            val gateNodeId = trigger.gateNodeId
+            val classes = if (gateNodeId != null && trigger.classes.isEmpty()) gateClasses(gateNodeId) else trigger.classes
             val resolved = patternsOf(classes, trigger.patterns)
             return CompiledTrigger(trigger.from, trigger.gateNodeId, classes, trigger.patterns, resolved)
         }
@@ -374,30 +379,36 @@ object PackageCompiler {
             private val approval: ScriptApproval,
         ) {
             private val artifacts = mutableListOf<String>()
+
+            // The trigger of a check or a notification, shown in the package's summary.
             private var trigger: CompiledTrigger? = null
 
             fun compile() {
-                val run = NodeRules.run(node)
-                val suggestedCommand = NodeRules.suggestions(node).command?.takeIf {
-                    node.kind == WorkflowNodeKind.CHECK &&
-                        run.command.isNullOrEmpty() &&
-                        NodeRules.openSuggestion(node, SuggestionField.COMMAND)
-                }
-                if (node.kind == WorkflowNodeKind.CHECK || node.kind == WorkflowNodeKind.NOTIFY) {
-                    trigger = compiledTrigger(node, workflow, suggested = suggestedCommand != null)
-                }
                 when (node.kind) {
-                    WorkflowNodeKind.CHECK ->
-                        compileCheck(run.command?.ifEmpty { null } ?: suggestedCommand?.value, suggestedCommand)
+                    WorkflowNodeKind.CHECK -> compileCheck()
                     WorkflowNodeKind.GATE -> compileGate()
-                    WorkflowNodeKind.NOTIFY -> compileNotify()
+                    WorkflowNodeKind.NOTIFY -> compileNotify(triggered(suggested = false))
                     WorkflowNodeKind.AGENT -> compileAgent()
                     else -> Unit
                 }
             }
 
-            private fun compileCheck(command: String?, suggested: StringSuggestion?) {
-                if (command.isNullOrEmpty()) return
+            private fun triggered(suggested: Boolean): CompiledTrigger =
+                compiledTrigger(node, workflow, suggested).also { trigger = it }
+
+            // A check runs its command, or the analysis' suggestion while nobody wrote one (then in the shadow).
+            private fun compileCheck() {
+                val own = NodeRules.run(node).command.orEmpty()
+                val suggestion = NodeRules.suggestions(node).command
+                val suggested = suggestion?.takeIf {
+                    own.isEmpty() && NodeRules.openSuggestion(node, SuggestionField.COMMAND)
+                }
+                val compiled = triggered(suggested = suggested != null)
+                val command = own.ifEmpty { suggested?.value.orEmpty() }
+                if (command.isNotEmpty()) compileScript(command, suggested, compiled)
+            }
+
+            private fun compileScript(command: String, suggested: StringSuggestion?, on: CompiledTrigger) {
                 val run = NodeRules.run(node)
                 val id = "s-${node.id}"
                 val body = PackageTexts.script(workflow, node, command)
@@ -427,14 +438,14 @@ object PackageCompiler {
                 scripts += script
                 file(script.path, body, PackageFileMode.EXECUTABLE)
                 artifacts += script.path
-                val resolved = trigger?.resolved.orEmpty()
+                val resolved = on.resolved
                 if (resolved.isNotEmpty()) {
                     hook(
                         kind = WorkflowNodeKind.CHECK,
                         event = AgentEvent.PRE_TOOL_USE,
                         tools = listOf("Bash"),
                         patterns = resolved,
-                        classes = trigger?.classes.orEmpty(),
+                        classes = on.classes,
                         why = approved.reason.takeIf { mode == PackageMode.SHADOW },
                         scriptId = id,
                         suggested = suggested?.let { true },
@@ -456,7 +467,7 @@ object PackageCompiler {
                 artifacts += "hook $id (gate: ostrom-gate)"
             }
 
-            private fun compileNotify() {
+            private fun compileNotify(on: CompiledTrigger) {
                 val run = NodeRules.run(node)
                 val channel = run.channel.orEmpty()
                 val suggestedChannel = NodeRules.suggestions(node).channel
@@ -467,7 +478,7 @@ object PackageCompiler {
                     id = id,
                     nodeId = node.id,
                     workflowId = workflow.id,
-                    channel = channel.ifEmpty { node.owner?.ifEmpty { null }?.let { "log:$it" } ?: "log:team" },
+                    channel = channel.ifEmpty { logOf(node.owner.orEmpty()) },
                     message = run.message?.ifEmpty { null }
                         ?: "${node.label}: {dev} ran \"{command}\" in {repo} (session {session}).",
                     mode = mode,
@@ -475,7 +486,7 @@ object PackageCompiler {
                 )
                 notes += note
                 artifacts += "notification $id"
-                val resolved = trigger?.resolved.orEmpty()
+                val resolved = on.resolved
                 if (resolved.isNotEmpty()) {
                     val why = when {
                         channel.isNotEmpty() -> null
@@ -489,12 +500,15 @@ object PackageCompiler {
                         event = AgentEvent.POST_TOOL_USE,
                         tools = listOf("Bash"),
                         patterns = resolved,
-                        classes = trigger?.classes.orEmpty(),
+                        classes = on.classes,
                         why = why,
                         notifyId = id,
                     )
                 }
             }
+
+            // Without a channel, a notification is logged under its owner, or the team's log.
+            private fun logOf(owner: String): String = if (owner.isEmpty()) "log:team" else "log:$owner"
 
             private fun compileAgent() {
                 val claude = "agents/ostrom-${PackageTexts.slug(node.label)}.md"
@@ -511,7 +525,7 @@ object PackageCompiler {
                 tools: List<String>,
                 patterns: List<String>,
                 classes: List<String>,
-                why: String? = null,
+                why: String?,
                 scriptId: String? = null,
                 notifyId: String? = null,
                 suggested: Boolean? = null,

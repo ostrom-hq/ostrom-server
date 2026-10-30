@@ -51,8 +51,8 @@ object NodeProduces {
     // The note of a hook without a trigger: the analysis's suggestion when there is one, else [fallback].
     private fun triggerNote(node: WorkflowNode, workflow: Workflow, fallback: String): String? {
         val none = NodeRules.triggerOf(node, workflow).from == "none"
-        val suggested = NodeRules.suggestions(node).on?.value
-            ?.takeIf { NodeRules.openSuggestion(node, SuggestionField.ON) }
+        val suggested = NodeRules.suggestions(node).on
+            ?.takeIf { NodeRules.openSuggestion(node, SuggestionField.ON) }?.value
         val note = suggested?.let {
             "no trigger set: the analysis suggests ${it.joinToString(", ")}, used only once someone takes it"
         }
@@ -112,8 +112,8 @@ object NodeProduces {
     }
 
     private fun gateProduces(node: WorkflowNode, shadow: Boolean): List<Produced> {
-        val suggested = NodeRules.suggestions(node).actions?.value
-            ?.takeIf { NodeRules.openSuggestion(node, SuggestionField.ACTIONS) }
+        val suggested = NodeRules.suggestions(node).actions
+            ?.takeIf { NodeRules.openSuggestion(node, SuggestionField.ACTIONS) }?.value
         val note = suggested?.let {
             "actions suggested by the analysis (${it.joinToString(", ").ifEmpty { "none" }}): the bridge ignores " +
                 "them until someone confirms"
@@ -131,8 +131,8 @@ object NodeProduces {
 
     private fun notifyProduces(node: WorkflowNode, workflow: Workflow, shadow: Boolean): List<Produced> {
         val channel = NodeRules.run(node).channel.orEmpty()
-        val suggestedChannel = NodeRules.suggestions(node).channel?.value
-            ?.takeIf { NodeRules.openSuggestion(node, SuggestionField.CHANNEL) }
+        val suggestedChannel = NodeRules.suggestions(node).channel
+            ?.takeIf { NodeRules.openSuggestion(node, SuggestionField.CHANNEL) }?.value
         val note = when {
             shadow -> "proposed workflow: logged, never sent"
             channel.isNotEmpty() -> null
