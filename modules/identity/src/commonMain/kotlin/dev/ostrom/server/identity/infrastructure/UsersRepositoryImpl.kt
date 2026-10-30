@@ -112,7 +112,8 @@ private suspend fun upsertEmail(executor: QueryExecutor, userId: Uuid, email: Us
     ).getOrThrow()
 }
 
-private inline fun <T> uniqueGuard(block: () -> T): T = try {
+// Not inline: one copy, whichever repository method fails.
+private suspend fun <T> uniqueGuard(block: suspend () -> T): T = try {
     block()
 } catch (error: SQLError) {
     if (error.kind == SQLError.Kind.UniqueViolation) throw DuplicateIdentityException()
