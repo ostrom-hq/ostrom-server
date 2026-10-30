@@ -265,6 +265,59 @@ class RelayMcpMessageUseCaseTest {
     }
 
     @Test
+    fun oddlyShapedMessagesAreAnsweredWithoutReachingTheUpstream() = runTest {
+        grafana()
+        fun raw(json: String) = Json.parseToJsonElement(json)
+        val numberMethod = relay()(Relay.memberA, "grafana", raw("""{"jsonrpc":"2.0","id":1,"method":5}"""))
+        assertEquals(202, numberMethod.status, "A method that is not a string is no request")
+        val objectMethod = relay()(Relay.memberA, "grafana", raw("""{"jsonrpc":"2.0","id":1,"method":{}}"""))
+        assertEquals(202, objectMethod.status)
+        val oddVersion = relay()(
+            Relay.memberA,
+            "grafana",
+            raw("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":{}}}"""),
+        )
+        assertEquals(
+            "2025-11-25",
+            oddVersion.body!!.jsonObject["result"]!!.jsonObject["protocolVersion"]!!.jsonPrimitive.content,
+        )
+        val noParams = relay()(Relay.memberA, "grafana", raw("""{"jsonrpc":"2.0","id":1,"method":"initialize"}"""))
+        assertEquals(200, noParams.status)
+        val versionObject = relay()(Relay.memberA, "grafana", raw("""{"jsonrpc":{},"id":1,"method":"ping"}"""))
+        assertEquals(400, versionObject.status)
+        for (params in listOf("""{"name":5}""", """{"name":{}}""", """[]""")) {
+            val call = relay()(
+                Relay.memberA,
+                "grafana",
+                raw("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":$params}"""),
+            )
+            assertEquals(-32602, call.body!!.jsonObject["error"]!!.jsonObject["code"]!!.jsonPrimitive.content.toInt())
+        }
+        assertTrue(upstream.targets.isEmpty())
+        assertEquals(3, repository.journal.count { it.outcome == McpOutcome.DENIED && it.tool == null })
+    }
+
+    @Test
+    fun aSharedStdioServerGetsItsSecretVariablesAndSkipsTheMissingOnes() = runTest {
+        val token = Uuid.random()
+        reveal.values[token] = "acme_token_value"
+        val server = Relay.server(transport = McpTransport.STDIO).copy(
+            stdio = dev.ostrom.server.mcprelay.domain.StdioSpec(
+                dev.ostrom.server.mcprelay.domain.StdioLauncher.NPM,
+                "@acme/mcp@1.0.0",
+                secretEnv = mapOf("ACME_TOKEN" to token, "GONE" to Uuid.random()),
+            ),
+        )
+        repository.servers += server
+        repository.assign(server, null)
+        relay()(Relay.memberA, "grafana", message("tools/call", callParams("x")))
+        val target = upstream.targets.single()
+        assertNull(target.credential)
+        assertEquals(setOf("ACME_TOKEN"), target.secretEnv.keys, "A secret deleted since is left out")
+        assertEquals("${server.orgId}:${server.id}:1", target.processKey)
+    }
+
+    @Test
     fun aToolErrorIsJournaledAsSuch() = runTest {
         grafana()
         upstream.call = UpstreamResult.Ok(buildJsonObject { put("isError", true) }, 2)

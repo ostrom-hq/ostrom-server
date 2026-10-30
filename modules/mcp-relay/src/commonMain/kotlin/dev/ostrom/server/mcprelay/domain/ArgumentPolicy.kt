@@ -55,7 +55,10 @@ data class ArgumentCondition(val path: String, val operator: ConditionOperator, 
             ConditionOperator.NOT_EQUALS -> text != value
             ConditionOperator.PREFIX -> text != null && text.startsWith(requireNotNull(value))
             ConditionOperator.CONTAINS -> text != null && text.contains(requireNotNull(value), ignoreCase = true)
-            ConditionOperator.MATCHES -> text != null && requireNotNull(regex).containsMatchIn(text)
+            // Text too long to match in bounded time counts as matching: a deny still applies to what it cannot read.
+            ConditionOperator.MATCHES ->
+                text != null &&
+                    (text.length > MAX_MATCHED_LENGTH || requireNotNull(regex).containsMatchIn(text))
         }
     }
 
@@ -72,6 +75,12 @@ data class ArgumentCondition(val path: String, val operator: ConditionOperator, 
         is JsonNull -> null
         is JsonPrimitive -> content
         else -> toString()
+    }
+
+    /** The bounds of a condition. */
+    companion object {
+        /** The longest argument a `matches` pattern reads; a longer one counts as matching (fail closed). */
+        const val MAX_MATCHED_LENGTH: Int = 8192
     }
 }
 

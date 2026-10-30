@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets.domain
 
+import kotlin.uuid.Uuid
+
 /**
  * Seals values at rest. The [context] is authenticated with the ciphertext (AES-GCM associated data): an envelope
  * copied to another row, org or member does not open.
@@ -28,4 +30,4 @@ interface SecretCipher {
 }
 
 /** The context a stored secret is sealed with. */
-fun secretContext(orgId: Any, secretId: Any): String = "secret:$orgId:$secretId"
+fun secretContext(orgId: Uuid, secretId: Uuid): String = "secret:$orgId:$secretId"

@@ -80,6 +80,9 @@ val OrgsMigrations = listOf(
 - **Every table starts with the module name** (`orgs_…`, `instance_…`).
 - An applied migration is never edited (its checksum is verified at each start and the server refuses to start);
   add a new version instead.
+- PostgreSQL 15 or later: unique indexes use `NULLS NOT DISTINCT`, and the first start creates the `ostrom_tenant`
+  role of row-level security, so the server's database user needs `CREATEROLE` (or an administrator creates the role
+  first).
 - Plain PostgreSQL. Statements are split on `;`. **No `::type` casts** (write `CAST(x AS type)`): the driver reads
   `:name` as a named parameter.
 - Modules migrate in the order of `serverModules()`: a module whose tables reference another module's tables comes

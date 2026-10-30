@@ -206,14 +206,28 @@ class RelayMcpMessageUseCaseImpl(
         }
         val call = RelayedOperation(caller, effective, McpOperation.CALL, tool)
         val policy = ArgumentPolicy.decide(repository.listPolicies(caller.orgId, effective.server.id), tool, arguments)
-        return result(id, if (policy == null) relayCall(call, arguments) else refuse(call, arguments, policy))
+        return result(
+            id,
+            if (policy ==
+                null
+            ) {
+                relayCall(call, tool, arguments)
+            } else {
+                refuse(call, tool, arguments, policy)
+            },
+        )
     }
 
-    private suspend fun refuse(call: RelayedOperation, arguments: JsonObject, policy: ArgumentPolicy): JsonObject {
+    private suspend fun refuse(
+        call: RelayedOperation,
+        tool: String,
+        arguments: JsonObject,
+        policy: ArgumentPolicy,
+    ): JsonObject {
         val text = when (policy.effect) {
             PolicyEffect.DENY -> "Refused by the organization's policy: ${policy.message}"
             PolicyEffect.REQUIRE_APPROVAL -> {
-                val link = approvals.request(call.caller, call.effective.server, call.tool.orEmpty(), arguments, policy)
+                val link = approvals.request(call.caller, call.effective.server, tool, arguments, policy)
                 "This call needs a human approval: ${policy.message}" +
                     (link?.let { " Approve it here, then retry: $it" } ?: "")
             }
@@ -223,9 +237,9 @@ class RelayMcpMessageUseCaseImpl(
         return toolError(text)
     }
 
-    private suspend fun relayCall(call: RelayedOperation, arguments: JsonObject): JsonObject {
+    private suspend fun relayCall(call: RelayedOperation, tool: String, arguments: JsonObject): JsonObject {
         val outcome = operate(call, { value, secrets -> value.scrubbed(secrets) as JsonObject }) { target ->
-            upstream.callTool(target, call.tool.orEmpty(), arguments, deadlines.call)
+            upstream.callTool(target, tool, arguments, deadlines.call)
         }
         return when (outcome) {
             is UpstreamResult.Ok -> outcome.value
