@@ -251,7 +251,7 @@ class ImportPostgresTest {
                         "grafana",
                         "b",
                         url = "https://b.example.com/mcp",
-                        sharedSecret = "b-token",
+                        sharedSecret = "b-token-value",
                     ),
                 ),
             )
