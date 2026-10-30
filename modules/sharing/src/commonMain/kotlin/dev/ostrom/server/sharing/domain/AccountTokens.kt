@@ -6,6 +6,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -28,6 +29,10 @@ class AccountTokens(
     private val mutex = Mutex()
     private val locks = mutableMapOf<Uuid, Mutex>()
 
+    // When the provider last could not be reached, per account: no refresh is tried again before UNAVAILABLE_BACKOFF,
+    // so a provider that is down does not hold every lease of the account for its timeout.
+    private val unavailableUntil = mutableMapOf<Uuid, Instant>()
+
     /**
      * Fresh tokens of the account.
      *
@@ -36,9 +41,11 @@ class AccountTokens(
      */
     suspend fun fresh(account: SharedAccount): AccountCredentials? = locked(account) {
         val stored = storedTokens(account)
+        val now = clock.now()
         when {
             stored == null -> retire(account)
-            stored.expiresAt > clock.now() + REFRESH_MARGIN -> stored
+            stored.expiresAt > now + REFRESH_MARGIN -> stored
+            (unavailableUntil[account.id] ?: now) > now -> stored.takeIf { it.expiresAt > now }
             else -> renew(account, stored)
         }
     }
@@ -64,14 +71,25 @@ class AccountTokens(
     private suspend fun renew(account: SharedAccount, stored: AccountCredentials): AccountCredentials? =
         when (val result = refresher.refresh(account.provider, stored)) {
             is RefreshResult.Renewed -> {
+                unavailableUntil.remove(account.id)
                 val sealed = cipher.seal(result.credentials, account.orgId, account.id)
                 accounts.putEnvelope(account.orgId, account.id, sealed)
                 result.credentials
             }
-            RefreshResult.Revoked -> retire(account)
+            RefreshResult.Revoked -> rotatedMeanwhile(account, stored) ?: retire(account)
             // Still valid for a few minutes: serve with it; expired: let the provider's 401 speak.
-            RefreshResult.Unavailable -> stored.takeIf { it.expiresAt > clock.now() }
+            RefreshResult.Unavailable -> {
+                unavailableUntil[account.id] = clock.now() + UNAVAILABLE_BACKOFF
+                stored.takeIf { it.expiresAt > clock.now() }
+            }
         }
+
+    /**
+     * The tokens another replica (or the owner's CLI, by sharing again) stored while this one refreshed: the provider
+     * rotates refresh tokens, so the old one is refused although the account is healthy.
+     */
+    private suspend fun rotatedMeanwhile(account: SharedAccount, used: AccountCredentials): AccountCredentials? =
+        storedTokens(account)?.takeIf { it.refreshToken != used.refreshToken }
 
     private suspend fun retire(account: SharedAccount): AccountCredentials? {
         accounts.setStatus(account.orgId, account.id, AccountStatus.RECONNECT_REQUIRED)
@@ -82,5 +100,8 @@ class AccountTokens(
     companion object {
         /** Tokens are renewed this long before they expire. */
         val REFRESH_MARGIN: Duration = 5.minutes
+
+        /** No refresh is tried again this long after the provider could not be reached. */
+        val UNAVAILABLE_BACKOFF: Duration = 30.seconds
     }
 }

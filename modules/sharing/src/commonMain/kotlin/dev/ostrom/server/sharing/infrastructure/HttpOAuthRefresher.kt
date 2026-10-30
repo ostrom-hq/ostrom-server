@@ -59,7 +59,9 @@ class HttpOAuthRefresher(
                         val body = response.bodyAsChannel().readRemaining(MAX_BODY).readByteArray().decodeToString()
                         parse(body, credentials)
                     }
-                    in REVOKED -> RefreshResult.Revoked
+                    in REFUSED -> refused(
+                        response.bodyAsChannel().readRemaining(MAX_BODY).readByteArray().decodeToString(),
+                    )
                     else -> RefreshResult.Unavailable
                 }
             }
@@ -68,6 +70,19 @@ class HttpOAuthRefresher(
         throw error
     } catch (_: Exception) {
         RefreshResult.Unavailable
+    }
+
+    /**
+     * Only `invalid_grant` says the refresh token is dead (RFC 6749 § 5.2); any other refusal (`invalid_request`,
+     * `invalid_client`, an unreadable body) is ours or the provider's, and must not make the owner share again.
+     */
+    private fun refused(body: String): RefreshResult {
+        val error = try {
+            (Json.parseToJsonElement(body) as? JsonObject)?.string("error")
+        } catch (_: SerializationException) {
+            null
+        }
+        return if (error == "invalid_grant") RefreshResult.Revoked else RefreshResult.Unavailable
     }
 
     private fun parse(body: String, previous: AccountCredentials): RefreshResult {
@@ -107,6 +122,6 @@ class HttpOAuthRefresher(
 
         private const val MAX_BODY = 256L * 1024
         private const val MAX_EXPIRES_IN = 31_536_000L
-        private val REVOKED = setOf(HttpStatusCode.BadRequest, HttpStatusCode.Unauthorized)
+        private val REFUSED = setOf(HttpStatusCode.BadRequest, HttpStatusCode.Unauthorized)
     }
 }

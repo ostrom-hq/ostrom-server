@@ -7,12 +7,17 @@ import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.AccountStatus
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
+import dev.ostrom.server.sharing.domain.AccountTokens
 import dev.ostrom.server.sharing.domain.LeaseResult
 import dev.ostrom.server.sharing.domain.NoAccountSpendReader
 import dev.ostrom.server.sharing.domain.QuotaWindow
 import dev.ostrom.server.sharing.domain.RefreshResult
 import dev.ostrom.server.sharing.domain.SharedAccount
 import dev.ostrom.server.sharing.domain.SharedAccountPool
+import dev.ostrom.server.sharing.domain.UNKNOWN_RESET
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -280,7 +285,75 @@ class SharedAccountPoolTest {
         assertEquals(budgeted.id, assertIs<LeaseResult.Leased>(lease()).lease.account.id)
         repository.accounts.removeAll { it.id == budgeted.id }
         val refusal = assertIs<LeaseResult.Refused>(lease()).refusal
-        assertNull(refusal.retryAt, "A full window that names no reset gives no retry time")
+        assertEquals(clock.now() + UNKNOWN_RESET, refusal.retryAt, "A full window without a reset is believed 5 min")
+        clock.advance(UNKNOWN_RESET)
+        assertEquals(
+            unknownReset.id,
+            assertIs<LeaseResult.Leased>(lease()).lease.account.id,
+            "Then the account is tried again: a missing reset header never closes it for good",
+        )
+    }
+
+    @Test
+    fun anUnreachableProviderIsNotAskedAgainForThirtySeconds() = runTest {
+        account("soon", expiresAt = clock.now() + 2.minutes)
+        refresher.result = RefreshResult.Unavailable
+        val pool = pool()
+        repeat(3) {
+            assertIs<LeaseResult.Leased>(
+                pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
+            ).lease.release()
+        }
+        assertEquals(1, refresher.calls, "One slow refresh, not one per lease")
+        clock.advance(AccountTokens.UNAVAILABLE_BACKOFF)
+        refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))
+        val renewed = assertIs<LeaseResult.Leased>(
+            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
+        ).lease
+        assertEquals("access-new", renewed.credentials.accessToken)
+        assertEquals(2, refresher.calls)
+        clock.advance(10.hours)
+        refresher.result = RefreshResult.Unavailable
+        assertIs<LeaseResult.Refused>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
+        assertIs<LeaseResult.Refused>(
+            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
+            "Expired during the back-off: not served, not retired",
+        )
+        assertEquals(3, refresher.calls)
+        assertEquals(AccountStatus.READY, repository.accounts.single().status)
+    }
+
+    @Test
+    fun aRefreshTokenRotatedByAnotherReplicaIsUsedInsteadOfRetiringTheAccount() = runTest {
+        val account = account("a", expiresAt = clock.now())
+        val rotated = AccountCredentials("access-other", "refresh-other", clock.now() + 8.hours)
+        refresher.result = RefreshResult.Revoked
+        refresher.onRefresh = {
+            // Another replica refreshed first and stored the rotated pair; ours is refused as already used.
+            repository.envelopes[account.id] = cipher.seal(rotated, Sharing.orgA, account.id)
+        }
+        assertEquals("access-other", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
+        assertEquals(AccountStatus.READY, repository.accounts.single().status)
+    }
+
+    @Test
+    fun aReleaseDuringCancellationStillGivesTheSlotBack() = runTest {
+        // The release runs in the `finally` of a cancelled request: it must not be cut short there.
+        val account = account("a", limits = AccountLimits(maxConcurrent = 1))
+        val pool = pool()
+        val leased = assertIs<LeaseResult.Leased>(
+            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
+        ).lease
+        val job = launch {
+            try {
+                awaitCancellation()
+            } finally {
+                leased.release()
+            }
+        }
+        testScheduler.runCurrent()
+        job.cancelAndJoin()
+        assertEquals(0, pool.inFlight(account.id))
     }
 
     @Test

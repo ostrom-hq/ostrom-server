@@ -3,6 +3,7 @@ package dev.ostrom.server.sharing.presentation
 
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * `/api/v1/accounts`: the shared subscription accounts of the caller's org (from the token), as in ostrom-core's
@@ -57,7 +58,8 @@ data class UpdateAccountRequest(
     val priority: Int? = null,
     val paused: Boolean? = null,
     val sharedWith: List<String>? = null,
-    val limits: AccountLimitsDto? = null,
+    /** The limits to change: a key present replaces the current value (`null` clears a budget), an absent one stays. */
+    val limits: JsonObject? = null,
 )
 
 /** A provider window. */

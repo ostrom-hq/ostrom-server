@@ -34,11 +34,11 @@ class AccountLease internal constructor(
      */
     suspend fun observe(status: Int, headers: Map<String, String>) = pool.observe(account, status, headers)
 
-    /** Gives the slot back; idempotent. */
+    /** Gives the slot back; idempotent, and done even when the request is being cancelled. */
     suspend fun release() {
         if (released) return
         released = true
-        pool.release(account.id)
+        withContext(NonCancellable) { pool.release(account.id) }
     }
 }
 
@@ -161,7 +161,7 @@ class SharedAccountPool(
         val budget = account.limits.monthlyBudgetMicros
         return when {
             cooling != null -> Standing.Closed(cooling)
-            full.isNotEmpty() -> Standing.Closed(full.mapNotNull { it.resetsAt }.maxOrNull())
+            full.isNotEmpty() -> Standing.Closed(full.maxOf { it.endsAt })
             budget != null && spend.spentMicros(account.id, monthStart) >= budget -> Standing.Closed(null)
             else -> Standing.Open(current.maxOfOrNull { it.utilization } ?: 0.0)
         }
@@ -183,7 +183,12 @@ class SharedAccountPool(
 
     private fun remember(sessionKey: String, accountId: Uuid, now: Instant) {
         affinity[sessionKey] = accountId to now + AFFINITY
-        if (affinity.size > MAX_AFFINITY) affinity.entries.removeAll { it.value.second <= now }
+        if (affinity.size > MAX_AFFINITY) {
+            affinity.entries.removeAll { it.value.second <= now }
+            // Still full of live sessions: forget them all (they only lose their prompt cache) rather than scan the
+            // whole map under the pool's lock at every new session.
+            if (affinity.size > MAX_AFFINITY) affinity.clear()
+        }
     }
 
     private suspend fun serve(account: SharedAccount, tried: MutableSet<Uuid>): LeaseResult? {
