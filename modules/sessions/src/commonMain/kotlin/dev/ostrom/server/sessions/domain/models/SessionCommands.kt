@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions.domain.models
 
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 
 /**
@@ -53,26 +54,46 @@ data class EndSession(
  */
 data class Reopened(val session: Session, val reopened: Boolean)
 
+/**
+ * How a segment opens.
+ *
+ * @property source Why it opens (`reopened: …`), or null for a plain start.
+ * @property mayReplace Whether the caller may close another launch's live open segment: a person may, an agent token
+ *   may not (S2-48).
+ */
+data class Opening(val source: String?, val mayReplace: Boolean) {
+    /** The openings. */
+    companion object {
+        /**
+         * @param actor The caller.
+         * @param source Why it opens.
+         * @return The opening of [actor].
+         */
+        fun of(actor: GateActor, source: String?): Opening = Opening(source, actor.kind != ActorKind.AGENT_SESSION)
+    }
+}
+
 /** Who may read and write a session. */
 object SessionAccess {
     /**
-     * The person behind a caller: a device or agent token acts for its person.
+     * The person behind a caller: a device or agent token acts for its person, and a credential without one acts for
+     * nobody (S2-48, never its own id).
      *
      * @param actor The caller.
      * @return The person's id.
      */
-    fun person(actor: GateActor): String = actor.personId ?: actor.id
+    fun person(actor: GateActor): String = actor.personId ?: throw NotYourSessionException()
 
     /**
      * True when the caller may read the session: any member of its organization, but an agent token only reads its
-     * own launch's sessions (audit A12).
+     * own launch's sessions (audit A12), and none without a launch (S2-48).
      *
      * @param actor The caller.
      * @param session The session.
      * @return Whether it may read it.
      */
     fun canRead(actor: GateActor, session: Session): Boolean =
-        actor.launchId == null || actor.launchId == session.launchId
+        if (actor.kind == ActorKind.AGENT_SESSION) actor.launchId == session.launchId else true
 
     /**
      * Refuses a write by anyone but the session's person, or by an agent token of another launch.
