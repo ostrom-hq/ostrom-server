@@ -187,6 +187,7 @@ class RelayMcpMessageUseCaseImpl(
         val started = clock.now()
         val server = effective.server
         if (!limiter.acquire(caller.orgId, caller.memberId, server.id)) {
+            journal(caller, effective, operation, tool, McpOutcome.RATE_LIMITED, started, 0)
             return UpstreamResult.Failure(McpOutcome.RATE_LIMITED, "Too many MCP operations on ${server.name} right now. Retry shortly.")
         }
         var outcome = McpOutcome.CANCELLED
