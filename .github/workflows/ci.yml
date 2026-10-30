@@ -139,7 +139,7 @@ jobs:
       # nothing outside ee/ may name it (app/build.gradle.kts generates the only reference, from ee/ itself).
       - name: AGPL build without ee/
         run: |
-          if grep -rn "dev\.ostrom\.server\.ee\." --include='*.kt' --include='*.kts' app kernel modules testing; then
+          if grep -rn "dev\.ostrom\.server\.ee\." --include='*.kt' --include='*.kts' --exclude-dir=build app kernel modules testing; then
             echo "Code outside ee/ references the enterprise modules." >&2
             exit 1
           fi
