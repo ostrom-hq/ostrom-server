@@ -118,14 +118,8 @@ class OrgsPostgresTest {
             assertNull(members.findByUser(acme.id, ada.id))
             assertNull(invitations.findLiveByTokenHash("hash-1", now))
             // Its free claim is released.
-            assertNull(
-                orgs.create(
-                    org("acme-2", "domain:acme.com"),
-                    member(acme, ada, OrgRole.OWNER).copy(orgId = Uuid.random()),
-                ) {
-                    false
-                }
-            )
+            val acme2 = org("acme-2", "domain:acme.com")
+            assertNull(orgs.create(acme2, member(acme2, ada, OrgRole.OWNER)) { false })
         }
 
     @Test

@@ -403,8 +403,9 @@ class OrgsRoutesPostgresTest {
         serverTest(modules, overrides) { server ->
             val (ada, adaSession) = server.signIn("ada")
             val acme = server.createOrg(adaSession, "Acme").body<OrgResponse>()
-            val (_, mallory) = server.signIn("mallory")
-            server.createOrg(mallory, "Evil")
+            // Another company: the free plan holds one team per domain, so not example.com again.
+            val (_, mallory) = server.signIn("mallory", "mallory@evil.test")
+            assertEquals(HttpStatusCode.Created, server.createOrg(mallory, "Evil").status)
 
             // Every org route answers a non-member as if the organization did not exist.
             val probes =
