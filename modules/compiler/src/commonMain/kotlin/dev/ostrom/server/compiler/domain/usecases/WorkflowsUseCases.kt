@@ -155,7 +155,7 @@ class WorkflowsUseCaseImpl(
     private fun decode(raw: JsonObject): Workflow = try {
         PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), raw)
     } catch (e: IllegalArgumentException) {
-        throw InvalidWorkflowException("Invalid workflow: ${e.message.orEmpty().take(MAX_ERROR)}", e)
+        throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
     }
 
     private suspend fun record(
