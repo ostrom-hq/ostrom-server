@@ -2,6 +2,8 @@ package dev.ostrom.server.sessions.presentation
 
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.presentation.GateScopes
+import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -58,43 +60,64 @@ data class SessionsRoutesDependencies(
 fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies) = with(dependencies) {
     authenticated {
         post<SessionsApi> {
-            val actor = call.actor(actors)
+            val actor = call.actor(actors, SessionScopes.writing)
             val body = call.receive<StartSessionRequest>()
             call.respond(get.view(start(actor, body.toStart())).toResponse())
         }
         get<SessionsApi> { params ->
-            val actor = call.actor(actors)
+            val actor = call.actor(actors, SessionScopes.reading)
             val limit = (params.limit ?: PAGE).coerceIn(1, SessionQuery.PAGE)
             val query = SessionQuery(params.repo, params.dev, params.open, params.before, null, limit)
             val items = list(actor, query)
             val next = if (items.size == query.limit) items.last().id else null
             call.respond(SessionsPage(items.map { it.toDto() }, next))
         }
-        get<SessionsApi.Id> { params -> call.respond(get(call.actor(actors), params.id).toResponse()) }
+        get<SessionsApi.Id> { params ->
+            call.respond(get(call.actor(actors, SessionScopes.reading), params.id).toResponse())
+        }
         post<SessionsApi.Id.Alive> { params ->
-            val session = alive(call.actor(actors), params.parent.id)
+            val session = alive(call.actor(actors), SessionScopes.writing, params.parent.id)
             call.respond(session.toDto())
         }
         post<SessionsApi.Id.End> { params ->
             val body = call.receive<EndSessionRequest>()
             val end = EndSession(body.tools, body.model, body.costUsd, body.source, body.exitCode)
-            call.respond(get.view(end(call.actor(actors), params.parent.id, end)).toResponse())
+            call.respond(get.view(end(call.actor(actors), SessionScopes.writing, params.parent.id, end)).toResponse())
         }
         post<SessionsApi.Id.Reopen> { params ->
-            val reopened = reopen(call.actor(actors), params.parent.id)
+            val reopened = reopen(call.actor(actors), SessionScopes.writing, params.parent.id)
             call.respond(get.view(reopened.session).toResponse(reopened.reopened))
         }
         post<SessionsApi.Id.Seen> { params ->
             val body = call.receive<SeenRequest>()
-            seen(call.actor(actors), params.parent.id, body.kind, body.name, body.via)
+            seen(call.actor(actors), SessionScopes.writing, params.parent.id, body.kind, body.name, body.via)
             call.respond(HttpStatusCode.NoContent)
         }
     }
 }
 
-private suspend fun ApplicationCall.actor(actors: GateActorResolver): GateActor =
-    actors.resolve(requirePrincipal())
+// The scope first (SECURITY-AUDIT S2-03): a credential that may not use the route learns nothing about its org.
+private suspend fun ApplicationCall.actor(actors: GateActorResolver, accepted: Set<String>): GateActor {
+    val principal = requirePrincipal()
+    principal.requireAnyScope(accepted)
+    return actors.resolve(principal)
         ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+}
+
+/** The scopes the sessions routes require; a user's browser session (`user:*`) holds them all. */
+object SessionScopes {
+    /** Reads sessions. */
+    const val READ: String = "sessions:read"
+
+    /** Starts, keeps alive, reopens and ends sessions (the CLI for its user). */
+    const val WRITE: String = "sessions:write"
+
+    /** Who changes a session: the launcher's CLI token and the agent token of the session itself. */
+    val writing: Set<String> = setOf(GateScopes.ALL_USER, GateScopes.AGENT_SESSION, WRITE)
+
+    /** Who reads one. */
+    val reading: Set<String> = setOf(GateScopes.ALL_USER, GateScopes.AGENT_SESSION, WRITE, READ)
+}
 
 private fun StartSessionRequest.toStart() =
     StartSession(id, launchId, repo, realRepo, cwd, agent, harnessVersion, packageDigest, model)
