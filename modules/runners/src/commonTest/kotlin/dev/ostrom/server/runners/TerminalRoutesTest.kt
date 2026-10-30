@@ -67,9 +67,9 @@ class TerminalRoutesTest {
         repository.createWithinCap(running, 5)
         val ws: HttpClient = createClient { install(WebSockets) }
 
-        ws.webSocket("/v1/runner/terminal?sessionId=${running.id}&epoch=2", request = { bearerAuth(token) }) {
+        ws.webSocket("/api/v1/cloud/runner/terminal?sessionId=${running.id}&epoch=2", request = { bearerAuth(token) }) {
             val runner = this
-            ws.webSocket("/v1/cloud/sessions/${running.id}/terminal", request = { bearerAuth("alice") }) {
+            ws.webSocket("/api/v1/cloud/sessions/${running.id}/terminal", request = { bearerAuth("alice") }) {
                 assertEquals(TerminalControl.Runner(true), nextControl())
                 runner.send(Frame.Binary(true, "$ ".encodeToByteArray()))
                 assertEquals("$ ", (incoming.receive() as Frame.Binary).readBytes().decodeToString())
@@ -85,7 +85,7 @@ class TerminalRoutesTest {
                 assertEquals(TerminalCloseCodes.BAD_REQUEST, closeCode())
             }
             // The scrollback greets the next member.
-            ws.webSocket("/v1/cloud/sessions/${running.id}/terminal", request = { bearerAuth("alice") }) {
+            ws.webSocket("/api/v1/cloud/sessions/${running.id}/terminal", request = { bearerAuth("alice") }) {
                 assertEquals("$ ", (incoming.receive() as Frame.Binary).readBytes().decodeToString())
                 assertEquals(TerminalControl.Runner(true), nextControl())
             }
@@ -98,18 +98,18 @@ class TerminalRoutesTest {
     fun aBrowserOpensTheTerminalWithASingleUseTicket() = serverTest(listOf(RunnersModule), identities) { server ->
         val live = session(state = SessionState.RUNNING, createdAt = t0)
         server.koin.get<CloudSessionsRepository>().createWithinCap(live, 5)
-        val ticket = server.client.post("/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("alice") }.body<TerminalTicketResponse>()
+        val ticket = server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("alice") }.body<TerminalTicketResponse>()
         val ws = createClient { install(WebSockets) }
 
-        ws.webSocket("/v1/cloud/sessions/${live.id}/terminal?ticket=${ticket.ticket}") {
+        ws.webSocket("/api/v1/cloud/sessions/${live.id}/terminal?ticket=${ticket.ticket}") {
             assertEquals(TerminalControl.Runner(false), nextControl())
         }
-        ws.webSocket("/v1/cloud/sessions/${live.id}/terminal?ticket=${ticket.ticket}") {
+        ws.webSocket("/api/v1/cloud/sessions/${live.id}/terminal?ticket=${ticket.ticket}") {
             assertEquals(TerminalCloseCodes.UNAUTHORIZED, closeCode())
         }
-        assertEquals(HttpStatusCode.Forbidden, server.client.post("/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("reader") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.post("/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("carol") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.post("/v1/cloud/sessions/nope/terminal/ticket") { bearerAuth("alice") }.status)
+        assertEquals(HttpStatusCode.Forbidden, server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("reader") }.status)
+        assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/cloud/sessions/${live.id}/terminal/ticket") { bearerAuth("carol") }.status)
+        assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/cloud/sessions/nope/terminal/ticket") { bearerAuth("alice") }.status)
     }
 
     @Test
@@ -126,13 +126,13 @@ class TerminalRoutesTest {
             ws.webSocket(path, request = { if (token != null) header(HttpHeaders.Authorization, token) }) { code = closeCode() }
             return code
         }
-        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/v1/cloud/sessions/${live.id}/terminal", null))
-        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/v1/cloud/sessions/${live.id}/terminal", "Bearer unknown"))
-        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/v1/cloud/sessions/${live.id}/terminal", "alice"))
-        assertEquals(TerminalCloseCodes.FORBIDDEN, code("/v1/cloud/sessions/${live.id}/terminal", "Bearer reader"))
-        assertEquals(TerminalCloseCodes.NOT_FOUND, code("/v1/cloud/sessions/${live.id}/terminal", "Bearer carol"))
-        assertEquals(TerminalCloseCodes.NOT_FOUND, code("/v1/cloud/sessions/nope/terminal", "Bearer alice"))
-        assertEquals(TerminalCloseCodes.CONFLICT, code("/v1/cloud/sessions/${over.id}/terminal", "Bearer alice"))
+        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/api/v1/cloud/sessions/${live.id}/terminal", null))
+        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/api/v1/cloud/sessions/${live.id}/terminal", "Bearer unknown"))
+        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("/api/v1/cloud/sessions/${live.id}/terminal", "alice"))
+        assertEquals(TerminalCloseCodes.FORBIDDEN, code("/api/v1/cloud/sessions/${live.id}/terminal", "Bearer reader"))
+        assertEquals(TerminalCloseCodes.NOT_FOUND, code("/api/v1/cloud/sessions/${live.id}/terminal", "Bearer carol"))
+        assertEquals(TerminalCloseCodes.NOT_FOUND, code("/api/v1/cloud/sessions/nope/terminal", "Bearer alice"))
+        assertEquals(TerminalCloseCodes.CONFLICT, code("/api/v1/cloud/sessions/${over.id}/terminal", "Bearer alice"))
     }
 
     @Test
@@ -146,7 +146,7 @@ class TerminalRoutesTest {
 
         suspend fun code(query: String, auth: String?): Short? {
             var code: Short? = null
-            ws.webSocket("/v1/runner/terminal$query", request = { if (auth != null) header(HttpHeaders.Authorization, auth) }) { code = closeCode() }
+            ws.webSocket("/api/v1/cloud/runner/terminal$query", request = { if (auth != null) header(HttpHeaders.Authorization, auth) }) { code = closeCode() }
             return code
         }
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=${running.id}&epoch=2", null))

@@ -41,7 +41,7 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
         class Resume(val parent: Id)
 
         /**
-         * `/v1/cloud/sessions/{id}/terminal` (the WebSocket itself is a plain route).
+         * `/api/v1/cloud/sessions/{id}/terminal` (the WebSocket itself is a plain route).
          *
          * @property parent The session.
          */
@@ -49,7 +49,7 @@ class CloudSessionsApi(val before: String? = null, val limit: Int? = null) {
         @Resource("terminal")
         class Terminal(val parent: Id) {
             /**
-             * `POST /v1/cloud/sessions/{id}/terminal/ticket`.
+             * `POST /api/v1/cloud/sessions/{id}/terminal/ticket`.
              *
              * @property parent The terminal.
              */
