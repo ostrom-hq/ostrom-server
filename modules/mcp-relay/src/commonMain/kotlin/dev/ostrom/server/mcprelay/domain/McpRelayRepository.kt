@@ -75,12 +75,12 @@ interface McpRelayRepository {
     suspend fun record(call: McpCall)
 
     /**
-     * The org's journal, newest first, before [before] (keyset), at most [limit], of one server or member when
-     * given.
+     * The org's journal, newest first (by start, then id), after the [before] cursor (keyset), at most [limit], of
+     * one server or member when given.
      */
     suspend fun listCalls(
         orgId: Uuid,
-        before: Instant?,
+        before: McpCallCursor?,
         limit: Int,
         server: String? = null,
         memberId: Uuid? = null,

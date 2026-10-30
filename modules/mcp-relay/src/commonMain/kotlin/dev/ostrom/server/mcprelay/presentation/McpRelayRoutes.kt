@@ -6,6 +6,7 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
+import dev.ostrom.server.mcprelay.domain.McpCallCursor
 import dev.ostrom.server.mcprelay.domain.McpSecretNotFoundException
 import dev.ostrom.server.mcprelay.domain.McpServerNotFoundException
 import dev.ostrom.server.mcprelay.domain.McpSettings
@@ -158,19 +159,13 @@ private fun Route.journalRoutes(dependencies: McpRelayRoutesDependencies) = with
     }
     get<McpApi.Calls> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_READ)
-        val before = params.before?.let {
-            try {
-                Instant.parse(it)
-            } catch (_: IllegalArgumentException) {
-                throw OstromException(ErrorKind.INVALID_REQUEST, "before is not an ISO 8601 instant.")
-            }
-        }
+        val before = params.before?.toCallCursor()
         val member = params.dev?.let {
             Uuid.parseOrNull(it) ?: throw OstromException(ErrorKind.INVALID_REQUEST, "dev is not a member id.")
         }
         val limit = params.limit.coerceIn(1, MAX_CALLS_PAGE)
         val calls = listCalls(caller, before, limit, params.server, member)
-        val next = if (calls.size == limit) calls.last().startedAt.toString() else null
+        val next = if (calls.size == limit) calls.last().let { "${it.startedAt}/${it.id}" } else null
         call.respond(McpCallsPage(calls.map { it.toDto() }, next))
     }
     get<McpApi.Usage> { params ->
@@ -222,5 +217,20 @@ private suspend fun McpRelayRoutesDependencies.serverId(caller: Caller, name: St
     val server = listServers(caller).firstOrNull { it.name == name } ?: throw McpServerNotFoundException()
     return server.id
 }
+
+/** `<instant>` (every call before it) or `<instant>/<id>`, the `next` of a page. */
+private fun String.toCallCursor(): McpCallCursor {
+    val id = substringAfter('/', missingDelimiterValue = "")
+    val startedAt = try {
+        Instant.parse(substringBefore('/'))
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+    val cursorId = if (id.isEmpty()) null else Uuid.parseOrNull(id) ?: invalidCursor()
+    return McpCallCursor(startedAt ?: invalidCursor(), cursorId)
+}
+
+private fun invalidCursor(): Nothing =
+    throw OstromException(ErrorKind.INVALID_REQUEST, "before is an ISO 8601 instant or the next of a page.")
 
 private fun String.toMemberId(): Uuid? = if (this == "all") null else toIdOr(::McpServerNotFoundException)
