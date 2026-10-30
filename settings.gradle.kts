@@ -14,6 +14,8 @@ pluginManagement {
 dependencyResolutionManagement {
     repositories {
         mavenCentral()
+        // Probe only: ostrom-core published to the runner's Maven local repository from source.
+        mavenLocal { content { includeGroup("dev.ostrom") } }
         // ostrom-core is published to GitHub Packages (private): token from GITHUB_ACTOR / GITHUB_TOKEN in CI,
         // or gpr.user / gpr.key in ~/.gradle/gradle.properties locally. Only dev.ostrom is looked up there.
         maven("https://maven.pkg.github.com/ostrom-hq/ostrom-core") {
