@@ -17,6 +17,7 @@ import dev.ostrom.server.receipts.presentation.ReceiptsPage
 import dev.ostrom.server.receipts.presentation.VerificationResponse
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -31,6 +32,7 @@ import kotlinx.serialization.json.JsonObject
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -132,18 +134,21 @@ class ReceiptsPostgresTest {
             none to other
         }
         assertEquals("0" to "0", counts, "Without the organization, and from another one, no row is visible")
-        val write = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", ORG_B.toString()))
-                .getOrThrow()
-            execute(
-                Statement.create(
-                    "INSERT INTO receipts_receipts (org_id, id, subject_kind, subject_id, body, created_at) " +
-                        "VALUES (:org, 'rcpt_x', 'gate', 'g', '{}', now())",
-                ).bind("org", ORG_A),
-            )
+        // PostgreSQL refuses the row (WITH CHECK): the statement fails, and with it the transaction.
+        val refused = assertFailsWith<SQLError> {
+            server.driver.transaction {
+                execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
+                val setOrg = Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)")
+                fetchAll(setOrg.bind("org", ORG_B.toString())).getOrThrow()
+                execute(
+                    Statement.create(
+                        "INSERT INTO receipts_receipts (org_id, id, subject_kind, subject_id, body, created_at) " +
+                            "VALUES (:org, 'rcpt_x', 'gate', 'g', '{}', now())",
+                    ).bind("org", ORG_A),
+                ).getOrThrow()
+            }
         }
-        assertTrue(write.isFailure, "A row of another organization cannot be written")
+        assertTrue("row-level security" in refused.message.orEmpty(), "A row of another organization is refused")
     }
 
     @Test
