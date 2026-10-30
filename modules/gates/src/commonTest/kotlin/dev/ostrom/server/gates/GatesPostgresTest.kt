@@ -343,6 +343,8 @@ class GatesPostgresTest {
         assertEquals(approval, server.call("user:a:rev-b", "/api/v1/approvals/${approval.id}").body<Approval>())
         val mine = server.call("user:a:rev-b", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>()
         assertEquals(1, mine.items.size)
+        val upper = server.call("user:a:Rev-B", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>()
+        assertEquals(1, upper.items.size, "an identity is the same whatever its case")
 
         assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/approvals?status=maybe").status)
     }
