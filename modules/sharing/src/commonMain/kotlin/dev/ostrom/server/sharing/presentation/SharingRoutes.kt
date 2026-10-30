@@ -23,6 +23,10 @@ import io.ktor.server.resources.patch
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -52,7 +56,7 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
                 label = request.label,
                 priority = request.priority,
                 disabled = request.paused,
-                limits = limitsOf(caller, id, request),
+                limits = request.limitsChange(),
             )
             call.respond(update(caller, id, payload).toResponse(caller))
         }
@@ -74,28 +78,36 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
 }
 
 /**
- * The limits a change sets: the requested ones, with `sharedWith` applied on top (on the current limits when none are
- * requested); an empty `sharedWith` opens the account to the whole org.
+ * How a change moves the current limits: the keys of `limits` replace theirs (the others stay), then `sharedWith`
+ * replaces the members; an empty `sharedWith` opens the account to the whole org. Malformed input is refused before
+ * the account is read.
  */
-private suspend fun SharingRoutesDependencies.limitsOf(
-    caller: Caller,
-    id: Uuid,
-    request: UpdateAccountRequest,
-): AccountLimits? {
-    val members = request.sharedWith
-    val limits = request.limits?.toDomain()
-    return when {
-        members == null -> limits
-        limits == null -> currentLimits(caller, id).copy(allowedMembers = memberIds(members))
-        else -> limits.copy(allowedMembers = memberIds(members))
+private fun UpdateAccountRequest.limitsChange(): ((AccountLimits) -> AccountLimits)? {
+    val patch = limits
+    val members = sharedWith?.let(::memberIds)
+    patch?.let { AccountLimits().patchedBy(it) }
+    return if (patch == null && sharedWith == null) {
+        null
+    } else {
+        { current ->
+            val patched = patch?.let(current::patchedBy) ?: current
+            if (sharedWith == null) patched else patched.copy(allowedMembers = members)
+        }
     }
 }
 
-/** The limits of an account the caller may change; not found otherwise, so existence does not leak. */
-private suspend fun SharingRoutesDependencies.currentLimits(caller: Caller, accountId: Uuid): AccountLimits {
-    val view = list(caller).firstOrNull { it.account.id == accountId && it.identityVisible }
-        ?: throw AccountNotFoundException()
-    return view.account.limits
+/** These limits with the keys of [patch] replaced. */
+private fun AccountLimits.patchedBy(patch: JsonObject): AccountLimits {
+    val merged = JsonObject(Json.encodeToJsonElement(AccountLimitsDto.serializer(), toDto()).jsonObject + patch)
+    val dto = try {
+        Json.decodeFromJsonElement(AccountLimitsDto.serializer(), merged)
+    } catch (_: SerializationException) {
+        throw InvalidAccountException(
+            "limits holds maxConcurrent, utilizationCeiling, monthlyBudgetMicros, " +
+                "allowedMembers.",
+        )
+    }
+    return dto.toDomain()
 }
 
 /** Member ids of `sharedWith`; an empty list opens the account to the whole org. */

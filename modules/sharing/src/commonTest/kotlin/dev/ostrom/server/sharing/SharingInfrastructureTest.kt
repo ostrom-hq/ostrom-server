@@ -82,15 +82,28 @@ class SharingInfrastructureTest {
     }
 
     @Test
+    fun onlyAnInvalidGrantRetiresTheRefreshToken() = realTime {
+        val dead = """{"error":"invalid_grant","error_description":"Refresh token revoked"}"""
+        assertEquals(
+            RefreshResult.Revoked,
+            refresher(HttpStatusCode.BadRequest, dead).refresh(AccountProvider.CLAUDE, old),
+        )
+        assertEquals(
+            RefreshResult.Revoked,
+            refresher(HttpStatusCode.Unauthorized, dead).refresh(AccountProvider.CLAUDE, old),
+        )
+        // Any other refusal is not the owner's token dying: the account must not be retired for it.
+        for (body in listOf("{}", """{"error":"invalid_request"}""", """{"error":"invalid_client"}""", "nope", "[1]")) {
+            assertEquals(
+                RefreshResult.Unavailable,
+                refresher(HttpStatusCode.BadRequest, body).refresh(AccountProvider.CLAUDE, old),
+                body,
+            )
+        }
+    }
+
+    @Test
     fun refusalsAndFailuresAreClassified() = realTime {
-        assertEquals(
-            RefreshResult.Revoked,
-            refresher(HttpStatusCode.BadRequest, "{}").refresh(AccountProvider.CLAUDE, old),
-        )
-        assertEquals(
-            RefreshResult.Revoked,
-            refresher(HttpStatusCode.Unauthorized, "{}").refresh(AccountProvider.CLAUDE, old),
-        )
         assertEquals(
             RefreshResult.Unavailable,
             refresher(HttpStatusCode.ServiceUnavailable, "{}").refresh(AccountProvider.CLAUDE, old),

@@ -3,6 +3,8 @@ package dev.ostrom.server.sharing.domain
 
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -107,9 +109,19 @@ class AccountCredentials(val accessToken: String, val refreshToken: String, val 
  * @property observedAt When it was read.
  */
 data class QuotaWindow(val window: String, val utilization: Double, val resetsAt: Instant?, val observedAt: Instant) {
+    /**
+     * Until when the observation describes the window: its reset, or [UNKNOWN_RESET] after it was read when the
+     * provider named none (a full window without a reset would otherwise close the account for good, since a closed
+     * account is never asked again).
+     */
+    val endsAt: Instant get() = resetsAt ?: (observedAt + UNKNOWN_RESET)
+
     /** Whether the observation still describes the window (it has not reset since). */
-    fun isCurrent(now: Instant): Boolean = resetsAt == null || resetsAt > now
+    fun isCurrent(now: Instant): Boolean = endsAt > now
 }
+
+/** How long a window observed without a reset is believed. */
+val UNKNOWN_RESET: Duration = 5.minutes
 
 /** Validation of what admins and members send. */
 object SharingRules {

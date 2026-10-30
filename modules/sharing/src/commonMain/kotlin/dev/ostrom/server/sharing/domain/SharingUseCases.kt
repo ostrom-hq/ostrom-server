@@ -40,13 +40,13 @@ data class ShareAccountPayload(
  * @property label New label.
  * @property priority New priority.
  * @property disabled Turns it off or back on (a RECONNECT_REQUIRED account comes back only by sharing it again).
- * @property limits New limits.
+ * @property limits The new limits from the current ones, so a change of one limit keeps the others.
  */
 data class UpdateAccountPayload(
     val label: String? = null,
     val priority: Int? = null,
     val disabled: Boolean? = null,
-    val limits: AccountLimits? = null,
+    val limits: ((AccountLimits) -> AccountLimits)? = null,
 )
 
 /**
@@ -123,8 +123,9 @@ class ShareAccountUseCaseImpl(
 }
 
 /**
- * The account a share stores: a new one owned by the caller, or [this] with new tokens, label and limits (its owner,
- * priority, creation and a DISABLED status kept).
+ * The account a share stores: a new one owned by the caller with the requested limits, or [this] with new tokens and
+ * label (its owner, priority, limits, creation and a DISABLED status kept: an admin's restrictions survive the owner
+ * sharing again after a reconnection; limits change through an update).
  */
 private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayload, clock: Clock): SharedAccount {
     val fresh = SharedAccount(
@@ -148,6 +149,7 @@ private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayl
             id = id,
             ownerMemberId = ownerMemberId ?: caller.memberId,
             priority = priority,
+            limits = limits,
             status = if (status == AccountStatus.DISABLED) AccountStatus.DISABLED else AccountStatus.READY,
             createdAt = createdAt,
         )
@@ -194,17 +196,21 @@ class UpdateSharedAccountUseCaseImpl(private val repository: SharedAccountReposi
     override suspend fun invoke(caller: Caller, id: Uuid, payload: UpdateAccountPayload): SharedAccount {
         val account = repository.writable(caller, id)
         payload.label?.let(SharingRules::requireLabel)
-        payload.limits?.let(SharingRules::requireLimits)
+        val limits = payload.limits?.invoke(account.limits) ?: account.limits
+        SharingRules.requireLimits(limits)
         payload.priority?.let(SharingRules::requirePriority)
-        val status = when (payload.disabled) {
-            true -> AccountStatus.DISABLED
-            false -> if (account.status == AccountStatus.DISABLED) AccountStatus.READY else account.status
-            null -> account.status
+        // RECONNECT_REQUIRED is left only by sharing again: pausing and resuming must not revive dead tokens (the
+        // repository also keeps it when the pool retires the account between this read and the write).
+        val status = when {
+            account.status == AccountStatus.RECONNECT_REQUIRED -> account.status
+            payload.disabled == true -> AccountStatus.DISABLED
+            payload.disabled == false -> AccountStatus.READY
+            else -> account.status
         }
         val updated = account.copy(
             label = payload.label ?: account.label,
             priority = payload.priority ?: account.priority,
-            limits = payload.limits ?: account.limits,
+            limits = limits,
             status = status,
         )
         return repository.update(updated) ?: throw AccountNotFoundException()

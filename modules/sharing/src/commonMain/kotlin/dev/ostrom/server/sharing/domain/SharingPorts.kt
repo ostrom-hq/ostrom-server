@@ -6,7 +6,12 @@ import kotlin.uuid.Uuid
 
 /** Storage of shared accounts and their sealed tokens. Every read and write is confined to one org. */
 interface SharedAccountRepository {
-    /** Inserts, or replaces the tokens and label of the same provider account in the org; returns the stored row. */
+    /**
+     * Inserts, or replaces the tokens, label and email of the same provider account in the org (its limits kept);
+     * returns the stored row.
+     *
+     * @throws AccountOwnedByAnotherMemberException When another member owns that provider account meanwhile.
+     */
     suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount
 
     /** The account. */

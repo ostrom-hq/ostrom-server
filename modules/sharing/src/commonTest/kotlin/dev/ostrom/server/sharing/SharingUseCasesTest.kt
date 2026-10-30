@@ -107,7 +107,7 @@ class SharingUseCasesTest {
             }
         }
         assertFailsWith<InvalidAccountException> {
-            update(Sharing.memberA, account.id, UpdateAccountPayload(limits = AccountLimits(maxConcurrent = 0)))
+            update(Sharing.memberA, account.id, UpdateAccountPayload(limits = { AccountLimits(maxConcurrent = 0) }))
         }
         val accepted = share(
             Sharing.memberA,

@@ -12,8 +12,12 @@ import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
+import dev.ostrom.server.sharing.domain.AccountCredentials
+import dev.ostrom.server.sharing.domain.AccountOwnedByAnotherMemberException
 import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.AccountSpendReader
+import dev.ostrom.server.sharing.domain.AccountStatus
+import dev.ostrom.server.sharing.domain.AccountTokenCipher
 import dev.ostrom.server.sharing.domain.LeaseResult
 import dev.ostrom.server.sharing.domain.SharedAccountPool
 import dev.ostrom.server.sharing.domain.SharedAccountRepository
@@ -43,11 +47,14 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.headersOf
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
@@ -202,7 +209,11 @@ class SharingPostgresTest {
             val open = patchAs("admin-a", path, UpdateAccountRequest(sharedWith = emptyList()))
                 .body<SharedAccountResponse>()
             assertEquals(emptyList(), open.sharedWith, "An empty list opens the account to the whole org")
-            val limited = patchAs("admin-a", path, UpdateAccountRequest(limits = AccountLimitsDto(maxConcurrent = 2)))
+            val limited = patchAs(
+                "admin-a",
+                path,
+                UpdateAccountRequest(limits = AccountLimitsDto(maxConcurrent = 2).patch()),
+            )
                 .body<SharedAccountResponse>()
             assertEquals(2, limited.limits.maxConcurrent)
             val notVisible = patchAs("other-a", path, UpdateAccountRequest(sharedWith = emptyList()))
@@ -213,7 +224,7 @@ class SharingPostgresTest {
                 "admin-a",
                 path,
                 UpdateAccountRequest(
-                    limits = AccountLimitsDto(maxConcurrent = 3),
+                    limits = AccountLimitsDto(maxConcurrent = 3).patch(),
                     sharedWith = listOf(Sharing.memberA.memberId.toString()),
                 ),
             ).body<SharedAccountResponse>()
@@ -233,6 +244,78 @@ class SharingPostgresTest {
             assertEquals(HttpStatusCode.NoContent, client.delete(path) { bearerAuth("admin-a") }.status)
             assertEquals(HttpStatusCode.NotFound, client.delete(path) { bearerAuth("admin-a") }.status)
             assertEquals(HttpStatusCode.NotFound, client.delete("$base/not-an-id") { bearerAuth("admin-a") }.status)
+        }
+    }
+
+    /** Only the fields set away from their defaults, as a client changing those alone sends them. */
+    private fun AccountLimitsDto.patch() = Json.encodeToJsonElement(AccountLimitsDto.serializer(), this).jsonObject
+
+    @Test
+    fun aChangeOrASecondShareKeepsTheLimitsItDoesNotName() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val account = shareAs("member-a").body<SharedAccountResponse>()
+            val path = "$base/${account.id}"
+            val other = Sharing.otherA.memberId.toString()
+            val restricted =
+                AccountLimitsDto(maxConcurrent = 4, monthlyBudgetMicros = 7, allowedMembers = listOf(other))
+            assertEquals(
+                HttpStatusCode.OK,
+                patchAs("admin-a", path, UpdateAccountRequest(limits = restricted.patch())).status,
+            )
+            val concurrency = patchAs(
+                "admin-a",
+                path,
+                UpdateAccountRequest(limits = AccountLimitsDto(maxConcurrent = 2).patch()),
+            )
+                .body<SharedAccountResponse>().limits
+            assertEquals(
+                restricted.copy(maxConcurrent = 2),
+                concurrency,
+                "Changing one limit keeps the budget and members",
+            )
+            val reshared = shareAs("member-a").body<SharedAccountResponse>()
+            assertEquals(account.id, reshared.id)
+            assertEquals(restricted.copy(maxConcurrent = 2), reshared.limits, "Sharing again keeps the admin's limits")
+            val cleared = patchAs(
+                "admin-a",
+                path,
+                UpdateAccountRequest(limits = Json.parseToJsonElement("""{"monthlyBudgetMicros":null}""").jsonObject),
+            ).body<SharedAccountResponse>().limits
+            assertNull(cleared.monthlyBudgetMicros, "An explicit null clears the budget")
+            for (bad in listOf("""{"maxConcurrent":null}""", """{"nope":1}""", """{"maxConcurrent":"x"}""")) {
+                val refused =
+                    patchAs("admin-a", path, UpdateAccountRequest(limits = Json.parseToJsonElement(bad).jsonObject))
+                assertEquals(HttpStatusCode.BadRequest, refused.status, bad)
+            }
+        }
+    }
+
+    @Test
+    fun aRetiredAccountStaysRetiredAndRacingSharesKeepAnEnvelopeThatOpens() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val account = shareAs("member-a").body<SharedAccountResponse>()
+            val path = "$base/${account.id}"
+            val repository = koin.get<SharedAccountRepository>()
+            val id = Uuid.parse(account.id)
+            repository.setStatus(Sharing.orgA, id, AccountStatus.RECONNECT_REQUIRED)
+            patchAs("member-a", path, UpdateAccountRequest(paused = true))
+            val resumed = patchAs("member-a", path, UpdateAccountRequest(paused = false)).body<SharedAccountResponse>()
+            assertEquals("reconnect_required", resumed.status, "Pausing and resuming never revives dead tokens")
+            val stale = repository.get(Sharing.orgA, id)!!.copy(status = AccountStatus.READY)
+            assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.update(stale)!!.status, "Nor does a stale write")
+
+            // Two first shares of one provider account: the second keeps the first row, and its envelope still opens.
+            val first = repository.get(Sharing.orgA, id)!!
+            val cipher = koin.get<AccountTokenCipher>()
+            val racer = first.copy(id = Uuid.random(), status = AccountStatus.READY)
+            val credentials = AccountCredentials("racer-access", "racer-refresh", Clock.System.now() + 8.hours)
+            val stored = repository.upsert(racer, cipher.seal(credentials, Sharing.orgA, racer.id))
+            assertEquals(id, stored.id)
+            assertNotNull(cipher.open(repository.envelope(Sharing.orgA, id)!!, Sharing.orgA, id))
+            val stranger = first.copy(id = Uuid.random(), ownerMemberId = Sharing.otherA.memberId)
+            assertFailsWith<AccountOwnedByAnotherMemberException> {
+                repository.upsert(stranger, cipher.seal(credentials, Sharing.orgA, stranger.id))
+            }
         }
     }
 
@@ -418,7 +501,7 @@ class SharingPostgresTest {
             patchAs(
                 "admin-a",
                 "$base/$id",
-                UpdateAccountRequest(limits = AccountLimitsDto(monthlyBudgetMicros = 5)),
+                UpdateAccountRequest(limits = AccountLimitsDto(monthlyBudgetMicros = 5).patch()),
             )
             val refusal = koin.get<SharedAccountPool>()
                 .lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null)
