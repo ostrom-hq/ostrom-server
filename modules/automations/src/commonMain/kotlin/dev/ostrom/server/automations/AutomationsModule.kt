@@ -77,8 +77,7 @@ object AutomationsModule : ServerModule {
         }
         single { AutomationScheduler(get(), get()) }
         single {
-            val publicUrl = get<ConfigSource>()["OSTROM_PUBLIC_URL"]?.trimEnd('/').orEmpty()
-            AutomationsRoutesDependencies(get(), get(), get(), publicUrl)
+            AutomationsRoutesDependencies(get(), get(), get(), publicUrlOf(get()))
         }
     }
 
@@ -94,3 +93,12 @@ object AutomationsModule : ServerModule {
         scope.launch { scheduler.run() }
     }
 }
+
+/**
+ * The server's public URL, without a trailing slash, for the webhook URLs; empty when unset (relative URLs).
+ *
+ * @param source The configuration.
+ *
+ * @return The URL.
+ */
+internal fun publicUrlOf(source: ConfigSource): String = (source["OSTROM_PUBLIC_URL"] ?: "").trimEnd('/')

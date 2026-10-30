@@ -2,6 +2,7 @@
 package dev.ostrom.server.automations
 
 import dev.ostrom.server.automations.domain.Automation
+import dev.ostrom.server.automations.domain.AutomationAction
 import dev.ostrom.server.automations.domain.AutomationDefinition
 import dev.ostrom.server.automations.domain.AutomationDisabledException
 import dev.ostrom.server.automations.domain.AutomationForbiddenException
@@ -20,6 +21,7 @@ import dev.ostrom.server.automations.domain.RunAutomationsUseCaseImpl
 import dev.ostrom.server.automations.domain.RunSource
 import dev.ostrom.server.automations.domain.RunStatus
 import dev.ostrom.server.automations.domain.WebhookDelivery
+import dev.ostrom.server.automations.domain.AutomationVariable
 import dev.ostrom.server.automations.fakes.InMemoryAutomations
 import dev.ostrom.server.automations.fakes.PlainSecrets
 import dev.ostrom.server.automations.fakes.RecordingLauncher
@@ -29,6 +31,7 @@ import dev.ostrom.server.automations.fakes.bobAuto
 import dev.ostrom.server.automations.fakes.cronDefinition
 import dev.ostrom.server.automations.fakes.daveAuto
 import dev.ostrom.server.automations.fakes.webhookDefinition
+import dev.ostrom.server.automations.presentation.toResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
@@ -134,7 +137,7 @@ class RunAutomationsTest {
     @Test
     fun theBodyIsAJsonObjectOfAtMost64KiB() = runTest {
         val automation = hook()
-        for (bad in listOf("[1]", "nope", "\"text\"")) {
+        for (bad in listOf("[1]", "nope", "\"text\"", "{oops")) {
             val bytes = bad.encodeToByteArray()
             val delivery = signed(automation, bytes)
             assertFailsWith<InvalidWebhookPayloadException> { runs.trigger(automation.id, delivery, bytes) }
@@ -272,6 +275,15 @@ class RunAutomationsTest {
         val strict = hook(webhookDefinition(name = "Strict").copy(maxRunsPerDay = 1))
         runs.trigger(strict.id, signed(strict), body)
         assertEquals("budget", runs.dryRun(aliceAuto, strict.id, payload).wouldSkip)
+        // A sensitive value that is missing shows as missing, not masked.
+        val secret = AutomationVariable("token", "$.token", sensitive = true)
+        val guarded = hook(
+            webhookDefinition(name = "Guarded").copy(
+                action = AutomationAction(prompt = "Use {{token}}"),
+                variables = listOf(secret),
+            ),
+        )
+        assertEquals(listOf(null), runs.dryRun(aliceAuto, guarded.id, buildJsonObject {}).variables.map { it.value })
         val cron = manage.create(aliceAuto, cronDefinition()).automation
         assertEquals(3, runs.dryRun(aliceAuto, cron.id, null).nextRuns.size)
     }
@@ -299,6 +311,7 @@ class RunAutomationsTest {
         val run = repository.runs.values.single()
         assertEquals(RunSource.CRON, run.source)
         assertEquals(Instant.parse("2026-10-30T20:00:00Z"), run.slotAt)
+        assertEquals("2026-10-30T20:00:00Z", run.toResponse().slotAt)
         assertEquals(Instant.parse("2026-10-31T20:00:00Z"), repository.automations.getValue(cron.id).nextRunAt)
         assertEquals(0, runs.tick())
         assertEquals(clock.now - 14.days, repository.deletedBefore)

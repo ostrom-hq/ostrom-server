@@ -100,7 +100,11 @@ class AutomationsApiTest {
         return post("/api/v1/automations/$id/trigger") {
             header("Ostrom-Timestamp", timestamp)
             header("Ostrom-Signature", "v1=${signature.toHexString()}")
-            if (key != null) header("Ostrom-Delivery", key)
+            // A key starting with "idem:" goes in Idempotency-Key, which wins over Ostrom-Delivery.
+            if (key != null) {
+                val name = if (key.startsWith("idem:")) "Idempotency-Key" else "Ostrom-Delivery"
+                header(name, key.removePrefix("idem:"))
+            }
             setBody(payload)
         }
     }
@@ -119,6 +123,14 @@ class AutomationsApiTest {
         assertEquals(automation, client.get(path) { bearerAuth("autoreader") }.body<AutomationResponse>())
         val listed = client.get("/api/v1/automations?limit=1") { bearerAuth("alice") }.body<AutomationsResponse>()
         assertEquals(listOf(automation.id), listed.items.map { item -> item.id })
+        assertNull(listed.next)
+        val second = client.create("alice", cron.copy(name = "Weekly")).body<AutomationResponse>()
+        val first = client.get("/api/v1/automations?limit=1") { bearerAuth("alice") }.body<AutomationsResponse>()
+        assertEquals(listOf(second.id), first.items.map { item -> item.id })
+        assertNotNull(first.next)
+        // An action needs a prompt: workflows are not available yet.
+        val promptless = cron.copy(action = AutomationActionRequest())
+        assertEquals(HttpStatusCode.BadRequest, client.create("alice", promptless).status)
         val armed = client.send("autowriter", "POST", "$path/enable").body<AutomationResponse>()
         assertTrue(armed.enabled)
         assertNotNull(armed.nextRunAt)
@@ -164,9 +176,13 @@ class AutomationsApiTest {
 
             val rotated = client.send("alice", "POST", "$path/webhook/rotate-secret").body<SecretResponse>()
             assertNotNull(rotated.previousSecretValidUntil)
+            val read = client.get(path) { bearerAuth("alice") }.body<AutomationResponse>()
+            assertEquals(rotated.previousSecretValidUntil, read.previousSecretValidUntil)
             val current = client.trigger(secrets, created.id, rotated.secret, key = "d2")
             assertEquals(HttpStatusCode.Accepted, current.status)
             assertEquals(HttpStatusCode.Accepted, client.trigger(secrets, created.id, secret, key = "d3").status)
+            val keyed = client.trigger(secrets, created.id, rotated.secret, key = "idem:d3")
+            assertEquals("true", keyed.headers["Idempotency-Replayed"])
 
             val test = TestRunRequest(buildJsonObject { putJsonObject("ticket") { put("number", "SUP-8") } })
             val tested = client.run("alice", path, test, key = "t1")

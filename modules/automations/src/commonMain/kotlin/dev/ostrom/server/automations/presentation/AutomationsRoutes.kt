@@ -99,8 +99,7 @@ private fun Route.stateRoutes(dependencies: AutomationsRoutesDependencies) = wit
     post<AutomationsApi.Id.RotateSecret> { params ->
         val caller = orgResolver.automationCallerOf(call.requirePrincipal(), AUTOMATIONS_WRITE)
         val rotated = manage.rotateSecret(caller, automationId(params.parent.id))
-        val until = rotated.automation.previousSecretValidUntil?.toString()
-        call.respond(SecretResponse(rotated.secret.orEmpty(), until))
+        call.respond(SecretResponse(rotated.secret, rotated.previousValidUntil.toString()))
     }
 }
 

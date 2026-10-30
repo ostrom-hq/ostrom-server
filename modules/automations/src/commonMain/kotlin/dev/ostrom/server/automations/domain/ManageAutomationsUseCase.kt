@@ -15,6 +15,15 @@ import kotlin.uuid.Uuid
 data class AutomationWithSecret(val automation: Automation, val secret: String?)
 
 /**
+ * A webhook automation after a rotation of its secret.
+ *
+ * @property automation The automation.
+ * @property secret The new secret, shown once.
+ * @property previousValidUntil Until when the former secret is still accepted.
+ */
+data class RotatedSecret(val automation: Automation, val secret: String, val previousValidUntil: Instant)
+
+/**
  * Who a listing covers.
  *
  * @property owner `all` (an administrator), a member id (an administrator, or the caller's own), or null (the caller).
@@ -52,7 +61,7 @@ interface ManageAutomationsUseCase {
     suspend fun setEnabled(caller: AutomationCaller, id: Uuid, enabled: Boolean): Automation
 
     /** A new webhook secret; the former one is accepted 10 more minutes (the owner, signed in). */
-    suspend fun rotateSecret(caller: AutomationCaller, id: Uuid): AutomationWithSecret
+    suspend fun rotateSecret(caller: AutomationCaller, id: Uuid): RotatedSecret
 }
 
 /**
@@ -138,20 +147,21 @@ class ManageAutomationsUseCaseImpl(
         return repository.update(changed, current) ?: throw StaleAutomationException()
     }
 
-    override suspend fun rotateSecret(caller: AutomationCaller, id: Uuid): AutomationWithSecret {
+    override suspend fun rotateSecret(caller: AutomationCaller, id: Uuid): RotatedSecret {
         val current = repository.ownedBy(caller, id)
         if (current.definition.trigger.kind != TriggerKind.WEBHOOK) {
             throw InvalidAutomationException("Only a webhook automation has a secret.")
         }
         if (!caller.interactive) throw AutomationForbiddenException("The webhook secret is rotated signed in.")
         val now = clock.now().truncatedToMillis()
+        val previousValidUntil = now + PREVIOUS_SECRET_GRACE
         val rotated = current.copy(
             secretGeneration = current.secretGeneration + 1,
-            previousSecretValidUntil = now + PREVIOUS_SECRET_GRACE,
+            previousSecretValidUntil = previousValidUntil,
             updatedAt = now,
         )
         val saved = repository.update(rotated, current) ?: throw StaleAutomationException()
-        return AutomationWithSecret(saved, secretOf(saved))
+        return RotatedSecret(saved, secrets.secret(saved.id, saved.secretGeneration), previousValidUntil)
     }
 
     private suspend fun secretOf(automation: Automation): String? =

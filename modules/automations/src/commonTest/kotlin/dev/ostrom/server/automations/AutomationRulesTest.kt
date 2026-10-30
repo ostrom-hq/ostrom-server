@@ -65,6 +65,7 @@ class AutomationRulesTest {
         refused(trigger(AutomationTrigger(TriggerKind.CRON, timezone = "UTC")), "A cron trigger has a cron.")
         val zone = "A cron has an IANA timezone, such as Europe/Paris."
         refused(trigger(AutomationTrigger(TriggerKind.CRON, "0 0 * * *")), zone)
+        refused(trigger(AutomationTrigger(TriggerKind.CRON, "0 0 * * *", " ")), zone)
         val mars = AutomationTrigger(TriggerKind.CRON, "0 0 * * *", "Mars/Olympus")
         refused(trigger(mars), "Unknown timezone: Mars/Olympus.")
         val grace = "catchupGraceMinutes is between 0 and 1440."

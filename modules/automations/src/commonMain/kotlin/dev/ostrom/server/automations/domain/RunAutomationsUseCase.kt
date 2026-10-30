@@ -347,7 +347,11 @@ private fun newRun(automation: Automation, source: RunSource, key: String, now: 
     )
 
 private fun readOf(automation: Automation, payload: JsonObject?): ReadPayload =
-    payload?.let { Prompts.read(it, automation.definition.variables) } ?: ReadPayload(emptyMap(), emptyList())
+    if (payload == null) {
+        ReadPayload(emptyMap(), emptyList())
+    } else {
+        Prompts.read(payload, automation.definition.variables)
+    }
 
 /** A test of a webhook needs a payload; a cron's takes none. */
 private fun checkTestPayload(automation: Automation, payload: JsonObject?) {
@@ -374,7 +378,7 @@ private fun payloadOf(body: ByteArray): JsonObject {
 private fun runVariables(automation: Automation, runId: Uuid, source: RunSource, at: Instant): Map<String, String> {
     val trigger = automation.definition.trigger
     val cron = trigger.kind == TriggerKind.CRON
-    val zone = if (cron) AutomationRules.zone(trigger.timezone.orEmpty()) else TimeZone.UTC
+    val zone = if (cron) AutomationRules.zone(trigger.timezone) else TimeZone.UTC
     val local = at.toLocalDateTime(zone)
     return mapOf(
         "run.id" to runId.toString(),

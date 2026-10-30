@@ -57,23 +57,23 @@ internal object AutomationRules {
     fun nextRun(definition: AutomationDefinition, after: Instant): Instant? {
         val trigger = definition.trigger
         if (trigger.kind != TriggerKind.CRON) return null
-        return CronSchedule.parse(trigger.cron.orEmpty()).next(after, zone(trigger.timezone.orEmpty()))
+        return cronOf(trigger).next(after, zone(trigger.timezone))
     }
 
     /** The next [count] slots of a cron definition; none for a webhook. */
     fun upcoming(definition: AutomationDefinition, after: Instant, count: Int): List<Instant> {
         val trigger = definition.trigger
         if (trigger.kind != TriggerKind.CRON) return emptyList()
-        return CronSchedule.parse(trigger.cron.orEmpty()).upcoming(after, zone(trigger.timezone.orEmpty()), count)
+        return cronOf(trigger).upcoming(after, zone(trigger.timezone), count)
     }
 
     /**
      * An IANA zone.
      *
-     * @throws InvalidAutomationException When it is unknown.
+     * @throws InvalidAutomationException When it is missing or unknown.
      */
-    fun zone(id: String): TimeZone {
-        requireAutomation(id.isNotBlank()) { "A cron has an IANA timezone, such as Europe/Paris." }
+    fun zone(id: String?): TimeZone {
+        if (id.isNullOrBlank()) throw InvalidAutomationException("A cron has an IANA timezone, such as Europe/Paris.")
         return try {
             TimeZone.of(id)
         } catch (expected: IllegalTimeZoneException) {
@@ -81,10 +81,13 @@ internal object AutomationRules {
         }
     }
 
+    private fun cronOf(trigger: AutomationTrigger): CronSchedule =
+        CronSchedule.parse(trigger.cron ?: throw InvalidAutomationException("A cron trigger has a cron."))
+
     private fun checkCron(definition: AutomationDefinition) {
         val trigger = definition.trigger
-        CronSchedule.parse(trigger.cron ?: throw InvalidAutomationException("A cron trigger has a cron."))
-        zone(trigger.timezone.orEmpty())
+        cronOf(trigger)
+        zone(trigger.timezone)
         requireAutomation(trigger.catchupGraceMinutes in 0..MAX_GRACE_MINUTES) {
             "catchupGraceMinutes is between 0 and $MAX_GRACE_MINUTES."
         }
