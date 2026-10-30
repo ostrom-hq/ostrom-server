@@ -151,7 +151,11 @@ class HttpGitHubApi(
                     put("after", after)
                 }
             }
-            val response = send(HttpMethod.Post, "/graphql", token, query, base = graphqlUrl)
+            val response = http.exchange(HttpMethod.Post, "$graphqlUrl/graphql", "/graphql") {
+                headers(token)
+                contentType(ContentType.Application.Json)
+                setBody(query.toString())
+            }
             val answer = decode<TeamsAnswer>(response, "teams")
             // A user's account is no organization: GitHub answers a null organization, with an error.
             val listed = answer.data?.organization?.teams
@@ -220,8 +224,7 @@ class HttpGitHubApi(
         token: String?,
         body: JsonObject?,
         timeoutMs: Long? = null,
-        base: String = apiUrl,
-    ): HttpResponse = http.exchange(method, "$base$path", path) {
+    ): HttpResponse = http.exchange(method, "$apiUrl$path", path) {
         headers(token)
         timeoutMs?.let { timeout { requestTimeoutMillis = it } }
         body?.let {
