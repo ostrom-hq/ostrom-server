@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+@file:OptIn(ExperimentalForeignApi::class)
+
 package dev.ostrom.runner
 
+import kotlinx.cinterop.ExperimentalForeignApi
 import dev.ostrom.runner.pty.ostrom_pty_resize
 import dev.ostrom.runner.pty.ostrom_pty_spawn
 import kotlinx.cinterop.IntVar

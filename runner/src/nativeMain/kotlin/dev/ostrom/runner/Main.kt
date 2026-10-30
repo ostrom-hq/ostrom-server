@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+@file:OptIn(ExperimentalForeignApi::class)
+
 package dev.ostrom.runner
 
+import kotlinx.cinterop.ExperimentalForeignApi
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout

@@ -74,15 +74,13 @@ class RunnerConfigTest {
     @Test
     fun aMissingOrMalformedVariableIsRefused() {
         val read = { _: String -> "t" }
-        for (
-            name in listOf(
-                "OSTROM_SERVER_URL",
-                "OSTROM_SESSION_ID",
-                "OSTROM_EPOCH",
-                "OSTROM_AGENT_COMMAND",
-                "OSTROM_RUNNER_TOKEN_FILE",
-            ),
-        ) {
+        listOf(
+            "OSTROM_SERVER_URL",
+            "OSTROM_SESSION_ID",
+            "OSTROM_EPOCH",
+            "OSTROM_AGENT_COMMAND",
+            "OSTROM_RUNNER_TOKEN_FILE",
+        ).forEach { name ->
             assertFailsWith<IllegalArgumentException>(name) { RunnerConfig.from(base - name, read) }
         }
         assertFailsWith<IllegalArgumentException> { RunnerConfig.from(base + ("OSTROM_SERVER_URL" to "ftp://x"), read) }
