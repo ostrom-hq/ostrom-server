@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.module
 
+import dev.ostrom.core.telemetry.Telemetry
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.ServerConfig
 import dev.ostrom.server.kernel.database.MigrationRunner
@@ -10,6 +11,7 @@ import dev.ostrom.server.kernel.http.HealthCheck
 import dev.ostrom.server.kernel.http.Readiness
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.network.TrustedProxies
+import dev.ostrom.server.kernel.observability.OstromMetrics
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
 import org.koin.core.module.Module
@@ -25,18 +27,25 @@ import kotlin.time.Clock
  * @param signer The instance signing key.
  * @param config Where modules read their configuration keys ([ServerConfig.source]).
  * @param clock The clock use cases read; tests inject a fixed one.
+ * @param telemetry Traces, metrics, logs and product events; disabled (nothing sent) unless configured.
+ * @param metrics The server's instruments, created on [telemetry]'s meter.
  *
  * @return The module.
  */
+@Suppress("LongParameterList") // The kernel's composition root: one parameter per shared dependency.
 fun kernelModule(
     logger: Logger,
     driver: Driver,
     signer: InstanceSigner,
     config: ConfigSource,
     clock: Clock = Clock.System,
+    telemetry: Telemetry = Telemetry.disabled(clock),
+    metrics: OstromMetrics = OstromMetrics(telemetry.meter),
 ): Module = module {
     single { logger }
     single { config }
+    single { telemetry }
+    single { metrics }
     single { driver }
     single { signer }
     single { clock }
