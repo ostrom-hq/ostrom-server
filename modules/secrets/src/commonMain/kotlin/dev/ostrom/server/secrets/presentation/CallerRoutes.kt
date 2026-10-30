@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets.presentation
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets
 
 import dev.ostrom.server.kernel.config.InvalidConfigException
@@ -61,6 +62,20 @@ class SecretsKeyTest {
             assertTrue(createOwnerOnlyFile(path, "first"))
             assertFalse(createOwnerOnlyFile(path, "second"), "A second writer loses")
             assertEquals("first", SystemFileSystem.source(Path(path)).buffered().use { it.readString() })
+        } finally {
+            SystemFileSystem.delete(Path(path), mustExist = false)
+        }
+    }
+
+    @Test
+    fun blankVariablesFallBackToTheDefaultFile() {
+        // A bare file name: the key file has no parent directory to create.
+        val path = "ostrom-secrets-${Uuid.random()}.key"
+        try {
+            val config = MapConfigSource(mapOf(SecretsKey.KEY_VARIABLE to " ", SecretsKey.FILE_VARIABLE to " "))
+            val created = SecretsKey.load(config, defaultFile = path)
+            assertEquals(32, created.size)
+            assertTrue(SystemFileSystem.exists(Path(path)))
         } finally {
             SystemFileSystem.delete(Path(path), mustExist = false)
         }
