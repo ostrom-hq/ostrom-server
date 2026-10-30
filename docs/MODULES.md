@@ -150,8 +150,9 @@ Every request is already logged once by the kernel (method, path, status, durati
 
 - `./gradlew linuxX64Test` passes in CI (tests run on Linux in CI; macOS only locally).
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
-- `ee/` code: same shape, under `ee/modules/<name>/`, AGPL code never depends on it. The build does not include
-  `ee/` yet: the first enterprise module adds its discovery and registration (see `ee/README.md`).
+- `ee/` code: same shape, under `ee/modules/<name>/` (Gradle path `:ee:modules:<name>`, discovered like `modules/`),
+  plus an `ee-module.properties` naming its `ServerModule` object; the app registers it after every AGPL module.
+  AGPL code never depends on `ee/`, and CI compiles the app with `ee/` deleted (see `ee/README.md`).
 
 ## Configuration
 
@@ -170,6 +171,8 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_STRIPE_WEBHOOK_SECRET` (or `_FILE`) | required with a key | Billing: the endpoint's `whsec_…` signing secret; two comma-separated during a rotation |
 | `OSTROM_STRIPE_API_BASE` | `https://api.stripe.com` | Billing: Stripe's API (stripe-mock in tests) |
 | `OSTROM_CONSOLE_URL` | `https://app.ostrom.run` | Billing: the console, for Checkout and portal return pages and limit messages |
+| `OSTROM_LICENSE_KEY` | — | Enterprise (`ee/`): the license key, `ostrom-license.v1.…`, verified offline at start; an invalid, expired (past 14 days of grace) or foreign key fails the start. Unset: no license |
+| `OSTROM_LICENSE_KEY_FILE` | — | Enterprise (`ee/`): a file holding the license key, read when `OSTROM_LICENSE_KEY` is unset; missing or empty fails the start |
 
 A module that needs its own keys reads them from the `ConfigSource` with the `OSTROM_<MODULE>_…` prefix and adds them
 to this table.
