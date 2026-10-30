@@ -148,7 +148,9 @@ class KubernetesRuntimeDriverTest {
             "true",
             container["securityContext"]!!.jsonObject["readOnlyRootFilesystem"]!!.jsonPrimitive.content,
         )
-        assertEquals("/tmp", container["volumeMounts"]!!.jsonArray[2].jsonObject["mountPath"]!!.jsonPrimitive.content)
+        val tmp = container["volumeMounts"]!!.jsonArray.map { it.jsonObject }
+            .single { it["name"]!!.jsonPrimitive.content == "tmp" }
+        assertEquals("/tmp", tmp["mountPath"]!!.jsonPrimitive.content)
         assertEquals(
             "2Gi",
             container["resources"]!!.jsonObject["limits"]!!.jsonObject["ephemeral-storage"]!!.jsonPrimitive.content,

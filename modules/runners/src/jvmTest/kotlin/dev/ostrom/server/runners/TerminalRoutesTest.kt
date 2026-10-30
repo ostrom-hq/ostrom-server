@@ -33,7 +33,10 @@ import kotlin.test.assertNotNull
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** The terminal WebSockets against a real server and database. */
+/**
+ * The terminal WebSockets against a real server and database. On the JVM only: Ktor's test client has no WebSockets
+ * on native platforms.
+ */
 class TerminalRoutesTest {
     private val identities = testIdentities
 
