@@ -1,0 +1,165 @@
+name: Image
+
+# Publishes ghcr.io/ostrom-hq/ostrom-server from the native linuxX64 / linuxArm64 binaries of this exact commit
+# (CONVENTIONS § 12): `edge` and `sha-…` from main, `<version>`, `<major>.<minor>` and `latest` from a bare
+# semver tag. One image per architecture, pushed by digest with SBOM and provenance, joined in one index,
+# signed with cosign by digest (key, no public transparency log while the repositories are private). No cache of any
+# kind: what is published is built from scratch, never from a cache a pull request could have written (zizmor).
+on:
+  push:
+    branches: [main]
+    tags: ['[0-9]*']
+  workflow_dispatch:
+
+# One run per workflow and ref; never cancelled on main (each push of main publishes its `edge`).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/ostrom-hq/ostrom-server
+
+jobs:
+  binaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with: { cache-disabled: true }
+      - name: Version
+        id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME}"; else v="0.0.0-edge.$(date -u +%Y%m%d%H%M%S).${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Release binaries (linuxX64, linuxArm64)
+        run: ./gradlew :app:linkReleaseExecutableLinuxX64 :app:linkReleaseExecutableLinuxArm64
+      - name: Image contexts
+        run: |
+          for a in amd64:linuxX64 arm64:linuxArm64; do
+            arch=${a%%:*}; target=${a#*:}
+            mkdir -p "ctx/$arch/dist"
+            cp Dockerfile .dockerignore "ctx/$arch/"
+            cp "app/build/bin/$target/releaseExecutable/ostrom-server.kexe" "ctx/$arch/dist/ostrom-server"
+          done
+          file ctx/*/dist/ostrom-server
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: contexts, path: ctx, retention-days: 3, include-hidden-files: true }
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+
+  image:
+    needs: binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Only the database roles of the smoke test.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, sparse-checkout: ci/database-roles.sql, sparse-checkout-cone-mode: false }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: contexts, path: ctx }
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with: { cache-image: false }
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with: { cache-binary: false }
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with: { cosign-release: v2.6.5 }
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=edge,branch=main
+            type=sha,prefix=sha-,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-') }}
+          labels: |
+            org.opencontainers.image.title=ostrom-server
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.version=${{ needs.binaries.outputs.version }}
+      - name: Smoke test of the amd64 image against PostgreSQL
+        run: |
+          chmod +x ctx/*/dist/ostrom-server
+          docker build -t ostrom-server:smoke ctx/amd64
+          docker network create smoke
+          docker run -d --name pg --network smoke -e POSTGRES_PASSWORD=postgres postgres:17.6
+          for _ in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+          # As deployed (docs/tenancy.md): the owner migrates, the server serves as a role that owns nothing.
+          docker exec -i pg psql -U postgres -v ON_ERROR_STOP=1 < ci/database-roles.sql
+          docker run --rm --network smoke --read-only --cap-drop ALL \
+            -e OSTROM_DATABASE_MIGRATION_URL=postgresql://ostrom_owner:ostrom_owner@pg:5432/ostrom \
+            ostrom-server:smoke migrate
+          # Read-only root and no capability, like the chart; the instance key goes to a writable /var/lib/ostrom.
+          docker run -d --name s --network smoke -p 8080:8080 --read-only --cap-drop ALL \
+            --tmpfs /var/lib/ostrom:uid=65532,gid=65532 \
+            -e OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@pg:5432/ostrom \
+            ostrom-server:smoke
+          for _ in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done
+          curl -fsS localhost:8080/ready | grep -q '"status":"ready"' || { docker logs s; exit 1; }
+          curl -fsS localhost:8080/health | grep -q '"status":"ok"' || { docker logs s; exit 1; }
+          curl -fsS localhost:8080/api/v1/instance | grep -q '"algorithm":"ed25519"' || { docker logs s; exit 1; }
+      - name: The arm64 image starts too (QEMU)
+        run: |
+          docker buildx build ctx/arm64 --platform linux/arm64 --load -t ostrom-server:smoke-arm64
+          # No database configured: the binary must load (libcrypt.so.1 of the right architecture) and refuse its config.
+          out=$(docker run --rm --platform linux/arm64 ostrom-server:smoke-arm64 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q 'OSTROM_DATABASE_URL' || { echo "arm64 binary did not start"; exit 1; }
+      - name: Build and push each architecture by digest
+        id: arch
+        run: |
+          labels=$(printf '%s\n' "${{ steps.meta.outputs.labels }}" | sed '/^$/d; s/^/--label /' | tr '\n' ' ')
+          for arch in amd64 arm64; do
+            # shellcheck disable=SC2086
+            docker buildx build ctx/$arch --platform linux/$arch --sbom=true --provenance=mode=max $labels \
+              --output type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true \
+              --metadata-file meta-$arch.json
+            echo "$arch=$(jq -r '."containerimage.digest"' meta-$arch.json)" >> "$GITHUB_OUTPUT"
+          done
+      - name: Index with every tag
+        id: index
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          args=""
+          for t in $TAGS; do args="$args -t $t"; done
+          # shellcheck disable=SC2086
+          docker buildx imagetools create $args "${IMAGE}@${{ steps.arch.outputs.amd64 }}" "${IMAGE}@${{ steps.arch.outputs.arm64 }}"
+          first=$(echo "$TAGS" | head -1)
+          echo "digest=$(docker buildx imagetools inspect "$first" --format '{{json .Manifest}}' | jq -r .digest)" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools inspect "$first"
+      - name: Sign the index and both images by digest
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          for d in "${{ steps.index.outputs.digest }}" "${{ steps.arch.outputs.amd64 }}" "${{ steps.arch.outputs.arm64 }}"; do
+            cosign sign --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${IMAGE}@$d"
+          done
+      - name: Summary
+        run: |
+          {
+            echo "### ${IMAGE}"
+            echo "Index: \`${IMAGE}@${{ steps.index.outputs.digest }}\`"
+            echo
+            echo "Tags:"; printf '%s\n' "${{ steps.meta.outputs.tags }}" | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"

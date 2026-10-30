@@ -1,7 +1,7 @@
 # Adding a functional module
 
 Every functional domain of the server (`identity`, `orgs`, `sessions`, `gates`, `receipts`, `compiler`,
-`mcp-relay`, `secrets`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`, `integrations-github`,
+`mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`, `integrations-github`,
 `integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already exists as an empty
 skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its single line in
 `app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference example: copy
@@ -87,6 +87,10 @@ val OrgsMigrations = listOf(
 - **A table holding an organization's data** has `org_id`, `ENABLE` and `FORCE ROW LEVEL SECURITY` and its policy in
   the same migration (CONVENTIONS 16.1, [tenancy.md](tenancy.md)):
   `USING (org_id = CAST(nullif(current_setting('ostrom.org_id', true), '') AS uuid))` and the same `WITH CHECK`.
+- PostgreSQL 15 or later: unique indexes use `NULLS NOT DISTINCT`. Some modules' migrations create the `ostrom_tenant`
+  role their queries switch to (`SET LOCAL ROLE`): the owner that runs `migrate` needs `CREATEROLE`, and the serving
+  role must be a member of `ostrom_tenant` (ci/database-roles.sql creates it beforehand and grants it to both, as a
+  deployment must). Their `inTenant` converges on the kernel's `withOrganization`, which needs no role switch.
 - Plain PostgreSQL. Statements are split on `;`. **No `::type` casts** (write `CAST(x AS type)`): the driver reads
   `:name` as a named parameter.
 - Modules migrate in the order of `serverModules()`: a module whose tables reference another module's tables comes
@@ -204,6 +208,9 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
 | `OSTROM_ALLOW_TEST_ACCOUNTS` | — | `true` lets `ostrom-server seed-test-account` run; never set in production |
+| `OSTROM_SECRETS_KEY` | — | The secrets key, base64 of 32 bytes (AES-256-GCM); wins over the file. Losing it loses every stored secret |
+| `OSTROM_SECRETS_KEY_FILE` | `data/secrets.key` | File of the secrets key, created with mode 0600 at first start when `OSTROM_SECRETS_KEY` is unset; keep it on a persistent volume |
+| `OSTROM_USAGE_RETENTION_DAYS` | `400` | Days the usage ledger keeps its events (1 to 3650); older ones are purged every hour |
 
 A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
