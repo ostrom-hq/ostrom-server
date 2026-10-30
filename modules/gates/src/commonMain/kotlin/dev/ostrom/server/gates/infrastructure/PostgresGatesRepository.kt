@@ -58,11 +58,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             scope.enter(orgId)
             // Served by the GIN index on the session ids (migration 2).
             executor.rows(
-                Statement.create(
-                    "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org " +
-                        "AND CAST(session_ids AS JSONB) @> jsonb_build_array(CAST(:session AS TEXT)) " +
-                        "ORDER BY created_at, id LIMIT $MAX_SESSION_GATES",
-                ).bind("org", orgId).bind("session", sessionId),
+                Statement.create(GatesQueries.OF_SESSION).bind("org", orgId).bind("session", sessionId),
             ).map { it.toGate() }
         }
     }
@@ -84,16 +80,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
     ): List<ApprovalView> = driver.transaction {
         Tx(this).run {
             scope.enter(orgId)
-            val filters = buildString {
-                append("org_id = :org")
-                // Identities compare without case everywhere (`SelfApproval.same`), the inbox too.
-                if (approverId != null) append(" AND lower(approver_id) = lower(:approver)")
-                if (status != null) append(" AND status = :status")
-            }
-            val page = Statement.create(
-                "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE $filters " +
-                    "ORDER BY created_at DESC, id DESC LIMIT :limit",
-            ).bind("org", orgId).bind("limit", limit)
+            val page = Statement.create(GatesQueries.approvals(approverId != null, status != null))
+                .bind("org", orgId).bind("limit", limit)
             approverId?.let { page.bind("approver", it) }
             status?.let { page.bind("status", it.name) }
             val requests = executor.rows(page).map { it.toRequest() }
@@ -102,10 +90,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             val gates = if (gateIds.isEmpty()) {
                 emptyMap()
             } else {
-                val names = gateIds.indices.joinToString(", ") { ":g$it" }
-                val statement = Statement.create(
-                    "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id IN ($names)",
-                ).bind("org", orgId)
+                val statement = Statement.create(GatesQueries.gates(gateIds.size)).bind("org", orgId)
                 gateIds.forEachIndexed { index, gateId -> statement.bind("g$index", gateId) }
                 executor.rows(statement).map { it.toGate() }.associateBy { it.id }
             }
@@ -140,10 +125,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         override suspend fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate> {
             scope.enter(orgId)
             return executor.rows(
-                Statement.create(
-                    "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND gate_key = :key " +
-                        "ORDER BY created_at DESC, id DESC LIMIT :limit",
-                ).bind("org", orgId).bind("key", key).bind("limit", limit),
+                Statement.create(GatesQueries.BY_KEY).bind("org", orgId).bind("key", key).bind("limit", limit),
             ).map { it.toGate() }
         }
 
@@ -155,18 +137,14 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         override suspend fun request(orgId: Uuid, id: Uuid): ApprovalRequest? {
             scope.enter(orgId)
             return executor.rows(
-                Statement.create("SELECT $REQUEST_COLUMNS FROM gates_requests WHERE org_id = :org AND id = :id")
-                    .bind("org", orgId).bind("id", id),
+                Statement.create(GatesQueries.REQUEST).bind("org", orgId).bind("id", id),
             ).firstOrNull()?.toRequest()
         }
 
         override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> {
             scope.enter(orgId)
             return executor.rows(
-                Statement.create(
-                    "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE org_id = :org AND gate_id = :gate " +
-                        "ORDER BY position LIMIT $MAX_REQUESTS",
-                ).bind("org", orgId).bind("gate", gateId),
+                Statement.create(GatesQueries.REQUESTS_OF).bind("org", orgId).bind("gate", gateId),
             ).map { it.toRequest() }
         }
 
@@ -174,7 +152,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             scope.enter(gate.orgId)
             executor.execute(
                 Statement.create(
-                    "INSERT INTO gates_gates ($GATE_COLUMNS) VALUES (:id, :org_id, :gate_key, :subject, :node, " +
+                    "INSERT INTO gates_gates (${GatesQueries.GATE_COLUMNS}) VALUES (:id, :org_id, :gate_key, :subject, :node, " +
                         ":label, :mode, :status, :asked_by, :asked_via, :session_ids, :launch_ids, :shown_digest, " +
                         ":evidence, :decided_by, :decided_at, :self_approved, :receipt_id, :reserved_by, " +
                         ":reserved_at, :consumed_at, :created_at)",
@@ -242,14 +220,6 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
     }
 
     private companion object {
-        const val MAX_REQUESTS = 100
-        const val MAX_SESSION_GATES = 500
-
-        const val GATE_COLUMNS = "id, org_id, gate_key, subject, node, label, mode, status, asked_by, asked_via, " +
-            "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, self_approved, receipt_id, " +
-            "reserved_by, reserved_at, consumed_at, created_at"
-        const val REQUEST_COLUMNS =
-            "id, gate_id, org_id, position, approver_id, status, answered_at, channel, created_at"
         val evidences = ListSerializer(EvidenceRecord.serializer())
         val json = Json { ignoreUnknownKeys = true }
         val strings = ListSerializer(String.serializer())
@@ -258,10 +228,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             fetchAll(statement).getOrThrow().toList()
 
         suspend fun QueryExecutor.selectGate(orgId: Uuid, id: Uuid, lock: Boolean): Gate? = rows(
-            Statement.create(
-                "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id = :id" +
-                    if (lock) " FOR UPDATE" else "",
-            ).bind("org", orgId).bind("id", id),
+            Statement.create(GatesQueries.gate(lock)).bind("org", orgId).bind("id", id),
         ).firstOrNull()?.toGate()
 
         // A null for a typed column (uuid, timestamptz) is bound with its type, or PostgreSQL takes it for text.
