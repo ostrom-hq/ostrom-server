@@ -77,6 +77,7 @@ class SharingInfrastructureTest {
             "A missing refresh token keeps the old one",
         )
         assertEquals("https://auth.openai.com/oauth/token", seen.single().first)
+        assertEquals(AccountProvider.entries.toSet(), HttpOAuthRefresher.ENDPOINTS.keys)
         assertTrue("app_EMoamEEZ73f0CkXaXp7hrann" in seen.single().second)
     }
 
@@ -112,6 +113,7 @@ class SharingInfrastructureTest {
         )
         for (body in listOf(
             """{"access_token":5,"expires_in":5}""",
+            """{"expires_in":5}""",
             """{"access_token":"a","expires_in":"soon"}""",
             """{"access_token":"a","expires_in":0}""",
             """{"access_token":"a","expires_in":40000000}""",

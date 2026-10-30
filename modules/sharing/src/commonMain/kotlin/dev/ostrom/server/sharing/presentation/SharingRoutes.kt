@@ -77,15 +77,26 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
  * The limits a change sets: the requested ones, with `sharedWith` applied on top (on the current limits when none are
  * requested); an empty `sharedWith` opens the account to the whole org.
  */
-private suspend fun SharingRoutesDependencies.limitsOf(caller: Caller, id: Uuid, request: UpdateAccountRequest) =
-    request.sharedWith?.let { members ->
-        (request.limits?.toDomain() ?: currentLimits(caller, id)).copy(allowedMembers = memberIds(members))
-    } ?: request.limits?.toDomain()
+private suspend fun SharingRoutesDependencies.limitsOf(
+    caller: Caller,
+    id: Uuid,
+    request: UpdateAccountRequest,
+): AccountLimits? {
+    val members = request.sharedWith
+    val limits = request.limits?.toDomain()
+    return when {
+        members == null -> limits
+        limits == null -> currentLimits(caller, id).copy(allowedMembers = memberIds(members))
+        else -> limits.copy(allowedMembers = memberIds(members))
+    }
+}
 
 /** The limits of an account the caller may change; not found otherwise, so existence does not leak. */
-private suspend fun SharingRoutesDependencies.currentLimits(caller: Caller, accountId: Uuid): AccountLimits =
-    list(caller).firstOrNull { it.account.id == accountId && it.identityVisible }?.account?.limits
+private suspend fun SharingRoutesDependencies.currentLimits(caller: Caller, accountId: Uuid): AccountLimits {
+    val view = list(caller).firstOrNull { it.account.id == accountId && it.identityVisible }
         ?: throw AccountNotFoundException()
+    return view.account.limits
+}
 
 /** Member ids of `sharedWith`; an empty list opens the account to the whole org. */
 private fun memberIds(values: List<String>): Set<Uuid>? = values.takeIf { it.isNotEmpty() }?.map {
@@ -138,8 +149,14 @@ private fun SharedAccountView.toResponse(caller: Caller) = SharedAccountResponse
     label = displayLabel,
     email = account.email.takeIf { identityVisible },
     providerAccountId = account.providerAccountId.takeIf { identityVisible },
-    owner = account.ownerMemberId?.toString()?.takeIf { identityVisible }.orEmpty(),
-    sharedWith = account.limits.allowedMembers?.map { it.toString() }?.sorted()?.takeIf { identityVisible }.orEmpty(),
+    owner = if (identityVisible) account.ownerMemberId?.toString().orEmpty() else "",
+    sharedWith = if (identityVisible) {
+        account.limits.allowedMembers.orEmpty().map {
+            it.toString()
+        }.sorted()
+    } else {
+        emptyList()
+    },
     paused = account.status == AccountStatus.DISABLED,
     mine = identityVisible && account.ownerMemberId == caller.memberId,
     priority = account.priority,

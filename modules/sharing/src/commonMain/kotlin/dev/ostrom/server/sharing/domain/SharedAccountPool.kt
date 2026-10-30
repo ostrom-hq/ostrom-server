@@ -171,7 +171,8 @@ class SharedAccountPool(
     private suspend fun take(open: List<Pair<SharedAccount, Double>>, sessionKey: String?, now: Instant) =
         mutex.withLock {
             val free = open.filter { (account, _) -> (inFlight[account.id] ?: 0) < account.limits.maxConcurrent }
-            val sticky = sessionKey?.let { affinity[it] }?.takeIf { it.second > now }?.first
+            val remembered = if (sessionKey == null) null else affinity[sessionKey]
+            val sticky = if (remembered != null && remembered.second > now) remembered.first else null
             val pick = free.firstOrNull { it.first.id == sticky }?.first ?: free.minWithOrNull(ORDER)?.first
             if (pick != null) {
                 inFlight[pick.id] = (inFlight[pick.id] ?: 0) + 1

@@ -88,7 +88,7 @@ class SharedAccountPoolTest {
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s1"),
         ).lease
         assertEquals(first.account.id, again.account.id)
-        clock.advance(2.hours)
+        clock.advance(SharedAccountPool.AFFINITY + 1.minutes)
         val later = assertIs<LeaseResult.Leased>(
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s1"),
         ).lease
@@ -151,7 +151,7 @@ class SharedAccountPoolTest {
             pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
         ).refusal
         assertTrue("busy" in busy.reason)
-        assertEquals(clock.now() + 5.seconds, busy.retryAt)
+        assertEquals(clock.now() + SharedAccountPool.BUSY_RETRY, busy.retryAt)
         first.release()
         first.release()
         assertEquals(0, pool.inFlight(first.account.id))
@@ -262,6 +262,13 @@ class SharedAccountPoolTest {
             Instant.parse("1969-12-01T00:00:00Z"),
             SharedAccountPool.monthStart(Instant.parse("1969-12-31T12:00:00Z")),
         )
+        for ((start, instant) in listOf(
+            "1969-12-01T00:00:00Z" to "1969-12-01T00:00:00Z",
+            "-0400-03-01T00:00:00Z" to "-0400-03-01T00:00:00Z",
+            "-0001-06-01T00:00:00Z" to "-0001-06-15T10:00:00Z",
+        )) {
+            assertEquals(Instant.parse(start), SharedAccountPool.monthStart(Instant.parse(instant)), instant)
+        }
     }
 
     @Test
@@ -329,5 +336,51 @@ class SharedAccountPoolTest {
                 value,
             )
         }
+    }
+
+    @Test
+    fun whenEveryOpenAccountIsBusyTheRetryIsTheFirstReopening() = runTest {
+        val closed = account("closed", priority = 5)
+        repository.setCooldown(Sharing.orgA, closed.id, clock.now() + 20.seconds)
+        account("open", limits = AccountLimits(maxConcurrent = 1))
+        val pool = pool()
+        assertIs<LeaseResult.Leased>(pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null))
+        val busy = assertIs<LeaseResult.Refused>(
+            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, null),
+        ).refusal
+        assertTrue("busy" in busy.reason)
+        assertEquals(clock.now() + 20.seconds, busy.retryAt)
+    }
+
+    @Test
+    fun aPastCoolDownNoLongerHoldsTheAccountBack() = runTest {
+        val account = account("a")
+        repository.setCooldown(Sharing.orgA, account.id, clock.now() - 1.minutes)
+        assertEquals(account.id, assertIs<LeaseResult.Leased>(lease()).lease.account.id)
+    }
+
+    @Test
+    fun theLoadOfAnAccountIsItsMostUsedWindow() = runTest {
+        val heavy = account("heavy", priority = 9)
+        val light = account("light")
+        val reset = clock.now() + 1.hours
+        repository.windows[heavy.id] = mutableListOf(
+            QuotaWindow("five_hour", 0.1, reset, clock.now()),
+            QuotaWindow("seven_day", 0.6, reset, clock.now()),
+            QuotaWindow("model:opus", 0.0, reset, clock.now()),
+        )
+        repository.windows[light.id] = mutableListOf(
+            QuotaWindow("seven_day", 0.3, reset, clock.now()),
+            QuotaWindow("five_hour", 0.2, reset, clock.now()),
+        )
+        assertEquals(light.id, assertIs<LeaseResult.Leased>(lease()).lease.account.id)
+    }
+
+    @Test
+    fun aRefusalUnderTheFullMarkCoolsDownForItsRetryAfter() = runTest {
+        val account = account("a")
+        val leased = assertIs<LeaseResult.Leased>(lease()).lease
+        leased.observe(429, mapOf("anthropic-ratelimit-unified-5h-utilization" to "0.5", "retry-after" to "30"))
+        assertEquals(clock.now() + 30.seconds, repository.get(Sharing.orgA, account.id)!!.cooldownUntil)
     }
 }

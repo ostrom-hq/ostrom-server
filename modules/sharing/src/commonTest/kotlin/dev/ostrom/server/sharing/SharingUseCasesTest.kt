@@ -23,6 +23,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
@@ -188,5 +189,20 @@ class SharingUseCasesTest {
         repository.vanishing = true
         assertFailsWith<AccountNotFoundException> { update(Sharing.memberA, account.id, UpdateAccountPayload()) }
         assertFailsWith<AccountNotFoundException> { remove(Sharing.memberA, account.id) }
+    }
+
+    @Test
+    fun anOwnerlessAccountGoesToWhoSharesItAgainAndProvidersStayApart() = runTest {
+        val first = share(Sharing.memberA, payload())
+        repository.accounts[0] = first.copy(ownerMemberId = null, status = AccountStatus.RECONNECT_REQUIRED)
+        clock.advance(1.hours)
+        val again = share(Sharing.adminA, payload(label = "Team Max"))
+        assertEquals(first.id, again.id)
+        assertEquals(Sharing.adminA.memberId, again.ownerMemberId)
+        assertEquals(AccountStatus.READY, again.status, "New tokens reconnect it")
+        assertEquals(first.createdAt, again.createdAt)
+        val codex = share(Sharing.memberA, payload().copy(provider = AccountProvider.CODEX))
+        assertNotEquals(first.id, codex.id, "Same account id, another provider: another account")
+        assertEquals(2, repository.accounts.size)
     }
 }
