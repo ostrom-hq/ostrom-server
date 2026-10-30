@@ -1,6 +1,8 @@
 package dev.ostrom.server.secrets.domain
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.uuid.Uuid
@@ -35,8 +37,9 @@ data class Caller(val orgId: Uuid, val memberId: Uuid, val role: MemberRole) {
 }
 
 /**
- * Turns a principal into the member it acts for. Bound by the identity/orgs modules; until they bind theirs,
- * [UnresolvedCallerResolver] refuses everyone, so no route of these modules is open by mistake.
+ * Turns a principal into the member it acts for. The modules use [OrgPrincipalCallerResolver], on the kernel's
+ * [PrincipalOrgResolver]: until identity binds it, the kernel's default refuses everyone, so no route is open by
+ * mistake.
  */
 interface CallerResolver {
     /**
@@ -50,9 +53,30 @@ interface CallerResolver {
     suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller?
 }
 
-/** Refuses every principal: the default until identity binds its own resolver. */
+/** Refuses every principal (tests and modules loaded without the kernel's resolver). */
 class UnresolvedCallerResolver : CallerResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? = null
+}
+
+/**
+ * [CallerResolver] on the kernel's [PrincipalOrgResolver], which the identity and orgs modules bind: owners and admins
+ * administer, every other role (member, approver, billing) is a member here.
+ *
+ * @param orgs The kernel's resolver.
+ */
+class OrgPrincipalCallerResolver(private val orgs: PrincipalOrgResolver) : CallerResolver {
+    override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
+        orgs.resolve(principal, orgId)?.let {
+            Caller(
+                orgId = it.orgId,
+                memberId = it.memberId,
+                role = when (it.role) {
+                    OrgRole.OWNER -> MemberRole.OWNER
+                    OrgRole.ADMIN -> MemberRole.ADMIN
+                    OrgRole.MEMBER, OrgRole.APPROVER, OrgRole.BILLING -> MemberRole.MEMBER
+                },
+            )
+        }
 }
 
 /** The caller is not a member of the org: answered like an unknown org, so existence does not leak. */

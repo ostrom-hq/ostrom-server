@@ -1,5 +1,7 @@
 package dev.ostrom.server.testing
 
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.configureHttp
@@ -43,8 +45,18 @@ fun serverTest(
     modules: List<ServerModule>,
     overrides: Module? = null,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
+) = serverTest(modules, overrides, EnvironmentConfigSource(), block)
+
+/**
+ * [serverTest] with the test database configuration read from [environment] (the skipped case is tested so).
+ */
+internal fun serverTest(
+    modules: List<ServerModule>,
+    overrides: Module?,
+    environment: ConfigSource,
+    block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
 ) = testApplication {
-    val database = TestDatabase.create() ?: return@testApplication
+    val database = TestDatabase.create(environment) ?: return@testApplication
     var started: Koin? = null
     try {
         val signer = Ed25519InstanceSigner.generate()

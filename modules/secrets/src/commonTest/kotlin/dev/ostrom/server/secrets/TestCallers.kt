@@ -6,6 +6,7 @@ import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.MemberRole
+import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import org.koin.core.module.Module
@@ -19,15 +20,33 @@ object TestCallers {
     val adminA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000a1"), MemberRole.ADMIN)
     val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
-    private val byToken = mapOf("admin-a" to adminA, "member-a" to memberA, "admin-b" to adminB)
+    private val byToken = mapOf(
+        "admin-a" to adminA,
+        "member-a" to memberA,
+        "admin-b" to adminB,
+        "agent-a" to memberA,
+        "cli-a" to memberA,
+        "device-a" to memberA,
+    )
 
-    /** Koin overrides (`stranger` is a valid token of nobody's org): the fake token authenticator and caller resolver, and a fixed secrets key. */
+    /** What each token is: browser sessions, plus an agent, a CLI token that may only read, and a device. */
+    private val principals = mapOf(
+        "agent-a" to AuthenticatedPrincipal("agent-a", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
+        "cli-a" to AuthenticatedPrincipal("cli-a", PrincipalKind.USER, setOf("profile:read", RelayScopes.SECRETS_READ)),
+        "device-a" to AuthenticatedPrincipal("device-a", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
+    )
+
+    /**
+     * Koin overrides (`stranger` is a valid token of nobody's org): the fake token authenticator and caller resolver,
+     * and a fixed secrets key.
+     */
     val overrides: Module = module {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) =
-                    (byToken[token] ?: token.takeIf { it == "stranger" })?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()) }
+                override suspend fun authenticate(token: String) = principals[token]
+                    ?: (byToken[token] ?: token.takeIf { it == "stranger" })
+                        ?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER)) }
             }
         }
         single<CallerResolver> {

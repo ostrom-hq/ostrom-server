@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -41,5 +42,21 @@ class JsonLoggerTest {
         logger.warn("kept")
         assertEquals(1, lines.size)
         assertTrue("kept" in lines.single())
+    }
+
+    @Test
+    fun writesEachKindOfFieldAndAnAnonymousErrorWithoutMessage() {
+        val lines = mutableListOf<String>()
+        val logger = JsonLogger(LogLevel.DEBUG, clock, { lines += it })
+        logger.warn("odd failure", mapOf("retry" to true, "missing" to null, "count" to 3L), object : Exception() {})
+        logger.info("plain")
+
+        val event = Json.parseToJsonElement(lines.first()).jsonObject
+        assertEquals("true", event["retry"]?.jsonPrimitive?.content)
+        assertEquals("null", event["missing"].toString())
+        assertEquals("3", event["count"]?.jsonPrimitive?.content)
+        assertEquals("Throwable", event["error"]?.jsonPrimitive?.content)
+        assertNull(event["error_message"])
+        assertEquals(setOf("ts", "level", "msg"), Json.parseToJsonElement(lines.last()).jsonObject.keys)
     }
 }

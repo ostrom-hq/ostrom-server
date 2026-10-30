@@ -1,6 +1,12 @@
 package dev.ostrom.server.secrets.presentation
 
+import dev.ostrom.server.secrets.domain.CallerResolver
+import dev.ostrom.server.secrets.domain.CreateSecretUseCase
+import dev.ostrom.server.secrets.domain.DeleteSecretUseCase
+import dev.ostrom.server.secrets.domain.FindSecretUseCase
 import dev.ostrom.server.secrets.domain.InvalidSecretException
+import dev.ostrom.server.secrets.domain.ListSecretsUseCase
+import dev.ostrom.server.secrets.domain.RotateSecretUseCase
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
@@ -73,3 +79,22 @@ fun personalScope(scope: String?): Boolean = when (scope) {
     "personal" -> true
     else -> throw InvalidSecretException("The scope is org or personal.")
 }
+
+/**
+ * What the secrets routes need.
+ *
+ * @property callers Resolves the member of each call.
+ * @property createSecret Creates.
+ * @property listSecrets Lists.
+ * @property rotateSecret Rotates.
+ * @property deleteSecret Deletes.
+ * @property findSecret Finds by name.
+ */
+data class SecretsRoutesDependencies(
+    val callers: CallerResolver,
+    val createSecret: CreateSecretUseCase,
+    val listSecrets: ListSecretsUseCase,
+    val rotateSecret: RotateSecretUseCase,
+    val deleteSecret: DeleteSecretUseCase,
+    val findSecret: FindSecretUseCase,
+)

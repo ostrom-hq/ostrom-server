@@ -1,5 +1,7 @@
 package dev.ostrom.server.kernel.module
 
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.auth.RejectingPrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.RejectingTokenAuthenticator
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import org.koin.core.Koin
@@ -9,8 +11,9 @@ import org.koin.dsl.module
 
 /**
  * Builds the server's Koin: the kernel, then every module, **without overrides** (two modules binding the same type
- * fail the start instead of one silently replacing the other). The only default a module may provide is the
- * [TokenAuthenticator]: when no module binds one (before the identity module exists), every token is rejected.
+ * fail the start instead of one silently replacing the other). The only defaults a module may replace are the
+ * [TokenAuthenticator] and the [PrincipalOrgResolver]: when no module binds them (before the identity and orgs
+ * modules exist), every token is rejected and no one is a member of any organization.
  *
  * @param kernel The kernel definitions ([kernelModule]).
  * @param modules The functional modules.
@@ -25,6 +28,9 @@ fun serverKoin(kernel: Module, modules: List<ServerModule>, overrides: Module? =
     }.koin
     if (koin.getOrNull<TokenAuthenticator>() == null) {
         koin.loadModules(listOf(module { single<TokenAuthenticator> { RejectingTokenAuthenticator() } }))
+    }
+    if (koin.getOrNull<PrincipalOrgResolver>() == null) {
+        koin.loadModules(listOf(module { single<PrincipalOrgResolver> { RejectingPrincipalOrgResolver() } }))
     }
     if (overrides != null) koin.loadModules(listOf(overrides), allowOverride = true)
     return koin
