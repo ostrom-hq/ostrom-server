@@ -18,7 +18,6 @@ import dev.ostrom.server.gates.fakes.FakeSigner
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
-import dev.ostrom.server.gates.infrastructure.UnavailableGateReceiptSigner
 import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -45,7 +44,6 @@ class GatesModuleRegistrationTest {
         assertIs<UnavailableGateSessions>(app.koin.get<GateSessions>())
         assertIs<NoGateNodes>(app.koin.get<GateNodeResolver>())
         assertIs<UnknownPullRequestHeads>(app.koin.get<PullRequestHeads>())
-        assertIs<UnavailableGateReceiptSigner>(app.koin.get<GateReceiptSigner>())
         assertIs<NoGateActors>(app.koin.get<GateActorResolver>())
         app.close()
     }

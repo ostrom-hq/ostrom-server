@@ -12,6 +12,10 @@ CREATE ROLE ostrom_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION N
 DO $$ BEGIN CREATE ROLE ostrom_tenant NOLOGIN NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 GRANT ostrom_tenant TO ostrom_owner WITH ADMIN OPTION;
 GRANT ostrom_tenant TO ostrom_app;
+-- The owner of the cross-organization functions (docs/tenancy.md): owner of no table, never granted to the serving
+-- role. The owner administers it to hand its functions over; tolerate one created before, like ostrom_tenant.
+DO $$ BEGIN CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+GRANT ostrom_router TO ostrom_owner WITH ADMIN OPTION;
 CREATE DATABASE ostrom OWNER ostrom_owner;
 \connect ostrom
 ALTER SCHEMA public OWNER TO ostrom_owner;

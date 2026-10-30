@@ -73,6 +73,25 @@ class SharingUseCasesTest {
     }
 
     @Test
+    fun anAccountSharedDisabledNeverServesAndSharingAgainNeverTurnsItOn() = runTest {
+        val off = share(Sharing.adminA, payload(id = "acct-off").copy(disabled = true))
+        assertEquals(AccountStatus.DISABLED, off.status, "Stored off in the same write")
+        assertEquals(AccountStatus.DISABLED, share(Sharing.adminA, payload(id = "acct-off")).status)
+        val on = share(Sharing.adminA, payload())
+        assertEquals(AccountStatus.DISABLED, share(Sharing.adminA, payload().copy(disabled = true)).status)
+        assertEquals(on.id, repository.list(Sharing.orgA).single { it.providerAccountId == "acct-1" }.id)
+    }
+
+    @Test
+    fun aCheckRefusesWhatAShareWouldAndWritesNothing() = runTest {
+        share.check(Sharing.memberA, payload())
+        assertEquals(emptyList(), repository.list(Sharing.orgA), "A check writes nothing")
+        assertFailsWith<InvalidAccountException> { share.check(Sharing.memberA, payload(label = "")) }
+        share(Sharing.memberA, payload())
+        assertFailsWith<AccountOwnedByAnotherMemberException> { share.check(Sharing.otherA, payload()) }
+    }
+
+    @Test
     fun invalidInputIsRefused() = runTest {
         assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload(label = "")) }
         assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload(id = "bad id")) }
