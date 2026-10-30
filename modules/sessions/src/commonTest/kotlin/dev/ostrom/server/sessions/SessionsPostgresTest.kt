@@ -134,8 +134,11 @@ class SessionsPostgresTest {
         val recorded = server.call("agent:a:launch-1", "/api/v1/sessions/s-1/seen", seen)
         assertEquals(HttpStatusCode.NoContent, recorded.status)
 
-        val ended = server.call("agent:a:launch-1", "/api/v1/sessions/s-1/end", """{"exitCode":0,"tools":3}""")
-            .body<SessionResponse>()
+        val end = """{"exitCode":0,"tools":3,"costUsd":0.42}"""
+        val ended = server.call("agent:a:launch-1", "/api/v1/sessions/s-1/end", end).body<SessionResponse>()
+        assertEquals(0.42, ended.session.costUsd)
+        val read = server.call("user:a:lyes", "/api/v1/sessions/s-1").body<SessionResponse>()
+        assertEquals(0.42, read.session.costUsd, "read back from the database")
         val receipt = assertNotNull(ended.receipt)
         assertEquals("rcpt_session_s-1", ended.session.receiptId)
         assertEquals(1, ended.session.gates?.size)
@@ -190,6 +193,8 @@ class SessionsPostgresTest {
         }
         assertEquals(3, starts.map { it.id }.toSet().size)
 
+        val noOrg = server.call("user:nobody", "/api/v1/sessions?open=true")
+        assertEquals(HttpStatusCode.Forbidden, noOrg.status, "a credential of no organization")
         val page = server.call("user:a:lyes", "/api/v1/sessions?open=true").body<SessionsPage>()
         assertEquals(1, page.items.size, "Every other segment was superseded")
         val ended = server.call("user:a:lyes", "/api/v1/sessions?open=false").body<SessionsPage>().items

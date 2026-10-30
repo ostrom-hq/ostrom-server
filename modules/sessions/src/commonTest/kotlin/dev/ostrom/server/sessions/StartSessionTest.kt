@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions
 
+import dev.ostrom.server.gates.domain.models.ActorKind
+import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.sessions.domain.models.EndSession
 import dev.ostrom.server.sessions.domain.models.InvalidSessionRequestException
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
 import dev.ostrom.server.sessions.domain.models.Session
+import dev.ostrom.server.sessions.domain.models.SessionClosedException
 import dev.ostrom.server.sessions.domain.models.StartSession
 import dev.ostrom.server.sessions.domain.usecases.SessionSegments
+import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
 import dev.ostrom.server.sessions.fakes.ORG
 import dev.ostrom.server.sessions.fakes.SessionBench
 import dev.ostrom.server.sessions.fakes.agent
@@ -65,6 +69,34 @@ class StartSessionTest {
         assertEquals(named, bench.start(agent(), start.copy(packageDigest = "pkg-2")))
         assertEquals(named, bench.start(user(), start.copy(launchId = null)))
         assertEquals(1, bench.repository.rows.size)
+    }
+
+    @Test
+    fun aRealRepositoryIsKeptOnlyWhenItIsAnotherOne() = runTest {
+        val bench = SessionBench()
+        assertEquals("acme/fork", bench.start(user(), start.copy(id = "s-2", realRepo = " acme/fork ")).realRepo)
+        val bare = bench.start(user(), start.copy(id = "s-3", repo = null, realRepo = null))
+        assertNull(bare.repo)
+        assertNull(bare.realRepo)
+        val service = GateActor("ci", ORG, ActorKind.SERVICE)
+        assertEquals("ci", bench.start(service, start.copy(id = "s-4")).dev, "without a person, the credential's id")
+    }
+
+    @Test
+    fun aClosedSessionSaysHowItEndedAndTheSweepWaitsTwoMinutes() = runTest {
+        val session = SessionBench().start(user(), start).copy(endedAt = Instant.parse("2026-10-30T10:00:00Z"))
+        assertTrue("(ended)" in SessionClosedException(session.copy(source = null)).message.orEmpty())
+        assertTrue("(superseded)" in SessionClosedException(session.copy(source = "superseded")).message.orEmpty())
+        assertEquals(2.minutes, SweepStaleSessionsUseCaseImpl.STALE_AFTER)
+    }
+
+    @Test
+    fun theLauncherKeepsThePackageItsHookStartedWith() = runTest {
+        val bench = SessionBench()
+        bench.start(user(), start.copy(launchId = null, packageDigest = "pkg-hook"))
+        val named = bench.start(agent(), start.copy(packageDigest = "pkg-launcher"))
+        assertEquals("launch-1", named.launchId)
+        assertEquals("pkg-hook", named.packageDigest)
     }
 
     @Test
