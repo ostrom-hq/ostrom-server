@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
+import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.Serializable
 
 // The identity API. These classes move to ostrom-core (the API contract) once it is published (docs/MODULES.md);
@@ -252,7 +255,9 @@ data class ProfileResponse(
  * @property expiresAt When it expires, if it does.
  * @property lastUsedAt When it was last used, if ever (precise to five minutes).
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = TokenResponse.Answer::class)
 data class TokenResponse(
     val id: String,
     val name: String,
@@ -262,7 +267,10 @@ data class TokenResponse(
     val createdAt: String,
     val expiresAt: String?,
     val lastUsedAt: String?,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<TokenResponse>(generatedSerializer(), "expiresAt", "lastUsedAt")
+}
 
 /**
  * The user's tokens.
@@ -379,7 +387,9 @@ data class AnswerDeviceRequest(val userCode: String, val approve: Boolean)
  * @property signature The instance's Ed25519 signature of the canonical form (base64).
  * @property keyId The instance key that signed it (`GET /v1/instance/keys`).
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = AuditEventResponse.Answer::class)
 data class AuditEventResponse(
     val id: String,
     val sequence: Long,
@@ -394,7 +404,10 @@ data class AuditEventResponse(
     val hash: String,
     val signature: String,
     val keyId: String,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<AuditEventResponse>(generatedSerializer(), "orgId", "actorId", "previousHash")
+}
 
 /**
  * A page of audit events.
@@ -402,5 +415,10 @@ data class AuditEventResponse(
  * @property events The events, newest first.
  * @property nextBefore The `before` of the next page, or null when this is the last one.
  */
-@Serializable
-data class AuditEventsResponse(val events: List<AuditEventResponse>, val nextBefore: Long?)
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = AuditEventsResponse.Answer::class)
+data class AuditEventsResponse(val events: List<AuditEventResponse>, val nextBefore: Long?) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<AuditEventsResponse>(generatedSerializer(), "nextBefore")
+}
