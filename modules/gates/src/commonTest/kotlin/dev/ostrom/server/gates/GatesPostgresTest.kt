@@ -93,8 +93,12 @@ class GatesPostgresTest {
                         AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER, GateScopes.ANSWER))
                     "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
                     // A browser session with the read scope only.
-                    "reader" ->
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ), PrincipalChannel.BROWSER)
+                    "reader" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.READ),
+                        PrincipalChannel.BROWSER,
+                    )
                     "device" -> AuthenticatedPrincipal(token, PrincipalKind.DEVICE, setOf(GateScopes.ANSWER))
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                 }
