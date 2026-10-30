@@ -66,10 +66,19 @@ class McpRelayModuleRegistrationTest {
             mapOf("OSTROM_MCP_HOST_TOKEN" to "t"),
             mapOf("OSTROM_MCP_LIST_TIMEOUT_MS" to "soon"),
             mapOf("OSTROM_MCP_CALL_TIMEOUT_MS" to "999"),
+            mapOf("OSTROM_MCP_CALL_TIMEOUT_MS" to "600001"),
         )
         for (values in broken) {
             assertFailsWith<InvalidConfigException>(values.toString()) { McpRelayConfig.from(MapConfigSource(values)) }
         }
+    }
+
+    @Test
+    fun aSourceThatKeepsBlankValuesStillLeavesTheHostUnset() {
+        val raw = object : ConfigSource {
+            override fun get(key: String): String? = if (key.startsWith("OSTROM_MCP_HOST_")) " " else null
+        }
+        assertNull(McpRelayConfig.from(raw).host)
     }
 
     @Test

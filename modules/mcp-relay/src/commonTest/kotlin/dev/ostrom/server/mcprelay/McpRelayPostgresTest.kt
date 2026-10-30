@@ -426,6 +426,12 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
                 assertEquals(HttpStatusCode.Forbidden, write.status, "mcp:read does not change")
                 val asAgent = client.get("$admin/servers") { bearerAuth("agent-a") }.body<McpServersPage>()
                 assertEquals(emptyList(), asAgent.items.single().secretNames, "An agent never sees secret names")
+                val asAdminAgent = client.get("$admin/servers") { bearerAuth("admin-agent-a") }.body<McpServersPage>()
+                assertEquals(
+                    emptyList(),
+                    asAdminAgent.items.single().secretNames,
+                    "An admin's agent gets the agent list, without secret names",
+                )
             }
         }
 

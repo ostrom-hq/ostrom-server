@@ -255,7 +255,8 @@ class UpstreamsTest {
 
     @Test
     fun anOddSessionIdIsIgnoredAndAMissingCredentialIsNotSent() = realTime {
-        for (sessionId in listOf("s 1", "s".repeat(257))) {
+        // Below 0x21, empty, above 0x7e and longer than 256: each is ignored.
+        for (sessionId in listOf("s 1", "", "s\u007f1", "s".repeat(257))) {
             requests.clear()
             val upstream = HttpMcpUpstream(
                 client { request, body ->

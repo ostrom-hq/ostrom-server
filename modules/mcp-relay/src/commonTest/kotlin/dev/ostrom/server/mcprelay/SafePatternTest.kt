@@ -36,6 +36,7 @@ class SafePatternTest {
             "[^]a]+",
             "[\\]]+",
             "[abc",
+            "a[",
             "a)b",
             "a\\",
             "\\d+",

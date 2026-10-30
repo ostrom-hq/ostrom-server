@@ -17,6 +17,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -67,6 +68,14 @@ class ArgumentPolicyTest {
         for ((results, expected) in cases) {
             assertEquals(expected, results.toList())
         }
+    }
+
+    @Test
+    fun aConditionWithoutItsOperandFailsLoudlyRatherThanDeciding() {
+        for (operator in listOf(PREFIX, CONTAINS, MATCHES)) {
+            assertFailsWith<IllegalArgumentException>(operator.name) { holds("db", operator) }
+        }
+        assertEquals(false, holds("missing", MATCHES), "Nothing to read, nothing to compile")
     }
 
     private fun policy(tool: String, effect: PolicyEffect, second: Long, vararg conditions: ArgumentCondition) =
