@@ -3,6 +3,7 @@ package dev.ostrom.server.identity.domain
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import kotlin.time.Clock
@@ -63,6 +64,10 @@ class CredentialAuthenticatorImpl(
             kind = PrincipalKind.USER,
             scopes = setOf(ALL_USER_SCOPES),
             credentialId = session.id.toString(),
+            // A session is only started by a sign-in (OAuth, e-mail link, SSO): its start is when the person proved
+            // who they are. Signing in again starts a new one, which a yes to a high-risk action asks for (S2-54).
+            channel = PrincipalChannel.BROWSER,
+            authenticatedAt = session.createdAt,
         )
     }
 

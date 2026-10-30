@@ -61,7 +61,7 @@ class OAuthProvidersTest {
 
     @Test
     fun gitHubSendsTheConsentPageWithPkce() {
-        val url = github { error("no call") }.authorizationUrl("st", "ch", "unused", "https://api.test/cb")
+        val url = github { error("no call") }.authorizationUrl("st", "ch", "unused", "https://api.test/cb", false)
 
         assertEquals("https://gh.test/login/oauth/authorize", url.substringBefore('?'))
         assertEquals(
@@ -71,6 +71,15 @@ class OAuthProvidersTest {
             ),
             query(url),
         )
+    }
+
+    @Test
+    fun signingInAgainAsksTheProviderNotToReuseAnOldSignIn() {
+        val gitHub = github { error("no call") }.authorizationUrl("st", "ch", "unused", "https://api.test/cb", true)
+        val openId = oidc(null).authorizationUrl("st", "ch", "n-1", "https://api.test/cb", true)
+
+        assertEquals("select_account", query(gitHub)["prompt"])
+        assertEquals("300", query(openId)["max_age"])
     }
 
     @Test
@@ -188,7 +197,7 @@ class OAuthProvidersTest {
 
     @Test
     fun oidcSendsTheConsentPageWithPkceAndNonce() {
-        val url = oidc(null).authorizationUrl("st", "ch", "n-1", "https://api.test/cb")
+        val url = oidc(null).authorizationUrl("st", "ch", "n-1", "https://api.test/cb", false)
 
         assertEquals("https://idp.test/authorize", url.substringBefore('?'))
         assertEquals(

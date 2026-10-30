@@ -67,7 +67,8 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
     }
     get<SignInApi.Provider.Start> { params ->
         val started = try {
-            startOAuth(params.parent.provider, params.redirect, call.request.origin.remoteAddress)
+            val source = call.request.origin.remoteAddress
+            startOAuth(params.parent.provider, params.redirect, source, reauthenticate = params.reauth)
         } catch (error: OstromException) {
             return@get call.redirectToLogin(config, error)
         }
