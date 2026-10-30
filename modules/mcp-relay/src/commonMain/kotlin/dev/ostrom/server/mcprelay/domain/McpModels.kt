@@ -172,6 +172,15 @@ data class McpCall(
 )
 
 /**
+ * Where a page of the journal starts: the calls strictly older than this one, newest first.
+ *
+ * @property startedAt When the last call of the previous page started.
+ * @property id That call's id, which orders calls started in the same microsecond; null for every call before
+ *   [startedAt].
+ */
+data class McpCallCursor(val startedAt: Instant, val id: Uuid? = null)
+
+/**
  * Usage of one member on one server over a period.
  *
  * @property memberId The member.

@@ -122,6 +122,19 @@ class McpServerAdministration(
         }
         val referenced = listOfNotNull(server.credentialSecretId) + server.stdio?.secretEnv?.values.orEmpty()
         requireSecrets(revealSecrets, caller, referenced)
+        requireDistinctAgentName(caller, server)
+    }
+
+    /** `a.b` and `a_b` reach the agent as the same `<prefix>-a_b`: the second would shadow the first. */
+    private suspend fun requireDistinctAgentName(caller: Caller, server: McpServer) {
+        val seen = McpRules.agentName("", server.name)
+        val clash = repository.listServers(caller.orgId, McpRules.MAX_SERVERS)
+            .firstOrNull { it.id != server.id && it.name != server.name && McpRules.agentName("", it.name) == seen }
+        if (clash != null) {
+            throw McpServerNameTakenException(
+                "The agent would see ${server.name} as the server ${clash.name} already is.",
+            )
+        }
     }
 
     private fun McpServerPayload.toServer(id: Uuid, orgId: Uuid, version: Int, createdAt: Instant) = McpServer(
@@ -348,7 +361,7 @@ interface ListMcpCallsUseCase {
     /** Reads a page, of one server or member when given. */
     suspend operator fun invoke(
         caller: Caller,
-        before: Instant?,
+        before: McpCallCursor?,
         limit: Int,
         server: String? = null,
         memberId: Uuid? = null,
@@ -359,7 +372,7 @@ interface ListMcpCallsUseCase {
 class ListMcpCallsUseCaseImpl(private val repository: McpRelayRepository) : ListMcpCallsUseCase {
     override suspend fun invoke(
         caller: Caller,
-        before: Instant?,
+        before: McpCallCursor?,
         limit: Int,
         server: String?,
         memberId: Uuid?,

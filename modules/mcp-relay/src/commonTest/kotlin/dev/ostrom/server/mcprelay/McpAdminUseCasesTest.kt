@@ -81,6 +81,20 @@ class McpAdminUseCasesTest {
     }
 
     @Test
+    fun twoNamesTheAgentWouldSeeAsOneAreRefused() = runTest {
+        val dotted = create(Relay.adminA, http.copy(name = "grafana.eu"))
+        // The agent sees both as `<prefix>-grafana_eu`: the second would shadow the first.
+        val clash =
+            assertFailsWith<McpServerNameTakenException> { create(Relay.adminA, http.copy(name = "grafana_eu")) }
+        assertEquals("The agent would see grafana_eu as the server grafana.eu already is.", clash.message)
+        val other = create(Relay.adminA, http.copy(name = "grafana-eu"))
+        assertFailsWith<McpServerNameTakenException> {
+            UpdateMcpServerUseCaseImpl(administration())(Relay.adminA, other.id, http.copy(name = "grafana_eu"))
+        }
+        UpdateMcpServerUseCaseImpl(administration())(Relay.adminA, dotted.id, http.copy(name = "grafana.eu"))
+    }
+
+    @Test
     fun anUpdateOfAMissingOrVanishedServerIsNotFound() = runTest {
         val update = UpdateMcpServerUseCaseImpl(administration())
         assertFailsWith<McpServerNotFoundException> { update(Relay.adminA, Uuid.random(), http) }

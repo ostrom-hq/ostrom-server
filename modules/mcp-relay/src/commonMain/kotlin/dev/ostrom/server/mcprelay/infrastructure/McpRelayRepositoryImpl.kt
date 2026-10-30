@@ -7,6 +7,7 @@ import dev.ostrom.server.mcprelay.domain.ConditionOperator
 import dev.ostrom.server.mcprelay.domain.EffectiveServer
 import dev.ostrom.server.mcprelay.domain.McpAssignment
 import dev.ostrom.server.mcprelay.domain.McpCall
+import dev.ostrom.server.mcprelay.domain.McpCallCursor
 import dev.ostrom.server.mcprelay.domain.McpOperation
 import dev.ostrom.server.mcprelay.domain.McpOutcome
 import dev.ostrom.server.mcprelay.domain.McpRelayRepository
@@ -245,20 +246,26 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
 
     override suspend fun listCalls(
         orgId: Uuid,
-        before: Instant?,
+        before: McpCallCursor?,
         limit: Int,
         server: String?,
         memberId: Uuid?,
     ): List<McpCall> {
-        val filters = (if (before == null) "" else " AND started_at < :before") +
+        val after = when {
+            before == null -> ""
+            before.id == null -> " AND started_at < :before"
+            else -> " AND (started_at, id) < (:before, :before_id)"
+        }
+        val filters = after +
             (if (server == null) "" else " AND server_name = :server") +
             (if (memberId == null) "" else " AND member_id = :member_id")
         val statement = Statement.create(
             "SELECT id, org_id, member_id, server_id, server_name, operation, tool, outcome, started_at, " +
                 "duration_ms, response_bytes, policy_id FROM mcp_relay_calls WHERE org_id = :org_id$filters ORDER BY " +
-                "started_at DESC, id LIMIT :limit",
+                "started_at DESC, id DESC LIMIT :limit",
         ).bind("org_id", orgId).bind("limit", limit)
-        if (before != null) statement.bind("before", before)
+        before?.let { statement.bind("before", it.startedAt) }
+        before?.id?.let { statement.bind("before_id", it) }
         if (server != null) statement.bind("server", server)
         if (memberId != null) statement.bind("member_id", memberId)
         return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toCall() }

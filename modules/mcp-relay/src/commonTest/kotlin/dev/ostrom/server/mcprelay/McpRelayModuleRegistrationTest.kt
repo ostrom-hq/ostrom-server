@@ -29,6 +29,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -127,7 +128,7 @@ class McpRelayModuleRegistrationTest {
         advanceTimeBy(1.hours + 1.milliseconds)
         assertEquals(2, purged.size)
         assertEquals(listOf("mcp journal purge failed"), warnings)
-        assertEquals(Relay.epoch - 30 * 24.hours, purged.first())
+        assertEquals(Relay.epoch - 30.days, purged.first())
         app.close()
     }
 }

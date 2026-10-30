@@ -64,7 +64,7 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
                 response_bytes BIGINT NOT NULL,
                 policy_id UUID
             );
-            CREATE INDEX mcp_relay_calls_org ON mcp_relay_calls (org_id, started_at DESC);
+            CREATE INDEX mcp_relay_calls_org ON mcp_relay_calls (org_id, started_at DESC, id DESC);
             CREATE INDEX mcp_relay_calls_started ON mcp_relay_calls (started_at)
         """.trimIndent(),
     ),

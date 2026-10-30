@@ -5,6 +5,7 @@ import dev.ostrom.server.mcprelay.domain.ArgumentPolicy
 import dev.ostrom.server.mcprelay.domain.EffectiveServer
 import dev.ostrom.server.mcprelay.domain.McpAssignment
 import dev.ostrom.server.mcprelay.domain.McpCall
+import dev.ostrom.server.mcprelay.domain.McpCallCursor
 import dev.ostrom.server.mcprelay.domain.McpOperation
 import dev.ostrom.server.mcprelay.domain.McpOutcome
 import dev.ostrom.server.mcprelay.domain.McpRelayRepository
@@ -188,13 +189,13 @@ class InMemoryRelayRepository : McpRelayRepository {
 
     override suspend fun listCalls(
         orgId: Uuid,
-        before: Instant?,
+        before: McpCallCursor?,
         limit: Int,
         server: String?,
         memberId: Uuid?,
     ): List<McpCall> = journal.filter {
         it.orgId == orgId &&
-            (before == null || it.startedAt < before) &&
+            (before == null || it.startedAt < before.startedAt) &&
             (server == null || it.serverName == server) &&
             (memberId == null || it.memberId == memberId)
     }.sortedByDescending { it.startedAt }.take(limit)
