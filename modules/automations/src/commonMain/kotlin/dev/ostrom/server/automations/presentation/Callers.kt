@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.automations.presentation
 
+import dev.ostrom.server.automations.domain.AutomationCaller
+import dev.ostrom.server.automations.domain.AutomationNotFoundException
+import dev.ostrom.server.automations.domain.MissingAutomationScopeException
 import dev.ostrom.server.automations.domain.MissingWaitScopeException
 import dev.ostrom.server.automations.domain.NoOrganizationException
 import dev.ostrom.server.automations.domain.WaitCaller
 import dev.ostrom.server.automations.domain.WaitNotFoundException
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.BrowserSessionRequiredException
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.auth.WriteAccess
+import dev.ostrom.server.kernel.auth.requireWrite
 import kotlin.uuid.Uuid
 
 /** Reading waits. */
@@ -50,3 +56,48 @@ private val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 
 /** A wait id of a path; a malformed one names no wait. */
 internal fun waitId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw WaitNotFoundException()
+
+/** Reading automations and their runs. */
+const val AUTOMATIONS_READ = "automations:read"
+
+/** Creating, changing, testing and deleting automations. Includes [AUTOMATIONS_READ]. */
+const val AUTOMATIONS_WRITE = "automations:write"
+
+/** Who writes automations besides a browser session (S2-52, declared): a service key, made for programs. */
+val AUTOMATION_WRITERS: WriteAccess = WriteAccess.tokens(PrincipalKind.SERVICE)
+
+/**
+ * Whether a credential carries [scope], directly, through `automations:write`, or as a member's full login. A device
+ * or agent token never manages automations, whatever its scopes (S2-03): only a member or a service key does.
+ */
+fun AuthenticatedPrincipal.allowsAutomations(scope: String): Boolean = when (kind) {
+    PrincipalKind.DEVICE -> false
+    PrincipalKind.USER -> ALL_USER_SCOPES in scopes || scope in scopes || AUTOMATIONS_WRITE in scopes
+    PrincipalKind.SERVICE -> scope in scopes || AUTOMATIONS_WRITE in scopes
+}
+
+/**
+ * The member an automations request acts for. Writing ([AUTOMATIONS_WRITE]) takes a browser session or a service key
+ * ([AUTOMATION_WRITERS], S2-52): never a personal token, a device or the mobile app.
+ *
+ * @throws MissingAutomationScopeException When the credential lacks [scope].
+ * @throws BrowserSessionRequiredException When it may not write automations.
+ * @throws NoOrganizationException When it acts for no organization.
+ */
+suspend fun PrincipalOrgResolver.automationCallerOf(
+    principal: AuthenticatedPrincipal,
+    scope: String,
+): AutomationCaller {
+    if (!principal.allowsAutomations(scope)) throw MissingAutomationScopeException(scope)
+    if (scope == AUTOMATIONS_WRITE) principal.requireWrite(AUTOMATION_WRITERS)
+    val member = resolve(principal, null) ?: throw NoOrganizationException()
+    return AutomationCaller(
+        orgId = member.orgId,
+        memberId = member.memberId.toString(),
+        admin = member.role in ADMIN_ROLES,
+        interactive = principal.kind == PrincipalKind.USER,
+    )
+}
+
+/** An automation id of a path; a malformed one names no automation. */
+internal fun automationId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw AutomationNotFoundException()

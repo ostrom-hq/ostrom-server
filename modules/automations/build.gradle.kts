@@ -8,6 +8,14 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            implementation(libs.kotlinx.datetime)
+            implementation(libs.cryptography.core)
+        }
+        nativeMain.dependencies {
+            implementation(libs.cryptography.openssl3.prebuilt)
+        }
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

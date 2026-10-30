@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.billing.presentation
 
-import dev.ostrom.server.billing.domain.BILLING_MANAGE
 import dev.ostrom.server.billing.domain.BILLING_READ
 import dev.ostrom.server.billing.domain.BillingAccessDeniedException
 import dev.ostrom.server.billing.domain.BillingInterval
@@ -10,8 +9,9 @@ import dev.ostrom.server.billing.domain.BillingScopeRequiredException
 import dev.ostrom.server.billing.domain.Invoice
 import dev.ostrom.server.billing.domain.Plan
 import dev.ostrom.server.billing.domain.PlanCatalog
-import dev.ostrom.server.billing.domain.allowsBilling
+import dev.ostrom.server.billing.domain.allowsBillingRead
 import dev.ostrom.server.billing.domain.percentOfHours
+import dev.ostrom.server.billing.domain.requireBillingWrite
 import dev.ostrom.server.billing.infrastructure.MAX_WEBHOOK_BYTES
 import dev.ostrom.server.billing.infrastructure.parseStripeEvent
 import dev.ostrom.server.kernel.auth.OrgPrincipal
@@ -32,68 +32,80 @@ import kotlinx.io.readByteArray
 import kotlin.uuid.Uuid
 
 /**
- * The billing routes. Reading needs membership, changing needs an owner, an admin or a billing admin (the member
- * comes from the kernel's [PrincipalOrgResolver]); the webhook is authenticated by Stripe's signature only.
+ * The billing routes. Reading needs membership, changing needs an owner, an admin or a billing admin signed in to the
+ * console (the member comes from the kernel's [PrincipalOrgResolver]); the webhook is authenticated by Stripe's
+ * signature only.
  */
 fun Route.billingRoutes(dependencies: BillingRoutesDependencies) = with(dependencies) {
     authenticated {
         get<BillingApi> { params ->
-            val (caller, orgId) = call.caller(resolver, params.orgId, BILLING_READ)
+            val (caller, orgId) = call.reader(resolver, params.orgId)
             call.respond(getOverview(caller, orgId).toResponse())
         }
         post<BillingApi.Checkout, PlanRequest> { params, request ->
             val (plan, interval) = request.parse()
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
+            val (caller, orgId) = call.writer(resolver, params.parent.orgId)
             call.respond(RedirectResponse(startCheckout(caller, orgId, plan, interval)))
         }
         post<BillingApi.Portal> { params ->
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
+            val (caller, orgId) = call.writer(resolver, params.parent.orgId)
             call.respond(RedirectResponse(openPortal(caller, orgId)))
         }
         post<BillingApi.ChangePlan, PlanRequest> { params, request ->
             val (plan, interval) = request.parse()
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
+            val (caller, orgId) = call.writer(resolver, params.parent.orgId)
             changePlan(caller, orgId, plan, interval)
             call.respond(getOverview(caller, orgId).toResponse())
         }
         post<BillingApi.Cancel> { params ->
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
+            val (caller, orgId) = call.writer(resolver, params.parent.orgId)
             setCancellation(caller, orgId, cancel = true)
             call.respond(getOverview(caller, orgId).toResponse())
         }
         post<BillingApi.Resume> { params ->
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
+            val (caller, orgId) = call.writer(resolver, params.parent.orgId)
             setCancellation(caller, orgId, cancel = false)
             call.respond(getOverview(caller, orgId).toResponse())
         }
         get<BillingApi.Invoices> { params ->
-            val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_READ)
+            val (caller, orgId) = call.reader(resolver, params.parent.orgId)
             call.respond(InvoicesResponse(listInvoices(caller, orgId, params.limit).map { it.toResponse() }))
         }
     }
-    post<StripeWebhookApi> {
-        // Reads at most one byte past the limit, whatever Content-Length says (or a chunked body hides).
-        val bytes = call.receiveChannel().readRemaining(MAX_WEBHOOK_BYTES + 1L).readByteArray()
-        if (bytes.size > MAX_WEBHOOK_BYTES) throw eventTooLarge()
-        val payload = bytes.decodeToString()
-        verifier.verify(payload, call.request.headers["Stripe-Signature"])
-        val outcome = handleEvent(parseStripeEvent(payload))
-        call.respond(WebhookResponse(received = true, outcome = outcome.name.lowercase()))
-    }
+    post<StripeWebhookApi> { call.receiveStripeEvent(dependencies) }
+    post<LegacyStripeWebhookApi> { call.receiveStripeEvent(dependencies) }
+}
+
+/** Verifies and applies one Stripe event; an event Stripe sent is always answered 200 once its signature holds. */
+private suspend fun ApplicationCall.receiveStripeEvent(dependencies: BillingRoutesDependencies) {
+    // Reads at most one byte past the limit, whatever Content-Length says (or a chunked body hides).
+    val bytes = receiveChannel().readRemaining(MAX_WEBHOOK_BYTES + 1L).readByteArray()
+    if (bytes.size > MAX_WEBHOOK_BYTES) throw eventTooLarge()
+    val payload = bytes.decodeToString()
+    dependencies.verifier.verify(payload, request.headers["Stripe-Signature"])
+    val outcome = dependencies.handleEvent(parseStripeEvent(payload))
+    respond(WebhookResponse(received = true, outcome = outcome.name.lowercase()))
 }
 
 private fun eventTooLarge() = OstromException(ErrorKind.PAYLOAD_TOO_LARGE, "The event is too large.")
 
 /**
- * The member the caller acts for in the organization of the path, and that organization. Only a person's credential
- * with [scope] gets there: an agent, device or service token is refused (S2-03).
+ * The member the caller acts for in the organization of the path, and that organization, for a read. Only a person's
+ * credential with [BILLING_READ] (or the console session) gets there: an agent, device or service token is refused
+ * (S2-03).
  */
-private suspend fun ApplicationCall.caller(
-    resolver: PrincipalOrgResolver,
-    orgId: String,
-    scope: String,
-): Pair<OrgPrincipal, Uuid> {
-    if (!requirePrincipal().allowsBilling(scope)) throw BillingScopeRequiredException(scope)
+private suspend fun ApplicationCall.reader(resolver: PrincipalOrgResolver, orgId: String): Pair<OrgPrincipal, Uuid> {
+    if (!requirePrincipal().allowsBillingRead()) throw BillingScopeRequiredException(BILLING_READ)
+    return member(resolver, orgId)
+}
+
+/** The same for a write, which only a person signed in to the console makes, never a token (S2-52). */
+private suspend fun ApplicationCall.writer(resolver: PrincipalOrgResolver, orgId: String): Pair<OrgPrincipal, Uuid> {
+    requirePrincipal().requireBillingWrite()
+    return member(resolver, orgId)
+}
+
+private suspend fun ApplicationCall.member(resolver: PrincipalOrgResolver, orgId: String): Pair<OrgPrincipal, Uuid> {
     val id = orgId.toOrgId()
     return requireOrgPrincipal(resolver, id) to id
 }

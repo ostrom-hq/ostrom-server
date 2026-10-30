@@ -18,7 +18,6 @@ import dev.ostrom.server.kernel.http.HealthCheck
 import dev.ostrom.server.kernel.http.HealthResponse
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.Readiness
-import dev.ostrom.server.kernel.http.UNMATCHED_ROUTE
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.kernel.http.configureHttp
 import dev.ostrom.server.kernel.http.httpStatus
@@ -26,12 +25,12 @@ import dev.ostrom.server.kernel.http.isBodilessUpgrade
 import dev.ostrom.server.kernel.http.isValidRequestId
 import dev.ostrom.server.kernel.http.limitedBody
 import dev.ostrom.server.kernel.http.requestFields
-import dev.ostrom.server.kernel.http.routeTemplate
 import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.kernel.network.TrustedProxies
+import dev.ostrom.server.kernel.observability.UNMATCHED_ROUTE
 import io.github.smyrgeorge.sqlx4k.SQLError
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -447,11 +446,32 @@ class HttpTest {
 
     @Test
     fun requestFieldsTolerateAMissingStatusOrStart() {
-        val fields = requestFields("GET", "/x", status = null, start = null, requestId = null)
+        val fields = requestFields("GET", "/x", status = null, start = null, requestId = null, span = null)
         assertEquals(
-            mapOf("method" to "GET", "route" to "/x", "status" to null, "duration_ms" to null, "request_id" to null),
+            mapOf(
+                "method" to "GET",
+                "route" to "/x",
+                "status" to null,
+                "duration_ms" to null,
+                "request_id" to null,
+                "trace_id" to null,
+                "span_id" to null,
+                "trace_flags" to null,
+            ),
             fields,
         )
+    }
+
+    @Test
+    fun aNotFoundIsLoggedOnce() = probeServer {
+        // The JSON of a 404 is sent from within the bare 404: both sends end, one line is written.
+        val missing = client.get("/nowhere") { header(HttpHeaders.XRequestId, "once-404") }
+        assertEquals(HttpStatusCode.NotFound, missing.status)
+        assertEquals("page", client.get("/l/slug/page") { header(HttpHeaders.XRequestId, "after-404") }.bodyAsText())
+        // Waits for a third line, which must never come, so that a late second line of the 404 would be seen.
+        requestLines(3)
+        assertTrue(lines.any { "after-404" in it }, lines.joinToString("\n"))
+        assertEquals(1, lines.count { "\"request_id\":\"once-404\"" in it }, lines.joinToString("\n"))
     }
 
     @Test
@@ -462,7 +482,9 @@ class HttpTest {
         assertEquals("page", client.get("/a/${Uuid.random()}/$ticket/index.html?token=query-secret").bodyAsText())
         assertEquals("page", client.get("/l/$slug/docs/page.html").bodyAsText())
         assertEquals(HttpStatusCode.NotFound, client.get("/nowhere/$ticket").status)
-        val served = requestLines(3).joinToString("\n")
+        val requests = requestLines(3)
+        assertEquals(3, requests.size, requests.joinToString("\n"))
+        val served = requests.joinToString("\n")
         // Ktor names a tail segment `{...}`, whatever the route calls it.
         for (route in listOf("/a/{id}/{ticket}/{...}", "/l/{slug}/{...}", UNMATCHED_ROUTE)) {
             assertTrue("\"route\":\"$route\"" in served, served)
@@ -559,17 +581,6 @@ class HttpTest {
         routing { refused = assertFailsWith<IllegalArgumentException> { bodyLimit(0) {} } }
         startApplication()
         assertNotNull(refused)
-    }
-
-    @Test
-    fun aRouteTemplateDropsKtorSelectors() {
-        assertEquals("/", routeTemplate(""))
-        assertEquals("/", routeTemplate("/(authenticate ostrom-token)/(method:GET)"))
-        assertEquals(
-            "/api/v1/secrets/{name}",
-            routeTemplate("/(authenticate ostrom-token)/api/v1/secrets/{name}/[scope?]/[limit]/(method:PUT)"),
-        )
-        assertEquals("/a/(b/c]/[d)", routeTemplate("/a/(b/c]/[d)"))
     }
 
     @Test
