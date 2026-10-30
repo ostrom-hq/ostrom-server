@@ -1,5 +1,6 @@
 package dev.ostrom.server.identity.domain
 
+import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -68,6 +69,7 @@ class CredentialAuthenticatorImpl(
         return AuthenticatedPrincipal(
             subjectId = session.userId.toString(),
             kind = PrincipalKind.USER,
+            scopes = setOf(ALL_USER_SCOPES),
             credentialId = session.id.toString(),
         )
     }
@@ -81,7 +83,7 @@ class CredentialAuthenticatorImpl(
 }
 
 /**
- * Whether a principal is a user's browser session (the only credential with no scopes): account-level actions such as
- * creating tokens or approving a CLI login need one.
+ * Whether a principal is a user's browser session (the only credential with [ALL_USER_SCOPES]): account-level actions
+ * such as creating tokens or approving a CLI login need one.
  */
-val AuthenticatedPrincipal.isBrowserSession: Boolean get() = kind == PrincipalKind.USER && scopes.isEmpty()
+val AuthenticatedPrincipal.isBrowserSession: Boolean get() = kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes

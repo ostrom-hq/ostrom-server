@@ -10,6 +10,7 @@ import dev.ostrom.server.identity.fakes.FakeHasher
 import dev.ostrom.server.identity.fakes.InMemoryApiTokensRepository
 import dev.ostrom.server.identity.fakes.InMemoryWebSessionsRepository
 import dev.ostrom.server.identity.fakes.SettableClock
+import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import kotlinx.coroutines.test.runTest
@@ -129,7 +130,7 @@ class CredentialAuthenticatorTest {
         val stored = session("oss_a")
 
         val principal = authenticator.authenticateSession("oss_a", null, requireCsrf = false)
-        assertEquals(AuthenticatedPrincipal(userId.toString(), PrincipalKind.USER, emptySet(), stored.id.toString()), principal)
+        assertEquals(AuthenticatedPrincipal(userId.toString(), PrincipalKind.USER, setOf(ALL_USER_SCOPES), stored.id.toString()), principal)
         assertTrue(principal!!.isBrowserSession)
         assertTrue(principal.allows("orgs:write"))
         assertEquals(0, sessions.touches, "Just created: no write")
@@ -167,6 +168,8 @@ class CredentialAuthenticatorTest {
 
         assertTrue(service.allows("checks:write"))
         assertFalse(service.allows("orgs:read"))
+        assertFalse(AuthenticatedPrincipal("a", PrincipalKind.AGENT, setOf(ALL_USER_SCOPES)).allows("orgs:read"))
+        assertFalse(AuthenticatedPrincipal("u", PrincipalKind.USER, emptySet()).allows("orgs:read"))
         assertFalse(AuthenticatedPrincipal("u", PrincipalKind.USER, setOf("orgs:read")).allows("orgs:write"))
     }
 }
