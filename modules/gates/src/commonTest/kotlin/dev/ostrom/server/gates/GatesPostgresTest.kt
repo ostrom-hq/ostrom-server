@@ -346,6 +346,21 @@ class GatesPostgresTest {
     }
 
     @Test
+    fun aSessionFindsItsGates() = gatesTest { server ->
+        val agent = "agent:a:$session"
+        val first = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        server.answer("user:a:rev-b", first, "rev-b")
+        val second = server.call(agent, "/api/v1/gates", push(commit = nextSha)).body<GateResponse>()
+        server.call("agent:a:other", "/api/v1/gates", push().copy(sessionId = "other-session"))
+
+        val list = server.koin.get<ListSessionGatesUseCase>()
+        val gates = list(orgA, session)
+        assertEquals(listOf(first.gate.id, second.gate.id), gates.map { it.id.toString() })
+        assertEquals(listOf("rev-b"), gates.first().decisions.map { it.by })
+        assertEquals(emptyList(), list(orgB, session), "Another organization's session has none of them")
+    }
+
+    @Test
     fun aHundredSimultaneousConsumesUseTheYesOnce() = gatesTest { server ->
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
