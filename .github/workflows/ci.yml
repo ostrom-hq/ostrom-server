@@ -49,6 +49,24 @@ jobs:
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # ostrom-core at the pinned commit, read with its read-only deploy key: the GITHUB_TOKEN of this repository can
+      # never read the Maven packages of another one (JOURNAL 05:50). Moved next to the workspace, where
+      # settings.gradle.kts includes it (ostrom.core.local), so that no check of this repository scans it.
+      - name: ostrom-core version
+        id: core
+        run: echo "ref=$(tr -d '[:space:]' < gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.core.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: ostrom-core
+          persist-credentials: false
+      - name: Build ostrom-core from that checkout
+        run: |
+          mv ostrom-core ../ostrom-core
+          mkdir -p ~/.gradle
+          echo "ostrom.core.local=true" >> ~/.gradle/gradle.properties
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
@@ -87,7 +105,7 @@ jobs:
         working-directory: ee/tools/license
         run: |
           python3 -m venv "$RUNNER_TEMP/license-venv"
-          "$RUNNER_TEMP/license-venv/bin/pip" install --quiet coverage==7.6.10 cryptography==44.0.3
+          "$RUNNER_TEMP/license-venv/bin/pip" install --quiet --require-hashes -r requirements-ci.txt
           "$RUNNER_TEMP/license-venv/bin/python" -m coverage run --branch --data-file="$RUNNER_TEMP/license.coverage" -m unittest -v test_sign
           "$RUNNER_TEMP/license-venv/bin/python" -m coverage report --data-file="$RUNNER_TEMP/license.coverage" -m --include=sign.py --fail-under=100
       # Coverage first, in its own step, with its gaps printed right after: a runner lost during the native links that
@@ -107,6 +125,14 @@ jobs:
       - name: Native tests (linuxX64), with PostgreSQL
         if: ${{ !cancelled() }}
         run: ./gradlew --continue linuxX64Test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # S2-49: one session of the real image, run as the Docker driver runs it; the agent must not reach the token.
+      - name: Session image, the agent cannot read the runner token (S2-49)
+        if: ${{ !cancelled() }}
+        run: |
+          ./gradlew :runner:linkDebugExecutableLinuxX64
+          ci/runner-isolation.sh runner/build/bin/linuxX64/debugExecutable/ostrom-runner.kexe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
@@ -170,9 +196,15 @@ jobs:
           test "$status" = 1
           grep -q 'The license key is malformed' license.log
           if grep -q 'not-a-license' license.log; then echo "The key was logged." >&2; exit 1; fi
+      - name: Telemetry reaches an OpenTelemetry collector (traces, metrics, logs)
+        timeout-minutes: 5
+        env:
+          OSTROM_SMOKE_DATABASE_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
+        run: ci/otel-smoke.sh
       - name: Server logs on failure
         if: failure()
-        run: docker logs ostrom || true
+        run: |
+          docker logs ostrom || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ostrom-server-linux

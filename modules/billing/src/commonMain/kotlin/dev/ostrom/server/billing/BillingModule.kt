@@ -3,6 +3,7 @@ package dev.ostrom.server.billing
 
 import dev.ostrom.server.billing.domain.BackfillActivePeopleUseCase
 import dev.ostrom.server.billing.domain.BackfillActivePeopleUseCaseImpl
+import dev.ostrom.server.billing.domain.BillingMetrics
 import dev.ostrom.server.billing.domain.BillingNotifier
 import dev.ostrom.server.billing.domain.BillingRepository
 import dev.ostrom.server.billing.domain.BillingSettings
@@ -39,6 +40,7 @@ import dev.ostrom.server.billing.domain.SyncSubscriptionUseCaseImpl
 import dev.ostrom.server.billing.infrastructure.BillingMigrations
 import dev.ostrom.server.billing.infrastructure.BillingRepositoryImpl
 import dev.ostrom.server.billing.infrastructure.GuardedBillingNotifier
+import dev.ostrom.server.billing.infrastructure.LoggingBillingMetrics
 import dev.ostrom.server.billing.infrastructure.LoggingBillingNotifier
 import dev.ostrom.server.billing.infrastructure.StripeConfig
 import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
@@ -94,7 +96,9 @@ object BillingModule : ServerModule {
         single<SetCancellationUseCase> { SetCancellationUseCaseImpl(get(), get(), get(), get()) }
         single<ListInvoicesUseCase> { ListInvoicesUseCaseImpl(get(), get()) }
         single<BackfillActivePeopleUseCase> { BackfillActivePeopleUseCaseImpl(get(), get()) }
-        single<HandleStripeEventUseCase> { HandleStripeEventUseCaseImpl(get(), get(), notifier(), get(), get()) }
+        single<HandleStripeEventUseCase> {
+            HandleStripeEventUseCaseImpl(get(), get(), notifier(), get(), metrics(), get())
+        }
         single<RecordMemberActivityUseCase> { RecordMemberActivityUseCaseImpl(get()) }
         single<RecordAgentUsageUseCase> { RecordAgentUsageUseCaseImpl(get(), get(), notifier(), get()) }
         single<CheckEntitlementUseCase> { CheckEntitlementUseCaseImpl(get(), get(), get(), get()) }
@@ -139,5 +143,7 @@ internal fun unknownPriceLogger(logger: Logger): (String, String?) -> Unit = { s
 private fun Scope.licenses(): LicenseProvider = getOrNull() ?: NoLicenseProvider()
 
 /** The notifications module; without it, the alerts are logged. Either way, a failed notification is only logged. */
+private fun Scope.metrics(): BillingMetrics = getOrNull() ?: LoggingBillingMetrics(get())
+
 private fun Scope.notifier(): BillingNotifier =
     GuardedBillingNotifier(getOrNull() ?: LoggingBillingNotifier(get()), get())

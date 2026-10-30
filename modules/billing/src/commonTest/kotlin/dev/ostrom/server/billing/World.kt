@@ -3,6 +3,7 @@ package dev.ostrom.server.billing
 
 import dev.ostrom.server.billing.domain.BackfillActivePeopleUseCaseImpl
 import dev.ostrom.server.billing.domain.BillingInterval
+import dev.ostrom.server.billing.domain.BillingMetrics
 import dev.ostrom.server.billing.domain.BillingSettings
 import dev.ostrom.server.billing.domain.ChangePlanUseCaseImpl
 import dev.ostrom.server.billing.domain.CheckEntitlementUseCaseImpl
@@ -55,7 +56,8 @@ internal class World(stripeEnabled: Boolean = true) {
     val cancellation = SetCancellationUseCaseImpl(repository, stripe, sync, settings)
     val invoices = ListInvoicesUseCaseImpl(repository, stripe)
     val backfill = BackfillActivePeopleUseCaseImpl(repository, clock)
-    val events = HandleStripeEventUseCaseImpl(repository, sync, notifier, backfill, clock)
+    val metrics = FakeBillingMetrics()
+    val events = HandleStripeEventUseCaseImpl(repository, sync, notifier, backfill, metrics, clock)
     val activity = RecordMemberActivityUseCaseImpl(repository)
     val usage = RecordAgentUsageUseCaseImpl(repository, limits, notifier, clock)
     val entitlements = CheckEntitlementUseCaseImpl(repository, limits, settings, clock)
@@ -65,6 +67,11 @@ internal class World(stripeEnabled: Boolean = true) {
         stripe,
         clock,
     ) { task, error -> failures += "${task.kind} ${error.message}" }
+
+    /** Stores the billing row an organization gets when it opens a checkout, before Stripe knows it. */
+    suspend fun opensACheckout() {
+        repository.save(OrgBilling(orgId = org, updatedAt = NOW))
+    }
 
     /** Stores a live subscription of [plan] and makes Stripe return it. */
     suspend fun subscribe(
@@ -101,3 +108,12 @@ internal class World(stripeEnabled: Boolean = true) {
 internal val PERIOD = Instant.parse("2026-10-15T00:00:00Z")
 /** The calendar month of [NOW]. */
 internal val MONTH = Instant.parse("2026-10-01T00:00:00Z")
+
+/** Records the events billing counted. */
+internal class FakeBillingMetrics : BillingMetrics {
+    val unknownOrganizations = mutableListOf<String>()
+
+    override fun stripeEventForUnknownOrganization(eventId: String, eventType: String) {
+        unknownOrganizations += "$eventId $eventType"
+    }
+}
