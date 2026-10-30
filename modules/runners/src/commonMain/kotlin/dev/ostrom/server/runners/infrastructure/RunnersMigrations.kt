@@ -3,7 +3,14 @@ package dev.ostrom.server.runners.infrastructure
 
 import dev.ostrom.server.kernel.database.SchemaMigration
 
-/** The schema of the runners module; its tables start with `runners_`. */
+/**
+ * The schema of the runners module; its tables start with `runners_`.
+ *
+ * `runners_sessions` and `runners_usage` are tenant tables, confined by row-level security to the organization of the
+ * transaction (S2-01). `runners_session_routes` is the one table read across organizations, by the reconciler (due
+ * sessions of every organization) and by the runner channel (a session found by its runner token): it holds no
+ * customer content, only a session's id and organization, the hash of its runner token and its reconcile schedule.
+ */
 val RunnersMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
         version = 1,
@@ -39,24 +46,33 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 terminated_at TIMESTAMPTZ,
                 pausing_since TIMESTAMPTZ,
                 runner_stopped_at TIMESTAMPTZ,
-                runner_token_hash TEXT,
-                next_reconcile_at TIMESTAMPTZ,
-                reconcile_owner TEXT,
-                reconcile_until TIMESTAMPTZ,
-                claimed_at TIMESTAMPTZ
+                runner_token_hash TEXT
             );
             CREATE INDEX runners_sessions_owner ON runners_sessions (org_id, owner_id, created_at DESC, id DESC);
             CREATE INDEX runners_sessions_holding ON runners_sessions (org_id, state);
-            CREATE INDEX runners_sessions_due ON runners_sessions (next_reconcile_at)
-                WHERE next_reconcile_at IS NOT NULL;
-            CREATE UNIQUE INDEX runners_sessions_runner_token ON runners_sessions (runner_token_hash)
-                WHERE runner_token_hash IS NOT NULL;
             CREATE TABLE runners_usage (
                 org_id UUID NOT NULL,
                 month TEXT NOT NULL,
                 seconds BIGINT NOT NULL,
                 PRIMARY KEY (org_id, month)
             );
+            CREATE TABLE runners_session_routes (
+                session_id UUID PRIMARY KEY REFERENCES runners_sessions (id) ON DELETE CASCADE,
+                org_id UUID NOT NULL,
+                runner_token_hash TEXT,
+                next_reconcile_at TIMESTAMPTZ,
+                reconcile_owner TEXT,
+                reconcile_until TIMESTAMPTZ,
+                claimed_at TIMESTAMPTZ
+            );
+            CREATE INDEX runners_session_routes_due ON runners_session_routes (next_reconcile_at)
+                WHERE next_reconcile_at IS NOT NULL;
+            CREATE UNIQUE INDEX runners_session_routes_runner_token ON runners_session_routes (runner_token_hash)
+                WHERE runner_token_hash IS NOT NULL;
+            $TENANT_ROLE_SQL
+            ${tenantTableSql("runners_sessions")}
+            ${tenantTableSql("runners_usage")}
+            GRANT SELECT, INSERT, UPDATE ON runners_session_routes TO $TENANT_ROLE;
         """.trimIndent(),
     ),
 )
