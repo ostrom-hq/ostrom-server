@@ -22,14 +22,14 @@ interface ConfigSource {
     operator fun get(key: String): String?
 }
 
-/** Reads the process environment. */
+/** Reads the process environment; a variable set to a blank value counts as unset. */
 class EnvironmentConfigSource : ConfigSource {
-    override fun get(key: String): String? = getenv(key)?.toKString()
+    override fun get(key: String): String? = getenv(key)?.toKString()?.takeIf { it.isNotBlank() }
 }
 
-/** A fixed set of values: a parsed configuration file, or the values of a test. */
+/** A fixed set of values (a parsed configuration file, the values of a test); a blank value counts as unset. */
 class MapConfigSource(private val values: Map<String, String>) : ConfigSource {
-    override fun get(key: String): String? = values[key]
+    override fun get(key: String): String? = values[key]?.takeIf { it.isNotBlank() }
 }
 
 /** Asks each source in order and keeps the first value found: the environment comes before the file. */

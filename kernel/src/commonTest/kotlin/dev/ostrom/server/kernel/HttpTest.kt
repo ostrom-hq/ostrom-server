@@ -45,7 +45,7 @@ class HttpTest {
 
     private class OneTokenAuthenticator : TokenAuthenticator {
         override suspend fun authenticate(token: String): AuthenticatedPrincipal? =
-            if (token == "good-token") AuthenticatedPrincipal("user-1", PrincipalKind.USER) else null
+            if (token == "good-token") AuthenticatedPrincipal("user-1", PrincipalKind.USER, emptySet()) else null
     }
 
     private object ProbeModule : ServerModule {

@@ -35,7 +35,7 @@ modules/<name>/
 
 ```kotlin
 object OrgsModule : ServerModule {
-    override val name = "orgs"                       // also the migration table: _migrations_orgs
+    override val name = "orgs"                       // [a-z][a-z0-9-]*, also the migration table: _migrations_orgs
     override val koinModule = module {
         single<OrgsRepository> { OrgsRepositoryImpl(get()) }          // get() = the sqlx4k Driver
         single<CreateOrgUseCase> { CreateOrgUseCaseImpl(get(), get()) } // get() = repository, kotlin.time.Clock
@@ -52,10 +52,11 @@ The kernel binds, for every module: `Logger`, `Driver` (database), `InstanceSign
 `TokenAuthenticator`, `MigrationRunner`, and the `HealthCheck`s. Use `Clock` from Koin, never `Clock.System`
 directly, so tests can fix the time.
 
-**Koin**: the app uses a local `koinApplication { }` (never `startKoin`, never `install(Koin)`), with overrides
-allowed and the kernel loaded first. A module may replace a kernel binding: the identity module binds its own
-`single<TokenAuthenticator> { … }`, which replaces the kernel's `RejectingTokenAuthenticator` (every protected
-route answers 401 until then).
+**Koin**: the app and the tests build Koin with `serverKoin(...)` (a local `koinApplication`, never `startKoin`,
+never `install(Koin)`), **without overrides**: two modules binding the same type, or a module rebinding a kernel
+type, fail the start. The one exception is the `TokenAuthenticator`: the identity module binds it
+(`single<TokenAuthenticator> { … }`); until then `serverKoin` binds `RejectingTokenAuthenticator` and every protected
+route answers 401. Only tests replace bindings, through `serverTest(overrides = …)`.
 
 ## 3. Migrations
 
@@ -118,7 +119,9 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) = with(dependencies) 
   for the client")` (`class OrgNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")`).
   The kernel answers `{"error":{"code","message","requestId"}}` with the kind's status. Any other exception is a 500
   whose message is logged, never sent. A unique-constraint violation is a 409.
-- Protected routes go in `authenticated { }`; `call.requirePrincipal()` gives the `AuthenticatedPrincipal`.
+- Protected routes go in `authenticated { }`; `call.requirePrincipal()` gives the `AuthenticatedPrincipal`. Its
+  `scopes` are explicit: an empty set grants no scope, never "everything".
+- A body that is not JSON is a 415, a malformed one a 400.
 - DTOs and `@Resource` classes are `@Serializable`; they move to `ostrom-core` (the API contract) as soon as it is
   published, and the web/app/cli clients use them from there.
 
@@ -147,7 +150,8 @@ Every request is already logged once by the kernel (method, path, status, durati
 
 - `./gradlew linuxX64Test` passes in CI (tests run on Linux in CI; macOS only locally).
 - One PR per module step, small; the PR touches only `modules/<name>/` (and its line in `ServerModules.kt` if needed).
-- `ee/` code: same shape, under `ee/modules/<name>/`, AGPL code never depends on it.
+- `ee/` code: same shape, under `ee/modules/<name>/`, AGPL code never depends on it. The build does not include
+  `ee/` yet: the first enterprise module adds its discovery and registration (see `ee/README.md`).
 
 ## Configuration
 
@@ -168,6 +172,7 @@ to this table.
 
 ## Known limits of the foundation
 
+- **No graceful shutdown on SIGTERM yet**: the process stops without draining requests or closing the pool.
 - **Migrations of several replicas starting at once are not serialized** (no advisory lock: the sqlx4k pool does not
   pin a connection for the migrator). Start one replica first after a release that adds migrations.
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;

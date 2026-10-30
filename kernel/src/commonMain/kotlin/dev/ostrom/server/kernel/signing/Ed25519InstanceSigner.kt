@@ -3,17 +3,30 @@ package dev.ostrom.server.kernel.signing
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.EdDSA
 import dev.whyoleg.cryptography.algorithms.SHA256
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
+import kotlinx.cinterop.usePinned
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readString
-import kotlinx.io.writeString
-import platform.posix.chmod
+import platform.posix.EEXIST
+import platform.posix.O_CREAT
+import platform.posix.O_EXCL
+import platform.posix.O_WRONLY
+import platform.posix.close
+import platform.posix.errno
+import platform.posix.fsync
+import platform.posix.link
+import platform.posix.open
+import platform.posix.unlink
+import platform.posix.write
+import kotlin.uuid.Uuid
 
 /**
  * [InstanceSigner] on OpenSSL 3 (statically linked by cryptography-kotlin), with the key in a PEM file (PKCS#8),
- * the format Node writes, so a prototype key can be reused.
+ * the format Node writes, so a prototype key can be reused. The file is created once, mode 0600, atomically; two
+ * processes starting together end up with the same key.
  */
 class Ed25519InstanceSigner private constructor(
     private val privateKey: EdDSA.PrivateKey,
@@ -50,18 +63,49 @@ class Ed25519InstanceSigner private constructor(
          */
         suspend fun loadOrCreate(path: String): Ed25519InstanceSigner {
             val file = Path(path)
-            if (SystemFileSystem.exists(file)) {
-                val pem = SystemFileSystem.source(file).buffered().use { it.readString() }
-                val privateKey = edDsa.privateKeyDecoder(EdDSA.Curve.Ed25519)
-                    .decodeFromByteArray(EdDSA.PrivateKey.Format.PEM, pem.encodeToByteArray())
-                return of(privateKey, privateKey.getPublicKey())
+            if (!SystemFileSystem.exists(file)) {
+                val signer = generate()
+                file.parent?.let { SystemFileSystem.createDirectories(it) }
+                val pem = signer.privateKey.encodeToByteArray(EdDSA.PrivateKey.Format.PEM).decodeToString()
+                if (createPrivateFile(path, pem)) return signer
+                // Another process created the key first: use its key, never a second one.
             }
-            val signer = generate()
-            file.parent?.let { SystemFileSystem.createDirectories(it) }
-            val pem = signer.privateKey.encodeToByteArray(EdDSA.PrivateKey.Format.PEM).decodeToString()
-            SystemFileSystem.sink(file).buffered().use { it.writeString(pem) }
-            chmod(path, OWNER_READ_WRITE.convert())
-            return signer
+            val pem = SystemFileSystem.source(file).buffered().use { it.readString() }
+            val privateKey = edDsa.privateKeyDecoder(EdDSA.Curve.Ed25519)
+                .decodeFromByteArray(EdDSA.PrivateKey.Format.PEM, pem.encodeToByteArray())
+            return of(privateKey, privateKey.getPublicKey())
+        }
+
+        /**
+         * Writes a file readable by its owner only, atomically and without overwriting: the content goes to a
+         * temporary file created with mode 0600 (never readable by others, even briefly), flushed to disk, then
+         * hard-linked to [path], which fails if [path] exists.
+         *
+         * @return True when the file was created, false when [path] already existed.
+         */
+        private fun createPrivateFile(path: String, content: String): Boolean {
+            val temporary = "$path.${Uuid.random().toHexString()}.tmp"
+            val descriptor = open(temporary, O_WRONLY or O_CREAT or O_EXCL, OWNER_READ_WRITE)
+            check(descriptor >= 0) { "Cannot create $temporary (errno $errno)." }
+            try {
+                val bytes = content.encodeToByteArray()
+                bytes.usePinned { pinned ->
+                    var offset = 0
+                    while (offset < bytes.size) {
+                        val written = write(descriptor, pinned.addressOf(offset), (bytes.size - offset).convert())
+                        check(written > 0) { "Cannot write $temporary (errno $errno)." }
+                        offset += written.toInt()
+                    }
+                }
+                check(fsync(descriptor) == 0) { "Cannot flush $temporary (errno $errno)." }
+            } finally {
+                close(descriptor)
+            }
+            val linked = link(temporary, path) == 0
+            val linkError = errno
+            unlink(temporary)
+            check(linked || linkError == EEXIST) { "Cannot create $path (errno $linkError)." }
+            return linked
         }
 
         private suspend fun of(privateKey: EdDSA.PrivateKey, publicKey: EdDSA.PublicKey): Ed25519InstanceSigner {
