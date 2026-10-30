@@ -8,11 +8,16 @@ import dev.ostrom.server.gateway.domain.WireProtocol
 import io.ktor.http.BadContentTypeFormatException
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.header
-import io.ktor.server.response.respondBytesWriter
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.writeFully
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -42,14 +47,28 @@ class KtorInferenceResponder(private val call: ApplicationCall, private val cloc
         val (types, others) = headers.partition { it.first == CONTENT_TYPE }
         others.forEach { (name, value) -> call.response.header(name, value) }
         val type = types.firstOrNull()?.second?.let(::contentTypeOrNull) ?: ContentType.Application.Json
-        call.respondBytesWriter(type, HttpStatusCode.fromValue(status)) {
+        // The body is written by this coroutine and read by the engine from a channel, so the call returns only once
+        // the provider's answer is read to its end (and metered); a writer block may run after the respond returns.
+        coroutineScope {
+            val channel = ByteChannel()
+            launch { call.respond(ChannelContent(channel, type, HttpStatusCode.fromValue(status))) }
             body(
                 ByteSink { bytes, count ->
-                    writeFully(bytes, 0, count)
-                    flush()
+                    channel.writeFully(bytes, 0, count)
+                    channel.flush()
                 },
             )
+            channel.flushAndClose()
         }
+    }
+
+    /** A streamed answer: the engine reads [channel] as the gateway fills it. */
+    private class ChannelContent(
+        private val channel: ByteReadChannel,
+        override val contentType: ContentType,
+        override val status: HttpStatusCode,
+    ) : OutgoingContent.ReadChannelContent() {
+        override fun readFrom(): ByteReadChannel = channel
     }
 
     /** The error shapes. */
