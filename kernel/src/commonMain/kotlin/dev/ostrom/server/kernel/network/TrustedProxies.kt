@@ -125,7 +125,8 @@ class TrustedProxies(private val networks: List<IpNetwork>, val clientHeader: St
         }
 
         private fun headerName(value: String?, withProxies: Boolean): String? {
-            val name = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            val name = value.orEmpty().trim()
+            if (name.isEmpty()) return null
             // X-Forwarded-For carries what clients write: its first value is theirs, so it is no client header.
             if (!HEADER_NAME.matches(name) || name.equals(FORWARDED_FOR, ignoreCase = true)) {
                 throw InvalidConfigException(
