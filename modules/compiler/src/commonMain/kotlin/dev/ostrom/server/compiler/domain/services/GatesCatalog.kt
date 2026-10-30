@@ -88,12 +88,15 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
         return out.values.toList()
     }
 
-    private fun patternsFor(action: ActionClass, repo: String?): List<String> = workflows.asSequence()
-        .flatMap { gates(it) }
-        .mapNotNull { node -> node.actions.orEmpty().firstOrNull { it.cls == action.cls && covers(it.repos, repo) } }
-        .firstOrNull { it.patterns.isNotEmpty() }
-        ?.patterns
-        ?: action.patterns
+    private fun patternsFor(action: ActionClass, repo: String?): List<String> {
+        val declared = workflows.asSequence()
+            .flatMap { gates(it) }
+            .mapNotNull { node ->
+                node.actions.orEmpty().firstOrNull { it.cls == action.cls && covers(it.repos, repo) }
+            }
+            .firstOrNull { it.patterns.isNotEmpty() }
+        return if (declared != null) declared.patterns else action.patterns
+    }
 
     /** Matching helpers of the prototype, shared with the rules harness. */
     companion object {

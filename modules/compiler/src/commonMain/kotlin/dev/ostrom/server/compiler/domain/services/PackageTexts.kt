@@ -153,11 +153,13 @@ object PackageTexts {
             val before = classes.joinToString(", ").ifEmpty { "the action" }
             listOf(
                 "",
-                script?.let {
-                    "Before $before, Ostrom runs `${it.command}` in a sandbox (no network, no secret). If it fails, " +
-                        "the action is refused with the output: fix the cause, never skip or weaken the check, then " +
-                        "run the same command again."
-                } ?: "Check it yourself before the action: nothing runs automatically for this step.",
+                if (script != null) {
+                    "Before $before, Ostrom runs `${script.command}` in a sandbox (no network, no secret). " +
+                        "If it fails, the action is refused with the output: fix the cause, never skip or weaken " +
+                        "the check, then run the same command again."
+                } else {
+                    "Check it yourself before the action: nothing runs automatically for this step."
+                },
             )
         }
         WorkflowNodeKind.GATE -> {

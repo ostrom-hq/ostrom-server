@@ -20,7 +20,6 @@ import dev.ostrom.server.compiler.domain.services.RulesHarness
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.signing.InstanceSigner
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -188,7 +187,7 @@ internal class PackageAuditor(private val repository: CompilerRepository, privat
         meta: Map<String, JsonPrimitive>,
     ) {
         val details = buildJsonObject {
-            put("repo", stored.envelope.repo?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("repo", JsonPrimitive(stored.envelope.repo))
             put("digest", stored.envelope.digest)
             meta.forEach { (key, value) -> put(key, value) }
         }

@@ -272,8 +272,9 @@ class RulesHarness(
          * @param entry The catalogue line.
          * @return Its JSON.
          */
-        fun gateJson(entry: CatalogEntry): JsonElement = entry.gate?.let { gate ->
-            buildJsonObject {
+        fun gateJson(entry: CatalogEntry): JsonElement {
+            val gate = entry.gate ?: return JsonNull
+            return buildJsonObject {
                 put("workflowId", gate.workflowId)
                 put("workflowName", gate.workflowName)
                 put("nodeId", gate.nodeId)
@@ -284,7 +285,7 @@ class RulesHarness(
                 put("basis", gate.basis)
                 put("reason", gate.reason)
             }
-        } ?: JsonNull
+        }
 
         /**
          * A catalogue line as the prototype writes it: class, label, tools, patterns, keywords, gate.

@@ -9,6 +9,7 @@ import dev.ostrom.core.api.models.WorkflowNodeKind.TRIGGER
 import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompilerSettings
+import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.domain.usecases.CompileSourcesUseCaseImpl
 import dev.ostrom.server.compiler.domain.usecases.GatesCatalogUseCaseImpl
@@ -157,6 +158,20 @@ class PackagesUseCasesTest {
         revoke.revoke(org, old.stored.envelope.contentDigest, "lead", "old")
 
         assertEquals(current.stored.envelope.contentDigest, repository.pin(org, "acme-api")?.contentDigest)
+    }
+
+    @Test
+    fun aPinToAVersionNoLongerStoredServesTheNewOneAndARevokeWithoutPinTouchesNoPin() = runTest {
+        sources.settings = CompilerSettings(manualPin = true)
+        repository.setPin(org, "acme-api", PackagePin("sha256:gone", "lead", NOW))
+        save(tests("w1"))
+        val served = publish(org, "acme-api", "https://acme.example", "dev-a")
+        assertFalse(served.pinned, "the manual pin stays where it was")
+        assertEquals("sha256:gone", repository.pin(org, "acme-api")?.contentDigest)
+
+        repository.setPin(org, "acme-api", null)
+        assertTrue(revoke.revoke(org, served.stored.envelope.contentDigest, "lead", "unused").revoked)
+        assertNull(repository.pin(org, "acme-api"))
     }
 
     @Test
