@@ -25,7 +25,6 @@ import dev.ostrom.server.identity.presentation.LauncherLoginResponse
 import dev.ostrom.server.identity.presentation.LinkStartedResponse
 import dev.ostrom.server.identity.presentation.OAUTH_STATE_COOKIE
 import dev.ostrom.server.identity.presentation.ProfileResponse
-import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireScope
@@ -111,10 +110,7 @@ class AccountSecurityRoutesPostgresTest {
         koin.get<ApiTokensRepository>().create(row, koin.get<SecretHasher>().hash(secret))
     }
 
-    private fun HttpRequestBuilder.session(started: StartedSession) {
-        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}")
-        header(CSRF_HEADER, started.csrfToken)
-    }
+    private fun HttpRequestBuilder.session(started: StartedSession) = browserSession(started.secret, started.csrfToken)
 
     private fun HttpResponse.cookie(name: String) =
         headers.getAll(HttpHeaders.SetCookie).orEmpty().map(::parseServerSetCookieHeader).lastOrNull { it.name == name }

@@ -3,7 +3,7 @@ package dev.ostrom.runner
 
 import kotlinx.coroutines.channels.ReceiveChannel
 
-/** A PTY running a program. */
+/** A PTY running a program: in the agent host, or seen from the runner through it. */
 interface Terminal {
     /**
      * Reads output, waiting for some.
@@ -25,7 +25,7 @@ interface Terminal {
      * @param columns Columns.
      * @param rows Rows.
      */
-    fun resize(columns: Int, rows: Int)
+    suspend fun resize(columns: Int, rows: Int)
 
     /** Asks the program's process group to stop (SIGTERM), then kills it after a grace period. */
     suspend fun terminate()
@@ -35,7 +35,7 @@ interface Terminal {
 }
 
 /** Starts terminals. */
-fun interface TerminalStarter {
+interface TerminalStarter {
     /**
      * Starts `sh -c script` on a new PTY.
      *
@@ -45,7 +45,7 @@ fun interface TerminalStarter {
      *
      * @return The terminal.
      */
-    fun start(script: String, environment: Map<String, String>, directory: String): Terminal
+    suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal
 }
 
 /** What the server tells the runner after a heartbeat. */

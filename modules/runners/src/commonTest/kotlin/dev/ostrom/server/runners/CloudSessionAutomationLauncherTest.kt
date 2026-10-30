@@ -7,6 +7,7 @@ import dev.ostrom.server.automations.domain.LaunchResult
 import dev.ostrom.server.runners.domain.CloudPlan
 import dev.ostrom.server.runners.domain.CloudPlanProvider
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.fakes.FixedPlans
 import dev.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
@@ -27,8 +28,11 @@ import kotlin.uuid.Uuid
 class CloudSessionAutomationLauncherTest {
     private val repository = InMemoryCloudSessionsRepository()
     private val plans = FixedPlans()
-    private val launcher =
-        CloudSessionAutomationLauncher(CreateCloudSessionUseCaseImpl(repository, plans, SettableClock()), repository)
+    private val meter = RepositoryCloudUsageMeter(repository)
+    private val launcher = CloudSessionAutomationLauncher(
+        CreateCloudSessionUseCaseImpl(repository, plans, meter, SettableClock()),
+        repository,
+    )
 
     private fun request(agent: String = "claude", model: String? = "claude-sonnet-4-5") = LaunchRequest(
         orgId = ORG_A,
@@ -67,7 +71,7 @@ class CloudSessionAutomationLauncherTest {
     @Test
     fun anUnexpectedFailurePropagates() = runTest {
         val failing = CloudSessionAutomationLauncher(
-            CreateCloudSessionUseCaseImpl(repository, DownPlans, SettableClock()),
+            CreateCloudSessionUseCaseImpl(repository, DownPlans, meter, SettableClock()),
             repository,
         )
         assertFailsWith<IllegalStateException> { failing.launch(request()) }
