@@ -80,6 +80,7 @@ class SessionUseCasesTest {
             ).name,
         )
         assertEquals("codex", create(alice, CreateCloudSessionPayload("  ", "codex", null)).name)
+        assertEquals("codex", create(alice, CreateCloudSessionPayload(null, "codex", null)).name)
     }
 
     @Test

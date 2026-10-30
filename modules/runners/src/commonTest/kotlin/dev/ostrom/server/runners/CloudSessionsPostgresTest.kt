@@ -34,9 +34,13 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -187,6 +191,14 @@ class CloudSessionsPostgresTest {
     }
 
     @Test
+    fun theModuleStartsTheReconcilerLoop() = serverTest(listOf(RunnersModule)) { server ->
+        val job = Job()
+        RunnersModule.start(CoroutineScope(currentCoroutineContext() + job), server.koin)
+        assertTrue(job.children.any())
+        job.cancelAndJoin()
+    }
+
+    @Test
     fun usageAddsUpPerOrganizationAndMonth() = serverTest(listOf(RunnersModule)) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
         assertEquals(0, repository.usageSeconds(ORG_A, "2026-10"))
@@ -242,6 +254,9 @@ class CloudSessionsPostgresTest {
         ) { bearerAuth("alice") }.body<CloudSessionsResponse>()
         assertEquals(listOf(session.id), list.items.map { it.id })
         assertEquals(session.id, list.next)
+        val partial = server.client.get("/api/v1/cloud/sessions") { bearerAuth("alice") }.body<CloudSessionsResponse>()
+        assertEquals(listOf(session.id), partial.items.map { it.id })
+        assertNull(partial.next)
         val empty = server.client.get(
             "/api/v1/cloud/sessions?before=${session.id}",
         ) { bearerAuth("alice") }.body<CloudSessionsResponse>()

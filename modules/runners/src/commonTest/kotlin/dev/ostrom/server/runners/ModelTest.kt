@@ -224,6 +224,28 @@ class ModelTest {
     }
 
     @Test
+    fun blankValuesReadAsUnset() {
+        val config = RunnersConfig.from(
+            MapConfigSource(
+                mapOf(
+                    "OSTROM_RUNNERS_DRIVER" to "",
+                    "OSTROM_RUNNERS_IMAGE" to " ",
+                    "OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS" to "",
+                    "OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET" to " ",
+                    "OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS" to " ",
+                    "OSTROM_RUNNERS_DOCKER_NETWORK" to "",
+                ),
+            ),
+        )
+        assertEquals(RunnersConfig.DriverKind.NONE, config.driver)
+        assertEquals(RunnersConfig.DEFAULT_RUNNER_IMAGE, config.runnerImage)
+        assertNull(config.kubernetes.storageClass)
+        assertNull(config.kubernetes.imagePullSecret)
+        assertNull(config.kubernetes.priorityClass)
+        assertNull(config.docker.network)
+    }
+
+    @Test
     fun theConfigurationRefusesAnUnknownDriverOrAMissingServerUrl() {
         assertFailsWith<InvalidConfigException> { RunnersConfig.from(
             MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "nomad")),

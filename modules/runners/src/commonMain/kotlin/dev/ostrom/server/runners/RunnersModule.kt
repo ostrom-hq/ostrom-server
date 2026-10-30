@@ -46,6 +46,7 @@ import dev.ostrom.server.runners.presentation.TerminalRoutesDependencies
 import dev.ostrom.server.runners.presentation.terminalRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -95,6 +96,7 @@ object RunnersModule : ServerModule {
 
     override fun start(scope: CoroutineScope, koin: Koin) {
         val worker = koin.get<ReconcilerWorker>()
-        scope.launch { worker.run() }
+        // Undispatched: the loop is running, up to its first query, when the server starts serving.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { worker.run() }
     }
 }

@@ -65,6 +65,14 @@ class RunnerHeartbeatUseCaseTest {
     }
 
     @Test
+    fun aFirstHeartbeatWithoutAStartTimeBillsNothing() = runTest {
+        val session = running().copy(executionStartedAt = null).also { repository.put(it) }
+        clock.now += 20.seconds
+        heartbeat("tok", beat(session.id))
+        assertNull(repository.usage[ORG_A to "2026-10"])
+    }
+
+    @Test
     fun aResumingSessionBecomesRunningToo() = runTest {
         val session = running(state = SessionState.RESUMING)
         assertEquals(SessionState.RUNNING, heartbeat("tok", beat(session.id, ready = true)).state)
