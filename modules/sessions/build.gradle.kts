@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Module sessions: the segments of the coding agent sessions, their sign of life and their signed receipts.
 plugins {
     id("ostrom.native-module")

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions.domain.models
 
 import dev.ostrom.server.gates.domain.models.GateActor

@@ -1,0 +1,86 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language:
+          - actions
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      # Code scanning results are uploaded once the repositories are public (organization variable OSTROM_PUBLIC;
+      # private repositories would need GitHub Advanced Security). Until then the SARIF is kept as an artifact and
+      # any error-level alert fails the job.
+      - id: analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}
+          upload: ${{ vars.OSTROM_PUBLIC == 'true' && 'always' || 'never' }}
+          output: sarif
+      - name: Fail on error-level alerts (before the launch)
+        if: vars.OSTROM_PUBLIC != 'true'
+        env:
+          LANG_ID: ${{ matrix.language }}
+        run: |
+          python3 - <<'PY'
+          import glob, json, sys
+          bad = []
+          for f in glob.glob('sarif/*.sarif'):
+              for run in json.load(open(f))['runs']:
+                  rules = run['tool']['driver'].get('rules', [])
+                  by_id = {r.get('id'): r for r in rules}
+                  for res in run.get('results', []):
+                      rule = by_id.get(res.get('ruleId'))
+                      if rule is None and isinstance(res.get('ruleIndex'), int) and res['ruleIndex'] < len(rules):
+                          rule = rules[res['ruleIndex']]
+                      rule = rule or {}
+                      level = res.get('level') or rule.get('defaultConfiguration', {}).get('level', 'warning')
+                      if level == 'error':
+                          locs = res.get('locations') or [{}]
+                          phys = locs[0].get('physicalLocation', {})
+                          uri = phys.get('artifactLocation', {}).get('uri', '?')
+                          line = phys.get('region', {}).get('startLine', 0)
+                          rid = res.get('ruleId') or rule.get('id', '?')
+                          bad.append(f"{uri}:{line} {rid}: {res.get('message', {}).get('text', '')}")
+          for b in bad:
+              print('::error::' + b)
+          print(f"codeql: {len(bad)} error-level alert(s)")
+          sys.exit(1 if bad else 0)
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: codeql-${{ matrix.language }}
+          path: sarif
+          retention-days: 14

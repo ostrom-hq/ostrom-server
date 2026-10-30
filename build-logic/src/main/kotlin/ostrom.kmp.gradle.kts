@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Convention for every Kotlin module of Ostrom (docs/CONVENTIONS.md sections 7, 8, 9 and 10).
 // A module applies `id("ostrom.kmp")` and declares its own dependencies; nothing else goes in its build file.
 //
@@ -71,6 +72,9 @@ kover {
                 // deserialization constructor whose missing-field check can never fail for a class without required
                 // fields, a branch no test can reach. Its JSON shape is tested by the round-trip of its routes.
                 annotatedBy("kotlinx.serialization.Serializable")
+                // Compatibility bridges the compiler writes for an interface's default methods on the JVM: the test
+                // target never calls them (the default methods themselves are measured).
+                classes("*\$DefaultImpls")
             }
         }
         verify {

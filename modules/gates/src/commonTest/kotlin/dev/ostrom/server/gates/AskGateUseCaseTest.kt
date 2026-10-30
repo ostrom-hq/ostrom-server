@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.models.AskedVia
@@ -20,15 +21,16 @@ import dev.ostrom.server.gates.domain.usecases.AskGate
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCaseImpl
 import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.IdentityDigester
+import dev.ostrom.server.gates.fakes.RecordingLogger
 import dev.ostrom.server.gates.fakes.SESSION
 import dev.ostrom.server.gates.fakes.SHA_A
 import dev.ostrom.server.gates.fakes.SHA_B
 import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.device
+import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
-import dev.ostrom.server.gates.infrastructure.SilentGateNotifier
 import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -124,7 +126,7 @@ class AskGateUseCaseTest {
         val view = ask(bench)(agent(), pushAsk(diff = null, realRepo = "evil/fork", remote = ""))
 
         assertEquals("evil/fork", view.gate.subject.realRepo)
-        assertEquals(listOf("evil/fork"), resolved, "The gate of the repository the command really runs in")
+        assertEquals(listOf<String?>("evil/fork"), resolved, "The gate of the repository the command really runs in")
         assertEquals("", view.gate.subject.diffDigest, "No diff sent: the empty diff is what was shown")
         assertEquals(
             listOf(
@@ -279,8 +281,9 @@ class AskGateUseCaseTest {
         assertNull(UnknownPullRequestHeads().head(gate.orgId, "o/r", 6))
         assertNull(UnavailableGateSessions().agentOf(gate.orgId, SESSION))
 
-        SilentGateNotifier().requested(gate, emptyList())
-        SilentGateNotifier().decided(gate, emptyList())
+        val silent = ChannelsGateNotifier({ emptyList() }, RecordingLogger())
+        silent.requested(gate, emptyList())
+        silent.decided(gate, emptyList())
         assertNull(NoGateActors().resolve(AuthenticatedPrincipal("x", PrincipalKind.USER, emptySet())))
     }
 }
