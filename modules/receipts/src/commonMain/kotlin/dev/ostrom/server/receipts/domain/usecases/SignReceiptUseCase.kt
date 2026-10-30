@@ -76,10 +76,6 @@ class SignReceiptUseCaseImpl(
         if (!condition) throw InvalidReceiptException(reason())
     }
 
-    private companion object {
-        val SERVER_FIELDS = listOf("id", "createdAt", "signature")
-        val RECEIPT_ID = Regex("rcpt_[A-Za-z0-9_.:~-]{1,120}")
-    }
 }
 
 /**
@@ -91,3 +87,7 @@ fun Instant.isoMillis(): String {
     val text = Instant.fromEpochMilliseconds(toEpochMilliseconds()).toString()
     return if ('.' in text) text else text.removeSuffix("Z") + ".000Z"
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val SERVER_FIELDS = listOf("id", "createdAt", "signature")
+private val RECEIPT_ID = Regex("rcpt_[A-Za-z0-9_.:~-]{1,120}")
