@@ -82,8 +82,10 @@ class WebhookSignature(private val secret: String?) {
     private companion object {
         const val PREFIX = "sha256="
         const val BYTE = 0xff
-        val HEX: List<String> = List(256) { it.toString(16).padStart(2, '0') }
     }
 }
 
 internal fun base64Url(bytes: ByteArray): String = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT).encode(bytes)
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val HEX: List<String> = List(256) { it.toString(16).padStart(2, '0') }

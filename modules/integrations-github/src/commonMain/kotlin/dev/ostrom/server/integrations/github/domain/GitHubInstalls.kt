@@ -80,9 +80,11 @@ class GitHubInstalls(
             .joinToString("") { (it.toInt() and BYTE).toString(HEX).padStart(2, '0') }
 
     private companion object {
-        val STATE_LIFETIME = 10.minutes
         const val MAX_STATE = 128
         const val BYTE = 0xff
         const val HEX = 16
     }
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val STATE_LIFETIME = 10.minutes
