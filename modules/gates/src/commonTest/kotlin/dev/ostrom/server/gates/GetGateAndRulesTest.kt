@@ -110,17 +110,20 @@ class GetGateAndRulesTest {
         assertEquals(
             """{"org":"org","repo":"o/r","realRepo":"o/fork","class":"push-main","action":"push",""" +
                 """"remote":"git@x:o/r",""" +
-                """"refs":["refs/heads/main=$SHA_A","refs/tags/v1=$SHA_A"],"scope":"session:s","force":true}""",
+                """"refs":["refs/heads/main=$SHA_A","refs/tags/v1=$SHA_A"],"scope":"session:s","force":true,""" +
+                """"gate":null}""",
             GateKeys.keyPreimage("org", subject, null),
         )
+        val deploy = subject.copy(push = null, actionClass = "deploy", command = " kubectl  apply -f x ")
         assertEquals(
-            """{"org":"org","repo":"o/r","class":"deploy","command":"kubectl apply -f x","scope":"session:s"}""",
-            GateKeys.keyPreimage(
-                "org",
-                subject.copy(push = null, actionClass = "deploy", command = " kubectl  apply -f x "),
-                null,
-            ),
+            """{"org":"org","repo":"o/r","class":"deploy","command":"kubectl apply -f x","scope":"session:s",""" +
+                """"gate":null}""",
+            GateKeys.keyPreimage("org", deploy, null),
         )
+        // A yes is the yes of one gate: a workflow that changes its gate or approvers asks a new one.
+        val node = GateNode("ship", "g-main", "Push", listOf("rev-b"), true)
+        assertTrue(GateKeys.keyPreimage("org", subject, node).endsWith(""""gate":"ship/g-main"}"""))
+        assertTrue(GateKeys.keyPreimage("org", deploy, node).endsWith(""""gate":"ship/g-main"}"""))
     }
 
     @Test

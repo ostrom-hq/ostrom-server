@@ -85,7 +85,8 @@ class AskGateUseCaseImpl(
         val repo = ask.repo.orEmpty().trim().ifEmpty { null }
         val realRepo = ask.realRepo.orEmpty().trim().takeIf { it.isNotEmpty() && it != repo }
         val node = nodes.resolve(orgId, realRepo ?: repo, ask.actionClass)
-        val command = ask.command.trim().take(MAX_COMMAND)
+        // Never cut: a tail the checks did not read would run unseen. OpenGate refuses a command that is too long.
+        val command = ask.command.trim()
         val pullRequest = pullRequestOf(orgId, repo, ask, command, node?.enforced == true)
         // Audit S2-05: the hook's force flag is the machine's word; the command's options count too.
         val push = ask.push.takeIf { pullRequest == null }
@@ -201,7 +202,6 @@ class AskGateUseCaseImpl(
     private companion object {
         const val MACHINE_DIFF = "Diff (sent by the developer's machine, not checked by Ostrom)"
         const val MAX_DIFF = 8_000
-        const val MAX_COMMAND = 8_000
         const val MAX_LABEL = 200
         const val MAX_SHOWN_COMMAND = 400
         const val SHORT_SHA = 7

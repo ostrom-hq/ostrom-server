@@ -21,6 +21,7 @@ import dev.ostrom.server.gates.fakes.ORG
 import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.user
 import dev.ostrom.server.gates.presentation.GateAskRequest
+import dev.ostrom.server.gates.presentation.GateCi
 import dev.ostrom.server.gates.presentation.GatePush
 import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.toApproval
@@ -90,6 +91,17 @@ class GatesMappersTest {
         assertFailsWith<InvalidGateRequestException> {
             GateAskRequest(cls = "merge", pr = PullRequestDto("six", "b".repeat(40))).toAskGate()
         }
+    }
+
+    @Test
+    fun theGitHubChecksAskIsReadAsCiWithItsPullRequest() {
+        assertEquals(AskedVia.HOOK, GateAskRequest(cls = "merge").toAskGate().via)
+        val check = GateAskRequest(cls = "merge", ci = GateCi(sha = "b".repeat(40), pr = "6")).toAskGate()
+        assertEquals(AskedVia.CI, check.via)
+        assertEquals(6, check.pullRequest)
+        assertNull(GateAskRequest(cls = "push-main", ci = GateCi(sha = "b".repeat(40))).toAskGate().pullRequest)
+        val both = GateAskRequest(cls = "merge", pr = PullRequestDto("#7", "b".repeat(40)), ci = GateCi(pr = "6"))
+        assertEquals(7, both.toAskGate().pullRequest, "the pull request the request names wins")
     }
 
     @Test

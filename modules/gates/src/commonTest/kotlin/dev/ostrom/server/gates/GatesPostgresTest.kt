@@ -100,6 +100,7 @@ class GatesPostgresTest {
                         PrincipalChannel.BROWSER,
                     )
                     "device" -> AuthenticatedPrincipal(token, PrincipalKind.DEVICE, setOf(GateScopes.ANSWER))
+                    "runner" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.ASK))
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                 }
             }
@@ -112,6 +113,7 @@ class GatesPostgresTest {
                     return when (kind) {
                         "user", "reader", "app", "cli" -> GateActor(id, orgId, ActorKind.USER, personId = id)
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
+                        "runner" -> GateActor(id, orgId, ActorKind.SERVICE)
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
                     }
                 }
@@ -364,6 +366,8 @@ class GatesPostgresTest {
         assertEquals(approval, server.call("user:a:rev-b", "/api/v1/approvals/${approval.id}").body<Approval>())
         val mine = server.call("user:a:rev-b", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>()
         assertEquals(1, mine.items.size)
+        val upper = server.call("user:a:Rev-B", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>()
+        assertEquals(1, upper.items.size, "an identity is the same whatever its case")
 
         assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/approvals?status=maybe").status)
     }
@@ -496,6 +500,15 @@ class GatesPostgresTest {
         val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
         assertEquals("pending", still.gate.status)
         assertEquals(HttpStatusCode.OK, server.answer("app:a:rev-b", opened, "rev-b").status, "the app, unlocked")
+    }
+
+    @Test
+    fun aRunnerKeyAsksAndReadsAGateButOnlyASessionUsesItsYes() = gatesTest { server ->
+        val opened = server.call("runner:a:ci", "/api/v1/gates", push()).body<GateResponse>()
+        assertEquals(HttpStatusCode.OK, server.call("runner:a:ci", "/api/v1/gates/${opened.gate.id}").status)
+        val reserve = server.move("runner:a:ci", opened, "reserve")
+        assertEquals(HttpStatusCode.Forbidden, reserve.status)
+        assertTrue(reserve.bodyAsText().contains("does not allow agent:session"))
     }
 
     @Test

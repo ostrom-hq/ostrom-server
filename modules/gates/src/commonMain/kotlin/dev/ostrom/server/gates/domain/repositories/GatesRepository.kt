@@ -116,6 +116,13 @@ interface GatesTransaction {
     suspend fun insertGate(gate: Gate)
 
     /**
+     * Records who asks a gate (its askers, paths, sessions and launches), and nothing else of it.
+     *
+     * @param gate The gate with its askers as they are now.
+     */
+    suspend fun addAskers(gate: Gate)
+
+    /**
      * Replaces a gate.
      *
      * @param gate The gate as it is now.

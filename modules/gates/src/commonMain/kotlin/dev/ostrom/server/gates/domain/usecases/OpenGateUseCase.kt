@@ -28,6 +28,7 @@ import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import dev.ostrom.server.gates.domain.services.GateSessions
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -105,26 +106,34 @@ class OpenGateUseCaseImpl(
             lockKey(orgId, key)
             val same = byKey(orgId, key, SAME_KEY_LIMIT)
                 .filter { request.subject.push == null || it.subject.diffDigest == request.subject.diffDigest }
-            joined(request, same) ?: created(newGate(request, key, mode), approvers)
+            joined(request, same, mode) ?: created(newGate(request, key, mode), approvers)
         }
         if (opened.created && opened.gate.mode == GateMode.ENFORCED) notifier.requested(opened.gate, opened.requests)
         return viewOf(opened.gate, opened.requests, policies.selfApproval(orgId))
     }
 
     // The live gate of the same action takes the new asker; a refused one answers again. An expired yes is not
-    // joined: the same action asks a new one (S2-29).
-    private suspend fun GatesTransaction.joined(request: OpenGate, same: List<Gate>): Opened? {
-        val live = same.firstOrNull { it.status in LIVE && !it.yesExpired(clock.now()) }
+    // joined: the same action asks a new one (S2-29). A shadow or ungated record is joined in its own mode only.
+    private suspend fun GatesTransaction.joined(request: OpenGate, same: List<Gate>, mode: GateMode): Opened? {
+        val now = clock.now()
+        val live = same.firstOrNull { it.joinable(mode, now) }
         val refused = same.firstOrNull()?.takeIf { it.status == GateStatus.REJECTED }
         return when {
             live != null -> {
                 val joined = join(live, request)
-                if (joined != live) updateGate(joined)
+                // Only the askers: an answer, reserve or consume may have committed since `byKey` read the row.
+                if (joined != live) addAskers(joined)
                 Opened(joined, requestsOf(joined.orgId, joined.id), created = false)
             }
             refused != null -> Opened(refused, requestsOf(refused.orgId, refused.id), created = false)
             else -> null
         }
+    }
+
+    private fun Gate.joinable(mode: GateMode, now: Instant): Boolean = when (status) {
+        GateStatus.SHADOW, GateStatus.UNGATED -> this.mode == mode
+        in LIVE -> !yesExpired(now) && !reservationLapsed(now)
+        else -> false
     }
 
     private suspend fun GatesTransaction.created(gate: Gate, approvers: List<String>): Opened {

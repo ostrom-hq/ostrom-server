@@ -50,11 +50,13 @@ object GateKeys {
                 fields["refs"] = JsonArray(push.refs.map { "${it.ref}=${it.sha}" }.sorted().map(::JsonPrimitive))
                 fields["scope"] = JsonPrimitive(subject.scope)
                 fields["force"] = JsonPrimitive(push.force)
+                fields["gate"] = nodeRef
             }
             else -> {
                 fields["class"] = JsonPrimitive(subject.actionClass)
                 fields["command"] = JsonPrimitive(normalizeCommand(subject.command))
                 fields["scope"] = JsonPrimitive(subject.scope)
+                fields["gate"] = nodeRef
             }
         }
         return JsonObject(fields).toString()

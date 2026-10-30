@@ -163,6 +163,14 @@ class AskGateUseCaseTest {
     }
 
     @Test
+    fun aCommandTooLongToCheckIsRefusedNeverCut() = runTest {
+        val bench = GateBench()
+        val hidden = "./deploy.sh # " + "x".repeat(8_000) + " ; GIT_DIR=/other git push --force"
+        assertFailsWith<InvalidGateRequestException> { ask(bench)(agent(), pushAsk(command = hidden)) }
+        assertTrue(bench.repository.gates.isEmpty())
+    }
+
+    @Test
     fun theSameRepositoryTwiceIsNotAnotherRepository() = runTest {
         val bench = GateBench()
         assertNull(ask(bench)(agent(), pushAsk(realRepo = "ostrom-hq/gate-demo")).gate.subject.realRepo)

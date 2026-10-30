@@ -72,7 +72,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             scoped(orgId)
             val filters = buildString {
                 append("org_id = :org")
-                if (approverId != null) append(" AND approver_id = :approver")
+                // Identities compare without case everywhere (`SelfApproval.same`), the inbox too.
+                if (approverId != null) append(" AND lower(approver_id) = lower(:approver)")
                 if (status != null) append(" AND status = :status")
             }
             val page = Statement.create(
@@ -159,6 +160,21 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                         ":evidence, :decided_by, :decided_at, :self_approved, :receipt_id, :reserved_by, " +
                         ":reserved_at, :consumed_at, :created_at)",
                 ).bindGate(gate),
+            ).getOrThrow()
+        }
+
+        override suspend fun addAskers(gate: Gate) {
+            scoped(gate.orgId)
+            executor.execute(
+                Statement.create(
+                    "UPDATE gates_gates SET asked_by = :asked_by, asked_via = :asked_via, " +
+                        "session_ids = :session_ids, launch_ids = :launch_ids WHERE org_id = :org_id AND id = :id",
+                ).bind("asked_by", json.encodeToString(strings, gate.askedBy))
+                    .bind("asked_via", json.encodeToString(strings, gate.askedVia.map { it.name }.sorted()))
+                    .bind("session_ids", json.encodeToString(strings, gate.sessionIds))
+                    .bind("launch_ids", json.encodeToString(strings, gate.launchIds))
+                    .bind("org_id", gate.orgId)
+                    .bind("id", gate.id),
             ).getOrThrow()
         }
 
