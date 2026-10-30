@@ -17,8 +17,12 @@ import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCase
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.GetApprovalQueueUseCase
+import dev.ostrom.server.gates.domain.usecases.GetApprovalQueueUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCase
 import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.GetApprovalViewUseCase
+import dev.ostrom.server.gates.domain.usecases.GetApprovalViewUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCase
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCase
@@ -65,7 +69,9 @@ object GatesModule : ServerModule {
         single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get()) }
         single<ListApprovalsUseCase> { ListApprovalsUseCaseImpl(get()) }
         single<GetApprovalUseCase> { GetApprovalUseCaseImpl(get()) }
-        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        single<GetApprovalQueueUseCase> { GetApprovalQueueUseCaseImpl(get(), get()) }
+        single<GetApprovalViewUseCase> { GetApprovalViewUseCaseImpl(get(), get()) }
+        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = GatesMigrations

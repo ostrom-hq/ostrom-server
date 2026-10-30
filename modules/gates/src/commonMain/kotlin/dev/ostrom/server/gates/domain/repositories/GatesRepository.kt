@@ -58,6 +58,15 @@ interface GatesRepository {
      * @return The requests.
      */
     suspend fun approvals(orgId: Uuid, approverId: String?, status: RequestStatus?, limit: Int): List<ApprovalView>
+
+    /**
+     * Reads the approvers of several gates in one read (the yes queue shows a page of them).
+     *
+     * @param orgId The organization.
+     * @param gateIds The gates, at most a page of them.
+     * @return Each gate's approvers, in their order; a gate without request, or another organization's, is absent.
+     */
+    suspend fun approversOf(orgId: Uuid, gateIds: List<Uuid>): Map<Uuid, List<String>>
 }
 
 /** The reads and writes of one transaction. Locking reads hold their rows until the transaction ends. */

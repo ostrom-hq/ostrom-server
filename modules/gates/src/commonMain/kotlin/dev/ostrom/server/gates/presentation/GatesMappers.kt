@@ -81,7 +81,7 @@ internal fun Gate.toRequest(approvalId: String?) = GateRequest(
     },
 )
 
-private fun GateNode.toRef() = GateRef(
+internal fun GateNode.toRef() = GateRef(
     workflowId = workflowId,
     workflowName = workflowName,
     nodeId = nodeId,
