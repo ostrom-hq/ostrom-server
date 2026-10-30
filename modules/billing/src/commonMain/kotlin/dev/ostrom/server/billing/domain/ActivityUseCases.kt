@@ -101,6 +101,21 @@ class RecordAgentUsageUseCaseImpl(
     }
 }
 
+/** Reads the cloud agent time of an organization's current billing period, the one its hour limit applies to. */
+interface GetAgentUsageUseCase {
+    /** @return The period's usage so far; zero when nothing was recorded yet. */
+    suspend operator fun invoke(orgId: Uuid): Usage
+}
+
+/** [GetAgentUsageUseCase]. Read only: runners call it before and while a cloud agent runs. */
+class GetAgentUsageUseCaseImpl(
+    private val repository: BillingRepository,
+    private val clock: Clock,
+) : GetAgentUsageUseCase {
+    override suspend fun invoke(orgId: Uuid): Usage =
+        repository.usage(orgId, billingPeriod(repository.get(orgId), clock.now()).start)
+}
+
 /** Sends the queued tasks to Stripe, with a growing delay between attempts. */
 interface ProcessOutboxUseCase {
     /** @return How many tasks were sent. */
