@@ -209,6 +209,81 @@ class UpstreamsTest {
     }
 
     @Test
+    fun aListingStopsAtSixteenPagesAndReadsOnlyWellFormedPages() = realTime {
+        val endless = HttpMcpUpstream(
+            client { request, body -> mcp(request, body) { """{"tools":[{"name":"t"}],"nextCursor":"again"}""" } },
+            UpstreamAddressGuard(),
+        ).listTools(httpTarget(), 5.seconds)
+        assertEquals(16, (endless as UpstreamResult.Ok).value.size, "At most 16 pages")
+        val odd = HttpMcpUpstream(
+            client { request, body -> mcp(request, body) { """{"tools":"none","nextCursor":5}""" } },
+            UpstreamAddressGuard(),
+        ).listTools(httpTarget(), 5.seconds)
+        assertEquals(emptyList(), (odd as UpstreamResult.Ok).value)
+    }
+
+    @Test
+    fun aListingOrACallThatFailsAfterInitializeIsAnOutcome() = realTime {
+        fun upstream(answer: suspend MockRequestHandleScope.(HttpRequestData, JsonObject?) -> HttpResponseData) =
+            HttpMcpUpstream(
+                client { request, body ->
+                    val method = body?.get("method")?.jsonPrimitive?.content
+                    if (method == "tools/list" || method == "tools/call") {
+                        answer(request, body)
+                    } else {
+                        mcp(request, body) { "{}" }
+                    }
+                },
+                UpstreamAddressGuard(),
+            )
+        val listError = upstream { _, b ->
+            respond("""{"jsonrpc":"2.0","id":${b!!["id"]},"error":{"code":1}}""", HttpStatusCode.OK)
+        }.listTools(httpTarget(), 5.seconds)
+        assertEquals(
+            "The MCP server could not list its tools: unknown error",
+            (listError as UpstreamResult.Failure).message,
+        )
+        val listDown = upstream { _, _ -> respond("", HttpStatusCode.BadGateway) }.listTools(httpTarget(), 5.seconds)
+        assertEquals("The MCP server answered HTTP 502.", (listDown as UpstreamResult.Failure).message)
+        val callDown = upstream { _, _ -> respond("", HttpStatusCode.BadGateway) }
+            .callTool(httpTarget(), "t", JsonObject(emptyMap()), 5.seconds)
+        assertEquals(McpOutcome.UPSTREAM_ERROR, (callDown as UpstreamResult.Failure).outcome)
+        val empty = upstream { _, b -> respond("""{"jsonrpc":"2.0","id":${b!!["id"]}}""", HttpStatusCode.OK) }
+            .callTool(httpTarget(), "t", JsonObject(emptyMap()), 5.seconds)
+        assertEquals("The MCP server sent an invalid answer.", (empty as UpstreamResult.Failure).message)
+    }
+
+    @Test
+    fun anOddSessionIdIsIgnoredAndAMissingCredentialIsNotSent() = realTime {
+        for (sessionId in listOf("s 1", "s".repeat(257))) {
+            requests.clear()
+            val upstream = HttpMcpUpstream(
+                client { request, body ->
+                    val method = body?.get("method")?.jsonPrimitive?.content
+                    if (method == "initialize") {
+                        json(body["id"], """{"protocolVersion":"2025-06-18"}""", mapOf("Mcp-Session-Id" to sessionId))
+                    } else {
+                        mcp(request, body) { "{}" }
+                    }
+                },
+                UpstreamAddressGuard(),
+            )
+            upstream.callTool(httpTarget().copy(credential = null), "t", JsonObject(emptyMap()), 5.seconds)
+            assertTrue(requests.none { it.first.headers["Mcp-Session-Id"] != null }, sessionId)
+            assertTrue(requests.none { it.first.method == HttpMethod.Delete }, "No session, nothing to close")
+            assertTrue(requests.none { it.first.headers[HttpHeaders.Authorization] != null })
+        }
+        val noVersion = HttpMcpUpstream(
+            client { _, body -> json(body!!["id"], "{}") },
+            UpstreamAddressGuard(),
+        ).listTools(httpTarget(), 5.seconds)
+        assertEquals(
+            "The MCP server speaks an unsupported protocol version.",
+            (noVersion as UpstreamResult.Failure).message,
+        )
+    }
+
+    @Test
     fun theGuardRefusesPrivateDestinations() {
         val guard = UpstreamAddressGuard()
         listOf(
@@ -234,12 +309,23 @@ class UpstreamsTest {
             "https://198.18.0.1",
             "https://192.0.2.1",
             "not a url",
+            "https://mcp.example.com:70000/",
+            "https://mcp.example.com:port/",
+            "https://./mcp",
+            "https://local/",
+            "https://svc/",
+            "https://[2600::1.2.3.4]/",
+            "https://[2002::1]/",
         ).forEach { assertFalse(guard.allows(it), it) }
         listOf(
             "https://mcp.grafana.com/mcp",
             "https://8.8.8.8/",
             "https://[2606:4700::1111]/",
             "https://172.32.0.1",
+            // Not IPv4 literals (a leading zero run, an octet above 255, five parts): names with a dot.
+            "https://0001.2.3.4/",
+            "https://1.2.3.256/",
+            "https://1.2.3.4.5/",
         ).forEach {
             assertTrue(guard.allows(it), it)
         }
@@ -348,6 +434,28 @@ class UpstreamsTest {
             "The MCP host is unreachable.",
             (down.callTool(stdioTarget(), "t", JsonObject(emptyMap()), 1.seconds) as UpstreamResult.Failure).message,
         )
+    }
+
+    @Test
+    fun oddHostAnswersAreReadSafelyAndTheTokenIsNeverPrinted() = realTime {
+        fun host(body: String) =
+            HostMcpUpstream(client { _, _ -> respond(body, HttpStatusCode.OK) }, McpHostConfig("http://h/", "t"))
+
+        suspend fun call(body: String) =
+            host(body).callTool(stdioTarget(), "t", JsonObject(emptyMap()), 1.seconds) as UpstreamResult.Failure
+
+        val invalid = "The MCP host sent an invalid answer."
+        assertEquals(invalid, call("not json").message)
+        assertEquals(invalid, call("[]").message)
+        assertEquals(invalid, call("""{"result":[]}""").message)
+        assertEquals("unknown error", call("""{"error":{"code":{},"message":{}}}""").message)
+        assertEquals("unknown error", call("""{"error":{}}""").message)
+        assertTrue("same token" in call("""{"error":{"code":"unsupported_protocol"}}""").message)
+        val listed = host("""{"result":{"tools":[{"name":"a"},3]}}""").listTools(stdioTarget(), 1.seconds)
+        assertEquals(listOf("a"), (listed as UpstreamResult.Ok).value.map { it["name"]!!.jsonPrimitive.content })
+        val none = host("""{"result":{"tools":"x"}}""").listTools(stdioTarget(), 1.seconds)
+        assertEquals(emptyList(), (none as UpstreamResult.Ok).value)
+        assertFalse("secret" in McpHostConfig("http://h", "secret").toString())
     }
 
     @Test

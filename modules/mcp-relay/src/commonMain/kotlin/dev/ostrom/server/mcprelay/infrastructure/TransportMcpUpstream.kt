@@ -16,22 +16,25 @@ import kotlin.time.Duration
  * @param host Stdio servers, or null when no MCP host is configured.
  */
 class TransportMcpUpstream(private val http: McpUpstream, private val host: McpUpstream?) : McpUpstream {
-    override suspend fun listTools(target: UpstreamTarget, deadline: Duration): UpstreamResult<List<JsonObject>> =
-        upstream(target)?.listTools(target, deadline) ?: NO_HOST
+    override suspend fun listTools(target: UpstreamTarget, deadline: Duration): UpstreamResult<List<JsonObject>> {
+        val upstream = upstream(target) ?: return NO_HOST
+        return upstream.listTools(target, deadline)
+    }
 
     override suspend fun callTool(
         target: UpstreamTarget,
         tool: String,
         arguments: JsonObject,
         deadline: Duration,
-    ): UpstreamResult<JsonObject> = upstream(target)?.callTool(target, tool, arguments, deadline) ?: NO_HOST
+    ): UpstreamResult<JsonObject> {
+        val upstream = upstream(target) ?: return NO_HOST
+        return upstream.callTool(target, tool, arguments, deadline)
+    }
 
     private fun upstream(target: UpstreamTarget): McpUpstream? = when (target.server.transport) {
         McpTransport.HTTP -> http
         McpTransport.STDIO -> host
     }
-
-    private companion object {
-        val NO_HOST = UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "No MCP host is configured on this server.")
-    }
 }
+
+private val NO_HOST = UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "No MCP host is configured on this server.")
