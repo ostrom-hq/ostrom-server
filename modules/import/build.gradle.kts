@@ -12,6 +12,7 @@ kotlin {
             implementation(project(":kernel"))
             implementation(project(":modules:secrets"))
             implementation(project(":modules:mcp-relay"))
+            implementation(project(":modules:sharing"))
         }
         commonTest.dependencies {
             implementation(project(":testing"))
