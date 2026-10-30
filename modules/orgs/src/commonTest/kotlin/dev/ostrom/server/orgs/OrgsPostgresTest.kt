@@ -1,0 +1,413 @@
+package dev.ostrom.server.orgs
+
+import dev.ostrom.server.identity.IdentityModule
+import dev.ostrom.server.identity.domain.AuditRepository
+import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.ResolveUserUseCase
+import dev.ostrom.server.identity.domain.User
+import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.database.inOrg
+import dev.ostrom.server.orgs.domain.AlreadyMemberException
+import dev.ostrom.server.orgs.domain.Invitation
+import dev.ostrom.server.orgs.domain.InvitationTokens
+import dev.ostrom.server.orgs.domain.InvitationsRepository
+import dev.ostrom.server.orgs.domain.Member
+import dev.ostrom.server.orgs.domain.MembersRepository
+import dev.ostrom.server.orgs.domain.Membership
+import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgRateLimiter
+import dev.ostrom.server.orgs.domain.OrgsRepository
+import dev.ostrom.server.orgs.domain.People
+import dev.ostrom.server.orgs.domain.SlugTakenException
+import dev.ostrom.server.testing.TestServer
+import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.SQLError
+import io.github.smyrgeorge.sqlx4k.Statement
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+
+/**
+ * The repositories on a real PostgreSQL, the row-level security of each table, and the identity
+ * adapters.
+ */
+class OrgsPostgresTest {
+    private val modules = listOf(IdentityModule, OrgsModule)
+    private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
+
+    private suspend fun TestServer.user(name: String, email: String = "$name@example.com"): User =
+        koin.get<ResolveUserUseCase>()(
+            VerifiedIdentity(IdentityProvider.GITHUB, name, email, true, name, login = name)
+        )
+
+    private fun org(slug: String, claim: String? = null) =
+        Org(Uuid.random(), slug, slug.uppercase(), null, claim, now)
+
+    private fun member(org: Org, user: User, role: OrgRole, at: Instant = now) =
+        Member(Uuid.random(), org.id, user.id, role, at)
+
+    private fun link(
+        org: Org,
+        by: Member,
+        maxUses: Int? = 2,
+        expiresAt: Instant = now + 7.days,
+        email: String? = null,
+    ) =
+        Invitation(
+            Uuid.random(),
+            org.id,
+            email,
+            OrgRole.MEMBER,
+            by.id,
+            now,
+            expiresAt,
+            maxUses,
+            0,
+            null,
+        )
+
+    @Test
+    fun organizationsAreCreatedReadRenamedAndDeleted() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val members = server.koin.get<MembersRepository>()
+            val invitations = server.koin.get<InvitationsRepository>()
+            val ada = server.user("ada")
+            val acme = org("acme", "domain:acme.com")
+            val owner = member(acme, ada, OrgRole.OWNER)
+
+            assertNull(orgs.create(acme, owner) { false })
+
+            assertEquals(acme, orgs.get(acme.id))
+            assertEquals(acme, orgs.findBySlug("acme"))
+            assertTrue(orgs.slugTaken("acme"))
+            assertFalse(orgs.slugTaken("other"))
+            assertEquals(listOf(Membership(acme, owner)), orgs.listOfUser(ada.id))
+            assertFailsWith<SlugTakenException> {
+                orgs.create(org("acme"), member(acme, ada, OrgRole.OWNER)) { false }
+            }
+            orgs.rename(acme.id, "Acme Labs")
+            assertEquals("Acme Labs", orgs.get(acme.id)?.name)
+
+            invitations.create(link(acme, owner), "hash-1")
+            orgs.delete(acme.id, now)
+            assertNull(orgs.get(acme.id))
+            assertNull(orgs.findBySlug("acme"))
+            assertTrue(orgs.slugTaken("acme"), "A deleted organization keeps its short name")
+            assertEquals(emptyList(), orgs.listOfUser(ada.id))
+            assertNull(members.findByUser(acme.id, ada.id))
+            assertNull(invitations.findLiveByTokenHash("hash-1", now))
+            // Its free claim is released.
+            assertNull(
+                orgs.create(
+                    org("acme-2", "domain:acme.com"),
+                    member(acme, ada, OrgRole.OWNER).copy(orgId = Uuid.random()),
+                ) {
+                    false
+                }
+            )
+        }
+
+    @Test
+    fun aDatabaseFailureOtherThanATakenSlugIsNotHidden() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val invitations = server.koin.get<InvitationsRepository>()
+            val ada = server.user("ada")
+            val acme = org("acme").copy(githubOrgId = 42)
+            val owner = member(acme, ada, OrgRole.OWNER)
+            val ghost = member(acme, ada, OrgRole.OWNER).copy(userId = Uuid.random())
+
+            assertFailsWith<SQLError> { orgs.create(acme, ghost) { false } }
+            assertNull(orgs.get(acme.id), "Nothing of the failed creation is left")
+            assertNull(orgs.create(acme, owner) { false })
+            assertEquals(42L, orgs.get(acme.id)?.githubOrgId)
+            val invitation = link(acme, owner)
+            invitations.create(invitation, "h")
+            assertFailsWith<SQLError> {
+                invitations.accept(
+                    invitation,
+                    member(acme, ada, OrgRole.MEMBER).copy(userId = Uuid.random()),
+                    now,
+                )
+            }
+            assertEquals(0, invitations.findLiveByTokenHash("h", now)?.uses)
+        }
+
+    @Test
+    fun aFreeClaimIsHeldByOneFreeOrganizationEvenUnderConcurrentCreations() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val ada = server.user("ada")
+            val bob = server.user("bob")
+            val candidates = (1..4).map { org("team-$it", "domain:acme.com") }
+
+            val holders = coroutineScope {
+                candidates
+                    .map { candidate ->
+                        async {
+                            orgs.create(
+                                candidate,
+                                member(
+                                    candidate,
+                                    if (candidate.slug == "team-1") ada else bob,
+                                    OrgRole.OWNER,
+                                ),
+                            ) {
+                                false
+                            }
+                        }
+                    }
+                    .awaitAll()
+            }
+
+            assertEquals(1, holders.count { it == null }, "Exactly one creation wins")
+            val winner = candidates.single { orgs.get(it.id) != null }
+            assertTrue(holders.filterNotNull().all { it.id == winner.id })
+            val paid = org("team-5", "domain:acme.com")
+            assertNull(orgs.create(paid, member(paid, bob, OrgRole.OWNER)) { it == winner.id })
+        }
+
+    @Test
+    fun membersHaveOneOwnerAndChangeRoles() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val members = server.koin.get<MembersRepository>()
+            val ada = server.user("ada")
+            val bob = server.user("bob")
+            val acme = org("acme")
+            val owner = member(acme, ada, OrgRole.OWNER)
+            orgs.create(acme, owner) { false }
+            val invitations = server.koin.get<InvitationsRepository>()
+            val bobMember = member(acme, bob, OrgRole.MEMBER, now + 1.minutes)
+            val invitation = link(acme, owner)
+            invitations.create(invitation, "h")
+            assertTrue(invitations.accept(invitation, bobMember, now))
+
+            assertEquals(listOf(owner, bobMember), members.list(acme.id))
+            assertEquals(2, members.count(acme.id))
+            members.changeRole(acme.id, bobMember.id, OrgRole.BILLING)
+            assertEquals(OrgRole.BILLING, members.findByUser(acme.id, bob.id)?.role)
+            assertFailsWith<SQLError> { members.changeRole(acme.id, bobMember.id, OrgRole.OWNER) }
+            members.transferOwnership(acme.id, owner.id, bobMember.id)
+            assertEquals(OrgRole.OWNER, members.findByUser(acme.id, bob.id)?.role)
+            assertEquals(OrgRole.ADMIN, members.findByUser(acme.id, ada.id)?.role)
+            members.remove(acme.id, owner.id)
+            assertEquals(listOf(bob.id), members.list(acme.id).map { it.userId })
+        }
+
+    @Test
+    fun invitationsWorkWhileLiveAndTheLastUseGoesToOnePerson() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val invitations = server.koin.get<InvitationsRepository>()
+            val ada = server.user("ada")
+            val acme = org("acme")
+            val owner = member(acme, ada, OrgRole.OWNER)
+            orgs.create(acme, owner) { false }
+            val single = link(acme, owner, maxUses = 1)
+            val email =
+                link(acme, owner, maxUses = 1, email = "dana@example.com")
+                    .copy(createdAt = now + 1.minutes)
+            val expired = link(acme, owner, expiresAt = now)
+            val revoked = link(acme, owner)
+            val unlimited = link(acme, owner, maxUses = null)
+            listOf(single, email, expired, revoked, unlimited).forEachIndexed { index, it ->
+                invitations.create(it, "hash-$index")
+            }
+
+            assertTrue(invitations.revoke(acme.id, revoked.id, now))
+            assertFalse(invitations.revoke(acme.id, revoked.id, now))
+            assertFalse(invitations.revoke(Uuid.random(), single.id, now))
+            assertEquals(
+                setOf(single.id, email.id, unlimited.id),
+                invitations.listLive(acme.id, now).map { it.id }.toSet(),
+            )
+            assertEquals(email.id, invitations.listLive(acme.id, now).first().id)
+            assertEquals(setOf("dana@example.com"), invitations.pendingEmails(acme.id, now))
+            assertEquals(single, invitations.findLiveByTokenHash("hash-0", now))
+            assertEquals(unlimited, invitations.findLiveByTokenHash("hash-4", now))
+            assertNull(invitations.findLiveByTokenHash("hash-2", now))
+            assertNull(invitations.findLiveByTokenHash("hash-3", now))
+
+            val people = (1..3).map { server.user("p$it") }
+            val results = coroutineScope {
+                people
+                    .map { person ->
+                        async {
+                            invitations.accept(single, member(acme, person, OrgRole.MEMBER), now)
+                        }
+                    }
+                    .awaitAll()
+            }
+            assertEquals(1, results.count { it }, "A one-use link brings in one person")
+            assertNull(invitations.findLiveByTokenHash("hash-0", now))
+            val joined = people[results.indexOf(true)]
+            assertFailsWith<AlreadyMemberException> {
+                invitations.accept(unlimited, member(acme, joined, OrgRole.MEMBER), now)
+            }
+            assertEquals(
+                0,
+                invitations.findLiveByTokenHash("hash-4", now)?.uses,
+                "The refused acceptance did not count",
+            )
+        }
+
+    @Test
+    fun rowLevelSecurityConfinesEveryTableToItsOrganization() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val invitations = server.koin.get<InvitationsRepository>()
+            val ada = server.user("ada")
+            val bob = server.user("bob")
+            val acme = org("acme")
+            val globex = org("globex")
+            val acmeOwner = member(acme, ada, OrgRole.OWNER)
+            val globexOwner = member(globex, bob, OrgRole.OWNER)
+            orgs.create(acme, acmeOwner) { false }
+            orgs.create(globex, globexOwner) { false }
+            invitations.create(link(acme, acmeOwner), "a")
+            invitations.create(link(globex, globexOwner), "g")
+
+            // Queries without any WHERE on the organization still only see the confined one.
+            for (table in listOf("orgs_organizations", "orgs_members", "orgs_invitations")) {
+                val column = if (table == "orgs_organizations") "id" else "org_id"
+                val seen =
+                    server.driver.inOrg(globex.id) {
+                        fetchAll(Statement.create("SELECT $column AS org FROM $table"))
+                            .getOrThrow()
+                            .map { it.get("org").asString() }
+                    }
+                assertEquals(listOf(globex.id.toString()), seen.distinct(), table)
+            }
+            // Writing a row of another organization from inside one fails the policy's check.
+            assertFailsWith<SQLError> {
+                server.driver.inOrg(globex.id) {
+                    execute(
+                            Statement.create(
+                                    "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES (:id, " +
+                                        ":org, :user, 'member', :at)"
+                                )
+                                .bind("id", Uuid.random())
+                                .bind("org", acme.id)
+                                .bind("user", bob.id)
+                                .bind("at", now)
+                        )
+                        .getOrThrow()
+                }
+            }
+            val updated =
+                server.driver.inOrg(globex.id) {
+                    execute(
+                            Statement.create(
+                                    "UPDATE orgs_organizations SET name = 'taken' WHERE id = :id"
+                                )
+                                .bind("id", acme.id)
+                        )
+                        .getOrThrow()
+                }
+            assertEquals(0L, updated)
+            assertEquals("ACME", orgs.get(acme.id)?.name)
+            // The repositories confine themselves too: Globex's id never reads Acme's members.
+            assertNull(server.koin.get<MembersRepository>().findByUser(globex.id, ada.id))
+            assertFalse(
+                invitations.revoke(globex.id, invitations.listLive(acme.id, now).single().id, now)
+            )
+        }
+
+    @Test
+    fun theResolverOnlyResolvesAPersonWhoIsAMember() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val resolver = server.koin.get<PrincipalOrgResolver>()
+            val ada = server.user("ada")
+            val acme = org("acme")
+            val owner = member(acme, ada, OrgRole.OWNER)
+            orgs.create(acme, owner) { false }
+            val person =
+                AuthenticatedPrincipal(ada.id.toString(), PrincipalKind.USER, setOf("user:*"))
+
+            assertEquals(
+                OrgPrincipal(acme.id, owner.id, OrgRole.OWNER),
+                resolver.resolve(person, acme.id),
+            )
+            assertNull(resolver.resolve(person, Uuid.random()))
+            assertNull(resolver.resolve(person, null), "No implicit current organization")
+            val bound = person.copy(orgId = acme.id.toString())
+            assertEquals(owner.id, resolver.resolve(bound, null)?.memberId)
+            assertEquals(owner.id, resolver.resolve(bound, acme.id)?.memberId)
+            assertNull(resolver.resolve(bound.copy(orgId = Uuid.random().toString()), acme.id))
+            assertNull(resolver.resolve(person.copy(kind = PrincipalKind.AGENT), acme.id))
+            assertNull(resolver.resolve(person.copy(subjectId = "not-a-uuid"), acme.id))
+            assertNull(
+                resolver.resolve(
+                    AuthenticatedPrincipal(
+                        Uuid.random().toString(),
+                        PrincipalKind.USER,
+                        emptySet(),
+                    ),
+                    acme.id,
+                )
+            )
+        }
+
+    @Test
+    fun theIdentityAdaptersReadPeopleAndWriteTheSignedAuditChain() =
+        serverTest(modules) { server ->
+            val people = server.koin.get<People>()
+            val ada = server.user("ada", "Ada@Acme.com")
+            val bob = server.user("bob")
+
+            assertEquals("ada", people.get(ada.id)?.login)
+            assertNull(people.get(Uuid.random()))
+            assertEquals(
+                setOf("ada", "bob"),
+                people.getMany(listOf(ada.id, bob.id)).map { it.login }.toSet(),
+            )
+            assertEquals(ada.id, people.findByLogin("ADA")?.id)
+            assertNull(people.findByLogin("nobody"))
+            assertEquals(setOf("ada@acme.com"), people.verifiedEmails(ada.id))
+
+            val orgId = Uuid.random()
+            server.koin
+                .get<OrgAudit>()
+                .record(
+                    orgId,
+                    ada.id,
+                    "org.member.removed",
+                    "member",
+                    "m-1",
+                    mapOf("login" to "bob"),
+                )
+            val event = server.koin.get<AuditRepository>().list(orgId, null, null, 10).single()
+            assertEquals("org.member.removed", event.entry.action)
+            assertEquals(mapOf("login" to "bob"), event.entry.details)
+
+            val tokens = server.koin.get<InvitationTokens>()
+            val token = tokens.generate()
+            assertNotEquals(token, tokens.generate())
+            assertEquals(tokens.hash(token), tokens.hash(token))
+            assertNotEquals(token, tokens.hash(token))
+            val limiter = server.koin.get<OrgRateLimiter>()
+            assertTrue(limiter.tryAcquire("k", 1, 1))
+            assertFalse(limiter.tryAcquire("k", 1, 1))
+        }
+}

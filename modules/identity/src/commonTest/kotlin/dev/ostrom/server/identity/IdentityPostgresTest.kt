@@ -63,6 +63,11 @@ class IdentityPostgresTest {
         assertNull(users.findByVerifiedEmail("bob@example.com"))
         assertTrue(users.loginTaken(ada.login))
         assertTrue(!users.loginTaken("nobody"))
+        assertEquals(ada, users.findByLogin(ada.login.uppercase()))
+        assertNull(users.findByLogin("nobody"))
+        assertEquals(listOf(ada), users.getMany(listOf(ada.id, ada.id, Uuid.random())))
+        assertEquals(emptyList(), users.getMany(emptyList()))
+        assertEquals(setOf(ada, bob), users.getMany(listOf(bob.id, ada.id)).toSet())
 
         users.link(bob.id, VerifiedIdentity(IdentityProvider.GOOGLE, "g", "bob@example.com", true), UserEmail("bob@example.com", true), now)
         users.link(bob.id, github("2"), UserEmail("bob@example.com", false), now)
