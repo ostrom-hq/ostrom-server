@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.automations.presentation
 
-import dev.ostrom.server.automations.domain.AnswerWaitUseCase
 import dev.ostrom.server.automations.domain.AskWait
-import dev.ostrom.server.automations.domain.AskWaitUseCase
 import dev.ostrom.server.automations.domain.InvalidWaitException
-import dev.ostrom.server.automations.domain.ReadWaitsUseCase
 import dev.ostrom.server.automations.domain.WaitQuery
-import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import io.ktor.http.ContentType
@@ -22,21 +18,6 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
-
-/**
- * What the wait routes need.
- *
- * @property ask Asks.
- * @property read Reads.
- * @property answer Answers and cancels.
- * @property orgResolver The member a request acts for.
- */
-data class WaitsRoutesDependencies(
-    val ask: AskWaitUseCase,
-    val read: ReadWaitsUseCase,
-    val answer: AnswerWaitUseCase,
-    val orgResolver: PrincipalOrgResolver,
-)
 
 /**
  * The waits API under `/api/v1/waits` ("Waiting for you"), and the agents' MCP server at `/api/v1/waits/mcp`.
