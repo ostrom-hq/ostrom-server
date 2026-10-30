@@ -93,16 +93,21 @@ private suspend fun post(
     body: JsonElement,
     authorize: HttpRequestBuilder.() -> Unit,
 ) {
-    val response: HttpResponse = try {
+    val response = answerOf(service) {
         http.post(url) {
             authorize()
             contentType(ContentType.Application.Json)
             setBody(body.toString())
         }
-    } catch (error: CancellationException) {
-        throw error
-    } catch (error: Exception) {
-        throw NotificationCallException("$service did not answer.", error)
     }
     if (!response.status.isSuccess()) throw NotificationCallException("$service refused (${response.status.value}).")
+}
+
+// The answer of [call], or a NotificationCallException when there is none; a cancellation stays a cancellation.
+private suspend fun answerOf(service: String, call: suspend () -> HttpResponse): HttpResponse = try {
+    call()
+} catch (error: CancellationException) {
+    throw error
+} catch (error: Exception) {
+    throw NotificationCallException("$service did not answer.", error)
 }
