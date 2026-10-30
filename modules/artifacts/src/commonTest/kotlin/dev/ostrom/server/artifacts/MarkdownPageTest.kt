@@ -50,6 +50,13 @@ class MarkdownPageTest {
     }
 
     @Test
+    fun aParagraphJoinsItsLinesUpToABlankLine() {
+        val html = MarkdownPage.render("a\nb\n\nc")
+        assertTrue("<p>a b</p>" in html, html)
+        assertTrue("<p>c</p>" in html, html)
+    }
+
+    @Test
     fun aQuoteJoinsItsLines() {
         assertTrue("<blockquote>a b</blockquote>" in MarkdownPage.render("> a\n> b"))
     }

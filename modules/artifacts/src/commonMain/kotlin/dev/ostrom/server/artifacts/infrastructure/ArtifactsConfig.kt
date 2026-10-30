@@ -24,7 +24,8 @@ internal object ArtifactsConfig {
      */
     fun from(source: ConfigSource): ArtifactLocations {
         // A blank value is already unset in every configuration source.
-        val viewer = source["OSTROM_ARTIFACTS_VIEWER_URL"]?.trimEnd('/') ?: DEFAULT_VIEWER_URL
+        val rawViewer = source["OSTROM_ARTIFACTS_VIEWER_URL"]
+        val viewer = if (rawViewer == null) DEFAULT_VIEWER_URL else rawViewer.trimEnd('/')
         val origin = source["OSTROM_ARTIFACTS_CONTENT_ORIGIN"]?.trimEnd('/')
         if (origin != null && (!ORIGIN.matches(origin) || viewer.startsWith("$origin/"))) {
             throw InvalidConfigException(
