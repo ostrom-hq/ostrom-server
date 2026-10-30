@@ -256,6 +256,35 @@ class ReconcileCloudSessionUseCaseTest {
     }
 
     @Test
+    fun aRunnerWithoutHeartbeatCountsFromItsReadinessThenFromNow() = runTest {
+        driver.status = ExecutionStatus.RUNNING
+        val ready = runningSession().copy(lastHeartbeatAt = null).also { put(it) }
+        clock.now = t0 + 91.seconds
+        reconcile(ready)
+        assertEquals("execution_lost", stored(ready).failure?.code)
+
+        val fresh = runningSession().copy(lastHeartbeatAt = null, readyAt = null, lastActivityAt = null)
+            .also { put(it) }
+        assertEquals(clock.now + 15.seconds, reconcile(fresh))
+        assertEquals(SessionState.RUNNING, stored(fresh).state)
+    }
+
+    @Test
+    fun aDrainEndsWhenTheRunnerFallsSilentBeforeTheDeadline() = runTest {
+        val silent = put(
+            runningSession().copy(
+                state = SessionState.PAUSING,
+                desiredState = DesiredState.PAUSED,
+                pausingSince = t0,
+                lastHeartbeatAt = t0,
+            ),
+        )
+        clock.now = t0 + 100.seconds
+        assertNull(reconcile(silent))
+        assertEquals(SessionState.PAUSED, stored(silent).state)
+    }
+
+    @Test
     fun aRunningSessionWithoutActivityCountsFromItsReadiness() = runTest {
         val running = runningSession().copy(
             lastActivityAt = null,

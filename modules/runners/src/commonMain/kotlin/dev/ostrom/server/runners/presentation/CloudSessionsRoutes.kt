@@ -37,7 +37,7 @@ fun Route.cloudSessionsRoutes(dependencies: CloudSessionsRoutesDependencies) = w
             call.respond(
                 CloudSessionsResponse(
                     items = sessions.map { it.toResponse() },
-                    next = sessions.lastOrNull()?.takeIf { sessions.size == limit }?.id?.toString(),
+                    next = sessions.lastOrNull()?.let { last -> last.id.toString().takeIf { sessions.size == limit } },
                 ),
             )
         }

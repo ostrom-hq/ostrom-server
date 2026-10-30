@@ -220,24 +220,24 @@ class ReconcileCloudSessionUseCaseImpl(
     /** Constants and readers of the enclosing type. */
     companion object {
         /** A start must report ready within this time, image pull and repository clone included. */
-        val START_TIMEOUT: Duration = 15.minutes
+        private val START_TIMEOUT: Duration = 15.minutes
 
         /** A runner silent for this long is lost. */
-        val HEARTBEAT_LOSS: Duration = 90.seconds
+        private val HEARTBEAT_LOSS: Duration = 90.seconds
 
         /** What the runtime reports for an execution that is no longer there. */
         private val LOST_STATUSES = setOf(ExecutionStatus.ENDED, ExecutionStatus.FAILED, ExecutionStatus.MISSING)
 
         /** A pause drains the agent for at most this long. */
-        val PAUSE_DEADLINE: Duration = 2.minutes
+        private val PAUSE_DEADLINE: Duration = 2.minutes
 
         /** A started execution the runtime does not list yet is given this long before it counts as lost. */
-        val MISSING_GRACE: Duration = 60.seconds
+        private val MISSING_GRACE: Duration = 60.seconds
 
         /** The delay between two steps of a move in progress. */
-        val STEP_DELAY: Duration = 2.seconds
+        private val STEP_DELAY: Duration = 2.seconds
 
         /** The delay between two checks of a running session. */
-        val WATCH_DELAY: Duration = 15.seconds
+        private val WATCH_DELAY: Duration = 15.seconds
     }
 }
