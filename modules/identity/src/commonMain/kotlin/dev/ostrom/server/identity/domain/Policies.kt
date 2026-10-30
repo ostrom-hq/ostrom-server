@@ -149,5 +149,19 @@ class DeviceCodeNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Unknow
 class SessionRequiredException :
     OstromException(ErrorKind.FORBIDDEN, "This action needs a signed-in browser session.")
 
+/**
+ * A free-text value as stored: trimmed and cut to [max] characters.
+ *
+ * @param raw The value, if any.
+ * @param max The longest kept.
+ *
+ * @return The value, or null when it is missing or blank.
+ */
+fun trimmedOrNull(raw: String?, max: Int): String? {
+    if (raw == null) return null
+    val trimmed = raw.trim().take(max)
+    return if (trimmed.isEmpty()) null else trimmed
+}
+
 /** The longest address SMTP can carry (RFC 5321 § 4.5.3.1.3, the path minus its brackets). */
 private const val MAX_EMAIL_LENGTH = 254

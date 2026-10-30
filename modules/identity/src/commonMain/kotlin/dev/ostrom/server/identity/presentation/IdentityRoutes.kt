@@ -7,7 +7,6 @@ import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.TokenNotFoundException
 import dev.ostrom.server.identity.domain.isBrowserSession
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
@@ -83,7 +82,7 @@ private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with
     post<AuthApi.Logout> {
         val principal = call.requirePrincipal()
         val userId = principal.userId()
-        val credential = principal.credentialId?.let(::parseId) ?: throw SessionRequiredException()
+        val credential = principal.credentialUuid()
         if (principal.isBrowserSession) {
             endWebSession(credential)
             call.clearSessionCookie(config)
@@ -114,12 +113,13 @@ private fun Route.tokenRoutes(dependencies: IdentityRoutesDependencies) = with(d
     }
     delete<TokensApi.Id> { params ->
         val principal = call.requireBrowserSession()
-        revokeToken(principal.userId(), parseId(params.id) ?: throw TokenNotFoundException())
+        revokeToken(principal.userId(), Uuid.parseOrNull(params.id) ?: throw TokenNotFoundException())
         call.respond(HttpStatusCode.NoContent)
     }
     post<TokensApi.Id.Rotate> { params ->
         val principal = call.requireBrowserSession()
-        val issued = rotateToken(principal.userId(), parseId(params.parent.id) ?: throw TokenNotFoundException())
+        val parent = Uuid.parseOrNull(params.parent.id) ?: throw TokenNotFoundException()
+        val issued = rotateToken(principal.userId(), parent)
         call.respond(HttpStatusCode.Created, issued.toCreatedTokenResponse())
     }
 }
@@ -194,17 +194,3 @@ fun ApplicationCall.requireBrowserSession(): AuthenticatedPrincipal {
     if (!principal.isBrowserSession) throw SessionRequiredException()
     return principal
 }
-
-/**
- * The user id of a user principal.
- *
- * @return The id.
- *
- * @throws SessionRequiredException When the principal is not a user (an agent).
- */
-fun AuthenticatedPrincipal.userId(): Uuid {
-    if (kind != PrincipalKind.USER) throw SessionRequiredException()
-    return parseId(subjectId) ?: throw SessionRequiredException()
-}
-
-private fun parseId(raw: String): Uuid? = Uuid.parseOrNull(raw)

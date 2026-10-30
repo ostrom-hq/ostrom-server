@@ -130,6 +130,12 @@ class IdentityRoutesPostgresTest {
             server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.body<ProfileResponse>().id,
         )
         assertNull(server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.body<ProfileResponse>().csrfToken)
+        // A token wins over a cookie sent along: the answer carries no CSRF token, the request is not a session.
+        val both = server.client.get("/api/v1/auth/me") {
+            bearerAuth(token.secret)
+            session(started, csrf = false)
+        }
+        assertNull(both.body<ProfileResponse>().csrfToken)
         assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/tokens") { bearerAuth(token.secret) }.status)
 
         val listed = server.client.get("/api/v1/tokens") { session(started) }.body<TokensResponse>()

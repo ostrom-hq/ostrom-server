@@ -40,7 +40,8 @@ class SecureSecretGenerator : SecretGenerator {
         const val BYTE_MASK = 0xFF
         const val VERSION_BYTE = 6
         const val VARIANT_BYTE = 8
-        val UNBIASED_LIMIT = 256 - 256 % USER_CODE_ALPHABET.length
+        /** Random bytes at or above this would favour the first letters: they are drawn again. */
+        const val UNBIASED_LIMIT = 256 - 256 % USER_CODE_ALPHABET.length
     }
 }
 

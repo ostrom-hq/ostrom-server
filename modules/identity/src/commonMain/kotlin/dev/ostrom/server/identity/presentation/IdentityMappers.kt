@@ -78,7 +78,7 @@ fun AuditEvent.toAuditEventResponse() = AuditEventResponse(
  */
 fun List<AuditEvent>.toAuditEventsResponse(limit: Int) = AuditEventsResponse(
     events = map { it.toAuditEventResponse() },
-    nextBefore = if (size >= limit.coerceIn(1, MAX_AUDIT_PAGE)) lastOrNull()?.sequence else null,
+    nextBefore = if (size >= limit.coerceIn(1, MAX_AUDIT_PAGE)) last().sequence else null,
 )
 
 /** The largest page of audit events, as the use case clamps it. */

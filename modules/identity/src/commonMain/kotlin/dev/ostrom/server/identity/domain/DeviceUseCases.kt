@@ -68,8 +68,7 @@ class StartDeviceAuthorizationUseCaseImpl(
         val allowed = limiter.tryAcquire("device-start:$source", DEVICE_STARTS_PER_WINDOW, DEVICE_RATE_WINDOW)
         if (!allowed) throw RateLimitedException()
         val now = clock.nowMillis()
-        val name = clientName?.trim()?.filter { !it.isISOControl() }?.take(MAX_CLIENT_NAME)?.takeIf { it.isNotEmpty() }
-            ?: DEFAULT_CLIENT_NAME
+        val name = trimmedOrNull(clientName?.filterNot { it.isISOControl() }, MAX_CLIENT_NAME) ?: DEFAULT_CLIENT_NAME
         val deviceCode = secrets.secret()
         val authorization = DeviceAuthorization(
             id = Uuid.random(),

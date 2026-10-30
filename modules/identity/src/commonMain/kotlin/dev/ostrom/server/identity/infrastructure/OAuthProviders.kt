@@ -216,11 +216,12 @@ class OidcProvider(
             claims.exp == null || Instant.fromEpochSeconds(claims.exp) <= clock.now() ->
                 throw ProviderRejectedException("expired token.")
             claims.nonce != nonce -> throw ProviderRejectedException("nonce mismatch.")
-            claims.sub.isNullOrEmpty() -> throw ProviderRejectedException("no subject.")
         }
+        val subject = claims.sub
+        if (subject.isNullOrEmpty()) throw ProviderRejectedException("no subject.")
         return VerifiedIdentity(
             provider = provider,
-            subject = requireNotNull(claims.sub),
+            subject = subject,
             email = claims.email,
             emailVerified = claims.email != null && claims.emailVerified == true,
             displayName = claims.name,

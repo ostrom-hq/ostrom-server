@@ -68,7 +68,9 @@ class StartOAuthSignInUseCaseImpl(
     override suspend fun invoke(provider: String, redirect: String?, source: String, linkTo: Uuid?): StartedOAuth {
         val oauth = configuredProvider(methods, provider)
         val (generator, hasher) = services.generator to services.hasher
-        if (!services.limiter.tryAcquire("oauth-start:$source", START_LIMIT, LIMIT_WINDOW)) throw RateLimitedException()
+        if (!services.limiter.tryAcquire("oauth-start:$source", START_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
+            throw RateLimitedException()
+        }
         val state = generator.secret()
         val verifier = generator.secret()
         val nonce = generator.secret()
@@ -94,7 +96,7 @@ class StartOAuthSignInUseCaseImpl(
 
     private companion object {
         const val START_LIMIT = 30
-        val LIMIT_WINDOW = 10.minutes
+        const val LIMIT_WINDOW_MINUTES = 10
     }
 }
 
@@ -205,10 +207,12 @@ class RequestMagicLinkUseCaseImpl(
         val limiter = services.limiter
         if (!methods.email) throw ProviderNotConfiguredException()
         val address = normalizeEmail(email)
-        if (!limiter.tryAcquire("magic-link:$source", SOURCE_LIMIT, LIMIT_WINDOW)) throw RateLimitedException()
+        if (!limiter.tryAcquire("magic-link:$source", SOURCE_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
+            throw RateLimitedException()
+        }
         // Per recipient, the limit is silent: an error would tell a stranger the address is being used, and a flood
         // of e-mails to one person stops at a few.
-        if (!limiter.tryAcquire("magic-link-to:$address", RECIPIENT_LIMIT, LIMIT_WINDOW)) return
+        if (!limiter.tryAcquire("magic-link-to:$address", RECIPIENT_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) return
         val token = services.generator.secret()
         val now = services.clock.nowMillis()
         val link = MagicLink(Uuid.random(), address, safeRedirectPath(redirect), now, now + MAGIC_LINK_LIFETIME)
@@ -219,7 +223,7 @@ class RequestMagicLinkUseCaseImpl(
     private companion object {
         const val SOURCE_LIMIT = 10
         const val RECIPIENT_LIMIT = 3
-        val LIMIT_WINDOW = 15.minutes
+        const val LIMIT_WINDOW_MINUTES = 15
     }
 }
 

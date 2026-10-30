@@ -18,6 +18,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -88,6 +89,16 @@ class CredentialAuthenticatorTest {
         val principal = authenticator.authenticate("osc_a")
         assertEquals(PrincipalKind.USER, principal?.kind)
         assertEquals(orgId.toString(), principal?.orgId)
+    }
+
+    @Test
+    fun anAgentTokenWithoutOrganizationHasNoneAndOneWithoutSessionIsACorruptRow() = runTest {
+        tokens.tokens["h(osa_c)"] = agentToken("osa_c", setOf(AGENT_SCOPE), session = "run-3").copy(orgId = null)
+        val corrupt = agentToken("osa_d", setOf(AGENT_SCOPE), session = "run-4")
+        tokens.tokens["h(osa_d)"] = corrupt.copy(agentSessionId = null)
+
+        assertEquals(null, authenticator.authenticate("osa_c")?.orgId)
+        assertFailsWith<IllegalStateException> { authenticator.authenticate("osa_d") }
     }
 
     @Test

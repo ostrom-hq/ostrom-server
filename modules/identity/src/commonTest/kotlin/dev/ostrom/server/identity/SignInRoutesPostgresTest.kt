@@ -8,6 +8,7 @@ import dev.ostrom.server.identity.domain.MagicLinksRepository
 import dev.ostrom.server.identity.domain.MailSender
 import dev.ostrom.server.identity.domain.OAuthAttempt
 import dev.ostrom.server.identity.domain.OAuthAttemptsRepository
+import dev.ostrom.server.identity.domain.RateLimiter
 import dev.ostrom.server.identity.domain.SignInMethods
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.fakes.FakeOAuthProvider
@@ -42,6 +43,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -135,6 +137,23 @@ class SignInRoutesPostgresTest {
         }.body<ProfileResponse>()
         assertEquals(profile.id, merged.id)
         assertEquals(listOf("github", "google"), merged.providers)
+    }
+
+    @Test
+    fun aStartPastTheRateLimitSendsBackToTheLoginPage() = serverTest(
+        listOf(IdentityModule),
+        module {
+            includes(overrides)
+            single<RateLimiter> {
+                object : RateLimiter {
+                    override suspend fun tryAcquire(key: String, limit: Int, window: Duration) = false
+                }
+            }
+        },
+    ) {
+        val browser = createClient { followRedirects = false }
+        val start = browser.get("/api/v1/auth/github/start")
+        assertEquals("http://localhost:5173/login?error=rate_limited", start.headers[HttpHeaders.Location])
     }
 
     @Test
