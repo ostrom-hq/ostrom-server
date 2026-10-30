@@ -13,3 +13,6 @@
 /data/*.pem
 /*.pem
 /dist/
+# Python tooling of ops/ (coverage, bytecode).
+__pycache__/
+.coverage

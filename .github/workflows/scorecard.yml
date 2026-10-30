@@ -5,9 +5,6 @@ name: OpenSSF Scorecard
 # variable OSTROM_PUBLIC): on a private repository GITHUB_TOKEN cannot read what Scorecard needs ("Resource not
 # accessible by integration").
 on:
-  push:
-    branches: [main]
-  branch_protection_rule:
   schedule:
     - cron: '41 5 * * 1'
   workflow_dispatch:
