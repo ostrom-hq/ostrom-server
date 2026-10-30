@@ -46,7 +46,8 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
     ).getOrThrow().firstOrNull() != null
 
     override suspend fun findByLogin(login: String): User? = driver.fetchAll(
-        Statement.create("SELECT $USER_COLUMNS FROM identity_users u WHERE u.login = :login").bind("login", login.lowercase()),
+        Statement.create("SELECT $USER_COLUMNS FROM identity_users u WHERE u.login = :login")
+            .bind("login", login.lowercase()),
     ).getOrThrow().firstOrNull()?.toUser()
 
     override suspend fun getMany(ids: Collection<Uuid>): List<User> {

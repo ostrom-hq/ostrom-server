@@ -230,8 +230,8 @@ class OrgsPostgresTest {
             val expired = link(acme, owner, expiresAt = now)
             val revoked = link(acme, owner)
             val unlimited = link(acme, owner, maxUses = null)
-            listOf(single, email, expired, revoked, unlimited).forEachIndexed { index, it ->
-                invitations.create(it, "hash-$index")
+            listOf(single, email, expired, revoked, unlimited).forEachIndexed { index, invitation ->
+                invitations.create(invitation, "hash-$index")
             }
 
             assertTrue(invitations.revoke(acme.id, revoked.id, now))

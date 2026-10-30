@@ -10,6 +10,9 @@ const val MAX_ORG_NAME = 100
 
 private const val MIN_SLUG = 2
 private const val SLUG_ATTEMPTS = 20
+
+/** Hex digits of the random suffix tried once every numbered slug is taken. */
+private const val RANDOM_SLUG_SUFFIX = 8
 private val SLUG_PATTERN = Regex("[a-z0-9](?:-?[a-z0-9])*")
 
 /** Short names kept for the console's own pages and the API. */
@@ -138,7 +141,7 @@ suspend fun freeSlug(base: String, taken: suspend (String) -> Boolean): String {
     if (!taken(base)) return base
     val numbered =
         (2..SLUG_ATTEMPTS).asSequence().map { suffixed(base, "-$it") }.firstOrNull { !taken(it) }
-    return numbered ?: suffixed(base, "-" + Uuid.random().toHexString().take(8))
+    return numbered ?: suffixed(base, "-" + Uuid.random().toHexString().take(RANDOM_SLUG_SUFFIX))
 }
 
 private fun suffixed(base: String, suffix: String) =

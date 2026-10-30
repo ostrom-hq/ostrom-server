@@ -19,6 +19,7 @@ data class OrgsConfig(val consoleUrl: String) {
      */
     fun invitationUrl(token: String): String = "$consoleUrl/invite#token=$token"
 
+    /** Reads the configuration from the environment. */
     companion object {
         /**
          * Reads the configuration.

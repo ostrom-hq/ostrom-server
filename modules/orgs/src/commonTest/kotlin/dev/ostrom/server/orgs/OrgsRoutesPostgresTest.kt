@@ -102,6 +102,7 @@ class OrgsRoutesPostgresTest {
     private fun tokenOf(link: String) = link.substringAfter("#token=")
 
     @Test
+    @Suppress("LongMethod") // One end-to-end story through the HTTP API, read top to bottom.
     fun aPersonCreatesATeamInvitesByEmailAndTheInviteeJoins() =
         serverTest(modules, overrides) { server ->
             val (_, ada) = server.signIn("ada", "ada@acme.com")
@@ -189,6 +190,7 @@ class OrgsRoutesPostgresTest {
         }
 
     @Test
+    @Suppress("LongMethod") // One end-to-end story through the HTTP API, read top to bottom.
     fun aLinkBringsPeopleInAndAdminsManageRolesRemovalsAndRevocations() =
         serverTest(modules, overrides) { server ->
             val (_, ada) = server.signIn("ada")
@@ -291,6 +293,7 @@ class OrgsRoutesPostgresTest {
         }
 
     @Test
+    @Suppress("LongMethod") // One end-to-end story through the HTTP API, read top to bottom.
     fun theOwnerRenamesTransfersLeavesAndDeletesWithABrowserSessionOnly() =
         serverTest(modules, overrides) { server ->
             val (ada, adaSession) = server.signIn("ada")
@@ -394,6 +397,7 @@ class OrgsRoutesPostgresTest {
         }
 
     @Test
+    @Suppress("LongMethod") // One end-to-end story through the HTTP API, read top to bottom.
     fun anotherOrganizationsPeopleAndAgentsSeeNothingOfIt() =
         serverTest(modules, overrides) { server ->
             val (ada, adaSession) = server.signIn("ada")
