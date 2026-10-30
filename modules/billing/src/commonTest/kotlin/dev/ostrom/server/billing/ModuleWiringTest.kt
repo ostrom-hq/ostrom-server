@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.billing
+
+import dev.ostrom.server.billing.domain.BillingNotifier
+import dev.ostrom.server.billing.domain.BillingRepository
+import dev.ostrom.server.billing.domain.BillingSettings
+import dev.ostrom.server.billing.domain.GetPlanLimitsUseCase
+import dev.ostrom.server.billing.domain.HandleStripeEventUseCase
+import dev.ostrom.server.billing.domain.LicenseGrant
+import dev.ostrom.server.billing.domain.LicenseProvider
+import dev.ostrom.server.billing.domain.ProcessOutboxUseCase
+import dev.ostrom.server.billing.domain.RecordAgentUsageUseCase
+import dev.ostrom.server.billing.domain.StripeGateway
+import dev.ostrom.server.billing.fakes.FakeBillingRepository
+import dev.ostrom.server.billing.fakes.FakeLicenseProvider
+import dev.ostrom.server.billing.fakes.FakeNotifier
+import dev.ostrom.server.billing.fakes.FixedClock
+import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
+import dev.ostrom.server.kernel.logging.JsonLogger
+import dev.ostrom.server.kernel.logging.LogLevel
+import dev.ostrom.server.kernel.logging.Logger
+import kotlinx.coroutines.test.runTest
+import org.koin.core.Koin
+import org.koin.core.module.Module
+import org.koin.dsl.koinApplication
+import org.koin.dsl.module
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.uuid.Uuid
+
+private val ORG = Uuid.parse("0195f7a2-0000-7000-8000-000000000001")
+
+/** The module's own bindings, on fakes for what the kernel and other modules provide. */
+private fun billingKoin(config: Map<String, String>, ports: Module = module { }): Koin = koinApplication {
+    allowOverride(true)
+    modules(
+        BillingModule.koinModule,
+        module {
+            single<ConfigSource> { MapConfigSource(config) }
+            single<Logger> { JsonLogger(LogLevel.ERROR) }
+            single<Clock> { FixedClock() }
+            single<BillingRepository> { FakeBillingRepository() }
+        },
+        ports,
+    )
+}.koin
+
+private val CLOUD = mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x", "OSTROM_STRIPE_WEBHOOK_SECRET" to "whsec_x")
+
+class ModuleWiringTest {
+    @Test
+    fun onOstromCloudTheModuleTalksToStripeAndStartsItsWorker() = runTest {
+        val koin = billingKoin(CLOUD)
+        assertTrue(koin.get<BillingSettings>().stripeEnabled)
+        assertIs<StripeGatewayImpl>(koin.get<StripeGateway>())
+        assertEquals(0, koin.get<ProcessOutboxUseCase>()(10))
+        BillingModule.start(backgroundScope, koin)
+    }
+
+    @Test
+    fun selfHostedTheModuleStartsNoWorkerAndHasNoLicenseByDefault() = runTest {
+        val koin = billingKoin(emptyMap())
+        assertFalse(koin.get<BillingSettings>().stripeEnabled)
+        BillingModule.start(backgroundScope, koin)
+        assertEquals(null, koin.get<GetPlanLimitsUseCase>()(ORG).maxPeople, "No license: no people limit")
+        koin.get<HandleStripeEventUseCase>()
+        koin.get<RecordAgentUsageUseCase>()
+    }
+
+    @Test
+    fun theLicenseAndNotificationModulesAreUsedWhenTheyAreBound() = runTest {
+        val license = FakeLicenseProvider(LicenseGrant(emptySet(), maxPeople = 40, expiresAt = null))
+        val koin = billingKoin(
+            emptyMap(),
+            module {
+                single<LicenseProvider> { license }
+                single<BillingNotifier> { FakeNotifier() }
+            },
+        )
+        assertEquals(40, koin.get<GetPlanLimitsUseCase>()(ORG).maxPeople)
+        koin.get<HandleStripeEventUseCase>()
+        koin.get<RecordAgentUsageUseCase>()
+    }
+}

@@ -36,11 +36,11 @@ class StripeSignatureVerifier(
     }
 
     private suspend fun isValid(payload: String, header: String?): Boolean {
-        val entries = header?.split(',')?.mapNotNull { part ->
+        val entries = header.orEmpty().split(',').mapNotNull { part ->
             val separator = part.indexOf('=')
             if (separator <= 0) null else part.substring(0, separator).trim() to part.substring(separator + 1).trim()
-        }.orEmpty()
-        val timestamp = entries.firstOrNull { it.first == "t" }?.second?.toLongOrNull()
+        }
+        val timestamp = entries.firstOrNull { it.first == "t" }?.let { it.second.toLongOrNull() }
             ?.takeIf { (clock.now() - Instant.fromEpochSeconds(it)).absoluteValue <= tolerance }
             ?: return false
         val signatures = entries.filter { it.first == "v1" }.map { it.second }

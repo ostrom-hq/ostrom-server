@@ -85,7 +85,7 @@ class StripeGatewayImpl(
     override suspend fun priceId(lookupKey: String): String = priceLock.withLock {
         priceIds[lookupKey] ?: run {
             val prices = call(HttpMethod.Get, "/v1/prices", listOf("lookup_keys[0]" to lookupKey, "active" to "true"))
-            val id = prices.array("data").firstOrNull()?.jsonObject?.string("id")
+            val id = prices.array("data").map { it.jsonObject }.firstOrNull()?.string("id")
                 ?: throw BillingNotConfiguredException()
             priceIds[lookupKey] = id
             id
@@ -183,7 +183,8 @@ class StripeGatewayImpl(
         val form = params.joinToString("&") { (key, value) ->
             "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
         }
-        val query = if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
+        // Every GET carries parameters (a lookup key, an expansion or a limit).
+        val query = if (method == HttpMethod.Get) "?$form" else ""
         val url = config.baseUrl.trimEnd('/') + path + query
         val response = client.request(url) {
             this.method = method
@@ -240,7 +241,7 @@ fun JsonObject.idOf(key: String): String? = when (val value: JsonElement? = get(
 }
 
 private fun JsonObject.toSubscription(): StripeSubscription {
-    val item = obj("items")?.array("data")?.firstOrNull()?.jsonObject
+    val item = (obj("items") ?: JsonObject(emptyMap())).array("data").map { it.jsonObject }.firstOrNull()
     val price = item?.obj("price")
     // Since API 2025-03-31, the period lives on the item; older versions had it on the subscription.
     val periodStart = item?.long("current_period_start") ?: long("current_period_start")

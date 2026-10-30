@@ -132,6 +132,10 @@ class BillingPostgresTest {
             repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_a", updatedAt = NOW))
             repository.recordActivePerson(ORG_A, NOW, "alice", NOW)
             assertEquals(ORG_A, repository.findByCustomer("cus_a")?.orgId, "The webhook finds the org by customer")
+            assertNull(repository.findByCustomer("cus_unknown"))
+            assertEquals(0, repository.usage(ORG_A, NOW).agentSeconds)
+            repository.addUsage(ORG_A, NOW, 90, 1)
+            assertEquals(90, repository.usage(ORG_A, NOW).agentSeconds)
             // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
             server.driver.execute(
                 "DO \$\$ BEGIN CREATE ROLE ostrom_billing_rls_probe NOLOGIN; " +

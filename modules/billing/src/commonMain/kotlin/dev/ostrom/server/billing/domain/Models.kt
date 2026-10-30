@@ -91,7 +91,23 @@ data class OrgBilling(
     val effectivePlan: Plan get() = if (status?.grantsPlan == true) plan else Plan.FREE
 
     /** Whether a subscription is running (a new checkout must not create a second one). */
-    val hasLiveSubscription: Boolean get() = stripeSubscriptionId != null && status?.grantsPlan == true
+    val hasLiveSubscription: Boolean get() = live() != null
+}
+
+/**
+ * A running subscription with the ids every Stripe call on it needs.
+ *
+ * @property billing The organization's billing.
+ * @property subscriptionId Its Stripe subscription.
+ * @property customerId Its Stripe customer.
+ */
+data class LiveSubscription(val billing: OrgBilling, val subscriptionId: String, val customerId: String)
+
+/** The running subscription, or null without a billing row, a subscription, a customer or a status that grants it. */
+fun OrgBilling?.live(): LiveSubscription? = this?.takeIf { it.status?.grantsPlan == true }?.let { billing ->
+    val subscriptionId = billing.stripeSubscriptionId
+    val customerId = billing.stripeCustomerId
+    if (subscriptionId == null || customerId == null) null else LiveSubscription(billing, subscriptionId, customerId)
 }
 
 /**

@@ -6,9 +6,11 @@ import dev.ostrom.server.billing.domain.CheckoutRequest
 import dev.ostrom.server.billing.domain.Proration
 import dev.ostrom.server.billing.domain.SubscriptionStatus
 import dev.ostrom.server.billing.infrastructure.STRIPE_API_VERSION
+import dev.ostrom.server.billing.infrastructure.STRIPE_JSON
 import dev.ostrom.server.billing.infrastructure.StripeApiException
 import dev.ostrom.server.billing.infrastructure.StripeConfig
 import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
+import dev.ostrom.server.billing.infrastructure.idOf
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -21,6 +23,7 @@ import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import io.ktor.util.decodeBase64String
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -261,6 +264,51 @@ class StripeGatewayImplTest {
     fun anInvoiceWithoutIdIsADefect() = runTest {
         val harness = Harness(200 to """{"data":[{"total":1}]}""")
         assertFailsWith<IllegalArgumentException> { harness.gateway.listInvoices("cus_1", 1) }
+    }
+
+    @Test
+    fun aPriceWithoutIdMeansTheAccountWasNotProvisioned() = runTest {
+        val harness = Harness(200 to """{"data":[{"object":"price"}]}""")
+        assertFailsWith<BillingNotConfiguredException> { harness.gateway.priceId("ostrom_team_monthly") }
+    }
+
+    @Test
+    fun aRefusalWithAnErrorObjectButNoMessageSaysTheStatus() = runTest {
+        val harness = Harness(400 to """{"error":{"code":"resource_missing"}}""")
+        val error = assertFailsWith<StripeApiException> { harness.gateway.setCancelAtPeriodEnd("s", true) }
+        assertEquals("resource_missing", error.code)
+        assertEquals("Stripe answered 400.", error.message)
+    }
+
+    @Test
+    fun anItemWithoutPeriodOrQuantityFallsBackToTheSubscription() = runTest {
+        val harness = Harness(
+            200 to """{"id":"sub_1","customer":"cus_1","status":"active","current_period_start":10,
+                "current_period_end":20,"items":{"data":[{"id":"si_1"}]}}""",
+            200 to """{"id":"sub_1","customer":"cus_1","status":"incomplete","items":{"data":[]}}""",
+        )
+        val withItem = harness.gateway.getSubscription("sub_1")
+        assertEquals("si_1", withItem.itemId)
+        assertNull(withItem.quantity)
+        assertEquals(Instant.fromEpochSeconds(10), withItem.currentPeriodStart)
+        assertEquals(Instant.fromEpochSeconds(20), withItem.currentPeriodEnd)
+        val noPeriod = harness.gateway.getSubscription("sub_1")
+        assertNull(noPeriod.itemId)
+        assertNull(noPeriod.currentPeriodStart)
+        assertNull(noPeriod.currentPeriodEnd)
+        assertFalse(noPeriod.cancelAtPeriodEnd)
+    }
+
+    @Test
+    fun anIdIsAStringOrAnExpandedObjectAndNothingElse() {
+        val json = STRIPE_JSON.parseToJsonElement(
+            """{"a":"cus_1","b":{"id":"cus_2"},"c":null,"d":[1]}""",
+        ).jsonObject
+        assertEquals("cus_1", json.idOf("a"))
+        assertEquals("cus_2", json.idOf("b"))
+        assertNull(json.idOf("c"))
+        assertNull(json.idOf("d"))
+        assertNull(json.idOf("missing"))
     }
 
     @Test

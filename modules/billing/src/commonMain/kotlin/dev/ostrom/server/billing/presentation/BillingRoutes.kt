@@ -22,11 +22,13 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.server.application.ApplicationCall
-import io.ktor.server.request.receiveText
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 import kotlin.uuid.Uuid
 
 /**
@@ -70,10 +72,10 @@ fun Route.billingRoutes(dependencies: BillingRoutesDependencies) = with(dependen
         }
     }
     post<StripeWebhookApi> {
-        val length = call.request.headers["Content-Length"]?.toLongOrNull()
-        if (length != null && length > MAX_WEBHOOK_BYTES) throw eventTooLarge()
-        val payload = call.receiveText()
-        if (payload.length > MAX_WEBHOOK_BYTES) throw eventTooLarge()
+        // Reads at most one byte past the limit, whatever Content-Length says (or a chunked body hides).
+        val bytes = call.receiveChannel().readRemaining(MAX_WEBHOOK_BYTES + 1L).readByteArray()
+        if (bytes.size > MAX_WEBHOOK_BYTES) throw eventTooLarge()
+        val payload = bytes.decodeToString()
         verifier.verify(payload, call.request.headers["Stripe-Signature"])
         val outcome = handleEvent(parseStripeEvent(payload))
         call.respond(WebhookResponse(received = true, outcome = outcome.name.lowercase()))

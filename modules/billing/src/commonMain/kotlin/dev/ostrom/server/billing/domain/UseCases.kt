@@ -249,8 +249,9 @@ class ChangePlanUseCaseImpl(
         caller.requireBillingAdminOf(orgId)
         if (!settings.stripeEnabled) throw BillingNotConfiguredException()
         if (!plan.selfServe) throw PlanNotPurchasableException(plan)
-        val billing = repository.get(orgId)?.takeIf { it.hasLiveSubscription } ?: throw NoActiveSubscriptionException()
-        val subscriptionId = checkNotNull(billing.stripeSubscriptionId) { "A live subscription has an id." }
+        val live = repository.get(orgId).live() ?: throw NoActiveSubscriptionException()
+        val billing = live.billing
+        val subscriptionId = live.subscriptionId
         if (billing.plan == plan && billing.interval == interval) return billing
         val itemId = billing.subscriptionItemId
             ?: throw SubscriptionStateException("The subscription has no plan item.")
@@ -293,8 +294,9 @@ class SetCancellationUseCaseImpl(
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, cancel: Boolean): OrgBilling {
         caller.requireBillingAdminOf(orgId)
         if (!settings.stripeEnabled) throw BillingNotConfiguredException()
-        val billing = repository.get(orgId)?.takeIf { it.hasLiveSubscription } ?: throw NoActiveSubscriptionException()
-        val subscriptionId = checkNotNull(billing.stripeSubscriptionId) { "A live subscription has an id." }
+        val live = repository.get(orgId).live() ?: throw NoActiveSubscriptionException()
+        val billing = live.billing
+        val subscriptionId = live.subscriptionId
         if (billing.cancelAtPeriodEnd == cancel) {
             throw SubscriptionStateException(
                 if (cancel) {
@@ -600,7 +602,7 @@ private class LimitWords(billing: OrgBilling?, settings: BillingSettings) {
 }
 
 /** The plan's name as people read it. */
-val Plan.displayName: String get() = key.replaceFirstChar { it.uppercase() }
+val Plan.displayName: String get() = key.take(1).uppercase() + key.drop(1)
 
 /** Sends the queued tasks to Stripe, with a growing delay between attempts. */
 interface ProcessOutboxUseCase {
@@ -637,16 +639,16 @@ class ProcessOutboxUseCaseImpl(
     }
 
     private suspend fun send(task: OutboxTask) {
-        val billing = repository.get(task.orgId)?.takeIf { it.hasLiveSubscription } ?: return
-        val customerId = checkNotNull(billing.stripeCustomerId) { "A live subscription has a customer." }
+        val live = repository.get(task.orgId).live() ?: return
+        val billing = live.billing
         when (task.kind) {
-            OutboxKind.ACTIVE_PERSON -> stripe.recordActivePerson(customerId, task.identifier, task.at)
+            OutboxKind.ACTIVE_PERSON -> stripe.recordActivePerson(live.customerId, task.identifier, task.at)
             OutboxKind.TRUE_UP -> {
                 val period = billingPeriod(billing, clock.now())
                 val active = repository.countActivePeople(task.orgId, period.start)
                 val itemId = billing.subscriptionItemId
                 if (billing.interval == BillingInterval.YEAR && itemId != null && active > billing.committedPeople) {
-                    stripe.setQuantity(checkNotNull(billing.stripeSubscriptionId), itemId, active)
+                    stripe.setQuantity(live.subscriptionId, itemId, active)
                     repository.save(billing.copy(committedPeople = active, updatedAt = clock.now()))
                 }
             }

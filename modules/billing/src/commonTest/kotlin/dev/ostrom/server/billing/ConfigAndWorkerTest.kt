@@ -12,6 +12,11 @@ import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.files.SystemTemporaryDirectory
+import kotlinx.io.writeString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -71,6 +76,20 @@ class ConfigAndWorkerTest {
         assertFailsWith<InvalidConfigException> {
             val source = mapOf("OSTROM_STRIPE_SECRET_KEY" to "sk_test_x", "OSTROM_STRIPE_WEBHOOK_SECRET_FILE" to "/e")
             BillingConfig.load(MapConfigSource(source)) { "  " }
+        }
+    }
+
+    @Test
+    fun aSecretFileIsReadFromTheFilesystem() {
+        val file = Path(SystemTemporaryDirectory, "ostrom-billing-${Uuid.random()}.key")
+        SystemFileSystem.sink(file).buffered().use { it.writeString("sk_test_disk\n") }
+        try {
+            val source = MapConfigSource(
+                mapOf("OSTROM_STRIPE_SECRET_KEY_FILE" to file.toString(), "OSTROM_STRIPE_WEBHOOK_SECRET" to "w"),
+            )
+            assertEquals("sk_test_disk", BillingConfig.load(source).stripeSecretKey)
+        } finally {
+            SystemFileSystem.delete(file)
         }
     }
 
