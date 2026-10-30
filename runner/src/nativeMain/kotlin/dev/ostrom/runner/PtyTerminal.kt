@@ -91,7 +91,7 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         }
     }
 
-    override fun resize(columns: Int, rows: Int) {
+    override suspend fun resize(columns: Int, rows: Int) {
         ostrom_pty_resize(master, columns, rows)
     }
 
@@ -126,7 +126,7 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
         private const val ROWS = 40
         private val GRACE = 10.seconds
 
-        override fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
+        override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
             spawn(listOf(SHELL, "-c", script), environment, directory, COLUMNS, ROWS, GRACE)
 
         /**
