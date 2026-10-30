@@ -3,6 +3,7 @@ package dev.ostrom.server.app
 
 import dev.ostrom.server.artifacts.ArtifactsModule
 import dev.ostrom.server.automations.AutomationsModule
+import dev.ostrom.server.billing.BillingModule
 import dev.ostrom.server.budgets.BudgetsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
@@ -40,6 +41,7 @@ fun serverModules(): List<ServerModule> = listOf(
     UsageModule,
     GatewayModule,
     BudgetsModule,
+    BillingModule,
     RunnersModule,
     AutomationsModule,
     ArtifactsModule,
