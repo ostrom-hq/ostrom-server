@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Database tests run against this service and fail (instead of being skipped) if it is missing.
+      OSTROM_TEST_DATABASE_URL: postgresql://localhost:5432/postgres
+      OSTROM_TEST_DATABASE_USER: postgres
+      OSTROM_TEST_DATABASE_PASSWORD: postgres
+      OSTROM_TEST_DATABASE_REQUIRED: "true"
+      # Reads ostrom-core from GitHub Packages once the server depends on it.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache Kotlin/Native toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: konan-${{ runner.os }}-
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Native tests (linuxX64, with PostgreSQL)
+        run: ./gradlew linuxX64Test --continue
+
+      - name: Server binaries (linuxX64, linuxArm64)
+        run: ./gradlew :app:linkReleaseExecutableLinuxX64 :app:linkReleaseExecutableLinuxArm64
+
+      - name: Docker image
+        run: |
+          cp app/build/bin/linuxX64/releaseExecutable/ostrom-server.kexe ostrom-server
+          docker build -t ostrom-server:ci .
+          docker images ostrom-server:ci --format '{{.Size}}'
+
+      - name: Smoke test of the image (/health, /v1/instance)
+        run: |
+          docker run -d --name ostrom --network host \
+            -e OSTROM_DATABASE_URL=postgresql://localhost:5432/postgres \
+            -e OSTROM_DATABASE_USER=postgres -e OSTROM_DATABASE_PASSWORD=postgres \
+            ostrom-server:ci
+          for i in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
+          echo
+          curl -fsS localhost:8080/health | grep '"status":"ok"'
+          curl -fsS localhost:8080/v1/instance | grep '"algorithm":"ed25519"'
+          docker logs ostrom
+
+      - name: Server logs on failure
+        if: failure()
+        run: docker logs ostrom || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ostrom-server-linux
+          path: |
+            app/build/bin/linuxX64/releaseExecutable/ostrom-server.kexe
+            app/build/bin/linuxArm64/releaseExecutable/ostrom-server.kexe
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-reports
+          path: '**/build/reports/tests/'
