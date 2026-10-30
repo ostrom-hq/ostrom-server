@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets.infrastructure
 
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -29,17 +30,18 @@ object SecretsKey {
      * Reads the key, or creates the file the first time.
      *
      * @param config The configuration.
+     * @param defaultFile The key file when [FILE_VARIABLE] is not set (tests use a temporary one).
      *
      * @return The 32-byte key.
      *
      * @throws InvalidConfigException When a configured key is not base64 of 32 bytes.
      */
-    fun load(config: ConfigSource): ByteArray {
+    fun load(config: ConfigSource, defaultFile: String = DEFAULT_FILE): ByteArray {
         val inline = config[KEY_VARIABLE]?.takeIf { it.isNotBlank() }
         return if (inline != null) {
             decode(inline, KEY_VARIABLE)
         } else {
-            loadFile(config[FILE_VARIABLE]?.takeIf { it.isNotBlank() } ?: DEFAULT_FILE)
+            loadFile(config[FILE_VARIABLE]?.takeIf { it.isNotBlank() } ?: defaultFile)
         }
     }
 

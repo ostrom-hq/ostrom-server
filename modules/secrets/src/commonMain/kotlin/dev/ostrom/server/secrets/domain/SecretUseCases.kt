@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets.domain
 
 import kotlin.time.Clock
@@ -230,7 +231,8 @@ class RevealSecretsUseCaseImpl(private val repository: SecretsRepository, privat
 }
 
 private suspend fun SecretsRepository.requireWritable(caller: Caller, id: Uuid): Secret {
-    val secret = get(caller.orgId, id)?.secret ?: throw SecretNotFoundException()
+    val stored = get(caller.orgId, id) ?: throw SecretNotFoundException()
+    val secret = stored.secret
     val owner = secret.ownerMemberId
     when {
         owner == null -> caller.requireAdmin()
