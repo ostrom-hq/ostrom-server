@@ -28,6 +28,7 @@ val ORG_A: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000000a")
 val ORG_B: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000000b")
 
 /** A session in a given state, for reconciler and heartbeat tests. */
+@Suppress("LongParameterList") // Every field a test may set, each with a default.
 fun session(
     state: SessionState = SessionState.CREATING,
     desired: DesiredState = DesiredState.RUNNING,
@@ -105,6 +106,7 @@ class FakeRuntimeDriver : RuntimeDriver {
  * Sessions in memory, with the same rules as PostgreSQL: compare-and-set on the generation, monotonic activity,
  * the running cap.
  */
+@Suppress("ReturnCount") // The fake mirrors the SQL guards one early return at a time.
 class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     val sessions = linkedMapOf<Uuid, CloudSession>()
     val next = mutableMapOf<Uuid, Instant?>()

@@ -48,6 +48,7 @@ import kotlin.uuid.Uuid
  * @param runnerImage The session pod's image.
  * @param token Reads the service-account token, at every call (the kubelet rotates it).
  */
+@Suppress("TooManyFunctions") // The port's operations plus one builder per Kubernetes object.
 class KubernetesRuntimeDriver(
     private val client: HttpClient,
     private val settings: KubernetesSettings,
@@ -280,6 +281,7 @@ class KubernetesRuntimeDriver(
         epoch?.let { put(EPOCH_LABEL, it.toString()) }
     }
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** Every object the driver creates carries this label. */
         const val MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
@@ -315,11 +317,11 @@ class KubernetesRuntimeDriver(
             val waiting = status["containerStatuses"]?.jsonArray.orEmpty().mapNotNull {
                 it.jsonObject["state"]?.jsonObject?.get("waiting")?.jsonObject?.get("reason")?.jsonPrimitive?.content
             }
-            if (waiting.any { it in FATAL_WAITING }) return ExecutionStatus.FAILED
-            return when (status["phase"]?.jsonPrimitive?.content) {
-                "Running" -> ExecutionStatus.RUNNING
-                "Succeeded" -> ExecutionStatus.ENDED
-                "Failed" -> ExecutionStatus.ENDED
+            val phase = status["phase"]?.jsonPrimitive?.content
+            return when {
+                waiting.any { it in FATAL_WAITING } -> ExecutionStatus.FAILED
+                phase == "Running" -> ExecutionStatus.RUNNING
+                phase == "Succeeded" || phase == "Failed" -> ExecutionStatus.ENDED
                 else -> ExecutionStatus.PENDING
             }
         }
