@@ -36,8 +36,10 @@ interface GetReceiptUseCase {
  * @param repository The receipts.
  */
 class GetReceiptUseCaseImpl(private val repository: ReceiptsRepository) : GetReceiptUseCase {
-    override suspend fun invoke(orgId: Uuid, id: String): JsonObject =
-        repository.get(orgId, id)?.body ?: throw ReceiptNotFoundException()
+    override suspend fun invoke(orgId: Uuid, id: String): JsonObject {
+        val stored = repository.get(orgId, id) ?: throw ReceiptNotFoundException()
+        return stored.body
+    }
 }
 
 /** Lists the receipts of the caller's organization. */
@@ -97,8 +99,10 @@ class VerifyReceiptUseCaseImpl(
     private val repository: ReceiptsRepository,
     private val keys: TrustedReceiptKeys,
 ) : VerifyReceiptUseCase {
-    override suspend fun invoke(orgId: Uuid, id: String): Verification =
-        verify(repository.get(orgId, id)?.body ?: throw ReceiptNotFoundException())
+    override suspend fun invoke(orgId: Uuid, id: String): Verification {
+        val stored = repository.get(orgId, id) ?: throw ReceiptNotFoundException()
+        return verify(stored.body)
+    }
 
     override suspend fun verify(receipt: JsonObject): Verification {
         val trusted = keys.keys().map { ReceiptPublicKey.fromSpkiPem(it.publicKeyPem) }
