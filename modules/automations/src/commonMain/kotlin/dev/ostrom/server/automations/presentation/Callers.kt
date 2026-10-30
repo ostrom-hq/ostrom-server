@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.automations.presentation
 
+import dev.ostrom.server.automations.domain.AutomationCaller
+import dev.ostrom.server.automations.domain.AutomationNotFoundException
+import dev.ostrom.server.automations.domain.MissingAutomationScopeException
 import dev.ostrom.server.automations.domain.MissingWaitScopeException
 import dev.ostrom.server.automations.domain.NoOrganizationException
 import dev.ostrom.server.automations.domain.WaitCaller
@@ -50,3 +53,36 @@ private val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 
 /** A wait id of a path; a malformed one names no wait. */
 internal fun waitId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw WaitNotFoundException()
+
+/** Reading automations and their runs. */
+const val AUTOMATIONS_READ = "automations:read"
+
+/** Creating, changing, testing and deleting automations. Includes [AUTOMATIONS_READ]. */
+const val AUTOMATIONS_WRITE = "automations:write"
+
+/** Whether a credential carries [scope], directly, through `automations:write`, or as a member's full login. */
+fun AuthenticatedPrincipal.allowsAutomations(scope: String): Boolean =
+    (kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes) || scope in scopes || AUTOMATIONS_WRITE in scopes
+
+/**
+ * The member an automations request acts for.
+ *
+ * @throws MissingAutomationScopeException When the credential lacks [scope].
+ * @throws NoOrganizationException When it acts for no organization.
+ */
+suspend fun PrincipalOrgResolver.automationCallerOf(
+    principal: AuthenticatedPrincipal,
+    scope: String,
+): AutomationCaller {
+    if (!principal.allowsAutomations(scope)) throw MissingAutomationScopeException(scope)
+    val member = resolve(principal, null) ?: throw NoOrganizationException()
+    return AutomationCaller(
+        orgId = member.orgId,
+        memberId = member.memberId.toString(),
+        admin = member.role in ADMIN_ROLES,
+        interactive = principal.kind == PrincipalKind.USER,
+    )
+}
+
+/** An automation id of a path; a malformed one names no automation. */
+internal fun automationId(raw: String): Uuid = Uuid.parseOrNull(raw) ?: throw AutomationNotFoundException()

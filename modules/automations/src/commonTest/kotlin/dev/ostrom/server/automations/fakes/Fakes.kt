@@ -62,7 +62,8 @@ class RecordingEvents : WaitEvents {
 /**
  * The test identities: `alice`, `bob` (members of org A), `dave` (admin of org A), `carol` (owner of org B) and
  * `nobody` (no org) sign in themselves; `reader`, `agent` and `writer` are bob's tokens with `waits:read`,
- * `waits:ask` and `waits:write`; `davekey` is dave's with `waits:write`; `cloud` is bob's with no waits scope.
+ * `waits:ask` and `waits:write`; `davekey` is dave's with `waits:write`; `cloud` is bob's with no waits scope;
+ * `autoreader` and `autowriter` are alice's with `automations:read` and `automations:write`.
  */
 val testIdentities = module {
     single<TokenAuthenticator> {
@@ -75,6 +76,8 @@ val testIdentities = module {
                 "writer" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:write"))
                 "davekey" -> AuthenticatedPrincipal("dave", PrincipalKind.SERVICE, setOf("waits:write"))
                 "cloud" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("cloud:read"))
+                "autoreader" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("automations:read"))
+                "autowriter" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("automations:write"))
                 else -> null
             }
         }
