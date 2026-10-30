@@ -13,8 +13,8 @@ import kotlin.time.Clock
 
 /**
  * Writes every event to [delegate] (the JSON lines on standard output) and, when an OTLP destination is configured,
- * exports it as an OpenTelemetry log record linked to its trace through the `trace_id`, `span_id` and `trace_flags` fields. The
- * error's type is exported, never its message (it may quote a provider or a secret).
+ * exports it as an OpenTelemetry log record linked to its trace through the `trace_id`, `span_id` and `trace_flags`
+ * fields. The error's type is exported, never its message (it may quote a provider or a secret).
  *
  * @param delegate The logger that writes the line.
  * @param telemetry Where records go.
@@ -63,7 +63,8 @@ class TelemetryLogger(
         val traceId = this[TRACE_ID_FIELD]
         val spanId = this[SPAN_ID_FIELD]
         val flags = this[TRACE_FLAGS_FIELD] ?: SAMPLED_FLAGS
-        return if (traceId == null || spanId == null) null else SpanContext.parseTraceparent("00-$traceId-$spanId-$flags")
+        val traceparent = if (traceId == null || spanId == null) null else "00-$traceId-$spanId-$flags"
+        return SpanContext.parseTraceparent(traceparent)
     }
 
     /** The field names that link a log event to its trace. */
