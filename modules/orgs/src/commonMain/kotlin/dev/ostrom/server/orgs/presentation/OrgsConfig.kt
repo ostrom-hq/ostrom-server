@@ -28,10 +28,10 @@ data class OrgsConfig(val consoleUrl: String) {
          * @param source The configuration source.
          * @return The configuration.
          */
-        fun from(source: ConfigSource): OrgsConfig =
-            OrgsConfig(
-                source["OSTROM_CONSOLE_URL"]?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
-                    ?: "http://localhost:5173"
-            )
+        fun from(source: ConfigSource): OrgsConfig {
+            val raw = source["OSTROM_CONSOLE_URL"]
+            val url = if (raw == null) "" else raw.trim().trimEnd('/')
+            return OrgsConfig(url.ifEmpty { "http://localhost:5173" })
+        }
     }
 }

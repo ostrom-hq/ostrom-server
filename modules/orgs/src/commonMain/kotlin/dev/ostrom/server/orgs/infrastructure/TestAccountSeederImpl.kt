@@ -10,7 +10,6 @@ import dev.ostrom.server.kernel.module.TestAccount
 import dev.ostrom.server.kernel.module.TestAccountSeeder
 import dev.ostrom.server.orgs.domain.CreateOrgUseCase
 import dev.ostrom.server.orgs.domain.ListMyOrgsUseCase
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 
 /**
@@ -36,13 +35,13 @@ class TestAccountSeederImpl(
         val user = resolveUser(VerifiedIdentity(IdentityProvider.EMAIL, address, address, true))
         val membership = listMyOrgs(user.id).firstOrNull()
             ?: createOrg(user.id, "QA ${address.substringBefore('@')}", null)
-        val issued = createToken(user.id, TEST_TOKEN_NAME, TEST_ACCOUNT_SCOPES, TEST_TOKEN_LIFETIME)
+        val issued = createToken(user.id, TEST_TOKEN_NAME, TEST_ACCOUNT_SCOPES, TEST_TOKEN_DAYS.days)
         return TestAccount(address, issued.secret, membership.org.id.toString())
     }
 
     private companion object {
         const val TEST_TOKEN_NAME = "qa-seed"
-        val TEST_TOKEN_LIFETIME: Duration = 30.days
+        const val TEST_TOKEN_DAYS = 30
     }
 }
 

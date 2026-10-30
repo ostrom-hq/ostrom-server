@@ -28,9 +28,9 @@ class MembershipOrgResolver(private val members: MembersRepository) : PrincipalO
             Uuid.parseOrNull(principal.subjectId).takeIf { principal.kind == PrincipalKind.USER }
         val bound = principal.orgId?.let(Uuid::parseOrNull)
         val target = orgId ?: bound
-        val allowed = userId != null && target != null && (bound == null || bound == target)
-        val member =
-            if (allowed) members.findByUser(checkNotNull(target), checkNotNull(userId)) else null
-        return member?.let { OrgPrincipal(it.orgId, it.id, it.role) }
+        // A token bound to one organization never acts in another.
+        val foreign = bound != null && bound != target
+        if (userId == null || target == null || foreign) return null
+        return members.findByUser(target, userId)?.let { OrgPrincipal(it.orgId, it.id, it.role) }
     }
 }

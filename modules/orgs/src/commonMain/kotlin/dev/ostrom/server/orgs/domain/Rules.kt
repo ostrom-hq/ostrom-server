@@ -17,7 +17,7 @@ private const val RANDOM_SLUG_SUFFIX = 8
 private val SLUG_PATTERN = Regex("[a-z0-9](?:-?[a-z0-9])*")
 
 /** Short names kept for the console's own pages and the API. */
-val RESERVED_SLUGS =
+private val RESERVED_SLUGS =
     setOf(
         "admin",
         "api",
@@ -42,7 +42,7 @@ val RESERVED_SLUGS =
  * Domains where anyone gets an address: they do not identify a company, so their users hold the
  * free plan as a person, not as a domain.
  */
-val PUBLIC_EMAIL_DOMAINS =
+private val PUBLIC_EMAIL_DOMAINS =
     setOf(
         "gmail.com",
         "googlemail.com",

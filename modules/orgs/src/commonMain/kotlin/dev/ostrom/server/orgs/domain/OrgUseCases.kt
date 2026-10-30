@@ -84,19 +84,20 @@ class CreateOrgUseCaseImpl(
         }
         ensure(chosen == null || !orgs.slugTaken(chosen)) { SlugTakenException() }
         val now = clock.nowMillis()
+        val claim = freeClaimOf(userId, people.verifiedEmails(userId))
         val org =
             Org(
                 id = Uuid.random(),
                 slug = chosen ?: freeSlug(slugOf(cleanName)) { orgs.slugTaken(it) },
                 name = cleanName,
                 githubOrgId = null,
-                freeClaim = freeClaimOf(userId, people.verifiedEmails(userId)),
+                freeClaim = claim,
                 createdAt = now,
             )
         val owner = Member(Uuid.random(), org.id, userId, OrgRole.OWNER, now)
         val holder = orgs.create(org, owner) { seats.isPaying(it) }
         ensure(holder == null) {
-            FreeTeamTakenException(describeClaim(checkNotNull(org.freeClaim)))
+            FreeTeamTakenException(describeClaim(claim))
         }
         audit.record(
             OrgEvent(
@@ -153,7 +154,8 @@ class FindOrgUseCaseImpl(private val orgs: OrgsRepository) : FindOrgUseCase {
     override suspend fun invoke(ref: String): Uuid {
         val id = Uuid.parseOrNull(ref)
         val org = if (id != null) orgs.get(id) else orgs.findBySlug(ref.lowercase())
-        return org?.id ?: throw OrgNotFoundException()
+        if (org == null) throw OrgNotFoundException()
+        return org.id
     }
 }
 

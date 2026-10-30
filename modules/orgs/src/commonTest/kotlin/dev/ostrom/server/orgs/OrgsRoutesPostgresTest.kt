@@ -72,10 +72,11 @@ class OrgsRoutesPostgresTest {
     private suspend fun TestServer.signIn(
         login: String,
         email: String = "$login@example.com",
+        avatarUrl: String? = null,
     ): Pair<User, StartedSession> {
         val user =
             koin.get<ResolveUserUseCase>()(
-                VerifiedIdentity(IdentityProvider.GITHUB, login, email, true, login, login = login)
+                VerifiedIdentity(IdentityProvider.GITHUB, login, email, true, login, avatarUrl, login = login)
             )
         return user to koin.get<StartWebSessionUseCase>()(user.id)
     }
@@ -106,7 +107,7 @@ class OrgsRoutesPostgresTest {
     @Suppress("LongMethod") // One end-to-end story through the HTTP API, read top to bottom.
     fun aPersonCreatesATeamInvitesByEmailAndTheInviteeJoins() =
         serverTest(modules, overrides) { server ->
-            val (_, ada) = server.signIn("ada", "ada@acme.com")
+            val (_, ada) = server.signIn("ada", "ada@acme.com", "https://avatars.test/ada")
 
             val created = server.createOrg(ada, "Acme")
             assertEquals(HttpStatusCode.Created, created.status)
@@ -181,7 +182,7 @@ class OrgsRoutesPostgresTest {
                 listOf("ada" to "owner", "dana" to "approver"),
                 members.map { it.login to it.role },
             )
-            assertEquals("", members.first().avatarUrl)
+            assertEquals(listOf("https://avatars.test/ada", ""), members.map { it.avatarUrl })
             val pending =
                 server.client
                     .get("/api/v1/orgs/acme/invitations") { session(ada) }
