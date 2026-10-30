@@ -178,5 +178,5 @@ object PlainSecrets : WebhookSecrets {
 
     override suspend fun sign(secret: String, data: ByteArray): ByteArray = (secret + "|").encodeToByteArray() + data
 
-    override suspend fun digest(data: ByteArray): String = "digest-" + data.size
+    override suspend fun digest(data: ByteArray): String = "digest-" + data.decodeToString()
 }
