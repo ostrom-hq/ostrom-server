@@ -5,10 +5,7 @@ import dev.ostrom.server.automations.domain.AutomationQuery
 import dev.ostrom.server.automations.domain.AutomationRules
 import dev.ostrom.server.automations.domain.InvalidAutomationException
 import dev.ostrom.server.automations.domain.InvalidWebhookPayloadException
-import dev.ostrom.server.automations.domain.ManageAutomationsUseCase
-import dev.ostrom.server.automations.domain.RunAutomationsUseCase
 import dev.ostrom.server.automations.domain.WebhookDelivery
-import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import io.ktor.http.HttpStatusCode
@@ -25,21 +22,6 @@ import io.ktor.server.routing.Route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 import kotlin.uuid.Uuid
-
-/**
- * What the automation routes need.
- *
- * @property manage Creates, reads, changes and deletes.
- * @property runs Triggers, tests and lists runs.
- * @property orgResolver The member a request acts for.
- * @property publicUrl The server's public URL, the base of webhook URLs (relative ones when empty).
- */
-data class AutomationsRoutesDependencies(
-    val manage: ManageAutomationsUseCase,
-    val runs: RunAutomationsUseCase,
-    val orgResolver: PrincipalOrgResolver,
-    val publicUrl: String,
-)
 
 /**
  * The automations API under `/api/v1/automations`, and its signed webhook `POST /api/v1/automations/{id}/trigger`,
