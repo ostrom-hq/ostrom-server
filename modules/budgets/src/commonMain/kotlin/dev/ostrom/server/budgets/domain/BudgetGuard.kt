@@ -158,34 +158,40 @@ class BudgetGuardImpl(
                 periodStart = period.start,
             )
             // The decision does not depend on the alert: a failure is reported and a later check tries again.
-            var sent = false
+            // Cancelled or failed: the memo must not claim an alert that was never sent.
             try {
                 if (repository.markAlerted(alert, now)) publishOrUnmark(alert)
-                sent = true
             } catch (error: CancellationException) {
+                forget(key)
                 throw error
             } catch (error: Exception) {
+                forget(key)
                 // The class only, never the message: PostgreSQL quotes row values in it.
                 logger.warn(
                     "budget alert failed",
                     mapOf("org_id" to subject.orgId, "threshold" to threshold, "error" to error::class.simpleName),
                 )
-            } finally {
-                // Cancelled or failed: the memo must not claim an alert that was never sent.
-                if (!sent) withContext(NonCancellable) { lock.withLock { alerted.remove(key) } }
             }
         }
     }
 
     /** Publishes; if that fails or is cancelled, takes back the mark so that another check sends it. */
     private suspend fun publishOrUnmark(alert: BudgetAlert) {
-        var published = false
+        // No `finally` with a flag: the compiler copies a finally per exit, and the copy of the normal exit has a
+        // branch no test can take.
         try {
             alerts.publish(alert)
-            published = true
-        } finally {
-            if (!published) withContext(NonCancellable) { repository.unmarkAlerted(alert) }
+        } catch (error: CancellationException) {
+            withContext(NonCancellable) { repository.unmarkAlerted(alert) }
+            throw error
+        } catch (error: Exception) {
+            withContext(NonCancellable) { repository.unmarkAlerted(alert) }
+            throw error
         }
+    }
+
+    private suspend fun forget(key: AlertKey) {
+        withContext(NonCancellable) { lock.withLock { alerted.remove(key) } }
     }
 
     /** Adds the key to the memo of this month's alerts; false if it was there. A new month starts an empty memo. */

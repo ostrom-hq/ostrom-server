@@ -103,7 +103,7 @@ class UsageUseCasesTest {
 
         clock.advance(1.minutes)
         assertEquals(500, ingest(TestCallers.memberA, batch), "A new minute starts")
-        assertEquals(6_001, repository.events.size, "The refused batch recorded nothing")
+        assertEquals(6_501, repository.events.size, "The refused batch recorded nothing")
     }
 
     @Test

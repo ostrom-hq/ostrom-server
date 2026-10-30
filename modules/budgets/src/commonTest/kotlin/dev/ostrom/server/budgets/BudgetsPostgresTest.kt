@@ -89,6 +89,25 @@ class BudgetsPostgresTest {
     }
 
     @Test
+    fun withoutAnAlertsModuleTheGuardStillDecidesOnAMemberOverride() = serverTest(
+        modules,
+        module {
+            includes(TestCallers.overrides(clock))
+            single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
+        },
+    ) { server ->
+        val repository = server.koin.get<BudgetsRepository>()
+        repository.putSharedLimit(TestCallers.orgA, SharedLimit.DEFAULT_MEMBER, 500_000, TestCallers.epoch)
+        repository.putMemberLimit(TestCallers.orgA, member, 2_000_000, TestCallers.epoch)
+        assertEquals(2_000_000, repository.limits(TestCallers.orgA, member).memberLimitMicros, "The override wins")
+        server.spend(1_900_000, member)
+        assertEquals(
+            BudgetDecision.Allowed(100_000),
+            server.koin.get<BudgetGuard>().check(TestCallers.orgA, member),
+        )
+    }
+
+    @Test
     fun anAdminManagesTheLimitsAndTheOverrides() = serverTest(modules, overrides) { server ->
         val org = BudgetDto("organization", usdPerMonth = 100.0)
         val saved = server.putBudget("admin-a", org)
