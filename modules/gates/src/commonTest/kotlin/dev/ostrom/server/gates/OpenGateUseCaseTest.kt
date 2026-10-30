@@ -4,6 +4,7 @@ package dev.ostrom.server.gates
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
+import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.GatePush
@@ -29,7 +30,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 class OpenGateUseCaseTest {
     @Test
@@ -164,6 +167,21 @@ class OpenGateUseCaseTest {
     }
 
     @Test
+    fun aShadowOrUngatedActionIsRecordedOnceAndNeverCoversAnEnforcedOne() = runTest {
+        val bench = GateBench()
+        val shadowNode = bench.node("rev-b", enforced = false)
+        val shadow = bench.open(bench.pushRequest(node = shadowNode))
+        assertEquals(shadow.gate.id, bench.open(bench.pushRequest(node = shadowNode)).gate.id)
+        val ungated = bench.open(bench.pushRequest(node = null))
+        assertEquals(ungated.gate.id, bench.open(bench.pushRequest(node = null)).gate.id)
+        assertEquals(2, bench.repository.gates.size, "one row per recorded action, not one per ask")
+
+        val enforced = bench.open(bench.pushRequest(node = shadowNode.copy(enforced = true)))
+        assertNotEquals(shadow.gate.id, enforced.gate.id, "the workflow now blocks: the record is no yes")
+        assertEquals(GateStatus.PENDING, enforced.gate.status)
+    }
+
+    @Test
     fun aNoHoldsForTheScope() = runTest {
         val bench = GateBench()
         val first = bench.open(bench.pushRequest())
@@ -182,6 +200,39 @@ class OpenGateUseCaseTest {
         bench.answer(first, "rev-b")
         bench.use(agent(), first.gate.id, GateUse.RESERVE)
         bench.use(agent(), first.gate.id, GateUse.CONSUME)
+        val again = bench.open(bench.pushRequest())
+
+        assertNotEquals(first.gate.id, again.gate.id)
+        assertEquals(GateStatus.PENDING, again.gate.status)
+    }
+
+    @Test
+    fun joiningNeverRewritesWhatAnotherTransactionCommitted() = runTest {
+        val bench = GateBench()
+        val first = bench.open(bench.pushRequest())
+        bench.answer(first, "rev-b")
+        val approved = bench.repository.gates.getValue(first.gate.id)
+        bench.use(agent(), first.gate.id, GateUse.RESERVE)
+        // A second asker read the row while it was still approved; the reservation committed before its write.
+        bench.repository.staleSnapshot = approved
+        val joined = bench.open(bench.pushRequest(asker = "rev-c"))
+
+        val stored = bench.repository.gates.getValue(first.gate.id)
+        assertEquals(first.gate.id, joined.gate.id)
+        assertEquals(GateStatus.RESERVED, stored.status, "the reservation stands: one yes, one action")
+        assertNotNull(stored.reservedBy)
+        assertTrue("rev-c" in stored.askedBy)
+    }
+
+    @Test
+    fun aReservationWhoseActionNeverReportedIsAskedAnew() = runTest {
+        val bench = GateBench()
+        val first = bench.open(bench.pushRequest())
+        bench.answer(first, "rev-b")
+        bench.use(agent(), first.gate.id, GateUse.RESERVE)
+        bench.clock.now += Gate.RESERVATION_LIFETIME - 1.seconds
+        assertEquals(first.gate.id, bench.open(bench.pushRequest()).gate.id, "still running")
+        bench.clock.now += 1.seconds
         val again = bench.open(bench.pushRequest())
 
         assertNotEquals(first.gate.id, again.gate.id)
