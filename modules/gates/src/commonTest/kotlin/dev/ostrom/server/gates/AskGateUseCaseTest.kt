@@ -43,7 +43,8 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 class AskGateUseCaseTest {
-    private val node = GateNode("ship", "g-main", "Merge into main", listOf("lyes", "rev-b"), enforced = true, workflowName = "Ship")
+    private val node =
+        GateNode("ship", "g-main", "Merge into main", listOf("lyes", "rev-b"), enforced = true, workflowName = "Ship")
     private val resolved = mutableListOf<String?>()
 
     private fun ask(bench: GateBench, heads: Map<Int, GatePullRequest> = emptyMap(), gate: GateNode? = node) =
@@ -85,7 +86,10 @@ class AskGateUseCaseTest {
     @Test
     fun aPushShowsItsCommitsDiffAndRepository() = runTest {
         val bench = GateBench()
-        val view = ask(bench)(agent().copy(personId = "lyes"), pushAsk(force = true).copy(harnessVersion = "0.9.0", runId = "run-1"))
+        val view = ask(bench)(
+            agent().copy(personId = "lyes"),
+            pushAsk(force = true).copy(harnessVersion = "0.9.0", runId = "run-1"),
+        )
 
         assertEquals("Merge into main", view.gate.label)
         assertEquals("ostrom-hq/gate-demo", view.gate.subject.repo)
@@ -100,8 +104,8 @@ class AskGateUseCaseTest {
                 Evidence("Command", "git push origin main"),
                 Evidence(
                     "Commits",
-                    "refs/heads/main ← 0123456789ab, refs/heads/old ← (deleted) on git@github.com:o/r.git (force-push). " +
-                        "This yes covers these commits only.",
+                    "refs/heads/main ← 0123456789ab, refs/heads/old ← (deleted) on git@github.com:o/r.git " +
+                        "(force-push). This yes covers these commits only.",
                 ),
                 Evidence("Repository", "ostrom-hq/gate-demo"),
                 Evidence("Asked by", "lyes · session s-000005"),
@@ -126,10 +130,15 @@ class AskGateUseCaseTest {
                 Evidence("Command", "git push origin main"),
                 Evidence(
                     "Commits",
-                    "refs/heads/main ← 0123456789ab, refs/heads/old ← (deleted). This yes covers these commits only.",
+                    "refs/heads/main ← 0123456789ab, refs/heads/old ← (deleted). " +
+                        "This yes covers these commits only.",
                 ),
                 Evidence("Repository", "evil/fork"),
-                Evidence("Session repository", "ostrom-hq/gate-demo: NOT the repository this command runs in (evil/fork). Check before saying yes."),
+                Evidence(
+                    "Session repository",
+                    "ostrom-hq/gate-demo: NOT the repository this command runs in (evil/fork). " +
+                        "Check before saying yes.",
+                ),
                 Evidence("Asked by", "agent-$SESSION · session s-000005"),
             ),
             view.gate.evidence,
@@ -146,7 +155,8 @@ class AskGateUseCaseTest {
     @Test
     fun aMergeTakesItsHeadAndBaseFromGitHub() = runTest {
         val bench = GateBench()
-        val merge = pushAsk().copy(actionClass = "merge", command = "gh pr merge 6", pullRequest = 6, diff = null, tool = "mcp")
+        val merge = pushAsk()
+            .copy(actionClass = "merge", command = "gh pr merge 6", pullRequest = 6, diff = null, tool = "mcp")
         val view = ask(bench, mapOf(6 to GatePullRequest(6, SHA_A, "main")))(agent(), merge)
 
         assertEquals(GatePullRequest(6, SHA_A, "main"), view.gate.subject.pullRequest)
@@ -154,11 +164,17 @@ class AskGateUseCaseTest {
         assertEquals(listOf(SHA_A), view.gate.subject.commits)
         assertNull(view.gate.subject.diffDigest)
         assertEquals("mcp", view.gate.subject.tool)
-        assertEquals(Evidence("Asked by", "agent-$SESSION · session s-000005 · PR #6 @ aaaaaaa into main"), view.gate.evidence[3])
+        assertEquals(
+            Evidence("Asked by", "agent-$SESSION · session s-000005 · PR #6 @ aaaaaaa into main"),
+            view.gate.evidence[3],
+        )
 
         val unknown = ask(bench)(agent(), merge.copy(pullRequest = 7, command = "gh pr merge 7", push = null))
         assertNull(unknown.gate.subject.pullRequest)
-        val outside = ask(bench, mapOf(6 to GatePullRequest(6, SHA_A, "main")))(agent(), merge.copy(repo = "  ", push = null))
+        val outside = ask(bench, mapOf(6 to GatePullRequest(6, SHA_A, "main")))(
+            agent(),
+            merge.copy(repo = "  ", push = null),
+        )
         assertNull(outside.gate.subject.pullRequest, "Outside a repository, GitHub is not asked")
         assertEquals(Evidence("Asked by", "agent-$SESSION · session s-000005"), outside.gate.evidence[2])
     }
@@ -166,7 +182,10 @@ class AskGateUseCaseTest {
     @Test
     fun anUngatedActionIsLabelledByItsClass() = runTest {
         val bench = GateBench()
-        val view = ask(bench, gate = null)(device(), pushAsk().copy(command = "", repo = null, push = null, sessionId = null))
+        val view = ask(bench, gate = null)(
+            device(),
+            pushAsk().copy(command = "", repo = null, push = null, sessionId = null),
+        )
         assertEquals("push-main", view.gate.label)
         assertEquals(GateStatus.UNGATED, view.gate.status)
         assertEquals("session:-", view.gate.subject.scope)
@@ -189,7 +208,8 @@ class AskGateUseCaseTest {
     @Test
     fun aRedirectedPushIsReadFromTheCommandNotFromTheHook() = runTest {
         val bench = GateBench()
-        for (command in listOf("GIT_DIR=/tmp/x git push origin main", "git -c remote.origin.url=evil push origin main")) {
+        val commands = listOf("GIT_DIR=/tmp/x git push origin main", "git -c remote.origin.url=evil push origin main")
+        for (command in commands) {
             assertFailsWith<RedirectedPushException> { ask(bench)(agent(), pushAsk(command = command)) }
         }
         assertTrue(bench.repository.gates.isEmpty())
@@ -212,11 +232,17 @@ class AskGateUseCaseTest {
     fun theDefaultPortsFailClosed() = runTest {
         val gate = GateBench().open(GateBench().pushRequest()).gate
         assertEquals(SelfApprovalPolicy.SOLE_APPROVER, DefaultGatePolicies().selfApproval(gate.orgId))
-        val sessions = assertFailsWith<OstromException> { UnavailableGateSessions().assertOpen(gate.orgId, SESSION) }
+        val sessions = assertFailsWith<OstromException> {
+            UnavailableGateSessions().assertOpen(gate.orgId, SESSION, null)
+        }
         assertEquals(ErrorKind.UNAVAILABLE, sessions.kind)
         assertNull(NoGateNodes().resolve(gate.orgId, "o/r", "push-main"))
         assertNull(UnknownPullRequestHeads().head(gate.orgId, "o/r", 6))
-        assertEquals(ErrorKind.UNAVAILABLE, assertFailsWith<OstromException> { UnavailableGateReceiptSigner().sign(gate) }.kind)
+        assertEquals(
+            ErrorKind.UNAVAILABLE,
+            assertFailsWith<OstromException> { UnavailableGateReceiptSigner().sign(gate) }.kind,
+        )
+
         SilentGateNotifier().requested(gate, emptyList())
         SilentGateNotifier().decided(gate, emptyList())
         assertNull(NoGateActors().resolve(AuthenticatedPrincipal("x", PrincipalKind.USER, emptySet())))

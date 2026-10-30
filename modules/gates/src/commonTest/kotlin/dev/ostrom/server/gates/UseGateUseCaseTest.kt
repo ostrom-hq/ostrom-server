@@ -107,7 +107,10 @@ class UseGateUseCaseTest {
                 }
             }
         }.awaitAll()
-        assertEquals(setOf<String?>("CONSUMED", "This yes was already used. Ask again: one yes covers one action."), outcomes.toSet())
+        assertEquals(
+            setOf<String?>("CONSUMED", "This yes was already used. Ask again: one yes covers one action."),
+            outcomes.toSet(),
+        )
     }
 
     @Test
@@ -129,7 +132,10 @@ class UseGateUseCaseTest {
         bench.answer(view, "rev-b")
         bench.use(agent(OTHER_SESSION), view.gate.id, GateUse.RESERVE)
 
-        val consume = assertFailsWith<GateNotUsableException> { bench.use(agent(SESSION), view.gate.id, GateUse.CONSUME) }
+        val consume = assertFailsWith<GateNotUsableException> {
+            bench.use(agent(SESSION), view.gate.id, GateUse.CONSUME)
+        }
+
         assertEquals("This yes is already in use by another action. Ask again for this one.", consume.message)
         val pending = bench.open(bench.pushRequest(sha = "d".repeat(40)))
         val early = assertFailsWith<GateNotUsableException> { bench.use(agent(), pending.gate.id, GateUse.CONSUME) }

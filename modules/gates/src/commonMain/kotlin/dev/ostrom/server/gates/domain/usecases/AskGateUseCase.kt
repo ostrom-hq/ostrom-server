@@ -96,7 +96,8 @@ class AskGateUseCaseImpl(
             scope = "session:${ask.sessionId ?: "-"}",
             push = push,
             pullRequest = pullRequest,
-            commits = pullRequest?.let { listOf(it.headSha) } ?: push?.refs?.map { it.sha }?.filter { it.isNotEmpty() }.orEmpty(),
+            commits = pullRequest?.let { listOf(it.headSha) }
+                ?: push?.refs?.map { it.sha }?.filter { it.isNotEmpty() }.orEmpty(),
             diffDigest = push?.let { digester.digest(diff.orEmpty()) },
             tool = ask.tool?.take(MAX_LABEL) ?: "Bash",
             harnessVersion = ask.harnessVersion?.take(MAX_LABEL),
@@ -116,7 +117,9 @@ class AskGateUseCaseImpl(
                 )
             }
             val session = ask.sessionId?.let { " · session ${it.take(SHORT_SESSION)}" }.orEmpty()
-            val pr = pullRequest?.let { " · PR #${it.number} @ ${it.headSha.take(SHORT_SHA)} into ${it.base}" }.orEmpty()
+            val pr = pullRequest?.let { " · PR #${it.number} @ ${it.headSha.take(SHORT_SHA)} into ${it.base}" }
+                .orEmpty()
+
             add(Evidence("Asked by", "$asker$session$pr"))
             subject.harnessVersion?.let { add(Evidence("Harness", it)) }
             if (push != null && !diff.isNullOrEmpty()) add(Evidence("Diff", diff))

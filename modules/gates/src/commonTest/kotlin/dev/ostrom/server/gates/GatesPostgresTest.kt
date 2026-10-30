@@ -67,7 +67,8 @@ class GatesPostgresTest {
     private val overrides = module {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) = AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
+                override suspend fun authenticate(token: String) =
+                    AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
             }
         }
         single<GateActorResolver> {
@@ -139,9 +140,19 @@ class GatesPostgresTest {
 
     // The approvals of a gate, read the way the console reads them: the organization's list.
     private suspend fun TestServer.approvalsOf(gate: GateResponse): List<Approval> =
-        call("user:a:rev-b", "/api/v1/approvals?limit=100").body<ApprovalsPage>().items.filter { it.group == gate.gate.id }
+        call("user:a:rev-b", "/api/v1/approvals?limit=100").body<ApprovalsPage>().items
+            .filter { it.group == gate.gate.id }
 
-    private suspend fun TestServer.answer(token: String, gate: GateResponse, approver: String, yes: Boolean = true): HttpResponse {
+    // Moves a gate with the agent's token: `reserve`, `release` or `consume`.
+    private suspend fun TestServer.move(token: String, gate: GateResponse, move: String): HttpResponse =
+        call(token, "/api/v1/gates/${gate.gate.id}/$move", post = true)
+
+    private suspend fun TestServer.answer(
+        token: String,
+        gate: GateResponse,
+        approver: String,
+        yes: Boolean = true,
+    ): HttpResponse {
         val approval = approvalsOf(gate).first { it.requestedFrom == approver }
         return call(
             token,
@@ -168,11 +179,23 @@ class GatesPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, self.status, "The asker never approves while someone else can")
         assertTrue(self.bodyAsText().contains("rev-b or rev-c must say yes"))
         val revB = approvals.first { it.requestedFrom == "rev-b" }
-        val admin = server.call("user:a:admin", "/api/v1/approvals/${revB.id}/answer", AnswerApprovalRequest(ApprovalAnswer.APPROVE, revB.shownDigest))
+        val admin = server.call(
+            "user:a:admin",
+            "/api/v1/approvals/${revB.id}/answer",
+            AnswerApprovalRequest(ApprovalAnswer.APPROVE, revB.shownDigest),
+        )
         assertEquals(HttpStatusCode.Forbidden, admin.status, "An admin never answers in an approver's place")
-        assertEquals(HttpStatusCode.Forbidden, server.answer("device:a:rev-b", opened, "rev-b").status, "A device never says yes")
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.answer("device:a:rev-b", opened, "rev-b").status,
+            "A device never says yes",
+        )
         assertEquals(HttpStatusCode.Forbidden, server.answer(agent, opened, "rev-b").status, "The agent never says yes")
-        val stale = server.call("user:a:rev-b", "/api/v1/approvals/${revB.id}/answer", AnswerApprovalRequest(ApprovalAnswer.APPROVE, "x"))
+        val stale = server.call(
+            "user:a:rev-b",
+            "/api/v1/approvals/${revB.id}/answer",
+            AnswerApprovalRequest(ApprovalAnswer.APPROVE, "x"),
+        )
         assertEquals(HttpStatusCode.Conflict, stale.status, "A yes names what was shown")
 
         val answered = server.answer("user:a:rev-b", opened, "rev-b").body<AnswerApprovalResponse>()
@@ -188,11 +211,12 @@ class GatesPostgresTest {
         )
         assertEquals(HttpStatusCode.Conflict, server.answer("user:a:rev-c", opened, "rev-c").status)
 
-        assertEquals("approved", server.call(agent, "/api/v1/gates/${opened.gate.id}/reserve", post = true).body<GateResponse>().gate.status)
-        assertEquals(HttpStatusCode.Conflict, server.call(agent, "/api/v1/gates/${opened.gate.id}/reserve", post = true).status)
-        assertEquals("approved", server.call(agent, "/api/v1/gates/${opened.gate.id}/release", post = true).body<GateResponse>().gate.status)
-        assertEquals("consumed", server.call(agent, "/api/v1/gates/${opened.gate.id}/consume", post = true).body<GateResponse>().gate.status)
-        assertEquals(HttpStatusCode.Conflict, server.call(agent, "/api/v1/gates/${opened.gate.id}/consume", post = true).status)
+        assertEquals("approved", server.move(agent, opened, "reserve").body<GateResponse>().gate.status)
+        assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "reserve").status)
+        assertEquals("approved", server.move(agent, opened, "release").body<GateResponse>().gate.status)
+        assertEquals("consumed", server.move(agent, opened, "consume").body<GateResponse>().gate.status)
+        assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "consume").status)
+
 
         val again = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         assertTrue(again.gate.id != opened.gate.id && again.gate.status == "pending", "One yes covers one action")
@@ -209,7 +233,10 @@ class GatesPostgresTest {
         val newCommit = server.call(agent, "/api/v1/gates", push(commit = nextSha)).body<GateResponse>()
         val same = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
 
-        assertEquals(listOf("pending", "pending", "pending"), listOf(forced, otherDiff, newCommit).map { it.gate.status })
+        assertEquals(
+            listOf("pending", "pending", "pending"),
+            listOf(forced, otherDiff, newCommit).map { it.gate.status },
+        )
         assertEquals(opened.gate.id, same.gate.id)
         assertEquals("approved", same.gate.status)
         assertEquals(true, forced.gate.push?.force)
@@ -227,7 +254,11 @@ class GatesPostgresTest {
         val opened = server.call("agent:a:$session", "/api/v1/gates", merge).body<GateResponse>()
         assertEquals(PullRequestDto("6", sha, "main"), opened.gate.pr, "Head and base come from GitHub, not the body")
 
-        val unknown = server.call("agent:a:$session", "/api/v1/gates", merge.copy(pr = PullRequestDto("7", sha), command = "gh pr merge 7"))
+        val unknown = server.call(
+            "agent:a:$session",
+            "/api/v1/gates",
+            merge.copy(pr = PullRequestDto("7", sha), command = "gh pr merge 7"),
+        )
             .body<GateResponse>()
         assertEquals(null, unknown.gate.pr, "Unknown on GitHub: bound to the command in this session")
         val malformed = server.call("agent:a:$session", "/api/v1/gates", merge.copy(pr = PullRequestDto("six", sha)))
@@ -269,9 +300,12 @@ class GatesPostgresTest {
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         server.answer("user:a:rev-b", opened, "rev-b")
         val statuses = coroutineScope {
-            List(4) { async { server.call(agent, "/api/v1/gates/${opened.gate.id}/consume", post = true).status } }.awaitAll()
+            List(4) { async { server.move(agent, opened, "consume").status } }.awaitAll()
         }
-        assertEquals(listOf(HttpStatusCode.OK, HttpStatusCode.Conflict, HttpStatusCode.Conflict, HttpStatusCode.Conflict), statuses.sortedBy { it.value })
+        assertEquals(
+            listOf(HttpStatusCode.OK, HttpStatusCode.Conflict, HttpStatusCode.Conflict, HttpStatusCode.Conflict),
+            statuses.sortedBy { it.value },
+        )
     }
 
     @Test
@@ -281,11 +315,16 @@ class GatesPostgresTest {
         assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "/api/v1/gates/${opened.gate.id}").status)
         assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "/api/v1/approvals/${approval.id}").status)
         val answer = AnswerApprovalRequest(ApprovalAnswer.APPROVE, approval.shownDigest)
-        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "/api/v1/approvals/${approval.id}/answer", answer).status)
-        assertEquals(HttpStatusCode.NotFound, server.call("agent:b:$session", "/api/v1/gates/${opened.gate.id}/consume", post = true).status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.call("user:b:rev-b", "/api/v1/approvals/${approval.id}/answer", answer).status,
+        )
+        assertEquals(HttpStatusCode.NotFound, server.move("agent:b:$session", opened, "consume").status)
         assertTrue(server.call("user:b:rev-b", "/api/v1/approvals").body<ApprovalsPage>().items.isEmpty())
         assertEquals(approval, server.call("user:a:rev-b", "/api/v1/approvals/${approval.id}").body<Approval>())
-        assertEquals(1, server.call("user:a:rev-b", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>().items.size)
+        val mine = server.call("user:a:rev-b", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>()
+        assertEquals(1, mine.items.size)
+
         assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/approvals?status=maybe").status)
     }
 
@@ -372,7 +411,14 @@ class GatesPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/gates", push()).status)
         assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/approvals").status)
         assertEquals(HttpStatusCode.BadRequest, server.call("user:a:rev-b", "/api/v1/gates/not-a-uuid").status)
-        assertEquals(HttpStatusCode.BadRequest, server.call("agent:a:$session", "/api/v1/gates", push().copy(sessionId = "")).status)
-        assertEquals(HttpStatusCode.NotFound, server.call("agent:a:$session", "/api/v1/gates/${Uuid.random()}/explode", post = true).status)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.call("agent:a:$session", "/api/v1/gates", push().copy(sessionId = "")).status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.call("agent:a:$session", "/api/v1/gates/${Uuid.random()}/explode", post = true).status,
+        )
+
     }
 }

@@ -74,7 +74,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                 if (status != null) append(" AND status = :status")
             }
             val page = Statement.create(
-                "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE $filters ORDER BY created_at DESC, id DESC LIMIT :limit",
+                "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE $filters " +
+                    "ORDER BY created_at DESC, id DESC LIMIT :limit",
             ).bind("org", orgId).bind("limit", limit)
             approverId?.let { page.bind("approver", it) }
             status?.let { page.bind("status", it.name) }
@@ -85,8 +86,9 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                 emptyMap()
             } else {
                 val names = gateIds.indices.joinToString(", ") { ":g$it" }
-                val statement = Statement.create("SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id IN ($names)")
-                    .bind("org", orgId)
+                val statement = Statement.create(
+                    "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id IN ($names)",
+                ).bind("org", orgId)
                 gateIds.forEachIndexed { index, gateId -> statement.bind("g$index", gateId) }
                 fetch(statement).map { it.toGate() }.associateBy { it.id }
             }
@@ -106,11 +108,13 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             org = orgId
         }
 
-        suspend fun fetch(statement: Statement): List<ResultSet.Row> = executor.fetchAll(statement).getOrThrow().toList()
+        suspend fun fetch(statement: Statement): List<ResultSet.Row> =
+            executor.fetchAll(statement).getOrThrow().toList()
 
         suspend fun selectGate(orgId: Uuid, id: Uuid, lock: Boolean): Gate? = fetch(
             Statement.create(
-                "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id = :id" + if (lock) " FOR UPDATE" else "",
+                "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND id = :id" +
+                    if (lock) " FOR UPDATE" else "",
             ).bind("org", orgId).bind("id", id),
         ).firstOrNull()?.toGate()
 
@@ -158,9 +162,10 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             scoped(gate.orgId)
             executor.execute(
                 Statement.create(
-                    "INSERT INTO gates_gates ($GATE_COLUMNS) VALUES (:id, :org_id, :gate_key, :subject, :node, :label, " +
-                        ":mode, :status, :asked_by, :asked_via, :session_ids, :launch_ids, :shown_digest, :evidence, :decided_by, " +
-                        ":decided_at, :self_approved, :receipt_id, :reserved_by, :reserved_at, :consumed_at, :created_at)",
+                    "INSERT INTO gates_gates ($GATE_COLUMNS) VALUES (:id, :org_id, :gate_key, :subject, :node, " +
+                        ":label, :mode, :status, :asked_by, :asked_via, :session_ids, :launch_ids, :shown_digest, " +
+                        ":evidence, :decided_by, :decided_at, :self_approved, :receipt_id, :reserved_by, " +
+                        ":reserved_at, :consumed_at, :created_at)",
                 ).bindGate(gate),
             ).getOrThrow()
         }
@@ -171,7 +176,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                 Statement.create(
                     "UPDATE gates_gates SET gate_key = :gate_key, subject = :subject, node = :node, label = :label, " +
                         "mode = :mode, status = :status, asked_by = :asked_by, asked_via = :asked_via, " +
-                        "session_ids = :session_ids, launch_ids = :launch_ids, shown_digest = :shown_digest, evidence = :evidence, " +
+                        "session_ids = :session_ids, launch_ids = :launch_ids, shown_digest = :shown_digest, " +
+                        "evidence = :evidence, " +
                         "decided_by = :decided_by, decided_at = :decided_at, self_approved = :self_approved, " +
                         "receipt_id = :receipt_id, reserved_by = :reserved_by, reserved_at = :reserved_at, " +
                         "consumed_at = :consumed_at, created_at = :created_at WHERE org_id = :org_id AND id = :id",
@@ -184,9 +190,10 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                 scoped(request.orgId)
                 executor.execute(
                     Statement.create(
-                        "INSERT INTO gates_requests (id, gate_id, org_id, position, approver_id, status, answered_at, " +
-                            "channel, created_at) VALUES (:id, :gate_id, :org_id, :position, :approver_id, :status, " +
-                            ":answered_at, :channel, :created_at)",
+                        "INSERT INTO gates_requests (id, gate_id, org_id, position, approver_id, status, " +
+                            "answered_at, channel, created_at) VALUES (:id, :gate_id, :org_id, :position, " +
+                            ":approver_id, :status, :answered_at, :channel, :created_at)",
+
                     ).bindRequest(request).bind("position", position),
                 ).getOrThrow()
             }
@@ -208,9 +215,11 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
     private companion object {
         const val MAX_REQUESTS = 100
         const val GATE_COLUMNS = "id, org_id, gate_key, subject, node, label, mode, status, asked_by, asked_via, " +
-            "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, self_approved, receipt_id, reserved_by, " +
-            "reserved_at, consumed_at, created_at"
-        const val REQUEST_COLUMNS = "id, gate_id, org_id, position, approver_id, status, answered_at, channel, created_at"
+            "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, self_approved, receipt_id, " +
+            "reserved_by, reserved_at, consumed_at, created_at"
+        const val REQUEST_COLUMNS =
+            "id, gate_id, org_id, position, approver_id, status, answered_at, channel, created_at"
+        val evidences = ListSerializer(EvidenceRecord.serializer())
         val json = Json { ignoreUnknownKeys = true }
         val strings = ListSerializer(String.serializer())
 
@@ -231,7 +240,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             .bind("session_ids", json.encodeToString(strings, gate.sessionIds))
             .bind("launch_ids", json.encodeToString(strings, gate.launchIds))
             .bind("shown_digest", gate.shownDigest)
-            .bind("evidence", json.encodeToString(ListSerializer(EvidenceRecord.serializer()), gate.evidence.map { EvidenceRecord(it.label, it.value) }))
+            .bind("evidence", json.encodeToString(evidences, gate.evidence.map { EvidenceRecord(it.label, it.value) }))
             .bind("decided_by", gate.decidedBy)
             .bindOrNull("decided_at", gate.decidedAt, Instant::class)
             .bind("self_approved", gate.selfApproved)
@@ -264,7 +273,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             sessionIds = json.decodeFromString(strings, get("session_ids").asString()),
             launchIds = json.decodeFromString(strings, get("launch_ids").asString()),
             shownDigest = get("shown_digest").asString(),
-            evidence = json.decodeFromString(ListSerializer(EvidenceRecord.serializer()), get("evidence").asString())
+            evidence = json.decodeFromString(evidences, get("evidence")
+.asString())
                 .map { Evidence(it.label, it.value) },
             decidedBy = get("decided_by").asStringOrNull(),
             decidedAt = get("decided_at").asInstantOrNull(),
@@ -311,7 +321,10 @@ internal data class SubjectRecord(
         actionClass = actionClass,
         command = command,
         scope = scope,
-        push = push?.let { record -> GatePush(record.remote, record.refs.map { PushRef(it.ref, it.sha) }, record.force) },
+        push = push?.let { record ->
+            GatePush(record.remote, record.refs.map { PushRef(it.ref, it.sha) }, record.force)
+        },
+
         pullRequest = pullRequest?.let { GatePullRequest(it.number, it.headSha, it.base) },
         commits = commits,
         diffDigest = diffDigest,

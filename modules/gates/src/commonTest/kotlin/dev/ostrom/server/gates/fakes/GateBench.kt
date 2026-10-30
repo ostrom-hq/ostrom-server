@@ -98,12 +98,16 @@ class GateBench {
     )
 
     /** [approver] answers their request of [view]'s gate, having seen what the gate shows. */
-    suspend fun answer(view: GateView, approver: String, answer: Answer = Answer.YES, actor: GateActor = user(approver)) =
-        this.answer(
-            actor,
-            view.requests.first { it.approverId.equals(approver, ignoreCase = true) }.id,
-            answer,
-            view.gate.shownDigest,
-            AnswerChannel.MOBILE,
-        )
+    suspend fun answer(
+        view: GateView,
+        approver: String,
+        answer: Answer = Answer.YES,
+        actor: GateActor = user(approver),
+    ) = this.answer(
+        actor,
+        view.requests.first { it.approverId.equals(approver, ignoreCase = true) }.id,
+        answer,
+        view.gate.shownDigest,
+        AnswerChannel.MOBILE,
+    )
 }

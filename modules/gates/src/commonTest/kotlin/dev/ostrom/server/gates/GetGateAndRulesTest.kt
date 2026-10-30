@@ -100,16 +100,25 @@ class GetGateAndRulesTest {
             actionClass = "push-main",
             command = "git   push origin main",
             scope = "session:s",
-            push = GatePush("git@x:o/r", listOf(PushRef("refs/tags/v1", SHA_A), PushRef("refs/heads/main", SHA_A)), true),
+            push = GatePush(
+                "git@x:o/r",
+                listOf(PushRef("refs/tags/v1", SHA_A), PushRef("refs/heads/main", SHA_A)),
+                true,
+            ),
         )
         assertEquals(
-            """{"org":"org","repo":"o/r","realRepo":"o/fork","class":"push-main","action":"push","remote":"git@x:o/r",""" +
+            """{"org":"org","repo":"o/r","realRepo":"o/fork","class":"push-main","action":"push",""" +
+                """"remote":"git@x:o/r",""" +
                 """"refs":["refs/heads/main=$SHA_A","refs/tags/v1=$SHA_A"],"scope":"session:s","force":true}""",
             GateKeys.keyPreimage("org", subject, null),
         )
         assertEquals(
             """{"org":"org","repo":"o/r","class":"deploy","command":"kubectl apply -f x","scope":"session:s"}""",
-            GateKeys.keyPreimage("org", subject.copy(push = null, actionClass = "deploy", command = " kubectl  apply -f x "), null),
+            GateKeys.keyPreimage(
+                "org",
+                subject.copy(push = null, actionClass = "deploy", command = " kubectl  apply -f x "),
+                null,
+            ),
         )
     }
 
@@ -145,7 +154,11 @@ class GetGateAndRulesTest {
         assertEquals(listOf("b"), SelfApproval.waitingFor(listOf("a"), listOf("a", "b"), SelfApprovalPolicy.NEVER))
         assertEquals(listOf("a"), SelfApproval.waitingFor(listOf("A"), listOf("a"), SelfApprovalPolicy.SOLE_APPROVER))
         assertEquals(emptyList(), SelfApproval.waitingFor(listOf("a"), listOf("a"), SelfApprovalPolicy.NEVER))
-        assertEquals(emptyList(), SelfApproval.waitingFor(listOf("a", "b"), listOf("a", "b"), SelfApprovalPolicy.SOLE_APPROVER))
+        assertEquals(
+            emptyList(),
+            SelfApproval.waitingFor(listOf("a", "b"), listOf("a", "b"), SelfApprovalPolicy.SOLE_APPROVER),
+        )
+
         assertEquals(listOf("a", "b"), SelfApproval.withAskers(listOf("a"), "A", " ", "b"))
     }
 }

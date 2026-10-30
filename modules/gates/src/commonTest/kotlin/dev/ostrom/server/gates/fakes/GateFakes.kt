@@ -55,11 +55,19 @@ class InMemoryGatesRepository : GatesRepository {
         requests.values.filter { it.gateId == gateId && it.orgId == orgId }
 
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? =
-        requests[id]?.takeIf { it.orgId == orgId }?.let { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
+        requests[id]?.takeIf { it.orgId == orgId }
+            ?.let { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
 
-    override suspend fun approvals(orgId: Uuid, approverId: String?, status: RequestStatus?, limit: Int): List<ApprovalView> =
+    override suspend fun approvals(
+        orgId: Uuid,
+        approverId: String?,
+        status: RequestStatus?,
+        limit: Int,
+    ): List<ApprovalView> =
         requests.values.filter {
-            it.orgId == orgId && (approverId == null || it.approverId == approverId) && (status == null || it.status == status)
+            it.orgId == orgId &&
+                (approverId == null || it.approverId == approverId) &&
+                (status == null || it.status == status)
         }.reversed().take(limit).mapNotNull { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
 
     private inner class Tx : GatesTransaction {
@@ -78,7 +86,8 @@ class InMemoryGatesRepository : GatesRepository {
             return get(orgId, id)
         }
 
-        override suspend fun request(orgId: Uuid, id: Uuid): ApprovalRequest? = requests[id]?.takeIf { it.orgId == orgId }
+        override suspend fun request(orgId: Uuid, id: Uuid): ApprovalRequest? =
+            requests[id]?.takeIf { it.orgId == orgId }
 
         override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
             this@InMemoryGatesRepository.requestsOf(orgId, gateId)
@@ -117,7 +126,10 @@ class FakeSessions : GateSessions {
     // A session belongs to the launch `launch-<session>`, the way [agent] scopes its token.
     override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) {
         if (sessionId in closed) throw OstromException(ErrorKind.CONFLICT, "session closed")
-        if (launchId != null && launchId != "launch-$sessionId") throw OstromException(ErrorKind.FORBIDDEN, "other launch")
+        if (launchId != null && launchId != "launch-$sessionId") {
+            throw OstromException(ErrorKind.FORBIDDEN, "other launch")
+        }
+
     }
 }
 

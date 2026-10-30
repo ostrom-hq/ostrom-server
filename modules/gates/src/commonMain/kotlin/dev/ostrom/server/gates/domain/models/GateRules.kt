@@ -208,10 +208,13 @@ object SelfApproval {
 
 /** What the server reads in a command itself, never trusting the hook's reading of it (audit A6, CORRECTIFS-3). */
 object GateCommands {
-    // Another repository (GIT_DIR, --git-dir, --work-tree), another config (GIT_CONFIG_*, --config-env), another remote
-    // or URL (`-c remote.*`, `-c url.*`…): what git sends is no longer what the hook read. The prototype's expression.
+    // Another repository (GIT_DIR, --git-dir, --work-tree), another config (GIT_CONFIG_*, --config-env), another
+    // remote or URL (`-c remote.*`, `-c url.*`…): what git sends is no longer what the hook read. The prototype's
+    // expression.
     private val redirect = Regex(
-        "\\bGIT_(DIR|WORK_TREE|CONFIG\\w*|NAMESPACE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|INDEX_FILE)=" +
+        "\\bGIT_(DIR|WORK_TREE|CONFIG\\w*|NAMESPACE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR" +
+            "|INDEX_FILE)=" +
+
             "|--git-dir\\b|--work-tree\\b|--namespace\\b|--config-env\\b" +
             "|(^|\\s)-c\\s*[\"']?(remote|url|branch|push|core|include|includeIf)\\.",
         RegexOption.IGNORE_CASE,

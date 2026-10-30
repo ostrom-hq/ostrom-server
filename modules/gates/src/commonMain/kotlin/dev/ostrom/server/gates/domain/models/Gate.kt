@@ -28,7 +28,9 @@ import kotlin.uuid.Uuid
  * @property decidedAt When the gate was answered.
  * @property selfApproved True when the yes came from someone who asked, as the only possible approver.
  * @property receiptId The signed receipt of the decision, once signed.
- * @property launchIds The launches whose agent tokens asked for it (an agent token reads and uses only its launch's gates).
+ * @property launchIds The launches whose agent tokens asked for it (an agent token reads and uses only its launch's
+ *   gates).
+
  * @property reservedBy The launch that reserved the yes before running the action.
  * @property reservedAt When it was reserved.
  * @property consumedAt When the action ran and the yes was used up.

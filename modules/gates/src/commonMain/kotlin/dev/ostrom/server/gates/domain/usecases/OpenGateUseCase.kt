@@ -15,6 +15,7 @@ import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.models.GateWithoutApproverException
 import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
 import dev.ostrom.server.gates.domain.models.NotYourGateException
+import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.RedirectedPushException
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApproval
@@ -96,7 +97,9 @@ class OpenGateUseCaseImpl(
         val orgId = request.actor.orgId
         request.sessionId?.let { sessions.assertOpen(orgId, it, request.actor.launchId) }
         val node = request.node
-        if (request.subject.push != null && node?.enforced == true && request.redirected) throw RedirectedPushException()
+        if (request.subject.push != null && node?.enforced == true && request.redirected) {
+            throw RedirectedPushException()
+        }
         val (mode, approvers) = when {
             node == null -> GateMode.UNGATED to emptyList()
             !node.enforced -> GateMode.SHADOW to emptyList()
@@ -177,7 +180,9 @@ class OpenGateUseCaseImpl(
             throw NotYourGateException()
         }
         request.sessionId?.let { id ->
-            ensure(id.isNotBlank() && id.length <= MAX_SESSION_ID) { "A session id has 1 to $MAX_SESSION_ID characters." }
+            ensure(id.isNotBlank() && id.length <= MAX_SESSION_ID) {
+                "A session id has 1 to $MAX_SESSION_ID characters."
+            }
         }
         val subject = request.subject
         ensure(subject.command.length <= MAX_COMMAND) { "The command is longer than $MAX_COMMAND characters." }
@@ -191,13 +196,15 @@ class OpenGateUseCaseImpl(
         subject.push?.let { push ->
             ensure(push.refs.isNotEmpty() && push.refs.size <= MAX_REFS) { "A push names 1 to $MAX_REFS refs." }
             ensure(push.remote.length <= MAX_REF) { "The remote is too long." }
-            ensure(push.refs.all { it.ref.isNotBlank() && it.ref.length <= MAX_REF && (it.sha.isEmpty() || isSha(it.sha)) }) {
-                "Invalid push ref."
-            }
+            ensure(push.refs.all(::isValidRef)) { "Invalid push ref." }
         }
     }
 
+    private fun isValidRef(ref: PushRef): Boolean =
+        ref.ref.isNotBlank() && ref.ref.length <= MAX_REF && (ref.sha.isEmpty() || isSha(ref.sha))
+
     private inline fun ensure(condition: Boolean, reason: () -> String) {
+
         if (!condition) throw InvalidGateRequestException(reason())
     }
 

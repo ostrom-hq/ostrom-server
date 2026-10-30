@@ -35,7 +35,8 @@ internal fun GateAskRequest.toAskGate() = AskGate(
 
 /** Maps a gate for its caller: their own approval, when they are a person and an approver. */
 internal fun GateView.toResponse(actor: GateActor): GateResponse {
-    val mine = requests.takeIf { actor.kind == ActorKind.USER }?.firstOrNull { SelfApproval.same(it.approverId, actor.id) }
+    val mine = requests.takeIf { actor.kind == ActorKind.USER }
+        ?.firstOrNull { SelfApproval.same(it.approverId, actor.id) }
     return GateResponse(
         gate = gate.toRequest(mine?.id?.toString()),
         approval = mine?.let { ApprovalView(it, gate).toApproval() },
@@ -70,7 +71,10 @@ internal fun Gate.toRequest(approvalId: String?) = GateRequest(
     pr = subject.pullRequest?.let { GatePullRequest(it.number.toString(), it.headSha, it.base) },
     askedVia = askedVia.map { it.name.lowercase() }.sorted(),
     selfApproved = selfApproved,
-    push = subject.push?.let { push -> GatePush(push.remote, push.refs.map { GatePushRef(it.ref, it.sha) }, push.force) },
+    push = subject.push?.let { push ->
+        GatePush(push.remote, push.refs.map { GatePushRef(it.ref, it.sha) }, push.force)
+    },
+
 )
 
 private fun GateNode.toRef() = GateRef(

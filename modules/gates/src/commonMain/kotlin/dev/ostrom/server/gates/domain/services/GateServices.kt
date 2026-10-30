@@ -69,7 +69,9 @@ interface GateSessions {
      * @param sessionId The session segment.
      * @param launchId The launch of the agent token that asks, or null for a person's device: the session must be one
      * of that launch's (audit A12).
-     * @throws dev.ostrom.server.kernel.errors.OstromException When the session is closed, unknown, or of another launch.
+     * @throws dev.ostrom.server.kernel.errors.OstromException When the session is closed, unknown, or of another
+     *   launch.
+
      */
     suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?)
 }

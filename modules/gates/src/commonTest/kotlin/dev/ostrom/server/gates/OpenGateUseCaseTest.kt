@@ -39,7 +39,11 @@ class OpenGateUseCaseTest {
 
         assertEquals(GateMode.ENFORCED, view.gate.mode)
         assertEquals(GateStatus.PENDING, view.gate.status)
-        assertEquals(listOf("lyes", "rev-b"), view.requests.map { it.approverId }, "One request per approver, no duplicate")
+        assertEquals(
+            listOf("lyes", "rev-b"),
+            view.requests.map { it.approverId },
+            "One request per approver, no duplicate",
+        )
         assertEquals(listOf("rev-b"), view.waitingFor, "The asker is not waited for while someone else can say yes")
         assertEquals(1, bench.notifier.requested.size)
         assertEquals(listOf("lyes"), view.gate.askedBy)
@@ -195,13 +199,18 @@ class OpenGateUseCaseTest {
     @Test
     fun anAgentTokenOnlyAsksForItsOwnSession() = runTest {
         val bench = GateBench()
-        val other = assertFailsWith<OstromException> { bench.open(bench.pushRequest().copy(actor = agent(OTHER_SESSION))) }
+        val other = assertFailsWith<OstromException> {
+            bench.open(bench.pushRequest().copy(actor = agent(OTHER_SESSION)))
+        }
         assertEquals("other launch", other.message, "The sessions module refuses a session of another launch")
         assertFailsWith<NotYourGateException> { bench.open(bench.pushRequest().copy(sessionId = null)) }
         val unscoped = agent().copy(launchId = null)
         assertFailsWith<NotYourGateException> { bench.open(bench.pushRequest().copy(actor = unscoped)) }
         for (id in listOf("", " ", "s".repeat(129))) {
-            assertFailsWith<InvalidGateRequestException> { bench.open(bench.pushRequest().copy(sessionId = id, actor = device())) }
+            assertFailsWith<InvalidGateRequestException> {
+                bench.open(bench.pushRequest().copy(sessionId = id, actor = device()))
+            }
+
         }
         val fromDevice = bench.open(bench.pushRequest().copy(actor = device()))
         assertEquals(GateStatus.PENDING, fromDevice.gate.status, "A device token of the developer may ask")

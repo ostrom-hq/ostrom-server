@@ -7,7 +7,8 @@ import dev.ostrom.server.kernel.errors.OstromException
 class GateNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Gate not found.")
 
 /** The caller is not the approver of this request: an admin never answers in an approver's place. */
-class NotTheApproverException : OstromException(ErrorKind.FORBIDDEN, "Only the approver this request was sent to can answer it.")
+class NotTheApproverException :
+    OstromException(ErrorKind.FORBIDDEN, "Only the approver this request was sent to can answer it.")
 
 /** A device, agent or service token tried to answer: only a signed-in person says yes or no. */
 class OnlyPeopleAnswerException : OstromException(ErrorKind.FORBIDDEN, "Only a signed-in person can answer a gate.")
@@ -49,8 +50,9 @@ class GateNotUsableException(reason: String) : OstromException(ErrorKind.CONFLIC
 class NotYourGateException : OstromException(ErrorKind.FORBIDDEN, "This gate was not asked by your session.")
 
 /**
- * The push rewrites where git reads or sends (`GIT_DIR`, `--git-dir`, `-c remote.*`…): Ostrom cannot tie a yes to what
- * it would really send, so no yes is asked.
+ * The push rewrites where git reads or sends (`GIT_DIR`, `--git-dir`, `-c remote.*`…): Ostrom cannot tie a yes to
+ * what it would really send, so no yes is asked.
+
  */
 class RedirectedPushException : OstromException(
     ErrorKind.INVALID_REQUEST,

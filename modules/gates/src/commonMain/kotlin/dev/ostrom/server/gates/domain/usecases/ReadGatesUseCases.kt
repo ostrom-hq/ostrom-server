@@ -69,7 +69,13 @@ interface ListApprovalsUseCase {
 class ListApprovalsUseCaseImpl(
     private val repository: GatesRepository,
 ) : ListApprovalsUseCase {
-    override suspend fun invoke(actor: GateActor, mine: Boolean, status: RequestStatus?, limit: Int): List<ApprovalView> {
+    override suspend fun invoke(
+        actor: GateActor,
+        mine: Boolean,
+        status: RequestStatus?,
+        limit: Int,
+    ): List<ApprovalView> {
+
         if (actor.kind != ActorKind.USER) throw OnlyPeopleAnswerException()
         return repository.approvals(actor.orgId, actor.id.takeIf { mine }, status, limit.coerceIn(1, MAX_LIMIT))
     }

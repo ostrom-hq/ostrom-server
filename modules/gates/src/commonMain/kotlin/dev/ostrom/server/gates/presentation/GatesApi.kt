@@ -165,7 +165,9 @@ data class GateRef(
  * @property key The gate key (a digest).
  * @property gate The workflow gate.
  * @property mode `enforced`, `shadow` or `ungated`.
- * @property status `pending`, `approved`, `rejected`, `shadow`, `ungated` or `consumed` (a reserved yes reads `approved`).
+ * @property status `pending`, `approved`, `rejected`, `shadow`, `ungated` or `consumed` (a reserved yes reads
+ *   `approved`).
+
  * @property at When it was asked.
  * @property decidedBy Who answered.
  * @property decidedAt When.
