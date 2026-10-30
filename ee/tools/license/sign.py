@@ -42,6 +42,8 @@ DEFAULT_KEY = os.path.join("~", ".config", "ostrom", "license-signing-ed25519.pe
 INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 ALLOWED_FIELDS = {"licenseId", "customer", "issuedAt", "expiresAt", "maxPeople", "features"}
 TIER = "enterprise"
+# The server decodes maxPeople as a 32-bit Int.
+MAX_PEOPLE = 2147483647
 
 
 class LicenseToolError(Exception):
@@ -139,11 +141,16 @@ def normalize_payload(
     max_people = raw.get("maxPeople")
     if max_people is not None and (isinstance(max_people, bool) or not isinstance(max_people, int) or max_people < 1):
         raise LicenseToolError("maxPeople must be a positive integer, or null for unlimited.")
+    if max_people is not None and max_people > MAX_PEOPLE:
+        raise LicenseToolError(f"maxPeople must be at most {MAX_PEOPLE}.")
     features = raw.get("features", [])
     if not isinstance(features, list) or not all(isinstance(f, str) and f.strip() for f in features):
         raise LicenseToolError("features must be a list of non-empty strings.")
-    if instance_id is not None and not instance_id.strip():
-        raise LicenseToolError("instanceId must be a non-empty string when set.")
+    if instance_id is not None:
+        try:
+            instance_id = str(uuid.UUID(instance_id.strip())).lower()
+        except ValueError:
+            raise LicenseToolError("instanceId must be a UUID (the id of GET /api/v1/instance).") from None
     payload = {
         "licenseId": license_id,
         "customer": customer,

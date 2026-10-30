@@ -14,7 +14,14 @@ class MalformedLicenseException(reason: String) : LicenseException("The license 
 
 /** The key was signed by a key this server does not trust (another vendor, or a key retired from the build). */
 class UnknownLicenseKeyException(keyId: String) :
-    LicenseException("The license key was signed by an unknown key ($keyId); this build does not trust it.")
+    LicenseException(
+        // The key id comes from a payload whose signature is not checked yet: echoed only when it is a real key id.
+        "The license key was signed by an unknown key (" +
+            (if (KEY_ID_FORMAT.matches(keyId)) keyId else "its key id is not a valid id") +
+            "); this build does not trust it.",
+    )
+
+private val KEY_ID_FORMAT = Regex("[0-9a-f]{16}")
 
 /** The signature does not match the payload: the key was altered or was not signed by Ostrom. */
 class InvalidLicenseSignatureException :

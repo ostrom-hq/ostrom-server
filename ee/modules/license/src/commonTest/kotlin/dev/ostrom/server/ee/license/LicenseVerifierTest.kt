@@ -65,6 +65,24 @@ class LicenseVerifierTest {
     }
 
     @Test
+    fun anUnknownKeyIdIsEchoedOnlyWhenItIsAValidId() = runTest {
+        val key = TestSigningKey.generate()
+        val verifier = LicenseVerifierImpl(listOf(key.publicKey))
+        val hostile = assertFailsWith<UnknownLicenseKeyException> {
+            verifier.verify(key.license("keyId" to "\"evil\\nFORGED LOG LINE\""), NOW)
+        }
+        assertEquals(
+            "The license key was signed by an unknown key (its key id is not a valid id); " +
+                "this build does not trust it.",
+            hostile.message,
+        )
+        val upper = assertFailsWith<UnknownLicenseKeyException> {
+            verifier.verify(key.license("keyId" to q("ABCDEF0123456789")), NOW)
+        }
+        assertEquals(true, upper.message.orEmpty().contains("its key id is not a valid id"))
+    }
+
+    @Test
     fun aGeneratedKeyVerifiesWithEveryField() = runTest {
         val key = TestSigningKey.generate()
         val signed = key.license("maxPeople" to null, "features" to "[\"sso\",\"sso\"]", "instanceId" to q("abc"))

@@ -87,7 +87,7 @@ class SignToolTest(unittest.TestCase):
 
     def test_a_signed_license_verifies_with_the_public_key(self) -> None:
         out = self.generate()
-        code, license_key, err = self.run_tool("--payload", self.payload_file(PAYLOAD), "--instance-id", "6f1c2c47")
+        code, license_key, err = self.run_tool("--payload", self.payload_file(PAYLOAD), "--instance-id", "6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d10")
         self.assertEqual(0, code, err)
         prefix, version, payload, signature = license_key.strip().split(".")
         self.assertEqual(("ostrom-license", "v1"), (prefix, version))
@@ -104,7 +104,7 @@ class SignToolTest(unittest.TestCase):
                 "keyId": key_id,
                 "tier": "enterprise",
                 "trial": False,
-                "instanceId": "6f1c2c47",
+                "instanceId": "6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d10",
             },
             json.loads(data),
         )
@@ -117,14 +117,14 @@ class SignToolTest(unittest.TestCase):
     def test_defaults_and_instance_binding(self) -> None:
         self.generate()
         payload = {"customer": "Acme", "expiresAt": "2027-01-01T00:00:00Z"}
-        code, license_key, err = self.run_tool("--payload", "-", "--instance-id", "6f1c2c47", stdin=json.dumps(payload))
+        code, license_key, err = self.run_tool("--payload", "-", "--instance-id", "6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d10", stdin=json.dumps(payload))
         self.assertEqual(0, code, err)
         decoded = json.loads(b64url_decode(license_key.strip().split(".")[2]))
         self.assertEqual("2026-10-30T09:30:00Z", decoded["issuedAt"])
         self.assertRegex(decoded["licenseId"], r"^[0-9a-f-]{36}$")
         self.assertEqual([], decoded["features"])
         self.assertIsNone(decoded["maxPeople"])
-        self.assertEqual("6f1c2c47", decoded["instanceId"])
+        self.assertEqual("6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d10", decoded["instanceId"])
         self.assertEqual(("enterprise", False), (decoded["tier"], decoded["trial"]))
 
     def test_a_trial_is_not_bound_to_an_instance(self) -> None:
@@ -140,11 +140,11 @@ class SignToolTest(unittest.TestCase):
         self.generate()
         payload = {"customer": "Acme", "expiresAt": "2027-01-01T00:00:00Z"}
         code, license_key, err = self.run_tool(
-            "--payload", "-", "--trial", "--instance-id", "abc", stdin=json.dumps(payload)
+            "--payload", "-", "--trial", "--instance-id", "6F1C2C47-3B7E-4A51-9A39-2F4F0F8C1D10", stdin=json.dumps(payload)
         )
         self.assertEqual(0, code, err)
         decoded = json.loads(b64url_decode(license_key.strip().split(".")[2]))
-        self.assertEqual((True, "abc"), (decoded["trial"], decoded["instanceId"]))
+        self.assertEqual((True, "6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d10"), (decoded["trial"], decoded["instanceId"]))
 
     def test_a_sold_license_needs_an_instance_id(self) -> None:
         self.generate()
@@ -155,7 +155,7 @@ class SignToolTest(unittest.TestCase):
         self.assertIn("--instance-id is required unless --trial", err.getvalue())
 
     def test_instance_id_and_trial_only_apply_to_a_payload(self) -> None:
-        for flag in (["--instance-id", "abc"], ["--trial"]):
+        for flag in (["--instance-id", "6F1C2C47-3B7E-4A51-9A39-2F4F0F8C1D10"], ["--trial"]):
             with self.subTest(flag=flag):
                 err = io.StringIO()
                 with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
@@ -186,15 +186,31 @@ class SignToolTest(unittest.TestCase):
         }
         for text, message in cases.items():
             with self.subTest(text=text):
-                code, out, err = self.run_tool("--payload", "-", "--instance-id", "abc", stdin=text)
+                code, out, err = self.run_tool("--payload", "-", "--instance-id", "6F1C2C47-3B7E-4A51-9A39-2F4F0F8C1D10", stdin=text)
                 self.assertEqual((2, ""), (code, out))
                 self.assertIn(message, err)
 
-    def test_a_blank_instance_id_is_refused(self) -> None:
+    def test_an_instance_id_must_be_a_uuid(self) -> None:
         self.generate()
-        code, out, err = self.run_tool("--payload", "-", "--instance-id", " ", stdin=json.dumps(PAYLOAD))
-        self.assertEqual((2, ""), (code, out))
-        self.assertIn("instanceId must be a non-empty string", err)
+        for value in (" ", "abc", "6f1c2c47"):
+            with self.subTest(value=value):
+                code, out, err = self.run_tool("--payload", "-", "--instance-id", value, stdin=json.dumps(PAYLOAD))
+                self.assertEqual((2, ""), (code, out))
+                self.assertIn("instanceId must be a UUID", err)
+
+    def test_max_people_is_at_most_a_32_bit_int(self) -> None:
+        self.generate()
+        code, _, err = self.run_tool(
+            "--payload", "-", "--instance-id", "6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d10",
+            stdin=json.dumps({**PAYLOAD, "maxPeople": 2147483648}),
+        )
+        self.assertEqual(2, code)
+        self.assertIn("maxPeople must be at most 2147483647.", err)
+        code, _, err = self.run_tool(
+            "--payload", "-", "--instance-id", "6f1c2c47-3b7e-4a51-9a39-2f4f0f8c1d10",
+            stdin=json.dumps({**PAYLOAD, "maxPeople": 2147483647}),
+        )
+        self.assertEqual(0, code, err)
 
     def test_a_missing_payload_file_is_refused(self) -> None:
         self.generate()
