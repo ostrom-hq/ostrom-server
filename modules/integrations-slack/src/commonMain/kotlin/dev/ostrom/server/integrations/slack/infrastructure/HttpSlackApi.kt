@@ -93,8 +93,7 @@ class HttpSlackApi(
         val channel: Channel? = null,
         val ts: String? = null,
     )
-
-    private companion object {
-        val json = Json { ignoreUnknownKeys = true }
-    }
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val json = Json { ignoreUnknownKeys = true }
