@@ -20,6 +20,7 @@ import dev.ostrom.server.runners.RunnersModule
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.sharing.SharingModule
+import dev.ostrom.server.usage.UsageModule
 
 /**
  * Every functional module, in dependency order: migrations and initialization run in this order, so a module comes
@@ -38,6 +39,7 @@ fun serverModules(): List<ServerModule> = listOf(
     CompilerModule,
     McpRelayModule,
     SecretsModule,
+    UsageModule,
     GatewayModule,
     BudgetsModule,
     BillingModule,
