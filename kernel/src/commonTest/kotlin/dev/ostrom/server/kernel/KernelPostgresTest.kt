@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
@@ -42,7 +45,9 @@ class KernelPostgresTest {
         try {
             val logger = JsonLogger(LogLevel.INFO, sink = { lines += it })
             val signer = Ed25519InstanceSigner.generate()
-            val koin = serverKoin(kernelModule(logger, database.driver, signer), emptyList())
+            val config = MapConfigSource(mapOf("OSTROM_PROBE" to "on"))
+            val koin = serverKoin(kernelModule(logger, database.driver, signer, config), emptyList())
+            assertSame(config, koin.get<ConfigSource>())
             assertSame(logger, koin.get<Logger>())
             assertSame(database.driver, koin.get<Driver>())
             assertSame(signer, koin.get<InstanceSigner>())
