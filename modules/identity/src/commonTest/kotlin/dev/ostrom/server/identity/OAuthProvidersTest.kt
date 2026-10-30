@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -8,6 +10,7 @@ import dev.ostrom.server.identity.infrastructure.GitHubOAuthProvider
 import dev.ostrom.server.identity.infrastructure.OAuthClient
 import dev.ostrom.server.identity.infrastructure.OidcEndpoints
 import dev.ostrom.server.identity.infrastructure.OidcProvider
+import dev.ostrom.server.identity.infrastructure.closeHttpClient
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -21,11 +24,13 @@ import io.ktor.http.Url
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import io.ktor.http.parseQueryString
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.test.runTest
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -48,7 +53,8 @@ class OAuthProvidersTest {
         return parseQueryString(body).entries().associate { it.key to it.value.single() }
     }
 
-    private fun query(url: String): Map<String, String> = Url(url).parameters.entries().associate { it.key to it.value.single() }
+    private fun query(url: String): Map<String, String> =
+        Url(url).parameters.entries().associate { it.key to it.value.single() }
 
     private fun github(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) =
         GitHubOAuthProvider(client, http(handler), "https://gh.test", "https://api.gh.test")
@@ -72,7 +78,10 @@ class OAuthProvidersTest {
         val provider = github { request ->
             when (request.url.encodedPath) {
                 "/login/oauth/access_token" -> json("""{"access_token":"gho_x","token_type":"bearer"}""")
-                "/user" -> json("""{"id":583231,"login":"ada","name":"Ada Lovelace","email":"public@example.com","avatar_url":"https://a.test/1"}""")
+                "/user" -> json(
+                    """{"id":583231,"login":"ada","name":"Ada Lovelace","email":"public@example.com",""" +
+                        """"avatar_url":"https://a.test/1"}""",
+                )
                 else -> json(
                     """[{"email":"old@example.com","primary":false,"verified":true},""" +
                         """{"email":"ada@example.com","primary":true,"verified":true},""" +
@@ -84,7 +93,9 @@ class OAuthProvidersTest {
         val identity = provider.identity("code", "verifier", "unused", "https://api.test/cb")
 
         assertEquals(
-            VerifiedIdentity(IdentityProvider.GITHUB, "583231", "ada@example.com", true, "Ada Lovelace", "https://a.test/1", "ada"),
+            VerifiedIdentity(
+                IdentityProvider.GITHUB, "583231", "ada@example.com", true, "Ada Lovelace", "https://a.test/1", "ada",
+            ),
             identity,
         )
         assertEquals(
@@ -111,7 +122,23 @@ class OAuthProvidersTest {
 
         val identity = provider.identity("code", "v", "n", "r")
 
-        assertEquals(VerifiedIdentity(IdentityProvider.GITHUB, "1", "public@example.com", false, "ada", null, "ada"), identity)
+        assertEquals(
+            VerifiedIdentity(IdentityProvider.GITHUB, "1", "public@example.com", false, "ada", null, "ada"),
+            identity,
+        )
+    }
+
+    @Test
+    fun gitHubWithoutANameShowsTheLogin() = runTest {
+        val provider = github { request ->
+            when (request.url.encodedPath) {
+                "/login/oauth/access_token" -> json("""{"access_token":"gho_x"}""")
+                "/user" -> json("""{"id":2,"login":"bob"}""")
+                else -> json("[]")
+            }
+        }
+
+        assertEquals("bob", provider.identity("code", "v", "n", "r").displayName)
     }
 
     @Test
@@ -131,7 +158,8 @@ class OAuthProvidersTest {
     }
 
     private val clock = SettableClock(Instant.parse("2026-10-30T10:00:00Z"))
-    private val endpoints = OidcEndpoints(setOf("https://idp.test"), "https://idp.test/authorize", "https://idp.test/token")
+    private val endpoints =
+        OidcEndpoints(setOf("https://idp.test"), "https://idp.test/authorize", "https://idp.test/token")
 
     private fun jwt(claims: String) = "eyJhbGciOiJSUzI1NiJ9." +
         Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT).encode(claims.encodeToByteArray()) + ".c2ln"
@@ -142,12 +170,20 @@ class OAuthProvidersTest {
         exp: String = "1793440000",
         nonce: String = "\"n-1\"",
         extra: String = ""
-    ) = """{"iss":$iss,"aud":$aud,"exp":$exp,"nonce":$nonce,"sub":"108","email":"ada@example.com","email_verified":true,""" +
+    ) = """{"iss":$iss,"aud":$aud,"exp":$exp,"nonce":$nonce,"sub":"108",""" +
+        """"email":"ada@example.com","email_verified":true,""" +
         """"name":"Ada","picture":"https://p.test/a"$extra}"""
 
     private fun oidc(idToken: String?, connection: Uuid? = null): OidcProvider {
-        val body = if (idToken == null) """{"error":"invalid_grant"}""" else """{"id_token":"$idToken","access_token":"a"}"""
-        return OidcProvider(IdentityProvider.OIDC, endpoints, client, http { json(body) }, clock, connection, mapOf("prompt" to "login"))
+        val body = if (idToken == null) {
+            """{"error":"invalid_grant"}"""
+        } else {
+            """{"id_token":"$idToken","access_token":"a"}"""
+        }
+        return OidcProvider(
+            IdentityProvider.OIDC, endpoints.copy(extraParameters = mapOf("prompt" to "login")), client,
+            http { json(body) }, clock, connection,
+        )
     }
 
     @Test
@@ -168,11 +204,15 @@ class OAuthProvidersTest {
     @Test
     fun oidcChecksTheIdTokenAndGivesTheIdentity() = runTest {
         val connection = Uuid.random()
-        val identity = oidc(jwt(claims(aud = """["other","client-id"]""", extra = ""","azp":"client-id"""")), connection)
+        val withAzp = claims(aud = """["other","client-id"]""", extra = ""","azp":"client-id"""")
+        val identity = oidc(jwt(withAzp), connection)
             .identity("code", "verifier", "n-1", "https://api.test/cb")
 
         assertEquals(
-            VerifiedIdentity(IdentityProvider.OIDC, "108", "ada@example.com", true, "Ada", "https://p.test/a", connectionId = connection),
+            VerifiedIdentity(
+                IdentityProvider.OIDC, "108", "ada@example.com", true, "Ada", "https://p.test/a",
+                connectionId = connection,
+            ),
             identity,
         )
         assertEquals(
@@ -186,12 +226,16 @@ class OAuthProvidersTest {
 
     @Test
     fun oidcWithAnUnverifiedEmailCannotMergeAccounts() = runTest {
-        val unverified = """{"iss":"https://idp.test","aud":"client-id","exp":1793440000,"nonce":"n-1","sub":"108","email":"a@b.co"}"""
+        val unverified =
+            """{"iss":"https://idp.test","aud":"client-id","exp":1793440000,"nonce":"n-1","sub":"108",""" +
+                """"email":"a@b.co"}"""
 
         val identity = oidc(jwt(unverified)).identity("c", "v", "n-1", "r")
 
         assertEquals(VerifiedIdentity(IdentityProvider.OIDC, "108", "a@b.co", false), identity)
-        val noEmail = """{"iss":"https://idp.test","aud":"client-id","exp":1793440000,"nonce":"n-1","sub":"108","email_verified":true}"""
+        val noEmail =
+            """{"iss":"https://idp.test","aud":"client-id","exp":1793440000,"nonce":"n-1","sub":"108",""" +
+                """"email_verified":true}"""
         assertEquals(false, oidc(jwt(noEmail)).identity("c", "v", "n-1", "r").emailVerified)
     }
 
@@ -230,5 +274,13 @@ class OAuthProvidersTest {
     fun googleHasItsEndpoints() {
         assertEquals(setOf("https://accounts.google.com", "accounts.google.com"), OidcEndpoints.GOOGLE.issuers)
         assertEquals("https://oauth2.googleapis.com/token", OidcEndpoints.GOOGLE.tokenEndpoint)
+    }
+
+    @Test
+    fun theModuleClosesItsHttpClientAndToleratesNone() {
+        val client = http { json("{}") }
+        closeHttpClient(client)
+        assertFalse(client.isActive)
+        closeHttpClient(null)
     }
 }

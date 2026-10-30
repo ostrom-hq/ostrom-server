@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.module
 
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -19,7 +20,7 @@ interface ServerModule {
     /** The Koin definitions of the module: use cases, repositories, and the routes' dependencies. */
     val koinModule: Module
 
-    /** The schema migrations of the module, applied at start in the order of the module list. */
+    /** The schema migrations of the module, applied by `ostrom-server migrate` in the order of the module list. */
     val migrations: List<SchemaMigration> get() = emptyList()
 
     /**

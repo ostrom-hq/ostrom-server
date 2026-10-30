@@ -1,13 +1,23 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
+import dev.ostrom.server.kernel.database.MigrationsNotAppliedException
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.kernel.database.TENANT_ROLE
+import dev.ostrom.server.kernel.database.inOrg
+import dev.ostrom.server.kernel.database.migrateUnderLock
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
 import dev.ostrom.server.kernel.http.HealthCheck
+import dev.ostrom.server.kernel.http.Readiness
 import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.kernel.module.kernelModule
+import dev.ostrom.server.kernel.network.TrustedProxies
 import dev.ostrom.server.kernel.module.serverKoin
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import dev.ostrom.server.kernel.signing.InstanceSigner
@@ -15,8 +25,15 @@ import dev.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import org.koin.core.module.Module
 import org.koin.core.qualifier.named
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -26,20 +43,30 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.uuid.Uuid
 
 class KernelPostgresTest {
     private val lines = mutableListOf<String>()
 
+    // On the real clock: runTest's virtual time would fire the health check's timeout before the database answers.
     private fun databaseTest(block: suspend (TestDatabase, MigrationRunner) -> Unit) = runTest {
-        val database = TestDatabase.create() ?: return@runTest
+        withContext(Dispatchers.Default) { runDatabaseTest(block) }
+    }
+
+    private suspend fun runDatabaseTest(block: suspend (TestDatabase, MigrationRunner) -> Unit) {
+        val database = TestDatabase.create() ?: return
         try {
             val logger = JsonLogger(LogLevel.INFO, sink = { lines += it })
             val signer = Ed25519InstanceSigner.generate()
-            val koin = serverKoin(kernelModule(logger, database.driver, signer), emptyList())
+            val config = MapConfigSource(mapOf("OSTROM_PROBE" to "on"))
+            val koin = serverKoin(kernelModule(logger, database.driver, signer, config), emptyList())
+            assertSame(config, koin.get<ConfigSource>())
             assertSame(logger, koin.get<Logger>())
             assertSame(database.driver, koin.get<Driver>())
             assertSame(signer, koin.get<InstanceSigner>())
             assertSame(Clock.System, koin.get<Clock>())
+            assertSame(TrustedProxies.NONE, koin.get<TrustedProxies>())
+            assertFalse(koin.get<Readiness>().isDraining)
             assertTrue(koin.get<HealthCheck>(named("database")).isUp())
             block(database, koin.get())
             koin.close()
@@ -102,5 +129,102 @@ class KernelPostgresTest {
     @Test
     fun aDatabaseThatDoesNotAnswerInTimeIsDown() = databaseTest { database, _ ->
         assertFalse(DatabaseHealthCheck(database.driver, timeout = Duration.ZERO).isUp())
+    }
+
+    @Test
+    fun aTransactionInOneOrganizationSeesAndWritesOnlyItsRows() = databaseTest { database, runner ->
+        val orgA = Uuid.random()
+        val orgB = Uuid.random()
+        runner.migrate("probe", tenantTable)
+        val driver = database.driver
+        for ((org, name) in listOf(orgA to "a", orgB to "b")) {
+            driver.execute(
+                Statement.create("INSERT INTO probe_notes (org_id, name) VALUES (:org, :name)")
+                    .bind("org", org).bind("name", name),
+            ).getOrThrow()
+        }
+
+        val seen = driver.inOrg(orgA) {
+            fetchAll("SELECT name FROM probe_notes ORDER BY name").getOrThrow().map { it.get("name").asString() }
+        }
+        assertEquals(listOf("a"), seen)
+        assertFails {
+            driver.inOrg(orgA) {
+                execute(
+                    Statement.create("INSERT INTO probe_notes (org_id, name) VALUES (:org, 'x')")
+                        .bind("org", orgB),
+                ).getOrThrow()
+            }
+        }
+        assertEquals(2, driver.count("probe_notes"), "The refused write left nothing")
+    }
+
+    // The role is global to the cluster: its creation tolerates one made by another database or test.
+    private val tenantTable = listOf(
+        SchemaMigration(
+            1,
+            "create_notes",
+            """
+            DO $$ BEGIN CREATE ROLE $TENANT_ROLE NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+            DO $$ BEGIN GRANT $TENANT_ROLE TO CURRENT_USER; EXCEPTION WHEN unique_violation THEN NULL; END $$;
+            CREATE TABLE probe_notes (org_id UUID NOT NULL, name TEXT NOT NULL);
+            ALTER TABLE probe_notes ENABLE ROW LEVEL SECURITY;
+            CREATE POLICY probe_notes_tenant ON probe_notes
+                USING (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID))
+                WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID));
+            GRANT SELECT, INSERT ON probe_notes TO $TENANT_ROLE;
+            """.trimIndent(),
+        ),
+    )
+
+    private class Probe(override val name: String, override val migrations: List<SchemaMigration>) : ServerModule {
+        override val koinModule: Module = module {}
+    }
+
+    private suspend fun Driver.advisoryLocks(): Long = fetchAll(
+        "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND database = " +
+            "(SELECT oid FROM pg_database WHERE datname = current_database())",
+    ).getOrThrow().single().get("n").asLong()
+
+    @Test
+    fun verifyRefusesMissingOrEditedMigrationsAndAcceptsAppliedOnes() = databaseTest { _, runner ->
+        val missing = assertFailsWith<MigrationsNotAppliedException> { runner.verify("probe", first) }
+        assertEquals(
+            "Migrations [1] of module probe are not applied, or differ from the applied ones: run " +
+                "`ostrom-server migrate`.",
+            missing.message,
+        )
+        runner.migrate("probe", first)
+        runner.verify("probe", first)
+        val second = first + SchemaMigration(2, "add_name", "ALTER TABLE probe_items ADD COLUMN name TEXT;")
+        assertFailsWith<MigrationsNotAppliedException> { runner.verify("probe", second) }
+        val edited = listOf(SchemaMigration(1, "create_probe", "CREATE TABLE probe_items (id TEXT PRIMARY KEY);"))
+        assertFailsWith<MigrationsNotAppliedException> { runner.verify("probe", edited) }
+        runner.verify("empty", emptyList())
+        assertFailsWith<IllegalArgumentException> { runner.verify("Probe", first) }
+    }
+
+    @Test
+    fun concurrentMigrationPassesWaitForEachOther() = databaseTest { database, runner ->
+        val modules = listOf(
+            Probe("probe", first + SchemaMigration(2, "add_name", "ALTER TABLE probe_items ADD COLUMN name TEXT;")),
+            Probe("other-probe", listOf(SchemaMigration(1, "create_other", "CREATE TABLE other_items (id BIGINT);"))),
+        )
+        coroutineScope {
+            List(3) { async { database.driver.migrateUnderLock(runner, modules) } }.awaitAll()
+        }
+        assertEquals(2, database.driver.count("_migrations_probe"))
+        assertEquals(1, database.driver.count("_migrations_other_probe"))
+        modules.forEach { runner.verify(it.name, it.migrations) }
+        assertEquals(0, database.driver.advisoryLocks(), "The lock is released")
+    }
+
+    @Test
+    fun aFailedMigrationReleasesTheLock() = databaseTest { database, runner ->
+        val broken = listOf(Probe("probe", listOf(SchemaMigration(1, "broken", "CREATE TABLE ;"))))
+        assertFails { database.driver.migrateUnderLock(runner, broken) }
+        assertEquals(0, database.driver.advisoryLocks(), "The lock is released")
+        database.driver.migrateUnderLock(runner, listOf(Probe("probe", first)))
+        assertEquals(1, database.driver.count("_migrations_probe"))
     }
 }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 @file:OptIn(ExperimentalForeignApi::class)
 
 package dev.ostrom.server.kernel.platform

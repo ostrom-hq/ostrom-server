@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -204,7 +205,8 @@ class InvalidSignInStateException :
     OstromException(ErrorKind.INVALID_REQUEST, "This sign-in has expired or was started elsewhere. Start again.")
 
 /** The provider refused the sign-in or answered something unusable. */
-class ProviderRejectedException(reason: String) : OstromException(ErrorKind.UNAUTHORIZED, "The provider refused the sign-in: $reason")
+class ProviderRejectedException(reason: String) :
+    OstromException(ErrorKind.UNAUTHORIZED, "The provider refused the sign-in: $reason")
 
 /** The sign-in link is unknown, expired or already used. */
 class InvalidMagicLinkException :

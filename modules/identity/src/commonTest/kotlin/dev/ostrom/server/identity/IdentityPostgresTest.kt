@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.ApiToken
@@ -19,6 +21,7 @@ import dev.ostrom.server.identity.domain.WebSession
 import dev.ostrom.server.identity.domain.WebSessionsRepository
 import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -36,16 +39,21 @@ import kotlin.uuid.Uuid
 class IdentityPostgresTest {
     private val now = Instant.parse("2026-10-30T10:00:00.123Z")
 
-    private fun user(name: String = "Ada") = User(Uuid.random(), "$name-${Uuid.random().toHexString().take(6)}".lowercase(), name, null, null, now)
+    private fun user(name: String = "Ada") =
+        User(Uuid.random(), "$name-${Uuid.random().toHexString().take(6)}".lowercase(), name, null, null, now)
 
     private fun github(subject: String, email: String? = null) =
         VerifiedIdentity(IdentityProvider.GITHUB, subject, email, email != null)
 
-    private fun token(userId: Uuid, kind: TokenKind = TokenKind.PERSONAL, expiresAt: Instant? = null, session: String? = null) =
-        ApiToken(
-            Uuid.random(), userId, if (kind == TokenKind.AGENT) Uuid.random() else null, "t", kind, setOf("b:read", "a:read"),
-            "osp_abc", session, now, expiresAt, null, null,
-        )
+    private fun token(
+        userId: Uuid,
+        kind: TokenKind = TokenKind.PERSONAL,
+        expiresAt: Instant? = null,
+        session: String? = null,
+    ) = ApiToken(
+        Uuid.random(), userId, if (kind == TokenKind.AGENT) Uuid.random() else null, "t", kind,
+        setOf("b:read", "a:read"), "osp_abc", session, now, expiresAt, null, null,
+    )
 
     @Test
     fun usersAreFoundByIdentityAndVerifiedEmailOnly() = serverTest(listOf(IdentityModule)) { server ->
@@ -64,12 +72,15 @@ class IdentityPostgresTest {
         assertTrue(users.loginTaken(ada.login))
         assertTrue(!users.loginTaken("nobody"))
 
-        users.link(bob.id, VerifiedIdentity(IdentityProvider.GOOGLE, "g", "bob@example.com", true), UserEmail("bob@example.com", true), now)
+        val google = VerifiedIdentity(IdentityProvider.GOOGLE, "g", "bob@example.com", true)
+        users.link(bob.id, google, UserEmail("bob@example.com", true), now)
         users.link(bob.id, github("2"), UserEmail("bob@example.com", false), now)
         assertEquals(listOf(UserEmail("bob@example.com", true)), users.listEmails(bob.id), "Verified stays verified")
         assertEquals(listOf("github", "google"), users.listIssuers(bob.id))
         // Linking an identity of another user changes nothing and fails, so the caller retries.
         assertFailsWith<DuplicateIdentityException> { users.link(bob.id, github("1"), null, now) }
+        // Any other database refusal (here, a user that does not exist) is not dressed up as a duplicate.
+        assertFailsWith<SQLError> { users.link(Uuid.random(), github("9"), null, now) }
         assertEquals(ada, users.findByIdentity("github", "1"))
     }
 
@@ -78,7 +89,9 @@ class IdentityPostgresTest {
         val users = server.koin.get<UsersRepository>()
         val ada = user()
         users.create(ada, github("1"), UserEmail("ada@example.com", true), now)
-        assertFailsWith<DuplicateIdentityException>("Logins are unique") { users.create(ada.copy(id = Uuid.random()), github("9"), null, now) }
+        assertFailsWith<DuplicateIdentityException>("Logins are unique") {
+            users.create(ada.copy(id = Uuid.random()), github("9"), null, now)
+        }
 
         assertFailsWith<DuplicateIdentityException> {
             users.create(user(), github("2"), UserEmail("ada@example.com", true), now)
@@ -116,7 +129,7 @@ class IdentityPostgresTest {
         val cli = token(ada.id, TokenKind.CLI, expiresAt = now + 1.days).copy(createdAt = now + 1.days)
         val expired = token(ada.id, expiresAt = now)
         val agent = token(ada.id, TokenKind.AGENT, session = "run-1")
-        listOf(personal, cli, expired, agent).forEachIndexed { index, it -> tokens.create(it, "hash-$index") }
+        listOf(personal, cli, expired, agent).forEachIndexed { index, token -> tokens.create(token, "hash-$index") }
         val kinds = setOf(TokenKind.PERSONAL, TokenKind.CLI)
 
         assertEquals(personal, tokens.findBySecretHash("hash-0"))
@@ -146,7 +159,9 @@ class IdentityPostgresTest {
         val devices = server.koin.get<DeviceAuthorizationsRepository>()
         val tokens = server.koin.get<ApiTokensRepository>()
         val ada = user().also { users.create(it, github("1"), null, now) }
-        val pending = DeviceAuthorization(Uuid.random(), "BCDF-GHJK", "laptop", DeviceAuthorizationStatus.PENDING, null, now, now + 1.days, null)
+        val pending = DeviceAuthorization(
+            Uuid.random(), "BCDF-GHJK", "laptop", DeviceAuthorizationStatus.PENDING, null, now, now + 1.days, null,
+        )
         devices.create(pending, "device-hash")
 
         assertEquals(pending, devices.findByDeviceCodeHash("device-hash"))
@@ -159,7 +174,9 @@ class IdentityPostgresTest {
         assertEquals(now, devices.findByDeviceCodeHash("device-hash")?.lastPolledAt)
 
         val results = coroutineScope {
-            (1..5).map { index -> async { devices.consume(pending.id, token(ada.id, TokenKind.CLI), "cli-$index") } }.awaitAll()
+            (1..5).map { index ->
+                async { devices.consume(pending.id, token(ada.id, TokenKind.CLI), "cli-$index") }
+            }.awaitAll()
         }
         assertEquals(1, results.count { it })
         assertEquals(1, tokens.listLive(ada.id, setOf(TokenKind.CLI), now).size)
@@ -174,7 +191,9 @@ class IdentityPostgresTest {
         val actor = Uuid.random()
 
         coroutineScope {
-            (1..10).map { index -> async { audit.record(AuditEntry(orgId, actor, "test.$index", "t", "$index")) } }.awaitAll()
+            (1..10).map { index ->
+                async { audit.record(AuditEntry(orgId, actor, "test.$index", "t", "$index")) }
+            }.awaitAll()
         }
         audit.record(AuditEntry(null, actor, "user.created", "user", actor.toString(), mapOf("provider" to "github")))
 
@@ -206,8 +225,10 @@ class IdentityPostgresTest {
             server.driver.inOrg(orgA) {
                 execute(
                     Statement.create(
-                        "INSERT INTO identity_audit_events (id, chain, sequence, org_id, action, target_type, target_id, " +
-                            "details, occurred_at, hash, signature, key_id) VALUES (:id, :chain, 99, :org, 'x', 't', '1', '{}', " +
+                        "INSERT INTO identity_audit_events (id, chain, sequence, org_id, action, target_type, " +
+                            "target_id, " +
+                            "details, occurred_at, hash, signature, key_id) VALUES (:id, :chain, 99, :org, " +
+                                "'x', 't', '1', '{}', " +
                             "now(), 'h', 's', 'k')",
                     ).bind("id", Uuid.random()).bind("chain", orgB.toString()).bind("org", orgB),
                 ).getOrThrow()

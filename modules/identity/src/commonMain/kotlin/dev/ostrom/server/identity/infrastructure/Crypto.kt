@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.SecretGenerator
@@ -39,7 +40,8 @@ class SecureSecretGenerator : SecretGenerator {
         const val BYTE_MASK = 0xFF
         const val VERSION_BYTE = 6
         const val VARIANT_BYTE = 8
-        val UNBIASED_LIMIT = 256 - 256 % USER_CODE_ALPHABET.length
+        /** Random bytes at or above this would favour the first letters: they are drawn again. */
+        const val UNBIASED_LIMIT = 256 - 256 % USER_CODE_ALPHABET.length
     }
 }
 
@@ -50,9 +52,11 @@ class Sha256SecretHasher : SecretHasher {
     override suspend fun csrfToken(sessionSecret: String): String =
         UrlBase64.encode(sha256((CSRF_DOMAIN + sessionSecret).encodeToByteArray()))
 
-    override suspend fun pkceChallenge(verifier: String): String = UrlBase64.encode(sha256(verifier.encodeToByteArray()))
+    override suspend fun pkceChallenge(verifier: String): String =
+        UrlBase64.encode(sha256(verifier.encodeToByteArray()))
 
-    private suspend fun sha256(data: ByteArray): ByteArray = CryptographyProvider.Default.get(SHA256).hasher().hash(data)
+    private suspend fun sha256(data: ByteArray): ByteArray =
+        CryptographyProvider.Default.get(SHA256).hasher().hash(data)
 
     private companion object {
         /** Separates the CSRF derivation from every other hash of the same secret. */

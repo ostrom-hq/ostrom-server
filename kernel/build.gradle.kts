@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The shared kernel every functional module builds on: configuration, logs, database and migrations, uniform
 // HTTP errors, token authentication, the instance signing key and the ServerModule contract.
 plugins {
@@ -25,11 +26,16 @@ kotlin {
         // The JVM target only runs the tests and Kover (never shipped): the JDK provides Ed25519 there.
         jvmMain.dependencies {
             implementation(libs.cryptography.jdk)
+            // Loading a key file needs its public key, which the JDK alone cannot derive from an Ed25519 private key.
+            runtimeOnly(libs.bouncycastle.bcprov)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
             implementation(libs.ktor.server.test.host)
             implementation(libs.ktor.client.content.negotiation)
+            // The client address test runs a real server and client on 127.0.0.1: the test engine has no peer address.
+            implementation(libs.ktor.server.cio)
+            implementation(libs.ktor.client.cio)
         }
     }
 }

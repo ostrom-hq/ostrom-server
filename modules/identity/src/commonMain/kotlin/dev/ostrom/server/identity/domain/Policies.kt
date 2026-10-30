@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
@@ -107,7 +108,7 @@ fun validateScopes(scopes: Collection<String>): Set<String> {
 fun normalizeEmail(raw: String): String {
     val email = raw.trim().lowercase()
     val at = email.indexOf('@')
-    val valid = email.length <= 254 && at > 0 && at == email.lastIndexOf('@') && at < email.length - 1 &&
+    val valid = email.length <= MAX_EMAIL_LENGTH && at > 0 && at == email.lastIndexOf('@') && at < email.length - 1 &&
         email.substring(at + 1).let { domain -> '.' in domain && !domain.startsWith('.') && !domain.endsWith('.') } &&
         email.none { it.isWhitespace() }
     if (!valid) throw InvalidEmailException()
@@ -147,3 +148,20 @@ class DeviceCodeNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Unknow
 /** The action needs a browser session of the user, not a token. */
 class SessionRequiredException :
     OstromException(ErrorKind.FORBIDDEN, "This action needs a signed-in browser session.")
+
+/**
+ * A free-text value as stored: trimmed and cut to [max] characters.
+ *
+ * @param raw The value, if any.
+ * @param max The longest kept.
+ *
+ * @return The value, or null when it is missing or blank.
+ */
+fun trimmedOrNull(raw: String?, max: Int): String? {
+    if (raw == null) return null
+    val trimmed = raw.trim().take(max)
+    return if (trimmed.isEmpty()) null else trimmed
+}
+
+/** The longest address SMTP can carry (RFC 5321 § 4.5.3.1.3, the path minus its brackets). */
+private const val MAX_EMAIL_LENGTH = 254

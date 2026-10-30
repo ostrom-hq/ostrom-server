@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.AuditEntry
@@ -41,7 +43,8 @@ class SupportTest {
         val log = AuditLogImpl(repository, signer, hasher, SettableClock(Instant.parse("2026-10-30T10:00:00.123456Z")))
         val orgId = Uuid.random()
 
-        val first = log.record(AuditEntry(orgId, Uuid.random(), "member.added", "member", "m1", mapOf("z" to "1", "a" to "2")))
+        val first =
+            log.record(AuditEntry(orgId, Uuid.random(), "member.added", "member", "m1", mapOf("z" to "1", "a" to "2")))
         val second = log.record(AuditEntry(orgId, null, "member.removed", "member", "m1"))
         val other = log.record(AuditEntry(null, null, "user.created", "user", "u1"))
 
@@ -51,7 +54,8 @@ class SupportTest {
         assertEquals(Instant.parse("2026-10-30T10:00:00.123Z"), first.occurredAt)
         assertEquals(signer.keyId, first.keyId)
         for (event in listOf(first, second, other)) {
-            val canonical = auditCanonicalForm(event.id, event.sequence, event.entry, event.occurredAt, event.previousHash)
+            val canonical =
+                auditCanonicalForm(event.id, event.sequence, event.entry, event.occurredAt, event.previousHash)
             assertEquals(hasher.hash(canonical), event.hash)
             assertTrue(signer.verify(canonical.encodeToByteArray(), Base64.decode(event.signature)))
         }
@@ -69,8 +73,10 @@ class SupportTest {
         )
 
         assertEquals(
-            """{"action":"a.b","actorId":null,"details":{"a":"é","b":"\"q\""},"id":"00000000-0000-4000-8000-000000000001",""" +
-                """"occurredAt":"2026-10-30T10:00:00Z","orgId":null,"previousHash":"abc","sequence":3,"targetId":"x",""" +
+            """{"action":"a.b","actorId":null,"details":{"a":"é","b":"\"q\""},""" +
+            """"id":"00000000-0000-4000-8000-000000000001",""" +
+                """"occurredAt":"2026-10-30T10:00:00Z","orgId":null,""" +
+                """"previousHash":"abc","sequence":3,"targetId":"x",""" +
                 """"targetType":"t","v":1}""",
             canonical,
         )
@@ -138,8 +144,10 @@ class SupportTest {
     @Test
     fun emailsAreNormalizedOrRefused() {
         assertEquals("ada@example.com", normalizeEmail("  Ada@Example.com "))
-        listOf("", "ada", "@example.com", "ada@", "ada@example", "a@b@c.com", "ada @example.com", "ada@.com", "ada@com.",
-            "a".repeat(250) + "@x.com").forEach { assertFailsWith<InvalidEmailException>(it) { normalizeEmail(it) } }
+        listOf(
+            "", "ada", "@example.com", "ada@", "ada@example", "a@b@c.com", "ada @example.com", "ada@.com", "ada@com.",
+            "a".repeat(250) + "@x.com",
+        ).forEach { assertFailsWith<InvalidEmailException>(it) { normalizeEmail(it) } }
     }
 
     @Test
@@ -167,13 +175,23 @@ class SupportTest {
         assertFalse(defaults.secureCookies)
 
         val production = IdentityConfig.from(
-            MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to "https://api.ostrom.run/", "OSTROM_CONSOLE_URL" to " https://app.ostrom.run ")),
+            MapConfigSource(
+                mapOf(
+                    "OSTROM_PUBLIC_URL" to "https://api.ostrom.run/",
+                    "OSTROM_CONSOLE_URL" to " https://app.ostrom.run ",
+                ),
+            ),
         )
         assertEquals("https://api.ostrom.run", production.publicUrl)
         assertEquals("https://app.ostrom.run", production.consoleUrl)
         assertTrue(production.secureCookies)
-        assertEquals("http://localhost:8080", IdentityConfig.from(MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to " "))).publicUrl)
-        assertFailsWith<InvalidConfigException> { IdentityConfig.from(MapConfigSource(mapOf("OSTROM_CONSOLE_URL" to "ftp://x"))) }
+        assertEquals(
+            "http://localhost:8080",
+            IdentityConfig.from(MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to " "))).publicUrl,
+        )
+        assertFailsWith<InvalidConfigException> {
+            IdentityConfig.from(MapConfigSource(mapOf("OSTROM_CONSOLE_URL" to "ftp://x")))
+        }
     }
 
     @Test

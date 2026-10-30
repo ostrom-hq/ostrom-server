@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.DuplicateIdentityException
@@ -42,7 +43,7 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
 
     override suspend fun loginTaken(login: String): Boolean = driver.fetchAll(
         Statement.create("SELECT 1 FROM identity_users WHERE login = :login").bind("login", login),
-    ).getOrThrow().isNotEmpty()
+    ).getOrThrow().firstOrNull() != null
 
     override suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant) = uniqueGuard {
         driver.transaction {
@@ -50,7 +51,8 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
                 Statement.create(
                     "INSERT INTO identity_users (id, login, display_name, primary_email, avatar_url, created_at) " +
                         "VALUES (:id, :login, :name, :email, :avatar, :at)",
-                ).bind("id", user.id).bind("login", user.login).bind("name", user.displayName).bind("email", user.primaryEmail)
+                ).bind("id", user.id).bind("login", user.login).bind("name", user.displayName)
+                    .bind("email", user.primaryEmail)
                     .bind("avatar", user.avatarUrl).bind("at", user.createdAt),
             ).getOrThrow()
             insertIdentity(this, user.id, identity, at)
@@ -67,7 +69,8 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
 
     override suspend fun listEmails(userId: Uuid): List<UserEmail> = driver.fetchAll(
         Statement.create(
-            "SELECT email, verified FROM identity_user_emails WHERE user_id = :id ORDER BY verified DESC, email LIMIT 50",
+            "SELECT email, verified FROM identity_user_emails WHERE user_id = :id ORDER BY verified DESC, " +
+                "email LIMIT 50",
         ).bind("id", userId),
     ).getOrThrow().map { UserEmail(it.get("email").asString(), it.get("verified").asBoolean()) }
 
@@ -76,49 +79,52 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
             .bind("id", userId),
     ).getOrThrow().map { it.get("issuer").asString() }
 
-    private suspend fun insertIdentity(executor: QueryExecutor, userId: Uuid, identity: VerifiedIdentity, at: Instant) {
-        // A known identity of the same user only refreshes its last use. Of another user, nothing is written and the
-        // call fails: the use case found it free a moment ago, so another sign-in took it in between (a race), and the
-        // caller retries, which then finds it. Writing nothing silently would leave a user without a way in.
-        val written = executor.execute(
-            Statement.create(
-                "INSERT INTO identity_identities (issuer, subject, user_id, email, created_at, last_used_at) " +
-                    "VALUES (:issuer, :subject, :user, :email, :at, :at) " +
-                    "ON CONFLICT (issuer, subject) DO UPDATE SET last_used_at = EXCLUDED.last_used_at " +
-                    "WHERE identity_identities.user_id = EXCLUDED.user_id",
-            ).bind("issuer", identity.issuer).bind("subject", identity.subject).bind("user", userId)
-                .bind("email", identity.email).bind("at", at),
-        ).getOrThrow()
-        if (written == 0L) throw DuplicateIdentityException()
-    }
-
-    private suspend fun upsertEmail(executor: QueryExecutor, userId: Uuid, email: UserEmail, at: Instant) {
-        // An e-mail becomes verified, never unverified.
-        executor.execute(
-            Statement.create(
-                "INSERT INTO identity_user_emails (user_id, email, verified, created_at) VALUES (:user, :email, :verified, :at) " +
-                    "ON CONFLICT (user_id, email) DO UPDATE SET verified = identity_user_emails.verified OR EXCLUDED.verified",
-            ).bind("user", userId).bind("email", email.email).bind("verified", email.verified).bind("at", at),
-        ).getOrThrow()
-    }
-
-    private inline fun <T> uniqueGuard(block: () -> T): T = try {
-        block()
-    } catch (error: SQLError) {
-        if (error.kind == SQLError.Kind.UniqueViolation) throw DuplicateIdentityException()
-        throw error
-    }
-
-    private fun ResultSet.Row.toUser() = User(
-        id = get("id").asUuid(),
-        login = get("login").asString(),
-        displayName = get("display_name").asString(),
-        primaryEmail = get("primary_email").asStringOrNull(),
-        avatarUrl = get("avatar_url").asStringOrNull(),
-        createdAt = get("created_at").asInstant(),
-    )
-
     private companion object {
         const val USER_COLUMNS = "u.id, u.login, u.display_name, u.primary_email, u.avatar_url, u.created_at"
     }
 }
+
+private suspend fun insertIdentity(executor: QueryExecutor, userId: Uuid, identity: VerifiedIdentity, at: Instant) {
+    // A known identity of the same user only refreshes its last use. Of another user, nothing is written and the
+    // call fails: the use case found it free a moment ago, so another sign-in took it in between (a race), and the
+    // caller retries, which then finds it. Writing nothing silently would leave a user without a way in.
+    val written = executor.execute(
+        Statement.create(
+            "INSERT INTO identity_identities (issuer, subject, user_id, email, created_at, last_used_at) " +
+                "VALUES (:issuer, :subject, :user, :email, :at, :at) " +
+                "ON CONFLICT (issuer, subject) DO UPDATE SET last_used_at = EXCLUDED.last_used_at " +
+                "WHERE identity_identities.user_id = EXCLUDED.user_id",
+        ).bind("issuer", identity.issuer).bind("subject", identity.subject).bind("user", userId)
+            .bind("email", identity.email).bind("at", at),
+    ).getOrThrow()
+    if (written == 0L) throw DuplicateIdentityException()
+}
+
+private suspend fun upsertEmail(executor: QueryExecutor, userId: Uuid, email: UserEmail, at: Instant) {
+    // An e-mail becomes verified, never unverified.
+    executor.execute(
+        Statement.create(
+            "INSERT INTO identity_user_emails (user_id, email, verified, created_at) VALUES (:user, " +
+                ":email, :verified, :at) " +
+                "ON CONFLICT (user_id, email) DO UPDATE SET verified = identity_user_emails.verified OR " +
+                "EXCLUDED.verified",
+        ).bind("user", userId).bind("email", email.email).bind("verified", email.verified).bind("at", at),
+    ).getOrThrow()
+}
+
+// Not inline: one copy, whichever repository method fails.
+private suspend fun <T> uniqueGuard(block: suspend () -> T): T = try {
+    block()
+} catch (error: SQLError) {
+    if (error.kind == SQLError.Kind.UniqueViolation) throw DuplicateIdentityException()
+    throw error
+}
+
+private fun ResultSet.Row.toUser() = User(
+    id = get("id").asUuid(),
+    login = get("login").asString(),
+    displayName = get("display_name").asString(),
+    primaryEmail = get("primary_email").asStringOrNull(),
+    avatarUrl = get("avatar_url").asStringOrNull(),
+    createdAt = get("created_at").asInstant(),
+)

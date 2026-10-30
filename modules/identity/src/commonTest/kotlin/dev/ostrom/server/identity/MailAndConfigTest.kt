@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -58,7 +60,8 @@ class MailAndConfigTest {
 
     @Test
     fun aResendFailureIsAMailNotSent() = runTest {
-        val refused = HttpClient(MockEngine { respond("{}", HttpStatusCode.UnprocessableEntity) }) { expectSuccess = false }
+        val refused =
+            HttpClient(MockEngine { respond("{}", HttpStatusCode.UnprocessableEntity) }) { expectSuccess = false }
         assertFailsWith<MailNotSentException> { ResendMailSender(refused, "k", "f").send(mail) }
 
         val down = HttpClient(MockEngine { error("network down") })
@@ -124,9 +127,12 @@ class MailAndConfigTest {
                     "OSTROM_GITHUB_CLIENT_ID" to " Iv1.a ", "OSTROM_GITHUB_CLIENT_SECRET" to "s1",
                     "OSTROM_GITHUB_WEB_URL" to "http://fake:9000/", "OSTROM_GITHUB_API_URL" to "http://fake:9000/api/",
                     "OSTROM_GOOGLE_CLIENT_ID" to "g", "OSTROM_GOOGLE_CLIENT_SECRET" to "s2",
-                    "OSTROM_GOOGLE_ISSUER" to "http://fake:9001", "OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://fake:9001/auth",
+                    "OSTROM_GOOGLE_ISSUER" to "http://fake:9001",
+                    "OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://fake:9001/auth",
                     "OSTROM_GOOGLE_TOKEN_URL" to "http://fake:9001/token",
-                    "OSTROM_RESEND_API_KEY" to "re_x", "OSTROM_MAIL_FROM" to "Me <me@x.test>", "OSTROM_MAIL_DIR" to "/tmp/m",
+                    "OSTROM_RESEND_API_KEY" to "re_x",
+                    "OSTROM_MAIL_FROM" to "Me <me@x.test>",
+                    "OSTROM_MAIL_DIR" to "/tmp/m",
                 ),
             ),
         )
@@ -135,7 +141,10 @@ class MailAndConfigTest {
         assertEquals("http://fake:9000", config.githubWebUrl)
         assertEquals("http://fake:9000/api", config.githubApiUrl)
         assertEquals(OAuthClient("g", "s2"), config.google)
-        assertEquals(OidcEndpoints(setOf("http://fake:9001"), "http://fake:9001/auth", "http://fake:9001/token"), config.googleEndpoints)
+        assertEquals(
+            OidcEndpoints(setOf("http://fake:9001"), "http://fake:9001/auth", "http://fake:9001/token"),
+            config.googleEndpoints,
+        )
         assertEquals("re_x", config.resendApiKey)
         assertEquals("Me <me@x.test>", config.mailFrom)
         assertEquals("/tmp/m", config.mailDirectory)
@@ -148,6 +157,8 @@ class MailAndConfigTest {
             mapOf("OSTROM_GOOGLE_CLIENT_SECRET" to "a"),
             mapOf("OSTROM_GOOGLE_ISSUER" to "http://x"),
             mapOf("OSTROM_GOOGLE_ISSUER" to "http://x", "OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://x/a"),
+            mapOf("OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://x/a"),
+            mapOf("OSTROM_GOOGLE_TOKEN_URL" to "http://x/t"),
         ).forEach { assertFailsWith<InvalidConfigException>(it.toString()) { SignInConfig.from(MapConfigSource(it)) } }
     }
 

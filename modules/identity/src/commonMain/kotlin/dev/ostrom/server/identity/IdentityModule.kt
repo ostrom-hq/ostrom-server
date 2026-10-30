@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
@@ -22,6 +23,7 @@ import dev.ostrom.server.identity.domain.OAuthProvider
 import dev.ostrom.server.identity.domain.RequestMagicLinkUseCase
 import dev.ostrom.server.identity.domain.RequestMagicLinkUseCaseImpl
 import dev.ostrom.server.identity.domain.SignInMethods
+import dev.ostrom.server.identity.domain.SignInServices
 import dev.ostrom.server.identity.domain.StartOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.StartOAuthSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
@@ -32,7 +34,9 @@ import dev.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import dev.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.OAuthAttemptsRepositoryImpl
+import dev.ostrom.server.identity.infrastructure.OidcEndpoints
 import dev.ostrom.server.identity.infrastructure.OidcProvider
+import dev.ostrom.server.identity.infrastructure.closeHttpClient
 import dev.ostrom.server.identity.infrastructure.ResendMailSender
 import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import dev.ostrom.server.identity.infrastructure.magicLinkMail
@@ -106,6 +110,7 @@ import dev.ostrom.server.kernel.auth.SignOutListener
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 import kotlin.time.Clock
 
 /**
@@ -117,6 +122,10 @@ import kotlin.time.Clock
  * [RevokeAgentTokensUseCase] for agent sessions.
  */
 object IdentityModule : ServerModule {
+    // Declared before koinModule: the object initializes in order, and the module lambda runs at once.
+    private val HTTP = named("identity-http")
+    private const val HTTP_TIMEOUT_MS = 10_000L
+
     override val name: String = "identity"
 
     override val koinModule: Module = module {
@@ -147,7 +156,9 @@ object IdentityModule : ServerModule {
         single<RotateTokenUseCase> { RotateTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<IssueAgentTokenUseCase> { IssueAgentTokenUseCaseImpl(get(), get(), get(), get()) }
         single<RevokeAgentTokensUseCase> { RevokeAgentTokensUseCaseImpl(get(), get()) }
-        single<StartDeviceAuthorizationUseCase> { StartDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<StartDeviceAuthorizationUseCase> {
+            StartDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get())
+        }
         single<GetDeviceAuthorizationUseCase> { GetDeviceAuthorizationUseCaseImpl(get(), get(), get()) }
         single<AnswerDeviceAuthorizationUseCase> { AnswerDeviceAuthorizationUseCaseImpl(get(), get(), get(), get()) }
         single<PollDeviceAuthorizationUseCase> { PollDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get()) }
@@ -160,22 +171,17 @@ object IdentityModule : ServerModule {
                     requestTimeoutMillis = HTTP_TIMEOUT_MS
                 }
             }
-        } onClose { it?.close() }
+        } onClose ::closeHttpClient
         single { signInMethods(get(), get(HTTP), get()) }
         single<MailSender> { mailSender(get(), get(HTTP), get()) }
         single<OAuthAttemptsRepository> { OAuthAttemptsRepositoryImpl(get()) }
         single<MagicLinksRepository> { MagicLinksRepositoryImpl(get()) }
-        single<StartOAuthSignInUseCase> {
-            val config = get<IdentityConfig>()
-            StartOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get(), config::callbackUrl)
-        }
-        single<CompleteOAuthSignInUseCase> {
-            val config = get<IdentityConfig>()
-            CompleteOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), config::callbackUrl)
-        }
+        single<StartOAuthSignInUseCase> { StartOAuthSignInUseCaseImpl(get(), get(), get()) }
+        single { SignInServices(get(), get(), get(), get(), get<IdentityConfig>()::callbackUrl) }
+        single<CompleteOAuthSignInUseCase> { CompleteOAuthSignInUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<RequestMagicLinkUseCase> {
             val config = get<IdentityConfig>()
-            RequestMagicLinkUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), ::magicLinkMail, config::magicLinkUrl)
+            RequestMagicLinkUseCaseImpl(get(), get(), get(), get(), ::magicLinkMail, config::magicLinkUrl)
         }
         single<VerifyMagicLinkUseCase> { VerifyMagicLinkUseCaseImpl(get(), get(), get(), get(), get()) }
         single<GitHubTokenVerifier> {
@@ -206,21 +212,24 @@ object IdentityModule : ServerModule {
         route.sessionRoutes(koin.get())
     }
 
-    private val HTTP = named("identity-http")
-    private const val HTTP_TIMEOUT_MS = 10_000L
-
     private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {
         val oauth = buildMap<IdentityProvider, OAuthProvider> {
-            config.github?.let { put(IdentityProvider.GITHUB, GitHubOAuthProvider(it, http, config.githubWebUrl, config.githubApiUrl)) }
+            config.github?.let {
+                put(IdentityProvider.GITHUB, GitHubOAuthProvider(it, http, config.githubWebUrl, config.githubApiUrl))
+            }
             config.google?.let {
                 put(
                     IdentityProvider.GOOGLE,
-                    OidcProvider(IdentityProvider.GOOGLE, config.googleEndpoints, it, http, clock, extraParameters = mapOf("prompt" to "select_account")),
+                    OidcProvider(IdentityProvider.GOOGLE, config.googleEndpoints.withAccountPicker(), it, http, clock),
                 )
             }
         }
         return SignInMethods(oauth, email = config.resendApiKey != null || config.mailDirectory != null)
     }
+
+    /** Google's consent page lets the person pick an account instead of reusing the last one silently. */
+    private fun OidcEndpoints.withAccountPicker() =
+        copy(extraParameters = extraParameters + ("prompt" to "select_account"))
 
     private fun mailSender(config: SignInConfig, http: HttpClient, clock: Clock): MailSender = when {
         config.resendApiKey != null -> ResendMailSender(http, config.resendApiKey, config.mailFrom)

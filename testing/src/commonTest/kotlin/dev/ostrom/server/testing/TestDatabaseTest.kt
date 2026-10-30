@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.testing
 
 import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.module.ServerModule
+import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.test.runTest
@@ -41,6 +44,51 @@ class TestDatabaseTest {
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
             )
             assertEquals(0, tables.getOrThrow().size, "A fresh database has no table")
+        } finally {
+            database.close()
+        }
+    }
+
+    private suspend fun Driver.text(sql: String, role: String? = null): String {
+        val statement = Statement.create(sql).let { if (role == null) it else it.bind("role", role) }
+        return fetchAll(statement).getOrThrow().single().get("value").asString()
+    }
+
+    private val bypasses = "SELECT CAST(rolbypassrls AS text) AS value FROM pg_roles WHERE rolname = current_user"
+    private val roles = "SELECT CAST(count(*) AS text) AS value FROM pg_roles WHERE rolname = :role"
+
+    @Test
+    fun aRoleIsCreatedForTheBlockAndDroppedAfter() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            val plain = database.withRole { role, driver ->
+                assertEquals(role, driver.text("SELECT CAST(current_user AS text) AS value"))
+                assertEquals("false", driver.text(bypasses))
+                role
+            }
+            val bypassing = database.withRole(bypassRowLevelSecurity = true) { role, driver ->
+                assertEquals("true", driver.text(bypasses))
+                role
+            }
+            assertEquals("0", database.driver.text(roles, plain), "The role is dropped")
+            assertEquals("0", database.driver.text(roles, bypassing), "The role is dropped")
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
+    fun aRoleIsDroppedWhenTheBlockFails() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            var created = ""
+            assertFailsWith<IllegalStateException> {
+                database.withRole { role, _ ->
+                    created = role
+                    error("test failure")
+                }
+            }
+            assertEquals("0", database.driver.text(roles, created))
         } finally {
             database.close()
         }

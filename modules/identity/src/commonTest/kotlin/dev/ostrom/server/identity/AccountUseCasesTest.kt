@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.AccountLinkRequiredException
@@ -110,7 +112,8 @@ class AccountUseCasesTest {
 
     @Test
     fun anInvalidProviderEmailIsIgnoredAndTheNameFallsBack() = runTest {
-        val user = resolve(VerifiedIdentity(IdentityProvider.OIDC, "s", "not-an-address", true, "  ", "http://insecure"))
+        val user =
+            resolve(VerifiedIdentity(IdentityProvider.OIDC, "s", "not-an-address", true, "  ", "http://insecure"))
 
         assertNull(user.primaryEmail)
         assertNull(user.avatarUrl)
@@ -125,7 +128,8 @@ class AccountUseCasesTest {
 
     @Test
     fun aTooLongAvatarUrlIsDropped() = runTest {
-        val user = resolve(VerifiedIdentity(IdentityProvider.GITHUB, "3", null, false, "A", "https://" + "a".repeat(3000)))
+        val user =
+            resolve(VerifiedIdentity(IdentityProvider.GITHUB, "3", null, false, "A", "https://" + "a".repeat(3000)))
 
         assertNull(user.avatarUrl)
     }
@@ -136,7 +140,7 @@ class AccountUseCasesTest {
         users.duplicatesToThrow = 1
         users.onDuplicate = {
             // The other sign-in created the user meanwhile.
-            users.users[winner] = dev.ostrom.server.identity.domain.User(winner, "Ada", null, null, clock.now)
+            users.users[winner] = dev.ostrom.server.identity.domain.User(winner, "ada", "Ada", null, null, clock.now)
             users.identities["github" to "1"] = winner
         }
 
@@ -234,7 +238,8 @@ class AccountUseCasesTest {
     @Test
     fun aWebSessionLastsThirtyDaysWithAPrefixedSecretAndItsCsrfToken() = runTest {
         val sessions = InMemoryWebSessionsRepository()
-        val started = StartWebSessionUseCaseImpl(sessions, CountingSecretGenerator(), FakeHasher(), clock)(Uuid.random())
+        val started =
+            StartWebSessionUseCaseImpl(sessions, CountingSecretGenerator(), FakeHasher(), clock)(Uuid.random())
 
         assertEquals("oss_secret1", started.secret)
         assertEquals("csrf(oss_secret1)", started.csrfToken)

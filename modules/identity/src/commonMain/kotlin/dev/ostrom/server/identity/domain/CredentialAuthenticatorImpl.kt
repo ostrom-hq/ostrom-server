@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
@@ -15,7 +16,8 @@ import kotlin.time.Instant
  *   for its kind: whatever its row says, a token never answers a gate (S2-04, S2-31).
  * - An agent token is an [PrincipalKind.AGENT] whose subject is its agent session, with the single [AGENT_SCOPE]:
  *   it never passes a console route (audit A2) and can only act on that session.
- * - A browser session acts as its user with all their rights, and needs the CSRF token on state-changing requests.
+ * - A browser session acts as its user with all their rights, and needs the CSRF token and an allowed `Origin` on
+ *   state-changing requests (S2-08).
  * - A session secret is never accepted as a bearer token, nor a token as a cookie.
  *
  * @param tokens The API tokens.
@@ -32,12 +34,8 @@ class CredentialAuthenticatorImpl(
     private val allowedOrigins: Set<String>,
 ) : TokenAuthenticator {
     override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
-        val kind = TokenKind.entries.firstOrNull { token.startsWith(it.prefix + "_") } ?: return null
-        if (token.length > MAX_SECRET_LENGTH) return null
-        val stored = tokens.findBySecretHash(hasher.hash(token)) ?: return null
-        val now = clock.now()
-        if (stored.kind != kind || stored.revokedAt != null || stored.expiresAt?.let { it <= now } == true) return null
-        if (stale(stored.lastUsedAt, now)) tokens.touch(stored.id, clock.nowMillis())
+        val stored = liveToken(token) ?: return null
+        if (stale(stored.lastUsedAt, clock.now())) tokens.touch(stored.id, clock.nowMillis())
         return when (stored.kind) {
             TokenKind.AGENT -> AuthenticatedPrincipal(
                 subjectId = checkNotNull(stored.agentSessionId) { "An agent token has no agent session." },
@@ -62,12 +60,8 @@ class CredentialAuthenticatorImpl(
         requireCsrf: Boolean,
         origin: String?,
     ): AuthenticatedPrincipal? {
-        if (!sessionToken.startsWith(SESSION_PREFIX + "_") || sessionToken.length > MAX_SECRET_LENGTH) return null
-        if (requireCsrf && !csrfHolds(sessionToken, csrfToken, origin)) return null
-        val session = sessions.findBySecretHash(hasher.hash(sessionToken)) ?: return null
-        val now = clock.now()
-        if (session.revokedAt != null || session.expiresAt <= now) return null
-        if (stale(session.lastSeenAt, now)) sessions.touch(session.id, clock.nowMillis())
+        val session = liveSession(sessionToken, csrfToken, requireCsrf, origin) ?: return null
+        if (stale(session.lastSeenAt, clock.now())) sessions.touch(session.id, clock.nowMillis())
         return AuthenticatedPrincipal(
             subjectId = session.userId.toString(),
             kind = PrincipalKind.USER,
@@ -76,10 +70,33 @@ class CredentialAuthenticatorImpl(
         )
     }
 
+    /** The live token a bearer secret names: its prefix says its kind, and the stored token must agree. */
+    private suspend fun liveToken(token: String): ApiToken? {
+        val kind = TokenKind.entries.firstOrNull { token.startsWith(it.prefix + "_") }
+        if (kind == null || token.length > MAX_SECRET_LENGTH) return null
+        val now = clock.now()
+        return tokens.findBySecretHash(hasher.hash(token))
+            ?.takeIf { it.kind == kind && it.revokedAt == null && it.expiresAt?.let { end -> end <= now } != true }
+    }
+
     /**
-     * A state-changing request with a session cookie (S2-08): the CSRF token (the kernel passes it only when the
-     * header repeats the readable cookie) is the session's, and the request comes from an allowed origin.
+     * The live session a cookie names; a state-changing request must also carry the session's CSRF token and come from
+     * an allowed origin (S2-08).
      */
+    private suspend fun liveSession(
+        sessionToken: String,
+        csrfToken: String?,
+        requireCsrf: Boolean,
+        origin: String?,
+    ): WebSession? {
+        val wellFormed = sessionToken.startsWith(SESSION_PREFIX + "_") && sessionToken.length <= MAX_SECRET_LENGTH
+        if (!wellFormed || requireCsrf && !csrfHolds(sessionToken, csrfToken, origin)) return null
+        val now = clock.now()
+        return sessions.findBySecretHash(hasher.hash(sessionToken))
+            ?.takeIf { it.revokedAt == null && it.expiresAt > now }
+    }
+
+    /** The kernel passes the CSRF token only when the header repeats the readable cookie (double submit). */
     private suspend fun csrfHolds(sessionToken: String, csrfToken: String?, origin: String?): Boolean =
         origin in allowedOrigins && csrfToken != null && constantTimeEquals(csrfToken, hasher.csrfToken(sessionToken))
 

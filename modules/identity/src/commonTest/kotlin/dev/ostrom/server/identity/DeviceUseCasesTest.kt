@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
@@ -123,7 +125,9 @@ class DeviceUseCasesTest {
     @Test
     fun anApprovedAuthorizationWithoutUserIsADefect() = runTest {
         val started = start("cli", "ip")
-        authorizations.update(started.authorization.id) { it.copy(status = DeviceAuthorizationStatus.APPROVED, userId = null) }
+        authorizations.update(started.authorization.id) {
+            it.copy(status = DeviceAuthorizationStatus.APPROVED, userId = null)
+        }
 
         assertFailsWith<IllegalStateException> { poll("secret1") }
     }

@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.server.kernel.auth.token
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.network.TrustedProxies
 import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -27,14 +29,15 @@ val OstromJson: Json = Json {
 const val SERVER_VERSION: String = "0.1.0-dev"
 
 /**
- * Installs the kernel's HTTP layer (JSON, type-safe resources, request ids, request logs, uniform errors, token
- * authentication, `/health`) and the routes of every module.
+ * Installs the kernel's HTTP layer (the client address behind trusted proxies, JSON, type-safe resources, request
+ * ids, request logs, uniform errors, token authentication, `/health` and `/ready`) and the routes of every module.
  *
  * @param koin The application's Koin, with the kernel module and every module's definitions loaded.
  * @param modules The functional modules, in order.
  */
 fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     val logger = koin.get<Logger>()
+    install(ClientAddress) { proxies = koin.getOrNull<TrustedProxies>() ?: TrustedProxies.NONE }
     install(ContentNegotiation) { json(OstromJson) }
     install(Resources)
     install(CallId) {
@@ -47,7 +50,7 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     configureErrors(logger)
     install(Authentication) { token(koin.get()) }
     routing {
-        healthRoutes(koin.getAll(), SERVER_VERSION)
+        healthRoutes(koin.getAll(), SERVER_VERSION, koin.getOrNull<Readiness>() ?: Readiness())
         modules.forEach { it.routes(this, koin) }
     }
 }

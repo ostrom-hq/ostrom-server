@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity.fakes
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -22,10 +24,10 @@ class InMemoryOAuthAttemptsRepository : OAuthAttemptsRepository {
     }
 
     override suspend fun consume(stateHash: String, now: Instant): OAuthAttempt? {
-        val attempt = attempts[stateHash] ?: return null
-        if (stateHash in used || attempt.expiresAt <= now) return null
-        used += stateHash
-        return attempt
+        val attempt = attempts[stateHash]
+        val usable = attempt != null && stateHash !in used && attempt.expiresAt > now
+        if (usable) used += stateHash
+        return attempt.takeIf { usable }
     }
 }
 
@@ -38,10 +40,10 @@ class InMemoryMagicLinksRepository : MagicLinksRepository {
     }
 
     override suspend fun consume(tokenHash: String, now: Instant): MagicLink? {
-        val link = links[tokenHash] ?: return null
-        if (tokenHash in used || link.expiresAt <= now) return null
-        used += tokenHash
-        return link
+        val link = links[tokenHash]
+        val usable = link != null && tokenHash !in used && link.expiresAt > now
+        if (usable) used += tokenHash
+        return link.takeIf { usable }
     }
 }
 
@@ -67,7 +69,12 @@ class FakeOAuthProvider(
     override fun authorizationUrl(state: String, codeChallenge: String, nonce: String, redirectUri: String): String =
         "https://idp.example/authorize?state=$state&challenge=$codeChallenge&nonce=$nonce&redirect=$redirectUri"
 
-    override suspend fun identity(code: String, codeVerifier: String, nonce: String, redirectUri: String): VerifiedIdentity {
+    override suspend fun identity(
+        code: String,
+        codeVerifier: String,
+        nonce: String,
+        redirectUri: String,
+    ): VerifiedIdentity {
         exchanges += listOf(code, codeVerifier, nonce, redirectUri)
         if (code != "good") throw ProviderRejectedException("bad code.")
         return identity

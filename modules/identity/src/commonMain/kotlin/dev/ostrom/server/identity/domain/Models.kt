@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
 import kotlin.time.Instant
@@ -45,6 +46,7 @@ enum class IdentityProvider(val key: String) {
     OIDC("oidc"),
     ;
 
+    /** Reads a stored provider name back. */
     companion object {
         /**
          * Reads a stored provider name.
@@ -88,7 +90,7 @@ data class VerifiedIdentity(
     val hostedDomain: String? = null,
 ) {
     /** The scope in which [subject] is unique: the provider, plus the connection for organization SSO. */
-    val issuer: String get() = connectionId?.let { "${provider.key}:$it" } ?: provider.key
+    val issuer: String get() = if (connectionId == null) provider.key else "${provider.key}:$connectionId"
 }
 
 /**
@@ -125,6 +127,7 @@ enum class TokenKind(val prefix: String) {
     AGENT("osa"),
     ;
 
+    /** Reads a stored kind back. */
     companion object {
         /**
          * Reads a stored kind.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity.fakes
 
 import dev.ostrom.server.identity.domain.ApiToken
@@ -62,7 +64,8 @@ class RecordingAuditLog : AuditLog {
 
     override suspend fun record(entry: AuditEntry): AuditEvent {
         entries += entry
-        return AuditEvent(Uuid.random(), entries.size.toLong(), entry, Instant.parse("2026-10-30T10:00:00Z"), null, "hash", "sig", "kid")
+        val occurredAt = Instant.parse("2026-10-30T10:00:00Z")
+        return AuditEvent(Uuid.random(), entries.size.toLong(), entry, occurredAt, null, "hash", "sig", "kid")
     }
 }
 
@@ -77,7 +80,8 @@ class InMemoryUsersRepository : UsersRepository {
 
     override suspend fun get(id: Uuid): User? = users[id]
 
-    override suspend fun findByIdentity(issuer: String, subject: String): User? = identities[issuer to subject]?.let(users::get)
+    override suspend fun findByIdentity(issuer: String, subject: String): User? =
+        identities[issuer to subject]?.let(users::get)
 
     override suspend fun findByVerifiedEmail(email: String): User? =
         emails.entries.firstOrNull { it.value[email] == true }?.key?.let(users::get)
@@ -95,7 +99,8 @@ class InMemoryUsersRepository : UsersRepository {
     }
 
     override suspend fun link(userId: Uuid, identity: VerifiedIdentity, email: UserEmail?, at: Instant) {
-        if (identities.getOrPut(identity.issuer to identity.subject) { userId } != userId) throw DuplicateIdentityException()
+        val owner = identities.getOrPut(identity.issuer to identity.subject) { userId }
+        if (owner != userId) throw DuplicateIdentityException()
         if (email != null) {
             val mine = emails.getOrPut(userId) { mutableMapOf() }
             mine[email.email] = (mine[email.email] ?: false) || email.verified
@@ -103,7 +108,8 @@ class InMemoryUsersRepository : UsersRepository {
     }
 
     override suspend fun listEmails(userId: Uuid): List<UserEmail> =
-        emails[userId].orEmpty().map { UserEmail(it.key, it.value) }.sortedWith(compareBy({ !it.verified }, { it.email }))
+        emails[userId].orEmpty().map { UserEmail(it.key, it.value) }
+            .sortedWith(compareBy({ !it.verified }, { it.email }))
 
     override suspend fun listIssuers(userId: Uuid): List<String> =
         identities.filterValues { it == userId }.keys.map { it.first }.distinct().sorted()
@@ -124,7 +130,8 @@ class InMemoryWebSessionsRepository : WebSessionsRepository {
         update(id) { it.copy(lastSeenAt = at) }
     }
 
-    override suspend fun revoke(id: Uuid, at: Instant) = update(id) { if (it.revokedAt == null) it.copy(revokedAt = at) else it }
+    override suspend fun revoke(id: Uuid, at: Instant) =
+        update(id) { if (it.revokedAt == null) it.copy(revokedAt = at) else it }
 
     override suspend fun revokeAllOfUser(userId: Uuid, at: Instant): Long {
         val live = sessions.filterValues { it.userId == userId && it.revokedAt == null }
@@ -148,13 +155,18 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
 
     override suspend fun findBySecretHash(secretHash: String): ApiToken? = tokens[secretHash]
 
-    override suspend fun get(userId: Uuid, id: Uuid): ApiToken? = tokens.values.firstOrNull { it.id == id && it.userId == userId }
+    override suspend fun get(userId: Uuid, id: Uuid): ApiToken? =
+        tokens.values.firstOrNull { it.id == id && it.userId == userId }
 
     override suspend fun listLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): List<ApiToken> =
-        tokens.values.filter { it.userId == userId && it.kind in kinds && it.revokedAt == null && (it.expiresAt?.let { e -> e > now } ?: true) }
+        tokens.values.filter {
+            it.userId == userId && it.kind in kinds && it.revokedAt == null &&
+                (it.expiresAt?.let { e -> e > now } ?: true)
+        }
             .sortedByDescending { it.createdAt }
 
-    override suspend fun countLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): Int = listLive(userId, kinds, now).size
+    override suspend fun countLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): Int =
+        listLive(userId, kinds, now).size
 
     override suspend fun touch(id: Uuid, at: Instant) {
         touches++
@@ -167,7 +179,13 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
         return true
     }
 
-    override suspend fun rotate(userId: Uuid, oldId: Uuid, replacement: ApiToken, secretHash: String, at: Instant): Boolean {
+    override suspend fun rotate(
+        userId: Uuid,
+        oldId: Uuid,
+        replacement: ApiToken,
+        secretHash: String,
+        at: Instant,
+    ): Boolean {
         if (failRotation) return false
         update(oldId) { it.copy(revokedAt = at) }
         tokens[secretHash] = replacement
@@ -185,7 +203,9 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
     }
 }
 
-class InMemoryDeviceAuthorizationsRepository(private val tokens: InMemoryApiTokensRepository) : DeviceAuthorizationsRepository {
+class InMemoryDeviceAuthorizationsRepository(
+    private val tokens: InMemoryApiTokensRepository,
+) : DeviceAuthorizationsRepository {
     val authorizations = mutableMapOf<String, DeviceAuthorization>()
     var refuseAnswer = false
     var refuseConsume = false
@@ -194,15 +214,19 @@ class InMemoryDeviceAuthorizationsRepository(private val tokens: InMemoryApiToke
         authorizations[deviceCodeHash] = authorization
     }
 
-    override suspend fun findByDeviceCodeHash(deviceCodeHash: String): DeviceAuthorization? = authorizations[deviceCodeHash]
+    override suspend fun findByDeviceCodeHash(deviceCodeHash: String): DeviceAuthorization? =
+        authorizations[deviceCodeHash]
 
     override suspend fun findPendingByUserCode(userCode: String, now: Instant): DeviceAuthorization? =
-        authorizations.values.firstOrNull { it.userCode == userCode && it.status == DeviceAuthorizationStatus.PENDING && it.expiresAt > now }
+        authorizations.values.firstOrNull {
+            it.userCode == userCode && it.status == DeviceAuthorizationStatus.PENDING && it.expiresAt > now
+        }
 
     override suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant): Boolean {
         if (refuseAnswer) return false
         update(id) {
-            it.copy(status = if (approved) DeviceAuthorizationStatus.APPROVED else DeviceAuthorizationStatus.DENIED, userId = userId)
+            val status = if (approved) DeviceAuthorizationStatus.APPROVED else DeviceAuthorizationStatus.DENIED
+            it.copy(status = status, userId = userId)
         }
         return true
     }
@@ -224,11 +248,15 @@ class InMemoryDeviceAuthorizationsRepository(private val tokens: InMemoryApiToke
 class InMemoryAuditRepository : AuditRepository {
     val events = mutableListOf<AuditEvent>()
 
-    override suspend fun append(orgId: Uuid?, build: suspend (previousHash: String?, sequence: Long) -> AuditEvent): AuditEvent {
+    override suspend fun append(
+        orgId: Uuid?,
+        build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
+    ): AuditEvent {
         val chain = events.filter { it.entry.orgId == orgId }
         return build(chain.lastOrNull()?.hash, chain.size + 1L).also { events += it }
     }
 
     override suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent> =
-        events.filter { it.entry.orgId == orgId && it.sequence < (beforeSequence ?: Long.MAX_VALUE) }.reversed().take(limit)
+        events.filter { it.entry.orgId == orgId && it.sequence < (beforeSequence ?: Long.MAX_VALUE) }
+            .reversed().take(limit)
 }

@@ -76,7 +76,7 @@ class IssueCliTokenUseCaseImpl(
     override suspend fun invoke(userId: Uuid, via: String?): IssuedToken {
         val now = clock.nowMillis()
         if (tokens.countLive(userId, USER_TOKEN_KINDS, now) >= MAX_TOKENS_PER_USER) throw TooManyTokensException()
-        val name = via?.trim()?.take(MAX_NAME)?.takeIf { it.isNotEmpty() } ?: DEFAULT_NAME
+        val name = trimmedOrNull(via, MAX_NAME) ?: DEFAULT_NAME
         val expiresAt = now + CLI_TOKEN_LIFETIME
         val issued = issue(secrets, TokenKind.CLI) { id, hint ->
             ApiToken(id, userId, null, name, TokenKind.CLI, CLI_SCOPES, hint, null, now, expiresAt, null, null)
@@ -134,7 +134,9 @@ class LauncherLoginUseCaseImpl(
 ) : LauncherLoginUseCase {
     override suspend fun invoke(githubToken: String, via: String?, source: String): LauncherLogin {
         if (githubToken.isBlank() || githubToken.length > MAX_GITHUB_TOKEN) throw GitHubTokenRejectedException()
-        if (!limiter.tryAcquire("launcher-login:$source", LIMIT, LIMIT_WINDOW)) throw RateLimitedException()
+        if (!limiter.tryAcquire("launcher-login:$source", LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
+            throw RateLimitedException()
+        }
         val account = verifier.verify(githubToken) ?: throw GitHubTokenRejectedException()
         val user = users.findByIdentity(IdentityProvider.GITHUB.key, account.id.toString())
             ?: throw LauncherAccountNotFoundException()
@@ -145,7 +147,7 @@ class LauncherLoginUseCaseImpl(
         /** GitHub tokens are far shorter; a longer value is refused before GitHub is asked. */
         const val MAX_GITHUB_TOKEN = 255
         const val LIMIT = 10
-        val LIMIT_WINDOW = 10.minutes
+        const val LIMIT_WINDOW_MINUTES = 10
     }
 }
 

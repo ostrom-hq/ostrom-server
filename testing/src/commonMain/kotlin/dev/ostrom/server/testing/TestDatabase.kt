@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.testing
 
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -19,19 +20,57 @@ import kotlin.uuid.Uuid
  */
 class TestDatabase private constructor(
     val driver: Driver,
-    private val admin: Driver,
+    private val admin: DatabaseConfig,
     private val name: String,
 ) {
+    private val url: String get() = admin.url.substringBeforeLast('/') + "/" + name
+
+    /**
+     * Runs [block] connected to this database as a fresh login role, like a deployment's serving role: not a
+     * superuser, owning nothing, granted only the use of the `public` schema (grant it the tables it needs). With
+     * [bypassRowLevelSecurity] the role has `BYPASSRLS`, the case the server refuses. The role is dropped afterwards.
+     *
+     * @param bypassRowLevelSecurity Whether the role bypasses row-level security.
+     * @param poolSize The connections of the role's pool; 1 makes every query run on the same session.
+     * @param block The test, given the role's name and a pool connected as the role.
+     *
+     * @return What [block] returns.
+     */
+    suspend fun <T> withRole(
+        bypassRowLevelSecurity: Boolean = false,
+        poolSize: Int = ROLE_POOL_SIZE,
+        block: suspend (role: String, driver: Driver) -> T,
+    ): T {
+        val role = "ostrom_test_role_" + Uuid.random().toHexString()
+        val password = Uuid.random().toHexString()
+        val bypass = if (bypassRowLevelSecurity) "BYPASSRLS" else "NOBYPASSRLS"
+        driver.execute(
+            "CREATE ROLE $role LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION $bypass PASSWORD '$password'",
+        ).getOrThrow()
+        try {
+            driver.execute("GRANT USAGE ON SCHEMA public TO $role").getOrThrow()
+            val connected = connectPostgres(DatabaseConfig(url, role, password, poolSize))
+            try {
+                return block(role, connected)
+            } finally {
+                connected.close()
+            }
+        } finally {
+            driver.execute("DROP OWNED BY $role").getOrThrow()
+            driver.execute("DROP ROLE $role").getOrThrow()
+        }
+    }
+
     /** Closes the pool and drops the database. */
     suspend fun close() {
         driver.close()
-        admin.execute("DROP DATABASE IF EXISTS $name WITH (FORCE)").getOrThrow()
-        admin.close()
+        administer(admin, "DROP DATABASE IF EXISTS $name WITH (FORCE)")
     }
 
     /** Creating test databases. */
     companion object {
         private const val POOL_SIZE = 4
+        private const val ROLE_POOL_SIZE = 2
 
         /**
          * Creates a fresh database.
@@ -55,17 +94,20 @@ class TestDatabase private constructor(
                 password = environment["OSTROM_TEST_DATABASE_PASSWORD"],
                 maxConnections = 1,
             )
-            val admin = connectPostgres(config)
             val name = "ostrom_test_" + Uuid.random().toHexString()
-            var database: TestDatabase? = null
+            administer(config, "CREATE DATABASE $name")
+            val testUrl = config.url.substringBeforeLast('/') + "/" + name
+            val driver = connectPostgres(config.copy(url = testUrl, maxConnections = POOL_SIZE))
+            return TestDatabase(driver, config, name)
+        }
+
+        /** Runs [sql] on a connection to the configured database opened for it alone, closed whatever happens. */
+        private suspend fun administer(config: DatabaseConfig, sql: String) {
+            val admin = connectPostgres(config)
             try {
-                admin.execute("CREATE DATABASE $name").getOrThrow()
-                val testUrl = config.url.substringBeforeLast('/') + "/" + name
-                val driver = connectPostgres(config.copy(url = testUrl, maxConnections = POOL_SIZE))
-                database = TestDatabase(driver, admin, name)
-                return database
+                admin.execute(sql).getOrThrow()
             } finally {
-                if (database == null) admin.close()
+                admin.close()
             }
         }
     }

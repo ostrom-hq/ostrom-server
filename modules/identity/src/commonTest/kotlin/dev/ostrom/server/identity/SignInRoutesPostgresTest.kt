@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -6,6 +8,7 @@ import dev.ostrom.server.identity.domain.MagicLinksRepository
 import dev.ostrom.server.identity.domain.MailSender
 import dev.ostrom.server.identity.domain.OAuthAttempt
 import dev.ostrom.server.identity.domain.OAuthAttemptsRepository
+import dev.ostrom.server.identity.domain.RateLimiter
 import dev.ostrom.server.identity.domain.SignInMethods
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.fakes.FakeOAuthProvider
@@ -42,6 +45,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -61,7 +65,9 @@ class SignInRoutesPostgresTest {
         const val WORKSPACE = "example.com"
     }
     private val overrides = module {
-        single { SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = true) }
+        single {
+            SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = true)
+        }
         single<MailSender> { mail }
     }
 
@@ -70,7 +76,10 @@ class SignInRoutesPostgresTest {
 
     @Test
     fun theLoginPageListsTheOfferedMethods() = serverTest(listOf(IdentityModule), overrides) { server ->
-        assertEquals(listOf("github", "google", "email"), server.client.get("/api/v1/auth/providers").body<ProvidersResponse>().methods)
+        assertEquals(
+            listOf("github", "google", "email"),
+            server.client.get("/api/v1/auth/providers").body<ProvidersResponse>().methods,
+        )
     }
 
     @Test
@@ -117,42 +126,72 @@ class SignInRoutesPostgresTest {
         assertEquals(listOf("Lax", "Lax"), listOf(sessionCookie, csrfCookie).map { it.extensions["SameSite"] })
         assertEquals(listOf("/", "/"), listOf(sessionCookie.path, csrfCookie.path))
         val session = sessionCookie.value
-        val profile = browser.get("/api/v1/auth/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session") }.body<ProfileResponse>()
+        val profile = browser.get("/api/v1/auth/me") {
+            header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session")
+        }.body<ProfileResponse>()
         assertEquals("Ada", profile.displayName)
 
         // Google proves the same verified e-mail: same account, one more way in.
         val googleStart = browser.get("/api/v1/auth/google/start")
-        val googleState = assertNotNull(Url(assertNotNull(googleStart.headers[HttpHeaders.Location])).parameters["state"])
+        val googleState =
+            assertNotNull(Url(assertNotNull(googleStart.headers[HttpHeaders.Location])).parameters["state"])
         val googleCallback = browser.get("/api/v1/auth/google/callback?code=good&state=$googleState") {
             header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$googleState")
         }
         assertEquals("http://localhost:5173/", googleCallback.headers[HttpHeaders.Location])
         val second = assertNotNull(googleCallback.cookie(SESSION_COOKIE)).value
-        val merged = browser.get("/api/v1/auth/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$second") }.body<ProfileResponse>()
+        val merged = browser.get("/api/v1/auth/me") {
+            header(HttpHeaders.Cookie, "$SESSION_COOKIE=$second")
+        }.body<ProfileResponse>()
         assertEquals(profile.id, merged.id)
         assertEquals(listOf("github", "google"), merged.providers)
     }
 
     @Test
+    fun aStartPastTheRateLimitSendsBackToTheLoginPage() = serverTest(
+        listOf(IdentityModule),
+        module {
+            includes(overrides)
+            single<RateLimiter> {
+                object : RateLimiter {
+                    override suspend fun tryAcquire(key: String, limit: Int, window: Duration) = false
+                }
+            }
+        },
+    ) {
+        val browser = createClient { followRedirects = false }
+        val start = browser.get("/api/v1/auth/github/start")
+        assertEquals("http://localhost:5173/login?error=rate_limited", start.headers[HttpHeaders.Location])
+    }
+
+    @Test
     fun aCallbackFromAnotherBrowserOrARefusalSignsNobodyIn() = serverTest(listOf(IdentityModule), overrides) { server ->
         val browser = createClient { followRedirects = false }
-        val state = Url(assertNotNull(browser.get("/api/v1/auth/github/start").headers[HttpHeaders.Location])).parameters["state"]
+        val startLocation = assertNotNull(browser.get("/api/v1/auth/github/start").headers[HttpHeaders.Location])
+        val state = Url(startLocation).parameters["state"]
 
         val noCookie = browser.get("/api/v1/auth/github/callback?code=good&state=$state")
         assertEquals("http://localhost:5173/login?error=expired", noCookie.headers[HttpHeaders.Location])
         assertNull(noCookie.cookie(SESSION_COOKIE))
         val denied = browser.get("/api/v1/auth/github/callback?error=access_denied&state=$state")
         assertEquals("http://localhost:5173/login?error=access_denied", denied.headers[HttpHeaders.Location])
-        val badCode = browser.get("/api/v1/auth/github/callback?code=bad&state=$state") { header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state") }
+        val badCode = browser.get("/api/v1/auth/github/callback?code=bad&state=$state") {
+            header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state")
+        }
         assertEquals("http://localhost:5173/login?error=refused", badCode.headers[HttpHeaders.Location])
         // The refused code consumed the attempt: the state cannot be replayed with a good code.
-        val replay = browser.get("/api/v1/auth/github/callback?code=good&state=$state") { header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state") }
+        val replay = browser.get("/api/v1/auth/github/callback?code=good&state=$state") {
+            header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$state")
+        }
         assertEquals("http://localhost:5173/login?error=expired", replay.headers[HttpHeaders.Location])
         assertNull(replay.cookie(SESSION_COOKIE))
     }
 
     @Test
-    fun aMagicLinkSignsUpOnceAndTheAnswerNeverTellsIfTheAccountExists() = serverTest(listOf(IdentityModule), overrides) { server ->
+    fun aMagicLinkSignsUpOnceAndTheAnswerNeverTellsIfTheAccountExists() = serverTest(
+        listOf(IdentityModule),
+        overrides,
+    ) { server ->
         suspend fun ask(email: String) = server.client.post("/api/v1/auth/email") {
             contentType(ContentType.Application.Json)
             setBody(MagicLinkRequest(email, "/welcome"))
@@ -174,7 +213,9 @@ class SignInRoutesPostgresTest {
         assertFalse(secret in verified.bodyAsText(), "No session in the body")
         assertEquals("/welcome", signedIn.redirect)
         val session = assertNotNull(verified.cookie(SESSION_COOKIE)).value
-        val profile = server.client.get("/api/v1/auth/me") { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session") }.body<ProfileResponse>()
+        val profile = server.client.get("/api/v1/auth/me") {
+            header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session")
+        }.body<ProfileResponse>()
         assertEquals("ada@example.com", profile.primaryEmail)
         assertEquals(signedIn.csrfToken, profile.csrfToken)
         assertEquals(signedIn.csrfToken, assertNotNull(verified.cookie(CSRF_COOKIE)).value)
@@ -197,7 +238,8 @@ class SignInRoutesPostgresTest {
         val attempts = server.koin.get<OAuthAttemptsRepository>()
         val links = server.koin.get<MagicLinksRepository>()
         val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
-        val attempt = OAuthAttempt(Uuid.random(), IdentityProvider.OIDC, Uuid.random(), "v", "n", "/x", now, now + 10.minutes)
+        val attempt =
+            OAuthAttempt(Uuid.random(), IdentityProvider.OIDC, Uuid.random(), "v", "n", "/x", now, now + 10.minutes)
         attempts.create(attempt, "state-hash")
         val link = MagicLink(Uuid.random(), "ada@example.com", "/y", now, now + 15.minutes)
         links.create(link, "token-hash")

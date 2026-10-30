@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.ApiToken
@@ -52,7 +53,8 @@ class WebSessionsRepositoryImpl(private val driver: Driver) : WebSessionsReposit
 
     override suspend fun touch(id: Uuid, at: Instant) {
         driver.execute(
-            Statement.create("UPDATE identity_web_sessions SET last_seen_at = :at WHERE id = :id").bind("at", at).bind("id", id),
+            Statement.create("UPDATE identity_web_sessions SET last_seen_at = :at WHERE id = :id")
+                .bind("at", at).bind("id", id),
         ).getOrThrow()
     }
 
@@ -64,7 +66,9 @@ class WebSessionsRepositoryImpl(private val driver: Driver) : WebSessionsReposit
     }
 
     override suspend fun revokeAllOfUser(userId: Uuid, at: Instant): Long = driver.execute(
-        Statement.create("UPDATE identity_web_sessions SET revoked_at = :at WHERE user_id = :user AND revoked_at IS NULL")
+        Statement.create(
+            "UPDATE identity_web_sessions SET revoked_at = :at WHERE user_id = :user AND revoked_at IS NULL",
+        )
             .bind("at", at).bind("user", userId),
     ).getOrThrow()
 }
@@ -78,7 +82,8 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
     override suspend fun create(token: ApiToken, secretHash: String) = insert(driver, token, secretHash)
 
     override suspend fun findBySecretHash(secretHash: String): ApiToken? = driver.fetchAll(
-        Statement.create("SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE secret_hash = :hash").bind("hash", secretHash),
+        Statement.create("SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE secret_hash = :hash")
+            .bind("hash", secretHash),
     ).getOrThrow().firstOrNull()?.toApiToken()
 
     override suspend fun get(userId: Uuid, id: Uuid): ApiToken? = driver.fetchAll(
@@ -89,31 +94,41 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
     override suspend fun listLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): List<ApiToken> = driver.fetchAll(
         Statement.create(
             "SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE user_id = :user AND revoked_at IS NULL " +
-                "AND (expires_at IS NULL OR expires_at > :now) AND kind IN :kinds ORDER BY created_at DESC, id LIMIT :limit",
+                "AND (expires_at IS NULL OR expires_at > :now) AND kind IN :kinds ORDER BY created_at DESC, id " +
+                "LIMIT :limit",
         ).bind("user", userId).bind("now", now).bind("kinds", kinds.map { it.name }).bind("limit", MAX_TOKENS_PER_USER),
     ).getOrThrow().map { it.toApiToken() }
 
     override suspend fun countLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): Int = driver.fetchAll(
         Statement.create(
-            "SELECT COUNT(*) AS live FROM (SELECT 1 FROM identity_api_tokens WHERE user_id = :user AND revoked_at IS NULL " +
+            "SELECT COUNT(*) AS live FROM (SELECT 1 FROM identity_api_tokens WHERE user_id = :user AND " +
+                "revoked_at IS NULL " +
                 "AND (expires_at IS NULL OR expires_at > :now) AND kind IN :kinds LIMIT :limit) AS capped",
         ).bind("user", userId).bind("now", now).bind("kinds", kinds.map { it.name }).bind("limit", MAX_TOKENS_PER_USER),
     ).getOrThrow().first().get("live").asInt()
 
     override suspend fun touch(id: Uuid, at: Instant) {
         driver.execute(
-            Statement.create("UPDATE identity_api_tokens SET last_used_at = :at WHERE id = :id").bind("at", at).bind("id", id),
+            Statement.create("UPDATE identity_api_tokens SET last_used_at = :at WHERE id = :id")
+                .bind("at", at).bind("id", id),
         ).getOrThrow()
     }
 
     override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant): Boolean = driver.execute(
         Statement.create(
-            "UPDATE identity_api_tokens SET revoked_at = :at WHERE id = :id AND user_id = :user AND revoked_at IS NULL " +
+            "UPDATE identity_api_tokens SET revoked_at = :at WHERE id = :id AND user_id = :user AND revoked_at " +
+                "IS NULL " +
                 "AND kind <> 'AGENT'",
         ).bind("at", at).bind("id", id).bind("user", userId),
     ).getOrThrow() == 1L
 
-    override suspend fun rotate(userId: Uuid, oldId: Uuid, replacement: ApiToken, secretHash: String, at: Instant): Boolean =
+    override suspend fun rotate(
+        userId: Uuid,
+        oldId: Uuid,
+        replacement: ApiToken,
+        secretHash: String,
+        at: Instant,
+    ): Boolean =
         driver.transaction {
             val revoked = execute(
                 Statement.create(
@@ -147,11 +162,14 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
 internal suspend fun insert(executor: QueryExecutor, token: ApiToken, secretHash: String) {
     executor.execute(
         Statement.create(
-            "INSERT INTO identity_api_tokens (id, user_id, org_id, name, kind, scopes, hint, agent_session_id, secret_hash, " +
-                "created_at, expires_at, last_used_at, revoked_at) VALUES (:id, :user, :org, :name, :kind, :scopes, :hint, " +
+            "INSERT INTO identity_api_tokens (id, user_id, org_id, name, kind, scopes, hint, agent_session_id, " +
+                "secret_hash, " +
+                "created_at, expires_at, last_used_at, revoked_at) VALUES (:id, :user, :org, :name, :kind, " +
+                ":scopes, :hint, " +
                 ":session, :hash, :created, :expires, NULL, NULL)",
         ).bind("id", token.id).bind("user", token.userId).bind("org", token.orgId).bind("name", token.name)
-            .bind("kind", token.kind.name).bind("scopes", token.scopes.sorted().joinToString(" ")).bind("hint", token.hint)
+            .bind("kind", token.kind.name).bind("scopes", token.scopes.sorted().joinToString(" "))
+            .bind("hint", token.hint)
             .bind("session", token.agentSessionId).bind("hash", secretHash).bind("created", token.createdAt)
             .bind("expires", token.expiresAt),
     ).getOrThrow()
@@ -164,7 +182,7 @@ internal fun ResultSet.Row.toApiToken() = ApiToken(
     orgId = get("org_id").asUuidOrNull(),
     name = get("name").asString(),
     kind = TokenKind.of(get("kind").asString()),
-    scopes = get("scopes").asString().split(' ').filter { it.isNotEmpty() }.toSet(),
+    scopes = get("scopes").asString().split(' ').toSet() - "",
     hint = get("hint").asString(),
     agentSessionId = get("agent_session_id").asStringOrNull(),
     createdAt = get("created_at").asInstant(),

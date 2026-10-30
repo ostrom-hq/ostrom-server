@@ -1,7 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 rootProject.name = "ostrom-server"
 
-// No TYPESAFE_PROJECT_ACCESSORS (CONVENTIONS section 9, as on main): the module `artifacts` would generate an
-// accessor that clashes with ModuleDependency.getArtifacts(), and no build file uses `projects.`.
+// No TYPESAFE_PROJECT_ACCESSORS (CONVENTIONS section 9): the module `artifacts` would generate an accessor that
+// clashes with ProjectDependency.getArtifacts() and breaks the build. Modules depend on project(":path").
 
 pluginManagement {
     includeBuild("build-logic")
@@ -32,7 +33,7 @@ if (providers.gradleProperty("ostrom.core.local").orNull == "true") {
     includeBuild("../ostrom-core")
 }
 
-include(":kernel", ":testing", ":app")
+include(":kernel", ":testing", ":app", ":runner")
 
 // Every directory of modules/ with a build file is a functional module (:modules:<name>), discovered here so that
 // adding a module never edits this file.
@@ -40,3 +41,11 @@ file("modules").listFiles()
     ?.filter { it.isDirectory && it.resolve("build.gradle.kts").exists() }
     ?.sortedBy { it.name }
     ?.forEach { include(":modules:${it.name}") }
+
+// Every directory of ee/modules/ with a build file is an enterprise module (:ee:modules:<name>, licensed under
+// ee/LICENSE). Discovered the same way, so that deleting ee/ gives the AGPL build with nothing else to edit; the app
+// registers what it finds (app/build.gradle.kts, ee/README.md).
+file("ee/modules").listFiles()
+    ?.filter { it.isDirectory && it.resolve("build.gradle.kts").exists() }
+    ?.sortedBy { it.name }
+    ?.forEach { include(":ee:modules:${it.name}") }
