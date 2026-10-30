@@ -1,7 +1,7 @@
 # Adding a functional module
 
 Every functional domain of the server (`identity`, `orgs`, `sessions`, `gates`, `receipts`, `compiler`,
-`mcp-relay`, `secrets`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`, `integrations-github`,
+`mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`, `integrations-github`,
 `integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already exists as an empty
 skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its single line in
 `app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference example: copy
@@ -200,6 +200,7 @@ Every request is already logged once by the kernel (method, path, status, durati
 | `OSTROM_LANGFUSE_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY` | — | Model calls to Langfuse (the three together) |
 | `OSTROM_POSTHOG_API_KEY`, `OSTROM_POSTHOG_HOST` | —, EU cloud | Product events to PostHog |
 | `OSTROM_POD_NAME` | random | `service.instance.id` (`ServerConfig.instanceId`; the chart sets it from the pod name) |
+| `OSTROM_USAGE_RETENTION_DAYS` | `400` | Days the usage ledger keeps its events (1 to 3650); older ones are purged every hour |
 
 A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
