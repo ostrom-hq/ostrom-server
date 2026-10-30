@@ -354,13 +354,8 @@ class GatesPostgresTest {
     @Test
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = gatesTest { server ->
         server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
-        // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
-        server.driver.execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
-        server.driver.execute("GRANT SELECT, INSERT ON gates_gates, gates_requests TO ostrom_rls_probe").getOrThrow()
+        // The test server's driver is the serving role, as in production: row level security applies to it.
         val counts = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             val none = fetchAll("SELECT COUNT(*) AS n FROM gates_gates").getOrThrow().first().get("n").asString()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
@@ -372,7 +367,6 @@ class GatesPostgresTest {
         }
         assertEquals(listOf("0", "0", "1"), counts, "No org set: nothing; org B: nothing; org A: its gate")
         val forged = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
             execute(
