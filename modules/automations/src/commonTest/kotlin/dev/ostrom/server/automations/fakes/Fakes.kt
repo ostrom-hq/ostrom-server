@@ -101,6 +101,7 @@ class TestClock(var now: Instant = Instant.parse("2026-10-30T10:00:00Z")) : Cloc
 }
 
 /** [WaitsRepository] in memory, with switches to lose races. */
+@Suppress("ReturnCount") // The fake mirrors the SQL guards one early return at a time.
 class InMemoryWaits : WaitsRepository {
     val waits = linkedMapOf<Uuid, Wait>()
     var loseNextAnswer = false
