@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.orgs.infrastructure
+
+import dev.ostrom.server.identity.domain.CreatePersonalTokenUseCase
+import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.ResolveUserUseCase
+import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.identity.domain.normalizeEmail
+import dev.ostrom.server.kernel.module.TestAccount
+import dev.ostrom.server.kernel.module.TestAccountSeeder
+import dev.ostrom.server.orgs.domain.CreateOrgUseCase
+import dev.ostrom.server.orgs.domain.ListMyOrgsUseCase
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+
+/**
+ * The QA account of `ostrom-server seed-test-account` (refused unless `OSTROM_ALLOW_TEST_ACCOUNTS=true`). It goes
+ * through the same use cases as a person's first e-mail sign-in, then their first team and a personal token: the
+ * free-plan guard, the rate limits and the token rules all apply, and no check is skipped. Seeding again finds the
+ * same person and team and issues a new token.
+ *
+ * @param resolveUser Finds or creates the person of a verified e-mail address.
+ * @param listMyOrgs The person's teams.
+ * @param createOrg Creates their team when they have none.
+ * @param createToken Issues the personal token.
+ */
+class TestAccountSeederImpl(
+    private val resolveUser: ResolveUserUseCase,
+    private val listMyOrgs: ListMyOrgsUseCase,
+    private val createOrg: CreateOrgUseCase,
+    private val createToken: CreatePersonalTokenUseCase,
+) : TestAccountSeeder {
+    override suspend fun seed(email: String): TestAccount {
+        val address = normalizeEmail(email)
+        // The magic link proves the address the same way: an e-mail identity is its own verified subject.
+        val user = resolveUser(VerifiedIdentity(IdentityProvider.EMAIL, address, address, true))
+        val membership = listMyOrgs(user.id).firstOrNull()
+            ?: createOrg(user.id, "QA ${address.substringBefore('@')}", null)
+        val issued = createToken(user.id, TEST_TOKEN_NAME, TEST_ACCOUNT_SCOPES, TEST_TOKEN_LIFETIME)
+        return TestAccount(address, issued.secret, membership.org.id.toString())
+    }
+
+    private companion object {
+        const val TEST_TOKEN_NAME = "qa-seed"
+        val TEST_TOKEN_LIFETIME: Duration = 30.days
+    }
+}
+
+/**
+ * The scopes of the QA token: every scope a route of the server checks today, as a person would tick them on a
+ * personal token. The identity module still strips what no token may hold (answering a gate, an agent's scope).
+ */
+val TEST_ACCOUNT_SCOPES: Set<String> = setOf(
+    "profile:read", "orgs:read", "orgs:write", "accounts:read", "accounts:write", "artifacts:read",
+    "artifacts:write", "billing:read", "budgets:read", "budgets:write", "cloud:read", "cloud:write",
+    "inference:read", "inference:admin", "mcp:read", "mcp:admin", "secrets:read", "secrets:write",
+    "sessions:write", "usage:read", "usage:write", "waits:read", "waits:write", "workflows:read",
+    "workflows:write",
+)

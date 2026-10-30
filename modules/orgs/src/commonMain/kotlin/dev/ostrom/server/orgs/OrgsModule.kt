@@ -4,6 +4,7 @@ package dev.ostrom.server.orgs
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.module.TestAccountSeeder
 import dev.ostrom.server.orgs.domain.AcceptInvitationUseCase
 import dev.ostrom.server.orgs.domain.AcceptInvitationUseCaseImpl
 import dev.ostrom.server.orgs.domain.ChangeRoleUseCase
@@ -63,6 +64,7 @@ import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembershipOrgResolver
 import dev.ostrom.server.orgs.infrastructure.OrgsMigrations
 import dev.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
+import dev.ostrom.server.orgs.infrastructure.TestAccountSeederImpl
 import dev.ostrom.server.orgs.presentation.InvitationCommands
 import dev.ostrom.server.orgs.presentation.MemberCommands
 import dev.ostrom.server.orgs.presentation.OrgCommands
@@ -98,6 +100,8 @@ object OrgsModule : ServerModule {
         single<InvitationMailer> { MailInvitationMailer(get()) }
         single<SeatPolicy> { FreePlanSeats() }
         single<PrincipalOrgResolver> { MembershipOrgResolver(get()) }
+        // Identity has no teams: the QA account (a person, their team, a token) is assembled here.
+        single<TestAccountSeeder> { TestAccountSeederImpl(get(), get(), get(), get()) }
         single {
             InvitationServices(get(), get(), get(), get(), get(), get<OrgsConfig>()::invitationUrl)
         }
