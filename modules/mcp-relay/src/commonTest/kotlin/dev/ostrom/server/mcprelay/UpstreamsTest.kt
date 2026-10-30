@@ -198,7 +198,7 @@ class UpstreamsTest {
         assertEquals(McpOutcome.TOOL_ERROR, toolError.outcome)
         val noUrl = HttpMcpUpstream(client { _, _ -> error("never") }, UpstreamAddressGuard())
             .listTools(httpTarget().copy(server = Relay.server().copy(url = null)), 1.seconds)
-        assertEquals("The MCP server has no URL.", (noUrl as UpstreamResult.Failure).message)
+        assertEquals("The MCP server's address is not allowed.", (noUrl as UpstreamResult.Failure).message)
         val private = HttpMcpUpstream(client { _, _ -> error("never") }, UpstreamAddressGuard())
             .listTools(
                 httpTarget().copy(server = Relay.server().copy(url = "https://169.254.169.254/latest")),
@@ -211,11 +211,28 @@ class UpstreamsTest {
     fun theGuardRefusesPrivateDestinations() {
         val guard = UpstreamAddressGuard()
         listOf(
-            "http://mcp.example.com", "https://localhost/x", "https://127.0.0.1", "https://10.1.2.3", "https://172.16.0.1",
-            "https://192.168.1.1", "https://169.254.169.254", "https://100.64.0.1", "https://0.0.0.0", "https://224.0.0.1",
-            "https://[::1]/", "https://[fd00::1]/", "https://[fe80::1]/", "https://[::ffff:127.0.0.1]/", "https://[2001:db8::1]/",
-            "https://api.svc", "https://grafana.monitoring.svc.cluster.local", "https://printer.local", "https://intranet",
-            "https://198.18.0.1", "https://192.0.2.1", "not a url",
+            "http://mcp.example.com",
+            "https://localhost/x",
+            "https://127.0.0.1",
+            "https://10.1.2.3",
+            "https://172.16.0.1",
+            "https://192.168.1.1",
+            "https://169.254.169.254",
+            "https://100.64.0.1",
+            "https://0.0.0.0",
+            "https://224.0.0.1",
+            "https://[::1]/",
+            "https://[fd00::1]/",
+            "https://[fe80::1]/",
+            "https://[::ffff:127.0.0.1]/",
+            "https://[2001:db8::1]/",
+            "https://api.svc",
+            "https://grafana.monitoring.svc.cluster.local",
+            "https://printer.local",
+            "https://intranet",
+            "https://198.18.0.1",
+            "https://192.0.2.1",
+            "not a url",
         ).forEach { assertFalse(guard.allows(it), it) }
         listOf(
             "https://mcp.grafana.com/mcp",

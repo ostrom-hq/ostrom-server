@@ -41,6 +41,7 @@ import dev.ostrom.server.mcprelay.domain.NoApprovalRequester
 import dev.ostrom.server.mcprelay.domain.PutMcpSettingsUseCase
 import dev.ostrom.server.mcprelay.domain.PutMcpSettingsUseCaseImpl
 import dev.ostrom.server.mcprelay.domain.RelayDeadlines
+import dev.ostrom.server.mcprelay.domain.RelayLimits
 import dev.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
 import dev.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
 import dev.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
@@ -81,7 +82,12 @@ import kotlin.time.Duration.Companion.milliseconds
  * @property deadlines List and call deadlines.
  */
 data class McpRelayConfig(val host: McpHostConfig?, val allowPrivateUpstreams: Boolean, val deadlines: RelayDeadlines) {
+    /** Reading the configuration. */
     companion object {
+        private val DEADLINE_MILLIS = 1_000L..600_000L
+        private const val LIST_MILLIS = 15_000L
+        private const val CALL_MILLIS = 60_000L
+
         /**
          * Reads it.
          *
@@ -90,22 +96,20 @@ data class McpRelayConfig(val host: McpHostConfig?, val allowPrivateUpstreams: B
         fun from(source: ConfigSource): McpRelayConfig {
             val url = source["OSTROM_MCP_HOST_URL"]?.takeIf { it.isNotBlank() }
             val token = source["OSTROM_MCP_HOST_TOKEN"]?.takeIf { it.isNotBlank() }
-            if ((url == null) !=
-                (token == null)
-            ) {
+            if ((url == null) != (token == null)) {
                 throw InvalidConfigException("OSTROM_MCP_HOST_URL and OSTROM_MCP_HOST_TOKEN go together.")
             }
             fun millis(key: String, default: Long): Long {
                 val value = source[key] ?: return default
-                return value.toLongOrNull()?.takeIf { it in 1_000..600_000 }
+                return value.toLongOrNull()?.takeIf { it in DEADLINE_MILLIS }
                     ?: throw InvalidConfigException("$key is 1000 to 600000 ms.")
             }
             return McpRelayConfig(
                 host = if (url != null && token != null) McpHostConfig(url, token) else null,
                 allowPrivateUpstreams = source["OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS"] == "true",
                 deadlines = RelayDeadlines(
-                    list = millis("OSTROM_MCP_LIST_TIMEOUT_MS", 15_000).milliseconds,
-                    call = millis("OSTROM_MCP_CALL_TIMEOUT_MS", 60_000).milliseconds,
+                    list = millis("OSTROM_MCP_LIST_TIMEOUT_MS", LIST_MILLIS).milliseconds,
+                    call = millis("OSTROM_MCP_CALL_TIMEOUT_MS", CALL_MILLIS).milliseconds,
                 ),
             )
         }
@@ -160,15 +164,15 @@ object McpRelayModule : ServerModule {
                 revealSecrets = get(),
                 upstream = get(),
                 approvals = getOrNull<ApprovalRequester>() ?: NoApprovalRequester(),
-                limiter = get(),
-                deadlines = get<McpRelayConfig>().deadlines,
+                limits = RelayLimits(get(), get<McpRelayConfig>().deadlines),
                 clock = get(),
             )
         }
         single {
             McpRelayRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
-                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(),
             )
         }
     }

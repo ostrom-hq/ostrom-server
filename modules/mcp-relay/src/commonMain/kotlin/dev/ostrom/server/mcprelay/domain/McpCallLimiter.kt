@@ -38,7 +38,7 @@ class McpCallLimiter(private val limits: McpLimits, private val clock: Clock) {
      * @return True when admitted; the caller then calls [release] exactly once.
      */
     suspend fun acquire(orgId: Uuid, memberId: Uuid, serverId: Uuid): Boolean = mutex.withLock {
-        val minute = clock.now().epochSeconds / 60
+        val minute = clock.now().epochSeconds / SECONDS_PER_MINUTE
         val member = "$orgId:$serverId:$memberId"
         val server = "$orgId:$serverId"
         val admitted = (running[member] ?: 0) < limits.memberConcurrency &&
@@ -74,3 +74,5 @@ class McpCallLimiter(private val limits: McpLimits, private val clock: Clock) {
         const val MAX_KEYS = 10_000
     }
 }
+
+private const val SECONDS_PER_MINUTE = 60

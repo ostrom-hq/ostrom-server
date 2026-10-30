@@ -15,7 +15,7 @@ import dev.ostrom.server.mcprelay.domain.McpSharing
 import dev.ostrom.server.mcprelay.domain.McpTransport
 import dev.ostrom.server.mcprelay.domain.NoApprovalRequester
 import dev.ostrom.server.mcprelay.domain.PolicyEffect
-import dev.ostrom.server.mcprelay.domain.RelayDeadlines
+import dev.ostrom.server.mcprelay.domain.RelayLimits
 import dev.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
 import dev.ostrom.server.mcprelay.domain.UpstreamResult
 import dev.ostrom.server.secrets.domain.Caller
@@ -54,8 +54,7 @@ class RelayMcpMessageUseCaseTest {
         reveal,
         upstream,
         approvals,
-        McpCallLimiter(limits, clock),
-        RelayDeadlines(),
+        RelayLimits(McpCallLimiter(limits, clock)),
         clock,
     )
 

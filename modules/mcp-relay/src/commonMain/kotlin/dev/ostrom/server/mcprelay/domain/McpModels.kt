@@ -88,6 +88,7 @@ data class ToolPolicy(val tools: Set<String>?) {
      */
     fun allows(tool: String): Boolean = tools == null || tool in tools
 
+    /** The policy that allows everything. */
     companion object {
         /** Every tool. */
         val ALL: ToolPolicy = ToolPolicy(null)
@@ -126,7 +127,17 @@ data class EffectiveServer(val server: McpServer, val assignment: McpAssignment)
 enum class McpOperation { LIST, CALL }
 
 /** How a relayed operation ended. Never arguments, results or credentials: outcomes only. */
-enum class McpOutcome { OK, TOOL_ERROR, DENIED, APPROVAL_REQUIRED, UPSTREAM_ERROR, TIMEOUT, TOO_LARGE, RATE_LIMITED, CANCELLED }
+enum class McpOutcome {
+    OK,
+    TOOL_ERROR,
+    DENIED,
+    APPROVAL_REQUIRED,
+    UPSTREAM_ERROR,
+    TIMEOUT,
+    TOO_LARGE,
+    RATE_LIMITED,
+    CANCELLED,
+}
 
 /**
  * One journal row.
@@ -192,6 +203,7 @@ data class McpUsage(
  *   TeamCode keeps `teamcode`.
  */
 data class McpSettings(val agentPrefix: String) {
+    /** The defaults. */
     companion object {
         /** The default prefix. */
         const val DEFAULT_PREFIX: String = "ostrom"

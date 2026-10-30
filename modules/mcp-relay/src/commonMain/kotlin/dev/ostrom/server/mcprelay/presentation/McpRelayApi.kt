@@ -1,5 +1,23 @@
 package dev.ostrom.server.mcprelay.presentation
 
+import dev.ostrom.server.mcprelay.domain.AssignMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.CreateArgumentPolicyUseCase
+import dev.ostrom.server.mcprelay.domain.CreateMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.DeleteArgumentPolicyUseCase
+import dev.ostrom.server.mcprelay.domain.DeleteMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.GetMcpSettingsUseCase
+import dev.ostrom.server.mcprelay.domain.ListArgumentPoliciesUseCase
+import dev.ostrom.server.mcprelay.domain.ListMcpAssignmentsUseCase
+import dev.ostrom.server.mcprelay.domain.ListMcpCallsUseCase
+import dev.ostrom.server.mcprelay.domain.ListMcpServersUseCase
+import dev.ostrom.server.mcprelay.domain.ListMemberServersUseCase
+import dev.ostrom.server.mcprelay.domain.McpUsageUseCase
+import dev.ostrom.server.mcprelay.domain.PutMcpSettingsUseCase
+import dev.ostrom.server.mcprelay.domain.RelayMcpMessageUseCase
+import dev.ostrom.server.mcprelay.domain.UnassignMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.UpdateMcpServerUseCase
+import dev.ostrom.server.secrets.domain.CallerResolver
+import dev.ostrom.server.secrets.domain.SecretDirectoryUseCase
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
@@ -282,3 +300,25 @@ data class McpUsageRow(
  */
 @Serializable
 data class McpUsageResponse(val byServer: Map<String, Long>, val byTool: Map<String, Long>, val rows: List<McpUsageRow>)
+
+/** What the relay routes need. */
+data class McpRelayRoutesDependencies(
+    val callers: CallerResolver,
+    val createServer: CreateMcpServerUseCase,
+    val updateServer: UpdateMcpServerUseCase,
+    val deleteServer: DeleteMcpServerUseCase,
+    val listServers: ListMcpServersUseCase,
+    val assign: AssignMcpServerUseCase,
+    val unassign: UnassignMcpServerUseCase,
+    val listAssignments: ListMcpAssignmentsUseCase,
+    val createPolicy: CreateArgumentPolicyUseCase,
+    val deletePolicy: DeleteArgumentPolicyUseCase,
+    val listPolicies: ListArgumentPoliciesUseCase,
+    val getSettings: GetMcpSettingsUseCase,
+    val putSettings: PutMcpSettingsUseCase,
+    val listCalls: ListMcpCallsUseCase,
+    val usage: McpUsageUseCase,
+    val listMemberServers: ListMemberServersUseCase,
+    val relay: RelayMcpMessageUseCase,
+    val directory: SecretDirectoryUseCase,
+)

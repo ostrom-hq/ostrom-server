@@ -98,14 +98,8 @@ class HttpMcpUpstream(
         deadline: Duration,
         block: suspend (Session) -> UpstreamResult<T>,
     ): UpstreamResult<T> {
-        val url =
-            target.server.url ?: return UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server has no URL.")
-        if (!guard.allows(
-                url,
-            )
-        ) {
-            return UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server's address is not allowed.")
-        }
+        val url = target.server.url?.takeIf { guard.allows(it) }
+            ?: return UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server's address is not allowed.")
         val session = Session(url, target)
         try {
             return withTimeoutOrNull(deadline) {
@@ -160,12 +154,9 @@ class HttpMcpUpstream(
                         ),
                     )
                 }
-                response.headers["Mcp-Session-Id"]?.takeIf {
-                    it.length in 1..256 && it.all { c -> c.code in 0x21..0x7e }
-                }?.let {
-                    sessionId =
-                        it
-                }
+                response.headers["Mcp-Session-Id"]
+                    ?.takeIf { it.length in SESSION_ID_LENGTH && it.all { c -> c.code in VISIBLE_ASCII } }
+                    ?.let { sessionId = it }
                 val bytes = response.bodyAsChannel().readRemaining(maxResponseBytes.toLong() + 1).readByteArray()
                 if (bytes.size > maxResponseBytes) {
                     return@post Reply.Refused(
@@ -265,10 +256,13 @@ class HttpMcpUpstream(
 
     private fun JsonElement?.isId(id: Int): Boolean = (this as? JsonPrimitive)?.content == id.toString()
 
+    /** Limits of the client. */
     companion object {
         /** The default bound of an upstream answer: 4 MiB. */
         const val DEFAULT_MAX_RESPONSE_BYTES: Int = 4 * 1024 * 1024
         private const val MAX_PAGES = 16
+        private val SESSION_ID_LENGTH = 1..256
+        private val VISIBLE_ASCII = 0x21..0x7e
         private const val MAX_ERROR = 1000
         private val INITIALIZE_PARAMS = buildJsonObject {
             put("protocolVersion", RelayMcpMessageUseCaseImpl.PROTOCOL_VERSIONS.first())

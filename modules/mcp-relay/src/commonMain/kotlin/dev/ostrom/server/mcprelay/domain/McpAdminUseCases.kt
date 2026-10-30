@@ -39,7 +39,8 @@ interface CreateMcpServerUseCase {
     /**
      * Declares it.
      *
-     * @throws InvalidMcpServerException, McpServerNameTakenException, McpSecretNotFoundException, McpHostDisabledException
+     * @throws InvalidMcpServerException, McpServerNameTakenException, McpSecretNotFoundException,
+     *   McpHostDisabledException
      */
     suspend operator fun invoke(caller: Caller, payload: McpServerPayload): McpServer
 }
@@ -363,7 +364,7 @@ class ListMcpCallsUseCaseImpl(private val repository: McpRelayRepository) : List
         memberId: Uuid?,
     ): List<McpCall> {
         val member = if (caller.role.isAdmin) memberId else caller.memberId
-        return repository.listCalls(caller.orgId, before, limit.coerceIn(1, 200), server, member)
+        return repository.listCalls(caller.orgId, before, limit.coerceIn(1, MAX_CALLS), server, member)
     }
 }
 
@@ -377,7 +378,7 @@ interface McpUsageUseCase {
 class McpUsageUseCaseImpl(private val repository: McpRelayRepository, private val clock: Clock) : McpUsageUseCase {
     override suspend fun invoke(caller: Caller, days: Int): List<McpUsage> = repository.usage(
         caller.orgId,
-        clock.now() - days.coerceIn(1, 30).days,
+        clock.now() - days.coerceIn(1, MAX_USAGE_DAYS).days,
         if (caller.role.isAdmin) null else caller.memberId,
     )
 }
@@ -387,3 +388,6 @@ private suspend fun requireSecrets(revealSecrets: RevealSecretsUseCase, caller: 
     val found = revealSecrets(caller.orgId, ids).keys
     if (!found.containsAll(ids)) throw McpSecretNotFoundException()
 }
+
+private const val MAX_CALLS = 200
+private const val MAX_USAGE_DAYS = 30

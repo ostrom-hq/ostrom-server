@@ -21,56 +21,77 @@ class UpstreamAddressGuard(private val allowPrivate: Boolean = false) {
         val parsed = try {
             Url(url)
         } catch (_: IllegalArgumentException) {
-            return false
+            null
         }
-        if (parsed.protocol.name != "https") return false
-        if (allowPrivate) return true
-        val host = parsed.host.lowercase().removePrefix("[").removeSuffix("]").trimEnd('.')
-        if (host.isEmpty() ||
-            host == "localhost" ||
-            INTERNAL_SUFFIXES.any { host == it.drop(1) || host.endsWith(it) }
-        ) {
-            return false
+        return when {
+            parsed == null || parsed.protocol.name != "https" -> false
+            allowPrivate -> true
+            else -> isPublicHost(parsed.host.lowercase().removePrefix("[").removeSuffix("]").trimEnd('.'))
         }
-        ipv4(host)?.let { return isPublicIpv4(it) }
-        if (':' in host) return isPublicIpv6(host)
-        return '.' in host
     }
 
-    private fun ipv4(host: String): IntArray? {
-        val parts = host.split('.')
-        if (parts.size != 4) return null
-        val octets = parts.map { part ->
-            part.toIntOrNull()?.takeIf { it in 0..255 && part.length in 1..3 }
-                ?: return null
+    private fun isPublicHost(host: String): Boolean {
+        val address = ipv4(host)
+        return when {
+            host.isEmpty() ||
+                host == "localhost" ||
+                INTERNAL_SUFFIXES.any {
+                    host == it.drop(1) || host.endsWith(it)
+                } -> false
+            address != null -> BLOCKED_IPV4.none { it.contains(address) }
+            ':' in host -> isPublicIpv6(host)
+            else -> '.' in host
         }
-        return octets.toIntArray()
     }
-
-    private fun isPublicIpv4(o: IntArray): Boolean = !(
-        o[0] == 0 ||
-            o[0] == 10 ||
-            o[0] == 127 ||
-            o[0] >= 224 ||
-            (o[0] == 100 && o[1] in 64..127) ||
-            (o[0] == 169 && o[1] == 254) ||
-            (o[0] == 172 && o[1] in 16..31) ||
-            (o[0] == 192 && o[1] == 168) ||
-            (o[0] == 192 && o[1] == 0 && o[2] in setOf(0, 2)) ||
-            (o[0] == 198 && o[1] in 18..19) ||
-            (o[0] == 198 && o[1] == 51 && o[2] == 100) ||
-            (o[0] == 203 && o[1] == 0 && o[2] == 113)
-        )
 
     private fun isPublicIpv6(host: String): Boolean {
         // Global unicast is 2000::/3; documentation (2001:db8::/32) and every embedded-IPv4 form are refused.
-        val first = host.substringBefore(':').toIntOrNull(16) ?: return false
-        if (first !in 0x2000..0x3fff) return false
-        if (host.startsWith("2001:db8") || host.startsWith("2001:0db8") || host.startsWith("2002:")) return false
-        return '.' !in host
+        val first = host.substringBefore(':').toIntOrNull(HEX)
+        val global = first != null && first in GLOBAL_UNICAST && BLOCKED_IPV6_PREFIXES.none { host.startsWith(it) }
+        return global && '.' !in host
+    }
+
+    /** An IPv4 block, such as `10.0.0.0/8`. */
+    private class Block(cidr: String) {
+        private val bits = cidr.substringAfter('/').toInt()
+        private val base = cidr.substringBefore('/').split('.')
+            .fold(0u) { address, octet -> (address shl OCTET_BITS) or octet.toUInt() }
+
+        fun contains(address: UInt): Boolean = (address xor base) shr (IPV4_BITS - bits) == 0u
     }
 
     private companion object {
+        const val HEX = 16
+        const val IPV4_BITS = 32
+        const val OCTETS = 4
+        const val OCTET_BITS = 8
+        val OCTET = 0..255
+        val OCTET_DIGITS = 1..3
+        val GLOBAL_UNICAST = 0x2000..0x3fff
         val INTERNAL_SUFFIXES = listOf(".local", ".internal", ".localhost", ".cluster.local", ".svc", ".home.arpa")
+        val BLOCKED_IPV6_PREFIXES = listOf("2001:db8", "2001:0db8", "2002:")
+
+        /** This network, private, loopback, CGNAT, link-local (cloud metadata), documentation, benchmark, multicast. */
+        val BLOCKED_IPV4 = listOf(
+            "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+            "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
+            "224.0.0.0/3",
+        ).map(::Block)
+
+        /** A dotted IPv4 literal as a number, or null. */
+        fun ipv4(host: String): UInt? {
+            val parts = host.split('.')
+            val octets = parts.mapNotNull { part ->
+                part.toIntOrNull()?.takeIf {
+                    part.length in OCTET_DIGITS &&
+                        it in OCTET
+                }
+            }
+            return if (parts.size == OCTETS && octets.size == OCTETS) {
+                octets.fold(0u) { address, octet -> (address shl OCTET_BITS) or octet.toUInt() }
+            } else {
+                null
+            }
+        }
     }
 }
