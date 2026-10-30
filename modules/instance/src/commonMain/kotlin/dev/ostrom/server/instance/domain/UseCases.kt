@@ -1,5 +1,7 @@
 package dev.ostrom.server.instance.domain
 
+import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
@@ -76,4 +78,30 @@ class ListSigningKeysUseCaseImpl(
     private val repository: InstanceRepository,
 ) : ListSigningKeysUseCase {
     override suspend fun invoke(): List<SigningKey> = repository.listKeys()
+}
+
+/** Returns the key the instance signs with now, as recorded at start, without writing anything. */
+interface GetCurrentSigningKeyUseCase {
+    /**
+     * Reads the current key.
+     *
+     * @return The current key and its first-seen date.
+     *
+     * @throws OstromException With [ErrorKind.UNAVAILABLE] if the start has not recorded it (it always does).
+     */
+    suspend operator fun invoke(): SigningKey
+}
+
+/**
+ * [GetCurrentSigningKeyUseCase] on the repository.
+ *
+ * @param repository The storage.
+ * @param signer The instance's key.
+ */
+class GetCurrentSigningKeyUseCaseImpl(
+    private val repository: InstanceRepository,
+    private val signer: InstanceSigner,
+) : GetCurrentSigningKeyUseCase {
+    override suspend fun invoke(): SigningKey = repository.listKeys().firstOrNull { it.keyId == signer.keyId }
+        ?: throw OstromException(ErrorKind.UNAVAILABLE, "The signing key is not registered yet.")
 }
