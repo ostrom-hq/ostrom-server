@@ -203,7 +203,7 @@ class TracingTest {
         override fun histogram(name: String, unit: String, description: String, boundaries: List<Double>): Histogram =
             object : Histogram {
                 override fun record(value: Double, attributes: Attributes) {
-                    throw IllegalStateException("broken")
+                    error("broken")
                 }
             }
     }
