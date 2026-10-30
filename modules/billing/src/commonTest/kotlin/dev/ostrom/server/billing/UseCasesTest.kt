@@ -158,7 +158,7 @@ class UseCasesTest {
         assertEquals(Plan.BUSINESS, overview.effectivePlan)
         assertEquals(PERIOD, overview.period.start)
         assertEquals(1, overview.activePeople)
-        assertEquals(3_600, overview.usage.agentSeconds)
+        assertEquals(3_600L, overview.usage.agentSeconds)
         assertEquals(listOf(80), overview.alerts)
         assertTrue(overview.stripeEnabled)
     }
@@ -594,8 +594,8 @@ class UseCasesTest {
         assertEquals(1, world.notifier.hours.size, "80 % is raised once")
         val usage = world.usage(world.org, 60 * 3600L, 1)
         assertEquals(listOf(80, 100), world.notifier.hours.map { it.second })
-        assertEquals(301, usage.agentHours)
-        assertEquals(12, usage.sessions)
+        assertEquals(301L, usage.agentHours)
+        assertEquals(12L, usage.sessions)
     }
 
     @Test

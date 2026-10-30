@@ -90,7 +90,7 @@ class StripeWebhooksTest {
         )
         assertEquals("evt_1", event.id)
         assertEquals("checkout.session.completed", event.type)
-        assertEquals(1_800_000_000, event.created.epochSeconds)
+        assertEquals(1_800_000_000L, event.created.epochSeconds)
         assertEquals("cus_1", event.customerId)
         assertEquals("sub_1", event.subscriptionId)
         assertEquals("org-1", event.orgId)
@@ -105,7 +105,7 @@ class StripeWebhooksTest {
         )
         assertEquals("sub_9", event.subscriptionId)
         assertEquals("org-9", event.orgId)
-        assertEquals(0, event.created.epochSeconds)
+        assertEquals(0L, event.created.epochSeconds)
     }
 
     @Test
