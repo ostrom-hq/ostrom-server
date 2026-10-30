@@ -180,13 +180,14 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         fetchAll(
             Statement.create(
                 """
-                SELECT COUNT(*) AS n FROM automations_runs WHERE automation_id = :automation_id AND created_at >
-                :since AND source IN (:sources) AND status IN (:statuses)
+                SELECT COUNT(*) AS n FROM automations_runs WHERE automation_id = :automation_id AND created_at > :since
+                AND source = ANY(string_to_array(:sources, ',')) AND status = ANY(string_to_array(:statuses, ','))
                 """,
             ).bind("automation_id", automationId)
                 .bind("since", since)
-                .bind("sources", sources.map { it.wire })
-                .bind("statuses", statuses.map { it.wire }),
+                // Joined, then split in SQL: a bound list is sent as one record, not as a list of values.
+                .bind("sources", sources.joinToString(",") { it.wire })
+                .bind("statuses", statuses.joinToString(",") { it.wire }),
         ).getOrThrow().first().get("n").asInt()
     }
 

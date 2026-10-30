@@ -152,12 +152,8 @@ class InMemoryAutomations : AutomationsRepository {
 
     override suspend fun failQueuedBefore(before: Instant, now: Instant) {
         failedBefore = before
-        runs.replaceAll { _, run ->
-            if (run.status == RunStatus.QUEUED && run.createdAt < before) {
-                run.copy(status = RunStatus.FAILED, reason = "interrupted", updatedAt = now)
-            } else {
-                run
-            }
+        runs.entries.filter { (_, run) -> run.status == RunStatus.QUEUED && run.createdAt < before }.forEach { entry ->
+            entry.setValue(entry.value.copy(status = RunStatus.FAILED, reason = "interrupted", updatedAt = now))
         }
     }
 }
