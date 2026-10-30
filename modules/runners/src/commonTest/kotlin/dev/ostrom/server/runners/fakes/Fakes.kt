@@ -138,6 +138,9 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
         return all.drop(start).take(limit)
     }
 
+    override suspend fun executions(orgId: Uuid, ownerId: String, limit: Int): List<CloudSession> =
+        list(orgId, ownerId, null, Int.MAX_VALUE).filter { it.state.holdsExecution }.take(limit)
+
     override suspend fun setDesiredState(
         orgId: Uuid,
         id: Uuid,
