@@ -81,7 +81,7 @@ Ostrom is before its first public release.
 | `kernel/` | Configuration, structured logs, PostgreSQL and migrations, uniform HTTP errors, token authentication, the instance signing key, the `ServerModule` contract |
 | `modules/<name>/` | One functional domain each (`identity`, `orgs`, `receipts`…), with `domain/`, `infrastructure/`, `presentation/` packages |
 | `testing/` | Test helpers: a throwaway PostgreSQL database per test, a test server |
-| `app/` | The binary: wires the kernel and every module, applies migrations, serves HTTP |
+| `app/` | The binary: `migrate` applies every module's migrations, `serve` wires the kernel and every module and serves HTTP until SIGTERM, `seed-test-account` creates a QA account |
 | `ee/` | Enterprise modules (commercial license) |
 | `build-logic/` | The `ostrom.kmp` convention plugin of ostrom-core's CONVENTIONS (native targets, the test-only `jvm()` target, Kover 100 %, detekt), applied as `ostrom.native-module` |
 | `ci/build-linux.sh` | Builds the release linuxX64 binary into `dist/ostrom-server` (image, end-to-end and load tests) |
@@ -107,12 +107,14 @@ docker compose up -d postgres            # PostgreSQL on localhost:5432
 export OSTROM_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ./gradlew jvmTest koverHtmlReport        # unit and database tests, coverage report
 ./gradlew :app:linkDebugExecutableMacosArm64
-OSTROM_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres \
-  ./app/build/bin/macosArm64/debugExecutable/ostrom-server.kexe
-curl localhost:8080/health
+server=./app/build/bin/macosArm64/debugExecutable/ostrom-server.kexe
+OSTROM_DATABASE_MIGRATION_URL=postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom $server migrate
+OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom $server   # never as a superuser
+curl localhost:8080/ready
 ```
 
-Configuration keys are listed in [`docs/MODULES.md`](docs/MODULES.md#configuration).
+Configuration keys and commands are listed in [`docs/MODULES.md`](docs/MODULES.md#configuration); how organizations
+are kept apart in PostgreSQL is in [`docs/tenancy.md`](docs/tenancy.md).
 
 ## Repositories
 
