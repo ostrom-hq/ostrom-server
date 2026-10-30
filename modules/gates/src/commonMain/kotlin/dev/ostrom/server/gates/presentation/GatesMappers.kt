@@ -28,12 +28,15 @@ internal fun GateAskRequest.toAskGate() = AskGate(
     command = command.orEmpty(),
     harnessVersion = harnessVersion,
     push = push?.let { dto -> DomainPush(dto.remote, dto.refs.map { PushRef(it.ref, it.sha) }, dto.force == true) },
-    pullRequest = pr?.let {
-        it.number.trimStart('#').toIntOrNull() ?: throw InvalidGateRequestException("Malformed pull request number.")
-    },
+    pullRequest = pullRequestNumber(if (pr == null) ci?.pr else pr.number),
     diff = diff,
-    via = AskedVia.HOOK,
+    // The GitHub check sends its CI context, often with its pull request there only.
+    via = if (ci == null) AskedVia.HOOK else AskedVia.CI,
 )
+
+private fun pullRequestNumber(number: String?): Int? = number?.let {
+    it.trimStart('#').toIntOrNull() ?: throw InvalidGateRequestException("Malformed pull request number.")
+}
 
 /** Maps a gate for its caller: their own approval, when they are a person and an approver. */
 internal fun GateView.toResponse(actor: GateActor): GateResponse {

@@ -114,12 +114,14 @@ class OpenGateUseCaseImpl(
     // The live gate of the same action takes the new asker; a refused one answers again. An expired yes is not
     // joined: the same action asks a new one (S2-29).
     private suspend fun GatesTransaction.joined(request: OpenGate, same: List<Gate>): Opened? {
-        val live = same.firstOrNull { it.status in LIVE && !it.yesExpired(clock.now()) }
+        val now = clock.now()
+        val live = same.firstOrNull { it.status in LIVE && !it.yesExpired(now) && !it.reservationLapsed(now) }
         val refused = same.firstOrNull()?.takeIf { it.status == GateStatus.REJECTED }
         return when {
             live != null -> {
                 val joined = join(live, request)
-                if (joined != live) updateGate(joined)
+                // Only the askers: an answer, reserve or consume may have committed since `byKey` read the row.
+                if (joined != live) addAskers(joined)
                 Opened(joined, requestsOf(joined.orgId, joined.id), created = false)
             }
             refused != null -> Opened(refused, requestsOf(refused.orgId, refused.id), created = false)
