@@ -33,7 +33,7 @@ data class NotificationSettings(
          * @return The settings; a blank value counts as absent.
          */
         fun from(config: ConfigSource): NotificationSettings {
-            fun value(key: String) = config[key]?.trim()?.takeIf { it.isNotEmpty() }
+            fun value(key: String) = config[key].orEmpty().trim().ifEmpty { null }
             val defaults = NotificationSettings()
             return NotificationSettings(
                 expoUrl = value("OSTROM_EXPO_PUSH_URL") ?: defaults.expoUrl,

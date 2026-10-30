@@ -84,6 +84,8 @@ class NotificationsInfrastructureTest {
         assertFalse(read.toString().contains("expo-secret") || read.toString().contains("re_secret"))
         val defaults = NotificationSettings.from(MapConfigSource(mapOf("OSTROM_RESEND_API_KEY" to " ")))
         assertEquals(NotificationSettings(), defaults, "a blank value counts as absent")
+        assertTrue("expo=true, resend=true" in read.toString())
+        assertTrue("expo=false, resend=false" in defaults.toString())
     }
 
     @Test
