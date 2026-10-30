@@ -71,7 +71,6 @@ class GatePolicyUseCaseImpl(
         const val MAX_REPO = 200
 
         // The hooks refuse a policy valid for longer than an hour; the relay fetches it again on expiry.
-        val LIFETIME = 10.minutes
     }
 }
 
@@ -90,3 +89,6 @@ fun catalogJson(entries: List<CatalogEntry>): JsonObject = buildJsonObject {
 }
 
 private const val WAIT_SECONDS = 300
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val LIFETIME = 10.minutes
