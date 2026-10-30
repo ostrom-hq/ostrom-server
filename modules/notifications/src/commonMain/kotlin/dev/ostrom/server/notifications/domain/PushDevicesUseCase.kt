@@ -53,7 +53,7 @@ class PushDevicesUseCaseImpl(
     override suspend fun register(actor: GateActor, registration: PushRegistration): PushDevice {
         val person = personOf(actor)
         val token = registration.pushToken.trim()
-        val locale = registration.locale?.trim()?.takeIf { it.isNotEmpty() }
+        val locale = registration.locale.orEmpty().trim().ifEmpty { null }
         val valid = TOKEN.matches(token) && registration.provider == PROVIDER &&
             registration.platform in PLATFORMS && (locale == null || LOCALE.matches(locale))
         if (!valid) throw OstromException(ErrorKind.INVALID_REQUEST, "A phone registers an Expo push token.")
