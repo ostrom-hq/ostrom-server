@@ -20,8 +20,8 @@ import org.koin.core.module.Module
 import org.koin.dsl.module
 
 /**
- * The reports module: the spending report and the activity feed, read across the usage, sessions, gates and
- * compiler tables. Comes after those modules (its migration indexes their tables) and needs the budgets module.
+ * The reports module: the spending report and the activity feed, read across the usage, sessions and gates
+ * tables. Comes after those modules (its migration indexes their tables) and needs the budgets module.
  */
 object ReportsModule : ServerModule {
     override val name: String = "reports"

@@ -52,8 +52,7 @@ class GetSpendingUseCaseImpl(
         )
     }
 
-    private companion object {
-        val LARGEST_FIRST: Comparator<SpendingLine> =
-            compareByDescending<SpendingLine> { it.micros }.thenBy { it.key }
-    }
 }
+
+// Top-level, not in a private companion: a companion property has a getter nothing calls, which Kover counts.
+private val LARGEST_FIRST: Comparator<SpendingLine> = compareByDescending<SpendingLine> { it.micros }.thenBy { it.key }

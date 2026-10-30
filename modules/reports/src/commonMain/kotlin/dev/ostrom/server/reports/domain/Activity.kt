@@ -23,9 +23,6 @@ enum class ActivityKind(val wire: String, val byAgent: Boolean) {
 
     /** A person said yes or no to a gate. */
     GATE_DECIDED("gate.decided", byAgent = false),
-
-    /** A person accepted or edited a workflow (a signed decision). */
-    WORKFLOW_CHANGED("workflow.changed", byAgent = false),
 }
 
 /**
@@ -36,7 +33,7 @@ enum class ActivityKind(val wire: String, val byAgent: Boolean) {
  * @property kind What happened.
  * @property actor Who did it: the agent of a session, the first asker of a gate, the person who decided (their login,
  *   or the id the source keeps when no login is known).
- * @property subject What it is about: the person who runs a session, the label of a gate, the id of a workflow.
+ * @property subject What it is about: the person who runs a session, the label of a gate.
  * @property outcome How a gate was decided: `approved` or `rejected`.
  * @property repo The repository, for a session.
  * @property costMicros What an ended session cost, as the server measured it.

@@ -57,14 +57,13 @@ class ReportsPresentationTest {
         assertEquals("claude asked for a yes: mia", summary(ActivityKind.GATE_REQUESTED))
         assertEquals("claude said yes to: mia", summary(ActivityKind.GATE_DECIDED, "approved"))
         assertEquals("claude said no to: mia", summary(ActivityKind.GATE_DECIDED, "rejected"))
-        assertEquals("claude changed the workflow mia", summary(ActivityKind.WORKFLOW_CHANGED))
         val kinds = ActivityKind.entries.associate {
             it.wire to ActivityItem("i", NOW, it, "a", "s").toDto().actor.kind
         }
         assertEquals(
             mapOf(
                 "session.started" to "agent", "session.ended" to "agent", "gate.requested" to "agent",
-                "gate.decided" to "person", "workflow.changed" to "person",
+                "gate.decided" to "person",
             ),
             kinds,
         )

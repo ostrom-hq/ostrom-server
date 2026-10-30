@@ -3,7 +3,6 @@ package dev.ostrom.server.reports
 
 import dev.ostrom.server.budgets.BudgetsModule
 import dev.ostrom.server.budgets.domain.BudgetsRepository
-import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.instance.InstanceModule
@@ -33,13 +32,13 @@ import kotlin.uuid.Uuid
 
 /**
  * Real PostgreSQL and real HTTP: the spending report and the activity feed read the real tables of the sessions,
- * gates, compiler and usage modules, under their row level security; what each role sees; nothing of another
+ * gates and usage modules, under their row level security; what each role sees; nothing of another
  * organization; 401, 403 and 404.
  */
 class ReportsPostgresTest {
     private val clock = FixedClock()
     private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
+        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule,
         SecretsModule, UsageModule, BudgetsModule, ReportsModule,
     )
     private val approved = Uuid.parse("00000000-0000-0000-0000-0000000000a1")
@@ -55,26 +54,29 @@ class ReportsPostgresTest {
 
     private suspend fun TestServer.seed() {
         // Org A: mia's ended claude session in acme/api, olga's running codex session in acme/web.
-        session(ORG_A, "s1", "claude-code", "acme/api", "mia", NOW - 3.hours, NOW - 2.hours, costUsd = 0.5)
-        session(ORG_A, "s2", "codex", "acme/web", "olga", NOW - 30.minutes)
+        session(SeedSession(ORG_A, "s1", "claude-code", "acme/api", "mia", NOW - 3.hours, NOW - 2.hours, costUsd = 0.5))
+        session(SeedSession(ORG_A, "s2", "codex", "acme/web", "olga", NOW - 30.minutes))
         spend(ORG_A, MIA.memberId, "s1", 300_000, NOW - 150.minutes)
         spend(ORG_A, MIA.memberId, "s1", 200_000, NOW - 140.minutes)
         spend(ORG_A, OLGA.memberId, "s2", 1_000_000, NOW - 10.minutes)
         // The organization's own call outside any session, and a call of last month.
         spend(ORG_A, null, null, 50_000, NOW - 5.minutes)
         spend(ORG_A, MIA.memberId, "s1", 7_000_000, NOW - 40.days)
-        gate(ORG_A, approved, "Merge PR #6", "APPROVED", NOW - 40.minutes, OLGA.userId.toString(), NOW - 15.minutes)
-        gate(ORG_A, rejected, "Deploy", "REJECTED", NOW - 20.minutes, "rev-b", NOW - 3.minutes)
-        gate(ORG_A, pending, "Publish", "PENDING", NOW - 1.minutes)
+        gate(SeedGate(
+            ORG_A, approved, "Merge PR #6", "APPROVED", NOW - 40.minutes, OLGA.userId.toString(), NOW - 15.minutes,
+        ))
+        gate(SeedGate(ORG_A, rejected, "Deploy", "REJECTED", NOW - 20.minutes, "rev-b", NOW - 3.minutes))
+        gate(SeedGate(ORG_A, pending, "Publish", "PENDING", NOW - 1.minutes))
         // A gate that only watched shows nothing.
-        gate(ORG_A, Uuid.random(), "Shadow", "SHADOW", NOW - 2.minutes)
-        decision(ORG_A, "d1", "workflow", "release", OLGA.userId.toString(), NOW - 25.minutes)
-        decision(ORG_A, "d2", "package", "acme", OLGA.userId.toString(), NOW - 24.minutes)
+        gate(SeedGate(ORG_A, Uuid.random(), "Shadow", "SHADOW", NOW - 2.minutes))
         // Org B: everything that must never show in A.
-        session(ORG_B, "sb", "claude-code", "acme/api", "carol", NOW - 1.hours, NOW - 50.minutes, costUsd = 9.0)
+        session(SeedSession(
+            ORG_B, "sb", "claude-code", "acme/api", "carol", NOW - 1.hours, NOW - 50.minutes, costUsd = 9.0,
+        ))
         spend(ORG_B, CAROL.memberId, "sb", 9_000_000, NOW - 55.minutes)
-        gate(ORG_B, Uuid.random(), "Merge B", "APPROVED", NOW - 45.minutes, CAROL.userId.toString(), NOW - 44.minutes)
-        decision(ORG_B, "db", "workflow", "b-flow", CAROL.userId.toString(), NOW - 43.minutes)
+        gate(SeedGate(
+            ORG_B, Uuid.random(), "Merge B", "APPROVED", NOW - 45.minutes, CAROL.userId.toString(), NOW - 44.minutes,
+        ))
         koin.get<BudgetsRepository>().putOrgLimits(ORG_A, 100_000_000, 20_000_000, NOW)
     }
 
@@ -155,7 +157,6 @@ class ReportsPostgresTest {
                 "gate.decided:$rejected",
                 "gate.decided:$approved",
                 "gate.requested:$rejected",
-                "workflow.changed:d1",
                 "session.started:s2",
                 "gate.requested:$approved",
                 "session.ended:s1",
@@ -172,7 +173,6 @@ class ReportsPostgresTest {
         assertEquals(approved.toString(), decided.gateId)
         assertEquals("rev-b said no to: Deploy", byId.getValue("gate.decided:$rejected").summary)
         assertEquals("claude asked for a yes: Publish", byId.getValue("gate.requested:$pending").summary)
-        assertEquals("olga changed the workflow release", byId.getValue("workflow.changed:d1").summary)
         val ended = byId.getValue("session.ended:s1")
         assertEquals(0.5, ended.costUsd)
         assertEquals("acme/api", ended.repo)
@@ -183,7 +183,7 @@ class ReportsPostgresTest {
 
         val carol = server.read("carol", "/api/v1/activity").body<ActivityPageDto>()
         assertEquals(
-            listOf("gate.decided", "gate.requested", "session.ended", "session.started", "workflow.changed").sorted(),
+            listOf("gate.decided", "gate.requested", "session.ended", "session.started"),
             carol.items.map { it.kind }.sorted(),
         )
         assertEquals(listOf("carol"), carol.items.filter { it.kind == "gate.decided" }.map { it.actor.name })
@@ -193,16 +193,18 @@ class ReportsPostgresTest {
     fun theFeedPagesByItsCursorAndFiltersOnARepository() = reportsTest { server ->
         // 60 more sessions in A, one minute apart, so that the feed has two pages.
         for (index in 1..60) {
-            server.session(ORG_A, "p$index", "claude-code", "acme/many", "mia", NOW - 4.hours - index.minutes)
+            server.session(SeedSession(
+                ORG_A, "p$index", "claude-code", "acme/many", "mia", NOW - 4.hours - index.minutes,
+            ))
         }
         val first = server.read("feed", "/api/v1/activity").body<ActivityPageDto>()
         assertEquals(50, first.items.size)
         val next = checkNotNull(first.next)
         val second = server.read("feed", "/api/v1/activity?before=${next.encodeURLParameter()}")
             .body<ActivityPageDto>()
-        assertEquals(19, second.items.size)
+        assertEquals(18, second.items.size)
         assertNull(second.next)
-        assertEquals(69, (first.items + second.items).map { it.id }.toSet().size)
+        assertEquals(68, (first.items + second.items).map { it.id }.toSet().size)
         assertEquals("session.started:p60", second.items.last().id)
 
         val api = server.read("mia", "/api/v1/activity?repo=acme%2Fapi").body<ActivityPageDto>()

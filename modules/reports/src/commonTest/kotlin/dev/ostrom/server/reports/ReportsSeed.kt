@@ -7,10 +7,6 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
-import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
-import dev.ostrom.server.kernel.config.LayeredConfigSource
-import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
@@ -20,13 +16,6 @@ import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
-
-/** A person of the seed: their user, their membership, their role. */
-data class Person(val login: String, val org: Uuid, val role: OrgRole) {
-    val userId: Uuid = Uuid.random()
-    val memberId: Uuid = Uuid.random()
-    val principal: OrgPrincipal get() = OrgPrincipal(org, memberId, role)
-}
 
 val OLGA = Person("olga", ORG_A, OrgRole.OWNER)
 val MIA = Person("mia", ORG_A, OrgRole.MEMBER)
@@ -41,11 +30,6 @@ val PEOPLE = listOf(OLGA, MIA, CAROL)
 fun reportsOverrides(clock: Clock) = module {
     single<Clock> { clock }
     single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
-    single<ConfigSource> {
-        LayeredConfigSource(
-            listOf(MapConfigSource(mapOf("OSTROM_PUBLIC_URL" to "https://ostrom.example/")), EnvironmentConfigSource()),
-        )
-    }
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
@@ -101,29 +85,31 @@ suspend fun TestServer.seedPeople() {
     }
 }
 
-/** A session; [endedAt] and [costUsd] together when it ended. */
-suspend fun TestServer.session(
-    org: Uuid,
-    id: String,
-    agent: String,
-    repo: String,
-    dev: String,
-    startedAt: Instant,
-    endedAt: Instant? = null,
-    costUsd: Double = 0.0,
-) {
+/** A session of the seed; [endedAt] and [costUsd] together when it ended. */
+data class SeedSession(
+    val org: Uuid,
+    val id: String,
+    val agent: String,
+    val repo: String,
+    val dev: String,
+    val startedAt: Instant,
+    val endedAt: Instant? = null,
+    val costUsd: Double = 0.0,
+)
+
+/** Writes a session. */
+suspend fun TestServer.session(seed: SeedSession) = with(seed) {
     val columns = "org_id, id, root_id, segment, agent, dev, repo, started_at, last_seen_at"
     val values = ":org, :id, :id, 0, :agent, :dev, :repo, :started, :started"
+    val common = arrayOf<Pair<String, Any>>(
+        "org" to org, "id" to id, "agent" to agent, "dev" to dev, "repo" to repo, "started" to startedAt,
+    )
     if (endedAt == null) {
-        sql(
-            org, "INSERT INTO sessions_sessions ($columns) VALUES ($values)",
-            "org" to org, "id" to id, "agent" to agent, "dev" to dev, "repo" to repo, "started" to startedAt,
-        )
+        sql(org, "INSERT INTO sessions_sessions ($columns) VALUES ($values)", *common)
     } else {
         sql(
             org, "INSERT INTO sessions_sessions ($columns, ended_at, cost_usd) VALUES ($values, :ended, :cost)",
-            "org" to org, "id" to id, "agent" to agent, "dev" to dev, "repo" to repo, "started" to startedAt,
-            "ended" to endedAt, "cost" to costUsd,
+            *common, "ended" to endedAt, "cost" to costUsd,
         )
     }
 }
@@ -144,38 +130,32 @@ suspend fun TestServer.spend(org: Uuid, member: Uuid?, session: String?, micros:
     )
 }
 
-/** A gate; [decidedBy] and [decidedAt] together when a person decided it. */
-suspend fun TestServer.gate(
-    org: Uuid,
-    id: Uuid,
-    label: String,
-    status: String,
-    createdAt: Instant,
-    decidedBy: String? = null,
-    decidedAt: Instant? = null,
-) {
+/** A gate of the seed; [decidedBy] and [decidedAt] together when a person decided it. */
+data class SeedGate(
+    val org: Uuid,
+    val id: Uuid,
+    val label: String,
+    val status: String,
+    val createdAt: Instant,
+    val decidedBy: String? = null,
+    val decidedAt: Instant? = null,
+)
+
+/** Writes a gate, opened by the agent `claude`. */
+suspend fun TestServer.gate(seed: SeedGate) = with(seed) {
     val columns = "id, org_id, gate_key, subject, label, mode, status, asked_by, asked_via, session_ids, launch_ids, " +
         "shown_digest, evidence, created_at"
     val values = ":id, :org, 'merge', 'pr', :label, 'ENFORCE', :status, '[\"claude\"]', 'cli', '[]', '[]', 'd', " +
         "'{}', :created"
+    val common = arrayOf<Pair<String, Any>>(
+        "id" to id, "org" to org, "label" to label, "status" to status, "created" to createdAt,
+    )
     if (decidedBy == null || decidedAt == null) {
-        sql(
-            org, "INSERT INTO gates_gates ($columns) VALUES ($values)",
-            "id" to id, "org" to org, "label" to label, "status" to status, "created" to createdAt,
-        )
+        sql(org, "INSERT INTO gates_gates ($columns) VALUES ($values)", *common)
     } else {
         sql(
             org, "INSERT INTO gates_gates ($columns, decided_by, decided_at) VALUES ($values, :by, :decided)",
-            "id" to id, "org" to org, "label" to label, "status" to status, "created" to createdAt,
-            "by" to decidedBy, "decided" to decidedAt,
+            *common, "by" to decidedBy, "decided" to decidedAt,
         )
     }
 }
-
-/** A signed decision of the compiler, its time kept as text like the compiler does. */
-suspend fun TestServer.decision(org: Uuid, id: String, kind: String, subject: String, by: String, at: Instant) = sql(
-    org,
-    "INSERT INTO compiler_decisions (org_id, id, subject_kind, subject_id, decided_by, decided_at) " +
-        "VALUES (:org, :id, :kind, :subject, :by, :at)",
-    "org" to org, "id" to id, "kind" to kind, "subject" to subject, "by" to by, "at" to at.toString(),
-)

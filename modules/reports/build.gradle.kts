@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Module reports: the console's and the app's read models across modules — the spending report (the usage ledger by
-// agent, repository and person, against the budget) and the activity feed (sessions, gates, workflow decisions).
+// agent, repository and person, against the budget) and the activity feed (sessions and gates).
 plugins {
     id("ostrom.native-module")
 }
@@ -22,7 +22,6 @@ kotlin {
             implementation(project(":modules:receipts"))
             implementation(project(":modules:gates"))
             implementation(project(":modules:sessions"))
-            implementation(project(":modules:compiler"))
         }
     }
 }
