@@ -60,9 +60,15 @@ const val AUTOMATIONS_READ = "automations:read"
 /** Creating, changing, testing and deleting automations. Includes [AUTOMATIONS_READ]. */
 const val AUTOMATIONS_WRITE = "automations:write"
 
-/** Whether a credential carries [scope], directly, through `automations:write`, or as a member's full login. */
-fun AuthenticatedPrincipal.allowsAutomations(scope: String): Boolean =
-    (kind == PrincipalKind.USER && ALL_USER_SCOPES in scopes) || scope in scopes || AUTOMATIONS_WRITE in scopes
+/**
+ * Whether a credential carries [scope], directly, through `automations:write`, or as a member's full login. A device
+ * or agent token never manages automations, whatever its scopes (S2-03): only a member or a service key does.
+ */
+fun AuthenticatedPrincipal.allowsAutomations(scope: String): Boolean = when (kind) {
+    PrincipalKind.DEVICE -> false
+    PrincipalKind.USER -> ALL_USER_SCOPES in scopes || scope in scopes || AUTOMATIONS_WRITE in scopes
+    PrincipalKind.SERVICE -> scope in scopes || AUTOMATIONS_WRITE in scopes
+}
 
 /**
  * The member an automations request acts for.
