@@ -107,6 +107,7 @@ class TerminalRelayTest {
     @Test
     fun anEmptyRoomIsForgotten() = runTest {
         val client = relay.connectClient(id)
+        assertEquals(Triple(1, 0, 1), relay.counts())
         val runner = assertNotNull(relay.connectRunner(id, 1))
         relay.disconnectClient(id, client)
         assertEquals(Triple(1, 1, 0), relay.counts())

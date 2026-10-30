@@ -79,7 +79,7 @@ class TerminalRelay(
     suspend fun connectRunner(sessionId: Uuid, epoch: Long): RunnerLink? = mutex.withLock {
         val room = rooms.getOrPut(sessionId) { Room(scrollbackBytes) }
         if (epoch < room.lastEpoch) return@withLock null
-        room.runner?.outbound?.close()
+        room.runner?.let { it.outbound.close() }
         room.lastEpoch = epoch
         RunnerLink(epoch, RUNNER_QUEUE).also {
             room.runner = it
@@ -177,7 +177,8 @@ class TerminalRelay(
     }
 
     private suspend fun toRunner(sessionId: Uuid, frame: RunnerBound): Boolean = mutex.withLock {
-        rooms[sessionId]?.runner?.outbound?.trySend(frame)?.isSuccess == true
+        val runner = rooms[sessionId]?.runner ?: return@withLock false
+        runner.outbound.trySend(frame).isSuccess
     }
 
     private fun Room.broadcast(frame: ClientBound) {
