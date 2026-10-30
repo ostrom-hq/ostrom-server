@@ -1,0 +1,15 @@
+.gradle/
+.kotlin/
+**/build/
+.idea/
+*.iml
+.DS_Store
+.env
+.env.*
+!.env.example
+/data/
+*.log
+# Instance signing keys never enter the repository.
+/data/*.pem
+/*.pem
+/dist/
