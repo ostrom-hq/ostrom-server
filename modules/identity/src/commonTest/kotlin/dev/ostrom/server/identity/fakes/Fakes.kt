@@ -88,6 +88,10 @@ class InMemoryUsersRepository : UsersRepository {
 
     override suspend fun loginTaken(login: String): Boolean = users.values.any { it.login == login }
 
+    override suspend fun findByLogin(login: String): User? = users.values.firstOrNull { it.login == login.lowercase() }
+
+    override suspend fun getMany(ids: Collection<Uuid>): List<User> = ids.distinct().mapNotNull { users[it] }
+
     override suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant) {
         if (duplicatesToThrow > 0) {
             duplicatesToThrow--

@@ -33,7 +33,7 @@ interface CreateCloudSessionUseCase {
      *
      * @throws InvalidCloudSessionRequestException When the request is malformed.
      * @throws CloudSessionLimitException When the organization runs as many sessions as its plan allows.
-     * @throws CloudHoursExhaustedException When the organization used its hours of the month.
+     * @throws CloudHoursExhaustedException When the organization used its hours of the period.
      */
     suspend operator fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession
 }
@@ -43,11 +43,13 @@ interface CreateCloudSessionUseCase {
  *
  * @param repository The sessions.
  * @param plans The organizations' plans.
+ * @param usage The hours used.
  * @param clock The time.
  */
 class CreateCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val plans: CloudPlanProvider,
+    private val usage: CloudUsageMeter,
     private val clock: Clock,
 ) : CreateCloudSessionUseCase {
     override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
@@ -69,7 +71,7 @@ class CreateCloudSessionUseCaseImpl(
         }
         val plan = plans.planFor(caller.orgId)
         val now = clock.now()
-        requireHoursLeft(repository, plan, caller.orgId, now)
+        requireHoursLeft(usage, plan, caller.orgId, now)
         val session = CloudSession(
             id = Uuid.random(),
             orgId = caller.orgId,
@@ -118,20 +120,20 @@ class CreateCloudSessionUseCaseImpl(
 }
 
 /**
- * Refuses when the organization used the hours of its plan this month.
+ * Refuses when the organization used the hours of its plan this period.
  *
  * @throws CloudSessionsClosedException When cloud sessions are closed to the organization.
  * @throws CloudHoursExhaustedException When no hour is left.
  */
 internal suspend fun requireHoursLeft(
-    repository: CloudSessionsRepository,
+    usage: CloudUsageMeter,
     plan: CloudPlan,
     orgId: Uuid,
     now: kotlin.time.Instant,
 ) {
     if (!plan.available) throw CloudSessionsClosedException()
     val hours = plan.monthlyHours ?: return
-    if (repository.usageSeconds(orgId, monthOf(now)) >= hours * SECONDS_PER_HOUR) {
+    if (usage.usedSeconds(orgId, now) >= hours * SECONDS_PER_HOUR) {
         throw CloudHoursExhaustedException(hours)
     }
 }
@@ -230,7 +232,7 @@ interface ChangeCloudSessionUseCase {
      * @throws CloudSessionNotFoundException When it does not exist or is not the caller's.
      * @throws CloudSessionStateException When the session is over.
      * @throws CloudSessionLimitException When the organization runs as many sessions as its plan allows.
-     * @throws CloudHoursExhaustedException When the organization used its hours of the month.
+     * @throws CloudHoursExhaustedException When the organization used its hours of the period.
      */
     suspend fun resume(caller: Caller, id: Uuid): CloudSession
 
@@ -252,11 +254,13 @@ interface ChangeCloudSessionUseCase {
  *
  * @param repository The sessions.
  * @param plans The organizations' plans.
+ * @param usage The hours used.
  * @param clock The time.
  */
 class ChangeCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val plans: CloudPlanProvider,
+    private val usage: CloudUsageMeter,
     private val clock: Clock,
 ) : ChangeCloudSessionUseCase {
     override suspend fun pause(caller: Caller, id: Uuid): CloudSession {
@@ -275,7 +279,7 @@ class ChangeCloudSessionUseCaseImpl(
         if (session.desiredState == DesiredState.RUNNING) return session
         val plan = plans.planFor(caller.orgId)
         val now = clock.now()
-        requireHoursLeft(repository, plan, caller.orgId, now)
+        requireHoursLeft(usage, plan, caller.orgId, now)
         val outcome = repository.resumeWithinCap(caller.orgId, id, plan.maxRunningSessions, now)
         if (outcome is ResumeOutcome.Resumed) return outcome.session
         throw if (outcome == ResumeOutcome.AtCap) {

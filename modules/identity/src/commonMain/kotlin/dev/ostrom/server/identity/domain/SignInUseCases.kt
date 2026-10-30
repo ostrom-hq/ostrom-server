@@ -44,13 +44,21 @@ interface StartOAuthSignInUseCase {
      * @param redirect The console path to return to after signing in; anything unsafe becomes `/`.
      * @param source Who is asking (the client address), for the rate limit.
      * @param linkTo The signed-in user who links this provider to their account (S2-07), or null for a sign-in.
+     * @param reauthenticate Whether the person signs in again before a yes (S2-54): the provider must not reuse an
+     *   old sign-in silently.
      *
      * @return The state and the consent page URL.
      *
      * @throws ProviderNotConfiguredException When the provider is unknown or not configured.
      * @throws RateLimitedException When the address starts too many sign-ins.
      */
-    suspend operator fun invoke(provider: String, redirect: String?, source: String, linkTo: Uuid? = null): StartedOAuth
+    suspend operator fun invoke(
+        provider: String,
+        redirect: String?,
+        source: String,
+        linkTo: Uuid? = null,
+        reauthenticate: Boolean = false,
+    ): StartedOAuth
 }
 
 /**
@@ -65,7 +73,13 @@ class StartOAuthSignInUseCaseImpl(
     private val attempts: OAuthAttemptsRepository,
     private val services: SignInServices,
 ) : StartOAuthSignInUseCase {
-    override suspend fun invoke(provider: String, redirect: String?, source: String, linkTo: Uuid?): StartedOAuth {
+    override suspend fun invoke(
+        provider: String,
+        redirect: String?,
+        source: String,
+        linkTo: Uuid?,
+        reauthenticate: Boolean,
+    ): StartedOAuth {
         val oauth = configuredProvider(methods, provider)
         val (generator, hasher) = services.generator to services.hasher
         if (!services.limiter.tryAcquire("oauth-start:$source", START_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
@@ -90,7 +104,7 @@ class StartOAuthSignInUseCaseImpl(
             hasher.hash(state),
         )
         val callback = services.callbackUrl(oauth.provider)
-        val url = oauth.authorizationUrl(state, hasher.pkceChallenge(verifier), nonce, callback)
+        val url = oauth.authorizationUrl(state, hasher.pkceChallenge(verifier), nonce, callback, reauthenticate)
         return StartedOAuth(state, url)
     }
 
