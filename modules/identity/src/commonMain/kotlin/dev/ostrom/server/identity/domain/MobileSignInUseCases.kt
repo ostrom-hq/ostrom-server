@@ -68,9 +68,12 @@ class CompleteMobileSignInUseCaseImpl(
         val (oauth, attempt) = takeAttempt(methods, attempts, services, TakenState(provider, state, browserState))
         val mobile = attempt.mobile ?: throw InvalidSignInStateException()
         val callback = MobileCallback(mobile.redirectUri, mobile.state)
-        if (providerError != null) return callback.copy(error = MOBILE_ACCESS_DENIED)
-        return code?.takeIf { it.isNotEmpty() }?.let { signIn(oauth, attempt, mobile, it, callback) }
-            ?: callback.copy(error = MOBILE_REFUSED)
+        val usable = code?.takeIf { it.isNotEmpty() }
+        return when {
+            providerError != null -> callback.copy(error = MOBILE_ACCESS_DENIED)
+            usable == null -> callback.copy(error = MOBILE_REFUSED)
+            else -> signIn(oauth, attempt, mobile, usable, callback)
+        }
     }
 
     private suspend fun signIn(
@@ -153,7 +156,8 @@ class ExchangeMobileCodeUseCaseImpl(
         }
         val now = services.clock.nowMillis()
         // The code is spent before anything is checked: a wrong verifier burns it (RFC 6749 § 4.1.2).
-        val taken = code.takeIf { it.length in 1..MAX_MOBILE_SECRET_LENGTH }?.let { codes.consume(services.hasher.hash(it), now) }
+        val taken = code.takeIf { it.length in 1..MAX_MOBILE_SECRET_LENGTH }
+            ?.let { codes.consume(services.hasher.hash(it), now) }
         val user = taken?.takeIf { it.matches(codeVerifier, redirectUri) }?.let { users.get(it.userId) }
             ?: throw InvalidMobileCodeException()
         return issueToken(user, now)
@@ -172,7 +176,8 @@ class ExchangeMobileCodeUseCaseImpl(
         }
         val unlockKey = services.generator.secret()
         mobileTokens.create(issued.token, services.hasher.hash(issued.secret), services.hasher.hash(unlockKey))
-        audit.record(AuditEntry(null, user.id, "token.created", "token", issued.token.id.toString(), AUDIT_DETAILS))
+        val details = mapOf("kind" to "mobile")
+        audit.record(AuditEntry(null, user.id, "token.created", "token", issued.token.id.toString(), details))
         return IssuedMobileToken(issued, unlockKey, user, expiresAt)
     }
 
@@ -180,7 +185,6 @@ class ExchangeMobileCodeUseCaseImpl(
         const val EXCHANGE_LIMIT = 30
         const val LIMIT_WINDOW_MINUTES = 10
         const val MOBILE_TOKEN_NAME = "Ostrom app"
-        val AUDIT_DETAILS = mapOf("kind" to "mobile")
     }
 }
 

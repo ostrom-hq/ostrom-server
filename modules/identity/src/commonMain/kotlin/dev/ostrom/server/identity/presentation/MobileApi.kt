@@ -143,7 +143,7 @@ fun IssuedMobileToken.toResponse(): MobileTokenResponse = MobileTokenResponse(
  * @return The URL.
  */
 fun MobileCallback.toUrl(): String {
-    val outcome = code?.let { "code" to it } ?: ("error" to error.orEmpty())
+    val outcome = if (code != null) "code" to code else "error" to error.orEmpty()
     return redirectUri + "?" + listOf(outcome, "state" to state).formUrlEncode()
 }
 

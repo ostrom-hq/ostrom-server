@@ -127,9 +127,9 @@ class MobileSignInTest {
             listOf(null, "s", challenge, "S256"),
             listOf(null, null, null, "S256"),
         )
-        refused.forEach { (uri, state, code, method) ->
-            assertFailsWith<InvalidMobileSignInException>("$uri $state $code $method") {
-                mobileClientOf(uri, state, code, method)
+        refused.forEach { query ->
+            assertFailsWith<InvalidMobileSignInException>(query.toString()) {
+                mobileClientOf(query[0], query[1], query[2], query[3])
             }
         }
     }

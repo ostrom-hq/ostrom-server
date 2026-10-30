@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
-import dev.ostrom.server.identity.domain.ExchangeMobileCodeUseCase
-import dev.ostrom.server.identity.domain.GetNotificationPreferencesUseCase
 import dev.ostrom.server.identity.domain.MobileUnlockRefusedException
 import dev.ostrom.server.identity.domain.NOTIFICATIONS_WRITE_SCOPE
-import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCase
-import dev.ostrom.server.identity.domain.UnlockMobileAppUseCase
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
@@ -17,21 +13,6 @@ import io.ktor.server.resources.post
 import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-
-/**
- * What the phone app's routes need.
- *
- * @property exchangeCode Exchanges a mobile sign-in's code for the app's token.
- * @property unlock Records the phone's biometric unlock.
- * @property getNotifications Reads the caller's notification preferences.
- * @property setNotifications Sets them.
- */
-data class MobileRoutesDependencies(
-    val exchangeCode: ExchangeMobileCodeUseCase,
-    val unlock: UnlockMobileAppUseCase,
-    val getNotifications: GetNotificationPreferencesUseCase,
-    val setNotifications: SetNotificationPreferencesUseCase,
-)
 
 /**
  * The phone app's routes. The code exchange is not authenticated (it is how the app gets its token): the code, its

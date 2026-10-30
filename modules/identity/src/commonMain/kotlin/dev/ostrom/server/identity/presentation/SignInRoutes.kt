@@ -84,8 +84,11 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
         val started = try {
             val source = call.request.origin.remoteAddress
             val provider = params.parent.provider
-            mobile?.let { startOAuth.mobile(provider, source, it) }
-                ?: startOAuth(provider, params.redirect, source, reauthenticate = params.reauth)
+            if (mobile != null) {
+                startOAuth.mobile(provider, source, mobile)
+            } else {
+                startOAuth(provider, params.redirect, source, reauthenticate = params.reauth)
+            }
         } catch (error: OstromException) {
             return@get call.redirectToLogin(config, error)
         }

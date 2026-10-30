@@ -111,6 +111,7 @@ class SignInApi {
          * @property codeChallenge The app's PKCE challenge.
          * @property codeChallengeMethod `S256`.
          */
+        @Suppress("LongParameterList") // One property per query parameter of the contract's two sign-in starts.
         @Serializable
         @Resource("start")
         class Start(
