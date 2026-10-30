@@ -98,6 +98,8 @@ class CompilerPostgresTest {
                     "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
                     "cli" -> AuthenticatedPrincipal(token, PrincipalKind.USER, cliScopes)
                     "gates" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
+                    // A machine holding the packages scope: never a person.
+                    "bot" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(CompilerScopes.PACKAGES_WRITE))
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                 }
             }
@@ -107,10 +109,10 @@ class CompilerPostgresTest {
                 override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? {
                     val (kind, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
                     val orgId = if (org == "a") orgA else orgB
-                    return if (kind != "agent") {
-                        GateActor(id, orgId, ActorKind.USER, personId = id)
-                    } else {
-                        GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lead")
+                    return when (kind) {
+                        "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lead")
+                        "bot" -> GateActor(id, orgId, ActorKind.SERVICE)
+                        else -> GateActor(id, orgId, ActorKind.USER, personId = id)
                     }
                 }
             }
@@ -226,6 +228,11 @@ class CompilerPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, server.call("gates:a:x", "/api/v1/gates/catalog").status)
         val revoke = server.call("cli:a:dev", "/api/v1/packages/x/revoke", "POST", RevokeRequest("x"))
         assertEquals(HttpStatusCode.Forbidden, revoke.status)
+        val machine = server.call("bot:a:ci", "/api/v1/packages/x/revoke", "POST", RevokeRequest("x"))
+        assertTrue(machine.bodyAsText().contains("Only a person changes workflows and packages."))
+        val orgless = server.call("user:nobody", "/api/v1/workflows")
+        assertEquals(HttpStatusCode.Forbidden, orgless.status)
+        assertTrue(orgless.bodyAsText().contains("This credential belongs to no organization."))
 
         val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
         assertEquals(HttpStatusCode.Forbidden, accepted.status)

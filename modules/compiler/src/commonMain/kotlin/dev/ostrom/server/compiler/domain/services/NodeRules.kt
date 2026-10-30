@@ -118,7 +118,7 @@ object NodeRules {
      */
     fun triggerOf(node: WorkflowNode, workflow: Workflow, suggested: Boolean = false): Trigger {
         val on = run(node).on ?: NO_ON
-        val suggestedOn = suggestions(node).on?.value?.takeIf { suggested && openSuggestion(node, SuggestionField.ON) }
+        val suggestedOn = suggestions(node).on?.takeIf { suggested && openSuggestion(node, SuggestionField.ON) }?.value
         return when {
             declaresOn(node) -> Trigger("node", null, on.classes.orEmpty(), on.patterns.orEmpty())
             suggestedOn != null -> Trigger("suggested", null, suggestedOn, emptyList())

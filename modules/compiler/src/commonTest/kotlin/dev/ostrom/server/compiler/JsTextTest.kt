@@ -70,5 +70,9 @@ class JsTextTest {
         val decision = CompilerDocs.decision(Json.parseToJsonElement("""{"id":"d","by":"a","at":"t"}""").jsonObject)
         assertEquals("", decision.subjectKind)
         assertNull(decision.receiptId)
+        val blank = CompilerDocs.decision(Json.parseToJsonElement("{}").jsonObject)
+        assertEquals(listOf("", "", ""), listOf(blank.id, blank.by, blank.at))
+        val mixed = CompilerDocs.rule(Json.parseToJsonElement("""{"scope":["a",{"b":1},["c"],2]}""").jsonObject)
+        assertEquals(listOf("a"), mixed.scope)
     }
 }

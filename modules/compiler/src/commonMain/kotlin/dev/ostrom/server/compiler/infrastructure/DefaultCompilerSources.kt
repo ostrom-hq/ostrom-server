@@ -17,10 +17,9 @@ import kotlin.uuid.Uuid
 class DefaultCompilerSources(config: ConfigSource) : CompilerSources {
     private val settings = CompilerSettings(
         manualPin = config["OSTROM_PIN"] == "manual",
-        codePublishers = config["OSTROM_CODE_PUBLISHERS"]
-            ?.split(',')
-            ?.map { it.trim().lowercase() }
-            ?.filter { it.isNotEmpty() },
+        codePublishers = config["OSTROM_CODE_PUBLISHERS"]?.let { raw ->
+            raw.split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        },
         prodApprover = config["OSTROM_PROD_APPROVER"],
     )
 

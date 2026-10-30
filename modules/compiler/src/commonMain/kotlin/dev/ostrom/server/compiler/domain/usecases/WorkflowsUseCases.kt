@@ -130,8 +130,9 @@ class WorkflowsUseCaseImpl(
         val author = Authorship(by, clock.now())
         val saved = repository.saveWorkflow(orgId, workflow.id, raw, expectedVersion, author)
             ?: throw OstromException(ErrorKind.CONFLICT, "workflow_conflict: someone saved this workflow in between.")
-        val change = changeOf(before?.doc?.workflow, workflow)
-        if (change != null) record(orgId, workflow, before?.doc?.workflow, change, author)
+        val previous = if (before == null) null else before.doc.workflow
+        val change = changeOf(previous, workflow)
+        if (change != null) record(orgId, workflow, previous, change, author)
         return saved
     }
 
