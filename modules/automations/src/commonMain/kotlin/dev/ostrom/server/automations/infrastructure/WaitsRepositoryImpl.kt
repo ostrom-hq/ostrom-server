@@ -31,7 +31,7 @@ import kotlin.uuid.Uuid
 internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository {
     override suspend fun createWithinLimit(wait: Wait, maxOpen: Int): CreateOutcome = driver.inTenant(wait.orgId) {
         // Serialize the count and the insert of one scope, so that two concurrent asks never both pass the limit.
-        val scope = wait.sessionId?.let { "session:$it" } ?: "member:${wait.createdBy}"
+        val scope = if (wait.sessionId == null) "member:${wait.createdBy}" else "session:${wait.sessionId}"
         fetchAll(
             Statement.create("""SELECT pg_advisory_xact_lock(hashtext(:key))""")
                 .bind("key", "automations:${wait.orgId}:$scope"),
