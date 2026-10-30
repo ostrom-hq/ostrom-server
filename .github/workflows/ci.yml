@@ -85,6 +85,17 @@ jobs:
         run: ./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test --continue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # A private repository's runner has 7 GB: after the tests, the Gradle and Kotlin daemons hold most of it, and the
+      # release link of the server was killed (exit 143). Stop them and add swap before the native links.
+      - name: Free memory for the native links
+        run: |
+          ./gradlew --stop
+          pkill -f KotlinCompileDaemon || true
+          sudo fallocate -l 8G /mnt/native-link.swap
+          sudo chmod 600 /mnt/native-link.swap
+          sudo mkswap /mnt/native-link.swap
+          sudo swapon /mnt/native-link.swap
+          free -h
       - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
         run: |
           ci/build-linux.sh
