@@ -49,16 +49,25 @@ interface UseGateUseCase {
 }
 
 /**
- * [UseGateUseCase] on the repository, under the gate's row lock.
+ * [UseGateUseCase] on the repository, under the gate's row lock. A yes is used only once its receipt is signed
+ * (SECURITY-AUDIT S2-14): it is signed now if it was not yet, and refused while it cannot be (fail closed).
  *
  * @param repository The gates.
+ * @param receipts Signs a decided gate's receipt.
  * @param clock The clock.
  */
 class UseGateUseCaseImpl(
     private val repository: GatesRepository,
+    private val receipts: EnsureGateReceiptUseCase,
     private val clock: Clock,
 ) : UseGateUseCase {
-    override suspend fun invoke(actor: GateActor, gateId: Uuid, use: GateUse): Gate = repository.transaction {
+    override suspend fun invoke(actor: GateActor, gateId: Uuid, use: GateUse): Gate {
+        // Signing never holds the row lock; the transaction below re-reads the gate with its receipt.
+        if (use != GateUse.RELEASE) repository.get(actor.orgId, gateId)?.let { receipts.ensureSigned(it) }
+        return move(actor, gateId, use)
+    }
+
+    private suspend fun move(actor: GateActor, gateId: Uuid, use: GateUse): Gate = repository.transaction {
         val gate = lockGate(actor.orgId, gateId) ?: throw GateNotFoundException()
         val launch = launchOf(actor, gate)
         val now = clock.now()
@@ -85,19 +94,25 @@ class UseGateUseCaseImpl(
 
     private fun reserved(gate: Gate, launch: String, now: Instant): Gate {
         if (gate.status != GateStatus.APPROVED) throw GateNotUsableException(reserveRefusal(gate))
-        if (gate.yesExpired(now)) throw GateNotUsableException(EXPIRED)
+        usable(gate, now)
         return gate.copy(status = GateStatus.RESERVED, reservedBy = launch, reservedAt = now)
     }
 
     // A shadow or ungated action has no yes to use: the gate stays as it is.
     private fun consumed(gate: Gate, launch: String, now: Instant): Gate = when {
         gate.status == GateStatus.SHADOW || gate.status == GateStatus.UNGATED -> gate
-        gate.yesExpired(now) -> throw GateNotUsableException(EXPIRED)
-        gate.status == GateStatus.APPROVED -> gate.copy(status = GateStatus.CONSUMED, consumedAt = now)
+        gate.status == GateStatus.APPROVED -> usable(gate, now).copy(status = GateStatus.CONSUMED, consumedAt = now)
         else -> {
             heldBy(gate, launch)
             gate.copy(status = GateStatus.CONSUMED, consumedAt = now)
         }
+    }
+
+    // An approved yes covers its action only signed and within its lifetime.
+    private fun usable(gate: Gate, now: Instant): Gate {
+        if (gate.receiptId == null) throw GateNotUsableException(UNSIGNED)
+        if (gate.yesExpired(now)) throw GateNotUsableException(EXPIRED)
+        return gate
     }
 
     private fun heldBy(gate: Gate, launch: String) {
@@ -121,5 +136,6 @@ class UseGateUseCaseImpl(
 
     private companion object {
         const val EXPIRED = "This yes expired: it waits 15 minutes for its action. Ask again."
+        const val UNSIGNED = "This yes has no signed receipt yet: it cannot be used. Try again in a moment."
     }
 }

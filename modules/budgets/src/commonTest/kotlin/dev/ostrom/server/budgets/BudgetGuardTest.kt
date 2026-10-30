@@ -344,7 +344,7 @@ class BudgetGuardTest {
     }
 
     @Test
-    fun tenThousandCachedChecksTakeUnderFiftyMilliseconds() = runTest {
+    fun tenThousandCachedChecksTakeUnderTwoHundredMilliseconds() = runTest {
         repository.orgLimits[orgA] = 1_000_000
         overrideMember(10_000)
         // An untimed pass first: on the JVM the first calls also pay class loading and the JIT, not the cache.
@@ -357,7 +357,9 @@ class BudgetGuardTest {
             mark.elapsedNow()
         }.min()
 
-        assertTrue(elapsed < 50.milliseconds, "10 000 cached checks took $elapsed")
+        // 20 µs a check at most, under Kover's instrumentation on a shared runner (about 6 µs measured there): a check
+        // that reads the database instead of the cache takes milliseconds, two orders of magnitude above.
+        assertTrue(elapsed < 200.milliseconds, "10 000 cached checks took $elapsed")
         assertEquals(1, repository.limitReads)
     }
 

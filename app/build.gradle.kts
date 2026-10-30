@@ -71,6 +71,8 @@ kotlin {
         }
         nativeMain.dependencies {
             implementation(libs.ktor.server.cio)
+            // The engine of telemetry's HTTP client (OTLP, Langfuse, PostHog).
+            implementation(libs.ktor.client.cio)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
