@@ -1,16 +1,61 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.BudgetAlerts
+import dev.ostrom.server.budgets.domain.BudgetDecisionCache
+import dev.ostrom.server.budgets.domain.BudgetGuard
+import dev.ostrom.server.budgets.domain.BudgetGuardImpl
+import dev.ostrom.server.budgets.domain.BudgetsRepository
+import dev.ostrom.server.budgets.domain.DeleteMemberBudgetUseCase
+import dev.ostrom.server.budgets.domain.DeleteMemberBudgetUseCaseImpl
+import dev.ostrom.server.budgets.domain.GetBudgetsUseCase
+import dev.ostrom.server.budgets.domain.GetBudgetsUseCaseImpl
+import dev.ostrom.server.budgets.domain.GetMyBudgetUseCase
+import dev.ostrom.server.budgets.domain.GetMyBudgetUseCaseImpl
+import dev.ostrom.server.budgets.domain.NoBudgetAlerts
+import dev.ostrom.server.budgets.domain.PutBudgetsUseCase
+import dev.ostrom.server.budgets.domain.PutBudgetsUseCaseImpl
+import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCase
+import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCaseImpl
+import dev.ostrom.server.budgets.infrastructure.BudgetsMigrations
+import dev.ostrom.server.budgets.infrastructure.BudgetsRepositoryImpl
+import dev.ostrom.server.budgets.presentation.BudgetsRoutesDependencies
+import dev.ostrom.server.budgets.presentation.budgetsRoutes
+import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.secrets.domain.CallerResolver
+import dev.ostrom.server.secrets.domain.UnresolvedCallerResolver
+import io.ktor.server.routing.Route
+import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.dsl.binds
 import org.koin.dsl.module
 
 /**
- * The budgets module: budgets, quotas and their enforcement on the gateway.
- *
- * Empty skeleton registered in the app so that its owner only edits this directory (docs/MODULES.md).
+ * The budgets module: monthly limits per org and per member, and the [BudgetGuard] the gateway asks before each model
+ * call. It reads the spend from the usage module's `SpendReader`, and binds [NoBudgetAlerts] until notifications
+ * replace it.
  */
 object BudgetsModule : ServerModule {
     override val name: String = "budgets"
 
-    override val koinModule: Module = module {}
+    override val koinModule: Module = module {
+        single<BudgetsRepository> { BudgetsRepositoryImpl(get()) }
+        single<BudgetAlerts> { NoBudgetAlerts() }
+        single { BudgetGuardImpl(get(), get(), get(), get(), get()) } binds arrayOf(BudgetGuard::class, BudgetDecisionCache::class)
+        single<GetBudgetsUseCase> { GetBudgetsUseCaseImpl(get(), get(), get()) }
+        single<PutBudgetsUseCase> { PutBudgetsUseCaseImpl(get(), get(), get(), get()) }
+        single<PutMemberBudgetUseCase> { PutMemberBudgetUseCaseImpl(get(), get(), get()) }
+        single<DeleteMemberBudgetUseCase> { DeleteMemberBudgetUseCaseImpl(get(), get()) }
+        single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
+        single {
+            BudgetsRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get(), get())
+        }
+    }
+
+    override val migrations: List<SchemaMigration> = BudgetsMigrations
+
+    override fun routes(route: Route, koin: Koin) {
+        route.budgetsRoutes(koin.get())
+    }
 }
