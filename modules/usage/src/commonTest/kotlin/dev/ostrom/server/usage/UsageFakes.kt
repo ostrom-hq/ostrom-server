@@ -44,7 +44,7 @@ object TestCallers {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) =
-                    byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER) }
+                    byToken[token]?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet()) }
             }
         }
         single<CallerResolver> {

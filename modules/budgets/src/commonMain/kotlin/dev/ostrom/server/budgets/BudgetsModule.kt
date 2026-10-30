@@ -33,16 +33,17 @@ import org.koin.dsl.module
 
 /**
  * The budgets module: monthly limits per org and per member, and the [BudgetGuard] the gateway asks before each model
- * call. It reads the spend from the usage module's `SpendReader`, and binds [NoBudgetAlerts] until notifications
- * replace it.
+ * call. It reads the spend from the usage module's `SpendReader`. It does not bind [BudgetAlerts]: the notifications
+ * module binds it (Koin refuses two bindings of one type), and until then alerts go to [NoBudgetAlerts].
  */
 object BudgetsModule : ServerModule {
     override val name: String = "budgets"
 
     override val koinModule: Module = module {
         single<BudgetsRepository> { BudgetsRepositoryImpl(get()) }
-        single<BudgetAlerts> { NoBudgetAlerts() }
-        single { BudgetGuardImpl(get(), get(), get(), get(), get()) } binds arrayOf(BudgetGuard::class, BudgetDecisionCache::class)
+        single {
+            BudgetGuardImpl(get(), get(), getOrNull<BudgetAlerts>() ?: NoBudgetAlerts(), get(), get())
+        } binds arrayOf(BudgetGuard::class, BudgetDecisionCache::class)
         single<GetBudgetsUseCase> { GetBudgetsUseCaseImpl(get(), get(), get()) }
         single<PutBudgetsUseCase> { PutBudgetsUseCaseImpl(get(), get(), get(), get()) }
         single<PutMemberBudgetUseCase> { PutMemberBudgetUseCaseImpl(get(), get(), get()) }

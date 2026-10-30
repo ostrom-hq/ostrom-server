@@ -25,7 +25,10 @@ data class BudgetAlert(
     val periodStart: Instant,
 )
 
-/** Where budget alerts go. The budgets module binds [NoBudgetAlerts]; the notifications module replaces it. */
+/**
+ * Where budget alerts go: the port the notifications module binds in Koin. Until it does, the budgets module uses
+ * [NoBudgetAlerts].
+ */
 interface BudgetAlerts {
     /**
      * Delivers an alert.
