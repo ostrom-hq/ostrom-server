@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns
 
+import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
 import dev.ostrom.core.api.models.NotificationStatus
@@ -80,6 +81,18 @@ class NodeOutcomesTest {
         assertEquals("failed: action blocked (2 runs)", failed.outcome)
         assertEquals("2 runs, sandbox ?, last exit 2", failed.detail)
         assertEquals("1 run, sandbox bwrap, last exit 1", one(check, listOf(run("chk_1", 1, head = null))).detail)
+    }
+
+    @Test
+    fun everyCheckNodeIsTheWorkstationsDeclarationAndNoOtherNodeCarriesAnAttestation() {
+        val check = node("n-check", "check")
+        val shadow = node("n-check", "check", mode = PackageMode.SHADOW)
+        val declared = CheckAttestation.WORKSTATION_DECLARED
+        assertEquals(declared, one(check, listOf(run("chk_1", 0))).attestation)
+        assertEquals(declared, one(shadow, listOf(run("chk_1", 0))).attestation)
+        assertEquals(declared, one(check).attestation)
+        assertEquals(null, one(node("n-gate", "gate")).attestation)
+        assertEquals(null, one(node("n-notify", "notify")).attestation)
     }
 
     @Test

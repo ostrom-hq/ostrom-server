@@ -158,6 +158,10 @@ class WorkflowRunsPostgresTest {
                 it.jsonObject.getValue("outcome").jsonPrimitive.content
             }
             assertEquals(listOf("passed", "sent to log:team"), outcomes)
+            val attested = receipt.receipt.getValue("nodes").jsonArray.map {
+                it.jsonObject["attestation"]?.jsonPrimitive?.content
+            }
+            assertEquals(listOf("workstation_declared", null), attested, "Signed with the node: a declared check")
 
             val bundle = server.call(agent, "/api/v1/receipts/$id/bundle")
             assertEquals(HttpStatusCode.OK, bundle.status, bundle.bodyAsText())

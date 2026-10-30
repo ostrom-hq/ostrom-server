@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.domain.usecases
 
+import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
 import dev.ostrom.core.api.models.NotificationStatus
@@ -14,7 +15,8 @@ import dev.ostrom.server.workflowruns.domain.models.RunPackage
 
 /**
  * What each node of a session's workflows did (prototype `outcomes`): it says only what Ostrom saw, a check run, a
- * notification, a skill opened, never that an instruction was followed.
+ * notification, a skill opened, never that an instruction was followed. A check node always carries its attestation,
+ * and today it is the workstation's declaration: nothing in a receipt calls a reported check proven.
  *
  * @param pack The session's package.
  * @param session The session.
@@ -57,12 +59,21 @@ class NodeOutcomes(
         }
     }
 
+    // Every check node says where its runs come from (decision 13:23, core#40). A run reaches the server only by
+    // POST /checks, from the hooks on the developer's machine, which the agent can read: it is a declaration of the
+    // workstation. `isolated_runner` and `ci` are written only once the server itself has proof of them, never before.
     private fun check(base: ReceiptNode, node: PackageNode): ReceiptNode {
+        val declared = base.copy(attestation = CheckAttestation.WORKSTATION_DECLARED)
         val mine = runs.filter { it.nodeId == node.id }
-        val last = mine.lastOrNull() ?: return base
-        if (node.mode == PackageMode.SHADOW) {
-            return base.copy(outcome = "shadow: would have run ${mine.size}×, not run")
+        val last = mine.lastOrNull()
+        return when {
+            last == null -> declared
+            node.mode == PackageMode.SHADOW -> declared.copy(outcome = "shadow: would have run ${mine.size}×, not run")
+            else -> ran(declared, mine, last)
         }
+    }
+
+    private fun ran(base: ReceiptNode, mine: List<CheckRun>, last: CheckRun): ReceiptNode {
         val failed = mine.count { it.exit != 0 }
         val outcome = when {
             last.exit != 0 -> "failed: action blocked (${plural(mine.size, "run")})"
