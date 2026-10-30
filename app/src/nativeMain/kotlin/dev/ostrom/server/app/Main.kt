@@ -21,6 +21,9 @@ import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.kernelModule
 import dev.ostrom.server.kernel.module.serverKoin
+import dev.ostrom.server.kernel.observability.OstromMetrics
+import dev.ostrom.server.kernel.observability.ProcessMetrics
+import dev.ostrom.server.kernel.observability.TelemetryLogger
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.ktor.server.cio.CIO
@@ -69,7 +72,12 @@ fun main(args: Array<String>) {
 @OptIn(ExperimentalForeignApi::class)
 private fun serve() {
     val (source, config) = loadConfig()
-    val logger = JsonLogger(config.logLevel)
+    // Telemetry has its own scope: it is flushed after the workers stop, then cancelled.
+    val exporters = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val telemetry = startTelemetry(config, exporters)
+    val logger = TelemetryLogger(JsonLogger(config.logLevel), telemetry, config.logLevel)
+    val metrics = OstromMetrics(telemetry.meter)
+    ProcessMetrics.register(telemetry.meter)
     if (source["OSTROM_DATABASE_MIGRATION_URL"] != null) {
         logger.warn("the serving process received the migration credentials: give them to `migrate` only")
     }
@@ -86,7 +94,8 @@ private fun serve() {
         val database = connectPostgres(config.database).also { driver = it }
         runBlocking { database.requireRowLevelSecurity() }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
-        val server = serverKoin(kernelModule(logger, database, signer, source), modules).also { koin = it }
+        val kernel = kernelModule(logger, database, signer, source, telemetry = telemetry, metrics = metrics)
+        val server = serverKoin(kernel, modules).also { koin = it }
         runBlocking {
             val migrations = server.get<MigrationRunner>()
             modules.forEach { migrations.verify(it.name, it.migrations) }
@@ -111,10 +120,10 @@ private fun serve() {
         logger.info("server stopped")
     } catch (error: Throwable) { // not coroutine-reachable: the process entry point, outside any coroutine.
         failed(logger, "server stopped on a failure", error)
-        shutDown(workers, koin, driver)
+        stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver) }
         exitProcess(EXIT_FAILURE)
     }
-    shutDown(workers, koin, driver)
+    stopThenFlush(telemetry, exporters) { shutDown(workers, koin, driver) }
 }
 
 /** Applies every module's migrations under the migration lock, with the owner's connection, then exits. */
