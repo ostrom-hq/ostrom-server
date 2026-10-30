@@ -76,7 +76,11 @@ class FakeGitHubApi : GitHubApi {
     /** The installations each person's token reaches. */
     val reachable = mutableMapOf<String, Set<Long>>()
 
-    override suspend fun userToken(code: String): String? = codes[code]
+    /** GitHub not answering the exchange of the install's code. */
+    var down = false
+
+    override suspend fun userToken(code: String): String? =
+        if (down) throw GitHubCallException("GitHub did not answer POST /login/oauth/access_token.") else codes[code]
 
     override suspend fun userInstallations(userToken: String): Set<Long> = reachable[userToken].orEmpty()
 }

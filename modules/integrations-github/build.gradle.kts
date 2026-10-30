@@ -10,6 +10,8 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(project(":modules:gates"))
+            // The organization an install start names (`?org=`): the orgs module's lookup by id or short name.
+            implementation(project(":modules:orgs"))
             // RS256 for the App's JWT, HMAC-SHA256 for the webhook signature (OpenSSL, linked by the kernel).
             implementation(libs.cryptography.core)
             // Outbound HTTPS to GitHub: Curl on Linux, Darwin on macOS (CIO has no TLS on Kotlin/Native).

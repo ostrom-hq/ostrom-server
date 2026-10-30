@@ -5,6 +5,7 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.integrations.github.domain.GitHubInstalls
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCase
+import dev.ostrom.server.integrations.github.domain.OrgReferences
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import dev.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -19,6 +20,7 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
  * @property webhooks Handles a verified webhook.
  * @property signature Verifies a webhook.
  * @property settings The App.
+ * @property orgs Reads the organization an install start names (`?org=`).
  */
 data class GitHubRoutesDependencies(
     val actors: GateActorResolver,
@@ -28,4 +30,5 @@ data class GitHubRoutesDependencies(
     val webhooks: HandleWebhookUseCase,
     val signature: WebhookSignature,
     val settings: GitHubSettings,
+    val orgs: OrgReferences,
 )

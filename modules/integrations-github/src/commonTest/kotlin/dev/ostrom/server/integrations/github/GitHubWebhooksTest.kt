@@ -104,20 +104,20 @@ class GitHubWebhooksTest {
     @Test
     fun anInstallLinksTheInstallationToTheOrganizationThatStartedItOnce() = runTest {
         val installs = GitHubInstalls(repository, api, "ostrom-dev", "https://github.com", clock)
-        val link = installs.start(ORG, "owner")
+        val link = installs.start(ORG, "owner", SESSION)
         assertTrue(link.startsWith("https://github.com/apps/ostrom-dev/installations/new?state="))
         val state = link.substringAfter("state=")
         assertEquals(64, state.length)
         api.accounts[42] = "acme"
 
-        assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", state))
+        assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", state, SESSION))
         assertEquals(GitHubInstallation(ORG, 42, "acme"), repository.installation(ORG))
-        val reused = assertFailsWith<OstromException> { installs.finish("42", "code-acme", state) }
+        val reused = assertFailsWith<OstromException> { installs.finish("42", "code-acme", state, SESSION) }
         assertEquals(ErrorKind.FORBIDDEN, reused.kind)
 
-        val expired = installs.start(ORG, "owner").substringAfter("state=")
+        val expired = installs.start(ORG, "owner", SESSION).substringAfter("state=")
         clock.now += 11.minutes
-        val late = assertFailsWith<OstromException> { installs.finish("42", "code-acme", expired) }
+        val late = assertFailsWith<OstromException> { installs.finish("42", "code-acme", expired, SESSION) }
         assertEquals(ErrorKind.FORBIDDEN, late.kind)
 
         val long = "s".repeat(129)
@@ -127,25 +127,26 @@ class GitHubWebhooksTest {
             Triple("42", "", state), Triple("42", long, state),
         )
         for ((id, code, value) in malformed) {
-            val refused = assertFailsWith<OstromException> { installs.finish(id, code, value) }
+            val refused = assertFailsWith<OstromException> { installs.finish(id, code, value, SESSION) }
             assertEquals(ErrorKind.INVALID_REQUEST, refused.kind, "$id $code $value")
         }
         // Installation 7 is reachable but not one of this App's installations GitHub knows.
         api.reachable["gho_acme"] = setOf(42L, 7L)
-        val unknown = installs.start(ORG, "owner").substringAfter("state=")
-        val notTheApp = assertFailsWith<OstromException> { installs.finish("7", "code-acme", unknown) }
+        val unknown = installs.start(ORG, "owner", SESSION).substringAfter("state=")
+        val notTheApp = assertFailsWith<OstromException> { installs.finish("7", "code-acme", unknown, SESSION) }
         assertEquals(ErrorKind.INVALID_REQUEST, notTheApp.kind)
 
-        val other = installs.start(OTHER_ORG, "owner").substringAfter("state=")
+        val other = installs.start(OTHER_ORG, "owner", SESSION).substringAfter("state=")
         assertEquals(
             ErrorKind.CONFLICT,
-            assertFailsWith<OstromException> { installs.finish("42", "code-acme", other) }.kind,
+            assertFailsWith<OstromException> { installs.finish("42", "code-acme", other, SESSION) }.kind,
         )
-        val again = installs.start(ORG, "owner").substringAfter("state=")
-        assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", again), "Installed again")
+        val again = installs.start(ORG, "owner", SESSION).substringAfter("state=")
+        val reinstalled = installs.finish("42", "code-acme", again, SESSION)
+        assertEquals(GitHubInstallation(ORG, 42, "acme"), reinstalled, "Installed again")
 
         val unconfigured = GitHubInstalls(repository, api, null, "https://github.com", clock)
-        assertFailsWith<GitHubAppNotConfiguredException> { unconfigured.start(ORG, "owner") }
+        assertFailsWith<GitHubAppNotConfiguredException> { unconfigured.start(ORG, "owner", SESSION) }
     }
 
     @Test
@@ -154,21 +155,41 @@ class GitHubWebhooksTest {
         api.accounts[42] = "acme"
         api.accounts[43] = "globex"
         // The owner of org B, who reaches only 43, comes back with the id of acme's installation.
-        val stolen = installs.start(OTHER_ORG, "owner-b").substringAfter("state=")
-        val refused = assertFailsWith<InstallationNotYoursException> { installs.finish("42", "code-globex", stolen) }
+        val stolen = installs.start(OTHER_ORG, "owner-b", SESSION).substringAfter("state=")
+        val refused = assertFailsWith<InstallationNotYoursException> {
+            installs.finish("42", "code-globex", stolen, SESSION)
+        }
         assertEquals(ErrorKind.FORBIDDEN, refused.kind)
         assertEquals("installation_not_yours", refused.type)
         assertTrue(repository.installations.isEmpty(), "Nothing linked")
         assertEquals(
             ErrorKind.FORBIDDEN,
-            assertFailsWith<OstromException> { installs.finish("43", "code-globex", stolen) }.kind,
+            assertFailsWith<OstromException> { installs.finish("43", "code-globex", stolen, SESSION) }.kind,
             "The state served once, even refused",
         )
         // A code GitHub does not accept proves nobody.
-        val forged = installs.start(OTHER_ORG, "owner-b").substringAfter("state=")
-        assertFailsWith<InstallationNotYoursException> { installs.finish("43", "code-forged", forged) }
+        val forged = installs.start(OTHER_ORG, "owner-b", SESSION).substringAfter("state=")
+        assertFailsWith<InstallationNotYoursException> { installs.finish("43", "code-forged", forged, SESSION) }
 
-        val own = installs.start(OTHER_ORG, "owner-b").substringAfter("state=")
-        assertEquals(GitHubInstallation(OTHER_ORG, 43, "globex"), installs.finish("43", "code-globex", own))
+        val own = installs.start(OTHER_ORG, "owner-b", SESSION).substringAfter("state=")
+        assertEquals(GitHubInstallation(OTHER_ORG, 43, "globex"), installs.finish("43", "code-globex", own, SESSION))
+    }
+
+    @Test
+    fun onlyTheSessionThatStartedAnInstallFinishesIt() = runTest {
+        val installs = GitHubInstalls(repository, api, "ostrom-dev", "https://github.com", clock)
+        api.accounts[42] = "acme"
+        val state = installs.start(ORG, "owner", SESSION).substringAfter("state=")
+        // The state brought back by another session (a link sent to someone else) matches nothing.
+        val elsewhere = assertFailsWith<OstromException> { installs.finish("42", "code-acme", state, "another") }
+        assertEquals(ErrorKind.FORBIDDEN, elsewhere.kind)
+        val signedOut = assertFailsWith<OstromException> { installs.finish("42", "code-acme", state, null) }
+        assertEquals(ErrorKind.UNAUTHORIZED, signedOut.kind)
+        assertTrue(repository.installations.isEmpty())
+        // Its own session still finishes it, once.
+        assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", state, SESSION))
+        assertFailsWith<OstromException> { installs.finish("42", "code-acme", state, SESSION) }
     }
 }
+
+private const val SESSION = "session-of-the-owner"

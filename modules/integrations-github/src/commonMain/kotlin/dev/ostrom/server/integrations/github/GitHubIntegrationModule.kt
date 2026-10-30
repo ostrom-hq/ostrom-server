@@ -9,11 +9,13 @@ import dev.ostrom.server.integrations.github.domain.GitHubInstalls
 import dev.ostrom.server.integrations.github.domain.GitHubPullRequestHeads
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCase
+import dev.ostrom.server.integrations.github.domain.OrgReferences
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
 import dev.ostrom.server.integrations.github.infrastructure.AppJwt
 import dev.ostrom.server.integrations.github.infrastructure.GitHubMigrations
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
+import dev.ostrom.server.integrations.github.infrastructure.OrgsOrgReferences
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubRepository
 import dev.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import dev.ostrom.server.integrations.github.presentation.GitHubRoutesDependencies
@@ -54,6 +56,8 @@ object GitHubIntegrationModule : ServerModule {
         // From the environment; a test binds its own.
         single { GitHubSettings.from(get()) }
         single<GitHubRepository> { PostgresGitHubRepository(get()) }
+        // The orgs module's lookup: `?org=` reads an id or a short name, as the `Ostrom-Org` header does.
+        single<OrgReferences> { OrgsOrgReferences(get()) }
         single<GitHubApi> {
             val settings = get<GitHubSettings>()
             val jwt = settings.appId?.let { id -> settings.privateKeyPem?.let { AppJwt(id, it, get()) } }
@@ -69,7 +73,7 @@ object GitHubIntegrationModule : ServerModule {
         single {
             val settings = get<GitHubSettings>()
             val signature = WebhookSignature(settings.webhookSecret)
-            GitHubRoutesDependencies(get(), get(), get(), get(), get(), signature, settings)
+            GitHubRoutesDependencies(get(), get(), get(), get(), get(), signature, settings, get())
         }
     }
 
