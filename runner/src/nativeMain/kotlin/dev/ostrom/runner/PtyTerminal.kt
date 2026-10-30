@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.runner
 
 import dev.ostrom.runner.pty.ostrom_pty_resize

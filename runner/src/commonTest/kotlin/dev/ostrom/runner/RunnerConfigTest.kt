@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.runner
 
 import io.ktor.client.HttpClient
@@ -29,7 +30,9 @@ class RunnerConfigTest {
 
     @Test
     fun theConfigurationComesFromThePodsEnvironment() {
-        val config = RunnerConfig.from(base + ("OSTROM_REPOSITORY_URL" to "https://github.com/a/b") + ("OSTROM_REPOSITORY_REF" to "main")) { path ->
+        val config = RunnerConfig.from(
+            base + ("OSTROM_REPOSITORY_URL" to "https://github.com/a/b") + ("OSTROM_REPOSITORY_REF" to "main"),
+        ) { path ->
             assertEquals("/run/ostrom/token", path)
             "ostrom_runner_secret\n"
         }
@@ -43,7 +46,9 @@ class RunnerConfigTest {
         assertEquals("/workspace", config.workspace)
         assertFalse("secret" in config.toString())
 
-        val inline = RunnerConfig.from(base - "OSTROM_RUNNER_TOKEN_FILE" + ("OSTROM_RUNNER_TOKEN" to "t") + ("OSTROM_WORKSPACE" to "/w")) { error("no file") }
+        val inline = RunnerConfig.from(
+            base - "OSTROM_RUNNER_TOKEN_FILE" + ("OSTROM_RUNNER_TOKEN" to "t") + ("OSTROM_WORKSPACE" to "/w"),
+        ) { error("no file") }
         assertEquals("t", inline.token)
         assertEquals("/w", inline.workspace)
         assertNull(inline.repositoryUrl)
@@ -51,12 +56,17 @@ class RunnerConfigTest {
         assertNull(inline.prompt)
 
         val files = mapOf("/run/ostrom/token" to "t", "/run/ostrom/prompt" to "Fix the tests")
-        val prompted = RunnerConfig.from(base + ("OSTROM_AGENT_PROMPT_FILE" to "/run/ostrom/prompt") + ("OSTROM_AGENT_MODEL" to "m")) { files.getValue(it) }
+        val prompted = RunnerConfig.from(
+            base + ("OSTROM_AGENT_PROMPT_FILE" to "/run/ostrom/prompt") + ("OSTROM_AGENT_MODEL" to "m"),
+        ) { files.getValue(it) }
         assertEquals("Fix the tests", prompted.prompt)
         assertEquals("m", prompted.model)
         assertEquals("hi", RunnerConfig.from(base + ("OSTROM_AGENT_PROMPT" to "hi")) { "t" }.prompt)
         assertFalse("Fix" in prompted.toString())
-        val environment = SessionScript.environment(base + ("OSTROM_AGENT_PROMPT_FILE" to "/run/ostrom/prompt"), prompted)
+        val environment = SessionScript.environment(
+            base + ("OSTROM_AGENT_PROMPT_FILE" to "/run/ostrom/prompt"),
+            prompted,
+        )
         assertEquals("Fix the tests", environment["OSTROM_AGENT_PROMPT"])
         assertNull(environment["OSTROM_AGENT_PROMPT_FILE"])
     }
@@ -64,7 +74,15 @@ class RunnerConfigTest {
     @Test
     fun aMissingOrMalformedVariableIsRefused() {
         val read = { _: String -> "t" }
-        for (name in listOf("OSTROM_SERVER_URL", "OSTROM_SESSION_ID", "OSTROM_EPOCH", "OSTROM_AGENT_COMMAND", "OSTROM_RUNNER_TOKEN_FILE")) {
+        for (
+            name in listOf(
+                "OSTROM_SERVER_URL",
+                "OSTROM_SESSION_ID",
+                "OSTROM_EPOCH",
+                "OSTROM_AGENT_COMMAND",
+                "OSTROM_RUNNER_TOKEN_FILE",
+            ),
+        ) {
             assertFailsWith<IllegalArgumentException>(name) { RunnerConfig.from(base - name, read) }
         }
         assertFailsWith<IllegalArgumentException> { RunnerConfig.from(base + ("OSTROM_SERVER_URL" to "ftp://x"), read) }
@@ -83,13 +101,19 @@ class RunnerConfigTest {
         assertEquals("xterm-256color", environment["TERM"])
         assertEquals("C.UTF-8", environment["LANG"])
         assertEquals("/usr/bin", environment["PATH"])
-        assertEquals("/h", SessionScript.environment(base + ("HOME" to "/h") + ("LANG" to "fr_FR.UTF-8"), config)["HOME"])
+        assertEquals(
+            "/h",
+            SessionScript.environment(base + ("HOME" to "/h") + ("LANG" to "fr_FR.UTF-8"), config)["HOME"],
+        )
         assertTrue("git clone" in SessionScript.FIRST && "exec bash -l" in SessionScript.AGAIN)
     }
 
     @Test
     fun anEnvironmentBlockIsParsed() {
-        assertEquals(mapOf("A" to "1", "B" to "x=y", "C" to ""), parseEnvironment("A=1\u0000B=x=y\u0000=bad\u0000C=\u0000"))
+        assertEquals(
+            mapOf("A" to "1", "B" to "x=y", "C" to ""),
+            parseEnvironment("A=1\u0000B=x=y\u0000=bad\u0000C=\u0000"),
+        )
     }
 
     @Test
@@ -105,8 +129,13 @@ class RunnerConfigTest {
         }) { expectSuccess = false }
         val api = HttpServerApi(client, RunnerConfig.from(base) { "t" }, this)
 
-        assertEquals(Instruction.RUN, api.heartbeat(ready = true, stopped = false, lastModelRequestAt = "2026-10-30T10:00:00Z"))
-        assertEquals("""{"sessionId":"$id","epoch":3,"ready":true,"stopped":false,"lastModelRequestAt":"2026-10-30T10:00:00Z"}""", bodies.single())
+        assertEquals(
+            Instruction.RUN,
+            api.heartbeat(ready = true, stopped = false, lastModelRequestAt = "2026-10-30T10:00:00Z"),
+        )
+        val heartbeat = """{"sessionId":"$id","epoch":3,"ready":true,"stopped":false,""" +
+            """"lastModelRequestAt":"2026-10-30T10:00:00Z"}"""
+        assertEquals(heartbeat, bodies.single())
         answer = """{"instruction":"stop","state":"pausing","extra":1}"""
         assertEquals(Instruction.STOP, api.heartbeat(ready = true, stopped = false, lastModelRequestAt = null))
         status = HttpStatusCode.Conflict

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.runner
 
 import kotlinx.coroutines.runBlocking
@@ -37,7 +38,14 @@ class PtyTerminalTest {
     @Test
     fun terminateStopsTheWholeProcessGroup() = runBlocking {
         withTimeout(20.seconds) {
-            val terminal = PtyTerminal.spawn(listOf("/bin/sh", "-c", "trap '' TERM; echo up; sleep 100"), environment, "/", 80, 24, 300.milliseconds)
+            val terminal = PtyTerminal.spawn(
+                listOf("/bin/sh", "-c", "trap '' TERM; echo up; sleep 100"),
+                environment,
+                "/",
+                80,
+                24,
+                300.milliseconds,
+            )
             terminal.readUntil("up")
             terminal.terminate()
             while (terminal.read() != null) Unit

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.runner
 
 import kotlinx.coroutines.CompletableDeferred
@@ -109,7 +110,14 @@ class RunnerTest {
     fun anEndedTerminalIsFollowedByAShell() = runTest {
         val server = FakeServer()
         val terminals = mutableListOf<FakeTerminal>()
-        val runner = Runner(config, server, { script, _, _ -> FakeTerminal(script).also { terminals += it } }, emptyMap(), clock, {})
+        val runner = Runner(
+            config,
+            server,
+            { script, _, _ -> FakeTerminal(script).also { terminals += it } },
+            emptyMap(),
+            clock,
+            {},
+        )
         val done = CompletableDeferred<Int>()
         backgroundScope.launchRunner(runner, done)
 
