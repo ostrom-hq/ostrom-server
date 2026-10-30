@@ -4,6 +4,7 @@ import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -14,6 +15,7 @@ import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import dev.ostrom.server.sessions.fakes.SettableClock
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
+import dev.ostrom.server.sessions.presentation.SessionScopes
 import dev.ostrom.server.sessions.presentation.SessionsPage
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
@@ -53,8 +55,13 @@ class SessionsPostgresTest {
     private val overrides = module {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String) =
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
+                override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
+                    "user" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
+                    "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
+                    "cli" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(SessionScopes.WRITE))
+                    "reader" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(SessionScopes.READ))
+                    else -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
+                }
             }
         }
         single<GateActorResolver> {
@@ -200,6 +207,13 @@ class SessionsPostgresTest {
         assertEquals(HttpStatusCode.OK, server.call("user:a:rev-b", "/api/v1/sessions/s-1").status)
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/sessions").status)
         assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/sessions").status)
+        // S2-03: a credential without a sessions scope is refused before its organization is looked up.
+        val gatesOnly = server.call("gates:a:rev-b", "/api/v1/sessions")
+        assertEquals(HttpStatusCode.Forbidden, gatesOnly.status)
+        assertTrue(gatesOnly.bodyAsText().contains("does not allow sessions:read"))
+        assertEquals(HttpStatusCode.OK, server.call("reader:a:rev-b", "/api/v1/sessions/s-1").status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("reader:a:rev-b", "/api/v1/sessions/s-1/alive", "{}").status)
+        assertEquals(HttpStatusCode.OK, server.call("cli:a:rev-b", "/api/v1/sessions?limit=1").status)
         assertEquals(HttpStatusCode.Forbidden, server.call("user:a:rev-b", "/api/v1/sessions/s-1/end", "{}").status)
         assertEquals(HttpStatusCode.NotFound, server.call("user:b:lyes", "/api/v1/sessions/s-1/end", "{}").status)
         val malformed = server.call("user:a:lyes", "/api/v1/sessions", """{"id":"a b","agent":"x"}""")
