@@ -105,6 +105,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Server binaries (linuxX64 in dist/, linuxArm64 cross-linked)
         run: |
+          # This job's own daemons from the test step (a 6 GB Gradle heap, the Kotlin daemon) would share the runner's
+          # memory with the release link's LLVM: twice the runner was shut down mid-link (runs 41010442211, 41016333786).
+          ./gradlew --stop
           ci/build-linux.sh
           ./gradlew :app:linkReleaseExecutableLinuxArm64
           ldd dist/ostrom-server
