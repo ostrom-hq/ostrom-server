@@ -99,6 +99,8 @@ class AutomationRulesTest {
         refused(variable(AutomationVariable("a", "$.x", VariableType.ENUM)), enum)
         refused(variable(AutomationVariable("a", "$.x", VariableType.ENUM, List(51) { "v$it" })), enum)
         refused(variable(AutomationVariable("a", "$.x", VariableType.STRING, listOf("v"))), enum)
+        val choice = variable(AutomationVariable("a", "$.x", VariableType.ENUM, List(50) { "v$it" }))
+        assertEquals(choice, AutomationRules.check(choice))
         refused(
             webhook.copy(samplePayload = buildJsonObject { put("x", "y".repeat(64 * 1024)) }),
             "The sample payload is at most 64 KiB.",
