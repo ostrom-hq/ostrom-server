@@ -121,7 +121,10 @@ class FakeRulesRepository : RulesRepository {
         decisions.filter { it.orgId == orgId }.reversed().take(query.limit)
 
     override suspend fun markSigned(orgId: Uuid, ids: List<String>) {
-        decisions.replaceAll { if (it.orgId == orgId && it.id in ids) it.copy(signed = true) else it }
+        for (index in decisions.indices) {
+            val decision = decisions[index]
+            if (decision.orgId == orgId && decision.id in ids) decisions[index] = decision.copy(signed = true)
+        }
     }
 
     override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy? = policies[orgId]
