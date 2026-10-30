@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.AGENT_SCOPE
@@ -37,16 +39,25 @@ class CredentialAuthenticatorTest {
         kind: TokenKind,
         scopes: Set<String> = setOf("orgs:read"),
         expiresIn: kotlin.time.Duration? = 10.days,
-        revoked: Boolean = false,
         org: Uuid? = null,
-        session: String? = null,
     ): ApiToken {
         val token = ApiToken(
-            Uuid.random(), userId, org, "t", kind, scopes, secret.take(12), session, clock.now,
-            expiresIn?.let { clock.now + it }, null, if (revoked) clock.now else null,
+            Uuid.random(), userId, org, "t", kind, scopes, secret.take(12), null, clock.now,
+            expiresIn?.let { clock.now + it }, null, null,
         )
         tokens.tokens["h($secret)"] = token
         return token
+    }
+
+    private fun agentToken(secret: String, scopes: Set<String>, session: String): ApiToken {
+        val agent = token(secret, TokenKind.AGENT, scopes, org = orgId).copy(agentSessionId = session)
+        tokens.tokens["h($secret)"] = agent
+        return agent
+    }
+
+    private fun revokedToken(secret: String, kind: TokenKind) {
+        val revoked = token(secret, kind).copy(revokedAt = clock.now)
+        tokens.tokens["h($secret)"] = revoked
     }
 
     private fun session(secret: String, revoked: Boolean = false, expired: Boolean = false): WebSession {
@@ -63,7 +74,9 @@ class CredentialAuthenticatorTest {
         val stored = token("osp_a", TokenKind.PERSONAL)
 
         assertEquals(
-            AuthenticatedPrincipal(userId.toString(), PrincipalKind.USER, setOf("orgs:read"), stored.id.toString(), null),
+            AuthenticatedPrincipal(
+                userId.toString(), PrincipalKind.USER, setOf("orgs:read"), stored.id.toString(), null,
+            ),
             authenticator.authenticate("osp_a"),
         )
     }
@@ -79,11 +92,13 @@ class CredentialAuthenticatorTest {
 
     @Test
     fun anAgentTokenIsConfinedToItsSessionAndNeverPassesAConsoleScope() = runTest {
-        val stored = token("osa_a", TokenKind.AGENT, setOf(AGENT_SCOPE), org = orgId, session = "run-1")
+        val stored = agentToken("osa_a", setOf(AGENT_SCOPE), session = "run-1")
 
         val principal = authenticator.authenticate("osa_a")
         assertEquals(
-            AuthenticatedPrincipal("run-1", PrincipalKind.AGENT, setOf(AGENT_SCOPE), stored.id.toString(), orgId.toString()),
+            AuthenticatedPrincipal(
+                "run-1", PrincipalKind.AGENT, setOf(AGENT_SCOPE), stored.id.toString(), orgId.toString(),
+            ),
             principal,
         )
         assertFalse(principal!!.allows("orgs:write"))
@@ -93,7 +108,7 @@ class CredentialAuthenticatorTest {
 
     @Test
     fun unknownRevokedExpiredMisprefixedOrOversizedTokensAreRefused() = runTest {
-        token("osp_revoked", TokenKind.PERSONAL, revoked = true)
+        revokedToken("osp_revoked", TokenKind.PERSONAL)
         token("osp_expired", TokenKind.PERSONAL, expiresIn = 0.days)
         token("osc_wrongkind", TokenKind.PERSONAL)
 
@@ -131,7 +146,10 @@ class CredentialAuthenticatorTest {
         val stored = session("oss_a")
 
         val principal = authenticator.authenticateSession("oss_a", null, requireCsrf = false)
-        assertEquals(AuthenticatedPrincipal(userId.toString(), PrincipalKind.USER, setOf(ALL_USER_SCOPES), stored.id.toString()), principal)
+        assertEquals(
+            AuthenticatedPrincipal(userId.toString(), PrincipalKind.USER, setOf(ALL_USER_SCOPES), stored.id.toString()),
+            principal,
+        )
         assertTrue(principal!!.isBrowserSession)
         assertTrue(principal.allows("orgs:write"))
         assertEquals(0, sessions.touches, "Just created: no write")
@@ -147,7 +165,10 @@ class CredentialAuthenticatorTest {
         assertNull(authenticator.authenticateSession("oss_a", null, requireCsrf = true))
         assertNull(authenticator.authenticateSession("oss_a", "csrf(oss_b)", requireCsrf = true))
         assertNull(authenticator.authenticateSession("oss_a", "short", requireCsrf = true))
-        assertEquals(userId.toString(), authenticator.authenticateSession("oss_a", "csrf(oss_a)", requireCsrf = true)?.subjectId)
+        assertEquals(
+            userId.toString(),
+            authenticator.authenticateSession("oss_a", "csrf(oss_a)", requireCsrf = true)?.subjectId,
+        )
     }
 
     @Test
@@ -200,7 +221,7 @@ class CredentialAuthenticatorTest {
 
     @Test
     fun anAgentTokenOnlyHoldsItsSessionScopeWhateverItsRowSays() = runTest {
-        token("osa_b", TokenKind.AGENT, setOf("gates:answer", AGENT_SCOPE), org = orgId, session = "run-2")
+        agentToken("osa_b", setOf("gates:answer", AGENT_SCOPE), session = "run-2")
 
         assertEquals(setOf(AGENT_SCOPE), authenticator.authenticate("osa_b")?.scopes)
     }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.AccountLinkRequiredException
@@ -16,6 +18,7 @@ import dev.ostrom.server.identity.domain.RateLimiter
 import dev.ostrom.server.identity.domain.RequestMagicLinkUseCaseImpl
 import dev.ostrom.server.identity.domain.ResolveUserUseCaseImpl
 import dev.ostrom.server.identity.domain.SignInMethods
+import dev.ostrom.server.identity.domain.SignInServices
 import dev.ostrom.server.identity.domain.StartOAuthSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import dev.ostrom.server.identity.domain.VerifiedIdentity
@@ -52,16 +55,17 @@ class SignInUseCasesTest {
     private val sessions = InMemoryWebSessionsRepository()
     private val github = FakeOAuthProvider(IdentityProvider.GITHUB)
     private val google = FakeOAuthProvider(IdentityProvider.GOOGLE)
-    private val methods = SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = true)
+    private val methods =
+        SignInMethods(mapOf(IdentityProvider.GITHUB to github, IdentityProvider.GOOGLE to google), email = true)
     private val resolve = ResolveUserUseCaseImpl(users, RecordingAuditLog(), clock)
     private val startSession = StartWebSessionUseCaseImpl(sessions, generator, hasher, clock)
     private val callback = { provider: IdentityProvider -> "https://api.test/v1/auth/${provider.key}/callback" }
-    private val start = StartOAuthSignInUseCaseImpl(methods, attempts, generator, hasher, limiter, clock, callback)
+    private val services = SignInServices(generator, hasher, limiter, clock, callback)
+    private val start = StartOAuthSignInUseCaseImpl(methods, attempts, services)
     private val link = LinkIdentityUseCaseImpl(users, RecordingAuditLog(), clock)
-    private val complete =
-        CompleteOAuthSignInUseCaseImpl(methods, attempts, hasher, resolve, link, startSession, clock, callback)
+    private val complete = CompleteOAuthSignInUseCaseImpl(methods, attempts, services, resolve, link, startSession)
     private val request = RequestMagicLinkUseCaseImpl(
-        methods, links, mail, generator, hasher, limiter, clock,
+        methods, links, mail, services,
         { to, link -> Mail(to, "Sign in", "<a href=\"$link\">", link) }, { "https://app.test/auth/email#token=$it" },
     )
     private val verify = VerifyMagicLinkUseCaseImpl(links, hasher, resolve, startSession, clock)
@@ -81,11 +85,16 @@ class SignInUseCasesTest {
         assertEquals(clock.now + 10.minutes, attempt.expiresAt)
 
         val signedIn = complete("github", "secret1", "secret1", "good")
-        assertEquals(listOf("good", "secret2", "secret3", "https://api.test/v1/auth/github/callback"), github.exchanges.single())
+        assertEquals(
+            listOf("good", "secret2", "secret3", "https://api.test/v1/auth/github/callback"),
+            github.exchanges.single(),
+        )
         assertEquals("/repos?tab=1", signedIn.redirectPath)
         assertEquals("ada@example.com", signedIn.user.primaryEmail)
         assertEquals(signedIn.user.id, sessions.sessions.values.single().userId)
-        assertFailsWith<InvalidSignInStateException>("An attempt completes once") { complete("github", "secret1", "secret1", "good") }
+        assertFailsWith<InvalidSignInStateException>("An attempt completes once") {
+            complete("github", "secret1", "secret1", "good")
+        }
     }
 
     @Test
@@ -98,7 +107,8 @@ class SignInUseCasesTest {
     @Test
     fun anUnknownOrUnconfiguredProviderIsRefused() = runTest {
         val onlyGithub = StartOAuthSignInUseCaseImpl(
-            SignInMethods(mapOf(IdentityProvider.GITHUB to github), email = false), attempts, generator, hasher, limiter, clock, callback,
+            SignInMethods(mapOf(IdentityProvider.GITHUB to github), email = false),
+            attempts, services,
         )
 
         assertFailsWith<ProviderNotConfiguredException> { onlyGithub("google", null, "ip") }
@@ -208,11 +218,16 @@ class SignInUseCasesTest {
         assertFailsWith<RateLimitedException> { request("ada@example.com", null, "ip") }
 
         val perRecipient = RequestMagicLinkUseCaseImpl(
-            methods, links, mail, generator, hasher,
-            object : RateLimiter {
-                override suspend fun tryAcquire(key: String, limit: Int, window: Duration) = !key.startsWith("magic-link-to:")
-            },
-            clock, { to, link -> Mail(to, "s", link, link) }, { it },
+            methods, links, mail,
+            SignInServices(
+                generator, hasher,
+                object : RateLimiter {
+                    override suspend fun tryAcquire(key: String, limit: Int, window: Duration) =
+                        !key.startsWith("magic-link-to:")
+                },
+                clock, callback,
+            ),
+            { to, link -> Mail(to, "s", link, link) }, { it },
         )
         perRecipient("ada@example.com", null, "ip")
         assertTrue(mail.sent.isEmpty())
@@ -223,7 +238,7 @@ class SignInUseCasesTest {
     fun linkRequestsCheckTheAddressAndTheConfiguration() = runTest {
         assertFailsWith<InvalidEmailException> { request("not-an-email", null, "ip") }
         val unconfigured = RequestMagicLinkUseCaseImpl(
-            SignInMethods(emptyMap(), email = false), links, mail, generator, hasher, limiter, clock,
+            SignInMethods(emptyMap(), email = false), links, mail, services,
             { to, link -> Mail(to, "s", link, link) }, { it },
         )
         assertFailsWith<ProviderNotConfiguredException> { unconfigured("ada@example.com", null, "ip") }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.AGENT_SCOPE

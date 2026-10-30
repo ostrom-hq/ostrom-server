@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.MAGIC_LINK_LIFETIME
@@ -36,22 +37,30 @@ class ResendMailSender(
     private val apiUrl: String = "https://api.resend.com",
 ) : MailSender {
     override suspend fun send(mail: Mail) {
+        val email = ResendEmail(from, listOf(mail.to), mail.subject, mail.html, mail.text)
         val sent = try {
             http.post("$apiUrl/emails") {
                 header(HttpHeaders.Authorization, "Bearer $apiKey")
                 contentType(ContentType.Application.Json)
-                setBody(ProviderJson.encodeToString(ResendEmail.serializer(), ResendEmail(from, listOf(mail.to), mail.subject, mail.html, mail.text)))
+                setBody(ProviderJson.encodeToString(ResendEmail.serializer(), email))
             }.status.isSuccess()
         } catch (error: CancellationException) {
             throw error
-        } catch (error: Exception) {
+        } catch (_: Exception) {
+            // Never the provider's message in a log or an answer: the caller only learns that the mail did not go.
             false
         }
         if (!sent) throw MailNotSentException()
     }
 
     @Serializable
-    private data class ResendEmail(val from: String, val to: List<String>, val subject: String, val html: String, val text: String)
+    private data class ResendEmail(
+        val from: String,
+        val to: List<String>,
+        val subject: String,
+        val html: String,
+        val text: String,
+    )
 }
 
 /**
@@ -66,11 +75,12 @@ class DirectoryMailSender(private val directory: String, private val clock: Cloc
         try {
             val dir = Path(directory)
             SystemFileSystem.createDirectories(dir)
-            val name = "${clock.now().toEpochMilliseconds()}-${mail.to.lowercase().replace(Regex("[^a-z0-9@._-]"), "_")}.txt"
+            val recipient = mail.to.lowercase().replace(Regex("[^a-z0-9@._-]"), "_")
+            val name = "${clock.now().toEpochMilliseconds()}-$recipient.txt"
             SystemFileSystem.sink(Path(dir, name)).buffered().use { sink ->
                 sink.writeString("To: ${mail.to}\nSubject: ${mail.subject}\n\n${mail.text}\n")
             }
-        } catch (error: IOException) {
+        } catch (_: IOException) {
             throw MailNotSentException()
         }
     }

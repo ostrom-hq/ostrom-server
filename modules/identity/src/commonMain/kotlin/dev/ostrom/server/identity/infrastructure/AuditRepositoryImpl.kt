@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.AuditEntry
@@ -32,19 +33,24 @@ class AuditRepositoryImpl(private val driver: Driver) : AuditRepository {
         val chain = orgId?.toString() ?: ACCOUNT_CHAIN
         val write: suspend Transaction.() -> AuditEvent = {
             // Serializes the appends of one chain until the transaction ends: no two events get the same sequence.
-            execute(Statement.create("SELECT pg_advisory_xact_lock(hashtext(:chain))").bind("chain", chain)).getOrThrow()
+            val lock = Statement.create("SELECT pg_advisory_xact_lock(hashtext(:chain))").bind("chain", chain)
+            execute(lock).getOrThrow()
             val last = fetchAll(
                 Statement.create(
-                    "SELECT sequence, hash FROM identity_audit_events WHERE chain = :chain ORDER BY sequence DESC LIMIT 1",
+                    "SELECT sequence, hash FROM identity_audit_events WHERE chain = :chain ORDER BY sequence " +
+                        "DESC LIMIT 1",
                 ).bind("chain", chain),
             ).getOrThrow().firstOrNull()
             val event = build(last?.get("hash")?.asString(), (last?.get("sequence")?.asLong() ?: 0L) + 1)
             execute(
                 Statement.create(
-                    "INSERT INTO identity_audit_events (id, chain, sequence, org_id, actor_id, action, target_type, target_id, " +
-                        "details, occurred_at, previous_hash, hash, signature, key_id) VALUES (:id, :chain, :sequence, :org, " +
+                    "INSERT INTO identity_audit_events (id, chain, sequence, org_id, actor_id, action, " +
+                        "target_type, target_id, " +
+                        "details, occurred_at, previous_hash, hash, signature, key_id) VALUES (:id, :chain, " +
+                        ":sequence, :org, " +
                         ":actor, :action, :type, :target, :details, :at, :previous, :hash, :signature, :key)",
-                ).bind("id", event.id).bind("chain", chain).bind("sequence", event.sequence).bind("org", event.entry.orgId)
+                ).bind("id", event.id).bind("chain", chain).bind("sequence", event.sequence)
+                    .bind("org", event.entry.orgId)
                     .bind("actor", event.entry.actorId).bind("action", event.entry.action)
                     .bind("type", event.entry.targetType).bind("target", event.entry.targetId)
                     .bind("details", DETAILS_JSON.encodeToString(DETAILS, event.entry.details))

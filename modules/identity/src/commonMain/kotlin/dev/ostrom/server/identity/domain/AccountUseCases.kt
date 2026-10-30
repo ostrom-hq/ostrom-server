@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -98,18 +99,25 @@ class ResolveUserUseCaseImpl(
         val vouched = email != null && vouchesFor(identity, email)
         val userEmail = email?.let { UserEmail(it, vouched) }
         val owner = if (email != null && identity.emailVerified) users.findByVerifiedEmail(email) else null
-        users.findByIdentity(identity.issuer, identity.subject)?.let { user ->
-            // The address is recorded unless another user already verified it: two accounts never share one.
-            users.link(user.id, identity, userEmail?.takeIf { owner == null || owner.id == user.id }, now)
-            return user
+        val known = users.findByIdentity(identity.issuer, identity.subject)
+        return when {
+            known != null -> known.also { user ->
+                // The address is recorded unless another user already verified it: two accounts never share one.
+                users.link(user.id, identity, userEmail?.takeIf { owner == null || owner.id == user.id }, now)
+            }
+            owner != null -> {
+                // The address is the owner's: only an authority for it may sign in to their account (S2-07).
+                if (!vouched) throw AccountLinkRequiredException()
+                users.link(owner.id, identity, userEmail, now)
+                val details = mapOf("provider" to identity.issuer)
+                audit.record(AuditEntry(null, owner.id, "identity.linked", "user", owner.id.toString(), details))
+                owner
+            }
+            else -> create(identity, email, userEmail, now)
         }
-        if (owner != null) {
-            // The address is the owner's: only an authority for it may sign in to their account (S2-07).
-            if (!vouched) throw AccountLinkRequiredException()
-            users.link(owner.id, identity, userEmail, now)
-            audit.record(AuditEntry(null, owner.id, "identity.linked", "user", owner.id.toString(), mapOf("provider" to identity.issuer)))
-            return owner
-        }
+    }
+
+    private suspend fun create(identity: VerifiedIdentity, email: String?, userEmail: UserEmail?, now: Instant): User {
         val user = User(
             id = Uuid.random(),
             login = freeLogin(identity, email),
@@ -121,19 +129,18 @@ class ResolveUserUseCaseImpl(
             createdAt = now,
         )
         users.create(user, identity, userEmail, now)
-        audit.record(AuditEntry(null, user.id, "user.created", "user", user.id.toString(), mapOf("provider" to identity.issuer)))
+        val details = mapOf("provider" to identity.issuer)
+        audit.record(AuditEntry(null, user.id, "user.created", "user", user.id.toString(), details))
         return user
     }
 
     private suspend fun freeLogin(identity: VerifiedIdentity, email: String?): String {
         val base = listOfNotNull(identity.login, email?.substringBefore('@'), identity.displayName)
             .firstNotNullOfOrNull(::loginOf) ?: DEFAULT_LOGIN
-        if (!users.loginTaken(base)) return base
         // ada, then ada-2, ada-3…; past a few, a random suffix (a very common name), then a race is retried above.
-        (2..NUMBERED_LOGINS).forEach { number ->
-            val candidate = "${base.take(MAX_LOGIN - 1 - number.toString().length)}-$number"
-            if (!users.loginTaken(candidate)) return candidate
-        }
+        val candidates = listOf(base) +
+            (2..NUMBERED_LOGINS).map { number -> "${base.take(MAX_LOGIN - 1 - number.toString().length)}-$number" }
+        for (candidate in candidates) if (!users.loginTaken(candidate)) return candidate
         return "${base.take(MAX_LOGIN - RANDOM_SUFFIX - 1)}-${Uuid.random().toHexString().take(RANDOM_SUFFIX)}"
     }
 
@@ -310,7 +317,8 @@ class EndWebSessionUseCaseImpl(
 
     override suspend fun everywhere(userId: Uuid): Long {
         val count = sessions.revokeAllOfUser(userId, clock.nowMillis())
-        audit.record(AuditEntry(null, userId, "sessions.revoked", "user", userId.toString(), mapOf("count" to count.toString())))
+        val details = mapOf("count" to count.toString())
+        audit.record(AuditEntry(null, userId, "sessions.revoked", "user", userId.toString(), details))
         return count
     }
 }

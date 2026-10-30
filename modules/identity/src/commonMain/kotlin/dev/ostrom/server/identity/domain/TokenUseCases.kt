@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The token kinds a user sees and manages in the console. */
@@ -20,7 +22,11 @@ private const val HINT_LENGTH = 12
  *
  * @return The issued token.
  */
-internal inline fun issue(secrets: SecretGenerator, kind: TokenKind, build: (id: Uuid, hint: String) -> ApiToken): IssuedToken {
+internal inline fun issue(
+    secrets: SecretGenerator,
+    kind: TokenKind,
+    build: (id: Uuid, hint: String) -> ApiToken,
+): IssuedToken {
     val secret = kind.prefix + "_" + secrets.secret()
     return IssuedToken(build(Uuid.random(), secret.take(HINT_LENGTH)), secret)
 }
@@ -39,7 +45,12 @@ interface CreatePersonalTokenUseCase {
      *
      * @throws InvalidTokenNameException, InvalidScopesException, InvalidTokenLifetimeException, TooManyTokensException
      */
-    suspend operator fun invoke(userId: Uuid, name: String, scopes: Collection<String>, lifetime: Duration?): IssuedToken
+    suspend operator fun invoke(
+        userId: Uuid,
+        name: String,
+        scopes: Collection<String>,
+        lifetime: Duration?,
+    ): IssuedToken
 }
 
 /**
@@ -58,20 +69,27 @@ class CreatePersonalTokenUseCaseImpl(
     private val audit: AuditLog,
     private val clock: Clock,
 ) : CreatePersonalTokenUseCase {
-    override suspend fun invoke(userId: Uuid, name: String, scopes: Collection<String>, lifetime: Duration?): IssuedToken {
+    override suspend fun invoke(
+        userId: Uuid,
+        name: String,
+        scopes: Collection<String>,
+        lifetime: Duration?,
+    ): IssuedToken {
         val label = name.trim()
         if (label.isEmpty() || label.length > MAX_NAME) throw InvalidTokenNameException()
         val validScopes = validateScopes(scopes)
-        if (lifetime != null && (lifetime < 1.days || lifetime > MAX_TOKEN_LIFETIME)) throw InvalidTokenLifetimeException()
+        if (lifetime != null && (lifetime < 1.days || lifetime > MAX_TOKEN_LIFETIME)) {
+            throw InvalidTokenLifetimeException()
+        }
         val now = clock.nowMillis()
         if (tokens.countLive(userId, USER_TOKEN_KINDS, now) >= MAX_TOKENS_PER_USER) throw TooManyTokensException()
         val issued = issue(secrets, TokenKind.PERSONAL) { id, hint ->
-            ApiToken(id, userId, null, label, TokenKind.PERSONAL, validScopes, hint, null, now, lifetime?.let { now + it }, null, null)
+            val expiresAt = lifetime?.let { now + it }
+            ApiToken(id, userId, null, label, TokenKind.PERSONAL, validScopes, hint, null, now, expiresAt, null, null)
         }
         tokens.create(issued.token, hasher.hash(issued.secret))
-        audit.record(
-            AuditEntry(null, userId, "token.created", "token", issued.token.id.toString(), mapOf("scopes" to validScopes.sorted().joinToString(" "))),
-        )
+        val details = mapOf("scopes" to validScopes.sorted().joinToString(" "))
+        audit.record(AuditEntry(null, userId, "token.created", "token", issued.token.id.toString(), details))
         return issued
     }
 
@@ -170,21 +188,23 @@ class RotateTokenUseCaseImpl(
     override suspend fun invoke(userId: Uuid, tokenId: Uuid): IssuedToken {
         val now = clock.nowMillis()
         val old = tokens.get(userId, tokenId)
-        if (old == null || old.kind !in USER_TOKEN_KINDS || old.revokedAt != null || old.expiresAt?.let { it <= now } == true) {
-            throw TokenNotFoundException()
-        }
+        if (old == null || !old.isRotatableAt(now)) throw TokenNotFoundException()
         val issued = issue(secrets, old.kind) { id, hint ->
             old.copy(
                 id = id, hint = hint, createdAt = now, lastUsedAt = null, revokedAt = null,
                 expiresAt = old.expiresAt?.let { now + (it - old.createdAt) },
             )
         }
-        if (!tokens.rotate(userId, tokenId, issued.token, hasher.hash(issued.secret), now)) throw TokenNotFoundException()
-        audit.record(
-            AuditEntry(null, userId, "token.rotated", "token", tokenId.toString(), mapOf("replacement" to issued.token.id.toString())),
-        )
+        val rotated = tokens.rotate(userId, tokenId, issued.token, hasher.hash(issued.secret), now)
+        if (!rotated) throw TokenNotFoundException()
+        val details = mapOf("replacement" to issued.token.id.toString())
+        audit.record(AuditEntry(null, userId, "token.rotated", "token", tokenId.toString(), details))
         return issued
     }
+
+    /** A live personal or CLI token: an agent token, a revoked or an expired one is never rotated. */
+    private fun ApiToken.isRotatableAt(now: Instant): Boolean =
+        kind in USER_TOKEN_KINDS && revokedAt == null && expiresAt?.let { it <= now } != true
 }
 
 /**
@@ -227,7 +247,10 @@ class IssueAgentTokenUseCaseImpl(
         require(lifetime.isPositive() && lifetime <= MAX_AGENT_TOKEN_LIFETIME) { "Invalid agent token lifetime." }
         val now = clock.nowMillis()
         val issued = issue(secrets, TokenKind.AGENT) { id, hint ->
-            ApiToken(id, userId, orgId, "agent $agentSessionId", TokenKind.AGENT, setOf(AGENT_SCOPE), hint, agentSessionId, now, now + lifetime, null, null)
+            val name = "agent $agentSessionId"
+            val scopes = setOf(AGENT_SCOPE)
+            val expiresAt = now + lifetime
+            ApiToken(id, userId, orgId, name, TokenKind.AGENT, scopes, hint, agentSessionId, now, expiresAt, null, null)
         }
         tokens.create(issued.token, hasher.hash(issued.secret))
         return issued
@@ -256,6 +279,10 @@ interface RevokeAgentTokensUseCase {
  * @param tokens The tokens.
  * @param clock The clock.
  */
-class RevokeAgentTokensUseCaseImpl(private val tokens: ApiTokensRepository, private val clock: Clock) : RevokeAgentTokensUseCase {
-    override suspend fun invoke(agentSessionId: String): Long = tokens.revokeOfAgentSession(agentSessionId, clock.nowMillis())
+class RevokeAgentTokensUseCaseImpl(
+    private val tokens: ApiTokensRepository,
+    private val clock: Clock,
+) : RevokeAgentTokensUseCase {
+    override suspend fun invoke(agentSessionId: String): Long =
+        tokens.revokeOfAgentSession(agentSessionId, clock.nowMillis())
 }

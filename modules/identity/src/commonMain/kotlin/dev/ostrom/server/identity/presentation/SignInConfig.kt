@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.infrastructure.OAuthClient
@@ -30,6 +31,7 @@ data class SignInConfig(
     val mailFrom: String,
     val mailDirectory: String?,
 ) {
+    /** Reads the configuration from the environment. */
     companion object {
         /**
          * Reads the configuration.
@@ -47,7 +49,8 @@ data class SignInConfig(
             val token = value(source, "OSTROM_GOOGLE_TOKEN_URL")
             val endpoints = when {
                 issuer == null && authorization == null && token == null -> OidcEndpoints.GOOGLE
-                issuer != null && authorization != null && token != null -> OidcEndpoints(setOf(issuer), authorization, token)
+                issuer != null && authorization != null && token != null ->
+                    OidcEndpoints(setOf(issuer), authorization, token)
                 else -> throw InvalidConfigException(
                     "OSTROM_GOOGLE_ISSUER, OSTROM_GOOGLE_AUTHORIZATION_URL and OSTROM_GOOGLE_TOKEN_URL go together.",
                 )
@@ -68,7 +71,8 @@ data class SignInConfig(
             val id = value(source, "OSTROM_${provider}_CLIENT_ID")
             val secret = value(source, "OSTROM_${provider}_CLIENT_SECRET")
             if ((id == null) != (secret == null)) {
-                throw InvalidConfigException("OSTROM_${provider}_CLIENT_ID and OSTROM_${provider}_CLIENT_SECRET go together.")
+                val keys = "OSTROM_${provider}_CLIENT_ID and OSTROM_${provider}_CLIENT_SECRET"
+                throw InvalidConfigException("$keys go together.")
             }
             return if (id != null && secret != null) OAuthClient(id, secret) else null
         }

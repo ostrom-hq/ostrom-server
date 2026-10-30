@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -26,7 +27,8 @@ class OAuthAttemptsRepositoryImpl(private val driver: Driver) : OAuthAttemptsRep
                     "nonce, redirect_path, created_at, expires_at, link_user_id) VALUES (:id, :state, :provider, " +
                     ":connection, :verifier, :nonce, :redirect, :created, :expires, :link)",
             ).bind("id", attempt.id).bind("state", stateHash).bind("provider", attempt.provider.key)
-                .bind("connection", attempt.connectionId).bind("verifier", attempt.codeVerifier).bind("nonce", attempt.nonce)
+                .bind("connection", attempt.connectionId).bind("verifier", attempt.codeVerifier)
+                .bind("nonce", attempt.nonce)
                 .bind("redirect", attempt.redirectPath).bind("created", attempt.createdAt)
                 .bind("expires", attempt.expiresAt).bind("link", attempt.linkUserId),
         ).getOrThrow()
