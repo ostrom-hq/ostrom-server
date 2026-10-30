@@ -24,6 +24,7 @@ import dev.ostrom.server.integrations.github.presentation.GitHubAppStatus
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -50,6 +51,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -67,8 +69,14 @@ class GitHubPostgresTest {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
-                    "user", "member", "admin" ->
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
+                    // A browser session, just signed in: the only one that says yes (S2-31, S2-54).
+                    "user", "member", "admin" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.ALL_USER),
+                        channel = PrincipalChannel.BROWSER,
+                        authenticatedAt = Clock.System.now(),
+                    )
                     "reader" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("orgs:read"))
                     else -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, emptySet())
                 }
