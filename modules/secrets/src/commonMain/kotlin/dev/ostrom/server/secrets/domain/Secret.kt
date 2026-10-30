@@ -77,14 +77,27 @@ object SecretRules {
      *
      * @param value The value.
      *
-     * @throws InvalidSecretException When it is empty, too long or holds a NUL character.
+     * @throws InvalidSecretException When it is under 8 characters, too long or holds a NUL character.
      */
     fun requireValue(value: String) {
-        if (value.isEmpty() || value.encodeToByteArray().size > MAX_VALUE_BYTES || '\u0000' in value) {
-            throw InvalidSecretException("A secret value is 1 byte to 16 KiB, without NUL.")
+        // Shorter values are refused because the scrubber leaves them alone: one echoed by an upstream would leak.
+        if (value.length < SecretScrubber.MIN_LENGTH ||
+            value.encodeToByteArray().size > MAX_VALUE_BYTES ||
+            '\u0000' in value
+        ) {
+            throw InvalidSecretException("A secret value is 8 characters to 16 KiB, without NUL.")
         }
     }
 }
+
+/**
+ * Where a page of secrets starts: after this name, then this id, since an org secret and personal secrets may share a
+ * name.
+ *
+ * @property name The last name of the previous page.
+ * @property id Its id.
+ */
+data class SecretCursor(val name: String, val id: Uuid)
 
 /** A malformed secret name or value. */
 class InvalidSecretException(message: String) : OstromException(ErrorKind.INVALID_REQUEST, message)

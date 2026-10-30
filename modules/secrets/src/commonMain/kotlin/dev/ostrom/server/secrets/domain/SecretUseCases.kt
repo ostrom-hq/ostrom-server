@@ -69,12 +69,12 @@ interface ListSecretsUseCase {
      * Lists them.
      *
      * @param caller The caller: admins see every secret, members the org's and their own.
-     * @param afterName Keyset cursor.
+     * @param after Keyset cursor.
      * @param limit The page size, at most [SecretRules.MAX_PAGE].
      *
-     * @return The secrets, by name.
+     * @return The secrets, by name then id.
      */
-    suspend operator fun invoke(caller: Caller, afterName: String?, limit: Int): List<Secret>
+    suspend operator fun invoke(caller: Caller, after: SecretCursor?, limit: Int): List<Secret>
 }
 
 /**
@@ -83,10 +83,10 @@ interface ListSecretsUseCase {
  * @param repository The storage.
  */
 class ListSecretsUseCaseImpl(private val repository: SecretsRepository) : ListSecretsUseCase {
-    override suspend fun invoke(caller: Caller, afterName: String?, limit: Int): List<Secret> = repository.list(
+    override suspend fun invoke(caller: Caller, after: SecretCursor?, limit: Int): List<Secret> = repository.list(
         orgId = caller.orgId,
         memberId = if (caller.role.isAdmin) null else caller.memberId,
-        afterName = afterName,
+        after = after,
         limit = limit.coerceIn(1, SecretRules.MAX_PAGE),
     )
 }
@@ -199,7 +199,7 @@ interface FindSecretUseCase {
 /** [FindSecretUseCase] on the repository. */
 class FindSecretUseCaseImpl(private val repository: SecretsRepository) : FindSecretUseCase {
     override suspend fun invoke(caller: Caller, name: String, personal: Boolean): Secret =
-        repository.findByName(caller.orgId, if (personal) caller.memberId else null, name)
+        repository.findManyByName(caller.orgId, if (personal) caller.memberId else null, listOf(name)).firstOrNull()
             ?: throw SecretNotFoundException()
 }
 
@@ -263,9 +263,7 @@ interface SecretDirectoryUseCase {
 /** [SecretDirectoryUseCase] on the repository. */
 class SecretDirectoryUseCaseImpl(private val repository: SecretsRepository) : SecretDirectoryUseCase {
     override suspend fun idsByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): Map<String, Uuid> =
-        names.distinct().mapNotNull { name ->
-            repository.findByName(orgId, ownerMemberId, name)?.let { name to it.id }
-        }.toMap()
+        repository.findManyByName(orgId, ownerMemberId, names.distinct()).associate { it.name to it.id }
 
     override suspend fun namesById(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, String> = if (ids.isEmpty()) {
         emptyMap()

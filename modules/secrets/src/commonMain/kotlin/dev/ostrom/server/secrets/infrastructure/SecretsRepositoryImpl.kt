@@ -2,6 +2,7 @@
 package dev.ostrom.server.secrets.infrastructure
 
 import dev.ostrom.server.secrets.domain.Secret
+import dev.ostrom.server.secrets.domain.SecretCursor
 import dev.ostrom.server.secrets.domain.SecretsRepository
 import dev.ostrom.server.secrets.domain.StoredSecret
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -57,16 +58,17 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
         ).getOrThrow().map { StoredSecret(it.toSecret(), it.get("envelope").asString()) }
     }
 
-    override suspend fun list(orgId: Uuid, memberId: Uuid?, afterName: String?, limit: Int): List<Secret> {
+    override suspend fun list(orgId: Uuid, memberId: Uuid?, after: SecretCursor?, limit: Int): List<Secret> {
         val visibility = if (memberId == null) "" else " AND (owner_member_id IS NULL OR owner_member_id = :member)"
+        val cursor = if (after == null) "" else " AND (name, id) > (:after_name, :after_id)"
         val statement = Statement.create(
-            "SELECT $COLUMNS FROM secrets_entries WHERE org_id = :org_id$visibility AND name > :after " +
+            "SELECT $COLUMNS FROM secrets_entries WHERE org_id = :org_id$visibility$cursor " +
                 "ORDER BY name, id LIMIT :limit",
         )
             .bind("org_id", orgId)
-            .bind("after", afterName ?: "")
             .bind("limit", limit)
         if (memberId != null) statement.bind("member", memberId)
+        if (after != null) statement.bind("after_name", after.name).bind("after_id", after.id)
         return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toSecret() }
     }
 
@@ -85,15 +87,16 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
                 .bind("id", id),
         ).getOrThrow().firstOrNull()?.toSecret()
 
-    override suspend fun findByName(orgId: Uuid, ownerMemberId: Uuid?, name: String): Secret? {
+    override suspend fun findManyByName(orgId: Uuid, ownerMemberId: Uuid?, names: Collection<String>): List<Secret> {
+        if (names.isEmpty()) return emptyList()
         val owner = if (ownerMemberId == null) "owner_member_id IS NULL" else "owner_member_id = :owner"
         val statement = Statement.create(
-            "SELECT $COLUMNS FROM secrets_entries WHERE org_id = :org_id AND name = :name AND $owner",
+            "SELECT $COLUMNS FROM secrets_entries WHERE org_id = :org_id AND name IN :names AND $owner",
         )
             .bind("org_id", orgId)
-            .bind("name", name)
+            .bind("names", names.toList())
         if (ownerMemberId != null) statement.bind("owner", ownerMemberId)
-        return driver.fetchInOrg(orgId, statement).getOrThrow().firstOrNull()?.toSecret()
+        return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toSecret() }
     }
 
     override suspend fun getOrgSecretsByName(orgId: Uuid, names: Collection<String>): List<StoredSecret> {
