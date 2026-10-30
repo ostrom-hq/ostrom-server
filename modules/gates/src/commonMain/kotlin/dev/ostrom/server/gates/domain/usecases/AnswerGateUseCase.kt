@@ -107,11 +107,14 @@ class AnswerGateUseCaseImpl(
     }
 
     private fun checkAnswerable(actor: GateActor, request: ApprovalRequest, gate: Gate, shownDigest: String) {
-        if (!SelfApproval.same(request.approverId, actor.id)) throw NotTheApproverException()
-        if (gate.status != GateStatus.PENDING || request.status != RequestStatus.PENDING) {
-            throw GateAlreadyDecidedException()
+        val refused = when {
+            !SelfApproval.same(request.approverId, actor.id) -> NotTheApproverException()
+            gate.status != GateStatus.PENDING -> GateAlreadyDecidedException()
+            request.status != RequestStatus.PENDING -> GateAlreadyDecidedException()
+            shownDigest != gate.shownDigest -> GateChangedException()
+            else -> null
         }
-        if (shownDigest != gate.shownDigest) throw GateChangedException()
+        if (refused != null) throw refused
     }
 
     // The gate is pending, so every request is: the answered one takes the answer, the others are closed.
