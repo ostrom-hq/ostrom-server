@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The server binary: reads the configuration, opens the database, applies every module's migrations, wires Koin
 // and serves HTTP on Ktor's CIO engine. Depends on every module of modules/, and on the enterprise modules of
 // ee/modules/ when that directory is present (an AGPL build without ee/ compiles the same code with none). The entry

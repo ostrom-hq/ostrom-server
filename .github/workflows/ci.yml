@@ -7,17 +7,21 @@ on:
     branches: [main]
     tags: ['[0-9]*']
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
   contents: read
   packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
+# One run per workflow and ref; a new push cancels the previous run, except on main (org CI rules, JOURNAL 03:10).
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  linux:
+  # One job, `ci`, the required check of main. A draft pull request runs no CI: mark it ready when you want it.
+  ci:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 40
     runs-on: ubuntu-24.04
     services:
@@ -32,7 +36,7 @@ jobs:
           --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
       # Stripe's official mock, for the billing gateway's integration test.
       stripe-mock:
-        image: stripe/stripe-mock:latest
+        image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78 # latest, 2026-10-01
         ports: ['12111:12111']
     env:
       OSTROM_TEST_DATABASE_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom_test
@@ -93,7 +97,7 @@ jobs:
         run: |
           docker build -t ostrom-server:ci .
           docker images ostrom-server:ci --format '{{.Size}}'
-      - name: Smoke test of the image (/health, /v1/instance)
+      - name: Smoke test of the image (/health, /api/v1/instance)
         run: |
           docker run -d --name ostrom --network host \
             -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom_test \
@@ -101,7 +105,7 @@ jobs:
           for i in $(seq 1 30); do curl -fsS localhost:8080/health && break; sleep 1; done
           echo
           curl -fsS localhost:8080/health | grep '"status":"ok"'
-          curl -fsS localhost:8080/v1/instance | grep '"algorithm":"ed25519"'
+          curl -fsS localhost:8080/api/v1/instance | grep '"algorithm":"ed25519"'
           docker logs ostrom
       - name: Smoke test of the license check (an invalid key fails the start, without logging the key)
         run: |

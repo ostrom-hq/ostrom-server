@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.billing.presentation
 
 import dev.ostrom.server.billing.domain.BILLING_MANAGE
@@ -41,7 +42,7 @@ fun Route.billingRoutes(dependencies: BillingRoutesDependencies) = with(dependen
         post<BillingApi.Checkout, PlanRequest> { params, request ->
             val (plan, interval) = request.parse()
             val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)
-            call.respond(RedirectResponse(startCheckout(caller, orgId, null, null, plan, interval)))
+            call.respond(RedirectResponse(startCheckout(caller, orgId, plan, interval)))
         }
         post<BillingApi.Portal> { params ->
             val (caller, orgId) = call.caller(resolver, params.parent.orgId, BILLING_MANAGE)

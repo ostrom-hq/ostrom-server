@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a change or a new capability.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Large ideas are easier to shape in [Discussions](https://github.com/ostrom-hq/ostrom-server/discussions/categories/ideas)
+        first. Here, start from the problem: we may solve it in another way than the one you have in mind.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: Who is affected, what they try to do, and what stands in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: What a person would see or do differently.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to work on this.
