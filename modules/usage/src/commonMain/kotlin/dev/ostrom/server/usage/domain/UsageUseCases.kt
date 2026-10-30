@@ -5,6 +5,8 @@ import dev.ostrom.server.secrets.domain.Caller
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.onSubscription
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -28,6 +30,12 @@ object UsageRules {
 
     /** How far in the future a client clock may be. */
     val MAX_CLOCK_SKEW: Duration = 5.minutes
+
+    /** How old a client event may be: a CLI that was offline flushes later, not months later. */
+    val MAX_EVENT_AGE: Duration = 7.days
+
+    /** Events one member may record per minute: twelve full requests. */
+    const val MAX_EVENTS_PER_MINUTE: Int = 6_000
 
     /** Days a summary may cover. */
     val SUMMARY_DAYS: IntRange = 1..90
@@ -72,6 +80,7 @@ interface IngestUsageEventsUseCase {
      * @return The number recorded.
      *
      * @throws TooManyUsageEventsException Over [UsageRules.MAX_EVENTS_PER_REQUEST].
+     * @throws UsageRateLimitedException Over [UsageRules.MAX_EVENTS_PER_MINUTE] for this member.
      * @throws InvalidUsageEventException When one event is malformed or of a server-only kind; none is recorded.
      */
     suspend operator fun invoke(caller: Caller, events: List<ClientUsageEvent>): Int
@@ -83,17 +92,26 @@ interface IngestUsageEventsUseCase {
  * @param repository The ledger.
  * @param feed The live feed.
  * @param clock The time.
+ * @param maxMembers Members whose minute is counted at once; past it, finished minutes are forgotten, then all.
  */
 class IngestUsageEventsUseCaseImpl(
     private val repository: UsageRepository,
     private val feed: UsageFeed,
     private val clock: Clock,
+    private val maxMembers: Int = 10_000,
 ) : IngestUsageEventsUseCase {
+    private class Minute(val start: Instant, var count: Int)
+
+    private val lock = Mutex()
+    private val minutes = HashMap<Pair<Uuid, Uuid>, Minute>()
+
     override suspend fun invoke(caller: Caller, events: List<ClientUsageEvent>): Int {
         if (events.size > UsageRules.MAX_EVENTS_PER_REQUEST) throw TooManyUsageEventsException()
         if (events.isEmpty()) return 0
         val now = clock.now()
-        val recorded = events.map { it.validated(now).toEvent(caller, now) }
+        val validated = events.map { it.validated(now) }
+        admit(caller, validated.size, now)
+        val recorded = validated.map { it.toEvent(caller, now) }
         repository.insert(caller.orgId, recorded)
         recorded.forEach { feed.publish(it) }
         return recorded.size
@@ -107,11 +125,35 @@ class IngestUsageEventsUseCaseImpl(
                 "The session id is 1 to 200 characters."
             durationMillis !in 0..UsageRules.MAX_DURATION_MILLIS -> "The duration is out of range."
             outcome.isBlank() || outcome.length > UsageRules.MAX_OUTCOME_LENGTH -> "The outcome is 1 to 64 characters."
-            at != null && at > now + UsageRules.MAX_CLOCK_SKEW -> "The event is in the future."
-            else -> null
+            else -> timeProblem(now)
         }
         if (problem != null) throw InvalidUsageEventException(problem)
         return this
+    }
+
+    private fun ClientUsageEvent.timeProblem(now: Instant): String? {
+        val at = at ?: return null
+        return when {
+            at > now + UsageRules.MAX_CLOCK_SKEW -> "The event is in the future."
+            at < now - UsageRules.MAX_EVENT_AGE -> "The event is older than a week."
+            else -> null
+        }
+    }
+
+    /** Counts the events against the member's minute; the ledger and the live feed are not a free sink. */
+    private suspend fun admit(caller: Caller, count: Int, now: Instant) = lock.withLock {
+        val key = caller.orgId to caller.memberId
+        var minute = minutes[key]
+        if (minute == null || now - minute.start >= 1.minutes) {
+            if (minutes.size >= maxMembers) {
+                minutes.entries.removeAll { now - it.value.start >= 1.minutes }
+                if (minutes.size >= maxMembers) minutes.clear()
+            }
+            minute = Minute(now, 0)
+            minutes[key] = minute
+        }
+        if (minute.count + count > UsageRules.MAX_EVENTS_PER_MINUTE) throw UsageRateLimitedException()
+        minute.count += count
     }
 
     private fun ClientUsageEvent.toEvent(caller: Caller, now: Instant) = UsageEvent(

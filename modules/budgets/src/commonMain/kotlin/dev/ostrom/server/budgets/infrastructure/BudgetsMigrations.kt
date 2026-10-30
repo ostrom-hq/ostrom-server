@@ -7,8 +7,8 @@ import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
 /**
  * The schema of the budgets module; its tables start with `budgets_`. `budgets_limits.scope` is `ORG` and
- * `DEFAULT_MEMBER` (member id null) or `MEMBER` (member id set). `budgets_alerts` makes each alert unique per limit,
- * threshold and month across replicas.
+ * `DEFAULT_MEMBER` (member id null) or `MEMBER` (member id set). `budgets_alerts` makes each alert unique per limit
+ * value, threshold and month across replicas: a changed limit alerts again.
  */
 val BudgetsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -31,9 +31,11 @@ val BudgetsMigrations: List<SchemaMigration> = listOf(
                 scope TEXT NOT NULL,
                 period_start TIMESTAMPTZ NOT NULL,
                 threshold INTEGER NOT NULL,
+                limit_micros BIGINT NOT NULL,
                 alerted_at TIMESTAMPTZ NOT NULL
             );
-            CREATE UNIQUE INDEX budgets_alerts_once ON budgets_alerts (org_id, scope, member_id, period_start, threshold) NULLS NOT DISTINCT
+            CREATE UNIQUE INDEX budgets_alerts_once
+                ON budgets_alerts (org_id, scope, member_id, period_start, threshold, limit_micros) NULLS NOT DISTINCT
         """.trimIndent(),
     ),
     SchemaMigration(

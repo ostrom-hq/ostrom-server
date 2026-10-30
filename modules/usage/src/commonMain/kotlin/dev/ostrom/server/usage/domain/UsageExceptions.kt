@@ -15,6 +15,10 @@ class InvalidUsageEventException(message: String) : OstromException(ErrorKind.IN
 class TooManyUsageEventsException :
     OstromException(ErrorKind.PAYLOAD_TOO_LARGE, "At most ${UsageRules.MAX_EVENTS_PER_REQUEST} events per request.")
 
+/** A member recorded more than [UsageRules.MAX_EVENTS_PER_MINUTE] events this minute. */
+class UsageRateLimitedException :
+    OstromException(ErrorKind.RATE_LIMITED, "At most ${UsageRules.MAX_EVENTS_PER_MINUTE} events per minute.")
+
 /**
  * A usage query is out of range (period, grouping, cursor).
  *

@@ -236,6 +236,75 @@ class BudgetGuardTest {
     }
 
     @Test
+    fun aFailedPublicationIsRetriedByALaterCheck() = runTest {
+        overrideMember(1_000)
+        spend.spent[orgA to member] = 900
+        alerts.failure = IllegalStateException("smtp down")
+        guard.check(orgA, member)
+
+        alerts.failure = null
+        clock.advance(5.seconds)
+        guard.check(orgA, member)
+
+        assertEquals(listOf(80), alerts.alerts.map { it.thresholdPercent }, "The mark was taken back: it is sent now")
+    }
+
+    @Test
+    fun aCancelledAlertIsNotTakenAsSent() = runTest {
+        overrideMember(1_000)
+        spend.spent[orgA to member] = 900
+        repository.markFailure = CancellationException("gateway call cancelled")
+        assertFailsWith<CancellationException> { guard.check(orgA, member) }
+
+        repository.markFailure = null
+        guard.check(orgA, member)
+
+        assertEquals(listOf(80), alerts.alerts.map { it.thresholdPercent })
+    }
+
+    @Test
+    fun aCancelledPublicationTakesBackItsMark() = runTest {
+        overrideMember(1_000)
+        spend.spent[orgA to member] = 900
+        alerts.failure = CancellationException("gateway call cancelled")
+        assertFailsWith<CancellationException> { guard.check(orgA, member) }
+
+        alerts.failure = null
+        guard.check(orgA, member)
+
+        assertEquals(listOf(80), alerts.alerts.map { it.thresholdPercent })
+    }
+
+    @Test
+    fun aLimitChangedDuringACheckIsNotCachedOverByIt() = runTest {
+        repository.orgLimits[orgA] = 1_000_000
+        spend.duringRead = {
+            repository.orgLimits[orgA] = 0
+            guard.invalidate(orgA)
+        }
+        assertEquals(BudgetDecision.Allowed(1_000_000), guard.check(orgA, member), "Read before the change")
+
+        assertEquals(
+            BudgetDecision.Exhausted(BudgetScope.ORG, 0, TestCallers.nextMonth),
+            guard.check(orgA, member),
+            "The next check, in the same second, sees the new limit",
+        )
+    }
+
+    @Test
+    fun aChangedLimitAlertsAgainInTheSameMonth() = runTest {
+        overrideMember(1_000)
+        spend.spent[orgA to member] = 900
+        guard.check(orgA, member)
+
+        overrideMember(1_100)
+        guard.invalidate(orgA)
+        guard.check(orgA, member)
+
+        assertEquals(listOf(1_000L, 1_100L), alerts.alerts.map { it.limitMicros })
+    }
+
+    @Test
     fun checkWithCancellationPropagatesException() = runTest {
         overrideMember(1_000)
         spend.spent[orgA to member] = 900

@@ -4,8 +4,10 @@ package dev.ostrom.server.budgets.domain
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.usage.domain.SpendReader
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -50,8 +52,8 @@ data class BudgetCacheSettings(val ttl: Duration = 5.seconds, val maxEntries: In
  * [BudgetGuard] on the limits and the ledger. Decisions are cached for the [BudgetCacheSettings.ttl] per (org, member),
  * and the org's spend as long per org, so that the gateway's hot path stays far under a millisecond; the price is that
  * spending may overshoot a limit by what is spent within that time. Crossing 80 % and 100 % of a limit publishes a
- * [BudgetAlert], once per limit, threshold and month: a local memo avoids asking the database again, and the database
- * makes it once across replicas.
+ * [BudgetAlert], once per limit value, threshold and month: a local memo avoids asking the database again, and the
+ * database makes it once across replicas.
  *
  * @param repository The limits.
  * @param spend The ledger.
@@ -76,7 +78,7 @@ class BudgetGuardImpl(
     /** Whose limit: the org's (no member) or a member's. */
     private data class Subject(val orgId: Uuid, val memberId: Uuid?, val scope: BudgetScope)
 
-    private data class AlertKey(val subject: Subject, val threshold: Int, val period: Instant)
+    private data class AlertKey(val subject: Subject, val threshold: Int, val limit: Long, val period: Instant)
 
     private class Measured(val limit: Long, val spent: Long) {
         val exhausted: Boolean get() = spent >= limit
@@ -87,28 +89,38 @@ class BudgetGuardImpl(
     private val decisions = HashMap<MemberKey, Cached<BudgetDecision>>()
     private val orgSpends = HashMap<Uuid, Cached<Long>>()
     private val alerted = HashSet<AlertKey>()
+    private var alertedPeriod: Instant? = null
+
+    /**
+     * Counts invalidations: a value read before one is not cached after it, or a check running while an admin changes
+     * a limit would keep the old decision for the whole TTL.
+     */
+    private var generation = 0L
 
     override suspend fun check(orgId: Uuid, memberId: Uuid): BudgetDecision {
         val now = clock.now()
         val key = MemberKey(orgId, memberId)
-        val cached = lock.withLock { decisions[key] }
+        val (cached, readAt) = lock.withLock { decisions[key] to generation }
         if (cached != null && cached.expiresAt > now) return cached.value
-        val decision = evaluate(orgId, memberId, now)
-        lock.withLock { decisions.putBounded(key, Cached(decision, now + cache.ttl), now) }
+        val decision = evaluate(orgId, memberId, now, readAt)
+        lock.withLock {
+            if (generation == readAt) decisions.putBounded(key, Cached(decision, now + cache.ttl), now)
+        }
         return decision
     }
 
     override suspend fun invalidate(orgId: Uuid) {
         lock.withLock {
+            generation++
             decisions.keys.removeAll { it.orgId == orgId }
             orgSpends.remove(orgId)
         }
     }
 
-    private suspend fun evaluate(orgId: Uuid, memberId: Uuid, now: Instant): BudgetDecision {
+    private suspend fun evaluate(orgId: Uuid, memberId: Uuid, now: Instant, readAt: Long): BudgetDecision {
         val period = BudgetPeriod.of(now)
         val limits = repository.limits(orgId, memberId)
-        val org = limits.orgLimitMicros?.let { Measured(it, orgSpent(orgId, period, now)) }
+        val org = limits.orgLimitMicros?.let { Measured(it, orgSpent(orgId, period, now, readAt)) }
         val member = limits.memberLimitMicros?.let { Measured(it, spend.spentMicros(orgId, memberId, period.start)) }
         if (org != null) alertCrossings(Subject(orgId, null, BudgetScope.ORG), org, period, now)
         if (member != null) alertCrossings(Subject(orgId, memberId, BudgetScope.MEMBER), member, period, now)
@@ -119,11 +131,13 @@ class BudgetGuardImpl(
         }
     }
 
-    private suspend fun orgSpent(orgId: Uuid, period: BudgetPeriod, now: Instant): Long {
+    private suspend fun orgSpent(orgId: Uuid, period: BudgetPeriod, now: Instant, readAt: Long): Long {
         val cached = lock.withLock { orgSpends[orgId] }
         if (cached != null && cached.expiresAt > now) return cached.value
         val spent = spend.spentMicros(orgId, null, period.start)
-        lock.withLock { orgSpends.putBounded(orgId, Cached(spent, now + cache.ttl), now) }
+        lock.withLock {
+            if (generation == readAt) orgSpends.putBounded(orgId, Cached(spent, now + cache.ttl), now)
+        }
         return spent
     }
 
@@ -132,7 +146,7 @@ class BudgetGuardImpl(
         for (threshold in BudgetRules.ALERT_THRESHOLDS) {
             // limit × threshold stays under 10^17: no overflow for any limit BudgetRules accepts.
             if (measured.spent < measured.limit * threshold / PERCENT) return
-            val key = AlertKey(subject, threshold, period.start)
+            val key = AlertKey(subject, threshold, measured.limit, period.start)
             if (!remember(key)) continue
             val alert = BudgetAlert(
                 orgId = subject.orgId,
@@ -143,25 +157,43 @@ class BudgetGuardImpl(
                 spentMicros = measured.spent,
                 periodStart = period.start,
             )
+            // The decision does not depend on the alert: a failure is reported and a later check tries again.
+            var sent = false
             try {
-                if (repository.markAlerted(alert, now)) alerts.publish(alert)
+                if (repository.markAlerted(alert, now)) publishOrUnmark(alert)
+                sent = true
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                // The decision does not depend on the alert: report it and let a later check try again.
-                lock.withLock { alerted.remove(key) }
                 // The class only, never the message: PostgreSQL quotes row values in it.
                 logger.warn(
                     "budget alert failed",
                     mapOf("org_id" to subject.orgId, "threshold" to threshold, "error" to error::class.simpleName),
                 )
+            } finally {
+                // Cancelled or failed: the memo must not claim an alert that was never sent.
+                if (!sent) withContext(NonCancellable) { lock.withLock { alerted.remove(key) } }
             }
         }
     }
 
-    /** Adds the key to the memo of this month's alerts; false if it was there. Older months are forgotten. */
+    /** Publishes; if that fails or is cancelled, takes back the mark so that another check sends it. */
+    private suspend fun publishOrUnmark(alert: BudgetAlert) {
+        var published = false
+        try {
+            alerts.publish(alert)
+            published = true
+        } finally {
+            if (!published) withContext(NonCancellable) { repository.unmarkAlerted(alert) }
+        }
+    }
+
+    /** Adds the key to the memo of this month's alerts; false if it was there. A new month starts an empty memo. */
     private suspend fun remember(key: AlertKey): Boolean = lock.withLock {
-        alerted.removeAll { it.period != key.period }
+        if (alertedPeriod != key.period) {
+            alerted.clear()
+            alertedPeriod = key.period
+        }
         alerted.add(key)
     }
 

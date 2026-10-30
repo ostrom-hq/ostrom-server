@@ -16,6 +16,7 @@ import dev.ostrom.server.usage.domain.UsageCursor
 import dev.ostrom.server.usage.domain.UsageEvent
 import dev.ostrom.server.usage.domain.UsageGroupBy
 import dev.ostrom.server.usage.domain.UsageKind
+import dev.ostrom.server.usage.domain.UsageRateLimitedException
 import dev.ostrom.server.usage.domain.UsageRecorderImpl
 import dev.ostrom.server.usage.domain.UsageRepository
 import dev.ostrom.server.usage.domain.UsageSummaryUseCaseImpl
@@ -94,6 +95,29 @@ class UsageUseCasesTest {
     }
 
     @Test
+    fun aMemberRecordsAtMostSixThousandEventsAMinute() = runTest {
+        val batch = List(500) { ClientUsageEvent(UsageKind.HOOK, "Stop") }
+        repeat(12) { ingest(TestCallers.memberA, batch) }
+        assertFailsWith<UsageRateLimitedException> { ingest(TestCallers.memberA, batch.take(1)) }
+        assertEquals(1, ingest(TestCallers.adminA, batch.take(1)), "Another member has their own minute")
+
+        clock.advance(1.minutes)
+        assertEquals(500, ingest(TestCallers.memberA, batch), "A new minute starts")
+        assertEquals(6_001, repository.events.size, "The refused batch recorded nothing")
+    }
+
+    @Test
+    fun theCountersStayBoundedForgettingFinishedMinutesFirst() = runTest {
+        val bounded = IngestUsageEventsUseCaseImpl(repository, feed, clock, maxMembers = 2)
+        val one = listOf(ClientUsageEvent(UsageKind.HOOK, "Stop"))
+        fun member() = TestCallers.memberA.copy(memberId = Uuid.random())
+        repeat(3) { bounded(member(), one) }
+        clock.advance(1.minutes)
+        repeat(2) { bounded(member(), one) }
+        assertEquals(5, repository.events.size)
+    }
+
+    @Test
     fun anEmptyBatchRecordsNothing() = runTest {
         assertEquals(0, ingest(TestCallers.memberA, emptyList()))
         assertEquals(emptyList(), repository.events)
@@ -120,6 +144,7 @@ class UsageUseCasesTest {
             ClientUsageEvent(UsageKind.SKILL, "deploy", outcome = ""),
             ClientUsageEvent(UsageKind.SKILL, "deploy", outcome = "o".repeat(65)),
             ClientUsageEvent(UsageKind.SKILL, "deploy", at = TestCallers.epoch + 6.minutes),
+            ClientUsageEvent(UsageKind.SKILL, "deploy", at = TestCallers.epoch - 7.days - 1.seconds),
         )
         for (event in invalid) {
             assertFailsWith<InvalidUsageEventException>("Refused: $event") {

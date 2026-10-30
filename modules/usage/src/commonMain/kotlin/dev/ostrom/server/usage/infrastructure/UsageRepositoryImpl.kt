@@ -42,11 +42,8 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
     }
 
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long {
-        val member = if (memberId == null) "" else " AND member_id = :member_id"
-        val statement = Statement.create(
-            "SELECT CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS spent FROM usage_events " +
-                "WHERE org_id = :org_id AND at >= :since$member",
-        ).bind("org_id", orgId).bind("since", since)
+        val statement = Statement.create(UsageQueries.spent(member = memberId != null))
+            .bind("org_id", orgId).bind("since", since)
         if (memberId != null) statement.bind("member_id", memberId)
         return driver.fetchInOrg(orgId, statement).getOrThrow().first().get("spent").asLong()
     }
@@ -54,24 +51,14 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long = driver.fetchInOrg(
         orgId,
         Statement.create(
-            "SELECT CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS spent FROM usage_events " +
-                "WHERE org_id = :org_id AND account_id = :account_id AND at >= :since",
+            UsageQueries.ACCOUNT_SPENT,
         ).bind("org_id", orgId).bind("account_id", accountId).bind("since", since),
     ).getOrThrow().first().get("spent").asLong()
 
     override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> {
-        val member = if (window.memberId == null) "" else " AND member_id = :member_id"
-        val until = if (window.until == null) "" else " AND at < :until"
-        val models = if (groupBy == UsageGroupBy.MODEL) " AND kind = 'MODEL'" else ""
+        val sql = UsageQueries.summary(groupBy, until = window.until != null, member = window.memberId != null)
         val statement = Statement.create(
-            "SELECT ${groupBy.keyExpression()} AS group_key, COUNT(*) AS events, " +
-                "CAST(COALESCE(SUM(input_tokens), 0) AS BIGINT) AS input_tokens, " +
-                "CAST(COALESCE(SUM(output_tokens), 0) AS BIGINT) AS output_tokens, " +
-                "CAST(COALESCE(SUM(cache_read_tokens), 0) AS BIGINT) AS cache_read_tokens, " +
-                "CAST(COALESCE(SUM(cache_write_tokens), 0) AS BIGINT) AS cache_write_tokens, " +
-                "CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS total_cost " +
-                "FROM usage_events WHERE org_id = :org_id AND at >= :since$until$member$models " +
-                "GROUP BY 1 ORDER BY total_cost DESC, group_key NULLS LAST LIMIT :limit",
+            sql,
         ).bind("org_id", window.orgId).bind("since", window.since).bind("limit", limit)
         window.memberId?.let { statement.bind("member_id", it) }
         window.until?.let { statement.bind("until", it) }
@@ -89,16 +76,13 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
     }
 
     override suspend fun list(orgId: Uuid, memberId: Uuid?, before: UsageCursor?, limit: Int): List<UsageEvent> {
-        val member = if (memberId == null) "" else " AND member_id = :member_id"
         val cursor = when {
-            before == null -> ""
-            before.id == null -> " AND at < :before_at"
-            else -> " AND (at, id) < (:before_at, :before_id)"
+            before == null -> UsageQueries.Cursor.NONE
+            before.id == null -> UsageQueries.Cursor.AT
+            else -> UsageQueries.Cursor.AT_AND_ID
         }
-        val statement = Statement.create(
-            "SELECT $COLUMNS FROM usage_events WHERE org_id = :org_id$member$cursor " +
-                "ORDER BY at DESC, id DESC LIMIT :limit",
-        ).bind("org_id", orgId).bind("limit", limit)
+        val statement = Statement.create(UsageQueries.list(member = memberId != null, cursor))
+            .bind("org_id", orgId).bind("limit", limit)
         if (memberId != null) statement.bind("member_id", memberId)
         if (before != null) {
             statement.bind("before_at", before.at)
@@ -112,18 +96,8 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
         execute("SELECT set_config('$RETENTION_SETTING', 'on', true)").getOrThrow()
         execute(
-            Statement.create(
-                "DELETE FROM usage_events WHERE id IN (SELECT id FROM usage_events WHERE at < :before LIMIT :limit)",
-            ).bind("before", before).bind("limit", limit),
+            Statement.create(UsageQueries.PURGE).bind("before", before).bind("limit", limit),
         ).getOrThrow()
-    }
-
-    private fun UsageGroupBy.keyExpression(): String = when (this) {
-        UsageGroupBy.MEMBER -> "CAST(member_id AS TEXT)"
-        UsageGroupBy.KIND -> "kind"
-        UsageGroupBy.MODEL -> "name"
-        UsageGroupBy.PROVIDER -> "provider"
-        UsageGroupBy.ACCOUNT -> "CAST(account_id AS TEXT)"
     }
 
     private fun Statement.bindEvent(prefix: String, event: UsageEvent): Statement = bind("${prefix}id", event.id)
@@ -171,4 +145,4 @@ private val PARAMETERS = listOf(
     "id", "org_id", "member_id", "kind", "name", "provider", "account_id", "session_id", "input_tokens",
     "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micros", "duration_ms", "outcome", "at",
 )
-private val COLUMNS = PARAMETERS.joinToString(", ")
+internal val COLUMNS = PARAMETERS.joinToString(", ")

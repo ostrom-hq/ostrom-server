@@ -8,6 +8,7 @@ import dev.ostrom.server.budgets.domain.BudgetLimits
 import dev.ostrom.server.budgets.domain.BudgetSettings
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.MemberBudget
+import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -109,9 +110,16 @@ class FakeSpendReader : SpendReader {
     val reads = mutableListOf<Pair<Uuid, Uuid?>>()
     val sinces = mutableListOf<Instant>()
 
+    /** Runs during the next read, as something happening while a check is in flight. */
+    var duringRead: (suspend () -> Unit)? = null
+
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long {
         reads += orgId to memberId
         sinces += since
+        duringRead?.let {
+            duringRead = null
+            it()
+        }
         return spent[orgId to memberId] ?: 0
     }
 
@@ -172,6 +180,11 @@ class InMemoryBudgetsRepository : BudgetsRepository {
         }
     }
 
+    override suspend fun putSharedLimit(orgId: Uuid, limit: SharedLimit, limitMicros: Long?, at: Instant) {
+        val limits = if (limit == SharedLimit.ORG) orgLimits else defaultLimits
+        if (limitMicros == null) limits.remove(orgId) else limits[orgId] = limitMicros
+    }
+
     override suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget =
         MemberBudget(memberId, limitMicros, at).also { memberLimits[orgId to memberId] = it }
 
@@ -180,6 +193,12 @@ class InMemoryBudgetsRepository : BudgetsRepository {
 
     override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
         markFailure?.let { throw it }
-        return marked.add(listOf(alert.orgId, alert.memberId, alert.scope, alert.periodStart, alert.thresholdPercent))
+        return marked.add(alert.markKey())
     }
+
+    override suspend fun unmarkAlerted(alert: BudgetAlert) {
+        marked.remove(alert.markKey())
+    }
+
+    private fun BudgetAlert.markKey() = listOf(orgId, memberId, scope, periodStart, thresholdPercent, limitMicros)
 }

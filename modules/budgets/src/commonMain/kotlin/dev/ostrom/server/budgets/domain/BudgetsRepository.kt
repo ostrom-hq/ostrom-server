@@ -67,6 +67,17 @@ interface BudgetsRepository {
     suspend fun putOrgLimits(orgId: Uuid, orgLimitMicros: Long?, defaultMemberLimitMicros: Long?, at: Instant)
 
     /**
+     * Sets or removes one org-wide limit and leaves the other as it is, in one statement: two admins changing the two
+     * limits at once never undo each other's change.
+     *
+     * @param orgId The org.
+     * @param limit Which one.
+     * @param limitMicros The limit, or null to remove it.
+     * @param at The time of the change.
+     */
+    suspend fun putSharedLimit(orgId: Uuid, limit: SharedLimit, limitMicros: Long?, at: Instant)
+
+    /**
      * Sets a member's own limit.
      *
      * @param orgId The org.
@@ -94,7 +105,23 @@ interface BudgetsRepository {
      * @param alert The alert.
      * @param at The time.
      *
-     * @return True the first time for this limit, threshold and month; false if it was already sent.
+     * @return True the first time for this limit value, threshold and month; false if it was already sent.
      */
     suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean
+
+    /**
+     * Forgets an alert whose sending failed, so that a later check sends it again.
+     *
+     * @param alert The alert [markAlerted] recorded.
+     */
+    suspend fun unmarkAlerted(alert: BudgetAlert)
+}
+
+/** The two limits that hold for a whole org rather than one member. */
+enum class SharedLimit {
+    /** The org's own limit. */
+    ORG,
+
+    /** The limit of every member without one of their own. */
+    DEFAULT_MEMBER,
 }

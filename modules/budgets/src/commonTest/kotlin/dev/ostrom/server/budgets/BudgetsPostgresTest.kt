@@ -7,6 +7,7 @@ import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetGuard
 import dev.ostrom.server.budgets.domain.BudgetScope
 import dev.ostrom.server.budgets.domain.BudgetsRepository
+import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.budgets.presentation.BudgetDto
 import dev.ostrom.server.budgets.presentation.BudgetsPage
 import dev.ostrom.server.budgets.presentation.MyBudgetResponse
@@ -232,6 +233,24 @@ class BudgetsPostgresTest {
         assertEquals(true, repository.markAlerted(memberAlert, TestCallers.epoch))
         assertEquals(false, repository.markAlerted(memberAlert, TestCallers.epoch))
         assertEquals(true, repository.markAlerted(alert.copy(thresholdPercent = 100), TestCallers.epoch))
+        assertEquals(true, repository.markAlerted(alert.copy(limitMicros = 2_000), TestCallers.epoch), "A new limit")
+
+        repository.unmarkAlerted(alert)
+        repository.unmarkAlerted(memberAlert)
+        assertEquals(true, repository.markAlerted(alert, TestCallers.epoch), "A failed alert is sent again")
+        assertEquals(true, repository.markAlerted(memberAlert, TestCallers.epoch))
+    }
+
+    @Test
+    fun oneOrgWideLimitIsWrittenWithoutTheOther() = serverTest(modules, overrides) { server ->
+        val repository = server.koin.get<BudgetsRepository>()
+        repository.putOrgLimits(TestCallers.orgA, 5_000, 1_000, TestCallers.epoch)
+
+        repository.putSharedLimit(TestCallers.orgA, SharedLimit.ORG, 7_000, TestCallers.epoch)
+        repository.putSharedLimit(TestCallers.orgA, SharedLimit.DEFAULT_MEMBER, null, TestCallers.epoch)
+
+        val settings = repository.settings(TestCallers.orgA, maxOverrides = 0)
+        assertEquals(7_000L to null, settings.orgLimitMicros to settings.defaultMemberLimitMicros)
     }
 
     @Test

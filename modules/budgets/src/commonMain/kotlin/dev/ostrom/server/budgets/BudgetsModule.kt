@@ -52,7 +52,7 @@ object BudgetsModule : ServerModule {
         single<PutMemberBudgetUseCase> { PutMemberBudgetUseCaseImpl(get(), get(), get()) }
         single<DeleteMemberBudgetUseCase> { DeleteMemberBudgetUseCaseImpl(get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
-        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get()) }
+        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single { BudgetsRoutesDependencies(callerResolver(), get(), get(), get()) }
     }
 

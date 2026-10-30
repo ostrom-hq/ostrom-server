@@ -147,6 +147,28 @@ class UsagePostgresTest {
             setBody("""{"events":[],"padding":"${"x".repeat(1_048_577)}"}""")
         }
         assertEquals(HttpStatusCode.PayloadTooLarge, tooBig.status)
+        val chunked = server.client.post("/api/v1/usage/events") {
+            bearerAuth("member-a")
+            // No Content-Length: the body streams in chunks, and is still cut at 1 MiB.
+            setBody(
+                object : OutgoingContent.WriteChannelContent() {
+                    override val contentType = ContentType.Application.Json
+
+                    override suspend fun writeTo(channel: ByteWriteChannel) {
+                        channel.writeStringUtf8("""{"events":[],"padding":"""")
+                        repeat(2_100) { channel.writeStringUtf8("x".repeat(512)) }
+                        channel.writeStringUtf8("\"}")
+                    }
+                },
+            )
+        }
+        assertEquals(HttpStatusCode.PayloadTooLarge, chunked.status)
+        val notJson = server.client.post("/api/v1/usage/events") {
+            bearerAuth("member-a")
+            contentType(ContentType.Application.Json)
+            setBody("not json")
+        }
+        assertEquals(HttpStatusCode.BadRequest, notJson.status)
         assertEquals(0, server.driver.fetchAll("SELECT id FROM usage_events").getOrThrow().size)
     }
 

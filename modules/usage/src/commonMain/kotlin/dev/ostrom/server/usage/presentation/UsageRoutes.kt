@@ -7,6 +7,7 @@ import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
 import dev.ostrom.server.usage.domain.IngestUsageEventsUseCase
+import dev.ostrom.server.usage.domain.InvalidUsageEventException
 import dev.ostrom.server.usage.domain.ListUsageEventsUseCase
 import dev.ostrom.server.usage.domain.TooManyUsageEventsException
 import dev.ostrom.server.usage.domain.UsageReportUseCase
@@ -16,16 +17,19 @@ import dev.ostrom.server.usage.domain.WatchUsageUseCase
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.request.contentLength
-import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.routing.Route
+import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.flow.map
+import kotlinx.io.readByteArray
+import kotlinx.serialization.SerializationException
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** The largest ingestion body read: 500 events of a few hundred bytes each fit well under it. */
@@ -41,6 +45,7 @@ private const val MAX_INGEST_BYTES: Long = 1_048_576
  * @property listEvents Pages the ledger.
  * @property watch Follows it live.
  * @property heartbeat The interval of the live stream's heartbeat comments.
+ * @property liveLifetime How long one live stream lasts before the client reconnects and is checked again.
  */
 data class UsageRoutesDependencies(
     val callers: CallerResolver,
@@ -50,6 +55,7 @@ data class UsageRoutesDependencies(
     val listEvents: ListUsageEventsUseCase,
     val watch: WatchUsageUseCase,
     val heartbeat: Duration = 15.seconds,
+    val liveLifetime: Duration = 10.minutes,
 )
 
 /**
@@ -69,8 +75,14 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
         }
         post<UsageApi.Events> {
             val caller = call.requireCaller(callers, UsageScopes.WRITE, RelayScopes.AGENT_SESSION)
-            if ((call.request.contentLength() ?: 0) > MAX_INGEST_BYTES) throw TooManyUsageEventsException()
-            val request = call.receive<UsageEventsRequest>()
+            // Read to one byte past the limit whatever the headers say: a chunked body declares no length.
+            val bytes = call.receiveChannel().readRemaining(MAX_INGEST_BYTES + 1).readByteArray()
+            if (bytes.size > MAX_INGEST_BYTES) throw TooManyUsageEventsException()
+            val request = try {
+                OstromJson.decodeFromString(UsageEventsRequest.serializer(), bytes.decodeToString())
+            } catch (_: SerializationException) {
+                throw InvalidUsageEventException("The body is not a list of usage events.")
+            }
             val accepted = ingest(caller, request.events.map { it.toClientEvent() })
             call.respond(HttpStatusCode.Accepted, UsageAcceptedResponse(accepted))
         }
@@ -91,7 +103,7 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
             // nginx (the web image proxies /api/) buffers responses unless told not to: the events would arrive late.
             call.response.header("X-Accel-Buffering", "no")
             call.respondBytesWriter(ContentType.Text.EventStream) {
-                writeEventStream(heartbeat) { onSubscribed ->
+                writeEventStream(heartbeat, liveLifetime) { onSubscribed ->
                     watch(caller, onSubscribed).map {
                         OstromJson.encodeToString(UsageEventResponse.serializer(), it.toResponse())
                     }

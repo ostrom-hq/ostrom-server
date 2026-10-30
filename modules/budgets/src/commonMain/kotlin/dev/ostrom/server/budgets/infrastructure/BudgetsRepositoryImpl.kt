@@ -6,6 +6,7 @@ import dev.ostrom.server.budgets.domain.BudgetLimits
 import dev.ostrom.server.budgets.domain.BudgetSettings
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.MemberBudget
+import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.secrets.infrastructure.inTenant
@@ -72,6 +73,10 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         }
     }
 
+    override suspend fun putSharedLimit(orgId: Uuid, limit: SharedLimit, limitMicros: Long?, at: Instant) {
+        driver.inTenant(orgId) { putShared(orgId, limit.name, limitMicros, at) }
+    }
+
     override suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget {
         driver.executeInOrg(
             orgId,
@@ -93,18 +98,32 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
 
     override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
         val statement = Statement.create(
-            "INSERT INTO budgets_alerts (org_id, member_id, scope, period_start, threshold, alerted_at) " +
-                "VALUES (:org_id, :member_id, :scope, :period_start, :threshold, :at) " +
-                "ON CONFLICT (org_id, scope, member_id, period_start, threshold) DO NOTHING",
-        )
-            .bind("org_id", alert.orgId)
-            .bind("scope", alert.scope.name)
-            .bind("period_start", alert.periodStart)
-            .bind("threshold", alert.thresholdPercent)
-            .bind("at", at)
-        val member = alert.memberId
-        if (member == null) statement.bindNull("member_id", Uuid::class) else statement.bind("member_id", member)
+            "INSERT INTO budgets_alerts " +
+                "(org_id, member_id, scope, period_start, threshold, limit_micros, alerted_at) " +
+                "VALUES (:org_id, :member_id, :scope, :period_start, :threshold, :limit, :at) " +
+                "ON CONFLICT (org_id, scope, member_id, period_start, threshold, limit_micros) DO NOTHING",
+        ).bindAlert(alert).bind("at", at)
         return driver.executeInOrg(alert.orgId, statement).getOrThrow() == 1L
+    }
+
+    override suspend fun unmarkAlerted(alert: BudgetAlert) {
+        val statement = Statement.create(
+            "DELETE FROM budgets_alerts WHERE org_id = :org_id AND scope = :scope " +
+                "AND member_id IS NOT DISTINCT FROM :member_id AND period_start = :period_start " +
+                "AND threshold = :threshold AND limit_micros = :limit",
+        ).bindAlert(alert)
+        driver.executeInOrg(alert.orgId, statement).getOrThrow()
+    }
+
+    private fun Statement.bindAlert(alert: BudgetAlert): Statement {
+        bind("org_id", alert.orgId)
+        bind("scope", alert.scope.name)
+        bind("period_start", alert.periodStart)
+        bind("threshold", alert.thresholdPercent)
+        bind("limit", alert.limitMicros)
+        val member = alert.memberId
+        if (member == null) bindNull("member_id", Uuid::class) else bind("member_id", member)
+        return this
     }
 
     private suspend fun QueryExecutor.putShared(orgId: Uuid, scope: String, limitMicros: Long?, at: Instant) {

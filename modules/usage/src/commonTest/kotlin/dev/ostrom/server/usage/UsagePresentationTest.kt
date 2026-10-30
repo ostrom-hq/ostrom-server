@@ -30,6 +30,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -115,7 +116,7 @@ class UsagePresentationTest {
         val channel = ByteChannel(autoFlush = true)
         val items = MutableSharedFlow<String>()
         val writer = launch {
-            channel.writeEventStream(15.seconds) { onSubscribed -> items.onSubscription { onSubscribed() } }
+            channel.writeEventStream(15.seconds, 10.minutes) { onSubscribed -> items.onSubscription { onSubscribed() } }
         }
 
         assertEquals(": connected", channel.readUTF8Line())
@@ -130,9 +131,22 @@ class UsagePresentationTest {
     }
 
     @Test
+    fun theStreamEndsAfterItsLifetimeSoThatTheClientReconnectsAndIsCheckedAgain() = runTest {
+        val channel = ByteChannel(autoFlush = true)
+        channel.writeEventStream(15.seconds, 40.seconds) { onSubscribed ->
+            MutableSharedFlow<String>().onSubscription { onSubscribed() }
+        }
+        channel.flushAndClose()
+
+        val lines = buildList { while (true) add(channel.readUTF8Line() ?: break) }
+        assertEquals(listOf(": connected", "", ": heartbeat", "", ": heartbeat", ""), lines)
+        assertEquals(40.seconds.inWholeMilliseconds, testScheduler.currentTime)
+    }
+
+    @Test
     fun theStreamEndsWithItsItems() = runTest {
         val channel = ByteChannel(autoFlush = true)
-        channel.writeEventStream(15.seconds) { onSubscribed ->
+        channel.writeEventStream(15.seconds, 10.minutes) { onSubscribed ->
             onSubscribed()
             flowOf("a", "b")
         }
@@ -147,7 +161,7 @@ class UsagePresentationTest {
         val channel = ByteChannel(autoFlush = true)
         channel.cancel(IOException("client gone"))
 
-        channel.writeEventStream(15.seconds) { onSubscribed ->
+        channel.writeEventStream(15.seconds, 10.minutes) { onSubscribed ->
             onSubscribed()
             flowOf("a")
         }

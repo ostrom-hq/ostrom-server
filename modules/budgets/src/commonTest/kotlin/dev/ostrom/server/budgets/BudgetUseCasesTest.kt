@@ -7,6 +7,7 @@ import dev.ostrom.server.budgets.domain.BudgetGuard
 import dev.ostrom.server.budgets.domain.BudgetPeriod
 import dev.ostrom.server.budgets.domain.BudgetRules
 import dev.ostrom.server.budgets.domain.BudgetScope
+import dev.ostrom.server.budgets.domain.BudgetTarget
 import dev.ostrom.server.budgets.domain.DeleteMemberBudgetUseCaseImpl
 import dev.ostrom.server.budgets.domain.GetBudgetsUseCaseImpl
 import dev.ostrom.server.budgets.domain.GetMyBudgetUseCaseImpl
@@ -17,6 +18,7 @@ import dev.ostrom.server.budgets.domain.MyBudget
 import dev.ostrom.server.budgets.domain.NoBudgetAlerts
 import dev.ostrom.server.budgets.domain.PutBudgetsUseCaseImpl
 import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCaseImpl
+import dev.ostrom.server.budgets.domain.SetBudgetUseCaseImpl
 import dev.ostrom.server.budgets.presentation.BudgetDto
 import dev.ostrom.server.budgets.presentation.toPage
 import dev.ostrom.server.budgets.presentation.toResponse
@@ -153,6 +155,25 @@ class BudgetUseCasesTest {
         assertEquals(null, page.next)
         assertEquals("2026-10-01T00:00:00Z", page.periodStart)
         assertEquals("2026-11-01T00:00:00Z", page.resetsAt)
+    }
+
+    @Test
+    fun settingOneOrgWideLimitLeavesTheOtherAsAnotherAdminJustSetIt() = runTest {
+        val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets, putMember, deleteMember)
+        repository.defaultLimits[TestCallers.orgA] = 5_000_000
+        assertEquals(7_000_000, set(TestCallers.adminA, BudgetTarget.Org, 7_000_000).settings.orgLimitMicros)
+        assertEquals(5_000_000, repository.defaultLimits[TestCallers.orgA], "Never read and written back")
+        repository.orgLimits[TestCallers.orgA] = 9_000_000
+        assertEquals(null, set(TestCallers.adminA, BudgetTarget.DefaultMember, null).settings.defaultMemberLimitMicros)
+        assertEquals(9_000_000, repository.orgLimits[TestCallers.orgA])
+        assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated)
+        assertFailsWith<InvalidBudgetException> { set(TestCallers.adminA, BudgetTarget.Org, -1) }
+        assertFailsWith<AdminRequiredException> { set(TestCallers.memberA, BudgetTarget.Org, 1) }
+        set(TestCallers.adminA, BudgetTarget.Member(member), 3)
+        assertEquals(3, repository.memberLimits[TestCallers.orgA to member]?.limitMicros)
+        set(TestCallers.adminA, BudgetTarget.Member(member), null)
+        set(TestCallers.adminA, BudgetTarget.Member(member), null)
+        assertEquals(null, repository.memberLimits[TestCallers.orgA to member], "Removing an absent one is a no-op")
     }
 
     @Test
