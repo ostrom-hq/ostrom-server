@@ -50,7 +50,7 @@ data class ServerConfig(
                 ),
             ),
             signingKeyFile = source["OSTROM_SIGNING_KEY_FILE"] ?: "data/instance-key.pem",
-            logLevel = source["OSTROM_LOG_LEVEL"]?.let(::logLevel) ?: LogLevel.INFO,
+            logLevel = logLevel(source["OSTROM_LOG_LEVEL"]),
         )
 
         /**
@@ -79,12 +79,16 @@ data class ServerConfig(
          */
         fun load(environment: ConfigSource = EnvironmentConfigSource()): ServerConfig = from(source(environment))
 
-        private fun logLevel(value: String): LogLevel = LogLevel.entries.firstOrNull { it.name.equals(value, true) }
-            ?: throw InvalidConfigException("OSTROM_LOG_LEVEL must be one of ${LogLevel.entries.joinToString()}.")
+        private fun logLevel(value: String?): LogLevel = if (value == null) {
+            LogLevel.INFO
+        } else {
+            LogLevel.entries.firstOrNull { it.name.equals(value, true) }
+                ?: throw InvalidConfigException("OSTROM_LOG_LEVEL must be one of ${LogLevel.entries.joinToString()}.")
+        }
 
         private fun ConfigSource.int(key: String, default: Int, range: IntRange): Int {
-            val value = this[key]?.let { it.toIntOrNull() ?: throw InvalidConfigException("$key must be an integer.") }
-                ?: return default
+            val raw = this[key] ?: return default
+            val value = raw.toIntOrNull() ?: throw InvalidConfigException("$key must be an integer.")
             if (value !in range) throw InvalidConfigException("$key must be between ${range.first} and ${range.last}.")
             return value
         }
@@ -130,7 +134,8 @@ data class DatabaseConfig(
             val match = URL.matchEntire(url) ?: throw InvalidConfigException(
                 "The database URL must be postgresql://[user[:password]@]host[:port]/database.",
             )
-            val (scheme, urlUser, urlPassword, location) = match.destructured
+            val (scheme, urlUser, urlPassword) = match.destructured
+            val location = match.groupValues.last()
             if ('%' in urlUser + urlPassword) {
                 throw InvalidConfigException(
                     "Percent-encoded credentials are not supported in the database URL: set OSTROM_DATABASE_USER " +
