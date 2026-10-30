@@ -99,8 +99,9 @@ class SessionSegments(private val close: CloseSessionUseCase, private val clock:
             if (start.agent.isBlank()) throw InvalidSessionRequestException("A session names its agent.")
             return start.copy(
                 launchId = start.launchId?.clip(LAUNCH),
-                repo = start.repo?.trim()?.clip(TEXT),
-                realRepo = start.realRepo?.trim()?.clip(TEXT),
+                // `?.let`, not `?.trim()?.clip`: a second null check nothing reaches, which Kover counts.
+                repo = start.repo?.let { it.trim().clip(TEXT) },
+                realRepo = start.realRepo?.let { it.trim().clip(TEXT) },
                 cwd = start.cwd?.clip(PATH),
                 agent = start.agent.trim().take(SHORT),
                 harnessVersion = start.harnessVersion?.clip(SHORT),

@@ -87,7 +87,7 @@ class CloseSessionUseCaseImpl(
                 endedAt = endedAt,
                 receiptId = (receipt.getValue("id") as JsonPrimitive).content,
                 tools = end.tools,
-                source = end.source?.clip(SessionSegments.TEXT) ?: session.source,
+                source = if (end.source == null) session.source else end.source.clip(SessionSegments.TEXT),
                 model = session.model ?: end.model,
                 costUsd = end.costUsd ?: session.costUsd,
                 exitCode = end.exitCode,
