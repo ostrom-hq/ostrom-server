@@ -100,7 +100,7 @@ jobs:
             printf %s "$STRIPE_TEST_KEY" > "$RUNNER_TEMP/stripe-test.key"
           fi
       - name: The demo's names resolve to this machine
-        run: echo "127.0.0.1 api.localhost app.localhost mail.localhost" | sudo tee -a /etc/hosts > /dev/null
+        run: echo "127.0.0.1 api.localhost app.localhost mail.localhost github.localtest.me" | sudo tee -a /etc/hosts > /dev/null
       - name: Up
         env:
           OSTROM_SERVER_IMAGE: ${{ steps.images.outputs.server }}
