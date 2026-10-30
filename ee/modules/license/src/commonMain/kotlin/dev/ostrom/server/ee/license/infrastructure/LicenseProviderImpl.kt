@@ -44,15 +44,22 @@ class LicenseProviderImpl(
     }
 
     override suspend fun current(): LicenseGrant? {
-        val license = load() ?: return null
-        if (clock.now() <= license.graceEndsAt) return license.toGrant()
-        mutex.withLock {
-            if (!endLogged) {
-                endLogged = true
-                logger.warn("license grace period over, enterprise features disabled", license.fields())
+        val license = load()
+        return when {
+            license == null -> null
+            clock.now() <= license.graceEndsAt -> license.toGrant()
+            else -> {
+                graceOver(license)
+                null
             }
         }
-        return null
+    }
+
+    private suspend fun graceOver(license: License) = mutex.withLock {
+        if (!endLogged) {
+            endLogged = true
+            logger.warn("license grace period over, enterprise features disabled", license.fields())
+        }
     }
 
     private suspend fun verified(key: String): License {
@@ -64,7 +71,8 @@ class LicenseProviderImpl(
         }
         logger.info("license verified", license.fields())
         if (clock.now() > license.expiresAt) {
-            logger.warn("license expired, in grace period", license.fields() + ("grace_ends_at" to license.graceEndsAt.toString()))
+            val fields = license.fields() + ("grace_ends_at" to license.graceEndsAt.toString())
+            logger.warn("license expired, in grace period", fields)
         }
         return license
     }

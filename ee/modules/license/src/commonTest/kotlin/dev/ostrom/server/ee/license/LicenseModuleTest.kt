@@ -26,20 +26,22 @@ import kotlin.time.Instant
 
 /** The module's wiring, without a database: the kernel and instance bindings are replaced by fakes. */
 class LicenseModuleTest {
-    private val logger = RecordingLogger()
+    private val recorder = RecordingLogger()
 
-    private fun koin(config: Map<String, String>, clock: Clock = MutableClock(), trustTestKey: Boolean = true): Koin =
+    private fun koin(config: Map<String, String>?, clock: Clock = MutableClock(), trustTestKey: Boolean = true): Koin =
         koinApplication {
             allowOverride(true)
             modules(
                 module {
-                    single<Logger> { logger }
+                    single<Logger> { recorder }
                     single<Clock> { clock }
                     single<GetOrCreateInstanceUseCase> { FakeInstance() }
-                    single<ConfigSource> { MapConfigSource(config) }
+                    if (config != null) single<ConfigSource> { MapConfigSource(config) }
                 },
                 LicenseModule.koinModule,
-                if (trustTestKey) module { single<LicenseVerifier> { LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY)) } } else module { },
+                module {
+                    if (trustTestKey) single<LicenseVerifier> { LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY)) }
+                },
             )
         }.koin
 
@@ -54,14 +56,22 @@ class LicenseModuleTest {
         val koin = koin(emptyMap())
         LicenseModule.initialize(koin)
         assertNull(koin.get<LicenseProvider>().current())
-        assertSame(koin.get<VerifiedLicenseProvider>(), koin.get<LicenseProvider>(), "billing reads the verified provider")
+        assertSame(koin.get<VerifiedLicenseProvider>(), koin.get<LicenseProvider>(), "billing reads the verified one")
+    }
+
+    @Test
+    fun withoutAConfigSourceTheEnvironmentIsRead() = runTest {
+        // Tests never set OSTROM_LICENSE_KEY: the environment has no license.
+        val koin = koin(null)
+        LicenseModule.initialize(koin)
+        assertNull(koin.get<LicenseConfig>().licenseKey)
     }
 
     @Test
     fun aValidKeyIsVerifiedAtStartAndBillingReadsIt() = runTest {
         val koin = koin(mapOf("OSTROM_LICENSE_KEY" to SIGN_PY_FIXTURE))
         LicenseModule.initialize(koin)
-        assertTrue(logger.lines.single().startsWith("INFO license verified {license_id=lic_fixture_0001"))
+        assertTrue(recorder.lines.single().startsWith("INFO license verified {license_id=lic_fixture_0001"))
         assertEquals(setOf("sso", "policies", "retention"), koin.get<LicenseProvider>().current()?.features)
     }
 
@@ -73,7 +83,8 @@ class LicenseModuleTest {
 
     @Test
     fun anUnusableKeyFailsTheStart() = runTest {
-        val koin = koin(mapOf("OSTROM_LICENSE_KEY" to SIGN_PY_FIXTURE), MutableClock(Instant.parse("2028-01-01T00:00:00Z")))
+        val late = MutableClock(Instant.parse("2028-01-01T00:00:00Z"))
+        val koin = koin(mapOf("OSTROM_LICENSE_KEY" to SIGN_PY_FIXTURE), late)
         assertFailsWith<ExpiredLicenseException> { LicenseModule.initialize(koin) }
     }
 }

@@ -17,6 +17,7 @@ class LicenseConfig(val licenseKey: String?) {
     /** Never prints the key, so the configuration can be logged or appear in an error. */
     override fun toString(): String = "LicenseConfig(licenseKey=${if (licenseKey == null) "unset" else "set"})"
 
+    /** Reads the configuration. */
     companion object {
         /**
          * Reads the configuration. The direct value wins over the file, as for billing's secrets.
@@ -30,10 +31,15 @@ class LicenseConfig(val licenseKey: String?) {
          *   license.
          */
         fun load(source: ConfigSource, readFile: (String) -> String = ::readLicenseFile): LicenseConfig {
-            source["OSTROM_LICENSE_KEY"]?.let { return LicenseConfig(it.trim()) }
-            val path = source["OSTROM_LICENSE_KEY_FILE"] ?: return LicenseConfig(null)
-            val key = readFile(path).trim()
-            if (key.isEmpty()) throw InvalidConfigException("License key file $path is empty.")
+            val direct = source["OSTROM_LICENSE_KEY"]
+            val path = source["OSTROM_LICENSE_KEY_FILE"]
+            val key = when {
+                direct != null -> direct.trim()
+                path != null -> readFile(path).trim().ifEmpty {
+                    throw InvalidConfigException("License key file $path is empty.")
+                }
+                else -> null
+            }
             return LicenseConfig(key)
         }
     }

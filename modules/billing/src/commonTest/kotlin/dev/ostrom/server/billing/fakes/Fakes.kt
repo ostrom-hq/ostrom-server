@@ -1,8 +1,5 @@
 package dev.ostrom.server.billing.fakes
 
-import dev.ostrom.server.billing.domain.BillingAccessDeniedException
-import dev.ostrom.server.billing.domain.BillingAccessPolicy
-import dev.ostrom.server.billing.domain.BillingAdminRequiredException
 import dev.ostrom.server.billing.domain.BillingNotifier
 import dev.ostrom.server.billing.domain.BillingRepository
 import dev.ostrom.server.billing.domain.CheckoutRequest
@@ -20,6 +17,10 @@ import dev.ostrom.server.billing.domain.Usage
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Instant
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import kotlin.uuid.Uuid
 
 /** 2026-10-30T10:00:00Z. */
@@ -68,19 +69,28 @@ class FakeBillingRepository : BillingRepository {
         return true
     }
 
-    override suspend fun countActivePeople(orgId: Uuid, periodStart: Instant): Int = active[orgId to periodStart]?.size ?: 0
+    override suspend fun countActivePeople(
+        orgId: Uuid,
+        periodStart: Instant,
+    ): Int = active[orgId to periodStart]?.size ?: 0
 
     override suspend fun listActivePeople(orgId: Uuid, periodStart: Instant, limit: Int): List<String> =
         active[orgId to periodStart].orEmpty().take(limit)
 
     override suspend fun addUsage(orgId: Uuid, periodStart: Instant, agentSeconds: Long, sessions: Long): Usage {
         val current = usages[orgId to periodStart] ?: Usage(periodStart, 0, 0)
-        val updated = current.copy(agentSeconds = current.agentSeconds + agentSeconds, sessions = current.sessions + sessions)
+        val updated = current.copy(
+            agentSeconds = current.agentSeconds + agentSeconds,
+            sessions = current.sessions + sessions,
+        )
         usages[orgId to periodStart] = updated
         return updated
     }
 
-    override suspend fun usage(orgId: Uuid, periodStart: Instant): Usage = usages[orgId to periodStart] ?: Usage(periodStart, 0, 0)
+    override suspend fun usage(
+        orgId: Uuid,
+        periodStart: Instant,
+    ): Usage = usages[orgId to periodStart] ?: Usage(periodStart, 0, 0)
 
     override suspend fun recordAlert(orgId: Uuid, periodStart: Instant, percent: Int, at: Instant): Boolean {
         val list = alertsRaised.getOrPut(orgId to periodStart) { mutableListOf() }
@@ -89,7 +99,10 @@ class FakeBillingRepository : BillingRepository {
         return true
     }
 
-    override suspend fun alerts(orgId: Uuid, periodStart: Instant): List<Int> = alertsRaised[orgId to periodStart].orEmpty().sorted()
+    override suspend fun alerts(
+        orgId: Uuid,
+        periodStart: Instant,
+    ): List<Int> = alertsRaised[orgId to periodStart].orEmpty().sorted()
 
     override suspend fun enqueue(task: OutboxTask) {
         if (tasks.none { it.identifier == task.identifier }) tasks += task
@@ -151,7 +164,13 @@ class FakeStripeGateway : StripeGateway {
         return checkNotNull(subscription) { "no subscription set" }
     }
 
-    override suspend fun changePrice(subscriptionId: String, itemId: String, priceId: String, quantity: Int?, proration: Proration) {
+    override suspend fun changePrice(
+        subscriptionId: String,
+        itemId: String,
+        priceId: String,
+        quantity: Int?,
+        proration: Proration,
+    ) {
         record("changePrice $subscriptionId $itemId $priceId $quantity ${proration.stripe}")
     }
 
@@ -174,18 +193,12 @@ class FakeStripeGateway : StripeGateway {
     }
 }
 
-/** Members and admins by organization. */
-class FakeAccessPolicy(
-    val members: MutableSet<Pair<String, Uuid>> = mutableSetOf(),
-    val admins: MutableSet<Pair<String, Uuid>> = mutableSetOf(),
-) : BillingAccessPolicy {
-    override suspend fun requireMember(subjectId: String, orgId: Uuid) {
-        if ((subjectId to orgId) !in members && (subjectId to orgId) !in admins) throw BillingAccessDeniedException()
-    }
-
-    override suspend fun requireBillingAdmin(subjectId: String, orgId: Uuid) {
-        requireMember(subjectId, orgId)
-        if ((subjectId to orgId) !in admins) throw BillingAdminRequiredException()
+/** Members by subject and organization, with their role; the member id is derived from the subject. */
+class FakeOrgResolver(private val members: Map<Pair<String, Uuid>, OrgRole>) : PrincipalOrgResolver {
+    override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? = orgId?.let { org ->
+        members[principal.subjectId to org]?.let { role ->
+            OrgPrincipal(org, Uuid.fromLongs(principal.subjectId.hashCode().toLong(), 0L), role)
+        }
     }
 }
 

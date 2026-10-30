@@ -57,7 +57,8 @@ class LicenseProviderTest {
         assertEquals(0, instance.calls, "a license for any instance never reads the instance")
         assertEquals(
             listOf(
-                "INFO license verified {license_id=lic_fixture_0001, customer=Acme Test Corp, expires_at=2027-10-30T00:00:00Z, " +
+                "INFO license verified {license_id=lic_fixture_0001, customer=Acme Test Corp, " +
+                    "expires_at=2027-10-30T00:00:00Z, " +
                     "max_people=50, features=policies,retention,sso, key_id=59f7291142778b67}",
             ),
             logger.lines,
@@ -100,7 +101,8 @@ class LicenseProviderTest {
         clock.now = Instant.parse("2027-11-13T00:00:01Z")
         assertNull(provider.current())
         assertNull(provider.current())
-        assertEquals(1, logger.lines.count { it.startsWith("WARN license grace period over, enterprise features disabled") })
+        val over = logger.lines.count { it.startsWith("WARN license grace period over, enterprise features disabled") }
+        assertEquals(1, over)
         assertEquals(1, fixtureVerifier.calls)
     }
 
@@ -108,7 +110,7 @@ class LicenseProviderTest {
     fun aLicenseBoundToThisInstanceIsAccepted() = runTest {
         val key = TestSigningKey.generate()
         val verifier = LicenseVerifierImpl(listOf(key.publicKey))
-        val license = key.license(instanceId = instance.id.toString().uppercase())
+        val license = key.license("instanceId" to q(instance.id.toString().uppercase()))
         assertEquals(instance.id.toString().uppercase(), provider(license, verifier).load()?.instanceId)
         assertEquals(1, instance.calls)
     }
@@ -118,7 +120,7 @@ class LicenseProviderTest {
         val key = TestSigningKey.generate()
         val verifier = LicenseVerifierImpl(listOf(key.publicKey))
         val error = assertFailsWith<LicenseInstanceMismatchException> {
-            provider(key.license(instanceId = "11111111-1111-1111-1111-111111111111"), verifier).load()
+            provider(key.license("instanceId" to q("11111111-1111-1111-1111-111111111111")), verifier).load()
         }
         assertEquals(
             "The license is for instance 11111111-1111-1111-1111-111111111111, not this instance (${instance.id}).",
@@ -129,7 +131,8 @@ class LicenseProviderTest {
     @Test
     fun loadWithCancellationPropagatesException() = runTest {
         val cancelling = object : LicenseVerifier {
-            override suspend fun verify(licenseKey: String, now: Instant): License = throw CancellationException("stopping")
+            override suspend fun verify(licenseKey: String, now: Instant): License =
+                throw CancellationException("stopping")
         }
         assertFailsWith<CancellationException> { provider(SIGN_PY_FIXTURE, cancelling).load() }
     }

@@ -25,7 +25,9 @@ class LicenseConfigTest {
     @Test
     fun theKeyComesFromTheEnvironmentAndWinsOverTheFile() {
         val config = LicenseConfig.load(
-            MapConfigSource(mapOf("OSTROM_LICENSE_KEY" to " ostrom-license.v1.a.b \n", "OSTROM_LICENSE_KEY_FILE" to "/run/license")),
+            MapConfigSource(
+                mapOf("OSTROM_LICENSE_KEY" to " ostrom-license.v1.a.b \n", "OSTROM_LICENSE_KEY_FILE" to "/run/license"),
+            ),
         ) { error("the file is not read when the value is set") }
         assertEquals("ostrom-license.v1.a.b", config.licenseKey)
         assertEquals("LicenseConfig(licenseKey=set)", config.toString(), "the key is never printed")

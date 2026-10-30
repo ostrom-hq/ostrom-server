@@ -1,6 +1,7 @@
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.server.kernel.auth.token
+import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
@@ -33,13 +34,13 @@ const val SERVER_VERSION: String = "0.1.0-dev"
  * @param modules The functional modules, in order.
  */
 fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
-    val logger = koin.get<dev.ostrom.server.kernel.logging.Logger>()
+    val logger = koin.get<Logger>()
     install(ContentNegotiation) { json(OstromJson) }
     install(Resources)
     install(CallId) {
         retrieveFromHeader(HttpHeaders.XRequestId)
         generate { Uuid.random().toHexString() }
-        verify { it.length in 1..128 && it.all { char -> char.isLetterOrDigit() || char == '-' || char == '_' } }
+        verify(::isValidRequestId)
         replyToHeader(HttpHeaders.XRequestId)
     }
     install(RequestLogging) { this.logger = logger }
@@ -50,3 +51,16 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
         modules.forEach { it.routes(this, koin) }
     }
 }
+
+private const val MAX_REQUEST_ID_LENGTH = 128
+
+/**
+ * Whether a client's `X-Request-Id` is kept: 1 to 128 letters, digits, `-` or `_`. Any other value is replaced by
+ * a generated id, so that a request id never carries text into the logs.
+ *
+ * @param id The header value.
+ *
+ * @return True when the id is kept.
+ */
+internal fun isValidRequestId(id: String): Boolean =
+    id.isNotEmpty() && id.length <= MAX_REQUEST_ID_LENGTH && id.all { it.isLetterOrDigit() || it == '-' || it == '_' }

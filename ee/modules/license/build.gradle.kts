@@ -11,7 +11,13 @@ kotlin {
             implementation(project(":modules:billing"))
             implementation(project(":modules:instance"))
             implementation(libs.cryptography.core)
-            implementation(libs.cryptography.openssl)
+        }
+        nativeMain.dependencies {
+            implementation(libs.cryptography.openssl3.prebuilt)
+        }
+        // The JVM target only runs the tests and Kover (never shipped): the JDK provides Ed25519 there.
+        jvmMain.dependencies {
+            implementation(libs.cryptography.jdk)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

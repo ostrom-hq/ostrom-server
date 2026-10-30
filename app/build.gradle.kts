@@ -1,6 +1,7 @@
 // The server binary: reads the configuration, opens the database, applies every module's migrations, wires Koin
 // and serves HTTP on Ktor's CIO engine. Depends on every module of modules/, and on the enterprise modules of
-// ee/modules/ when that directory is present (an AGPL build without ee/ compiles the same code with none).
+// ee/modules/ when that directory is present (an AGPL build without ee/ compiles the same code with none). The entry
+// point is native only (nativeMain); the module list (commonMain) is also tested on the JVM for coverage.
 plugins {
     id("ostrom.native-module")
 }
@@ -58,11 +59,13 @@ kotlin {
         commonMain.configure { kotlin.srcDir(generateEeModules) }
         commonMain.dependencies {
             implementation(project(":kernel"))
-            implementation(libs.ktor.server.cio)
             rootProject.subprojects
                 .filter { it.path.startsWith(":modules:") }
                 .forEach { implementation(project(it.path)) }
             eeProjects.forEach { implementation(project(it.path)) }
+        }
+        nativeMain.dependencies {
+            implementation(libs.ktor.server.cio)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

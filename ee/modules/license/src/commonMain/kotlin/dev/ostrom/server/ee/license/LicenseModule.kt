@@ -26,7 +26,9 @@ object LicenseModule : ServerModule {
     override val koinModule: Module = module {
         single { LicenseConfig.load(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
         single<LicenseVerifier> { LicenseVerifierImpl(PinnedLicenseKeys.ALL) }
-        single<VerifiedLicenseProvider> { LicenseProviderImpl(get<LicenseConfig>().licenseKey, get(), get(), get(), get()) }
+        single<VerifiedLicenseProvider> {
+            LicenseProviderImpl(get<LicenseConfig>().licenseKey, get(), get(), get(), get())
+        }
         single<LicenseProvider> { get<VerifiedLicenseProvider>() }
     }
 

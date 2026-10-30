@@ -15,6 +15,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.isSuccess
@@ -65,6 +66,7 @@ data class StripeConfig(
  * @param config The key and base URL.
  * @param idempotencyKey Generates the key of each write (random; fixed in tests).
  */
+@Suppress("TooManyFunctions") // implements StripeGateway, one function per Stripe call
 class StripeGatewayImpl(
     private val client: HttpClient,
     private val config: StripeConfig,
@@ -82,7 +84,8 @@ class StripeGatewayImpl(
     override suspend fun priceId(lookupKey: String): String = priceLock.withLock {
         priceIds[lookupKey] ?: run {
             val prices = call(HttpMethod.Get, "/v1/prices", listOf("lookup_keys[0]" to lookupKey, "active" to "true"))
-            val id = prices.array("data").firstOrNull()?.jsonObject?.string("id") ?: throw BillingNotConfiguredException()
+            val id = prices.array("data").firstOrNull()?.jsonObject?.string("id")
+                ?: throw BillingNotConfiguredException()
             priceIds[lookupKey] = id
             id
         }
@@ -116,9 +119,19 @@ class StripeGatewayImpl(
     ).requireString("url")
 
     override suspend fun getSubscription(subscriptionId: String): StripeSubscription =
-        call(HttpMethod.Get, "/v1/subscriptions/$subscriptionId", listOf("expand[0]" to "items.data.price")).toSubscription()
+        call(
+            HttpMethod.Get,
+            "/v1/subscriptions/$subscriptionId",
+            listOf("expand[0]" to "items.data.price"),
+        ).toSubscription()
 
-    override suspend fun changePrice(subscriptionId: String, itemId: String, priceId: String, quantity: Int?, proration: Proration) {
+    override suspend fun changePrice(
+        subscriptionId: String,
+        itemId: String,
+        priceId: String,
+        quantity: Int?,
+        proration: Proration,
+    ) {
         val params = mutableListOf(
             "items[0][id]" to itemId,
             "items[0][price]" to priceId,
@@ -166,8 +179,11 @@ class StripeGatewayImpl(
     ).array("data").map { it.jsonObject.toInvoice() }
 
     private suspend fun call(method: HttpMethod, path: String, params: List<Pair<String, String>>): JsonObject {
-        val form = params.joinToString("&") { (key, value) -> "${key.encodeURLParameter()}=${value.encodeURLParameter()}" }
-        val url = config.baseUrl.trimEnd('/') + path + if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
+        val form = params.joinToString("&") { (key, value) ->
+            "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
+        }
+        val query = if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
+        val url = config.baseUrl.trimEnd('/') + path + query
         val response = client.request(url) {
             this.method = method
             basicAuth(config.secretKey, "")
@@ -259,4 +275,4 @@ private fun JsonObject.toInvoice(): Invoice {
 }
 
 private fun JsonObject.requireString(key: String): String =
-    string(key) ?: throw StripeApiException(200, null, "Stripe's answer has no $key.")
+    string(key) ?: throw StripeApiException(HttpStatusCode.OK.value, null, "Stripe's answer has no $key.")

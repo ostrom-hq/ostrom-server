@@ -31,21 +31,23 @@ class StripeSignatureVerifier(
 ) {
     /** @throws InvalidWebhookSignatureException When no entry matches or the timestamp is out of tolerance. */
     suspend fun verify(payload: String, header: String?) {
-        if (header == null || secrets.isEmpty()) throw InvalidWebhookSignatureException()
-        val entries = header.split(',').mapNotNull { part ->
+        if (!isValid(payload, header)) throw InvalidWebhookSignatureException()
+    }
+
+    private suspend fun isValid(payload: String, header: String?): Boolean {
+        val entries = header?.split(',')?.mapNotNull { part ->
             val separator = part.indexOf('=')
             if (separator <= 0) null else part.substring(0, separator).trim() to part.substring(separator + 1).trim()
-        }
-        val timestamp = entries.firstOrNull { it.first == "t" }?.second?.toLongOrNull() ?: throw InvalidWebhookSignatureException()
-        val age = clock.now() - Instant.fromEpochSeconds(timestamp)
-        if (age > tolerance || age < -tolerance) throw InvalidWebhookSignatureException()
+        }.orEmpty()
+        val timestamp = entries.firstOrNull { it.first == "t" }?.second?.toLongOrNull()
+            ?.takeIf { (clock.now() - Instant.fromEpochSeconds(it)).absoluteValue <= tolerance }
+            ?: return false
         val signatures = entries.filter { it.first == "v1" }.map { it.second }
         val signed = "$timestamp.$payload".encodeToByteArray()
-        for (secret in secrets) {
+        return secrets.any { secret ->
             val expected = hmacSha256Hex(secret, signed)
-            if (signatures.any { constantTimeEquals(it, expected) }) return
+            signatures.any { constantTimeEquals(it, expected) }
         }
-        throw InvalidWebhookSignatureException()
     }
 }
 
@@ -85,7 +87,8 @@ fun parseStripeEvent(payload: String): StripeEvent {
     val objectType = target.string("object")
     val subscriptionId = when (objectType) {
         "subscription" -> target.string("id")
-        "invoice" -> target.obj("parent")?.obj("subscription_details")?.idOf("subscription") ?: target.idOf("subscription")
+        "invoice" -> target.obj("parent")?.obj("subscription_details")?.idOf("subscription")
+            ?: target.idOf("subscription")
         else -> target.idOf("subscription")
     }
     val orgId = target.obj("metadata")?.string("org_id")

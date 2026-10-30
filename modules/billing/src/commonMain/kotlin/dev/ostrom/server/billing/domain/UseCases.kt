@@ -1,5 +1,8 @@
 package dev.ostrom.server.billing.domain
 
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
@@ -12,6 +15,22 @@ val ALERT_THRESHOLDS = listOf(80, 100)
 
 /** Upper bound of the people read at once (a backfill, a listing). */
 const val MAX_PEOPLE_READ = 1_000
+
+/** Seconds in an agent hour. */
+const val SECONDS_PER_HOUR = 3_600L
+
+/** Upper bound of the invoices listed at once (Stripe's own maximum). */
+const val MAX_INVOICES = 100
+
+private const val PERCENT = 100
+
+// A failed Stripe task is retried after 30 s, then twice as late each time, at most an hour later.
+private val FIRST_RETRY = 30.seconds
+private val LAST_RETRY = 60.minutes
+private const val MAX_DOUBLINGS = 7
+
+/** The share of [hours] agent hours that [agentSeconds] use, in whole percent. */
+fun percentOfHours(agentSeconds: Long, hours: Int): Int = (agentSeconds * PERCENT / (hours * SECONDS_PER_HOUR)).toInt()
 
 /**
  * The billing of an organization as the console shows it.
@@ -76,20 +95,19 @@ class GetPlanLimitsUseCaseImpl(
 
 /** Builds the console's view of an organization's billing. */
 interface GetBillingOverviewUseCase {
-    /** @throws BillingAccessDeniedException When [subjectId] is not a member. */
-    suspend operator fun invoke(subjectId: String, orgId: Uuid): BillingOverview
+    /** @throws BillingAccessDeniedException When [caller] is not a member. */
+    suspend operator fun invoke(caller: OrgPrincipal, orgId: Uuid): BillingOverview
 }
 
 /** [GetBillingOverviewUseCase]. */
 class GetBillingOverviewUseCaseImpl(
     private val repository: BillingRepository,
-    private val access: BillingAccessPolicy,
     private val limits: GetPlanLimitsUseCase,
     private val settings: BillingSettings,
     private val clock: Clock,
 ) : GetBillingOverviewUseCase {
-    override suspend fun invoke(subjectId: String, orgId: Uuid): BillingOverview {
-        access.requireMember(subjectId, orgId)
+    override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid): BillingOverview {
+        caller.requireMemberOf(orgId)
         val now = clock.now()
         val billing = repository.get(orgId) ?: OrgBilling(orgId = orgId, updatedAt = now)
         val period = billingPeriod(billing, now)
@@ -109,37 +127,31 @@ class GetBillingOverviewUseCaseImpl(
 /** Starts the purchase of a plan: a Stripe Checkout session with automatic tax. */
 interface StartCheckoutUseCase {
     /**
-     * @param email The buyer's e-mail, prefilled on the customer.
+     * The buyer's e-mail, name and address are asked by Checkout and saved on the customer.
+     *
      * @return The Checkout URL.
      * @throws SubscriptionAlreadyActiveException When a subscription is running.
      */
-    suspend operator fun invoke(subjectId: String, orgId: Uuid, orgName: String?, email: String?, plan: Plan, interval: BillingInterval): String
+    suspend operator fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): String
 }
 
 /** [StartCheckoutUseCase]. A yearly plan is bought for the people already active, at least one. */
 class StartCheckoutUseCaseImpl(
     private val repository: BillingRepository,
-    private val access: BillingAccessPolicy,
     private val stripe: StripeGateway,
     private val settings: BillingSettings,
     private val clock: Clock,
 ) : StartCheckoutUseCase {
-    override suspend fun invoke(
-        subjectId: String,
-        orgId: Uuid,
-        orgName: String?,
-        email: String?,
-        plan: Plan,
-        interval: BillingInterval,
-    ): String {
-        access.requireBillingAdmin(subjectId, orgId)
+    override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): String {
+        caller.requireBillingAdminOf(orgId)
         if (!settings.stripeEnabled) throw BillingNotConfiguredException()
         if (!plan.selfServe) throw PlanNotPurchasableException(plan)
         val now = clock.now()
         val existing = repository.get(orgId)
         if (existing?.hasLiveSubscription == true) throw SubscriptionAlreadyActiveException()
-        val customerId = existing?.stripeCustomerId ?: stripe.createCustomer(orgId, orgName, email).also { id ->
-            repository.save((existing ?: OrgBilling(orgId = orgId, updatedAt = now)).copy(stripeCustomerId = id, updatedAt = now))
+        val customerId = existing?.stripeCustomerId ?: stripe.createCustomer(orgId, null, null).also { id ->
+            val base = existing ?: OrgBilling(orgId = orgId, updatedAt = now)
+            repository.save(base.copy(stripeCustomerId = id, updatedAt = now))
         }
         val quantity = if (interval == BillingInterval.YEAR) {
             maxOf(1, repository.countActivePeople(orgId, billingPeriod(existing, now).start))
@@ -163,18 +175,17 @@ class StartCheckoutUseCaseImpl(
 /** Opens Stripe's customer portal: payment methods, invoices and receipts, billing details, cancellation. */
 interface OpenCustomerPortalUseCase {
     /** @return The portal URL. @throws NoActiveSubscriptionException When the organization never bought. */
-    suspend operator fun invoke(subjectId: String, orgId: Uuid): String
+    suspend operator fun invoke(caller: OrgPrincipal, orgId: Uuid): String
 }
 
 /** [OpenCustomerPortalUseCase]. */
 class OpenCustomerPortalUseCaseImpl(
     private val repository: BillingRepository,
-    private val access: BillingAccessPolicy,
     private val stripe: StripeGateway,
     private val settings: BillingSettings,
 ) : OpenCustomerPortalUseCase {
-    override suspend fun invoke(subjectId: String, orgId: Uuid): String {
-        access.requireBillingAdmin(subjectId, orgId)
+    override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid): String {
+        caller.requireBillingAdminOf(orgId)
         if (!settings.stripeEnabled) throw BillingNotConfiguredException()
         val customerId = repository.get(orgId)?.stripeCustomerId ?: throw NoActiveSubscriptionException()
         return stripe.createPortalSession(customerId, settings.billingPageUrl)
@@ -219,7 +230,7 @@ class SyncSubscriptionUseCaseImpl(
 /** Changes the plan or the interval of a running subscription. */
 interface ChangePlanUseCase {
     /** @return The billing after the change. */
-    suspend operator fun invoke(subjectId: String, orgId: Uuid, plan: Plan, interval: BillingInterval): OrgBilling
+    suspend operator fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): OrgBilling
 }
 
 /**
@@ -228,20 +239,20 @@ interface ChangePlanUseCase {
  */
 class ChangePlanUseCaseImpl(
     private val repository: BillingRepository,
-    private val access: BillingAccessPolicy,
     private val stripe: StripeGateway,
     private val sync: SyncSubscriptionUseCase,
     private val settings: BillingSettings,
     private val clock: Clock,
 ) : ChangePlanUseCase {
-    override suspend fun invoke(subjectId: String, orgId: Uuid, plan: Plan, interval: BillingInterval): OrgBilling {
-        access.requireBillingAdmin(subjectId, orgId)
+    override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): OrgBilling {
+        caller.requireBillingAdminOf(orgId)
         if (!settings.stripeEnabled) throw BillingNotConfiguredException()
         if (!plan.selfServe) throw PlanNotPurchasableException(plan)
         val billing = repository.get(orgId)?.takeIf { it.hasLiveSubscription } ?: throw NoActiveSubscriptionException()
         val subscriptionId = checkNotNull(billing.stripeSubscriptionId) { "A live subscription has an id." }
         if (billing.plan == plan && billing.interval == interval) return billing
-        val itemId = billing.subscriptionItemId ?: throw SubscriptionStateException("The subscription has no plan item.")
+        val itemId = billing.subscriptionItemId
+            ?: throw SubscriptionStateException("The subscription has no plan item.")
         val quantity = if (interval == BillingInterval.YEAR) {
             val active = repository.countActivePeople(orgId, billingPeriod(billing, clock.now()).start)
             maxOf(1, active, billing.committedPeople)
@@ -251,7 +262,13 @@ class ChangePlanUseCaseImpl(
         val upgrade = plan.ordinal > billing.plan.ordinal ||
             (interval == BillingInterval.YEAR && billing.interval != BillingInterval.YEAR)
         val proration = if (upgrade) Proration.ALWAYS_INVOICE else Proration.CREATE_PRORATIONS
-        stripe.changePrice(subscriptionId, itemId, stripe.priceId(PlanCatalog.lookupKey(plan, interval)), quantity, proration)
+        stripe.changePrice(
+            subscriptionId,
+            itemId,
+            stripe.priceId(PlanCatalog.lookupKey(plan, interval)),
+            quantity,
+            proration,
+        )
         return sync(billing, subscriptionId)
     }
 }
@@ -262,25 +279,28 @@ interface SetCancellationUseCase {
      * @param cancel True to end at the period end, false to keep the subscription (reactivation).
      * @return The billing after the change.
      */
-    suspend operator fun invoke(subjectId: String, orgId: Uuid, cancel: Boolean): OrgBilling
+    suspend operator fun invoke(caller: OrgPrincipal, orgId: Uuid, cancel: Boolean): OrgBilling
 }
 
 /** [SetCancellationUseCase]. A subscription already gone is reactivated by a new checkout, not here. */
 class SetCancellationUseCaseImpl(
     private val repository: BillingRepository,
-    private val access: BillingAccessPolicy,
     private val stripe: StripeGateway,
     private val sync: SyncSubscriptionUseCase,
     private val settings: BillingSettings,
 ) : SetCancellationUseCase {
-    override suspend fun invoke(subjectId: String, orgId: Uuid, cancel: Boolean): OrgBilling {
-        access.requireBillingAdmin(subjectId, orgId)
+    override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, cancel: Boolean): OrgBilling {
+        caller.requireBillingAdminOf(orgId)
         if (!settings.stripeEnabled) throw BillingNotConfiguredException()
         val billing = repository.get(orgId)?.takeIf { it.hasLiveSubscription } ?: throw NoActiveSubscriptionException()
         val subscriptionId = checkNotNull(billing.stripeSubscriptionId) { "A live subscription has an id." }
         if (billing.cancelAtPeriodEnd == cancel) {
             throw SubscriptionStateException(
-                if (cancel) "The subscription already ends at the end of the period." else "The subscription is not ending.",
+                if (cancel) {
+                    "The subscription already ends at the end of the period."
+                } else {
+                    "The subscription is not ending."
+                },
             )
         }
         stripe.setCancelAtPeriodEnd(subscriptionId, cancel)
@@ -291,19 +311,18 @@ class SetCancellationUseCaseImpl(
 /** Lists an organization's invoices and receipts. */
 interface ListInvoicesUseCase {
     /** @return The latest invoices, newest first; empty for an organization that never bought. */
-    suspend operator fun invoke(subjectId: String, orgId: Uuid, limit: Int): List<Invoice>
+    suspend operator fun invoke(caller: OrgPrincipal, orgId: Uuid, limit: Int): List<Invoice>
 }
 
 /** [ListInvoicesUseCase]. */
 class ListInvoicesUseCaseImpl(
     private val repository: BillingRepository,
-    private val access: BillingAccessPolicy,
     private val stripe: StripeGateway,
 ) : ListInvoicesUseCase {
-    override suspend fun invoke(subjectId: String, orgId: Uuid, limit: Int): List<Invoice> {
-        access.requireBillingAdmin(subjectId, orgId)
+    override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, limit: Int): List<Invoice> {
+        caller.requireBillingAdminOf(orgId)
         val customerId = repository.get(orgId)?.stripeCustomerId ?: return emptyList()
-        return stripe.listInvoices(customerId, limit.coerceIn(1, 100))
+        return stripe.listInvoices(customerId, limit.coerceIn(1, MAX_INVOICES))
     }
 }
 
@@ -336,11 +355,22 @@ class HandleStripeEventUseCaseImpl(
     }
 
     private suspend fun apply(event: StripeEvent): EventOutcome {
-        val billing = findBilling(event) ?: return EventOutcome.IGNORED
-        val subscriptionId = event.subscriptionId ?: billing.stripeSubscriptionId ?: return EventOutcome.IGNORED
-        return when (event.type) {
+        val billing = findBilling(event)
+        val subscriptionId = event.subscriptionId ?: billing?.stripeSubscriptionId
+        return if (billing == null || subscriptionId == null) {
+            EventOutcome.IGNORED
+        } else {
+            apply(event, billing, subscriptionId)
+        }
+    }
+
+    private suspend fun apply(event: StripeEvent, billing: OrgBilling, subscriptionId: String): EventOutcome =
+        when (event.type) {
             "checkout.session.completed", "checkout.session.async_payment_succeeded" -> {
-                val synced = sync(billing.copy(stripeCustomerId = event.customerId ?: billing.stripeCustomerId), subscriptionId)
+                val synced = sync(
+                    billing.copy(stripeCustomerId = event.customerId ?: billing.stripeCustomerId),
+                    subscriptionId,
+                )
                 backfill(synced)
                 EventOutcome.PROCESSED
             }
@@ -356,7 +386,8 @@ class HandleStripeEventUseCaseImpl(
                 EventOutcome.PROCESSED
             }
             "invoice.payment_failed", "invoice.payment_action_required" -> {
-                val kind = if (event.type == "invoice.payment_failed") PaymentIssueKind.FAILED else PaymentIssueKind.ACTION_REQUIRED
+                val failed = event.type == "invoice.payment_failed"
+                val kind = if (failed) PaymentIssueKind.FAILED else PaymentIssueKind.ACTION_REQUIRED
                 val issue = PaymentIssue(kind, event.hostedInvoiceUrl, event.created)
                 sync(billing.copy(paymentIssue = issue), subscriptionId)
                 notifier.paymentIssue(billing.orgId, issue)
@@ -364,12 +395,15 @@ class HandleStripeEventUseCaseImpl(
             }
             else -> EventOutcome.IGNORED
         }
-    }
 
     private suspend fun findBilling(event: StripeEvent): OrgBilling? {
-        event.customerId?.let { customerId -> repository.findByCustomer(customerId)?.let { return it } }
-        val orgId = event.orgId?.let(::parseUuid) ?: return null
-        return repository.get(orgId) ?: OrgBilling(orgId = orgId, updatedAt = clock.now())
+        val known = event.customerId?.let { repository.findByCustomer(it) }
+        val orgId = event.orgId?.let(::parseUuid)
+        return when {
+            known != null -> known
+            orgId != null -> repository.get(orgId) ?: OrgBilling(orgId = orgId, updatedAt = clock.now())
+            else -> null
+        }
     }
 }
 
@@ -430,11 +464,27 @@ private suspend fun queueActivity(
     val periodKey = period.start.epochSeconds
     when (billing.interval) {
         BillingInterval.MONTH -> repository.enqueue(
-            OutboxTask(Uuid.random(), billing.orgId, OutboxKind.ACTIVE_PERSON, "ostrom-${billing.orgId}-$periodKey-$userId", at, 0),
+            OutboxTask(
+                Uuid.random(),
+                billing.orgId,
+                OutboxKind.ACTIVE_PERSON,
+                "ostrom-${billing.orgId}-$periodKey-$userId",
+                at,
+                0,
+            ),
         )
-        BillingInterval.YEAR -> if (repository.countActivePeople(billing.orgId, period.start) > billing.committedPeople) {
+        BillingInterval.YEAR -> if (
+            repository.countActivePeople(billing.orgId, period.start) > billing.committedPeople
+        ) {
             repository.enqueue(
-                OutboxTask(Uuid.random(), billing.orgId, OutboxKind.TRUE_UP, "ostrom-${billing.orgId}-$periodKey-trueup-$userId", at, 0),
+                OutboxTask(
+                    Uuid.random(),
+                    billing.orgId,
+                    OutboxKind.TRUE_UP,
+                    "ostrom-${billing.orgId}-$periodKey-trueup-$userId",
+                    at,
+                    0,
+                ),
             )
         }
         null -> Unit
@@ -460,7 +510,7 @@ class RecordAgentUsageUseCaseImpl(
         val period = billingPeriod(repository.get(orgId), now)
         val usage = repository.addUsage(orgId, period.start, agentSeconds, sessions)
         val limit = limits(orgId).agentHoursPerPeriod ?: return usage
-        val percent = (usage.agentSeconds * 100 / (limit * 3600L)).toInt()
+        val percent = percentOfHours(usage.agentSeconds, limit)
         for (threshold in ALERT_THRESHOLDS.filter { it <= percent }) {
             if (repository.recordAlert(orgId, period.start, threshold, now)) {
                 notifier.agentHoursReached(orgId, threshold, usage.agentHours, limit)
@@ -486,38 +536,65 @@ class CheckEntitlementUseCaseImpl(
     override suspend fun invoke(orgId: Uuid, entitlement: Entitlement) {
         val limits = limits(orgId)
         val billing = repository.get(orgId)
-        val planName = if (settings.stripeEnabled) "The ${(billing?.effectivePlan ?: Plan.FREE).displayName} plan" else "This instance's license"
-        val upgrade = if (settings.stripeEnabled) "Upgrade at ${settings.billingPageUrl}" else "Contact sales@ostrom.run for a license"
+        val words = LimitWords(billing, settings)
         when (entitlement) {
-            is Entitlement.AddPerson -> limits.maxPeople?.let { max ->
-                if (entitlement.currentPeople >= max) {
-                    throw PlanLimitException("$planName includes $max people and this organization has ${entitlement.currentPeople}. $upgrade.")
-                }
-            }
+            is Entitlement.AddPerson -> checkPeople(limits, entitlement.currentPeople, words)
             is Entitlement.StartCloudAgent -> {
-                limits.maxConcurrentCloudAgents?.let { max ->
-                    if (entitlement.running >= max) {
-                        throw PlanLimitException(
-                            "$planName runs $max cloud agents at the same time and ${entitlement.running} are running. " +
-                                "Wait for one to finish, or upgrade at ${settings.billingPageUrl}.",
-                        )
-                    }
-                }
-                limits.agentHoursPerPeriod?.let { hours ->
-                    val period = billingPeriod(billing, clock.now())
-                    if (repository.usage(orgId, period.start).agentSeconds >= hours * 3600L) {
-                        throw PlanLimitException(
-                            "This organization used the $hours cloud agent hours of its plan for this period " +
-                                "(it renews on ${period.end.toString().substring(0, 10)}). $upgrade.",
-                        )
-                    }
-                }
+                checkConcurrentAgents(limits, entitlement.running, words)
+                checkAgentHours(orgId, billing, limits, words)
             }
-            Entitlement.Sso -> if (!limits.sso) throw PlanLimitException("Single sign-on is part of the Business plan. $upgrade.")
+            Entitlement.Sso -> if (!limits.sso) {
+                throw PlanLimitException("Single sign-on is part of the Business plan. ${words.upgrade}.")
+            }
             Entitlement.Policies -> if (!limits.policies) {
-                throw PlanLimitException("Organization policies are part of the Business plan. $upgrade.")
+                throw PlanLimitException("Organization policies are part of the Business plan. ${words.upgrade}.")
             }
         }
+    }
+
+    private fun checkPeople(limits: PlanLimits, people: Int, words: LimitWords) {
+        val max = limits.maxPeople ?: return
+        if (people >= max) {
+            throw PlanLimitException(
+                "${words.planName} includes $max people and this organization has $people. ${words.upgrade}.",
+            )
+        }
+    }
+
+    private fun checkConcurrentAgents(limits: PlanLimits, running: Int, words: LimitWords) {
+        val max = limits.maxConcurrentCloudAgents ?: return
+        if (running >= max) {
+            throw PlanLimitException(
+                "${words.planName} runs $max cloud agents at the same time and $running are running. " +
+                    "Wait for one to finish, or upgrade at ${settings.billingPageUrl}.",
+            )
+        }
+    }
+
+    private suspend fun checkAgentHours(orgId: Uuid, billing: OrgBilling?, limits: PlanLimits, words: LimitWords) {
+        val hours = limits.agentHoursPerPeriod ?: return
+        val period = billingPeriod(billing, clock.now())
+        if (repository.usage(orgId, period.start).agentSeconds >= hours * SECONDS_PER_HOUR) {
+            val renewal = period.end.toLocalDateTime(TimeZone.UTC).date
+            throw PlanLimitException(
+                "This organization used the $hours cloud agent hours of its plan for this period " +
+                    "(it renews on $renewal). ${words.upgrade}.",
+            )
+        }
+    }
+}
+
+/** How a limit message names the plan and says where to go: the billing page on Ostrom Cloud, sales otherwise. */
+private class LimitWords(billing: OrgBilling?, settings: BillingSettings) {
+    val planName = if (settings.stripeEnabled) {
+        "The ${(billing?.effectivePlan ?: Plan.FREE).displayName} plan"
+    } else {
+        "This instance's license"
+    }
+    val upgrade = if (settings.stripeEnabled) {
+        "Upgrade at ${settings.billingPageUrl}"
+    } else {
+        "Contact sales@ostrom.run for a license"
     }
 }
 
@@ -551,7 +628,7 @@ class ProcessOutboxUseCaseImpl(
                 throw error
             } catch (error: Exception) {
                 onFailure(task, error)
-                val delay = (30.seconds * (1 shl task.attempts.coerceAtMost(7))).coerceAtMost(60.minutes)
+                val delay = (FIRST_RETRY * (1 shl task.attempts.coerceAtMost(MAX_DOUBLINGS))).coerceAtMost(LAST_RETRY)
                 repository.failTask(task.id, clock.now() + delay)
             }
         }

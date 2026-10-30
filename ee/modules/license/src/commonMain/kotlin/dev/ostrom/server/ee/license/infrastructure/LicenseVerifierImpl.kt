@@ -39,9 +39,9 @@ class LicenseVerifierImpl(
         // trusted until the signature matches.
         val payload = parse(payloadBytes)
         val publicKey = trusted()[payload.keyId] ?: throw UnknownLicenseKeyException(payload.keyId)
-        if (signature.size != SIGNATURE_SIZE || !publicKey.signatureVerifier().tryVerifySignature(payloadBytes, signature)) {
-            throw InvalidLicenseSignatureException()
-        }
+        val signed = signature.size == SIGNATURE_SIZE &&
+            publicKey.signatureVerifier().tryVerifySignature(payloadBytes, signature)
+        if (!signed) throw InvalidLicenseSignatureException()
         val license = payload.toLicense()
         if (now < license.issuedAt - LICENSE_CLOCK_SKEW) throw NotYetValidLicenseException(license.issuedAt)
         if (now > license.graceEndsAt) throw ExpiredLicenseException(license.expiresAt, license.graceEndsAt)
@@ -53,7 +53,8 @@ class LicenseVerifierImpl(
         val hasher = CryptographyProvider.Default.get(SHA256).hasher()
         return trustedKeys.associate { encoded ->
             val der = Base64.decode(encoded)
-            hasher.hash(der).toHexString().take(KEY_ID_LENGTH) to decoder.decodeFromByteArray(EdDSA.PublicKey.Format.DER, der)
+            val keyId = hasher.hash(der).toHexString().take(KEY_ID_LENGTH)
+            keyId to decoder.decodeFromByteArray(EdDSA.PublicKey.Format.DER, der)
         }
     }
 

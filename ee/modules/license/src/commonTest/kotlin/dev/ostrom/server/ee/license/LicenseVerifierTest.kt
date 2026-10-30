@@ -17,12 +17,15 @@ import kotlin.test.assertNull
 import kotlin.time.Instant
 
 class LicenseVerifierTest {
+    private val fixtureVerifier = LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY))
+
     private suspend fun malformed(verifier: LicenseVerifierImpl, key: String): String =
         assertFailsWith<MalformedLicenseException> { verifier.verify(key, NOW) }.message.orEmpty()
+            .removePrefix("The license key is malformed: ")
 
     @Test
     fun aLicenseSignedBySignPyVerifies() = runTest {
-        val license = LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY)).verify(SIGN_PY_FIXTURE, NOW)
+        val license = fixtureVerifier.verify(SIGN_PY_FIXTURE, NOW)
         assertEquals(
             License(
                 licenseId = "lic_fixture_0001",
@@ -44,18 +47,21 @@ class LicenseVerifierTest {
         assertEquals(listOf("MCowBQYDK2VwAyEACIFioTGJviBXEX6sfYdbVtCcStqJoa7Fj7VXj/mp3VY="), PinnedLicenseKeys.ALL)
         // The default verifier trusts the production key only: the test key's licenses are unknown to it.
         val error = assertFailsWith<UnknownLicenseKeyException> { LicenseVerifierImpl().verify(SIGN_PY_FIXTURE, NOW) }
-        assertEquals("The license key was signed by an unknown key (59f7291142778b67); this build does not trust it.", error.message)
-        // The production key's id is 5cceefe10dca26f3: a forgery claiming it reaches the signature check, and fails it.
-        val forger = TestSigningKey.generate()
-        assertFailsWith<InvalidLicenseSignatureException> { LicenseVerifierImpl().verify(forger.license(keyId = "5cceefe10dca26f3"), NOW) }
+        assertEquals(
+            "The license key was signed by an unknown key (59f7291142778b67); this build does not trust it.",
+            error.message,
+        )
+        // The production key's id is 5cceefe10dca26f3: a forgery claiming it reaches the signature check, and fails.
+        val forged = TestSigningKey.generate().license("keyId" to q("5cceefe10dca26f3"))
+        assertFailsWith<InvalidLicenseSignatureException> { LicenseVerifierImpl().verify(forged, NOW) }
     }
 
     @Test
     fun aGeneratedKeyVerifiesWithEveryField() = runTest {
         val key = TestSigningKey.generate()
-        val license = LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY, key.publicKey))
-            .verify("  " + key.license(maxPeople = null, features = "[\"sso\",\"sso\"]", instanceId = "abc") + "\n", NOW)
-        assertNull(license.maxPeople, "null is unlimited")
+        val signed = key.license("maxPeople" to null, "features" to "[\"sso\",\"sso\"]", "instanceId" to q("abc"))
+        val license = LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY, key.publicKey)).verify(" $signed\n", NOW)
+        assertNull(license.maxPeople, "absent is unlimited")
         assertEquals(setOf("sso"), license.features)
         assertEquals("abc", license.instanceId)
         assertEquals(key.keyId, license.keyId)
@@ -65,49 +71,42 @@ class LicenseVerifierTest {
     @Test
     fun theFeaturesDefaultToNone() = runTest {
         val key = TestSigningKey.generate()
-        val json = "{\"licenseId\":\"l\",\"customer\":\"c\",\"issuedAt\":\"2026-10-30T00:00:00Z\",\"expiresAt\":\"2027-10-30T00:00:00Z\",\"keyId\":\"${key.keyId}\"}"
-        val license = LicenseVerifierImpl(listOf(key.publicKey)).verify(key.sign(json), NOW)
+        val license = LicenseVerifierImpl(listOf(key.publicKey))
+            .verify(key.license("maxPeople" to "null", "features" to null), NOW)
         assertEquals(emptySet(), license.features)
         assertNull(license.maxPeople)
     }
 
     @Test
     fun aKeyWithoutThePrefixIsMalformed() = runTest {
-        val verifier = LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY))
-        assertEquals(
-            "The license key is malformed: it does not start with ostrom-license.v1.",
-            malformed(verifier, SIGN_PY_FIXTURE.replace("ostrom-license.v1.", "ostrom-license.v2.")),
-        )
-        assertEquals("The license key is malformed: it does not start with ostrom-license.v1.", malformed(verifier, ""))
+        val v2 = SIGN_PY_FIXTURE.replace("ostrom-license.v1.", "ostrom-license.v2.")
+        assertEquals("it does not start with ostrom-license.v1.", malformed(fixtureVerifier, v2))
+        assertEquals("it does not start with ostrom-license.v1.", malformed(fixtureVerifier, ""))
     }
 
     @Test
     fun aKeyTooLongIsMalformedBeforeAnyDecoding() = runTest {
-        assertEquals(
-            "The license key is malformed: it is longer than 8192 characters.",
-            malformed(LicenseVerifierImpl(), "ostrom-license.v1." + "a".repeat(8_200)),
-        )
+        val long = "ostrom-license.v1." + "a".repeat(8_200)
+        assertEquals("it is longer than 8192 characters.", malformed(LicenseVerifierImpl(), long))
     }
 
     @Test
     fun aKeyWithoutExactlyTwoPartsIsMalformed() = runTest {
-        val verifier = LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY))
-        val expected = "The license key is malformed: it must be ostrom-license.v1.<payload>.<signature>."
-        assertEquals(expected, malformed(verifier, "ostrom-license.v1.abc"))
-        assertEquals(expected, malformed(verifier, "$SIGN_PY_FIXTURE.extra"))
+        val expected = "it must be ostrom-license.v1.<payload>.<signature>."
+        assertEquals(expected, malformed(fixtureVerifier, "ostrom-license.v1.abc"))
+        assertEquals(expected, malformed(fixtureVerifier, "$SIGN_PY_FIXTURE.extra"))
     }
 
     @Test
     fun badBase64IsMalformed() = runTest {
-        val verifier = LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY))
         val (payload, signature) = SIGN_PY_FIXTURE.removePrefix("ostrom-license.v1.").split('.')
         assertEquals(
-            "The license key is malformed: its payload is not base64url without padding.",
-            malformed(verifier, "ostrom-license.v1.$payload*.$signature"),
+            "its payload is not base64url without padding.",
+            malformed(fixtureVerifier, "ostrom-license.v1.$payload*.$signature"),
         )
         assertEquals(
-            "The license key is malformed: its signature is not base64url without padding.",
-            malformed(verifier, "ostrom-license.v1.$payload.$signature=="),
+            "its signature is not base64url without padding.",
+            malformed(fixtureVerifier, "ostrom-license.v1.$payload.$signature=="),
         )
     }
 
@@ -115,84 +114,95 @@ class LicenseVerifierTest {
     fun aPayloadThatIsNotAV1PayloadIsMalformed() = runTest {
         val key = TestSigningKey.generate()
         val verifier = LicenseVerifierImpl(listOf(key.publicKey))
-        val expected = "The license key is malformed: its payload is not a v1 license payload."
+        val expected = "its payload is not a v1 license payload."
         assertEquals(expected, malformed(verifier, key.sign("not json")), "not JSON")
-        assertEquals(expected, malformed(verifier, key.sign("{\"licenseId\":\"l\"}")), "missing fields")
-        assertEquals(expected, malformed(verifier, key.sign(payload(keyId = key.keyId).dropLast(1) + ",\"seats\":3}")), "unknown field")
-        assertEquals(expected, malformed(verifier, key.sign(payload(keyId = key.keyId, maxPeople = "\"many\""))), "mistyped field")
+        assertEquals(expected, malformed(verifier, key.license("customer" to null)), "a missing field")
+        assertEquals(expected, malformed(verifier, key.license("seats" to "3")), "a field v1 does not define")
+        assertEquals(expected, malformed(verifier, key.license("maxPeople" to q("many"))), "a mistyped field")
     }
 
     @Test
     fun aKeyIdThisBuildDoesNotTrustIsUnknown() = runTest {
         val key = TestSigningKey.generate()
         val error = assertFailsWith<UnknownLicenseKeyException> {
-            LicenseVerifierImpl(listOf(key.publicKey)).verify(key.license(keyId = "0000000000000000"), NOW)
+            LicenseVerifierImpl(listOf(key.publicKey)).verify(key.license("keyId" to q("0000000000000000")), NOW)
         }
-        assertEquals("The license key was signed by an unknown key (0000000000000000); this build does not trust it.", error.message)
+        assertEquals(
+            "The license key was signed by an unknown key (0000000000000000); this build does not trust it.",
+            error.message,
+        )
     }
 
     @Test
     fun anAlteredPayloadHasAnInvalidSignature() = runTest {
         val key = TestSigningKey.generate()
-        val verifier = LicenseVerifierImpl(listOf(key.publicKey))
         val signature = key.license().substringAfterLast('.')
-        val raised = b64url(payload(keyId = key.keyId, maxPeople = "5000").encodeToByteArray())
-        val error = assertFailsWith<InvalidLicenseSignatureException> { verifier.verify("ostrom-license.v1.$raised.$signature", NOW) }
-        assertEquals("The license key's signature is invalid: the key was altered or not issued by Ostrom.", error.message)
+        val raised = b64url(key.payload("maxPeople" to "5000").encodeToByteArray())
+        val error = assertFailsWith<InvalidLicenseSignatureException> {
+            LicenseVerifierImpl(listOf(key.publicKey)).verify("ostrom-license.v1.$raised.$signature", NOW)
+        }
+        assertEquals(
+            "The license key's signature is invalid: the key was altered or not issued by Ostrom.",
+            error.message,
+        )
     }
 
     @Test
     fun aSignatureByAnotherKeyClaimingATrustedKeyIdIsInvalid() = runTest {
         val trusted = TestSigningKey.generate()
-        val forger = TestSigningKey.generate()
+        val forged = TestSigningKey.generate().license("keyId" to q(trusted.keyId))
         assertFailsWith<InvalidLicenseSignatureException> {
-            LicenseVerifierImpl(listOf(trusted.publicKey)).verify(forger.license(keyId = trusted.keyId), NOW)
+            LicenseVerifierImpl(listOf(trusted.publicKey)).verify(forged, NOW)
         }
     }
 
     @Test
     fun aSignatureOfTheWrongSizeIsInvalid() = runTest {
         val key = TestSigningKey.generate()
-        val payloadPart = key.license().removePrefix("ostrom-license.v1.").substringBefore('.')
+        val verifier = LicenseVerifierImpl(listOf(key.publicKey))
+        val payload = key.license().removePrefix("ostrom-license.v1.").substringBefore('.')
         assertFailsWith<InvalidLicenseSignatureException> {
-            LicenseVerifierImpl(listOf(key.publicKey)).verify("ostrom-license.v1.$payloadPart.${b64url(ByteArray(10))}", NOW)
+            verifier.verify("ostrom-license.v1.$payload.${b64url(ByteArray(10))}", NOW)
         }
-        assertFailsWith<InvalidLicenseSignatureException> {
-            LicenseVerifierImpl(listOf(key.publicKey)).verify("ostrom-license.v1.$payloadPart.", NOW)
-        }
+        assertFailsWith<InvalidLicenseSignatureException> { verifier.verify("ostrom-license.v1.$payload.", NOW) }
     }
 
     @Test
     fun invalidFieldsAreRefusedAfterTheSignature() = runTest {
         val key = TestSigningKey.generate()
         val verifier = LicenseVerifierImpl(listOf(key.publicKey))
-        suspend fun field(license: String) = malformed(verifier, license).removePrefix("The license key is malformed: ")
-        assertEquals("its licenseId is invalid.", field(key.license(licenseId = " ")))
-        assertEquals("its customer is invalid.", field(key.license(customer = "")))
-        assertEquals("its maxPeople is invalid.", field(key.license(maxPeople = "0")))
-        assertEquals("its features is invalid.", field(key.license(features = "[\"sso\",\" \"]")))
-        assertEquals("its instanceId is invalid.", field(key.license(instanceId = "")))
-        assertEquals("its issuedAt is invalid.", field(key.license(issuedAt = "yesterday")))
-        assertEquals("its expiresAt is invalid.", field(key.license(expiresAt = "2027-02-30")))
-        assertEquals("its expiresAt is invalid.", field(key.license(expiresAt = "2026-10-30T00:00:00Z")), "not after issuedAt")
+        suspend fun field(vararg change: Pair<String, String?>) = malformed(verifier, key.license(*change))
+        assertEquals("its licenseId is invalid.", field("licenseId" to q(" ")))
+        assertEquals("its customer is invalid.", field("customer" to q("")))
+        assertEquals("its maxPeople is invalid.", field("maxPeople" to "0"))
+        assertEquals("its features is invalid.", field("features" to "[\"sso\",\" \"]"))
+        assertEquals("its instanceId is invalid.", field("instanceId" to q("")))
+        assertEquals("its issuedAt is invalid.", field("issuedAt" to q("yesterday")))
+        assertEquals("its expiresAt is invalid.", field("expiresAt" to q("2027-02-30")))
+        assertEquals("its expiresAt is invalid.", field("expiresAt" to q("2026-10-30T00:00:00Z")), "not after issued")
     }
 
     @Test
     fun aLicenseIsNotValidBeforeItWasIssuedBeyondFiveMinutesOfSkew() = runTest {
         val key = TestSigningKey.generate()
         val verifier = LicenseVerifierImpl(listOf(key.publicKey))
-        val license = key.license(issuedAt = "2026-11-01T12:05:00Z")
-        assertEquals("lic_1", verifier.verify(license, Instant.parse("2026-11-01T12:00:00Z")).licenseId, "5 minutes of skew")
-        val error = assertFailsWith<NotYetValidLicenseException> { verifier.verify(license, Instant.parse("2026-11-01T11:59:59Z")) }
+        val license = key.license("issuedAt" to q("2026-11-01T12:05:00Z"))
+        assertEquals("lic_1", verifier.verify(license, Instant.parse("2026-11-01T12:00:00Z")).licenseId, "skew")
+        val error = assertFailsWith<NotYetValidLicenseException> {
+            verifier.verify(license, Instant.parse("2026-11-01T11:59:59Z"))
+        }
         assertEquals("The license is not valid before 2026-11-01T12:05:00Z; check the server's clock.", error.message)
     }
 
     @Test
     fun anExpiredLicenseWorksForFourteenDaysThenIsRefused() = runTest {
-        val verifier = LicenseVerifierImpl(listOf(SIGN_PY_TEST_PUBLIC_KEY))
-        assertEquals("lic_fixture_0001", verifier.verify(SIGN_PY_FIXTURE, Instant.parse("2027-11-05T00:00:00Z")).licenseId)
-        assertEquals("lic_fixture_0001", verifier.verify(SIGN_PY_FIXTURE, Instant.parse("2027-11-13T00:00:00Z")).licenseId, "last instant of grace")
-        val error = assertFailsWith<ExpiredLicenseException> { verifier.verify(SIGN_PY_FIXTURE, Instant.parse("2027-11-13T00:00:01Z")) }
+        val inGrace = fixtureVerifier.verify(SIGN_PY_FIXTURE, Instant.parse("2027-11-05T00:00:00Z"))
+        assertEquals("lic_fixture_0001", inGrace.licenseId)
+        val lastInstant = fixtureVerifier.verify(SIGN_PY_FIXTURE, Instant.parse("2027-11-13T00:00:00Z"))
+        assertEquals("lic_fixture_0001", lastInstant.licenseId, "the last instant of grace")
+        val error = assertFailsWith<ExpiredLicenseException> {
+            fixtureVerifier.verify(SIGN_PY_FIXTURE, Instant.parse("2027-11-13T00:00:01Z"))
+        }
         assertEquals(
             "The license expired on 2027-10-30T00:00:00Z and its grace period ended on 2027-11-13T00:00:00Z; renew it.",
             error.message,
