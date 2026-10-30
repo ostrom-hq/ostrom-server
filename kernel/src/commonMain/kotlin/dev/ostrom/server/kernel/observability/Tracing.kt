@@ -72,14 +72,28 @@ fun Application.installTelemetry(telemetry: Telemetry, metrics: OstromMetrics) {
             ending = Ending.FAILED
             throw error
         } finally {
-            val route = call.attributes.getOrNull(routeKey) ?: UNMATCHED_ROUTE
-            val status = call.response.status()?.value ?: ending.status
-            try {
-                metrics.requestServed(method, route, status, started.elapsedNow())
-            } finally {
-                span?.finish(method, route, status)
-            }
+            call.endRequest(metrics, span, method, ending, started)
         }
+    }
+}
+
+/**
+ * Records the end of a request: its duration and the in-flight decrement, then the end of its span, even if measuring
+ * failed. One function rather than the finally's own body, so that each exit path runs the same code.
+ */
+private fun ApplicationCall.endRequest(
+    metrics: OstromMetrics,
+    span: Span?,
+    method: String,
+    ending: Ending,
+    started: TimeSource.Monotonic.ValueTimeMark,
+) {
+    val route = attributes.getOrNull(routeKey) ?: UNMATCHED_ROUTE
+    val status = response.status()?.value ?: ending.status
+    try {
+        metrics.requestServed(method, route, status, started.elapsedNow())
+    } finally {
+        span?.finish(method, route, status)
     }
 }
 

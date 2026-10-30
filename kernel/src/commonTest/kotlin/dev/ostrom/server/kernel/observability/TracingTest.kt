@@ -4,6 +4,9 @@ package dev.ostrom.server.kernel.observability
 import dev.ostrom.core.telemetry.AttributeValue
 import dev.ostrom.core.telemetry.Attributes
 import dev.ostrom.core.telemetry.Telemetry
+import dev.ostrom.core.telemetry.metrics.Histogram
+import dev.ostrom.core.telemetry.metrics.Meter
+import dev.ostrom.core.telemetry.metrics.NoopMeter
 import dev.ostrom.core.telemetry.trace.SpanContext
 import dev.ostrom.core.telemetry.trace.SpanKind
 import dev.ostrom.core.telemetry.trace.StatusCode
@@ -193,6 +196,37 @@ class TracingTest {
         val span = telemetry.spans.single()
         assertEquals(StatusCode.UNSET, span.status)
         assertEquals(AttributeValue.Integer(499), span.attributes["http.response.status_code"])
+    }
+
+    /** A meter whose histograms fail, as a broken exporter could. */
+    private object FailingHistograms : Meter by NoopMeter {
+        override fun histogram(name: String, unit: String, description: String, boundaries: List<Double>): Histogram =
+            object : Histogram {
+                override fun record(value: Double, attributes: Attributes) {
+                    throw IllegalStateException("broken")
+                }
+            }
+    }
+
+    @Test
+    fun aMeasureThatFailsStillEndsTheSpan() = testApplication {
+        val metrics = OstromMetrics(FailingHistograms)
+        application {
+            installTelemetry(telemetry, metrics)
+            routing {
+                get("/up") { call.respondText("up") }
+                get("/health") { call.respondText("ok") }
+            }
+        }
+        for (path in listOf("/up", "/health")) {
+            try {
+                client.get(path)
+            } catch (_: IllegalStateException) {
+                // The test engine may hand the measure's failure back to the caller; the span is what matters here.
+            }
+        }
+
+        assertEquals("GET /up", telemetry.spans.single().name)
     }
 
     @Test
