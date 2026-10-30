@@ -1,20 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.presentation
 
-import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
-import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import dev.ostrom.server.runners.domain.CloudSession
 import dev.ostrom.server.runners.domain.CloudSessionNotFoundException
 import dev.ostrom.server.runners.domain.CreateCloudSessionPayload
-import dev.ostrom.server.runners.domain.CreateCloudSessionUseCase
-import dev.ostrom.server.runners.domain.GetCloudSessionUseCase
 import dev.ostrom.server.runners.domain.InvalidCloudSessionRequestException
-import dev.ostrom.server.runners.domain.ListCloudSessionsUseCase
 import dev.ostrom.server.runners.domain.RepositorySpec
 import dev.ostrom.server.runners.domain.RunnerHeartbeat
-import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -27,25 +21,6 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
-
-/**
- * What the cloud session routes need.
- *
- * @property createCloudSession Creates a session.
- * @property getCloudSession Reads one.
- * @property listCloudSessions Lists the caller's.
- * @property changeCloudSession Pauses, resumes, deletes.
- * @property runnerHeartbeat The runner channel.
- * @property orgResolver The member a request acts for.
- */
-data class CloudSessionsRoutesDependencies(
-    val createCloudSession: CreateCloudSessionUseCase,
-    val getCloudSession: GetCloudSessionUseCase,
-    val listCloudSessions: ListCloudSessionsUseCase,
-    val changeCloudSession: ChangeCloudSessionUseCase,
-    val runnerHeartbeat: RunnerHeartbeatUseCase,
-    val orgResolver: PrincipalOrgResolver,
-)
 
 /**
  * The cloud session routes: management under `/api/v1/cloud/sessions` for members, and the runner channel under
