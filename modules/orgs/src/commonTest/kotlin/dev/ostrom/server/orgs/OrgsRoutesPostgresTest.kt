@@ -12,6 +12,7 @@ import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
@@ -87,9 +88,12 @@ class OrgsRoutesPostgresTest {
         return user to koin.get<StartWebSessionUseCase>()(user.id)
     }
 
+    // What the console sends (S2-08, #58): the session cookie, the readable CSRF cookie, the same token in
+    // X-CSRF-Token, and its Origin (the default console URL).
     private fun HttpRequestBuilder.session(started: StartedSession) {
-        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}")
+        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}; $CSRF_COOKIE=${started.csrfToken}")
         header(CSRF_HEADER, started.csrfToken)
+        header(HttpHeaders.Origin, "http://localhost:5173")
     }
 
     private fun HttpRequestBuilder.json(body: Any) {
