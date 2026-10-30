@@ -27,6 +27,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -44,7 +45,8 @@ class SharingInfrastructureTest {
             },
         ),
         clock,
-        timeout = 300.milliseconds,
+        // Real time: a short timeout only where the provider hangs, a cold JVM's first call can take longer.
+        timeout = if (hang) 300.milliseconds else 30.seconds,
     )
 
     @Test
