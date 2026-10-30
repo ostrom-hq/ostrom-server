@@ -33,6 +33,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 class AnalysisUseCasesTest {
@@ -84,6 +85,26 @@ class AnalysisUseCasesTest {
         assertNull(again.failure, "A failed run never blocks the next")
         runs.runs[org to AnalysisKind.REPLAY] = again.copy(phase = AnalysisRun.READY)
         assertEquals(AnalysisRun.CONNECT, start(RulesFixtures.lyes, AnalysisKind.REPLAY).phase, "Nor a ready one")
+    }
+
+    @Test
+    fun aRunThatStoppedReportingForAnHourNoLongerBlocksTheNext() = runTest {
+        val stuck = start(RulesFixtures.lyes, AnalysisKind.ANALYSIS)
+        clock.advance(59.minutes)
+        assertFailsWith<AnalysisBusyException> { start(RulesFixtures.lyes, AnalysisKind.ANALYSIS) }
+        clock.advance(1.minutes)
+        val next = start(RulesFixtures.lyes, AnalysisKind.ANALYSIS)
+        assertTrue(next.id != stuck.id, "A new run replaces the stuck one")
+    }
+
+    @Test
+    fun aNewRunKeepsTheLastResultsUntilItWritesItsOwn() = runTest {
+        val item = JsonObject(mapOf("judged" to JsonPrimitive(true)))
+        val done = start(RulesFixtures.lyes, AnalysisKind.REPLAY).copy(phase = AnalysisRun.READY, items = listOf(item))
+        runs.runs[org to AnalysisKind.REPLAY] = done
+        engine.answer = AnalysisStart.Unavailable("engine", "No engine.")
+        assertEquals(listOf(item), start(RulesFixtures.lyes, AnalysisKind.REPLAY).items)
+        assertEquals(listOf(item), runs.run(org, AnalysisKind.REPLAY)?.items)
     }
 
     @Test

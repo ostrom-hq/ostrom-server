@@ -18,12 +18,14 @@ import dev.ostrom.server.rules.domain.services.AnalysisStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
 
 /** Starts an analysis or a replay of the organization (prototype `POST /api/analysis/start`, `/api/replay/start`). */
 interface StartAnalysisUseCase {
     /**
-     * Records a new run, then asks the engine to run it. A run the engine cannot start is failed at once.
+     * Records a new run, then asks the engine to run it. A run the engine cannot start is failed at once; a run that
+     * has not moved for an hour no longer blocks a new one.
      *
      * @param decider Who starts it.
      * @param kind Analysis or replay.
@@ -51,7 +53,9 @@ class StartAnalysisUseCaseImpl(
     override suspend fun invoke(decider: Decider, kind: AnalysisKind): AnalysisRun {
         val now = clock.now()
         val run = repository.transaction(decider.orgId) {
-            if (lock(kind)?.running == true) throw AnalysisBusyException()
+            val current = lock(kind)
+            // A run the engine stopped reporting on (a restart, a crash) holds nobody back past STALE.
+            if (current != null && current.running && now - current.updatedAt < STALE) throw AnalysisBusyException()
             AnalysisRun(
                 orgId = decider.orgId,
                 kind = kind,
@@ -62,6 +66,8 @@ class StartAnalysisUseCaseImpl(
                 startedBy = decider.name,
                 startedAt = now,
                 updatedAt = now,
+                // The last results stay until the new run writes its own: a run that cannot start erases nothing.
+                items = current?.items.orEmpty(),
             ).also { put(it) }
         }
         val unavailable = when (val answer = started(run)) {
@@ -92,6 +98,9 @@ class StartAnalysisUseCaseImpl(
         const val ENGINE = "engine"
     }
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val STALE = 1.hours
 
 /**
  * The analysis as the console shows it.
