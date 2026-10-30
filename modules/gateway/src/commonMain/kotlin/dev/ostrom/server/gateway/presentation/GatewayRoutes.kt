@@ -9,6 +9,8 @@ import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
@@ -49,6 +51,9 @@ const val INFERENCE_BASE: String = "/api/v1/inference"
 /** The credentials that call models: an agent session, a personal token with the scope, a browser session. */
 private val INFERENCE_SCOPES = arrayOf(RelayScopes.AGENT_SESSION, RelayScopes.INFERENCE_USE)
 
+/** Who changes the policy and the settings besides a browser session (S2-52, declared): an `inference:admin` key. */
+private val INFERENCE_ADMINS = WriteAccess.tokens(PrincipalKind.SERVICE)
+
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
 
@@ -59,7 +64,8 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  * The gateway routes. The inference endpoints speak the providers' APIs (Anthropic Messages, OpenAI Responses and
  * Chat Completions), take the member's Ostrom token as `Authorization: Bearer` or `x-api-key`, and answer errors in
  * the provider's shape. An agent session reads the model policy; only `inference:admin` (or a browser session)
- * changes it and reads or changes the settings (SECURITY-AUDIT S2-03).
+ * changes it and reads or changes the settings (SECURITY-AUDIT S2-03), and a token that changes them is a service key
+ * (S2-52).
  *
  * @param dependencies The use cases.
  */
@@ -81,7 +87,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             call.respond(getPolicy(caller).toDto())
         }
         put<ModelPolicyApi> {
-            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)
+            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
             val request = call.receive<ModelPolicyDto>()
             call.respond(
                 putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember)).toDto(),
@@ -91,7 +97,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             call.respond(getSettings(call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)).toDto())
         }
         put<InferenceSettingsApi> {
-            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)
+            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
             val request = call.receive<InferenceSettingsDto>()
             val settings = GatewaySettings(
                 request.anthropicKeySecret,

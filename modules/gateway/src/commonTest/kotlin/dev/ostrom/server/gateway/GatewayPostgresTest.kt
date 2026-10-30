@@ -13,6 +13,7 @@ import dev.ostrom.server.gateway.presentation.InferenceSettingsDto
 import dev.ostrom.server.gateway.presentation.MAX_INFERENCE_REQUEST_BYTES
 import dev.ostrom.server.gateway.presentation.ModelPolicyDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -139,7 +140,12 @@ class GatewayPostgresTest {
                         PrincipalKind.SERVICE,
                         principals.getValue(token),
                     )
-                    token in byToken -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
+                    token in byToken -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(RelayScopes.ALL_USER),
+                        channel = PrincipalChannel.BROWSER,
+                    )
                     else -> null
                 }
             }
