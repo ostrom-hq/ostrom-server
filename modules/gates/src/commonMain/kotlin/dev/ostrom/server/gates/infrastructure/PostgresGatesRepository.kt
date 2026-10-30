@@ -55,7 +55,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> = driver.transaction {
         Tx(this).run {
-            scoped(orgId)
+            scope.enter(orgId)
             // Served by the GIN index on the session ids (migration 2).
             executor.rows(
                 Statement.create(
