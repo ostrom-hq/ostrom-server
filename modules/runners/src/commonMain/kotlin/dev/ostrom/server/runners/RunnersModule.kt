@@ -20,6 +20,8 @@ import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCase
 import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCaseImpl
+import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
+import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerTokens
@@ -61,11 +63,12 @@ object RunnersModule : ServerModule {
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
         single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get()) }
+        single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
         single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
         single<ReconcileCloudSessionUseCase> { ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get()) }
         single { ReconcilerWorker(get(), get(), get(), get()) }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = RunnersMigrations

@@ -28,14 +28,15 @@ val OstromJson: Json = Json {
 const val SERVER_VERSION: String = "0.1.0-dev"
 
 /**
- * Installs the kernel's HTTP layer (JSON, type-safe resources, request ids, request logs, uniform errors, token
- * authentication, `/health`) and the routes of every module.
+ * Installs the kernel's HTTP layer (request body limit, JSON, type-safe resources, request ids, request logs by route
+ * template, uniform errors, token authentication, `/health`) and the routes of every module.
  *
  * @param koin The application's Koin, with the kernel module and every module's definitions loaded.
  * @param modules The functional modules, in order.
  */
 fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     val logger = koin.get<Logger>()
+    install(BodyLimit)
     install(ContentNegotiation) { json(OstromJson) }
     install(Resources)
     install(CallId) {
@@ -44,6 +45,7 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
         verify(::isValidRequestId)
         replyToHeader(HttpHeaders.XRequestId)
     }
+    recordRouteTemplates()
     install(RequestLogging) { this.logger = logger }
     configureErrors(logger)
     install(Authentication) { token(koin.get()) }

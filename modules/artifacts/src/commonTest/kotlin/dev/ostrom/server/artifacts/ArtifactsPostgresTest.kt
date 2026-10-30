@@ -27,6 +27,9 @@ import dev.ostrom.server.artifacts.presentation.PublishArtifactRequest
 import dev.ostrom.server.artifacts.presentation.PublishVersionRequest
 import dev.ostrom.server.artifacts.presentation.UpdateArtifactRequest
 import dev.ostrom.server.artifacts.infrastructure.inTenant
+import dev.ostrom.server.kernel.logging.JsonLogger
+import dev.ostrom.server.kernel.logging.LogLevel
+import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -47,6 +50,10 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.delay
+import org.koin.dsl.module
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -55,11 +62,13 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Against a real PostgreSQL: the repository's SQL, the routes, the content origin and the MCP server. */
+@OptIn(ExperimentalAtomicApi::class)
 class ArtifactsPostgresTest {
     private val t0 = Instant.parse("2026-10-30T10:00:00Z")
 
@@ -375,5 +384,52 @@ class ArtifactsPostgresTest {
         assertTrue("<h1>Title</h1>" in markdown.bodyAsText())
         assertTrue("&lt;b&gt;" in markdown.bodyAsText())
         assertTrue(markdown.headers[HttpHeaders.ContentType].orEmpty().startsWith("text/html"))
+    }
+
+    @Test
+    fun aLargePublicationIsAcceptedAndNoTicketOrLinkReachesTheLogs() {
+        // Written by the server's threads, read by the test.
+        val written = AtomicReference(emptyList<String>())
+        val overrides = module {
+            includes(testIdentities)
+            single<Logger> {
+                JsonLogger(LogLevel.INFO, sink = { line ->
+                    while (true) {
+                        val current = written.load()
+                        if (written.compareAndSet(current, current + line)) break
+                    }
+                })
+            }
+        }
+        serverTest(listOf(ArtifactsModule), overrides) { server ->
+            val client = server.client
+            // S2-46: publishing declares its own body limit, over the kernel's 1 MiB default.
+            val large = client.publish("alice", "Large", "link", "<p>${"x".repeat(1_200_000)}</p>")
+            assertEquals(HttpStatusCode.Created, large.status)
+            val created = large.body<ArtifactResponse>()
+            val ticket = client.post("/api/v1/artifacts/${created.id}/tickets") { bearerAuth("alice") }
+                .body<ArtifactTicketResponse>()
+            assertEquals(HttpStatusCode.OK, client.content(ticket.url).status)
+            val publicUrl = assertNotNull(created.publicUrl)
+            assertEquals(HttpStatusCode.OK, client.content(publicUrl).status)
+
+            // S2-45: the ticket and the slug are in the paths; the request lines carry the route templates only.
+            val ticketSegment = ticket.url.removePrefix("$CONTENT_ORIGIN/a/${created.id}/").substringBefore('/')
+            val slug = publicUrl.removePrefix("$CONTENT_ORIGIN/l/").substringBefore('/')
+            var waits = 0
+            while (written.load().count { "request served" in it } < REQUESTS_MADE && waits++ < 50) {
+                delay(20.milliseconds)
+            }
+            val lines = written.load()
+            assertTrue(lines.any { "\"route\":\"/a/{id}/{ticket}/{path...}\"" in it }, lines.joinToString("\n"))
+            assertTrue(lines.any { "\"route\":\"/l/{slug}/{path...}\"" in it }, lines.joinToString("\n"))
+            assertTrue(ticketSegment.length > 8 && slug.length > 8)
+            assertFalse(lines.any { ticketSegment in it || slug in it }, "A ticket or a link slug was logged")
+        }
+    }
+
+    private companion object {
+        /** The publication, the ticket, and the two pages. */
+        const val REQUESTS_MADE = 4
     }
 }
