@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets.presentation
 
 import dev.ostrom.server.kernel.auth.authenticated
@@ -26,7 +27,7 @@ fun Route.secretsRoutes(dependencies: SecretsRoutesDependencies) = with(dependen
             val caller = call.requireCaller(callers, RelayScopes.SECRETS_READ)
             val limit = params.limit.coerceIn(1, MAX_PAGE)
             val page = listSecrets(caller, params.after, limit)
-            val next = page.takeIf { it.size == limit }?.last()?.name
+            val next = if (page.size == limit) page.last().name else null
             call.respond(SecretsPageResponse(page.map { it.toSecretResponse() }, next))
         }
         post<SecretsApi> {

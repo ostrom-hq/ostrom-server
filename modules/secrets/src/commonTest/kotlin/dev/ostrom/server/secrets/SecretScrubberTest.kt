@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets
 
 import dev.ostrom.server.secrets.domain.SecretScrubber
@@ -20,6 +21,7 @@ class SecretScrubberTest {
     @Test
     fun shortValuesAreLeftAlone() {
         assertEquals("a short pw", SecretScrubber.scrub("a short pw", listOf("short")))
+        assertEquals("nothing to hide", SecretScrubber.scrub("nothing to hide", listOf("absent-value")))
     }
 
     @Test

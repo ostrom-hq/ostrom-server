@@ -1,6 +1,17 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.secrets
 
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
+import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
+import dev.ostrom.server.secrets.domain.SecretCipher
+import dev.ostrom.server.secrets.domain.SecretsRepository
+import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.secrets.infrastructure.SecretsKey
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.secrets.presentation.SecretResponse
@@ -19,10 +30,13 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.koin.dsl.module
+import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Real PostgreSQL and real HTTP: storage, encryption at rest, roles and org isolation. */
@@ -260,5 +274,67 @@ class SecretsPostgresTest {
                 it.get("name").asString()
             }
             assertEquals(listOf("ORG_A_ONLY"), names, "The failed write left nothing")
+        }
+
+    @Test
+    fun withoutIdentityTheRealKeyLoadsAndEveryCallIsRefused() {
+        val key = Base64.encode(ByteArray(AesGcmSecretCipher.KEY_BYTES) { 3 })
+        val bare = module {
+            single<ConfigSource> { MapConfigSource(mapOf(SecretsKey.KEY_VARIABLE to key)) }
+            single<TokenAuthenticator> {
+                object : TokenAuthenticator {
+                    override suspend fun authenticate(token: String) =
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
+                }
+            }
+        }
+        serverTest(listOf(SecretsModule), bare) { server ->
+            assertEquals(HttpStatusCode.NotFound, server.client.get(base) { bearerAuth("anyone") }.status)
+            val cipher = server.koin.get<SecretCipher>()
+            assertEquals("v", cipher.open(cipher.seal("v".encodeToByteArray(), "ctx"), "ctx")?.decodeToString())
+        }
+    }
+
+    @Test
+    fun theRepositoryReadsOnlyWhatExists() = serverTest(listOf(SecretsModule), TestCallers.overrides) { server ->
+        server.client.post(base) {
+            bearerAuth("admin-a")
+            contentType(ContentType.Application.Json)
+            setBody(SecretWriteRequest("PRESENT", "present-value-1"))
+        }
+        val repository = server.koin.get<SecretsRepository>()
+        val present = repository.findByName(TestCallers.orgA, null, "PRESENT")!!
+        assertEquals(null, repository.findByName(TestCallers.orgA, null, "ABSENT"))
+        assertEquals(null, repository.get(TestCallers.orgA, Uuid.random()))
+        assertEquals(listOf("PRESENT"), repository.getMany(TestCallers.orgA, listOf(present.id)).map { it.secret.name })
+        assertEquals(emptyList(), repository.getMany(TestCallers.orgA, emptyList()))
+        assertEquals(emptyList(), repository.getOrgSecretsByName(TestCallers.orgA, emptyList()))
+        val epoch = Instant.parse("2026-10-30T00:00:00Z")
+        assertEquals(
+            null,
+            repository.rotate(TestCallers.orgA, Uuid.random(), "v1:x", epoch, TestCallers.adminA.memberId),
+        )
+    }
+
+    @Test
+    fun aPersonalSecretIsRotatedByTheScopeOfThePath() =
+        serverTest(listOf(SecretsModule), TestCallers.overrides) { server ->
+            server.client.post(base) {
+                bearerAuth("member-a")
+                contentType(ContentType.Application.Json)
+                setBody(SecretWriteRequest("MINE", "first-value-1", scope = "personal"))
+            }
+            val rotated = server.client.put("$base/MINE?scope=personal") {
+                bearerAuth("member-a")
+                contentType(ContentType.Application.Json)
+                setBody(SecretWriteRequest("MINE", "second-value-2"))
+            }
+            assertEquals(2, rotated.body<SecretResponse>().version)
+            val byBody = server.client.put("$base/MINE") {
+                bearerAuth("member-a")
+                contentType(ContentType.Application.Json)
+                setBody(SecretWriteRequest("MINE", "third-value-3", scope = "personal"))
+            }
+            assertEquals(3, byBody.body<SecretResponse>().version, "The scope of the body wins over the path's")
         }
 }

@@ -1,0 +1,65 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. **A security problem is never reported here:** follow
+        [SECURITY.md](https://github.com/ostrom-hq/ostrom-server/security/policy) instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence that shows the problem. A minimal repository or a command helps most.
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Paste the full error. Remove tokens, keys and anything private first.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: `GET /health` or the image tag
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Where it runs
+      options:
+        - Ostrom Cloud
+        - Self-hosted (Helm)
+        - Self-hosted (Docker Compose)
+        - Local development
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and architecture (`uname -orsm`), and how you run it
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and discussions.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
