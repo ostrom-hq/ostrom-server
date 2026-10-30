@@ -29,7 +29,8 @@ data class ShareAccountPayload(
     val expiresAt: Instant,
     val limits: AccountLimits = AccountLimits(),
 ) {
-    override fun toString(): String = "ShareAccountPayload(provider=$provider, label=$label, providerAccountId=$providerAccountId, tokens=[REDACTED])"
+    override fun toString(): String =
+        "ShareAccountPayload(provider=$provider, label=$label, providerAccountId=$providerAccountId, tokens=[REDACTED])"
 }
 
 /**
@@ -40,7 +41,12 @@ data class ShareAccountPayload(
  * @property disabled Turns it off or back on (a RECONNECT_REQUIRED account comes back only by sharing it again).
  * @property limits New limits.
  */
-data class UpdateAccountPayload(val label: String? = null, val priority: Int? = null, val disabled: Boolean? = null, val limits: AccountLimits? = null)
+data class UpdateAccountPayload(
+    val label: String? = null,
+    val priority: Int? = null,
+    val disabled: Boolean? = null,
+    val limits: AccountLimits? = null,
+)
 
 /**
  * An account as the caller may see it.
@@ -86,7 +92,8 @@ interface RemoveSharedAccountUseCase {
 }
 
 /** Another member already shares this provider account. */
-class AccountOwnedByAnotherMemberException : OstromException(ErrorKind.CONFLICT, "Another member already shares this account.")
+class AccountOwnedByAnotherMemberException :
+    OstromException(ErrorKind.CONFLICT, "Another member already shares this account.")
 
 /** [ShareAccountUseCase]. */
 class ShareAccountUseCaseImpl(
@@ -98,47 +105,66 @@ class ShareAccountUseCaseImpl(
         SharingRules.requireLabel(payload.label)
         SharingRules.requireLimits(payload.limits)
         SharingRules.requireTokens(payload.accessToken, payload.refreshToken, payload.providerAccountId)
-        if (payload.email != null && (payload.email.length > 320 || payload.email.any { it.isISOControl() })) {
-            throw InvalidAccountException("The email is malformed.")
-        }
+        SharingRules.requireEmail(payload.email)
         val existing = repository.list(caller.orgId)
-        val same = existing.firstOrNull { it.provider == payload.provider && it.providerAccountId == payload.providerAccountId }
-        if (same == null && existing.size >= SharingRules.MAX_ACCOUNTS) throw TooManyAccountsException()
-        if (same != null && !caller.role.isAdmin && same.ownerMemberId != caller.memberId) throw AccountOwnedByAnotherMemberException()
-        val account = SharedAccount(
-            id = same?.id ?: Uuid.random(),
-            orgId = caller.orgId,
-            provider = payload.provider,
-            label = payload.label,
-            email = payload.email,
-            providerAccountId = payload.providerAccountId,
-            ownerMemberId = same?.ownerMemberId ?: caller.memberId,
-            priority = same?.priority ?: 0,
-            status = if (same?.status == AccountStatus.DISABLED) AccountStatus.DISABLED else AccountStatus.READY,
-            limits = payload.limits,
-            cooldownUntil = null,
-            createdAt = same?.createdAt ?: clock.now(),
-        )
+        val same = existing.firstOrNull {
+            it.provider == payload.provider && it.providerAccountId == payload.providerAccountId
+        }
+        when {
+            same == null && existing.size >= SharingRules.MAX_ACCOUNTS -> throw TooManyAccountsException()
+            same != null && !caller.mayChange(same) -> throw AccountOwnedByAnotherMemberException()
+            else -> Unit
+        }
+        val account = same.sharedAgain(caller, payload, clock)
         val credentials = AccountCredentials(payload.accessToken, payload.refreshToken, payload.expiresAt)
         return repository.upsert(account, cipher.seal(credentials, account.orgId, account.id))
     }
 }
 
+/**
+ * The account a share stores: a new one owned by the caller, or [this] with new tokens, label and limits (its owner,
+ * priority, creation and a DISABLED status kept).
+ */
+private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayload, clock: Clock) = SharedAccount(
+    id = this?.id ?: Uuid.random(),
+    orgId = caller.orgId,
+    provider = payload.provider,
+    label = payload.label,
+    email = payload.email,
+    providerAccountId = payload.providerAccountId,
+    ownerMemberId = this?.ownerMemberId ?: caller.memberId,
+    priority = this?.priority ?: 0,
+    status = if (this?.status == AccountStatus.DISABLED) AccountStatus.DISABLED else AccountStatus.READY,
+    limits = payload.limits,
+    cooldownUntil = null,
+    createdAt = this?.createdAt ?: clock.now(),
+)
+
 /** [ListSharedAccountsUseCase]. */
 class ListSharedAccountsUseCaseImpl(
     private val repository: SharedAccountRepository,
+    private val quotas: QuotaWindowRepository,
     private val pool: SharedAccountPool,
     private val spend: AccountSpendReader,
     private val clock: Clock,
 ) : ListSharedAccountsUseCase {
     override suspend fun invoke(caller: Caller): List<SharedAccountView> {
         val now = clock.now()
-        val windows = repository.windows(caller.orgId)
+        val windows = quotas.byAccount(caller.orgId)
         val since = SharedAccountPool.monthStart(now)
         return repository.list(caller.orgId).mapIndexed { index, account ->
-            val visible = caller.role.isAdmin || account.ownerMemberId == caller.memberId
+            val visible = caller.mayChange(account)
             SharedAccountView(
-                account = if (visible) account else account.copy(email = null, providerAccountId = "", ownerMemberId = null, label = ""),
+                account = if (visible) {
+                    account
+                } else {
+                    account.copy(
+                        email = null,
+                        providerAccountId = "",
+                        ownerMemberId = null,
+                        label = "",
+                    )
+                },
                 displayLabel = if (visible) account.label else "Account ${index + 1}",
                 identityVisible = visible,
                 windows = windows[account.id].orEmpty().filter { it.isCurrent(now) }.sortedBy { it.window },
@@ -155,7 +181,7 @@ class UpdateSharedAccountUseCaseImpl(private val repository: SharedAccountReposi
         val account = repository.writable(caller, id)
         payload.label?.let(SharingRules::requireLabel)
         payload.limits?.let(SharingRules::requireLimits)
-        if (payload.priority != null && payload.priority !in -100..100) throw InvalidAccountException("priority is -100 to 100.")
+        payload.priority?.let(SharingRules::requirePriority)
         val status = when (payload.disabled) {
             true -> AccountStatus.DISABLED
             false -> if (account.status == AccountStatus.DISABLED) AccountStatus.READY else account.status
@@ -180,8 +206,11 @@ class RemoveSharedAccountUseCaseImpl(private val repository: SharedAccountReposi
 }
 
 /** The account if the caller may change it (admin or owner); otherwise not found, so existence does not leak. */
+/** Admins change every account of their org; a member only the accounts it shared. */
+private fun Caller.mayChange(account: SharedAccount) = role.isAdmin || account.ownerMemberId == memberId
+
 private suspend fun SharedAccountRepository.writable(caller: Caller, id: Uuid): SharedAccount {
     val account = get(caller.orgId, id) ?: throw AccountNotFoundException()
-    if (!caller.role.isAdmin && account.ownerMemberId != caller.memberId) throw AccountNotFoundException()
+    if (!caller.mayChange(account)) throw AccountNotFoundException()
     return account
 }

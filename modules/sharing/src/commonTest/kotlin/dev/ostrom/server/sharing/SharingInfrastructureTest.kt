@@ -11,9 +11,9 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -48,7 +48,10 @@ class SharingInfrastructureTest {
 
     @Test
     fun aRefreshUsesThePublicClientOfEachProvider() = realTime {
-        val renewed = refresher(HttpStatusCode.OK, """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":28800}""")
+        val renewed = refresher(
+            HttpStatusCode.OK,
+            """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":28800}""",
+        )
             .refresh(AccountProvider.CLAUDE, old)
         val credentials = assertIs<RefreshResult.Renewed>(renewed).credentials
         assertEquals("new-access", credentials.accessToken)
@@ -61,23 +64,75 @@ class SharingInfrastructureTest {
         assertEquals("9d1c250a-e61b-44d9-88ed-5944d1962f5e", json["client_id"]!!.jsonPrimitive.content)
 
         seen.clear()
-        val codex = refresher(HttpStatusCode.OK, """{"access_token":"c","expires_in":60}""").refresh(AccountProvider.CODEX, old)
-        assertEquals("old-refresh", assertIs<RefreshResult.Renewed>(codex).credentials.refreshToken, "A missing refresh token keeps the old one")
+        val codex = refresher(
+            HttpStatusCode.OK,
+            """{"access_token":"c","expires_in":60}""",
+        ).refresh(AccountProvider.CODEX, old)
+        assertEquals(
+            "old-refresh",
+            assertIs<RefreshResult.Renewed>(codex).credentials.refreshToken,
+            "A missing refresh token keeps the old one",
+        )
         assertEquals("https://auth.openai.com/oauth/token", seen.single().first)
         assertTrue("app_EMoamEEZ73f0CkXaXp7hrann" in seen.single().second)
     }
 
     @Test
     fun refusalsAndFailuresAreClassified() = realTime {
-        assertEquals(RefreshResult.Revoked, refresher(HttpStatusCode.BadRequest, "{}").refresh(AccountProvider.CLAUDE, old))
-        assertEquals(RefreshResult.Revoked, refresher(HttpStatusCode.Unauthorized, "{}").refresh(AccountProvider.CLAUDE, old))
-        assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.ServiceUnavailable, "{}").refresh(AccountProvider.CLAUDE, old))
-        assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.OK, "not json").refresh(AccountProvider.CLAUDE, old))
-        assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.OK, "[1]").refresh(AccountProvider.CLAUDE, old))
-        assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.OK, """{"access_token":"a"}""").refresh(AccountProvider.CLAUDE, old))
-        assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.OK, """{"access_token":"","expires_in":5}""").refresh(AccountProvider.CLAUDE, old))
-        assertEquals(RefreshResult.Unavailable, refresher(HttpStatusCode.OK, "{}", hang = true).refresh(AccountProvider.CLAUDE, old))
-        val down = HttpOAuthRefresher(HttpClient(MockEngine { error("connection refused") }), clock, timeout = 300.milliseconds)
+        assertEquals(
+            RefreshResult.Revoked,
+            refresher(HttpStatusCode.BadRequest, "{}").refresh(AccountProvider.CLAUDE, old),
+        )
+        assertEquals(
+            RefreshResult.Revoked,
+            refresher(HttpStatusCode.Unauthorized, "{}").refresh(AccountProvider.CLAUDE, old),
+        )
+        assertEquals(
+            RefreshResult.Unavailable,
+            refresher(HttpStatusCode.ServiceUnavailable, "{}").refresh(AccountProvider.CLAUDE, old),
+        )
+        assertEquals(
+            RefreshResult.Unavailable,
+            refresher(HttpStatusCode.OK, "not json").refresh(AccountProvider.CLAUDE, old),
+        )
+        assertEquals(
+            RefreshResult.Unavailable,
+            refresher(HttpStatusCode.OK, "[1]").refresh(AccountProvider.CLAUDE, old),
+        )
+        assertEquals(
+            RefreshResult.Unavailable,
+            refresher(HttpStatusCode.OK, """{"access_token":"a"}""").refresh(AccountProvider.CLAUDE, old),
+        )
+        assertEquals(
+            RefreshResult.Unavailable,
+            refresher(HttpStatusCode.OK, """{"access_token":"","expires_in":5}""").refresh(AccountProvider.CLAUDE, old),
+        )
+        for (body in listOf(
+            """{"access_token":5,"expires_in":5}""",
+            """{"access_token":"a","expires_in":"soon"}""",
+            """{"access_token":"a","expires_in":0}""",
+            """{"access_token":"a","expires_in":40000000}""",
+        )) {
+            assertEquals(
+                RefreshResult.Unavailable,
+                refresher(HttpStatusCode.OK, body).refresh(AccountProvider.CLAUDE, old),
+                body,
+            )
+        }
+        assertEquals(
+            RefreshResult.Unavailable,
+            refresher(HttpStatusCode.OK, "{}", hang = true).refresh(AccountProvider.CLAUDE, old),
+        )
+        val down =
+            HttpOAuthRefresher(
+                HttpClient(
+                    MockEngine {
+                        error("connection refused")
+                    },
+                ),
+                clock,
+                timeout = 300.milliseconds,
+            )
         assertEquals(RefreshResult.Unavailable, down.refresh(AccountProvider.CODEX, old))
     }
 
@@ -99,7 +154,16 @@ class SharingInfrastructureTest {
         assertEquals(listOf("five_hour" to 0.3, "seven_day" to 1.0), windows.map { it.window to it.utilization })
         assertEquals(Instant.fromEpochSeconds(reset), windows.first().resetsAt)
         assertNull(windows.last().resetsAt)
-        assertEquals(emptyList(), ProviderQuotaHeaderParser().parse(AccountProvider.CLAUDE, mapOf("anthropic-ratelimit-unified-5h-utilization" to "NaN"), now))
+        assertEquals(
+            emptyList(),
+            ProviderQuotaHeaderParser().parse(
+                AccountProvider.CLAUDE,
+                mapOf(
+                    "anthropic-ratelimit-unified-5h-utilization" to "NaN",
+                ),
+                now,
+            ),
+        )
     }
 
     @Test
@@ -118,6 +182,8 @@ class SharingInfrastructureTest {
                 "x-codex-odd-primary-used-percent" to "1",
                 "x-codex-odd-primary-window-minutes" to "60",
                 "x-codex-nolength-secondary-used-percent" to "1",
+                "x-codex-bad-primary-used-percent" to "abc",
+                "x-codex-bad-primary-window-minutes" to "300",
                 "x-other" to "1",
             ),
             now,
@@ -139,6 +205,35 @@ class SharingInfrastructureTest {
         val notJson = ContextCipher().seal("nope".encodeToByteArray(), "shared-account:${Sharing.orgA}:$account")
         assertNull(cipher.open(notJson, Sharing.orgA, account))
         assertEquals("AccountCredentials([REDACTED])", old.toString())
+    }
+
+    @Test
+    fun unreadableClaudeValuesAreSkipped() {
+        val now = clock.now()
+        val parser = ProviderQuotaHeaderParser()
+        val unreadable = parser.parse(
+            AccountProvider.CLAUDE,
+            mapOf(
+                "anthropic-ratelimit-unified-5h-utilization" to "-0.1",
+                "anthropic-ratelimit-unified-7d-utilization" to "1e999",
+                "anthropic-ratelimit-unified-7d_oi-utilization" to "abc",
+            ),
+            now,
+        )
+        assertEquals(emptyList(), unreadable)
+        val resets = parser.parse(
+            AccountProvider.CLAUDE,
+            mapOf(
+                "anthropic-ratelimit-unified-5h-utilization" to "0.1",
+                "anthropic-ratelimit-unified-5h-reset" to "soon",
+                "anthropic-ratelimit-unified-7d-utilization" to "0.2",
+                "anthropic-ratelimit-unified-7d-reset" to "0",
+                "anthropic-ratelimit-unified-7d_oi-utilization" to "0.3",
+                "anthropic-ratelimit-unified-7d_oi-reset" to "${Long.MAX_VALUE}",
+            ),
+            now,
+        )
+        assertEquals(listOf<Instant?>(null, null, null), resets.map { it.resetsAt }, "An unreadable reset is no reset")
     }
 }
 

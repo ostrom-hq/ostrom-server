@@ -9,6 +9,7 @@ import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.CancellationException
@@ -52,12 +53,12 @@ class HttpOAuthRefresher(
                     }.toString(),
                 )
             }.execute { response ->
-                when (response.status.value) {
-                    200 -> {
+                when (response.status) {
+                    HttpStatusCode.OK -> {
                         val body = response.bodyAsChannel().readRemaining(MAX_BODY).readByteArray().decodeToString()
                         parse(body, credentials)
                     }
-                    400, 401 -> RefreshResult.Revoked
+                    in REVOKED -> RefreshResult.Revoked
                     else -> RefreshResult.Unavailable
                 }
             }
@@ -73,14 +74,21 @@ class HttpOAuthRefresher(
             Json.parseToJsonElement(body) as? JsonObject
         } catch (_: SerializationException) {
             null
-        } ?: return RefreshResult.Unavailable
-        val access = (value["access_token"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
-        val refresh = (value["refresh_token"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() } ?: previous.refreshToken
-        val seconds = (value["expires_in"] as? JsonPrimitive)?.longOrNull?.takeIf { it in 1..31_536_000 }
-        if (access == null || seconds == null) return RefreshResult.Unavailable
-        return RefreshResult.Renewed(AccountCredentials(access, refresh, clock.now() + seconds.seconds))
+        }
+        val access = value?.string("access_token")
+        val refresh = value?.string("refresh_token") ?: previous.refreshToken
+        val seconds = (value?.get("expires_in") as? JsonPrimitive)?.longOrNull?.takeIf { it in 1..MAX_EXPIRES_IN }
+        return if (access == null || seconds == null) {
+            RefreshResult.Unavailable
+        } else {
+            RefreshResult.Renewed(AccountCredentials(access, refresh, clock.now() + seconds.seconds))
+        }
     }
 
+    private fun JsonObject.string(key: String): String? =
+        (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+
+    /** The providers' endpoints and client ids. */
     companion object {
         /** The providers' token endpoints. */
         val ENDPOINTS: Map<AccountProvider, String> = mapOf(
@@ -95,5 +103,7 @@ class HttpOAuthRefresher(
         )
 
         private const val MAX_BODY = 256L * 1024
+        private const val MAX_EXPIRES_IN = 31_536_000L
+        private val REVOKED = setOf(HttpStatusCode.BadRequest, HttpStatusCode.Unauthorized)
     }
 }

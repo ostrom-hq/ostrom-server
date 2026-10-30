@@ -3,14 +3,16 @@ package dev.ostrom.server.sharing
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
-import dev.ostrom.server.secrets.domain.UnresolvedCallerResolver
+import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
+import dev.ostrom.server.sharing.domain.AccountTokens
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
 import dev.ostrom.server.sharing.domain.NoAccountSpendReader
 import dev.ostrom.server.sharing.domain.OAuthRefresher
 import dev.ostrom.server.sharing.domain.QuotaHeaderParser
+import dev.ostrom.server.sharing.domain.QuotaWindowRepository
 import dev.ostrom.server.sharing.domain.RemoveSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.RemoveSharedAccountUseCaseImpl
 import dev.ostrom.server.sharing.domain.ShareAccountUseCase
@@ -21,6 +23,7 @@ import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCaseImpl
 import dev.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import dev.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
+import dev.ostrom.server.sharing.infrastructure.QuotaWindowRepositoryImpl
 import dev.ostrom.server.sharing.infrastructure.SharedAccountRepositoryImpl
 import dev.ostrom.server.sharing.infrastructure.SharingMigrations
 import dev.ostrom.server.sharing.presentation.SharingRoutesDependencies
@@ -30,6 +33,7 @@ import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
+import org.koin.core.scope.Scope
 import org.koin.dsl.module
 
 /**
@@ -50,18 +54,30 @@ object SharingModule : ServerModule {
             }
         }
         single<SharedAccountRepository> { SharedAccountRepositoryImpl(get()) }
+        single<QuotaWindowRepository> { QuotaWindowRepositoryImpl(get()) }
         single { AccountTokenCipher(get()) }
         single<OAuthRefresher> { HttpOAuthRefresher(get(HTTP_CLIENT), get()) }
         single<QuotaHeaderParser> { ProviderQuotaHeaderParser() }
-        single { SharedAccountPool(get(), get(), get(), get(), getOrNull<AccountSpendReader>() ?: NoAccountSpendReader(), get()) }
+        single { AccountTokens(get(), get(), get(), get()) }
+        single { SharedAccountPool(get(), get(), get(), get(), spend(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
-        single<ListSharedAccountsUseCase> {
-            ListSharedAccountsUseCaseImpl(get(), get(), getOrNull<AccountSpendReader>() ?: NoAccountSpendReader(), get())
-        }
+        single<ListSharedAccountsUseCase> { ListSharedAccountsUseCaseImpl(get(), get(), get(), spend(), get()) }
         single<UpdateSharedAccountUseCase> { UpdateSharedAccountUseCaseImpl(get()) }
         single<RemoveSharedAccountUseCase> { RemoveSharedAccountUseCaseImpl(get()) }
-        single { SharingRoutesDependencies(getOrNull<CallerResolver>() ?: UnresolvedCallerResolver(), get(), get(), get(), get(), get()) }
+        single {
+            SharingRoutesDependencies(
+                getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+            )
+        }
     }
+
+    /** The usage ledger's spend per account when the gateway binds it; none otherwise. */
+    private fun Scope.spend(): AccountSpendReader = getOrNull<AccountSpendReader>() ?: NoAccountSpendReader()
 
     override val migrations: List<SchemaMigration> = SharingMigrations
 

@@ -45,6 +45,7 @@ data class AccountLimits(
     val monthlyBudgetMicros: Long? = null,
     val allowedMembers: Set<Uuid>? = null,
 ) {
+    /** The defaults. */
     companion object {
         /** Default concurrency, as TeamCode. */
         const val DEFAULT_MAX_CONCURRENT: Int = 8
@@ -114,28 +115,64 @@ object SharingRules {
     /** The most accounts per org. */
     const val MAX_ACCOUNTS: Int = 100
 
+    /** The most members an account may be restricted to. */
+    const val MAX_ALLOWED_MEMBERS: Int = 1000
+
+    /** The highest concurrency of an account. */
+    const val MAX_CONCURRENT: Int = 64
+
+    /** Priorities run from minus this to this. */
+    const val MAX_PRIORITY: Int = 100
+
+    /** The longest email address (RFC 5321). */
+    const val MAX_EMAIL: Int = 320
+
+    /** The lowest utilization ceiling: below it, an account would never serve. */
+    const val MIN_CEILING: Double = 0.05
+
     private val label = Regex("[^\\p{Cntrl}]{1,120}")
+    private val token = Regex("[\\x21-\\x7e]{8,4096}")
+    private val providerAccount = Regex("[A-Za-z0-9._:@-]{1,128}")
 
     /** Refuses a label that is empty, too long or has control characters. */
     fun requireLabel(value: String) {
         if (!label.matches(value)) throw InvalidAccountException("A label is 1 to 120 printable characters.")
     }
 
-    /** Refuses limits out of range. */
+    /** Refuses limits out of range (a NaN ceiling is in no range). */
     fun requireLimits(limits: AccountLimits) {
-        if (limits.maxConcurrent !in 1..64) throw InvalidAccountException("maxConcurrent is 1 to 64.")
-        if (!limits.utilizationCeiling.isFinite() || limits.utilizationCeiling !in 0.05..1.0) {
-            throw InvalidAccountException("utilizationCeiling is 0.05 to 1.")
+        val problem = when {
+            limits.maxConcurrent !in 1..MAX_CONCURRENT -> "maxConcurrent is 1 to $MAX_CONCURRENT."
+            limits.utilizationCeiling !in MIN_CEILING..1.0 -> "utilizationCeiling is $MIN_CEILING to 1."
+            (limits.monthlyBudgetMicros ?: 0) < 0 -> "monthlyBudgetMicros is positive."
+            (limits.allowedMembers?.size ?: 0) > MAX_ALLOWED_MEMBERS -> "At most $MAX_ALLOWED_MEMBERS allowed members."
+            else -> null
         }
-        if (limits.monthlyBudgetMicros != null && limits.monthlyBudgetMicros < 0) throw InvalidAccountException("monthlyBudgetMicros is positive.")
-        if ((limits.allowedMembers?.size ?: 0) > 1000) throw InvalidAccountException("At most 1000 allowed members.")
+        if (problem != null) throw InvalidAccountException(problem)
     }
 
-    /** Refuses tokens that cannot be OAuth tokens. */
+    /** Refuses a priority out of range. */
+    fun requirePriority(value: Int) {
+        if (value !in -MAX_PRIORITY..MAX_PRIORITY) {
+            throw InvalidAccountException("priority is -$MAX_PRIORITY to $MAX_PRIORITY.")
+        }
+    }
+
+    /** Refuses an email that is too long or has control characters; none is fine. */
+    fun requireEmail(value: String?) {
+        if (value != null && (value.length > MAX_EMAIL || value.any { it.isISOControl() })) {
+            throw InvalidAccountException("The email is malformed.")
+        }
+    }
+
+    /** Refuses tokens that cannot be OAuth tokens, and a provider account id that cannot be one. */
     fun requireTokens(accessToken: String, refreshToken: String, providerAccountId: String) {
-        val token = Regex("[\\x21-\\x7e]{8,4096}")
-        if (!token.matches(accessToken) || !token.matches(refreshToken)) throw InvalidAccountException("The tokens are malformed.")
-        if (!Regex("[A-Za-z0-9._:@-]{1,128}").matches(providerAccountId)) throw InvalidAccountException("providerAccountId is malformed.")
+        val problem = when {
+            !token.matches(accessToken) || !token.matches(refreshToken) -> "The tokens are malformed."
+            !providerAccount.matches(providerAccountId) -> "providerAccountId is malformed."
+            else -> null
+        }
+        if (problem != null) throw InvalidAccountException(problem)
     }
 }
 
@@ -146,4 +183,5 @@ class InvalidAccountException(message: String) : OstromException(ErrorKind.INVAL
 class AccountNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Account not found.")
 
 /** Too many accounts. */
-class TooManyAccountsException : OstromException(ErrorKind.CONFLICT, "An organization shares at most ${SharingRules.MAX_ACCOUNTS} accounts.")
+class TooManyAccountsException :
+    OstromException(ErrorKind.CONFLICT, "An organization shares at most ${SharingRules.MAX_ACCOUNTS} accounts.")

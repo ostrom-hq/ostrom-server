@@ -1,8 +1,10 @@
 package dev.ostrom.server.sharing.infrastructure
 
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
+import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
-/** The schema of the sharing module; its tables start with `sharing_`. */
+/** The schema of the sharing module; its tables start with `sharing_`, each confined to its org (S2-01, S2-21). */
 val SharingMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
         version = 1,
@@ -39,5 +41,10 @@ val SharingMigrations: List<SchemaMigration> = listOf(
             );
             CREATE INDEX sharing_windows_org ON sharing_windows (org_id)
         """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 2,
+        name = "confine_sharing_to_their_org",
+        sql = TENANT_ROLE_SQL + "\n" + tenantTableSql("sharing_accounts") + "\n" + tenantTableSql("sharing_windows"),
     ),
 )
