@@ -17,6 +17,7 @@ import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.mcprelay.McpRelayModule
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.reports.ReportsModule
 import dev.ostrom.server.runners.RunnersModule
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.sessions.SessionsModule
@@ -51,4 +52,5 @@ fun serverModules(): List<ServerModule> = listOf(
     SlackIntegrationModule,
     SharingModule,
     ImportModule,
+    ReportsModule,
 ) + eeModules()
