@@ -1,0 +1,368 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.workflowruns
+
+import dev.ostrom.core.api.models.CheckRun
+import dev.ostrom.core.api.models.Notification
+import dev.ostrom.core.api.models.NotificationStatus
+import dev.ostrom.core.api.models.PackageEnvelope
+import dev.ostrom.core.api.models.PackageMode
+import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.compiler.domain.models.StoredPackage
+import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
+import dev.ostrom.server.gates.GatesModule
+import dev.ostrom.server.identity.IdentityModule
+import dev.ostrom.server.identity.domain.ApiToken
+import dev.ostrom.server.identity.domain.ApiTokensRepository
+import dev.ostrom.server.identity.domain.CLI_SCOPES
+import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.ResolveUserUseCase
+import dev.ostrom.server.identity.domain.SecretHasher
+import dev.ostrom.server.identity.domain.TokenKind
+import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.instance.InstanceModule
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.database.withOrganization
+import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.launches.LaunchesModule
+import dev.ostrom.server.launches.presentation.LaunchResponse
+import dev.ostrom.server.orgs.OrgsModule
+import dev.ostrom.server.orgs.domain.Member
+import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgsRepository
+import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.sessions.SessionsModule
+import dev.ostrom.server.testing.TestServer
+import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.workflowruns.domain.repositories.RunQuery
+import dev.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
+import dev.ostrom.server.workflowruns.infrastructure.RunQueries
+import dev.ostrom.server.workflowruns.presentation.BUNDLE_FORMAT
+import dev.ostrom.server.workflowruns.presentation.ChecksPage
+import dev.ostrom.server.workflowruns.presentation.NotificationsPage
+import dev.ostrom.server.workflowruns.presentation.WorkflowReceiptResponse
+import io.github.smyrgeorge.sqlx4k.Statement
+import io.ktor.client.call.body
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
+
+/**
+ * `ostrom claude` after the launch, on the real modules and PostgreSQL: the hooks report a check and a notification
+ * with the launch's agent token, the launcher signs the session's workflow receipt and pulls its bundle, the person
+ * reads them, and nothing crosses a launch or an organization.
+ */
+class WorkflowRunsPostgresTest {
+    private val modules = listOf(
+        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
+        LaunchesModule, WorkflowRunsModule,
+    )
+    private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
+
+    /** A person of a new organization with its package: the CLI's token, and a personal one reading receipts. */
+    private class Person(val org: Org, val cliToken: String, val personalToken: String)
+
+    private suspend fun TestServer.person(login: String): Person {
+        val user = koin.get<ResolveUserUseCase>()(
+            VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
+        )
+        val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
+        koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        suspend fun token(kind: TokenKind, scopes: Set<String>): String {
+            val secret = kind.prefix + "_" + Uuid.random().toHexString()
+            val token = ApiToken(
+                Uuid.random(), user.id, org.id, "t", kind, scopes, "hint", null, now, now + 1.hours, null, null,
+            )
+            koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
+            return secret
+        }
+        val envelope = PackageEnvelope(
+            "ostrom.package/1", "v1", "acme/api", DIGEST, "sha256:content", "Ed25519", "k", "sig", BODY, true, false,
+        )
+        koin.get<CompilerRepository>().savePackage(org.id, StoredPackage(envelope, now.toString(), emptyMap()))
+        return Person(org, token(TokenKind.CLI, CLI_SCOPES), token(TokenKind.PERSONAL, READER_SCOPES))
+    }
+
+    private suspend fun TestServer.call(token: String?, path: String, body: String? = null): HttpResponse =
+        if (body == null) {
+            client.get(path) { token?.let { header(HttpHeaders.Authorization, "Bearer $it") } }
+        } else {
+            client.post(path) {
+                token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+        }
+
+    /** A launch and its session `s-1`; the agent token. */
+    private suspend fun TestServer.session(person: Person): String {
+        val launch = call(person.cliToken, "/api/v1/launches", LAUNCH).body<LaunchResponse>()
+        val started = call(launch.agentToken, "/api/v1/sessions", SESSION)
+        assertEquals(HttpStatusCode.OK, started.status, started.bodyAsText())
+        return launch.agentToken
+    }
+
+    @Test
+    fun theHooksReportTheLauncherSignsAndPullsTheBundleAndThePersonReadsThem() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val agent = server.session(ada)
+
+            val reported = server.call(agent, "/api/v1/checks", CHECK)
+            assertEquals(HttpStatusCode.Created, reported.status, reported.bodyAsText())
+            val run = reported.body<CheckRun>()
+            assertEquals(listOf("ada", "v1", "acme/api"), listOf(run.dev, run.version, run.repo))
+            assertEquals(false, run.tampered)
+
+            val notified = server.call(agent, "/api/v1/notifications", NOTIFY)
+            assertEquals(HttpStatusCode.Accepted, notified.status, notified.bodyAsText())
+            val notification = notified.body<Notification>()
+            assertEquals(NotificationStatus.SENT, notification.status)
+            assertEquals("ada pushed git push in acme/api", notification.text)
+            val again = server.call(agent, "/api/v1/notifications", NOTIFY).body<Notification>()
+            assertEquals(notification.id, again.id, "A hook passing twice on the same action gets the first one")
+
+            assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/sessions/s-1/end", "{}").status)
+            val signed = server.call(agent, "/api/v1/sessions/s-1/workflow-receipt", RECEIPT)
+            assertEquals(HttpStatusCode.OK, signed.status, signed.bodyAsText())
+            val receipt = signed.body<WorkflowReceiptResponse>()
+            assertTrue(receipt.verification.ok, receipt.verification.reason)
+            val id = receipt.receipt.getValue("id").jsonPrimitive.content
+            assertEquals("rcpt_workflow_s-1", id)
+            val resigned = server.call(agent, "/api/v1/sessions/s-1/workflow-receipt", RECEIPT)
+            assertEquals(receipt.receipt, resigned.body<WorkflowReceiptResponse>().receipt, "Signed once")
+            val outcomes = receipt.receipt.getValue("nodes").jsonArray.map {
+                it.jsonObject.getValue("outcome").jsonPrimitive.content
+            }
+            assertEquals(listOf("passed", "sent to log:team"), outcomes)
+
+            val bundle = server.call(agent, "/api/v1/receipts/$id/bundle")
+            assertEquals(HttpStatusCode.OK, bundle.status, bundle.bodyAsText())
+            val gathered = bundle.body<JsonObject>()
+            assertEquals(BUNDLE_FORMAT, gathered.getValue("format").jsonPrimitive.content)
+            assertEquals(receipt.receipt, gathered.getValue("receipt"))
+            val chain = gathered.getValue("chain").jsonArray.map { it.jsonObject.getValue("id").jsonPrimitive.content }
+            assertEquals(listOf("rcpt_session_s-1"), chain)
+            assertEquals(DIGEST, gathered.getValue("package").jsonObject.getValue("digest").jsonPrimitive.content)
+            assertTrue(gathered.getValue("keys").jsonArray.isNotEmpty())
+
+            val byPerson = server.call(ada.personalToken, "/api/v1/receipts/rcpt_session_s-1/bundle")
+                .body<JsonObject>()
+            assertEquals(JsonNull, byPerson["package"], "A session receipt cites no package; the key is still there")
+            val checks = server.call(ada.cliToken, "/api/v1/checks?sessionId=s-1").body<ChecksPage>()
+            assertEquals(listOf(run.id), checks.items.map { it.id })
+            assertNull(checks.next)
+            val sent = server.call(agent, "/api/v1/notifications?sessionId=s-1&status=sent").body<NotificationsPage>()
+            assertEquals(listOf(notification.id), sent.items.map { it.id })
+            val none = server.call(ada.cliToken, "/api/v1/notifications?status=not-sent").body<NotificationsPage>()
+            assertTrue(none.items.isEmpty())
+        }
+
+    @Test
+    fun eachRouteRefusesWithoutACredentialAndAnswers404ForWhatItDoesNotHave() =
+        serverTest(modules) { server ->
+            val routes = listOf(
+                "/api/v1/checks" to CHECK,
+                "/api/v1/checks" to null,
+                "/api/v1/notifications" to NOTIFY,
+                "/api/v1/notifications" to null,
+                "/api/v1/sessions/s-1/workflow-receipt" to RECEIPT,
+                "/api/v1/receipts/rcpt_session_s-1/bundle" to null,
+            )
+            routes.forEach { (path, body) ->
+                assertEquals(HttpStatusCode.Unauthorized, server.call(null, path, body).status, path)
+            }
+            val ada = server.person("ada")
+            val agent = server.session(ada)
+            val absent = listOf(
+                Triple(agent, "/api/v1/checks", CHECK.replace("\"s-1\"", "\"s-9\"")),
+                Triple(agent, "/api/v1/checks", CHECK.replace(DIGEST, "sha256:other")),
+                Triple(agent, "/api/v1/checks", CHECK.replace("sc-1", "sc-9")),
+                Triple(ada.cliToken, "/api/v1/checks?sessionId=s-9", null),
+                Triple(agent, "/api/v1/notifications", NOTIFY.replace("nt-1", "nt-9")),
+                Triple(ada.cliToken, "/api/v1/notifications?sessionId=s-9", null),
+                Triple(agent, "/api/v1/sessions/s-9/workflow-receipt", RECEIPT),
+                Triple(ada.personalToken, "/api/v1/receipts/rcpt_absent/bundle", null),
+            )
+            absent.forEach { (token, path, body) ->
+                val response = server.call(token, path, body)
+                assertEquals(HttpStatusCode.NotFound, response.status, "$path ${response.bodyAsText()}")
+            }
+            val badStatus = server.call(ada.cliToken, "/api/v1/notifications?status=lost")
+            assertEquals(HttpStatusCode.BadRequest, badStatus.status)
+            // The CLI's own token reads no receipt (it holds no receipts scope).
+            val cliBundle = server.call(ada.cliToken, "/api/v1/receipts/rcpt_session_s-1/bundle")
+            assertEquals(HttpStatusCode.Forbidden, cliBundle.status)
+            // A credential of no organization: its person left it.
+            server.koin.get<OrgsRepository>().delete(ada.org.id, now)
+            assertEquals(HttpStatusCode.Forbidden, server.call(ada.cliToken, "/api/v1/checks").status)
+            assertEquals(
+                HttpStatusCode.Forbidden,
+                server.call(ada.personalToken, "/api/v1/receipts/rcpt_session_s-1/bundle").status,
+            )
+        }
+
+    @Test
+    fun anotherLaunchOrOrganizationNeitherReportsNorReads() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val adas = server.session(ada)
+            assertEquals(HttpStatusCode.Created, server.call(adas, "/api/v1/checks", CHECK).status)
+            assertEquals(HttpStatusCode.Accepted, server.call(adas, "/api/v1/notifications", NOTIFY).status)
+            assertEquals(HttpStatusCode.OK, server.call(adas, "/api/v1/sessions/s-1/end", "{}").status)
+
+            // Another launch of Ada's: the session is not its own.
+            val other = server.call(ada.cliToken, "/api/v1/launches", LAUNCH).body<LaunchResponse>().agentToken
+            assertEquals(HttpStatusCode.Forbidden, server.call(other, "/api/v1/checks", CHECK).status)
+            assertEquals(HttpStatusCode.NotFound, server.call(other, "/api/v1/checks?sessionId=s-1").status)
+            val otherBundle = server.call(other, "/api/v1/receipts/rcpt_session_s-1/bundle")
+            assertEquals(HttpStatusCode.NotFound, otherBundle.status)
+
+            // Bob's organization: Ada's session, receipts and runs do not exist.
+            val bob = server.person("bob")
+            val bobs = server.session(bob)
+            val crossed = server.call(bobs, "/api/v1/checks", CHECK)
+            assertEquals(HttpStatusCode.Created, crossed.status, "Bob's own session s-1, in Bob's organization")
+            val bobsChecks = server.call(bob.cliToken, "/api/v1/checks").body<ChecksPage>()
+            assertEquals(listOf(crossed.body<CheckRun>().id), bobsChecks.items.map { it.id })
+            assertTrue(server.call(bob.cliToken, "/api/v1/notifications").body<NotificationsPage>().items.isEmpty())
+            val adasBundle = server.call(bob.personalToken, "/api/v1/receipts/rcpt_session_s-1/bundle")
+            assertEquals(HttpStatusCode.NotFound, adasBundle.status, "Ada's session receipt is not in Bob's org")
+
+            // The database itself: without its organization set, a transaction reads no run and changes none.
+            server.driver.execute(PROBE_ROLE).getOrThrow()
+            server.driver.execute(
+                "GRANT SELECT, UPDATE ON workflow_runs_checks, workflow_runs_notifications TO ostrom_rls_probe",
+            ).getOrThrow()
+            val seen = server.driver.transaction {
+                execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
+                listOf("workflow_runs_checks", "workflow_runs_notifications").map { table ->
+                    val count = fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow().first().get("n").asString()
+                    count to execute("UPDATE $table SET session_id = 'x'").getOrThrow()
+                }
+            }
+            assertEquals(listOf("0" to 0L, "0" to 0L), seen)
+        }
+
+    @Test
+    fun aPageEndsWithACursorAndTwoPassesAtOnceKeepTheFirstNotification() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val agent = server.session(ada)
+            val ids = (1..PAGE + 1).map { server.call(agent, "/api/v1/checks", CHECK).body<CheckRun>().id }
+            val first = server.call(ada.cliToken, "/api/v1/checks?sessionId=s-1&nodeId=n-check").body<ChecksPage>()
+            assertEquals(PAGE, first.items.size)
+            assertEquals(first.items.last().id, first.next)
+            val rest = server.call(ada.cliToken, "/api/v1/checks?before=${first.next}").body<ChecksPage>()
+            assertEquals((first.items + rest.items).map { it.id }.toSet(), ids.toSet())
+            assertNull(rest.next)
+
+            // Two passes of a hook racing past the first read: the database keeps one, both get it back.
+            val repository = server.koin.get<WorkflowRunsRepository>()
+            val stored = notification("ntf_a")
+            assertEquals(stored, repository.addNotification(ada.org.id, stored, "key"))
+            assertEquals(stored, repository.addNotification(ada.org.id, notification("ntf_b"), "key"))
+            val outside = notification("ntf_c", sessionId = null)
+            assertEquals(outside, repository.addNotification(ada.org.id, outside, "key"))
+            val twice = repository.addNotification(ada.org.id, outside.copy(id = "ntf_d"), "key")
+            assertEquals("ntf_d", twice.id, "Outside a session, nothing is deduplicated")
+            val page = repository.notifications(ada.org.id, RunQuery(status = NotificationStatus.SENT))
+            assertEquals(setOf("ntf_a", "ntf_c", "ntf_d"), page.map { it.id }.toSet())
+        }
+
+    @Test
+    fun theRequestPathQueriesUseTheirIndexes() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val agent = server.session(ada)
+            repeat(ROWS) {
+                server.call(agent, "/api/v1/checks", CHECK)
+                server.call(agent, "/api/v1/notifications", NOTIFY.replace("git push", "git push $it"))
+            }
+            server.driver.execute("ANALYZE workflow_runs_checks").getOrThrow()
+            server.driver.execute("ANALYZE workflow_runs_notifications").getOrThrow()
+            val plans = listOf(
+                Triple("checks of a session", RunQueries.checks(RunQuery(sessionId = "s-1")), "session"),
+                Triple("checks of the organization", RunQueries.checks(RunQuery()), "at"),
+                Triple("checks before a cursor", RunQueries.checks(RunQuery(before = "chk_x")), "pkey"),
+                Triple("notifications of a session", RunQueries.notifications(RunQuery(sessionId = "s-1")), "session"),
+                Triple("notifications of the organization", RunQueries.notifications(RunQuery()), "at"),
+                Triple("an action's first notification", RunQueries.FIRST_NOTIFICATION, "once"),
+            )
+            plans.forEach { (name, sql, index) ->
+                val plan = server.driver.withOrganization(ada.org.id) { tx ->
+                    tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
+                    val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ada.org.id)
+                        .bindIfPresent(sql, "limit", PAGE).bindIfPresent(sql, "session_id", "s-1")
+                        .bindIfPresent(sql, "before", "chk_x").bindIfPresent(sql, "notify_id", "nt-1")
+                        .bindIfPresent(sql, "action_key", "k")
+                    tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+                }
+                println("-- $name\n$plan")
+                assertTrue("Index" in plan && index in plan, "$name\n$plan")
+            }
+        }
+
+    private fun Statement.bindIfPresent(sql: String, name: String, value: Any): Statement =
+        if (":$name" in sql) bind(name, value) else this
+
+    private fun notification(id: String, sessionId: String? = "s-1") = Notification(
+        id = id,
+        at = now.toString(),
+        sessionId = sessionId,
+        digest = DIGEST,
+        nodeId = "n-notify",
+        notifyId = "nt-1",
+        channel = "log:team",
+        mode = PackageMode.ENFORCE,
+        status = NotificationStatus.SENT,
+        text = "t",
+        dev = "ada",
+    )
+
+    private companion object {
+        const val PAGE = 50
+        const val ROWS = 30
+        const val DIGEST = "sha256:runs"
+        val READER_SCOPES = setOf("receipts:read", "sessions:read")
+        const val PROBE_ROLE =
+            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$"
+        const val LAUNCH = """{"repo":"acme/api","agent":"claude-code"}"""
+        const val SESSION = """{"id":"s-1","agent":"claude-code","repo":"acme/api"}"""
+        const val CHECK = """{"sessionId":"s-1","digest":"sha256:runs","nodeId":"n-check","scriptId":"sc-1",""" +
+            """"scriptSha":"sha-1","exit":0,"outcome":"passed","sandbox":"bwrap"}"""
+        const val NOTIFY =
+            """{"sessionId":"s-1","digest":"sha256:runs","nodeId":"n-notify","notifyId":"nt-1","command":"git push"}"""
+        const val RECEIPT = """{"digest":"sha256:runs","agent":"claude-code"}"""
+        val BODY: String = OstromJson.encodeToString(
+            JsonObject.serializer(),
+            OstromJson.parseToJsonElement(
+                """{"nodes":[
+                {"id":"n-check","workflowId":"wf1","workflowName":"Ship","kind":"check","label":"Tests"},
+                {"id":"n-notify","workflowId":"wf1","workflowName":"Ship","kind":"notify","label":"Tell"}],
+                "scripts":[{"id":"sc-1","nodeId":"n-check","sha256":"sha-1","mode":"enforce"}],
+                "notifications":[{"id":"nt-1","nodeId":"n-notify","channel":"log:team",
+                "message":"{dev} pushed {command} in {repo}","mode":"enforce"}]}""",
+            ).jsonObject,
+        )
+    }
+}
