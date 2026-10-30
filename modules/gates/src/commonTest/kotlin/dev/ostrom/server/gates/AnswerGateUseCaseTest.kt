@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
+import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateAlreadyDecidedException
 import dev.ostrom.server.gates.domain.models.GateChangedException
 import dev.ostrom.server.gates.domain.models.GateNotFoundException
@@ -13,6 +15,7 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.models.SelfApprovalRefusedException
 import dev.ostrom.server.gates.fakes.GateBench
+import dev.ostrom.server.gates.fakes.ORG
 import dev.ostrom.server.gates.fakes.OTHER_ORG
 import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.ciService
@@ -32,6 +35,15 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 class AnswerGateUseCaseTest {
+    @Test
+    fun s215APersonAnswersNeverACredentialWithoutPerson() = runTest {
+        val bench = GateBench()
+        val view = bench.open(bench.pushRequest())
+        val keyless = GateActor("rev-b", ORG, ActorKind.USER)
+        assertFailsWith<OnlyPeopleAnswerException> { bench.answer(view, "rev-b", actor = keyless) }
+        assertEquals(GateStatus.PENDING, bench.repository.gates.getValue(view.gate.id).status)
+    }
+
     @Test
     fun theFirstYesOpensTheGateAndClosesTheOtherRequests() = runTest {
         val bench = GateBench()

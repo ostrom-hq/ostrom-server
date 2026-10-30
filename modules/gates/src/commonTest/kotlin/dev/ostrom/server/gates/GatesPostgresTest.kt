@@ -113,7 +113,7 @@ class GatesPostgresTest {
                     return when (kind) {
                         "user", "reader", "app", "cli" -> GateActor(id, orgId, ActorKind.USER, personId = id)
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
-                        "runner" -> GateActor(id, orgId, ActorKind.SERVICE)
+                        "runner" -> GateActor(id, orgId, ActorKind.SERVICE, personId = "lyes")
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
                     }
                 }
