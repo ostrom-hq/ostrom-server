@@ -18,6 +18,9 @@ import kotlinx.serialization.json.putJsonObject
  * plus a bandwidth annotation on the pod.
  */
 object SessionNetworkPolicy {
+    /** DNS, over UDP and TCP. */
+    private const val DNS_PORT = 53
+
     /** The label of the server's pods, which the runners may reach (set by the deployment). */
     const val SERVER_POD_LABEL = "app.kubernetes.io/name"
     const val SERVER_POD_NAME = "ostrom-server"
@@ -74,8 +77,8 @@ object SessionNetworkPolicy {
                 add(
                     buildJsonObject {
                         putJsonArray("ports") {
-                            add(port("UDP", 53))
-                            add(port("TCP", 53))
+                            add(port("UDP", DNS_PORT))
+                            add(port("TCP", DNS_PORT))
                         }
                     },
                 )
