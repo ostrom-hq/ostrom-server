@@ -107,7 +107,7 @@ class TestDatabase private constructor(
     /** Creating test databases. */
     companion object {
         private const val POOL_SIZE = 4
-        private const val OWNER_POOL_SIZE = 2
+        private const val OWNER_POOL_SIZE = 4
         private const val SUPERUSER_POOL_SIZE = 2
         private const val ROLE_POOL_SIZE = 2
 
