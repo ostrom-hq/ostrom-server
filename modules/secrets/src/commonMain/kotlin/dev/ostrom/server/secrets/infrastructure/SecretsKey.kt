@@ -37,12 +37,10 @@ object SecretsKey {
      * @throws InvalidConfigException When a configured key is not base64 of 32 bytes.
      */
     fun load(config: ConfigSource, defaultFile: String = DEFAULT_FILE): ByteArray {
-        val inline = config[KEY_VARIABLE]?.takeIf { it.isNotBlank() }
-        return if (inline != null) {
-            decode(inline, KEY_VARIABLE)
-        } else {
-            loadFile(config[FILE_VARIABLE]?.takeIf { it.isNotBlank() } ?: defaultFile)
-        }
+        val inline = config[KEY_VARIABLE]
+        if (!inline.isNullOrBlank()) return decode(inline, KEY_VARIABLE)
+        val file = config[FILE_VARIABLE]
+        return loadFile(if (file.isNullOrBlank()) defaultFile else file)
     }
 
     private fun loadFile(path: String): ByteArray {

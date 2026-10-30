@@ -26,7 +26,8 @@ modules/<name>/
 
 - **domain** depends on nothing but the kernel's `errors` and `signing` interfaces: no Ktor, no SQL.
 - **infrastructure** implements the domain's interfaces; only it sees `io.github.smyrgeorge.sqlx4k`.
-- **presentation** maps HTTP to use cases; routes receive a `<Name>RoutesDependencies` data class.
+- **presentation** maps HTTP to use cases; routes receive a `<Name>RoutesDependencies` data class, in its own file
+  (detekt `MatchingDeclarationName`: a file whose only class is not its name fails).
 - A module never imports another module's `infrastructure` or `presentation`, never reads another module's tables.
   To use another domain, depend on its Gradle module and inject the **interface** it binds in Koin
   (`implementation(project(":modules:orgs"))`, then `get<GetOrgUseCase>()`); keep that graph acyclic.

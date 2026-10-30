@@ -130,7 +130,8 @@ data class DatabaseConfig(
             val match = URL.matchEntire(url) ?: throw InvalidConfigException(
                 "The database URL must be postgresql://[user[:password]@]host[:port]/database.",
             )
-            val (scheme, urlUser, urlPassword, location) = match.destructured
+            val (scheme, urlUser, urlPassword) = match.destructured
+            val location = match.groupValues.last()
             if ('%' in urlUser + urlPassword) {
                 throw InvalidConfigException(
                     "Percent-encoded credentials are not supported in the database URL: set OSTROM_DATABASE_USER " +

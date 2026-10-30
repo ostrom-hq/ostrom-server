@@ -36,6 +36,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Real PostgreSQL and real HTTP: storage, encryption at rest, roles and org isolation. */
@@ -308,6 +309,11 @@ class SecretsPostgresTest {
         assertEquals(listOf("PRESENT"), repository.getMany(TestCallers.orgA, listOf(present.id)).map { it.secret.name })
         assertEquals(emptyList(), repository.getMany(TestCallers.orgA, emptyList()))
         assertEquals(emptyList(), repository.getOrgSecretsByName(TestCallers.orgA, emptyList()))
+        val epoch = Instant.parse("2026-10-30T00:00:00Z")
+        assertEquals(
+            null,
+            repository.rotate(TestCallers.orgA, Uuid.random(), "v1:x", epoch, TestCallers.adminA.memberId),
+        )
     }
 
     @Test
@@ -324,5 +330,11 @@ class SecretsPostgresTest {
                 setBody(SecretWriteRequest("MINE", "second-value-2"))
             }
             assertEquals(2, rotated.body<SecretResponse>().version)
+            val byBody = server.client.put("$base/MINE") {
+                bearerAuth("member-a")
+                contentType(ContentType.Application.Json)
+                setBody(SecretWriteRequest("MINE", "third-value-3", scope = "personal"))
+            }
+            assertEquals(3, byBody.body<SecretResponse>().version, "The scope of the body wins over the path's")
         }
 }
