@@ -20,7 +20,6 @@ import dev.ostrom.server.artifacts.presentation.ArtifactsRoutesDependencies
 import dev.ostrom.server.artifacts.presentation.artifactContentRoutes
 import dev.ostrom.server.artifacts.presentation.artifactsRoutes
 import dev.ostrom.server.kernel.config.ConfigSource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.server.routing.Route
@@ -38,7 +37,7 @@ object ArtifactsModule : ServerModule {
     override val name: String = "artifacts"
 
     override val koinModule: Module = module {
-        single<ArtifactLocations> { ArtifactsConfig.from(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
+        single<ArtifactLocations> { ArtifactsConfig.from(get<ConfigSource>()) }
         single<ArtifactsRepository> { ArtifactsRepositoryImpl(get()) }
         single<ContentDigest> { Sha256ContentDigest() }
         single<PublishArtifactUseCase> { PublishArtifactUseCaseImpl(get(), get(), get()) }
