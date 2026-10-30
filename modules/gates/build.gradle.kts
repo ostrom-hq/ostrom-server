@@ -10,7 +10,6 @@ kotlin {
             implementation(project(":modules:receipts"))
 
             implementation(libs.cryptography.core)
-            implementation(libs.cryptography.openssl)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
