@@ -2,8 +2,6 @@
 package dev.ostrom.server.gateway.domain
 
 import dev.ostrom.server.sharing.domain.AccountLease
-import kotlinx.serialization.SerializationException
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -40,7 +38,7 @@ class UpstreamRequests(private val endpoints: ProviderEndpoints) {
                 call.headers[OPENAI_BETA]?.let { OPENAI_BETA to it },
                 "authorization" to "Bearer $key",
             )
-            UpstreamRequest(base + path, headers, body.render())
+            UpstreamRequest(base + path, headers, body.render(members = usageRequested(call, body)))
         }
         return InferencePlan.Ready(request, provider, null, body.model, body.stream)
     }
@@ -84,6 +82,21 @@ class UpstreamRequests(private val endpoints: ProviderEndpoints) {
         return UpstreamRequest("${endpoints.codex}/responses", headers, rendered)
     }
 
+    /**
+     * A streamed Chat Completions call reports its usage only with `stream_options.include_usage`: asked for when the
+     * agent set no stream options, so every streamed chat call is metered. Options the agent set are left as they are.
+     */
+    private fun usageRequested(call: InferenceCall, body: RequestBody): List<String> {
+        val chatStream = call.protocol == WireProtocol.CHAT && body.stream
+        return if (chatStream &&
+            RequestBody.STREAM_OPTIONS !in body.fields.ranges
+        ) {
+            listOf(INCLUDE_USAGE)
+        } else {
+            emptyList()
+        }
+    }
+
     private fun anthropicHeaders(headers: Map<String, String>, beta: String?): List<Pair<String, String>> =
         listOfNotNull(
             CONTENT_TYPE,
@@ -104,6 +117,7 @@ class UpstreamRequests(private val endpoints: ProviderEndpoints) {
         private const val ANTHROPIC_BETA = "anthropic-beta"
         private const val OPENAI_BETA = "openai-beta"
         private val CONTENT_TYPE = "content-type" to "application/json"
+        private const val INCLUDE_USAGE = "\"${RequestBody.STREAM_OPTIONS}\":{\"include_usage\":true}"
 
         // The meter reads usage from the bytes as they pass: they must not be compressed.
         private val IDENTITY = "accept-encoding" to "identity"
@@ -119,14 +133,14 @@ internal object ClaudeMetadata {
     private val LEGACY_ACCOUNT = Regex("_account_[0-9a-fA-F-]+_session_")
 
     /** The rewritten `metadata` value, or null when there is nothing to rewrite. */
-    fun withAccount(metadata: String, accountId: String): String? = parseObject(metadata)?.let { json ->
+    fun withAccount(metadata: String, accountId: String): String? = parseJsonObject(metadata)?.let { json ->
         (json["user_id"] as? JsonPrimitive)?.takeIf { it.isString }
             ?.let { replaceAccount(it.content, accountId) }
             ?.let { JsonObject(json + ("user_id" to JsonPrimitive(it))).toString() }
     }
 
     private fun replaceAccount(userId: String, accountId: String): String? {
-        val inner = parseObject(userId)
+        val inner = parseJsonObject(userId)
         return when {
             inner != null -> inner.takeIf { "account_uuid" in it }
                 ?.let { JsonObject(it + ("account_uuid" to JsonPrimitive(accountId))).toString() }
@@ -134,11 +148,5 @@ internal object ClaudeMetadata {
                 LEGACY_ACCOUNT.replace(userId, Regex.escapeReplacement("_account_${accountId}_session_"))
             else -> null
         }
-    }
-
-    private fun parseObject(text: String): JsonObject? = try {
-        Json.parseToJsonElement(text) as? JsonObject
-    } catch (_: SerializationException) {
-        null
     }
 }

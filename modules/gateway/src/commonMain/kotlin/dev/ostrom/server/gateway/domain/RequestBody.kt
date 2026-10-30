@@ -5,8 +5,8 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * An agent's request body, scanned once ([TopLevelJson]): the model it asks for (the org's default when it names
- * none), whether it streams, and where `metadata` and `store` sit. Every rewrite is applied to the original text in
- * one pass ([render]).
+ * none), whether it streams, and where `metadata`, `store` and `stream_options` sit. Every rewrite is applied to the
+ * original text in one pass ([render]).
  *
  * @property text The body as the agent sent it.
  * @property fields Its scan.
@@ -45,10 +45,13 @@ class RequestBody private constructor(
         /** Whether OpenAI keeps the response. */
         const val STORE = "store"
 
+        /** Chat Completions streams carry usage only when asked here. */
+        const val STREAM_OPTIONS = "stream_options"
+
         /** The longest model name accepted. */
         const val MAX_MODEL = 200
 
-        private val FIELDS = setOf(MODEL, STREAM, METADATA, STORE)
+        private val FIELDS = setOf(MODEL, STREAM, METADATA, STORE, STREAM_OPTIONS)
 
         /**
          * Reads a body.

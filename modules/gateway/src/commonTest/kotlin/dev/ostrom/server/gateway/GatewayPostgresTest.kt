@@ -43,16 +43,23 @@ import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.preparePost
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
 import io.ktor.http.headersOf
+import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.channels.Channel
+import kotlinx.io.readText
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -104,6 +111,12 @@ class GatewayPostgresTest {
     private val received = mutableListOf<HttpRequestData>()
     private var failing = false
 
+    /** When set, the provider answers with this channel, which the test breaks midway. */
+    private var broken: ByteChannel? = null
+
+    /** Every recorded call, for a test that waits for one the server records after the agent's answer. */
+    private val recorded = Channel<ModelCallRecord>(Channel.UNLIMITED)
+
     /** The content type of the JSON answers; null for none. */
     private var jsonType: String? = "application/json"
 
@@ -147,7 +160,12 @@ class GatewayPostgresTest {
                 ),
             )
         }
-        single<ModelUsageSink> { ModelUsageSink { records += it } }
+        single<ModelUsageSink> {
+            ModelUsageSink {
+                records += it
+                recorded.trySend(it)
+            }
+        }
         single<ModelCallObserver> { ModelCallObserver { traces += it } }
         single<SpendGuard> {
             SpendGuard { _, member ->
@@ -179,6 +197,7 @@ class GatewayPostgresTest {
     private fun MockRequestHandleScope.provider(request: HttpRequestData): HttpResponseData {
         check(!failing) { "connection refused" }
         received += request
+        broken?.let { return respond(it, HttpStatusCode.OK, headersOf("Content-Type", "text/event-stream")) }
         val stream = request.url.host == "anthropic.test" || request.url.host == "codex.test"
         val type = if (stream) "text/event-stream" else jsonType
         val headers = listOfNotNull(
@@ -257,6 +276,35 @@ class GatewayPostgresTest {
 
             val models = client.get("/api/v1/inference/v1/models") { bearerAuth("agent-a") }.bodyAsText()
             assertTrue("\"claude-opus-5\"" in models, "Without a policy, every priced model is listed")
+        }
+    }
+
+    @Test
+    fun aStreamTheProviderBreaksMidwayIsCutForTheAgent() = serverTest(modules, overrides) { server ->
+        with(server) {
+            shareClaude()
+            val upstream = ByteChannel()
+            upstream.writeStringUtf8(events.substringBefore("event: content_block_delta"))
+            upstream.flush()
+            broken = upstream
+            client.preparePost("/api/v1/inference/v1/messages") {
+                header("x-api-key", "agent-a")
+                setBody(TextContent("""{"model":"claude-opus-5","stream":true}""", ContentType.Application.Json))
+            }.execute { response ->
+                assertEquals(HttpStatusCode.OK, response.status)
+                val body = response.bodyAsChannel()
+                body.awaitContent()
+                upstream.cancel(IllegalStateException("connection reset"))
+                val rest = try {
+                    body.readRemaining().readText()
+                } catch (_: Exception) {
+                    ""
+                }
+                assertFalse("message_delta" in rest, "Never ended as if complete")
+            }
+            var record = recorded.receive()
+            while (record.outcome == "ok") record = recorded.receive()
+            assertEquals("upstream_broken", record.outcome)
         }
     }
 

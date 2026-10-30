@@ -17,6 +17,8 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -52,12 +54,19 @@ class KtorInferenceResponder(private val call: ApplicationCall, private val cloc
         coroutineScope {
             val channel = ByteChannel()
             launch { call.respond(ChannelContent(channel, type, HttpStatusCode.fromValue(status))) }
-            body(
-                ByteSink { bytes, count ->
-                    channel.writeFully(bytes, 0, count)
-                    channel.flush()
-                },
-            )
+            try {
+                body(
+                    ByteSink { bytes, count ->
+                        channel.writeFully(bytes, 0, count)
+                        channel.flush()
+                    },
+                )
+            } catch (cause: Exception) {
+                // The engine aborts the answer instead of ending it as if complete: the agent sees it cut.
+                channel.cancel(cause)
+                currentCoroutineContext().ensureActive()
+                throw cause
+            }
             channel.flushAndClose()
         }
     }

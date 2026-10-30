@@ -4,6 +4,8 @@ package dev.ostrom.server.gateway.domain
 import dev.ostrom.server.secrets.domain.Caller
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -78,7 +80,7 @@ class RelayInferenceUseCaseImpl(
     private val clock: Clock,
 ) : RelayInferenceUseCase {
     override suspend fun invoke(caller: Caller, call: InferenceCall, responder: InferenceResponder) {
-        val exchange = Exchange(caller, call, responder, clock.now())
+        val exchange = Exchange(caller, call, responder, clock.now(), planner.configOf(caller))
         var tries = 1
         var done = exchange.attempt(tries)
         while (done == null) {
@@ -94,9 +96,10 @@ class RelayInferenceUseCaseImpl(
         val call: InferenceCall,
         val responder: InferenceResponder,
         val started: Instant,
+        val org: GatewayOrgConfig,
     ) {
         /** One try: the finished call, or null to try again on another account. */
-        suspend fun attempt(tries: Int): CallState? = when (val plan = planner.plan(caller, call)) {
+        suspend fun attempt(tries: Int): CallState? = when (val plan = planner.plan(caller, call, org)) {
             is InferencePlan.Refused -> refuse(plan)
             is InferencePlan.Ready -> send(plan, tries)
         }
@@ -129,7 +132,7 @@ class RelayInferenceUseCaseImpl(
         /** The provider failed: a 502 if the agent got nothing yet, otherwise the answer is cut. */
         private suspend fun failed(state: CallState) {
             if (state.answered) {
-                state.outcome = "upstream_broken"
+                state.outcome = if (state.agentGone) "agent_gone" else "upstream_broken"
             } else {
                 val refusal =
                     InferenceRefusal(RefusalKind.UPSTREAM_UNREACHABLE, "The model provider could not be reached.")
@@ -156,24 +159,39 @@ class RelayInferenceUseCaseImpl(
         private suspend fun stream(answer: UpstreamAnswer, state: CallState) {
             state.status = answer.status
             state.outcome = if (answer.status in SUCCESS) "ok" else "provider_error"
-            state.answered = true
             val meter = UsageMeter(call.protocol)
             val events = answer.headers["content-type"]?.startsWith(EVENT_STREAM) == true
             val whole = if (events) null else Accumulator()
+            val buffer = ByteArray(CHUNK)
+            // The first bytes are read before the answer starts: a provider failing before it sends any still gets
+            // the agent a 502 it can retry, not an empty 200.
+            var count = answer.body.read(buffer)
+            while (count == 0) count = answer.body.read(buffer)
+            state.answered = true
             responder.stream(answer.status, forwarded(answer.headers)) { sink ->
-                val buffer = ByteArray(CHUNK)
-                var count = answer.body.read(buffer)
                 while (count >= 0) {
                     if (count > 0) {
                         state.firstByte = state.firstByte ?: clock.now()
                         if (whole == null) meter.accept(buffer, count) else whole.add(buffer, count)
-                        sink.write(buffer, count)
+                        write(sink, buffer, count, state)
                     }
                     count = answer.body.read(buffer)
                 }
             }
             whole?.bytes()?.let(meter::acceptBody)
             state.usage = meter.usage
+        }
+
+        /** Writes to the agent; a failure here is the agent gone, not the provider. */
+        private suspend fun write(sink: ByteSink, buffer: ByteArray, count: Int, state: CallState) {
+            try {
+                sink.write(buffer, count)
+            } catch (error: Exception) {
+                // Cancelled: rethrown as such, and recorded as cancelled.
+                currentCoroutineContext().ensureActive()
+                state.agentGone = true
+                throw error
+            }
         }
     }
 
@@ -187,6 +205,7 @@ class RelayInferenceUseCaseImpl(
         var status: Int = 0
         var outcome: String = ""
         var answered: Boolean = false
+        var agentGone: Boolean = false
         var firstByte: Instant? = null
         var usage: TokenUsage? = null
     }
@@ -261,10 +280,21 @@ class RelayInferenceUseCaseImpl(
         private const val EVENT_STREAM = "text/event-stream"
         private val SUCCESS = 200..299
         private val RETRYABLE = setOf(401, 429)
-        private val FORWARDED_PREFIXES = listOf("anthropic-ratelimit-", "x-ratelimit-", "openai-", "x-codex-")
-        private val FORWARDED = setOf("content-type", "retry-after", "request-id", "x-request-id")
 
-        /** The answer headers an agent may see: content type, request ids, rate limits. */
+        // Rate limits only: `openai-organization` and `openai-project` name the org behind a key, `x-codex-*` a shared
+        // account's own usage.
+        private val FORWARDED_PREFIXES = listOf("anthropic-ratelimit-", "x-ratelimit-")
+        private val FORWARDED = setOf(
+            "content-type",
+            "retry-after",
+            "request-id",
+            "x-request-id",
+            // A stream must not be buffered by a proxy between the gateway and the agent.
+            "cache-control",
+            "x-accel-buffering",
+        )
+
+        /** The answer headers an agent may see: content type, request ids, rate limits, stream caching. */
         fun forwarded(headers: Map<String, String>): List<Pair<String, String>> =
             headers.filter { (name, _) -> name in FORWARDED || FORWARDED_PREFIXES.any { name.startsWith(it) } }
                 .toList()

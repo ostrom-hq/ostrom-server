@@ -58,9 +58,9 @@ class GetModelPolicyUseCaseImpl(private val repository: GatewaySettingsRepositor
 class PutModelPolicyUseCaseImpl(private val repository: GatewaySettingsRepository) : PutModelPolicyUseCase {
     override suspend fun invoke(caller: Caller, policy: ModelPolicy): ModelPolicy {
         caller.requireAdmin()
-        GatewayRules.requirePolicy(policy)
-        repository.putPolicy(caller.orgId, policy)
-        return policy
+        val canonical = GatewayRules.requirePolicy(policy)
+        repository.putPolicy(caller.orgId, canonical)
+        return canonical
     }
 }
 
@@ -78,15 +78,24 @@ object GatewayRules {
     /** A secret name, as the secrets module accepts it. */
     val SECRET_NAME = Regex("[A-Za-z0-9_.-]{1,128}")
 
-    /** Refuses a malformed policy. */
-    fun requirePolicy(policy: ModelPolicy) {
+    /**
+     * Refuses a malformed policy.
+     *
+     * @return The policy with its member ids written as [ModelPolicy.listFor] looks them up (lowercase, dashed).
+     */
+    fun requirePolicy(policy: ModelPolicy): ModelPolicy {
+        val ids = policy.byMember.keys.map { Uuid.parseOrNull(it)?.toString() }
         val problem = when {
             policy.byMember.size > MAX_MEMBERS -> "At most $MAX_MEMBERS members with their own list."
-            policy.byMember.keys.any { Uuid.parseOrNull(it) == null } -> "byMember is keyed by member id."
+            null in ids -> "byMember is keyed by member id."
+            ids.toSet().size < ids.size -> "byMember names a member twice."
+            // An empty list allows every model: as a member's own list it would lift the org's restriction.
+            policy.byMember.values.any { it.isEmpty() } -> "A member's own list names at least one model."
             else -> (policy.byMember.values + listOf(policy.allowed, listOfNotNull(policy.default)))
                 .firstNotNullOfOrNull(::modelsProblem)
         }
         if (problem != null) throw InvalidGatewaySettingsException(problem)
+        return policy.copy(byMember = policy.byMember.mapKeys { Uuid.parse(it.key).toString() })
     }
 
     private fun modelsProblem(models: List<String>): String? = when {

@@ -47,6 +47,8 @@ class GatewayParsingTest {
             "", "  ", "[]", "{", "{}x", "{} {}", "{\"a\"}", "{\"a\":}", "{\"a\":1,}", "{\"a\":1 \"b\":2}", "{a:1}",
             "{\"a\":\"unterminated}", "{\"a\":\"ends with a backslash\\", "{\"a\":[1,2}", "{\"a\":{\"b\":\"x\"",
             "{\"a\":1", "{\"model\":\"a\",\"model\":\"b\"}",
+            // Escaped keys the provider decodes to a wanted one: one model checked, another one used.
+            "{\"model\":\"a\",\"mod\\u0065l\":\"b\"}", "{\"st\\u006fre\":true}", "{\"x\\\"y\":1}",
         )
         for (text in malformed) assertNull(TopLevelJson.scan(text, keys), text)
         assertNotNull(TopLevelJson.scan("{\"other\":1,\"other\":2}", keys), "Only wanted keys must be unique")
@@ -162,10 +164,10 @@ class GatewayParsingTest {
     @Test
     fun aLineTooLongIsDroppedAndTheNextOneRead() {
         val meter = UsageMeter(WireProtocol.CHAT)
-        val long = ("data: {\"usage\":{\"prompt_tokens\":1},\"pad\":\"" + "x".repeat(300 * 1024) + "\"}\n")
+        val long = ("data: {\"usage\":{\"prompt_tokens\":1},\"pad\":\"" + "x".repeat(9 * 1024 * 1024) + "\"}\n")
             .encodeToByteArray()
         meter.accept(long, long.size)
-        assertNull(meter.usage, "A line over 256 KiB is never parsed")
+        assertNull(meter.usage, "A line over 8 MiB is never parsed")
         val next = "data: {\"usage\":{\"prompt_tokens\":2}}\n".encodeToByteArray()
         meter.accept(next, next.size)
         assertEquals(TokenUsage(input = 2), meter.usage)
@@ -176,6 +178,13 @@ class GatewayParsingTest {
             ).encodeToByteArray()
         wide.toList().chunked(1000).forEach { meter.accept(it.toByteArray(), it.size) }
         assertEquals(TokenUsage(input = 3), meter.usage, "A line longer than the first buffer grows it")
+        val completed = (
+            "data: {\"type\":\"response.completed\",\"response\":{\"output\":\"" + "z".repeat(600 * 1024) +
+                "\",\"usage\":{\"input_tokens\":9,\"output_tokens\":4}}}\n"
+            ).encodeToByteArray()
+        val responses = UsageMeter(WireProtocol.RESPONSES)
+        responses.accept(completed, completed.size)
+        assertEquals(TokenUsage(input = 9, output = 4), responses.usage, "A whole response on one line is metered")
     }
 
     @Test

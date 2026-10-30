@@ -34,11 +34,22 @@ class InferencePlanner(
      * @param caller The member.
      * @param call The call as the agent sent it.
      */
-    suspend fun plan(caller: Caller, call: InferenceCall): InferencePlan {
-        val policy = settings.policy(caller.orgId)
-        val body = RequestBody.read(call.body, policy.default)
+    suspend fun plan(caller: Caller, call: InferenceCall): InferencePlan = plan(caller, call, configOf(caller))
+
+    /** What [plan] needs of the caller's org: one read, kept over the tries of a call. */
+    suspend fun configOf(caller: Caller): GatewayOrgConfig = settings.forCall(caller.orgId)
+
+    /**
+     * Plans a try of a call.
+     *
+     * @param caller The member.
+     * @param call The call as the agent sent it.
+     * @param org The org's settings and policy ([configOf]).
+     */
+    suspend fun plan(caller: Caller, call: InferenceCall, org: GatewayOrgConfig): InferencePlan {
+        val body = RequestBody.read(call.body, org.policy.default)
             ?: return refused(RefusalKind.INVALID, "The request body must be a JSON object naming a model.", "")
-        return admit(caller, body, policy) ?: route(caller, call, body)
+        return admit(caller, body, org.policy) ?: route(caller, call, body, org.settings)
     }
 
     /** The refusal of a model the org does not allow, or of a member over budget; null when the call may go. */
@@ -55,8 +66,12 @@ class InferencePlanner(
             ?.let { refused(RefusalKind.BUDGET_EXHAUSTED, it.message, body.model, it.resetsAt) }
     }
 
-    private suspend fun route(caller: Caller, call: InferenceCall, body: RequestBody): InferencePlan {
-        val org = settings.get(caller.orgId)
+    private suspend fun route(
+        caller: Caller,
+        call: InferenceCall,
+        body: RequestBody,
+        org: GatewaySettings,
+    ): InferencePlan {
         val lease = call.protocol.shared?.takeIf { org.useSharedAccounts }
             ?.let { pool.lease(caller.orgId, caller.memberId, it, call.sessionId) }
         return when (lease) {

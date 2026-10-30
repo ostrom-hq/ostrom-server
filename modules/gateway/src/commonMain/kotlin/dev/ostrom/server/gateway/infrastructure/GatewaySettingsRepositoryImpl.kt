@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gateway.infrastructure
 
+import dev.ostrom.server.gateway.domain.GatewayOrgConfig
 import dev.ostrom.server.gateway.domain.GatewaySettings
 import dev.ostrom.server.gateway.domain.GatewaySettingsRepository
 import dev.ostrom.server.gateway.domain.ModelPolicy
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import kotlinx.serialization.builtins.ListSerializer
@@ -28,14 +30,30 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
             "SELECT anthropic_key_secret, openai_key_secret, openrouter_key_secret, use_shared_accounts " +
                 "FROM gateway_settings WHERE org_id = :org_id",
         ).bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.let { row ->
-        GatewaySettings(
-            anthropicKeySecret = row.get("anthropic_key_secret").asStringOrNull(),
-            openaiKeySecret = row.get("openai_key_secret").asStringOrNull(),
-            openrouterKeySecret = row.get("openrouter_key_secret").asStringOrNull(),
-            useSharedAccounts = row.get("use_shared_accounts").asBoolean(),
+    ).getOrThrow().firstOrNull()?.let(::settingsOf) ?: GatewaySettings()
+
+    override suspend fun forCall(orgId: Uuid): GatewayOrgConfig = driver.fetchInOrg(
+        orgId,
+        Statement.create(FOR_CALL).bind("org_id", orgId),
+    ).getOrThrow().first().let { row ->
+        GatewayOrgConfig(
+            settings = if (row.get("settings_org").asStringOrNull() == null) GatewaySettings() else settingsOf(row),
+            policy = if (row.get("policy_org").asStringOrNull() == null) ModelPolicy() else policyOf(row),
         )
-    } ?: GatewaySettings()
+    }
+
+    private fun settingsOf(row: ResultSet.Row) = GatewaySettings(
+        anthropicKeySecret = row.get("anthropic_key_secret").asStringOrNull(),
+        openaiKeySecret = row.get("openai_key_secret").asStringOrNull(),
+        openrouterKeySecret = row.get("openrouter_key_secret").asStringOrNull(),
+        useSharedAccounts = row.get("use_shared_accounts").asBoolean(),
+    )
+
+    private fun policyOf(row: ResultSet.Row) = ModelPolicy(
+        allowed = Json.decodeFromString(MODELS, row.get("allowed").asString()),
+        default = row.get("default_model").asStringOrNull(),
+        byMember = Json.decodeFromString(BY_MEMBER, row.get("by_member").asString()),
+    )
 
     override suspend fun put(orgId: Uuid, settings: GatewaySettings) {
         driver.executeInOrg(
@@ -53,13 +71,7 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
         orgId,
         Statement.create("SELECT allowed, default_model, by_member FROM gateway_model_policies WHERE org_id = :org_id")
             .bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.let { row ->
-        ModelPolicy(
-            allowed = Json.decodeFromString(MODELS, row.get("allowed").asString()),
-            default = row.get("default_model").asStringOrNull(),
-            byMember = Json.decodeFromString(BY_MEMBER, row.get("by_member").asString()),
-        )
-    } ?: ModelPolicy()
+    ).getOrThrow().firstOrNull()?.let(::policyOf) ?: ModelPolicy()
 
     override suspend fun putPolicy(orgId: Uuid, policy: ModelPolicy) {
         driver.executeInOrg(
@@ -78,6 +90,15 @@ class GatewaySettingsRepositoryImpl(private val driver: Driver) : GatewaySetting
     private companion object {
         val MODELS = ListSerializer(String.serializer())
         val BY_MEMBER = MapSerializer(String.serializer(), ListSerializer(String.serializer()))
+
+        // One row whatever was set: the org's id, joined to each table.
+        const val FOR_CALL =
+            "WITH org AS (SELECT CAST(:org_id AS UUID) AS id) " +
+                "SELECT CAST(s.org_id AS TEXT) AS settings_org, s.anthropic_key_secret, s.openai_key_secret, " +
+                "s.openrouter_key_secret, s.use_shared_accounts, " +
+                "CAST(p.org_id AS TEXT) AS policy_org, p.allowed, p.default_model, p.by_member " +
+                "FROM org LEFT JOIN gateway_settings s ON s.org_id = org.id " +
+                "LEFT JOIN gateway_model_policies p ON p.org_id = org.id"
 
         const val UPSERT_SETTINGS =
             "INSERT INTO gateway_settings (org_id, anthropic_key_secret, openai_key_secret, openrouter_key_secret, " +

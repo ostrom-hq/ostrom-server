@@ -216,8 +216,19 @@ data class ModelPolicy(
     }
 }
 
+/**
+ * What a model call needs of its org, read once per call.
+ *
+ * @property settings The gateway settings.
+ * @property policy The model policy.
+ */
+data class GatewayOrgConfig(val settings: GatewaySettings = GatewaySettings(), val policy: ModelPolicy = ModelPolicy())
+
 /** Storage of the org's settings and model policy, confined to the org. */
 interface GatewaySettingsRepository {
+    /** The settings and the policy in one read, for a model call (defaults for what was never set). */
+    suspend fun forCall(orgId: Uuid): GatewayOrgConfig
+
     /** The settings, defaults when never set. */
     suspend fun get(orgId: Uuid): GatewaySettings
 

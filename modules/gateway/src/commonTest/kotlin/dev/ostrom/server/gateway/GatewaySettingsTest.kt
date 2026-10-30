@@ -66,9 +66,28 @@ class GatewaySettingsTest {
             ModelPolicy(allowed = listOf("has space")),
             ModelPolicy(default = ""),
             ModelPolicy(byMember = mapOf(Uuid.random().toString() to listOf("bad model"))),
+            // An empty own list would allow every model to a member the org restricts.
+            ModelPolicy(allowed = listOf("claude-haiku"), byMember = mapOf(Uuid.random().toString() to emptyList())),
+            ModelPolicy(
+                byMember = mapOf(
+                    Gw.otherA.memberId.toString() to listOf("a"),
+                    Gw.otherA.memberId.toString().uppercase() to listOf("b"),
+                ),
+            ),
         )
         for (bad in refused) assertFailsWith<InvalidGatewaySettingsException>(bad.toString()) { put(Gw.adminA, bad) }
         assertEquals(policy, get(Gw.memberA), "Nothing stored on a refusal")
+    }
+
+    @Test
+    fun aMemberIdWrittenInAnotherFormStillRestrictsThatMember() = runTest {
+        val written = Gw.otherA.memberId.toString().uppercase()
+        val stored = PutModelPolicyUseCaseImpl(repository)(
+            Gw.adminA,
+            ModelPolicy(byMember = mapOf(written to listOf("claude-haiku"))),
+        )
+        assertEquals(setOf(Gw.otherA.memberId.toString()), stored.byMember.keys)
+        assertFalse(GetModelPolicyUseCaseImpl(repository)(Gw.otherA).allows(Gw.otherA.memberId, "claude-opus-5"))
     }
 
     @Test

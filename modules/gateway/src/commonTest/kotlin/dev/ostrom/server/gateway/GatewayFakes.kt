@@ -4,6 +4,7 @@ package dev.ostrom.server.gateway
 import dev.ostrom.server.gateway.domain.AllowAllSpend
 import dev.ostrom.server.gateway.domain.ByteSink
 import dev.ostrom.server.gateway.domain.ByteSource
+import dev.ostrom.server.gateway.domain.GatewayOrgConfig
 import dev.ostrom.server.gateway.domain.GatewaySettings
 import dev.ostrom.server.gateway.domain.GatewaySettingsRepository
 import dev.ostrom.server.gateway.domain.InferencePlanner
@@ -77,6 +78,14 @@ class TestClock(var now: Instant = Gw.epoch) : Clock {
 class InMemorySettings : GatewaySettingsRepository {
     val settings = mutableMapOf<Uuid, GatewaySettings>()
     val policies = mutableMapOf<Uuid, ModelPolicy>()
+
+    /** Reads for calls, to prove a call reads its org once over its tries. */
+    var callReads = 0
+
+    override suspend fun forCall(orgId: Uuid): GatewayOrgConfig {
+        callReads++
+        return GatewayOrgConfig(get(orgId), policy(orgId))
+    }
 
     override suspend fun get(orgId: Uuid) = settings[orgId] ?: GatewaySettings()
 
@@ -241,6 +250,17 @@ class ChunkSource(chunks: List<ByteArray>) : ByteSource {
 
 /** A body of [chunks]. */
 fun source(vararg chunks: ByteArray): ByteSource = ChunkSource(chunks.toList())
+
+/** Reads [chunks], then throws [error] instead of ending (the connection reset). */
+class FailingSource(chunks: List<ByteArray>, private val error: Exception) : ByteSource {
+    private val chunks = ChunkSource(chunks)
+
+    override suspend fun read(buffer: ByteArray): Int {
+        val count = chunks.read(buffer)
+        if (count < 0) throw error
+        return count
+    }
+}
 
 /** A provider answering each request with the next answer of [answers] (an exception is thrown). */
 class FakeUpstream(vararg answers: Any) : InferenceUpstream {

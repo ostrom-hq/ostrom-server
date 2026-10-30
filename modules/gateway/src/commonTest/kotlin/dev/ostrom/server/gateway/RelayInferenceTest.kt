@@ -190,6 +190,7 @@ class RelayInferenceTest {
         val responder = RecordingResponder()
         relay(upstream, InstanceProviderKeys())(Gw.memberA, call(), responder)
         assertEquals(RelayInferenceUseCaseImpl.MAX_ATTEMPTS, upstream.requests.size)
+        assertEquals(1, settings.callReads, "The org is read once, not once per try")
         assertEquals(429, responder.status)
         assertEquals("""{"error":{}}""", responder.text)
         assertEquals("provider_error", records.single().outcome)
@@ -224,8 +225,34 @@ class RelayInferenceTest {
             gone,
         )
         assertNull(gone.refusal, "No error after the answer started")
-        assertEquals("upstream_broken", records.last().outcome)
+        assertEquals("agent_gone", records.last().outcome, "The agent left: not the provider's fault")
         assertNotNull(records.last().firstByteMillis)
+
+        val cut = RecordingResponder()
+        val broken = FailingSource(listOf(ByteArray(0), events.copyOfRange(0, 5)), IllegalStateException("reset"))
+        relay(FakeUpstream(UpstreamAnswer(200, mapOf("content-type" to "text/event-stream"), broken)))(
+            Gw.memberA,
+            call(),
+            cut,
+        )
+        assertNull(cut.refusal)
+        assertEquals(5, cut.size, "An empty read is not the start of the answer")
+        assertEquals("upstream_broken", records.last().outcome)
+    }
+
+    @Test
+    fun aProviderFailingBeforeItsFirstByteIsStillA502() = runTest {
+        val responder = RecordingResponder()
+        val silent = FailingSource(emptyList(), IllegalStateException("reset before the body"))
+        relay(FakeUpstream(UpstreamAnswer(200, mapOf("content-type" to "text/event-stream"), silent)))(
+            Gw.memberA,
+            call(),
+            responder,
+        )
+        assertNull(responder.status, "The answer never started")
+        assertEquals(RefusalKind.UPSTREAM_UNREACHABLE, responder.refusal?.kind)
+        assertEquals(502, records.single().status)
+        assertEquals("upstream_unreachable", records.single().outcome)
     }
 
     @Test
@@ -273,14 +300,17 @@ class RelayInferenceTest {
         NoModelUsageSink.record(record)
         NoModelCallObserver.observe(record)
         assertEquals(
-            listOf("content-type" to "a", "x-ratelimit-limit" to "1", "openai-model" to "m", "x-codex-x" to "1"),
+            listOf("content-type" to "a", "cache-control" to "no-cache", "x-ratelimit-limit" to "1"),
             RelayInferenceUseCaseImpl.forwarded(
                 linkedMapOf(
                     "content-type" to "a",
+                    "cache-control" to "no-cache",
                     "server" to "x",
                     "x-ratelimit-limit" to "1",
-                    "openai-model" to "m",
-                    "x-codex-x" to "1",
+                    // The org behind a key and a shared account's own usage stay with the gateway.
+                    "openai-organization" to "org-instance",
+                    "openai-project" to "proj",
+                    "x-codex-primary-used-percent" to "80",
                 ),
             ),
         )

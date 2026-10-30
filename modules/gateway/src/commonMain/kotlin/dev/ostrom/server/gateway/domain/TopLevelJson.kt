@@ -10,8 +10,8 @@ import kotlinx.serialization.json.Json
  * rest byte for byte. Scanning keeps the gateway's added latency under a millisecond where a full parse would not.
  *
  * The scan checks the structure (object, strings, brackets), not every primitive: the provider refuses what it cannot
- * read. A wanted key that appears twice is refused, so the gateway never checks one `model` while the provider reads
- * another.
+ * read. A wanted key that appears twice, or any top-level key written with an escape, is refused, so the gateway never
+ * checks one `model` while the provider reads another.
  */
 object TopLevelJson {
     /**
@@ -102,6 +102,9 @@ private class Scanner(private val text: String, private val keys: Set<String>) {
         skipSpace()
         val keyEnd = string(index)
         val key = text.substring(index + 1, keyEnd - 1)
+        // An escaped top-level key (`mod\u0065l`) is refused: the provider would decode it to a wanted key the scan
+        // never saw. No API names a top-level field with an escape.
+        if ('\\' in key) malformed()
         index = keyEnd
         skipSpace()
         expect(':')

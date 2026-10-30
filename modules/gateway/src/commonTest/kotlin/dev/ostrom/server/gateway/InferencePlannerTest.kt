@@ -232,6 +232,22 @@ class InferencePlannerTest {
     }
 
     @Test
+    fun aStreamedChatCallAsksForItsUsageUnlessTheAgentSetItsOptions() = runTest {
+        val keys = InstanceProviderKeys(openai = "sk-op")
+        suspend fun body(protocol: WireProtocol, text: String) =
+            assertIs<InferencePlan.Ready>(plan(protocol, text, keys = keys)).request.body
+        assertEquals(
+            """{"stream_options":{"include_usage":true},"model":"gpt-5","stream":true}""",
+            body(WireProtocol.CHAT, """{"model":"gpt-5","stream":true}"""),
+        )
+        val own = """{"model":"gpt-5","stream":true,"stream_options":{"include_usage":false}}"""
+        assertEquals(own, body(WireProtocol.CHAT, own), "The agent's options are left as they are")
+        assertEquals("""{"model":"gpt-5"}""", body(WireProtocol.CHAT, """{"model":"gpt-5"}"""), "Not streamed")
+        val responses = """{"model":"gpt-5","stream":true}"""
+        assertEquals(responses, body(WireProtocol.RESPONSES, responses), "Responses streams always carry usage")
+    }
+
+    @Test
     fun theOrgCanTurnSharedAccountsOff() = runTest {
         accounts.share(AccountProvider.CLAUDE, "max", clock)
         settings.settings[Gw.orgA] = GatewaySettings(useSharedAccounts = false)

@@ -10,7 +10,8 @@ import kotlinx.serialization.json.longOrNull
 /**
  * Reads token usage from a provider's answer as it streams through, without holding it: bytes are split into lines,
  * and only a line that can carry usage (a `data:` line naming `usage`) is parsed. Prompt and output text are never
- * kept beyond the current line, and a line longer than 256 KiB is dropped. Works for Anthropic Messages events,
+ * kept beyond the current line, and a line longer than 8 MiB is dropped (a Responses `response.completed` event carries
+ * the whole response on one line). Works for Anthropic Messages events,
  * OpenAI Responses events and Chat Completions chunks, streamed (server-sent events) or not (one JSON body,
  * [acceptBody]).
  *
@@ -42,7 +43,7 @@ class UsageMeter(private val protocol: WireProtocol) {
 
     /** Reads a whole non-streamed JSON answer. */
     fun acceptBody(body: ByteArray) {
-        parse(body.decodeToString())?.let(::read)
+        parseJsonObject(body.decodeToString())?.let(::read)
     }
 
     /** Adds `bytes[from until to]` to the current line, or drops the line once it outgrows [MAX_LINE]. */
@@ -63,7 +64,7 @@ class UsageMeter(private val protocol: WireProtocol) {
     /** Parses the line only when it is a `data:` line naming `usage`: most lines are text and never decoded. */
     private fun endLine() {
         if (!dropping && isUsageLine()) {
-            parse(line.decodeToString(DATA.size, length).trim())?.let(::read)
+            parseJsonObject(line.decodeToString(DATA.size, length).trim())?.let(::read)
         }
         length = 0
         dropping = false
@@ -113,7 +114,7 @@ class UsageMeter(private val protocol: WireProtocol) {
 
 private const val NEWLINE: Byte = 10
 private const val INITIAL = 1024
-private const val MAX_LINE = 256 * 1024
+private const val MAX_LINE = 8 * 1024 * 1024
 private const val MAX_TOKENS = 100_000_000L
 private val DATA = "data:".encodeToByteArray()
 private val USAGE = "\"usage\"".encodeToByteArray()
@@ -138,7 +139,8 @@ private fun ByteArray.matches(pattern: ByteArray, at: Int): Boolean {
     return index == pattern.size
 }
 
-private fun parse(text: String): JsonObject? = try {
+/** [text] as a JSON object, or null when it is not one. */
+internal fun parseJsonObject(text: String): JsonObject? = try {
     Json.parseToJsonElement(text) as? JsonObject
 } catch (_: SerializationException) {
     null
