@@ -18,7 +18,8 @@ val ClientAddress = createApplicationPlugin("ClientAddress", ::ClientAddressConf
         onCall { call ->
             val peer = call.request.local.remoteAddress
             val forwardedFor = call.request.headers.getAll(FORWARDED_FOR).orEmpty()
-            val headerValue = proxies.clientHeader?.let { call.request.headers[it] }
+            // Two values: one may be the client's own, so neither is believed.
+            val headerValue = proxies.clientHeader?.let { call.request.headers.getAll(it)?.singleOrNull() }
             val client = proxies.clientAddress(peer, forwardedFor, headerValue)
             if (client != peer) {
                 call.mutableOriginConnectionPoint.remoteAddress = client

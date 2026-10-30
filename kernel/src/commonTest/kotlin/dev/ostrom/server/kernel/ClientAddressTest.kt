@@ -28,11 +28,11 @@ import io.ktor.client.engine.cio.CIO as ClientCIO
 class ClientAddressTest {
     /** A client of `/origin`, the address the server sees for the call. */
     private class Asker(private val client: HttpClient, private val port: Int) {
-        /** Asks `/origin` sending [forwardedFor] as `X-Forwarded-For` and [connectingIp] as `CF-Connecting-IP`. */
-        suspend fun ask(forwardedFor: String?, connectingIp: String? = null): String =
+        /** Asks `/origin` sending [forwardedFor] as `X-Forwarded-For` and each [connectingIp] as `CF-Connecting-IP`. */
+        suspend fun ask(forwardedFor: String?, vararg connectingIp: String): String =
             client.get("http://127.0.0.1:$port/origin") {
                 forwardedFor?.let { header("X-Forwarded-For", it) }
-                connectingIp?.let { header("CF-Connecting-IP", it) }
+                connectingIp.forEach { header("CF-Connecting-IP", it) }
             }.bodyAsText()
     }
 
@@ -75,13 +75,14 @@ class ClientAddressTest {
     @Test
     fun behindATrustedProxyTheClientAddressHeaderWins() =
         behindAProxy(TrustedProxies.parse("127.0.0.1/32", "CF-Connecting-IP")) {
-            assertEquals("203.0.113.7", ask("10.9.9.9", connectingIp = "203.0.113.7"))
+            assertEquals("203.0.113.7", ask("10.9.9.9", "203.0.113.7"))
             assertEquals("198.51.100.9", ask("198.51.100.9"), "Without the header, X-Forwarded-For")
+            assertEquals("198.51.100.9", ask("198.51.100.9", "6.6.6.6", "203.0.113.7"), "Two values: X-Forwarded-For")
         }
 
     @Test
     fun fromAnUntrustedPeerTheClientAddressHeaderIsIgnored() =
         behindAProxy(TrustedProxies.parse("10.0.0.0/8", "CF-Connecting-IP")) {
-            assertEquals("127.0.0.1", ask("198.51.100.9", connectingIp = "203.0.113.7"))
+            assertEquals("127.0.0.1", ask("198.51.100.9", "203.0.113.7"))
         }
 }

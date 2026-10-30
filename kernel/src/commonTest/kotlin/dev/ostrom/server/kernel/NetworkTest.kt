@@ -165,6 +165,8 @@ class NetworkTest {
         // Absent or unreadable, the header gives way to X-Forwarded-For.
         assertEquals("198.51.100.1", cloudflare.clientAddress("10.0.0.5", listOf("198.51.100.1"), null))
         assertEquals("198.51.100.1", cloudflare.clientAddress("10.0.0.5", listOf("198.51.100.1"), "unknown"))
+        // A trusted proxy is never the client, here as in X-Forwarded-For.
+        assertEquals("198.51.100.1", cloudflare.clientAddress("10.0.0.5", listOf("198.51.100.1"), "10.0.0.9"))
     }
 
     @Test
@@ -178,7 +180,11 @@ class NetworkTest {
         assertNull(TrustedProxies.parse("10.0.0.0/8", " ").clientHeader)
         assertNull(TrustedProxies.parse(null, null).clientHeader)
         val badName = assertFailsWith<InvalidConfigException> { TrustedProxies.parse("10.0.0.0/8", "CF Connecting") }
-        assertEquals("OSTROM_CLIENT_ADDRESS_HEADER: 'CF Connecting' is not a header name.", badName.message)
+        assertEquals(
+            "OSTROM_CLIENT_ADDRESS_HEADER: 'CF Connecting' is not the name of a header a proxy sets alone.",
+            badName.message,
+        )
+        assertFailsWith<InvalidConfigException> { TrustedProxies.parse("10.0.0.0/8", "x-forwarded-for") }
         // Without a trusted proxy the header would never be read: refusing says so at start.
         val alone = assertFailsWith<InvalidConfigException> { TrustedProxies.parse(null, "CF-Connecting-IP") }
         assertEquals(
