@@ -40,7 +40,7 @@ class IpNetwork private constructor(private val bytes: ByteArray, private val pr
             val address = parseIpAddress(text.substringBefore('/')) ?: return null
             val bits = address.size * BYTE_BITS
             val prefix = if ('/' in text) text.substringAfter('/').takeIf(PREFIX::matches)?.toInt() else bits
-            return prefix?.takeIf { it in 0..bits }?.let { IpNetwork(address, it) }
+            return prefix?.takeIf { it <= bits }?.let { IpNetwork(address, it) }
         }
     }
 }
@@ -72,7 +72,7 @@ class TrustedProxies(private val networks: List<IpNetwork>) {
         val hops = forwardedFor.flatMap { it.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }
         val readable = hops.asReversed().map(::parseIpAddress).takeWhile { it != null }.filterNotNull()
         val client = readable.firstOrNull { address -> networks.none { address in it } } ?: readable.lastOrNull()
-        return client?.let(::formatIpAddress) ?: peer
+        return if (client == null) peer else formatIpAddress(client)
     }
 
     private fun isTrusted(address: String): Boolean {
