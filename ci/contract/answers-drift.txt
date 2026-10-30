@@ -3,3 +3,70 @@
 # check-answers.mjs fails on a difference not listed here, and on a listed one the tests now answer as the contract
 # (remove its line in the pull request that fixes it). The rule of the product wave: the server serves the contract's
 # schema unless the reason is written here and in the coordination journal.
+#
+# Owners: the agents of the product wave (~/git/ostrom-hq/.coord/VAGUE-PRODUIT.md). "to assign": no agent of the
+# wave covers the module yet. Most "missing" nullable fields have one cause: the server's OstromJson writes no null
+# (explicitNulls = false) while the contract's fields are required and nullable (the contract's OstromJson writes
+# them); one kernel change fixes them all.
+
+# The test-only route of the gates tests, never in the API.
+UNDESCRIBED POST /api/v1/test/gates/answer  test route installed by the gates tests, not part of the API (permanent)
+
+# Identity
+getMe 200  serves Profile (id, login, displayName, primaryEmail, createdAt, emails, providers, csrfToken); the contract answers Me (dev, member, organization, capabilities). Serve Me, csrfToken optional in it (AUTH-REPRISE)
+pollDeviceLogin 200  serves {status, accessToken, expiresAt, scopes, interval}; the contract answers AuthToken (token, login, scopes) and 428/400 (AUTH-REPRISE, ostrom-server#62)
+createToken 201  token.expiresAt and token.lastUsedAt omitted when null; required and nullable in the contract (kernel explicitNulls, to assign)
+rotateToken 201  token.lastUsedAt omitted when null (kernel explicitNulls, to assign)
+listMyAudit 200  events[].orgId omitted when null (kernel explicitNulls, to assign)
+startDeviceLogin 200  serves verificationUriComplete, not in the contract's DeviceCode (CORE-CONTRAT: add it)
+startDeviceLogin 429  rate limited; the contract lists no 429 (CORE-CONTRAT: add it)
+launcherLogin 401  a refused GitHub token; the contract lists no 401 (CORE-CONTRAT: add it)
+
+# Gates
+answerApproval 200  ApprovalView without `you` (SRV-MOBILE, approvals view)
+askGate 503  sessions or receipts module absent on this server; the contract lists no 503 (CORE-CONTRAT: add it)
+
+# Billing
+getBilling 200  paymentIssue and limits.maxPeople omitted when null (kernel explicitNulls, to assign)
+getBilling 403  a member without the billing role; the contract lists 200, 401, 404 only (CORE-CONTRAT: add it)
+changeBillingPlan 200  paymentIssue and limits.maxPeople omitted when null (kernel explicitNulls, to assign)
+cancelBillingSubscription 200  paymentIssue and limits.maxPeople omitted when null (kernel explicitNulls, to assign)
+resumeBillingSubscription 200  paymentIssue and limits.maxPeople omitted when null (kernel explicitNulls, to assign)
+listBillingInvoices 200  invoices[].pdfUrl omitted when null (kernel explicitNulls, to assign)
+receiveStripeWebhook 200  outcome outside the contract's enum (processed, duplicate, ignored): serve `ignored` (billing, to assign)
+
+# Artifacts
+createArtifactTicket 201  answers 201; the contract answers 200 (artifacts, to assign)
+getArtifactContent 404  text/plain on the content origin; the contract says ApiError JSON (CORE-CONTRAT: describe the plain 404)
+
+# Waits, automations
+createWait 200  answers 200; the contract answers 201 (automations, to assign)
+rotateAutomationSecret 200  serves previousSecretValidUntil, not in the contract (CORE-CONTRAT: add it)
+
+# Sharing, cloud
+enrollSharedAccount 201  serves email, providerAccountId, mine, priority, limits, windows, inFlight, spentMicros, createdAt, not in SharedAccount (CORE-CONTRAT: add them)
+updateSharedAccount 200  same fields as enrollSharedAccount (CORE-CONTRAT: add them)
+listSharedAccounts 200  same fields as enrollSharedAccount (CORE-CONTRAT: add them)
+createCloudSession 402  plan without cloud hours; the contract lists no 402 (CORE-CONTRAT: add it)
+
+# MCP relay
+relayMcp 202  a notification is accepted with 202; not in the contract (CORE-CONTRAT: add it)
+relayMcp 400  a JSON-RPC error body (MCP), not ApiError (CORE-CONTRAT: describe it)
+relayMcp 404  a JSON-RPC error body (MCP), not ApiError (CORE-CONTRAT: describe it)
+relayMcp 413  message over 1 MiB; the contract lists no 413 (CORE-CONTRAT: add it)
+getMcpUsage 200  serves rows, not in the contract (CORE-CONTRAT: add it)
+listMcpCalls 200  items[].outcome and items[].responseBytes, not in the contract (CORE-CONTRAT: add them)
+
+# Gateway (model calls answer in the provider's own format, by design)
+getModelPolicy 200  `default` omitted when no default model; required in the contract (CORE-CONTRAT: optional, nullable)
+setModelPolicy 200  same as getModelPolicy (CORE-CONTRAT: optional, nullable)
+inferenceMessages 400  Anthropic error format {type, error}; the contract says ApiError (CORE-CONTRAT: provider formats)
+inferenceMessages 401  Anthropic error format (CORE-CONTRAT: provider formats)
+inferenceMessages 403  Anthropic error format (CORE-CONTRAT: provider formats)
+inferenceMessages 429  rate limited; not in the contract (CORE-CONTRAT: add it)
+inferenceMessages 503  no route to a provider; not in the contract (CORE-CONTRAT: add it)
+inferenceChatCompletions 403  OpenAI error format (error.code); the contract says ApiError (CORE-CONTRAT: provider formats)
+inferenceChatCompletions 502  the provider failed; not in the contract (CORE-CONTRAT: add it)
+inferenceResponses 401  OpenAI error format (CORE-CONTRAT: provider formats)
+inferenceModels 200  OpenAI list format, `object` not in the contract (CORE-CONTRAT: add it)
+inferenceModels 401  OpenAI error format (CORE-CONTRAT: provider formats)

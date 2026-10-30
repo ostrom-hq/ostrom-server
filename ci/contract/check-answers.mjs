@@ -40,7 +40,7 @@ for (const [path, item] of Object.entries(contract.paths)) {
   for (const method of METHODS.filter((m) => item[m])) {
     const segments = path.split('/')
     const pattern = segments
-      .map((s) => (s === '{path}' ? '.+' : /^\{.+\}$/.test(s) ? '[^/]+' : s.replace(/[.*+?^$()|[\]\\]/g, '\\$&')))
+      .map((s) => (s === '{path}' ? '.*' : /^\{.+\}$/.test(s) ? '[^/]+' : s.replace(/[.*+?^$()|[\]\\]/g, '\\$&')))
       .join('/')
     operations.push({
       method: method.toUpperCase(),
