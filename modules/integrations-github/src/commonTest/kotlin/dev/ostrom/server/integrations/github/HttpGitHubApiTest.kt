@@ -60,7 +60,7 @@ class HttpGitHubApiTest {
             install(HttpTimeout)
         }
         val jwt = if (configured) AppJwt("123", pem(), clock) else null
-        return HttpGitHubApi(http, "https://api.github.test", jwt, clock)
+        return HttpGitHubApi(http, "https://api.github.test", { jwt }, clock)
     }
 
     private suspend fun pem(): String = CryptographyProvider.Default.get(RSA.PKCS1)

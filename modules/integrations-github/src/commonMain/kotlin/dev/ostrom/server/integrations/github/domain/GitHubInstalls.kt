@@ -21,16 +21,18 @@ class GitHubAppNotConfiguredException :
  *
  * @param repository Installations and states.
  * @param api GitHub.
- * @param slug The App's slug, or null when not configured.
+ * @param slug The App's slug, or null when not configured (read at each start: the App can be created later).
  * @param webUrl GitHub's web address.
  * @param clock The clock.
+ * @param installed Told of each installation linked (the directory is read again).
  */
 class GitHubInstalls(
     private val repository: GitHubRepository,
     private val api: GitHubApi,
-    private val slug: String?,
+    private val slug: suspend () -> String?,
     private val webUrl: String,
     private val clock: Clock,
+    private val installed: suspend (GitHubInstallation) -> Unit = {},
 ) {
     /**
      * Starts an install.
@@ -41,7 +43,7 @@ class GitHubInstalls(
      * @throws GitHubAppNotConfiguredException Without an App.
      */
     suspend fun start(orgId: Uuid, by: String): String {
-        val app = slug ?: throw GitHubAppNotConfiguredException()
+        val app = slug() ?: throw GitHubAppNotConfiguredException()
         val state = Uuid.random().toHexString() + Uuid.random().toHexString()
         repository.saveState(orgId, hash(state), by, clock.now() + STATE_LIFETIME)
         return "$webUrl/apps/$app/installations/new?state=$state"
@@ -70,6 +72,7 @@ class GitHubInstalls(
         }
         val installation = GitHubInstallation(orgId, id, account)
         repository.saveInstallation(installation, clock.now())
+        installed(installation)
         return installation
     }
 

@@ -102,7 +102,7 @@ class GitHubWebhooksTest {
 
     @Test
     fun anInstallLinksTheInstallationToTheOrganizationThatStartedItOnce() = runTest {
-        val installs = GitHubInstalls(repository, api, "ostrom-dev", "https://github.com", clock)
+        val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
         val link = installs.start(ORG, "owner")
         assertTrue(link.startsWith("https://github.com/apps/ostrom-dev/installations/new?state="))
         val state = link.substringAfter("state=")
@@ -130,7 +130,7 @@ class GitHubWebhooksTest {
         val again = installs.start(ORG, "owner").substringAfter("state=")
         assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", again), "Its own: installed again")
 
-        val unconfigured = GitHubInstalls(repository, api, null, "https://github.com", clock)
+        val unconfigured = GitHubInstalls(repository, api, { null }, "https://github.com", clock)
         assertFailsWith<GitHubAppNotConfiguredException> { unconfigured.start(ORG, "owner") }
     }
 }

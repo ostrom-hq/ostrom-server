@@ -53,16 +53,16 @@ class GitHubCryptoTest {
             .decodeFromByteArray(HMAC.Key.Format.RAW, "s3cret".encodeToByteArray())
         val mac = key.signatureGenerator().generateSignature(body)
         val good = "sha256=" + mac.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
-        val signature = WebhookSignature("s3cret")
+        val signature = WebhookSignature { "s3cret" }
 
         assertTrue(signature.verify(body, good))
         assertFalse(signature.verify("""{"action":"closed"}""".encodeToByteArray(), good), "Another body")
-        assertFalse(WebhookSignature("other").verify(body, good), "Another secret")
+        assertFalse(WebhookSignature { "other" }.verify(body, good), "Another secret")
         assertFalse(signature.verify(body, good.dropLast(1)), "Shorter")
         assertFalse(signature.verify(body, good + "0"), "Longer")
         assertFalse(signature.verify(body, good.replaceFirst("sha256=", "sha1=")), "Another algorithm")
         assertFalse(signature.verify(body, null), "Unsigned")
-        assertFalse(WebhookSignature(null).verify(body, good), "No secret: nothing passes")
+        assertFalse(WebhookSignature { null }.verify(body, good), "No secret: nothing passes")
     }
 
     @Test

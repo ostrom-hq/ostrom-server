@@ -28,6 +28,8 @@ import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.secrets.domain.SecretCipher
+import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import dev.whyoleg.cryptography.CryptographyProvider
@@ -123,6 +125,8 @@ class GitHubPostgresTest {
         }
         single { GitHubSettings("123", null, secret, slug, webOrigin = "https://console.example") }
         single<GitHubApi> { github }
+        // Seals an App the manifest flow would create (none in these tests: the environment names one).
+        single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
     }
 
     // Read when the server starts: a test sets it before.

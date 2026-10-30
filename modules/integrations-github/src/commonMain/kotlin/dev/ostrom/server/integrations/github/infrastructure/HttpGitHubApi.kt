@@ -3,9 +3,14 @@ package dev.ostrom.server.integrations.github.infrastructure
 
 import dev.ostrom.server.integrations.github.domain.CHECK_NAME
 import dev.ostrom.server.integrations.github.domain.CheckRun
+import dev.ostrom.server.integrations.github.domain.CreatedGitHubApp
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
+import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
+import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
 import dev.ostrom.server.integrations.github.domain.GitHubPull
+import dev.ostrom.server.integrations.github.domain.GitHubRepo
+import dev.ostrom.server.integrations.github.domain.GitHubTeam
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
@@ -37,21 +42,32 @@ import kotlin.time.Instant
 
 /**
  * [GitHubApi] over HTTPS as the GitHub App: the App's JWT is exchanged for an installation token restricted to
- * `checks: write` and `pull_requests: read`, kept until a minute before it expires.
+ * `checks: write` and `pull_requests: read`, kept until a minute before it expires. The directory
+ * ([GitHubDirectoryApi]) is read with tokens of their own, read-only: `metadata` for the repositories, `members` for
+ * the teams. The manifest conversion ([GitHubManifestApi]) is the one call without a credential: the code is the
+ * proof.
  *
  * @param http The client (`expectSuccess = false`).
- * @param apiUrl GitHub's API.
- * @param jwt The App's JWT, or null when the App is not configured: then every call fails.
+ * @param apiUrl GitHub's API (`https://api.github.com`, or `https://<host>/api/v3` for GitHub Enterprise Server).
+ * @param jwt The App's JWT, read at each exchange (the App can be created after the start), or null when the App is
+ *   not configured: then every authenticated call fails.
  * @param clock The clock.
  */
 class HttpGitHubApi(
     private val http: HttpClient,
     private val apiUrl: String,
-    private val jwt: AppJwt?,
+    private val jwt: suspend () -> AppJwt?,
     private val clock: Clock,
-) : GitHubApi {
-    private val tokens = mutableMapOf<Long, InstallationToken>()
+) : GitHubApi, GitHubDirectoryApi, GitHubManifestApi {
+    private val tokens = mutableMapOf<Pair<Long, Map<String, String>>, InstallationToken>()
     private val lock = Mutex()
+
+    // GitHub Enterprise Server serves GraphQL at /api/graphql, next to the REST API's /api/v3.
+    private val graphqlUrl = if (apiUrl.endsWith(ENTERPRISE_REST)) {
+        apiUrl.removeSuffix(ENTERPRISE_REST) + "/api"
+    } else {
+        apiUrl
+    }
 
     override suspend fun pullRequest(installationId: Long, repo: String, number: Int): GitHubPull? {
         // The hook of the agent waits for this answer: GitHub has 2 seconds.
@@ -93,43 +109,110 @@ class HttpGitHubApi(
         return decode<Installation>(response, "installation").account.login
     }
 
+    override suspend fun repositories(installationId: Long): List<GitHubRepo> {
+        val token = installationToken(installationId, REPOS)
+            ?: throw GitHubCallException("GitHub refused the installation token (422).")
+        val repos = mutableListOf<GitHubRepo>()
+        var page = 0
+        do {
+            page++
+            val path = "/installation/repositories?per_page=$PER_PAGE&page=$page"
+            val listed = decode<Repositories>(send(HttpMethod.Get, path, token, null), "repositories").repositories
+            listed.mapTo(repos) {
+                val pushedAt = instantOrNull(it.pushedAt)
+                GitHubRepo(it.name, it.description, it.language, it.defaultBranch, it.archived, pushedAt)
+            }
+        } while (listed.size == PER_PAGE && page < MAX_PAGES)
+        return repos
+    }
+
+    override suspend fun teams(installationId: Long, account: String): List<GitHubTeam> {
+        // An App not allowed to read the members gets no token for them (422): it has no teams to show.
+        val token = installationToken(installationId, TEAMS) ?: return emptyList()
+        val teams = mutableListOf<GitHubTeam>()
+        var after: String? = null
+        var page = 0
+        do {
+            page++
+            val query = buildJsonObject {
+                put("query", TEAMS_QUERY)
+                putJsonObject("variables") {
+                    put("login", account)
+                    put("after", after)
+                }
+            }
+            val response = send(HttpMethod.Post, "/graphql", token, query, base = graphqlUrl)
+            val answer = decode<TeamsAnswer>(response, "teams")
+            // A user's account is no organization: GitHub answers a null organization, with an error.
+            val listed = answer.data?.organization?.teams
+            listed?.let { found ->
+                found.nodes.mapTo(teams) { team ->
+                    val members = team.members.nodes.map { it.login }
+                    GitHubTeam(team.slug, team.name, members, team.repositories.nodes.map { it.name })
+                }
+            }
+            after = if (listed != null && listed.pageInfo.hasNextPage) listed.pageInfo.endCursor else null
+        } while (after != null && page < MAX_PAGES)
+        return teams
+    }
+
+    override suspend fun convertManifest(code: String): CreatedGitHubApp? {
+        val response = send(HttpMethod.Post, "/app-manifests/$code/conversions", null, null)
+        if (response.status == HttpStatusCode.NotFound || response.status == HttpStatusCode.UnprocessableEntity) {
+            return null
+        }
+        val app = decode<Conversion>(response, "App")
+        return CreatedGitHubApp(
+            id = app.id,
+            slug = app.slug,
+            owner = app.owner?.login,
+            privateKeyPem = app.pem,
+            webhookSecret = app.webhookSecret,
+            clientId = app.clientId,
+            clientSecret = app.clientSecret,
+        )
+    }
+
     private suspend fun call(
         installationId: Long,
         method: HttpMethod,
         path: String,
         body: JsonObject?,
         timeoutMs: Long? = null,
-    ): HttpResponse = send(method, path, installationToken(installationId), body, timeoutMs)
-
-    private suspend fun installationToken(installationId: Long): String = lock.withLock {
-        tokens[installationId]?.takeIf { it.expiresAt - clock.now() > REFRESH_BEFORE }?.let { return it.token }
-        val permissions = buildJsonObject {
-            putJsonObject("permissions") {
-                put("checks", "write")
-                put("pull_requests", "read")
-            }
-        }
-        val path = "/app/installations/$installationId/access_tokens"
-        val response = send(HttpMethod.Post, path, appToken(), permissions)
-        val issued = decode<AccessToken>(response, "installation token")
-        val token = InstallationToken(issued.token, Instant.parse(issued.expiresAt))
-        tokens[installationId] = token
-        token.token
+    ): HttpResponse {
+        val token = installationToken(installationId, CHECKS)
+            ?: throw GitHubCallException("GitHub refused the installation token (422).")
+        return send(method, path, token, body, timeoutMs)
     }
 
+    // Null when GitHub refuses these permissions to the installation (422): the App was not granted them.
+    private suspend fun installationToken(installationId: Long, permissions: Map<String, String>): String? =
+        lock.withLock {
+            val key = installationId to permissions
+            tokens[key]?.takeIf { it.expiresAt - clock.now() > REFRESH_BEFORE }?.let { return it.token }
+            val path = "/app/installations/$installationId/access_tokens"
+            val response = send(HttpMethod.Post, path, appToken(), tokenRequest(permissions))
+            if (response.status == HttpStatusCode.UnprocessableEntity) return null
+            val issued = decode<AccessToken>(response, "installation token")
+            val token = InstallationToken(issued.token, Instant.parse(issued.expiresAt))
+            tokens[key] = token
+            token.token
+        }
+
     private suspend fun appToken(): String {
-        val app = jwt ?: throw GitHubCallException("The GitHub App is not configured on this server.")
+        val app = jwt() ?: throw GitHubCallException("The GitHub App is not configured on this server.")
         return app.token()
     }
 
     private suspend fun send(
         method: HttpMethod,
         path: String,
-        token: String,
+        token: String?,
         body: JsonObject?,
         timeoutMs: Long? = null,
+        base: String = apiUrl,
     ): HttpResponse = try {
-        http.request("$apiUrl$path") {
+        http.request("$base$path") {
             this.method = method
             headers(token)
             timeoutMs?.let { timeout { requestTimeoutMillis = it } }
@@ -143,24 +226,6 @@ class HttpGitHubApi(
     } catch (error: Exception) {
         // A timeout or a refused connection: the message of the cause can carry the URL, never a token.
         throw GitHubCallException("GitHub did not answer ${method.value} $path.", error)
-    }
-
-    private fun HttpRequestBuilder.headers(token: String) {
-        header(HttpHeaders.Authorization, "Bearer $token")
-        header(HttpHeaders.Accept, "application/vnd.github+json")
-        header("X-GitHub-Api-Version", "2022-11-28")
-        header(HttpHeaders.UserAgent, "ostrom")
-    }
-
-    private suspend inline fun <reified T> decode(response: HttpResponse, what: String): T {
-        if (!response.status.isSuccess()) {
-            throw GitHubCallException("GitHub refused the $what (${response.status.value}).")
-        }
-        return try {
-            json.decodeFromString<T>(response.bodyAsText())
-        } catch (error: SerializationException) {
-            throw GitHubCallException("GitHub answered an unexpected $what.", error)
-        }
     }
 
     private data class InstallationToken(val token: String, val expiresAt: Instant)
@@ -190,11 +255,112 @@ class HttpGitHubApi(
     @Serializable
     private data class AccessToken(val token: String, @SerialName("expires_at") val expiresAt: String)
 
+    @Serializable
+    private data class Repository(
+        val name: String,
+        val description: String? = null,
+        val language: String? = null,
+        @SerialName("default_branch") val defaultBranch: String = "main",
+        val archived: Boolean = false,
+        @SerialName("pushed_at") val pushedAt: String? = null,
+    )
+
+    @Serializable
+    private data class Repositories(val repositories: List<Repository>)
+
+    @Serializable
+    private data class TeamsAnswer(val data: TeamsData? = null)
+
+    @Serializable
+    private data class TeamsData(val organization: TeamsOrganization? = null)
+
+    @Serializable
+    private data class TeamsOrganization(val teams: TeamsPage)
+
+    @Serializable
+    private data class TeamsPage(val pageInfo: PageInfo, val nodes: List<TeamNode>)
+
+    @Serializable
+    private data class PageInfo(val hasNextPage: Boolean, val endCursor: String? = null)
+
+    @Serializable
+    private data class TeamNode(val slug: String, val name: String, val members: Logins, val repositories: Names)
+
+    @Serializable
+    private data class Logins(val nodes: List<Account>)
+
+    @Serializable
+    private data class Names(val nodes: List<Name>)
+
+    @Serializable
+    private data class Name(val name: String)
+
+    @Serializable
+    private data class Conversion(
+        val id: Long,
+        val slug: String,
+        val owner: Account? = null,
+        val pem: String,
+        @SerialName("webhook_secret") val webhookSecret: String? = null,
+        @SerialName("client_id") val clientId: String,
+        @SerialName("client_secret") val clientSecret: String,
+    )
+
     private companion object {
         const val HEAD_TIMEOUT_MS = 2_000L
+        const val PER_PAGE = 100
+
+        // 30 pages of 100: the repositories and teams of a very large organization; beyond, the first ones.
+        const val MAX_PAGES = 30
+        const val ENTERPRISE_REST = "/api/v3"
+        const val TEAMS_QUERY = "query(\$login: String!, \$after: String) { organization(login: \$login) { " +
+            "teams(first: 100, after: \$after) { pageInfo { hasNextPage endCursor } nodes { slug name " +
+            "members(first: 100) { nodes { login } } repositories(first: 100) { nodes { name } } } } } }"
+    }
+}
+
+/**
+ * Reads a timestamp GitHub sent; a malformed one is dropped rather than failing the whole read.
+ *
+ * @param text The ISO 8601 text, or null.
+ * @return The instant, or null.
+ */
+internal fun instantOrNull(text: String?): Instant? = text?.let {
+    try {
+        Instant.parse(it)
+    } catch (_: IllegalArgumentException) {
+        null
     }
 }
 
 // Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
 private val REFRESH_BEFORE = 1.minutes
+private val CHECKS = mapOf("checks" to "write", "pull_requests" to "read")
+private val REPOS = mapOf("metadata" to "read")
+private val TEAMS = mapOf("members" to "read", "metadata" to "read")
 private val json = Json { ignoreUnknownKeys = true }
+
+private fun HttpRequestBuilder.headers(token: String?) {
+    token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+    header(HttpHeaders.Accept, "application/vnd.github+json")
+    header("X-GitHub-Api-Version", "2022-11-28")
+    header(HttpHeaders.UserAgent, "ostrom")
+}
+
+private suspend inline fun <reified T> decode(response: HttpResponse, what: String): T {
+    if (!response.status.isSuccess()) {
+        throw GitHubCallException("GitHub refused the $what (${response.status.value}).")
+    }
+    return try {
+        json.decodeFromString<T>(response.bodyAsText())
+    } catch (error: SerializationException) {
+        throw GitHubCallException("GitHub answered an unexpected $what.", error)
+    }
+}
+
+// The body asking GitHub for an installation token restricted to [permissions].
+private fun tokenRequest(permissions: Map<String, String>): JsonObject = buildJsonObject {
+    putJsonObject("permissions") {
+        permissions.forEach { (permission, access) -> put(permission, access) }
+    }
+}

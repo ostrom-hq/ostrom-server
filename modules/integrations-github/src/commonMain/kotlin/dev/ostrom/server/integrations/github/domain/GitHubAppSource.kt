@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.integrations.github.domain
+
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
+
+/**
+ * The GitHub App of the instance: from the environment, or created by the manifest flow and stored sealed.
+ *
+ * @property appId Its id.
+ * @property slug Its slug, for the install link.
+ * @property privateKeyPem Its private key.
+ * @property webhookSecret The secret GitHub signs its webhooks with.
+ * @property clientId Its OAuth client id.
+ * @property clientSecret Its OAuth client secret.
+ */
+data class GitHubAppCredentials(
+    val appId: String? = null,
+    val slug: String? = null,
+    val privateKeyPem: String? = null,
+    val webhookSecret: String? = null,
+    val clientId: String? = null,
+    val clientSecret: String? = null,
+) {
+    /** Whether an App is named at all: an id or a slug. */
+    val named: Boolean get() = appId != null || slug != null
+
+    // The key and the secrets never appear in a log or a dump.
+    override fun toString(): String = "GitHubAppCredentials(appId=$appId, slug=$slug)"
+}
+
+/**
+ * An App GitHub just created from the manifest (`POST /app-manifests/{code}/conversions`).
+ *
+ * @property id Its id.
+ * @property slug Its slug.
+ * @property owner The account that owns it.
+ * @property privateKeyPem Its private key.
+ * @property webhookSecret Its webhook secret.
+ * @property clientId Its OAuth client id.
+ * @property clientSecret Its OAuth client secret.
+ */
+data class CreatedGitHubApp(
+    val id: Long,
+    val slug: String,
+    val owner: String?,
+    val privateKeyPem: String,
+    val webhookSecret: String?,
+    val clientId: String,
+    val clientSecret: String,
+) {
+    // The key and the secrets never appear in a log or a dump.
+    override fun toString(): String = "CreatedGitHubApp(id=$id, slug=$slug, owner=$owner)"
+}
+
+/** The App the integration uses now. */
+interface GitHubAppSource {
+    /** @return The App, every field null when there is none. */
+    suspend fun current(): GitHubAppCredentials
+
+    /** Drops what was read, after the App is stored. */
+    fun forget()
+}
+
+/** The App created by the manifest flow, and the single-use states of that flow. Instance rows, not an org's. */
+interface GitHubAppStore {
+    /** @return The stored App, opened, or null. */
+    suspend fun app(): GitHubAppCredentials?
+
+    /**
+     * Stores the App, its key and secrets sealed.
+     *
+     * @param app The App.
+     * @param by Who created it.
+     * @param at When.
+     * @return False when an App was already stored: the first one stays.
+     */
+    suspend fun saveApp(app: CreatedGitHubApp, by: String, at: Instant): Boolean
+
+    /**
+     * Stores the hash of a manifest state.
+     *
+     * @param stateHash The hash of the state sent to GitHub.
+     * @param by Who started the flow.
+     * @param expiresAt When it stops being accepted.
+     */
+    suspend fun saveState(stateHash: String, by: String, expiresAt: Instant)
+
+    /**
+     * Uses a manifest state once: it is deleted, and returned only if not expired.
+     *
+     * @param stateHash The hash of the state GitHub sent back.
+     * @param now The current time.
+     * @return Who started the flow, or null.
+     */
+    suspend fun takeState(stateHash: String, now: Instant): String?
+}
+
+/**
+ * [GitHubAppSource]: **the environment's App wins** whenever it names one (`OSTROM_GITHUB_APP_ID` or
+ * `OSTROM_GITHUB_APP_SLUG`), as #44 reads it; the stored App only serves an instance whose environment names none.
+ * A deployment that pins its App in its secret store is never changed by a row of its database, and an operator
+ * who set the variables keeps the App they chose. The stored App is read at most every [STORED_FOR] (a server that
+ * did not create it sees it within that time), opened only by the store.
+ *
+ * @param environment The App of the environment.
+ * @param store The stored App.
+ * @param clock The clock.
+ */
+class GitHubAppSourceImpl(
+    private val environment: GitHubAppCredentials,
+    private val store: GitHubAppStore,
+    private val clock: Clock,
+) : GitHubAppSource {
+    private var held: Pair<Instant, GitHubAppCredentials?>? = null
+
+    override suspend fun current(): GitHubAppCredentials {
+        if (environment.named) return environment
+        val now = clock.now()
+        val fresh = held?.takeIf { now - it.first < STORED_FOR }
+        val stored = if (fresh != null) fresh.second else store.app().also { held = now to it }
+        return stored ?: environment
+    }
+
+    override fun forget() {
+        held = null
+    }
+}
+
+// Top-level, not in a companion: a companion property has a getter nothing calls, which Kover counts.
+private val STORED_FOR = 60.seconds
