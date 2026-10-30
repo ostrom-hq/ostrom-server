@@ -8,7 +8,6 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             implementation(libs.cryptography.core)
-            implementation(libs.cryptography.openssl)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

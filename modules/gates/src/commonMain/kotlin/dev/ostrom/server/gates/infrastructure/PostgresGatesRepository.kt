@@ -273,8 +273,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             sessionIds = json.decodeFromString(strings, get("session_ids").asString()),
             launchIds = json.decodeFromString(strings, get("launch_ids").asString()),
             shownDigest = get("shown_digest").asString(),
-            evidence = json.decodeFromString(evidences, get("evidence")
-.asString())
+            evidence = json.decodeFromString(evidences, get("evidence").asString())
                 .map { Evidence(it.label, it.value) },
             decidedBy = get("decided_by").asStringOrNull(),
             decidedAt = get("decided_at").asInstantOrNull(),
