@@ -5,13 +5,13 @@ import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
 /**
- * `GET /v1/orgs/{orgId}/billing`: the plan, limits, usage and payment state of an organization (members).
+ * `GET /api/v1/orgs/{orgId}/billing`: the plan, limits, usage and payment state of an organization (members).
  * To move to ostrom-core with the API contract (`api/openapi.yaml`, tag `billing`).
  *
  * @property orgId The organization.
  */
 @Serializable
-@Resource("/v1/orgs/{orgId}/billing")
+@Resource("/api/v1/orgs/{orgId}/billing")
 class BillingApi(val orgId: String) {
     /** `POST …/checkout` {plan, interval}: a Stripe Checkout URL (owners and billing admins). */
     @Serializable
@@ -48,9 +48,9 @@ class BillingApi(val orgId: String) {
     class Invoices(val parent: BillingApi, val limit: Int = 24)
 }
 
-/** `POST /v1/billing/stripe/webhook`: Stripe's events, verified by their signature (no bearer token). */
+/** `POST /api/v1/billing/stripe/webhook`: Stripe's events, verified by their signature (no bearer token). */
 @Serializable
-@Resource("/v1/billing/stripe/webhook")
+@Resource("/api/v1/billing/stripe/webhook")
 class StripeWebhookApi
 
 /** A plan to buy or switch to. */

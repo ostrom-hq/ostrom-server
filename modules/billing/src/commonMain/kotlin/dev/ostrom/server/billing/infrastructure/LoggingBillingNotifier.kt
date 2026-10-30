@@ -8,7 +8,7 @@ import kotlin.uuid.Uuid
 
 /**
  * [BillingNotifier] that logs, until the notifications module binds the e-mail and console ones. The console shows
- * the alerts already: they are stored and returned by `GET /v1/orgs/{orgId}/billing`. Stripe e-mails the customer
+ * the alerts already: they are stored and returned by `GET /api/v1/orgs/{orgId}/billing`. Stripe e-mails the customer
  * about failed payments itself.
  *
  * @param logger The logger.
