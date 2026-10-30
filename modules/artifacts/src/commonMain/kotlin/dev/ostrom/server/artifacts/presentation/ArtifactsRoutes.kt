@@ -92,7 +92,7 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
                 HttpHeaders.ContentDisposition,
                 ContentDisposition.Attachment.withParameter(ContentDisposition.Parameters.FileName, name).toString(),
             )
-            call.response.header(HttpHeaders.XContentTypeOptions, "nosniff")
+            call.response.header("X-Content-Type-Options", "nosniff")
             call.response.header("Content-Security-Policy", "sandbox; default-src 'none'")
             call.respondBytes(file.bytes, ContentType.parse(file.contentType))
         }

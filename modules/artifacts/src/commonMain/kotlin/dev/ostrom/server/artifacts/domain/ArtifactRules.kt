@@ -90,16 +90,20 @@ object ArtifactRules {
      */
     fun check(files: List<UploadedFile>) {
         ensureValid(files.isNotEmpty()) { "A version needs at least one file." }
-        if (files.size > MAX_FILES) throw ArtifactTooLargeException("A version holds at most $MAX_FILES files.")
+        checkSizes(files)
         files.forEach { checkPath(it.path) }
         ensureValid(files.map { it.path }.toSet().size == files.size) { "Two files have the same path." }
+        files.firstOrNull { holdsSecret(it.bytes) }?.let { throw ArtifactSecretException(it.path) }
+    }
+
+    private fun checkSizes(files: List<UploadedFile>) {
+        if (files.size > MAX_FILES) throw ArtifactTooLargeException("A version holds at most $MAX_FILES files.")
         val oversized = files.firstOrNull { it.bytes.size > MAX_FILE_BYTES }
         if (oversized != null || files.sumOf { it.bytes.size.toLong() } > MAX_VERSION_BYTES) {
             throw ArtifactTooLargeException(
                 "A file holds at most ${MAX_FILE_BYTES / MIB} MiB and a version ${MAX_VERSION_BYTES / MIB} MiB.",
             )
         }
-        files.firstOrNull { holdsSecret(it.bytes) }?.let { throw ArtifactSecretException(it.path) }
     }
 
     /**

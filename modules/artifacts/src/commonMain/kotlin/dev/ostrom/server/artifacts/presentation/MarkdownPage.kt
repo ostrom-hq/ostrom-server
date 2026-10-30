@@ -11,6 +11,11 @@ internal object MarkdownPage {
     private val BULLET = Regex("^\\s*[-*+]\\s+(.*)$")
     private val NUMBERED = Regex("^\\s*\\d+[.)]\\s+(.*)$")
     private val INLINE = Regex("`([^`]+)`|\\*\\*([^*]+)\\*\\*|\\*([^*]+)\\*|\\[([^\\]]+)]\\(([^)\\s]+)\\)")
+    private const val CODE_GROUP = 1
+    private const val BOLD_GROUP = 2
+    private const val EM_GROUP = 3
+    private const val LABEL_GROUP = 4
+    private const val TARGET_GROUP = 5
     private val SAFE_SCHEMES = setOf("http", "https", "mailto")
 
     /**
@@ -90,7 +95,12 @@ internal object MarkdownPage {
         var last = 0
         INLINE.findAll(text).forEach { match ->
             out.append(escape(text.substring(last, match.range.first)))
-            val (code, bold, em, label, target) = match.destructured
+            val groups = match.groupValues
+            val code = groups[CODE_GROUP]
+            val bold = groups[BOLD_GROUP]
+            val em = groups[EM_GROUP]
+            val label = groups[LABEL_GROUP]
+            val target = groups[TARGET_GROUP]
             out.append(
                 when {
                     code.isNotEmpty() -> "<code>${escape(code)}</code>"
