@@ -166,6 +166,7 @@ class KubernetesRuntimeDriver(
             put("automountServiceAccountToken", false)
             put("enableServiceLinks", false)
             put("terminationGracePeriodSeconds", GRACE_SECONDS)
+            settings.priorityClass?.let { put("priorityClassName", it) }
             settings.imagePullSecret?.let { secret ->
                 putJsonArray("imagePullSecrets") { add(buildJsonObject { put("name", secret) }) }
             }
@@ -186,20 +187,24 @@ class KubernetesRuntimeDriver(
                         put("env", environment(spec))
                         putJsonObject("securityContext") {
                             put("allowPrivilegeEscalation", false)
+                            put("readOnlyRootFilesystem", true)
                             putJsonObject("capabilities") { putJsonArray("drop") { add(JsonPrimitive("ALL")) } }
                         }
                         putJsonObject("resources") {
                             putJsonObject("requests") {
                                 put("cpu", "250m")
                                 put("memory", "512Mi")
+                                put("ephemeral-storage", "256Mi")
                             }
                             putJsonObject("limits") {
                                 put("cpu", "2")
                                 put("memory", "4Gi")
+                                put("ephemeral-storage", "2Gi")
                             }
                         }
                         putJsonArray("volumeMounts") {
                             add(buildJsonObject { put("name", "workspace"); put("mountPath", WORKSPACE) })
+                            add(buildJsonObject { put("name", "tmp"); put("mountPath", "/tmp") })
                             add(
                                 buildJsonObject {
                                     put("name", "runner-token")
@@ -227,6 +232,12 @@ class KubernetesRuntimeDriver(
                             put("secretName", name)
                             put("defaultMode", TOKEN_FILE_MODE)
                         }
+                    },
+                )
+                add(
+                    buildJsonObject {
+                        put("name", "tmp")
+                        putJsonObject("emptyDir") { put("sizeLimit", "1Gi") }
                     },
                 )
             }

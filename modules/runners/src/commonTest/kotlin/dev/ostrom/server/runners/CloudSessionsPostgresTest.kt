@@ -245,6 +245,12 @@ class CloudSessionsPostgresTest {
             setBody(CreateCloudSessionRequest(agent = "claude", name = "one too many"))
         }
         assertEquals(HttpStatusCode.PaymentRequired, capped.status)
+        val closed = server.client.post("/api/v1/cloud/sessions") {
+            bearerAuth("carol")
+            contentType(ContentType.Application.Json)
+            setBody(CreateCloudSessionRequest(agent = "claude", name = "not allowed here"))
+        }
+        assertEquals(HttpStatusCode.Forbidden, closed.status)
         assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/cloud/sessions?before=nope") { bearerAuth("alice") }.status)
         assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/cloud/sessions?limit=99") { bearerAuth("alice") }.status)
     }

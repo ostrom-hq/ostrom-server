@@ -106,6 +106,12 @@ class KubernetesRuntimeDriverTest {
         assertFalse("ostrom_runner_abc" in pod.toString())
         assertEquals("ostrom-ws-$hex", spec["volumes"]!!.jsonArray[0].jsonObject["persistentVolumeClaim"]!!.jsonObject["claimName"]!!.jsonPrimitive.content)
         assertEquals("ostrom-s-$hex-e4", spec["volumes"]!!.jsonArray[1].jsonObject["secret"]!!.jsonObject["secretName"]!!.jsonPrimitive.content)
+        assertEquals("1Gi", spec["volumes"]!!.jsonArray[2].jsonObject["emptyDir"]!!.jsonObject["sizeLimit"]!!.jsonPrimitive.content)
+        assertEquals("true", container["securityContext"]!!.jsonObject["readOnlyRootFilesystem"]!!.jsonPrimitive.content)
+        assertEquals("/tmp", container["volumeMounts"]!!.jsonArray[2].jsonObject["mountPath"]!!.jsonPrimitive.content)
+        assertEquals("2Gi", container["resources"]!!.jsonObject["limits"]!!.jsonObject["ephemeral-storage"]!!.jsonPrimitive.content)
+        assertEquals("RuntimeDefault", spec["securityContext"]!!.jsonObject["seccompProfile"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        assertNull(spec["priorityClassName"])
 
         // The policies are applied once per process.
         driver.startExecution(spec(restricted = false, repository = RepositorySpec("https://github.com/acme/api", null)))
@@ -116,6 +122,13 @@ class KubernetesRuntimeDriverTest {
         assertNull(body(4)["stringData"]!!.jsonObject["prompt"])
         assertFalse("OSTROM_AGENT_PROMPT_FILE" in open.toString())
         assertFalse("OSTROM_REPOSITORY_REF" in open["spec"]!!.jsonObject["containers"]!!.jsonArray[0].toString())
+    }
+
+    @Test
+    fun sessionPodsTakeTheConfiguredLowPriorityClass() = runTest {
+        val low = KubernetesRuntimeDriver(api.client, settings.copy(priorityClass = "ostrom-low"), "http://s", "img:1") { "t" }
+        low.startExecution(spec(repository = null))
+        assertEquals("ostrom-low", body(3)["spec"]!!.jsonObject["priorityClassName"]!!.jsonPrimitive.content)
     }
 
     @Test

@@ -4,6 +4,7 @@ import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.CloudPlanProvider
@@ -51,7 +52,9 @@ object RunnersModule : ServerModule {
         single<RunnersConfig> { RunnersConfig.from(getOrNull<ConfigSource>() ?: EnvironmentConfigSource()) }
         single<CloudSessionsRepository> { CloudSessionsRepositoryImpl(get()) }
         single<RunnerTokens> { RunnerTokensImpl() }
-        single<CloudPlanProvider> { FreeCloudPlanProvider() }
+        single<CloudPlanProvider> {
+            AllowlistedCloudPlanProvider(get<RunnersConfig>().allowedOrgs, FreeCloudPlanProvider())
+        }
         single<RuntimeDriver> { RuntimeDrivers.create(get()) }
         single<CreateCloudSessionUseCase> { CreateCloudSessionUseCaseImpl(get(), get(), get()) }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get()) }

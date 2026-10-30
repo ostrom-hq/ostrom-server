@@ -230,6 +230,16 @@ class ReconcileCloudSessionUseCaseTest {
         repository.usage[ORG_A to "2026-10"] = 300 * 3600L
         reconcile(overBudget)
         assertEquals("hours_exhausted", stored(overBudget).failure?.code)
+
+        repository.usage.clear()
+        plans.plan = CloudPlan.FREE.copy(available = false)
+        val closed = runningSession().copy(lastActivityAt = t0 + 10.minutes, lastHeartbeatAt = t0 + 10.minutes).also { put(it) }
+        reconcile(closed)
+        assertEquals("closed", stored(closed).failure?.code)
+        val waiting = put(session())
+        assertNull(reconcile(waiting))
+        assertEquals("closed", stored(waiting).failure?.code)
+        assertEquals(SessionState.PAUSED, stored(waiting).state)
     }
 
     @Test

@@ -71,6 +71,8 @@ class DockerRuntimeDriverTest {
         assertTrue("OSTROM_SERVER_URL=http://host.docker.internal:8080" in env)
         assertFalse(env.any { it.startsWith("OSTROM_REPOSITORY_URL") })
         val host = container["HostConfig"]!!.jsonObject
+        assertEquals("true", host["ReadonlyRootfs"]!!.jsonPrimitive.content)
+        assertEquals("rw,nosuid,size=1g", host["Tmpfs"]!!.jsonObject["/tmp"]!!.jsonPrimitive.content)
         assertEquals("ostrom-ws-$hex:/workspace", host["Binds"]!!.jsonArray[0].jsonPrimitive.content)
         assertEquals("ostrom", host["NetworkMode"]!!.jsonPrimitive.content)
         assertEquals("no", host["RestartPolicy"]!!.jsonObject["Name"]!!.jsonPrimitive.content)

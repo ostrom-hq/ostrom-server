@@ -4,6 +4,7 @@ import dev.ostrom.server.runners.domain.AgentKind
 import dev.ostrom.server.runners.domain.Caller
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.CloudHoursExhaustedException
+import dev.ostrom.server.runners.domain.CloudSessionsClosedException
 import dev.ostrom.server.runners.domain.CloudPlan
 import dev.ostrom.server.runners.domain.CloudSessionLimitException
 import dev.ostrom.server.runners.domain.CloudSessionNotFoundException
@@ -226,6 +227,9 @@ class SessionUseCasesTest {
         assertFailsWith<CloudSessionLimitException> { change.resume(alice, paused.id) }
         repository.usage[ORG_A to "2026-10"] = 300 * 3600L
         assertFailsWith<CloudHoursExhaustedException> { change.resume(alice, paused.id) }
+        plans.plan = CloudPlan.FREE.copy(available = false)
+        assertFailsWith<CloudSessionsClosedException> { change.resume(alice, paused.id) }
+        assertFailsWith<CloudSessionsClosedException> { create(alice, payload()) }
     }
 
     @Test

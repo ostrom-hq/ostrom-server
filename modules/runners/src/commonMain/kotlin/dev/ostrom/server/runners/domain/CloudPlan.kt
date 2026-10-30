@@ -11,6 +11,8 @@ import kotlin.uuid.Uuid
  * @property idleTimeoutMinutes Minutes without a request to the model nor terminal input before a session pauses.
  * @property maxRunMinutes Minutes one execution may run before it pauses.
  * @property restrictedEgress Whether pods get the restricted outbound network.
+ * @property available Whether the organization may run cloud sessions at all: on a shared cluster they are open only
+ *   to the organizations of `OSTROM_RUNNERS_ALLOWED_ORGS` (audit S2-10), whatever their plan.
  */
 data class CloudPlan(
     val maxRunningSessions: Int,
@@ -18,6 +20,7 @@ data class CloudPlan(
     val idleTimeoutMinutes: Int,
     val maxRunMinutes: Int,
     val restrictedEgress: Boolean,
+    val available: Boolean,
 ) {
     /** The limits a new session of this plan runs under. */
     fun sessionLimits(): SessionLimits = SessionLimits(idleTimeoutMinutes, maxRunMinutes, restrictedEgress)
@@ -30,6 +33,7 @@ data class CloudPlan(
             idleTimeoutMinutes = 30,
             maxRunMinutes = 240,
             restrictedEgress = true,
+            available = true,
         )
     }
 }
@@ -52,4 +56,36 @@ interface CloudPlanProvider {
 /** Every organization on the free plan. */
 class FreeCloudPlanProvider : CloudPlanProvider {
     override suspend fun planFor(orgId: Uuid): CloudPlan = CloudPlan.FREE
+}
+
+/**
+ * Which organizations may run cloud sessions on this server (audit S2-10: closed by default on a shared cluster).
+ *
+ * @property all Every organization (a self-hosted or single-user server).
+ * @property orgs The organizations allowed when [all] is false.
+ */
+data class AllowedOrgs(val all: Boolean, val orgs: Set<Uuid>) {
+    /** Whether [orgId] is allowed. */
+    operator fun contains(orgId: Uuid): Boolean = all || orgId in orgs
+
+    companion object {
+        /** No organization: the default. */
+        val NONE = AllowedOrgs(all = false, orgs = emptySet())
+    }
+}
+
+/**
+ * Closes cloud sessions to the organizations [allowed] does not name, whatever [delegate] says of their plan.
+ *
+ * @param allowed The organizations allowed.
+ * @param delegate The plans (the free plan until billing binds its own).
+ */
+class AllowlistedCloudPlanProvider(
+    private val allowed: AllowedOrgs,
+    private val delegate: CloudPlanProvider,
+) : CloudPlanProvider {
+    override suspend fun planFor(orgId: Uuid): CloudPlan {
+        val plan = delegate.planFor(orgId)
+        return if (orgId in allowed) plan else plan.copy(available = false)
+    }
 }
