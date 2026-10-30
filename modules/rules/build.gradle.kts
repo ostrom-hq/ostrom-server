@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Module rules: the organization's rules, its signed decisions and its gate policy (self-approval), which the gates
+// module reads.
+plugins {
+    id("ostrom.native-module")
+}
+
+kotlin {
+    sourceSets {
+        commonMain.dependencies {
+            implementation(project(":kernel"))
+            // The member a console call acts for (CallerResolver, on the kernel's PrincipalOrgResolver).
+            implementation(project(":modules:secrets"))
+            // The self-approval policy is the gates module's GatePolicies port; who decides is its GateActorResolver.
+            implementation(project(":modules:gates"))
+            // Every decision signs a receipt.
+            implementation(project(":modules:receipts"))
+        }
+        commonTest.dependencies {
+            implementation(project(":testing"))
+            // The receipts module signs with the instance's keys.
+            implementation(project(":modules:instance"))
+        }
+    }
+}
