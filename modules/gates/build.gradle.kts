@@ -8,6 +8,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            implementation(libs.cryptography.core)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
