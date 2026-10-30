@@ -71,7 +71,8 @@ class SignReceiptUseCaseImpl(
     private fun JsonObject.text(name: String): String? =
         (get(name) as? JsonPrimitive)?.takeIf { it.isString && it.content.isNotEmpty() }?.content
 
-    private inline fun ensure(condition: Boolean, reason: () -> String) {
+    // Not inline: Kover counts an inline function's own lines, never run as such.
+    private fun ensure(condition: Boolean, reason: () -> String) {
         if (!condition) throw InvalidReceiptException(reason())
     }
 
