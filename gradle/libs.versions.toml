@@ -24,7 +24,7 @@ detekt = "1.23.8"
 maven-publish = "0.37.0"
 zodable = "1.7.6"
 # ostrom-core, from GitHub Packages (0.1.<run number of its main build>).
-ostrom-core = "0.1.4"
+ostrom-core = "0.1.13"
 
 [plugins]
 multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
