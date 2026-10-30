@@ -126,20 +126,33 @@ class ShareAccountUseCaseImpl(
  * The account a share stores: a new one owned by the caller, or [this] with new tokens, label and limits (its owner,
  * priority, creation and a DISABLED status kept).
  */
-private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayload, clock: Clock) = SharedAccount(
-    id = this?.id ?: Uuid.random(),
-    orgId = caller.orgId,
-    provider = payload.provider,
-    label = payload.label,
-    email = payload.email,
-    providerAccountId = payload.providerAccountId,
-    ownerMemberId = this?.ownerMemberId ?: caller.memberId,
-    priority = this?.priority ?: 0,
-    status = if (this?.status == AccountStatus.DISABLED) AccountStatus.DISABLED else AccountStatus.READY,
-    limits = payload.limits,
-    cooldownUntil = null,
-    createdAt = this?.createdAt ?: clock.now(),
-)
+private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayload, clock: Clock): SharedAccount {
+    val fresh = SharedAccount(
+        id = Uuid.random(),
+        orgId = caller.orgId,
+        provider = payload.provider,
+        label = payload.label,
+        email = payload.email,
+        providerAccountId = payload.providerAccountId,
+        ownerMemberId = caller.memberId,
+        priority = 0,
+        status = AccountStatus.READY,
+        limits = payload.limits,
+        cooldownUntil = null,
+        createdAt = clock.now(),
+    )
+    return if (this == null) {
+        fresh
+    } else {
+        fresh.copy(
+            id = id,
+            ownerMemberId = ownerMemberId ?: caller.memberId,
+            priority = priority,
+            status = if (status == AccountStatus.DISABLED) AccountStatus.DISABLED else AccountStatus.READY,
+            createdAt = createdAt,
+        )
+    }
+}
 
 /** [ListSharedAccountsUseCase]. */
 class ListSharedAccountsUseCaseImpl(

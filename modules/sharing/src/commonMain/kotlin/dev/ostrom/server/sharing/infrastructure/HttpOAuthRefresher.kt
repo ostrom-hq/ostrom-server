@@ -86,8 +86,10 @@ class HttpOAuthRefresher(
         }
     }
 
-    private fun JsonObject.string(key: String): String? =
-        (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+    private fun JsonObject.string(key: String): String? {
+        val value = this[key] as? JsonPrimitive
+        return if (value == null || !value.isString || value.content.isBlank()) null else value.content
+    }
 
     /** The providers' endpoints and client ids. */
     companion object {

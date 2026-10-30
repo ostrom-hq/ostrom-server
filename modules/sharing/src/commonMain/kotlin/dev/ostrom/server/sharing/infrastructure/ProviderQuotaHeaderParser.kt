@@ -57,13 +57,11 @@ class ProviderQuotaHeaderParser : QuotaHeaderParser {
         return used?.takeIf { fresh && it in 0.0..Double.MAX_VALUE }
             ?.let { QuotaWindow(name, it.coerceAtMost(1.0), reset, now) }
     }
-
-    private companion object {
-        val CLAUDE_WINDOWS = listOf("5h" to "five_hour", "7d" to "seven_day", "7d_oi" to "model:opus")
-        val CODEX = Regex("^x-codex-(?:([a-z0-9][a-z0-9_-]{0,63})-)?(?:primary|secondary)-used-percent$")
-        val FIVE_HOURS_MINUTES = 270.0..330.0
-        val SEVEN_DAYS_MINUTES = 9_072.0..11_088.0
-        const val PERCENT = 100
-        const val MAX_SECONDS = Long.MAX_VALUE / 1000
-    }
 }
+
+private val CLAUDE_WINDOWS = listOf("5h" to "five_hour", "7d" to "seven_day", "7d_oi" to "model:opus")
+private val CODEX = Regex("^x-codex-(?:([a-z0-9][a-z0-9_-]{0,63})-)?(?:primary|secondary)-used-percent$")
+private val FIVE_HOURS_MINUTES = 270.0..330.0
+private val SEVEN_DAYS_MINUTES = 9_072.0..11_088.0
+private const val PERCENT = 100
+private const val MAX_SECONDS = Long.MAX_VALUE / 1000

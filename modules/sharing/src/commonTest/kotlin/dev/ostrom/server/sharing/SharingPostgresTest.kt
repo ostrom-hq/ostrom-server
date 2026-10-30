@@ -16,6 +16,7 @@ import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.LeaseResult
 import dev.ostrom.server.sharing.domain.SharedAccountPool
+import dev.ostrom.server.sharing.domain.SharedAccountRepository
 import dev.ostrom.server.sharing.presentation.AccountLimitsDto
 import dev.ostrom.server.sharing.presentation.CapacityPoolDto
 import dev.ostrom.server.sharing.presentation.CapacityResponse
@@ -50,6 +51,8 @@ import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
@@ -204,6 +207,20 @@ class SharingPostgresTest {
             assertEquals(2, limited.limits.maxConcurrent)
             val notVisible = patchAs("other-a", path, UpdateAccountRequest(sharedWith = emptyList()))
             assertEquals(HttpStatusCode.NotFound, notVisible.status)
+            val missing = patchAs("admin-a", "$base/${Uuid.random()}", UpdateAccountRequest(sharedWith = emptyList()))
+            assertEquals(HttpStatusCode.NotFound, missing.status)
+            val both = patchAs(
+                "admin-a",
+                path,
+                UpdateAccountRequest(
+                    limits = AccountLimitsDto(maxConcurrent = 3),
+                    sharedWith = listOf(Sharing.memberA.memberId.toString()),
+                ),
+            ).body<SharedAccountResponse>()
+            assertEquals(3, both.limits.maxConcurrent)
+            assertEquals(listOf(Sharing.memberA.memberId.toString()), both.sharedWith)
+            val capacity = client.get("/api/v1/capacity") { bearerAuth("admin-a") }.body<CapacityResponse>()
+            assertEquals(listOf(CapacityPoolDto("claude", 1, 0, 0)), capacity.pools, "A paused account is not ready")
             assertIs<LeaseResult.Refused>(
                 koin.get<SharedAccountPool>().lease(
                     Sharing.orgA,
@@ -457,6 +474,25 @@ class SharingPostgresTest {
             assertEquals(listOf(Sharing.otherA.memberId.toString()), restricted.sharedWith)
             assertEquals(listOf(Sharing.otherA.memberId.toString()), restricted.limits.allowedMembers)
             assertEquals(HttpStatusCode.Unauthorized, client.get(base).status)
+        }
+    }
+
+    @Test
+    fun anOwnerlessAccountShowsNoOwnerAndMissingRowsReadAsNothing() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val account = shareAs("member-a").body<SharedAccountResponse>()
+            val id = Uuid.parse(account.id)
+            val orphaned = Statement.create("UPDATE sharing_accounts SET owner_member_id = NULL WHERE id = :id")
+                .bind("id", id)
+            assertEquals(1L, driver.executeInOrg(Sharing.orgA, orphaned).getOrThrow())
+            val seen = client.get(base) { bearerAuth("admin-a") }.body<SharedAccountsResponse>().items.single()
+            assertEquals("", seen.owner)
+            assertFalse(seen.mine)
+
+            val repository = koin.get<SharedAccountRepository>()
+            val stored = assertNotNull(repository.get(Sharing.orgA, id))
+            assertNull(repository.update(stored.copy(id = Uuid.random())), "A row deleted meanwhile updates nothing")
+            assertNull(repository.envelope(Sharing.orgA, Uuid.random()))
         }
     }
 }
