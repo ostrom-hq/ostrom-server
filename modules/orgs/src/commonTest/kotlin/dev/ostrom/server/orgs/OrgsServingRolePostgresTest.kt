@@ -62,7 +62,9 @@ class OrgsServingRolePostgresTest {
                 val orgs = OrgsRepositoryImpl(serving)
                 // Without its own EXECUTE grant, a role cannot run them: PUBLIC has none (S2-60).
                 assertFails { orgs.slugTaken("acme") }
-                server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
+                server.database.superuser
+                    .execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role")
+                    .getOrThrow()
                 val members = MembersRepositoryImpl(serving)
                 val invitations = InvitationsRepositoryImpl(serving)
 
