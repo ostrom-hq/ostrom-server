@@ -112,6 +112,10 @@ import kotlin.time.Clock
  * [RevokeAgentTokensUseCase] for agent sessions.
  */
 object IdentityModule : ServerModule {
+    // Declared before koinModule: the object initializes in order, and the module lambda runs at once.
+    private val HTTP = named("identity-http")
+    private const val HTTP_TIMEOUT_MS = 10_000L
+
     override val name: String = "identity"
 
     override val koinModule: Module = module {
@@ -188,9 +192,6 @@ object IdentityModule : ServerModule {
         route.identityRoutes(koin.get())
         route.signInRoutes(koin.get())
     }
-
-    private val HTTP = named("identity-http")
-    private const val HTTP_TIMEOUT_MS = 10_000L
 
     private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {
         val oauth = buildMap<IdentityProvider, OAuthProvider> {
