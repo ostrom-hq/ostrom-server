@@ -127,6 +127,13 @@ class KubernetesRuntimeDriverTest {
         assertEquals("/run/ostrom/prompt", env["OSTROM_AGENT_PROMPT_FILE"])
         assertFalse("Fix the tests" in pod.toString())
         assertFalse("ostrom_runner_abc" in pod.toString())
+    }
+
+    @Test
+    fun theSessionPodIsHardened() = runTest {
+        driver.startExecution(spec())
+        val spec = body(3)["spec"]!!.jsonObject
+        val container = spec["containers"]!!.jsonArray[0].jsonObject
         val claimName = spec["volumes"]!!.jsonArray[0].jsonObject["persistentVolumeClaim"]!!.jsonObject["claimName"]
         assertEquals("ostrom-ws-$hex", claimName!!.jsonPrimitive.content)
         assertEquals(
@@ -151,8 +158,11 @@ class KubernetesRuntimeDriverTest {
             spec["securityContext"]!!.jsonObject["seccompProfile"]!!.jsonObject["type"]!!.jsonPrimitive.content,
         )
         assertNull(spec["priorityClassName"])
+    }
 
-        // The policies are applied once per process.
+    @Test
+    fun thePoliciesAreAppliedOncePerProcess() = runTest {
+        driver.startExecution(spec())
         driver.startExecution(
             spec(restricted = false, repository = RepositorySpec("https://github.com/acme/api", null)),
         )
