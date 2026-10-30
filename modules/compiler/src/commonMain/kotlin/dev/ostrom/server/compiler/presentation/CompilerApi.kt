@@ -8,7 +8,16 @@ import kotlinx.serialization.json.JsonObject
 /** The gates catalogue of a repository (contract `getGateCatalog`). */
 @Serializable
 @Resource("/api/v1/gates/catalog")
-class GateCatalogApi(val repo: String? = null)
+class GateCatalogApi(val repo: String? = null) {
+    /**
+     * The catalogue signed by the instance for the repository's hooks (`ostrom.gates/1`, SECURITY-AUDIT S2-20).
+     *
+     * @property parent The catalogue, which carries the repository.
+     */
+    @Serializable
+    @Resource("signed")
+    class Signed(val parent: GateCatalogApi = GateCatalogApi())
+}
 
 /** The packages (contract `getCurrentPackage`, `listPackages`, `previewPackage`, `getPackage`…). */
 @Serializable
