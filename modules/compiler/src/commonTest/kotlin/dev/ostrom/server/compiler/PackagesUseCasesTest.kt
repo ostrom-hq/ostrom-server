@@ -7,6 +7,7 @@ import dev.ostrom.core.api.models.WorkflowNodeKind.CHECK
 import dev.ostrom.core.api.models.WorkflowNodeKind.GATE
 import dev.ostrom.core.api.models.WorkflowNodeKind.TRIGGER
 import dev.ostrom.core.api.models.WorkflowStatus
+import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompilerSettings
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.domain.usecases.CompileSourcesUseCaseImpl
@@ -52,7 +53,7 @@ class PackagesUseCasesTest {
 
     private suspend fun save(workflow: Workflow, orgId: Uuid = org) {
         val raw = PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
-        repository.saveWorkflow(orgId, workflow.id, raw, null, "dev-a", NOW)
+        repository.saveWorkflow(orgId, workflow.id, raw, null, Authorship("dev-a", NOW))
         repository.addDecision(orgId, decision(workflow.id))
     }
 

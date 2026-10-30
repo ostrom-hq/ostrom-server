@@ -161,7 +161,7 @@ class PublishPackageUseCaseImpl(
         actor: String,
         stored: StoredPackage,
         meta: Map<String, JsonPrimitive>,
-    ) = auditPackage(repository, clock, orgId, event, actor, stored, meta)
+    ) = PackageAuditor(repository, clock).record(orgId, event, actor, stored, meta)
 
     private fun countsOf(body: CompiledBody): Map<String, Int> = mapOf(
         "workflows" to body.workflows.size,
@@ -178,23 +178,24 @@ class PublishPackageUseCaseImpl(
     }
 }
 
-// An audit line about a package: the version, its repository and digest, and [meta].
-internal suspend fun auditPackage(
-    repository: CompilerRepository,
-    clock: Clock,
-    orgId: Uuid,
-    event: String,
-    actor: String,
-    stored: StoredPackage,
-    meta: Map<String, JsonPrimitive>,
-) {
-    val details = buildJsonObject {
-        put("repo", stored.envelope.repo?.let { JsonPrimitive(it) } ?: JsonNull)
-        put("digest", stored.envelope.digest)
-        meta.forEach { (key, value) -> put(key, value) }
+// An audit line about a package: the version, its repository and digest, and the meta of the event.
+internal class PackageAuditor(private val repository: CompilerRepository, private val clock: Clock) {
+    suspend fun record(
+        orgId: Uuid,
+        event: String,
+        actor: String,
+        stored: StoredPackage,
+        meta: Map<String, JsonPrimitive>,
+    ) {
+        val details = buildJsonObject {
+            put("repo", stored.envelope.repo?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("digest", stored.envelope.digest)
+            meta.forEach { (key, value) -> put(key, value) }
+        }
+        val id = "aud_${Uuid.random().toHexString().take(AUDIT_ID)}"
+        val line = PackageAudit(id, JsText.iso(clock.now()), event, actor, stored.envelope.version, details)
+        repository.audit(orgId, line)
     }
-    val id = "aud_${Uuid.random().toHexString().take(AUDIT_ID)}"
-    repository.audit(orgId, PackageAudit(id, JsText.iso(clock.now()), event, actor, stored.envelope.version, details))
 }
 
 private const val AUDIT_ID = 12
@@ -231,8 +232,10 @@ interface RevokePackageUseCase {
  */
 class RevokePackageUseCaseImpl(
     private val repository: CompilerRepository,
-    private val clock: Clock,
+    clock: Clock,
 ) : RevokePackageUseCase {
+    private val auditor = PackageAuditor(repository, clock)
+
     override suspend fun revoke(orgId: Uuid, digest: String, by: String, reason: String): StoredPackage {
         val stored = find(orgId, digest)
         val next = stored.copy(envelope = stored.envelope.copy(revoked = true), revokedBy = by, revokeReason = reason)
@@ -241,7 +244,7 @@ class RevokePackageUseCaseImpl(
         if (repository.pin(orgId, repo)?.contentDigest == stored.envelope.contentDigest) {
             repository.setPin(orgId, repo, null)
         }
-        auditPackage(repository, clock, orgId, "package.revoked", by, next, mapOf("reason" to JsonPrimitive(reason)))
+        auditor.record(orgId, "package.revoked", by, next, mapOf("reason" to JsonPrimitive(reason)))
         return next
     }
 
@@ -249,7 +252,7 @@ class RevokePackageUseCaseImpl(
         val stored = find(orgId, digest)
         val next = stored.copy(envelope = stored.envelope.copy(revoked = false), revokedBy = null, revokeReason = null)
         repository.updatePackage(orgId, next)
-        auditPackage(repository, clock, orgId, "package.restored", by, next, emptyMap())
+        auditor.record(orgId, "package.restored", by, next, emptyMap())
         return next
     }
 

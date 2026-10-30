@@ -26,6 +26,7 @@ import kotlin.time.Instant
 internal const val AT = "2026-10-30T08:00:00.000Z"
 internal val NOW: Instant = Instant.parse("2026-10-30T08:45:00Z")
 
+@Suppress("LongParameterList") // A test fixture: one named argument with a default per field.
 internal fun node(
     id: String,
     kind: WorkflowNodeKind,
@@ -50,6 +51,7 @@ internal fun node(
     suggested = suggested,
 )
 
+@Suppress("LongParameterList") // A test fixture: one named argument with a default per field.
 internal fun workflow(
     id: String,
     nodes: List<WorkflowNode>,
@@ -83,6 +85,7 @@ internal fun action(cls: String, repos: List<String> = emptyList(), patterns: Li
 internal fun doc(workflow: Workflow): WorkflowDoc =
     CompilerDocs.workflow(PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject)
 
+@Suppress("LongParameterList") // A test fixture: one named argument with a default per field.
 internal fun rule(
     id: String,
     scope: List<String> = emptyList(),
@@ -102,6 +105,7 @@ internal fun decision(
 ) =
     DecisionDoc("dec_$subjectId$at", kind, subjectId, by, at, receipt)
 
+@Suppress("LongParameterList") // A test fixture: one named argument with a default per field.
 internal fun inputs(
     workflows: List<Workflow>,
     repo: String? = "acme-api",
