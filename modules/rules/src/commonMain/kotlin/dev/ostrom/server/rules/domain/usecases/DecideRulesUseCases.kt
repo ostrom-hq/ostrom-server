@@ -246,19 +246,27 @@ private suspend fun RulesTransaction.change(
     before: Rule,
     patch: RulePatch,
 ): Pair<Rule, Decision?> {
+    val edited = patched(before, patch, now)
+    val after = if (RuleDecisions.action(before, edited) == null) {
+        edited
+    } else {
+        decided(edited, decider, now, patch.reviewBy != null)
+    }
+    updateRule(after)
+    return after to record(signer, decider, now, before = before, after = after)
+}
+
+// The patch over the rule: what it leaves out is kept, an empty why removes it, a new statement alone edits the rule.
+private fun patched(before: Rule, patch: RulePatch, now: Instant): Rule {
     val statement = patch.statement ?: before.statement
     val status = patch.status ?: if (statement != before.statement) RuleStatus.EDITED else before.status
-    val edited = before.copy(
+    return before.copy(
         statement = statement,
         status = status,
         strength = patch.strength ?: before.strength,
         scope = patch.scope ?: before.scope,
         group = patch.group ?: before.group,
-        why = when (val why = patch.why) {
-            null -> before.why
-            "" -> null
-            else -> why
-        },
+        why = whyOf(before.why, patch.why),
         output = patch.output ?: before.output,
         gate = when (val change = patch.gate) {
             GateChange.Keep -> before.gate
@@ -268,13 +276,12 @@ private suspend fun RulesTransaction.change(
         reviewBy = patch.reviewBy ?: before.reviewBy,
         updatedAt = now,
     )
-    val after = if (RuleDecisions.action(before, edited) == null) {
-        edited
-    } else {
-        decided(edited, decider, now, patch.reviewBy != null)
-    }
-    updateRule(after)
-    return after to record(signer, decider, now, before = before, after = after)
+}
+
+private fun whyOf(before: String?, patched: String?): String? = when (patched) {
+    null -> before
+    "" -> null
+    else -> patched
 }
 
 /**

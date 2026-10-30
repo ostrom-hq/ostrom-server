@@ -15,6 +15,8 @@ kotlin {
             implementation(project(":modules:gates"))
             // Every decision signs a receipt.
             implementation(project(":modules:receipts"))
+            // A review date is checked against the calendar.
+            implementation(libs.kotlinx.datetime)
             // The rules are the compiler's sources: the harness carries them, their gates enter the catalogue.
             implementation(project(":modules:compiler"))
         }
