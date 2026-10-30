@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.importer
 
+import dev.ostrom.server.importer.domain.AccountImportRun
 import dev.ostrom.server.importer.domain.AccountImporter
 import dev.ostrom.server.importer.domain.ImportAction
+import dev.ostrom.server.importer.domain.TeamCodeAccount
 import dev.ostrom.server.importer.presentation.ImportItemDto
 import dev.ostrom.server.importer.presentation.ImportReportDto
 import dev.ostrom.server.importer.presentation.TeamCodeAccountDto
@@ -25,6 +27,10 @@ import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.sharing.domain.AccountCredentials
+import dev.ostrom.server.sharing.domain.AccountProvider
+import dev.ostrom.server.sharing.domain.OAuthRefresher
+import dev.ostrom.server.sharing.domain.RefreshResult
 import dev.ostrom.server.testing.TestServer
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -148,15 +154,31 @@ class FakeAccountImporter : AccountImporter {
     /** The providers imported. */
     val imported = mutableListOf<String>()
 
-    override suspend fun import(
-        caller: Caller,
-        account: dev.ostrom.server.importer.domain.TeamCodeAccount,
-        dryRun: Boolean,
-    ): ImportAction {
-        if (account.provider != "claude") throw RefusedAccountException()
-        if (dryRun) return ImportAction.PLANNED
-        imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
-        return ImportAction.CREATED
+    override suspend fun begin(caller: Caller, dryRun: Boolean): AccountImportRun = object : AccountImportRun {
+        override suspend fun import(account: TeamCodeAccount): ImportAction {
+            if (account.provider != "claude") throw RefusedAccountException()
+            if (dryRun) return ImportAction.PLANNED
+            imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
+            return ImportAction.CREATED
+        }
+    }
+}
+
+/**
+ * The provider's token endpoint as a fake (a test never calls a real provider): a refresh token containing `refused`
+ * is refused, one containing `offline` cannot be tested, any other renews as `renewed-` plus the old tokens.
+ */
+class TeamCodeRefresher : OAuthRefresher {
+    override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials): RefreshResult = when {
+        "refused" in credentials.refreshToken -> RefreshResult.Revoked
+        "offline" in credentials.refreshToken -> RefreshResult.Unavailable
+        else -> RefreshResult.Renewed(
+            AccountCredentials(
+                "renewed-${credentials.accessToken}",
+                "renewed-${credentials.refreshToken}",
+                credentials.expiresAt,
+            ),
+        )
     }
 }
 
@@ -181,7 +203,7 @@ private val principals = mapOf(
     "stranger" to AuthenticatedPrincipal("stranger", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
 )
 
-/** The bindings of the import tests: a fixed key, tokens by name, and the sharing module's import when given. */
+/** The import tests' bindings: a fixed key, tokens by name, a fake token endpoint, an account import if given. */
 fun importOverrides(accounts: AccountImporter? = null): Module = module {
     single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
     single<TokenAuthenticator> {
@@ -198,6 +220,7 @@ fun importOverrides(accounts: AccountImporter? = null): Module = module {
                 byToken[principal.subjectId]
         }
     }
+    single<OAuthRefresher> { TeamCodeRefresher() }
     accounts?.let { importer -> single<AccountImporter> { importer } }
 }
 

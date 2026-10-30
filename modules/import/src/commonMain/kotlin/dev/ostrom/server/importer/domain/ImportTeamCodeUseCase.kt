@@ -36,7 +36,8 @@ interface ImportTeamCodeUseCase {
  * the same lines: unchanged and skipped where the reads already tell (an identical server, secret, denial or
  * assignment; a name collision; a server or secret it did not create; a prefix it keeps), planned for what it would
  * write. A write the owning module could still refuse (a stdio server without an MCP host, an invalid name or value)
- * stays planned: the dry run never runs the owning module's checks.
+ * stays planned: the dry run never runs the owning module's checks. Shared accounts are the exception: their dry run
+ * runs the sharing module's checks and counts the run's earlier accounts ([AccountImporter]).
  *
  * @param secrets The secrets use cases.
  * @param mcp The MCP relay use cases.
@@ -68,22 +69,26 @@ class ImportTeamCodeUseCaseImpl(
             McpImporter(mcp, dryRun, mcp.listServers(caller), servers, record),
         )
         val items = run.import(plan)
-        for (account in export.accounts) importAccount(caller, account, dryRun, items)
+        importAccounts(caller, export.accounts, dryRun, items)
         return ImportReport(items)
     }
 
-    private suspend fun importAccount(
+    /** One account run for all of TeamCode's accounts, so it reads the org's accounts once. */
+    private suspend fun importAccounts(
         caller: Caller,
-        account: TeamCodeAccount,
+        accounts: List<TeamCodeAccount>,
         dryRun: Boolean,
         items: MutableList<ImportItem>,
     ) {
-        val name = "${account.provider}/${account.label}"
-        val importer = accounts
-        when {
-            importer == null -> items += ImportItem(ImportKind.ACCOUNT, name, ImportAction.SKIPPED, NO_SHARING)
-            else -> guarded(items, ImportKind.ACCOUNT, name) {
-                items += ImportItem(ImportKind.ACCOUNT, name, importer.import(caller, account, dryRun))
+        if (accounts.isEmpty()) return
+        val run = this.accounts?.begin(caller, dryRun)
+        for (account in accounts) {
+            val name = "${account.provider.trim().lowercase()}/${account.label}"
+            when (run) {
+                null -> items += ImportItem(ImportKind.ACCOUNT, name, ImportAction.SKIPPED, NO_SHARING)
+                else -> guarded(items, ImportKind.ACCOUNT, name) {
+                    items += ImportItem(ImportKind.ACCOUNT, name, run.import(account))
+                }
             }
         }
     }

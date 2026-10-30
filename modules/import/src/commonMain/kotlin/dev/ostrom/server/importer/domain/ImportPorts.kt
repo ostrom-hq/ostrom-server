@@ -59,17 +59,25 @@ data class McpPorts(
     val putSettings: PutMcpSettingsUseCase,
 )
 
-/** Imports a shared subscription account ([SharedAccountImporter] when the sharing module is installed). */
+/** Imports shared subscription accounts ([SharedAccountImporter] when the sharing module is installed). */
 fun interface AccountImporter {
     /**
-     * Imports it, or says what it would do: a dry run makes the same reads and refuses the same accounts.
+     * Starts one run: reads the org's accounts once, then imports TeamCode's one by one.
      *
      * @param caller The admin running the import.
-     * @param account The account.
-     * @param dryRun Whether to write nothing.
+     * @param dryRun Whether to write nothing: the run then makes the same reads and refuses the same accounts, the
+     *   earlier accounts of the same run counted as if written.
+     */
+    suspend fun begin(caller: Caller, dryRun: Boolean): AccountImportRun
+}
+
+/** One run of an [AccountImporter]. */
+fun interface AccountImportRun {
+    /**
+     * Imports the account, or says what it would do.
      *
      * @return [ImportAction.CREATED], [ImportAction.UPDATED] or [ImportAction.UNCHANGED]; [ImportAction.PLANNED]
      *   instead of a write in a dry run.
      */
-    suspend fun import(caller: Caller, account: TeamCodeAccount, dryRun: Boolean): ImportAction
+    suspend fun import(account: TeamCodeAccount): ImportAction
 }

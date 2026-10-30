@@ -37,7 +37,9 @@ object ImportModule : ServerModule {
         single<ImportProvenanceRepository> { ImportProvenanceRepositoryImpl(get()) }
         single<ImportTeamCodeUseCase> {
             val accounts = getOrNull<AccountImporter>()
-                ?: getOrNull<ShareAccountUseCase>()?.let { share -> SharedAccountImporter(share, get(), get()) }
+                ?: getOrNull<ShareAccountUseCase>()?.let { share ->
+                    SharedAccountImporter(share, get(), get(), get())
+                }
             ImportTeamCodeUseCaseImpl(get(), get(), get(), accounts)
         }
         single { ImportRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get()) }
