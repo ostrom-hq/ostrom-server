@@ -64,8 +64,9 @@ class PtyTerminalTest {
                 "HOME" to "/tmp/ostrom-runner-test-home",
             )
             val terminal = PtyTerminal.start(SessionScript.FIRST, agent, "/tmp")
-            assertTrue("--model m-1 fix it" in terminal.readUntil("--model m-1 fix it"))
-            assertTrue("The agent exited" in terminal.readUntil("The agent exited"))
+            // One read until the last line: a chunk can hold both, and a second wait would block on the shell.
+            val output = terminal.readUntil("The agent exited")
+            assertTrue("--model m-1 fix it" in output, output)
             terminal.terminate()
             terminal.close()
         }

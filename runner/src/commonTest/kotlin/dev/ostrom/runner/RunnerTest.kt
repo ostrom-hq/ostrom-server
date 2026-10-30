@@ -86,6 +86,8 @@ class RunnerTest {
         val job = backgroundScope.launchRunner(runner, done)
 
         server.instructions.send(Result.success(Instruction.RUN))
+        // The runner starts its terminal once it has read the instruction: let it run before looking.
+        testScheduler.runCurrent()
         terminals.first().output.send("hello".encodeToByteArray())
         assertEquals("hello", link.sent.receive())
         link.frames.send(ServerFrame.Input("ls\r".encodeToByteArray()))
@@ -122,6 +124,8 @@ class RunnerTest {
         backgroundScope.launchRunner(runner, done)
 
         server.instructions.send(Result.success(Instruction.RUN))
+        // The runner starts its terminal once it has read the instruction: let it run before looking.
+        testScheduler.runCurrent()
         terminals.first().output.send(null)
         testScheduler.advanceTimeBy(16.seconds)
         assertEquals(SessionScript.AGAIN, terminals.last().script)

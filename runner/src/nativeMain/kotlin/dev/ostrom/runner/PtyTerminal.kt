@@ -23,13 +23,17 @@ import kotlinx.cinterop.set
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import platform.posix.EINTR
+import platform.posix.POLLIN
 import platform.posix.SIGKILL
 import platform.posix.SIGTERM
 import platform.posix.WNOHANG
 import platform.posix.errno
 import platform.posix.kill
+import platform.posix.poll
+import platform.posix.pollfd
 import platform.posix.strerror
 import platform.posix.waitpid
 import kotlin.concurrent.AtomicInt
@@ -49,6 +53,8 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
     private val buffer = ByteArray(CHUNK)
 
     override suspend fun read(): ByteArray? = withContext(Dispatchers.IO) {
+        // A short poll before the read: a blocked read() would ignore a cancellation until the PTY speaks.
+        while (!readable()) ensureActive()
         var count = readOnce()
         while (count < 0L && errno == EINTR) count = readOnce()
         if (count > 0L) {
@@ -58,6 +64,14 @@ class PtyTerminal private constructor(val pid: Int, private val master: Int, pri
             reap()
             null
         }
+    }
+
+    /** Whether the master has bytes, or has hung up (the read then ends at once); false after [POLL] of quiet. */
+    private fun readable(): Boolean = memScoped {
+        val request = alloc<pollfd>()
+        request.fd = master
+        request.events = POLLIN.convert()
+        poll(request.ptr, 1.convert(), POLL.inWholeMilliseconds.toInt()) > 0
     }
 
     private fun readOnce(): Long =
