@@ -23,9 +23,9 @@ internal object ArtifactsConfig {
      *   host (pages would then run next to the console's session).
      */
     fun from(source: ConfigSource): ArtifactLocations {
-        val viewer = source["OSTROM_ARTIFACTS_VIEWER_URL"]?.trimEnd('/')?.takeIf { it.isNotBlank() }
-            ?: DEFAULT_VIEWER_URL
-        val origin = source["OSTROM_ARTIFACTS_CONTENT_ORIGIN"]?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        // A blank value is already unset in every configuration source.
+        val viewer = source["OSTROM_ARTIFACTS_VIEWER_URL"]?.trimEnd('/') ?: DEFAULT_VIEWER_URL
+        val origin = source["OSTROM_ARTIFACTS_CONTENT_ORIGIN"]?.trimEnd('/')
         if (origin != null && (!ORIGIN.matches(origin) || viewer.startsWith("$origin/"))) {
             throw InvalidConfigException(
                 "OSTROM_ARTIFACTS_CONTENT_ORIGIN must be an http(s) origin of its own (https://artifacts.example.com).",
@@ -40,5 +40,5 @@ internal object ArtifactsConfig {
      * @return `artifacts.example.com`, or null without an origin.
      */
     fun contentHost(locations: ArtifactLocations): String? =
-        locations.contentOrigin?.substringAfter("://")?.substringBefore(':')
+        locations.contentOrigin?.let { it.substringAfter("://").substringBefore(':') }
 }

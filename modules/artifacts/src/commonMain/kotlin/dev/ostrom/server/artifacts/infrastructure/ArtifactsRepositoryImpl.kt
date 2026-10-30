@@ -160,7 +160,7 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         orgId,
         Statement.create("""SELECT bytes FROM artifacts_blobs WHERE artifact_id = :id AND sha256 = :sha""")
             .bind("id", artifactId).bind("sha", sha256),
-    ).getOrThrow().firstOrNull()?.get("bytes")?.asByteArray()
+    ).getOrThrow().firstOrNull()?.let { it.get("bytes").asByteArray() }
 
     override suspend fun blobDigests(orgId: Uuid, artifactId: Uuid): Set<String> = driver.fetchInOrg(
         orgId,

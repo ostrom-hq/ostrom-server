@@ -45,14 +45,14 @@ internal class ManageArtifactUseCaseImpl(
 
     override suspend fun update(caller: ArtifactCaller, id: Uuid, title: String?, access: String?): Artifact {
         val artifact = rules.manageable(caller, id)
-        val newAccess = access?.let { parseAccess(it) } ?: artifact.access
+        val newAccess = if (access == null) artifact.access else parseAccess(access)
         val slug = when {
             newAccess != ArtifactAccess.LINK -> null
             artifact.access == ArtifactAccess.LINK -> artifact.linkSlug
             else -> linkSlugFor(newAccess)
         }
         val updated = artifact.copy(
-            title = title?.let { ArtifactRules.title(it) } ?: artifact.title,
+            title = if (title == null) artifact.title else ArtifactRules.title(title),
             access = newAccess,
             linkSlug = slug,
             updatedAt = clock.now(),

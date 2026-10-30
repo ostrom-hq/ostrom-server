@@ -49,7 +49,7 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_READ)
             val page = read.list(caller, params.before?.let { parseId(it) }, params.limit)
             val limit = params.limit ?: DEFAULT_LIMIT
-            val next = page.lastOrNull()?.takeIf { page.size == limit }?.id?.toString()
+            val next = page.lastOrNull()?.let { last -> last.id.toString().takeIf { page.size == limit } }
             call.respond(ArtifactsResponse(page.map { toResponse(it) }, next))
         }
         post<ArtifactsApi> {

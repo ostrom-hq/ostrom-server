@@ -50,6 +50,11 @@ class MarkdownPageTest {
     }
 
     @Test
+    fun aQuoteJoinsItsLines() {
+        assertTrue("<blockquote>a b</blockquote>" in MarkdownPage.render("> a\n> b"))
+    }
+
+    @Test
     fun inlineMarksAreEscaped() {
         assertEquals(
             "a <code>&lt;b&gt;</code> <strong>c</strong> <em>d</em> &amp; &quot;e&quot; &#39;f&#39;",
