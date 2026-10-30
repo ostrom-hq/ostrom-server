@@ -187,7 +187,8 @@ class SessionCookiePostgresTest {
             val cleared = listOf(SESSION_COOKIE, CSRF_COOKIE).map { assertNotNull(logout.cookie(it), it) }
             assertTrue(cleared.all { it.value.isEmpty() && it.maxAge == 0 }, cleared.toString())
             assertEquals("no-store", logout.headers[HttpHeaders.CacheControl])
-            assertEquals(listOf(user.id.toString() to started.session.id.toString()), listener.calls)
+            val expected: List<Pair<String, String?>> = listOf(user.id.toString() to started.session.id.toString())
+            assertEquals(expected, listener.calls)
             val after = server.client.get("/api/v1/auth/me") { browserSession(started.secret, null) }
             assertEquals(HttpStatusCode.Unauthorized, after.status)
 
