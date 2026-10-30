@@ -123,7 +123,7 @@ class SlackDomainTest {
         channel.requested(gate, requests)
         assertEquals(listOf("U0REVB"), api.opened, "only the linked, pending approver")
         assertEquals(listOf(SlackMessageRef(ORG, requests[0].id, gate.id, "D-U0REVB", "ts-1")), repository.messages)
-        channel.decided(gate.copy(status = GateStatus.APPROVED), requests)
+        channel.decided(gate.copy(status = GateStatus.APPROVED, decidedBy = "rev-b"), requests)
         assertEquals(listOf("D-U0REVB" to "ts-1"), api.updated.map { it.first to it.second })
         assertEquals("Merge into main: approved by rev-b", api.updated.single().third.text)
     }
