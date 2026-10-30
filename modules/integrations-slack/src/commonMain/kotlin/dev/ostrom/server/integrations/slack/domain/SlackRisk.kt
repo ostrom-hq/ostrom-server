@@ -19,9 +19,9 @@ object SlackRisk {
      * @return True when a yes on Slack may open it.
      */
     fun answerable(gate: Gate): Boolean {
-        val push = gate.subject.push ?: return false
-        val diff = gate.evidence.firstOrNull { it.label == Evidence.MACHINE_DIFF }?.value ?: return false
-        return !push.force && changedLines(diff) in 1..MAX_CHANGED_LINES
+        val push = gate.subject.push
+        val diff = gate.evidence.firstOrNull { it.label == Evidence.MACHINE_DIFF }
+        return push != null && diff != null && !push.force && changedLines(diff.value) in 1..MAX_CHANGED_LINES
     }
 
     /**

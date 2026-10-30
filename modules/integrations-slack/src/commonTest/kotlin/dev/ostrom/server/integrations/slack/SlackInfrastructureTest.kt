@@ -115,14 +115,18 @@ class SlackInfrastructureTest {
         assertEquals("D1", update["channel"]!!.jsonPrimitive.content)
     }
 
+    // A lambda inside `to` gets no expected type: the parameter gives it its receiver.
+    private fun case(says: String, respond: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) =
+        respond to says
+
     @Test
     fun everyRefusalOfSlackIsASlackCallException() = runTest {
-        val cases = listOf<Pair<suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData, String>>(
-            { _: HttpRequestData -> json("""{"ok":false,"error":"channel_not_found"}""") } to "channel_not_found",
-            { _: HttpRequestData -> json("{}", HttpStatusCode.TooManyRequests) } to "429",
-            { _: HttpRequestData -> json("<html>", HttpStatusCode.BadGateway) } to "unexpectedly (502)",
-            { _: HttpRequestData -> json("""{"ok":true}""") } to "no direct message",
-            { _: HttpRequestData -> throw IllegalStateException("connection refused") } to "did not answer",
+        val cases = listOf(
+            case("channel_not_found") { json("""{"ok":false,"error":"channel_not_found"}""") },
+            case("429") { json("{}", HttpStatusCode.TooManyRequests) },
+            case("unexpectedly (502)") { json("<html>", HttpStatusCode.BadGateway) },
+            case("no direct message") { json("""{"ok":true}""") },
+            case("did not answer") { throw IllegalStateException("connection refused") },
         )
         for ((respond, says) in cases) {
             handler = respond
