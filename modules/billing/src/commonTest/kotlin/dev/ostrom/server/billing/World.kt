@@ -7,6 +7,7 @@ import dev.ostrom.server.billing.domain.BillingMetrics
 import dev.ostrom.server.billing.domain.BillingSettings
 import dev.ostrom.server.billing.domain.ChangePlanUseCaseImpl
 import dev.ostrom.server.billing.domain.CheckEntitlementUseCaseImpl
+import dev.ostrom.server.billing.domain.GetAgentUsageUseCaseImpl
 import dev.ostrom.server.billing.domain.GetBillingOverviewUseCaseImpl
 import dev.ostrom.server.billing.domain.GetPlanLimitsUseCaseImpl
 import dev.ostrom.server.billing.domain.HandleStripeEventUseCaseImpl
@@ -60,6 +61,7 @@ internal class World(stripeEnabled: Boolean = true) {
     val events = HandleStripeEventUseCaseImpl(repository, sync, notifier, backfill, metrics, clock)
     val activity = RecordMemberActivityUseCaseImpl(repository)
     val usage = RecordAgentUsageUseCaseImpl(repository, limits, notifier, clock)
+    val readUsage = GetAgentUsageUseCaseImpl(repository, clock)
     val entitlements = CheckEntitlementUseCaseImpl(repository, limits, settings, clock)
     val failures = mutableListOf<String>()
     val outbox = ProcessOutboxUseCaseImpl(
