@@ -14,7 +14,6 @@ import dev.ostrom.server.automations.domain.InvalidSignatureException
 import dev.ostrom.server.automations.domain.InvalidWebhookPayloadException
 import dev.ostrom.server.automations.domain.LaunchResult
 import dev.ostrom.server.automations.domain.ManageAutomationsUseCaseImpl
-import dev.ostrom.server.automations.domain.MemberDirectory
 import dev.ostrom.server.automations.domain.Overlap
 import dev.ostrom.server.automations.domain.PayloadProblem
 import dev.ostrom.server.automations.domain.RunAutomationsUseCaseImpl
@@ -33,6 +32,7 @@ import dev.ostrom.server.automations.fakes.cronDefinition
 import dev.ostrom.server.automations.fakes.daveAuto
 import dev.ostrom.server.automations.fakes.webhookDefinition
 import dev.ostrom.server.automations.presentation.toResponse
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject

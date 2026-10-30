@@ -2,7 +2,6 @@
 package dev.ostrom.server.automations.fakes
 
 import dev.ostrom.server.automations.domain.CreateOutcome
-import dev.ostrom.server.automations.domain.MemberDirectory
 import dev.ostrom.server.automations.domain.Wait
 import dev.ostrom.server.automations.domain.WaitAnswer
 import dev.ostrom.server.automations.domain.WaitCaller
@@ -11,6 +10,7 @@ import dev.ostrom.server.automations.domain.WaitFilter
 import dev.ostrom.server.automations.domain.WaitStatus
 import dev.ostrom.server.automations.domain.WaitsRepository
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
