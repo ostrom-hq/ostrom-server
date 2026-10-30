@@ -2,6 +2,7 @@
 package dev.ostrom.server.gates.presentation
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -55,12 +56,16 @@ fun AuthenticatedPrincipal.requireAnyScope(accepted: Set<String>) {
 }
 
 /**
- * Refuses an answer from anything but a person who holds [GateScopes.answering] (S2-31): a device, an agent or a
- * service never says yes, whatever its scopes.
+ * Refuses an answer from anything but a person who holds [GateScopes.answering], in the browser or in the unlocked
+ * app (S2-31, S2-04): a device, an agent or a service never says yes, nor a person's API token, which the agent of
+ * that person can read.
  *
  * @throws OstromException A 403.
  */
 fun AuthenticatedPrincipal.requireAnswering() {
     if (kind != PrincipalKind.USER) throw OstromException(ErrorKind.FORBIDDEN, "Only a person answers a gate.")
+    if (channel != PrincipalChannel.BROWSER && channel != PrincipalChannel.MOBILE_APP) {
+        throw OstromException(ErrorKind.FORBIDDEN, "A yes is given in the browser or in the app.")
+    }
     requireAnyScope(GateScopes.answering)
 }
