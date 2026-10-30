@@ -26,6 +26,10 @@ import kotlin.uuid.Uuid
 /**
  * [CloudSessionsRepository] on PostgreSQL (tables of [RunnersMigrations]).
  *
+ * Every read and write of a session or of the usage runs confined to the session's organization ([inTenant], S2-01).
+ * Only `runners_session_routes` is read across organizations: the reconciler claims due sessions there, and the runner
+ * channel finds a session by its runner token there, before loading the session in its organization.
+ *
  * The running cap is serialized per organization with a transaction-scoped advisory lock, so the count and the
  * write of two concurrent creations or resumes never interleave.
  *
@@ -33,27 +37,28 @@ import kotlin.uuid.Uuid
  */
 @Suppress("TooManyFunctions") // One implementation of the one port of the table.
 class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRepository {
-    override suspend fun createWithinCap(session: CloudSession, maxRunning: Int): Boolean = driver.transaction {
-        lockOrg(session.orgId)
-        if (countHolding(session.orgId, null) >= maxRunning) return@transaction false
-        execute(
-            Statement.create(
-                """
-                INSERT INTO runners_sessions ($COLUMNS, next_reconcile_at) VALUES ($VALUES, :created_at)
-                """,
-            ).bindInsert(session),
-        ).getOrThrow()
-        true
-    }
+    override suspend fun createWithinCap(session: CloudSession, maxRunning: Int): Boolean =
+        driver.inTenant(session.orgId) {
+            lockOrg(session.orgId)
+            if (countHolding(session.orgId, null) >= maxRunning) return@inTenant false
+            execute(
+                Statement.create("""INSERT INTO runners_sessions ($COLUMNS) VALUES ($VALUES)""").bindInsert(session),
+            ).getOrThrow()
+            execute(
+                Statement.create(
+                    """
+                    INSERT INTO runners_session_routes (session_id, org_id, runner_token_hash, next_reconcile_at)
+                    VALUES (:id, :org_id, :hash, :now)
+                    """,
+                ).bind("id", session.id).bind("org_id", session.orgId).bind("hash", session.runnerTokenHash)
+                    .bind("now", session.createdAt),
+            ).getOrThrow()
+            true
+        }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): CloudSession? = driver.fetchAll(
-        Statement.create("""SELECT $COLUMNS FROM runners_sessions WHERE id = :id AND org_id = :org_id""")
-            .bind("id", id).bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.toSession()
+    override suspend fun get(orgId: Uuid, id: Uuid): CloudSession? = driver.inTenant(orgId) { select(id) }
 
-    override suspend fun getById(id: Uuid): CloudSession? = driver.fetchAll(
-        Statement.create("""SELECT $COLUMNS FROM runners_sessions WHERE id = :id""").bind("id", id),
-    ).getOrThrow().firstOrNull()?.toSession()
+    override suspend fun getById(id: Uuid): CloudSession? = route("session_id = :key", id)
 
     override suspend fun list(orgId: Uuid, ownerId: String, before: Uuid?, limit: Int): List<CloudSession> {
         val cursor = if (before == null) {
@@ -69,7 +74,7 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
             """,
         ).bind("org_id", orgId).bind("owner_id", ownerId).bind("limit", limit)
         if (before != null) statement.bind("before", before)
-        return driver.fetchAll(statement).getOrThrow().map { it.toSession() }
+        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toSession() } }
     }
 
     override suspend fun setDesiredState(
@@ -77,86 +82,100 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         id: Uuid,
         desiredState: DesiredState,
         now: Instant,
-    ): CloudSession? =
-        driver.fetchAll(
+    ): CloudSession? = driver.inTenant(orgId) {
+        val updated = fetchAll(
             Statement.create(
                 """
                 UPDATE runners_sessions SET desired_state = :desired, generation = generation + 1, updated_at =
-                :now, next_reconcile_at = :now WHERE id = :id AND org_id = :org_id AND state NOT IN
-                ('terminated', 'failed') RETURNING $COLUMNS
+                :now WHERE id = :id AND org_id = :org_id AND state NOT IN ('terminated', 'failed') RETURNING
+                $COLUMNS
                 """,
             ).bind("desired", desiredState.wire).bind("now", now).bind("id", id).bind("org_id", orgId),
-        ).getOrThrow().firstOrNull()?.toSession() ?: get(orgId, id)
+        ).getOrThrow().firstOrNull()?.toSession()
+        if (updated != null) lookAt(id, now)
+        updated ?: select(id)
+    }
 
     override suspend fun resumeWithinCap(orgId: Uuid, id: Uuid, maxRunning: Int, now: Instant): ResumeOutcome =
-        driver.transaction {
+        driver.inTenant(orgId) {
             lockOrg(orgId)
-            val current = fetchAll(
-                Statement.create("""SELECT $COLUMNS FROM runners_sessions WHERE id = :id AND org_id = :org_id""")
-                    .bind("id", id).bind("org_id", orgId),
-            ).getOrThrow().firstOrNull()?.toSession() ?: return@transaction ResumeOutcome.NotFound
+            val current = select(id) ?: return@inTenant ResumeOutcome.NotFound
             if (!current.state.holdsExecution && countHolding(orgId, id) >= maxRunning) {
-                return@transaction ResumeOutcome.AtCap
+                return@inTenant ResumeOutcome.AtCap
             }
             val updated = fetchAll(
                 Statement.create(
                     """
                     UPDATE runners_sessions SET desired_state = 'running', generation = generation + 1,
-                    updated_at = :now, next_reconcile_at = :now WHERE id = :id AND org_id = :org_id RETURNING
-                    $COLUMNS
+                    updated_at = :now WHERE id = :id AND org_id = :org_id RETURNING $COLUMNS
                     """,
                 ).bind("now", now).bind("id", id).bind("org_id", orgId),
             ).getOrThrow().first().toSession()
+            lookAt(id, now)
             ResumeOutcome.Resumed(updated)
         }
 
     override suspend fun compareAndSet(session: CloudSession, nextReconcileAt: Instant?): CloudSession? =
-        driver.fetchAll(
-            Statement.create(
-                """
-                UPDATE runners_sessions SET state = :state, desired_state = :desired_state, phase = :phase, epoch =
-                :epoch, generation = generation + 1, failure_code = :failure_code, failure_message =
-                :failure_message, updated_at = :updated_at, execution_started_at = :execution_started_at, ready_at =
-                :ready_at, last_heartbeat_at = :last_heartbeat_at, last_activity_at = GREATEST(last_activity_at,
-                :last_activity_at), paused_at = :paused_at, terminated_at = :terminated_at, pausing_since =
-                :pausing_since, runner_stopped_at = :runner_stopped_at, runner_token_hash = :runner_token_hash,
-                next_reconcile_at = CASE WHEN CAST(:has_next AS BOOLEAN) THEN LEAST(COALESCE(next_reconcile_at,
-                :next_at), :next_at) ELSE next_reconcile_at END WHERE id = :id AND generation = :generation
-                RETURNING $COLUMNS
-                """,
-            ).bindUpdate(session)
-                .bind("generation", session.generation)
-                .bind("has_next", nextReconcileAt != null)
-                .bind("next_at", nextReconcileAt ?: session.updatedAt),
-        ).getOrThrow().firstOrNull()?.toSession()
+        driver.inTenant(session.orgId) {
+            val updated = fetchAll(
+                Statement.create(
+                    """
+                    UPDATE runners_sessions SET state = :state, desired_state = :desired_state, phase = :phase,
+                    epoch = :epoch, generation = generation + 1, failure_code = :failure_code, failure_message =
+                    :failure_message, updated_at = :updated_at, execution_started_at = :execution_started_at,
+                    ready_at = :ready_at, last_heartbeat_at = :last_heartbeat_at, last_activity_at =
+                    GREATEST(last_activity_at, :last_activity_at), paused_at = :paused_at, terminated_at =
+                    :terminated_at, pausing_since = :pausing_since, runner_stopped_at = :runner_stopped_at,
+                    runner_token_hash = :runner_token_hash WHERE id = :id AND generation = :generation RETURNING
+                    $COLUMNS
+                    """,
+                ).bindUpdate(session).bind("generation", session.generation),
+            ).getOrThrow().firstOrNull()?.toSession()
+            if (updated != null) {
+                execute(
+                    Statement.create(
+                        """
+                        UPDATE runners_session_routes SET runner_token_hash = :hash, next_reconcile_at = CASE WHEN
+                        CAST(:has_next AS BOOLEAN) THEN LEAST(COALESCE(next_reconcile_at, :next_at), :next_at) ELSE
+                        next_reconcile_at END WHERE session_id = :id
+                        """,
+                    ).bind("hash", session.runnerTokenHash)
+                        .bind("has_next", nextReconcileAt != null)
+                        .bind("next_at", nextReconcileAt ?: session.updatedAt)
+                        .bind("id", session.id),
+                ).getOrThrow()
+            }
+            updated
+        }
 
     override suspend fun touchActivity(id: Uuid, at: Instant) {
-        driver.execute(
-            Statement.create(
-                """
-                UPDATE runners_sessions SET last_activity_at = GREATEST(COALESCE(last_activity_at, :at), :at)
-                WHERE id = :id
-                """,
-            ).bind("at", at).bind("id", id),
-        ).getOrThrow()
+        val orgId = orgOf(id) ?: return
+        driver.inTenant(orgId) {
+            execute(
+                Statement.create(
+                    """
+                    UPDATE runners_sessions SET last_activity_at = GREATEST(COALESCE(last_activity_at, :at), :at)
+                    WHERE id = :id
+                    """,
+                ).bind("at", at).bind("id", id),
+            ).getOrThrow()
+        }
     }
 
-    override suspend fun findByRunnerTokenHash(tokenHash: String): CloudSession? = driver.fetchAll(
-        Statement.create("""SELECT $COLUMNS FROM runners_sessions WHERE runner_token_hash = :hash""")
-            .bind("hash", tokenHash),
-    ).getOrThrow().firstOrNull()?.toSession()
+    override suspend fun findByRunnerTokenHash(tokenHash: String): CloudSession? =
+        route("runner_token_hash = :key", tokenHash)
 
     override suspend fun claimDue(owner: String, now: Instant, leaseUntil: Instant, limit: Int): List<CloudSession> =
         driver.fetchAll(
             Statement.create(
                 """
-                UPDATE runners_sessions SET reconcile_owner = :owner, reconcile_until = :until, claimed_at =
-                :now WHERE id IN (SELECT id FROM runners_sessions WHERE next_reconcile_at <= :now AND
-                (reconcile_until IS NULL OR reconcile_until < :now) ORDER BY next_reconcile_at LIMIT :limit FOR
-                UPDATE SKIP LOCKED) RETURNING $COLUMNS
+                UPDATE runners_session_routes SET reconcile_owner = :owner, reconcile_until = :until, claimed_at =
+                :now WHERE session_id IN (SELECT session_id FROM runners_session_routes WHERE next_reconcile_at <=
+                :now AND (reconcile_until IS NULL OR reconcile_until < :now) ORDER BY next_reconcile_at LIMIT
+                :limit FOR UPDATE SKIP LOCKED) RETURNING session_id, org_id
                 """,
             ).bind("owner", owner).bind("until", leaseUntil).bind("now", now).bind("limit", limit),
-        ).getOrThrow().map { it.toSession() }
+        ).getOrThrow().mapNotNull { get(it.get("org_id").asUuid(), it.get("session_id").asUuid()) }
 
     override suspend fun release(id: Uuid, owner: String, nextReconcileAt: Instant?) {
         // An API write or a heartbeat during the pass moves next_reconcile_at after claimed_at: that request for a
@@ -164,11 +183,11 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         driver.execute(
             Statement.create(
                 """
-                UPDATE runners_sessions SET reconcile_owner = NULL, reconcile_until = NULL, next_reconcile_at =
-                CASE WHEN next_reconcile_at > claimed_at AND CAST(:has_next AS BOOLEAN) THEN
+                UPDATE runners_session_routes SET reconcile_owner = NULL, reconcile_until = NULL, next_reconcile_at
+                = CASE WHEN next_reconcile_at > claimed_at AND CAST(:has_next AS BOOLEAN) THEN
                 LEAST(next_reconcile_at, :next_at) WHEN next_reconcile_at > claimed_at THEN next_reconcile_at
-                WHEN CAST(:has_next AS BOOLEAN) THEN :next_at ELSE NULL END WHERE id = :id AND reconcile_owner =
-                :owner
+                WHEN CAST(:has_next AS BOOLEAN) THEN :next_at ELSE NULL END WHERE session_id = :id AND
+                reconcile_owner = :owner
                 """,
             ).bind("has_next", nextReconcileAt != null)
                 .bind("next_at", nextReconcileAt ?: EPOCH)
@@ -176,21 +195,51 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         ).getOrThrow()
     }
 
-    override suspend fun usageSeconds(orgId: Uuid, month: String): Long = driver.fetchAll(
-        Statement.create("""SELECT seconds FROM runners_usage WHERE org_id = :org_id AND month = :month""")
-            .bind("org_id", orgId).bind("month", month),
-    ).getOrThrow().firstOrNull()?.get("seconds")?.asLong() ?: 0
+    override suspend fun usageSeconds(orgId: Uuid, month: String): Long = driver.inTenant(orgId) {
+        fetchAll(
+            Statement.create("""SELECT seconds FROM runners_usage WHERE org_id = :org_id AND month = :month""")
+                .bind("org_id", orgId).bind("month", month),
+        ).getOrThrow().firstOrNull()?.get("seconds")?.asLong() ?: 0
+    }
 
     override suspend fun addUsage(orgId: Uuid, month: String, seconds: Long) {
-        driver.execute(
-            Statement.create(
-                """
-                INSERT INTO runners_usage (org_id, month, seconds) VALUES (:org_id, :month, :seconds) ON
-                CONFLICT (org_id, month) DO UPDATE SET seconds = runners_usage.seconds + EXCLUDED.seconds
-                """,
-            ).bind("org_id", orgId).bind("month", month).bind("seconds", seconds),
+        driver.inTenant(orgId) {
+            execute(
+                Statement.create(
+                    """
+                    INSERT INTO runners_usage (org_id, month, seconds) VALUES (:org_id, :month, :seconds) ON
+                    CONFLICT (org_id, month) DO UPDATE SET seconds = runners_usage.seconds + EXCLUDED.seconds
+                    """,
+                ).bind("org_id", orgId).bind("month", month).bind("seconds", seconds),
+            ).getOrThrow()
+        }
+    }
+
+    /** The organization of a session, from the one table read across organizations. */
+    private suspend fun orgOf(id: Uuid): Uuid? = driver.fetchAll(
+        Statement.create("""SELECT org_id FROM runners_session_routes WHERE session_id = :id""").bind("id", id),
+    ).getOrThrow().firstOrNull()?.get("org_id")?.asUuid()
+
+    /** The session a route matches ([condition] on `:key`), loaded in its organization. */
+    private suspend fun route(condition: String, key: Any): CloudSession? {
+        val row = driver.fetchAll(
+            Statement.create("""SELECT session_id, org_id FROM runners_session_routes WHERE $condition""")
+                .bind("key", key),
+        ).getOrThrow().firstOrNull() ?: return null
+        return get(row.get("org_id").asUuid(), row.get("session_id").asUuid())
+    }
+
+    /** Asks the reconciler for a look at [id] at [now] (an API write). */
+    private suspend fun QueryExecutor.lookAt(id: Uuid, now: Instant) {
+        execute(
+            Statement.create("""UPDATE runners_session_routes SET next_reconcile_at = :now WHERE session_id = :id""")
+                .bind("now", now).bind("id", id),
         ).getOrThrow()
     }
+
+    private suspend fun QueryExecutor.select(id: Uuid): CloudSession? = fetchAll(
+        Statement.create("""SELECT $COLUMNS FROM runners_sessions WHERE id = :id""").bind("id", id),
+    ).getOrThrow().firstOrNull()?.toSession()
 
     private suspend fun QueryExecutor.lockOrg(orgId: Uuid) {
         fetchAll(
