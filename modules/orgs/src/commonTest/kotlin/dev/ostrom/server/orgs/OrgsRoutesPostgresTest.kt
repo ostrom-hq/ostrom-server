@@ -12,6 +12,7 @@ import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.orgs.presentation.CreateLinkRequest
@@ -82,8 +83,11 @@ class OrgsRoutesPostgresTest {
     }
 
     private fun HttpRequestBuilder.session(started: StartedSession) {
-        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}")
+        // #58: a browser write needs the CSRF header repeating the readable cookie (double submit), from the console's
+        // origin (the default console URL of the test configuration).
+        header(HttpHeaders.Cookie, "$SESSION_COOKIE=${started.secret}; $CSRF_COOKIE=${started.csrfToken}")
         header(CSRF_HEADER, started.csrfToken)
+        header(HttpHeaders.Origin, CONSOLE_ORIGIN)
     }
 
     private fun HttpRequestBuilder.json(body: Any) {
@@ -503,3 +507,5 @@ class OrgsRoutesPostgresTest {
             assertEquals(HttpStatusCode.PaymentRequired, sixth.status)
         }
 }
+
+private const val CONSOLE_ORIGIN = "http://localhost:5173"

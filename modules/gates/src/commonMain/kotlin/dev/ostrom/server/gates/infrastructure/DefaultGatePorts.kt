@@ -12,7 +12,6 @@ import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
-import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -33,9 +32,9 @@ import kotlin.uuid.Uuid
 // integrations-github, notifications), which bind their implementation over these defaults. Each default fails
 // closed: until the owner is loaded, nothing is approved that should not be.
 
-/** No organization setting yet: the default rule, self-approval only for the sole declared approver. */
+/** No organization setting yet: no self-approval, a yes always comes from another person (S2-15). */
 class DefaultGatePolicies : GatePolicies {
-    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = SelfApprovalPolicy.SOLE_APPROVER
+    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = SelfApprovalPolicy.NEVER
 }
 
 /** Without the sessions module, a gate asked inside a session is refused rather than added to an unknown session. */
@@ -53,12 +52,6 @@ class NoGateNodes : GateNodeResolver {
 /** Without the GitHub integration, a pull request's head is unknown: the merge is bound to its command. */
 class UnknownPullRequestHeads : PullRequestHeads {
     override suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest? = null
-}
-
-/** Without the receipts module, a decision is not signed yet; the next read signs it once the signer exists. */
-class UnavailableGateReceiptSigner : GateReceiptSigner {
-    override suspend fun sign(gate: Gate): String =
-        throw OstromException(ErrorKind.UNAVAILABLE, "Receipts are not available on this server.")
 }
 
 /**
