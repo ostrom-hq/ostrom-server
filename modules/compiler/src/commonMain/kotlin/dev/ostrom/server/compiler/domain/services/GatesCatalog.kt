@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler.domain.services
 
 import dev.ostrom.core.api.models.Workflow
@@ -48,7 +49,7 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
             }
         }
         val chosen = declared?.let { Triple(it.second, it.third, "declared") }
-            ?: guess(action, repo, workflows)?.let { Triple(it.first, it.second, "guessed") }
+            ?: GateGuess.guess(action, repo, workflows)?.let { Triple(it.first, it.second, "guessed") }
         return chosen?.let { (workflow, node, basis) -> ref(workflow, node, basis) }
     }
 
@@ -96,9 +97,6 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
     /** Matching helpers of the prototype, shared with the rules harness. */
     companion object {
         private const val MIN_ALIAS = 3
-        private const val OWN_WORD = 2
-        private const val ENOUGH_WORDS = 3
-        private const val NAMES_REPO = 4
 
         /**
          * The short names of a repository: `controlresell-core` → `controlresell-core`, `core`.
@@ -135,50 +133,9 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
             return repos.isEmpty() || repos.any { it.lowercase() in names }
         }
 
-        private fun decided(workflow: Workflow): Boolean = workflow.status != WorkflowStatus.PROPOSED
+        internal fun decided(workflow: Workflow): Boolean = workflow.status != WorkflowStatus.PROPOSED
 
-        private fun gates(workflow: Workflow): List<WorkflowNode> =
+        internal fun gates(workflow: Workflow): List<WorkflowNode> =
             workflow.nodes.filter { it.kind == WorkflowNodeKind.GATE }
-
-        private fun word(text: String, key: String): Boolean =
-            Regex("\\b${Regex.escape(key)}\\b", RegexOption.IGNORE_CASE).containsMatchIn(text)
-
-        private fun text(workflow: Workflow): String =
-            (listOf(workflow.name, workflow.domain) + workflow.nodes.map { "${it.label} ${it.detail.orEmpty()}" })
-                .joinToString(" ")
-                .lowercase()
-
-        // The starting heuristic: the gate whose words speak of the action, in a workflow that names the repository.
-        private fun guess(
-            action: ActionClass,
-            repo: String?,
-            workflows: List<Workflow>,
-        ): Pair<Workflow, WorkflowNode>? {
-            var best: Triple<Int, Workflow, WorkflowNode>? = null
-            for (workflow in workflows) {
-                val all = text(workflow)
-                for (node in gates(workflow).filter { it.actions == null }) {
-                    val own = "${node.label} ${node.detail.orEmpty()}".lowercase()
-                    val words = action.keywords.sumOf { key ->
-                        when {
-                            word(own, key) -> OWN_WORD
-                            word(all, key) -> 1
-                            else -> 0
-                        }
-                    }
-                    val named = repo?.let { r -> aliases(r).any { mentions(all, it) } } == true
-                    val score = words + (if (named) NAMES_REPO else 0) + (if (decided(workflow)) 1 else 0)
-                    val current = best
-                    val wins = current == null || score > current.first ||
-                        score == current.first && ties(workflow, current.second)
-                    if (words >= ENOUGH_WORDS && wins) best = Triple(score, workflow, node)
-                }
-            }
-            return best?.let { it.second to it.third }
-        }
-
-        // At equal scores: a decided workflow first, then the lower id.
-        private fun ties(workflow: Workflow, best: Workflow): Boolean =
-            decided(workflow) && !decided(best) || decided(workflow) == decided(best) && workflow.id < best.id
     }
 }

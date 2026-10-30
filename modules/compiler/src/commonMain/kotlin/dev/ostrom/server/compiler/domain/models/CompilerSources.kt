@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler.domain.models
 
 import dev.ostrom.core.api.models.Workflow

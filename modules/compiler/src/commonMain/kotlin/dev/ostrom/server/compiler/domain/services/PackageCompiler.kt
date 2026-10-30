@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler.domain.services
 
 import dev.ostrom.core.api.models.AgentEvent
@@ -538,7 +539,7 @@ object PackageCompiler {
                 kind = node.kind,
                 label = node.label,
                 mode = mode,
-                produces = NodeRules.produces(node, workflow),
+                produces = NodeProduces.produces(node, workflow),
                 trigger = trigger,
                 artifacts = artifacts.toList(),
             )
