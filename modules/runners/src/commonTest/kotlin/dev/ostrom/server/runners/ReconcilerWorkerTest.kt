@@ -16,6 +16,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 class ReconcilerWorkerTest {
     private class RecordingLogger : Logger {
@@ -47,7 +48,7 @@ class ReconcilerWorkerTest {
 
         assertEquals(1, worker { clock.now + 5.seconds }.pass())
 
-        assertEquals(listOf(due.id to clock.now + 5.seconds), repository.released)
+        assertEquals(listOf<Pair<Uuid, Instant?>>(due.id to clock.now + 5.seconds), repository.released)
         assertEquals(clock.now + 10.seconds, repository.next[later.id])
     }
 
@@ -57,7 +58,7 @@ class ReconcilerWorkerTest {
 
         worker { throw IllegalStateException("cluster said: secret body") }.pass()
 
-        assertEquals(listOf(due.id to clock.now + 30.seconds), repository.released)
+        assertEquals(listOf<Pair<Uuid, Instant?>>(due.id to clock.now + 30.seconds), repository.released)
         val (message, fields) = logger.lines.single()
         assertEquals("cloud session step failed", message)
         assertEquals("IllegalStateException", fields["error"])
