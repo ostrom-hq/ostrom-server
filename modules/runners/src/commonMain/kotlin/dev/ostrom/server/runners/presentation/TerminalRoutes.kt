@@ -106,10 +106,10 @@ private const val MAX_SIZE = 1000
 
 /**
  * The terminal routes:
- * - `POST /v1/cloud/sessions/{id}/terminal/ticket`: a single-use ticket for a browser;
- * - `WS /v1/cloud/sessions/{id}/terminal`: a member attaches (bearer token, or `?ticket=`); binary frames are the
+ * - `POST /api/v1/cloud/sessions/{id}/terminal/ticket`: a single-use ticket for a browser;
+ * - `WS /api/v1/cloud/sessions/{id}/terminal`: a member attaches (bearer token, or `?ticket=`); binary frames are the
  *   terminal's bytes both ways, text frames are [TerminalControl];
- * - `WS /v1/runner/terminal?sessionId=&epoch=`: the runner's PTY, authenticated by its runner token.
+ * - `WS /api/v1/cloud/runner/terminal?sessionId=&epoch=`: the runner's PTY, authenticated by its runner token.
  *
  * Refusals close the socket with [TerminalCloseCodes].
  *
@@ -131,7 +131,7 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
             call.respond(TerminalTicketResponse(ticket.value, ticket.expiresAt.toString()))
         }
     }
-    webSocket("/v1/cloud/sessions/{id}/terminal") {
+    webSocket("/api/v1/cloud/sessions/{id}/terminal") {
         val id = Uuid.parseOrNull(call.parameters["id"].orEmpty())
             ?: return@webSocket close(CloseReason(TerminalCloseCodes.NOT_FOUND, "No such cloud session."))
         val caller = try {
@@ -146,7 +146,7 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
         }
         attachClient(dependencies, id)
     }
-    webSocket("/v1/runner/terminal") {
+    webSocket("/api/v1/cloud/runner/terminal") {
         val token = call.request.headers[HttpHeaders.Authorization]?.removePrefix("Bearer ")?.trim()
         val id = Uuid.parseOrNull(call.parameters["sessionId"].orEmpty())
         val epoch = call.parameters["epoch"]?.toLongOrNull()

@@ -62,6 +62,24 @@ class SessionUseCasesTest {
     }
 
     @Test
+    fun aSessionWithoutNameIsNamedAfterItsRepositoryOrAgent() = runTest {
+        assertEquals("api", create(alice, CreateCloudSessionPayload(null, "codex", RepositorySpec("https://github.com/acme/api.git", null))).name)
+        assertEquals("codex", create(alice, CreateCloudSessionPayload("  ", "codex", null)).name)
+    }
+
+    @Test
+    fun theModelAndPromptAreKeptWithinBounds() = runTest {
+        val created = create(alice, CreateCloudSessionPayload("x", "claude", null, model = " claude-opus-5-5 ", prompt = "Fix the tests"))
+        assertEquals("claude-opus-5-5", created.model)
+        assertEquals("Fix the tests", created.prompt)
+        val bare = create(alice, CreateCloudSessionPayload("x", "claude", null, model = "", prompt = "  "))
+        assertEquals(null, bare.model)
+        assertEquals(null, bare.prompt)
+        assertFailsWith<InvalidCloudSessionRequestException> { create(alice, CreateCloudSessionPayload("x", "claude", null, model = "a b")) }
+        assertFailsWith<InvalidCloudSessionRequestException> { create(alice, CreateCloudSessionPayload("x", "claude", null, prompt = "x".repeat(20_001))) }
+    }
+
+    @Test
     fun createAcceptsARepositoryWithoutRef() = runTest {
         val created = create(alice, payload(repository = RepositorySpec("https://github.com/acme/api", null)))
         assertEquals(RepositorySpec("https://github.com/acme/api", null), created.repository)
@@ -69,7 +87,6 @@ class SessionUseCasesTest {
 
     @Test
     fun createRefusesBadNames() = runTest {
-        assertFailsWith<InvalidCloudSessionRequestException> { create(alice, payload(name = "   ")) }
         assertFailsWith<InvalidCloudSessionRequestException> { create(alice, payload(name = "x".repeat(121))) }
         assertFailsWith<InvalidCloudSessionRequestException> { create(alice, payload(name = "a\u0000b")) }
         assertEquals(0, repository.sessions.size)

@@ -75,6 +75,8 @@ class ModelTest {
     fun anExecutionSpecNeverPrintsItsToken() {
         val spec = ExecutionSpec(Uuid.random(), ORG_A, 1, AgentKind.CLAUDE, null, "ostrom_runner_secret", CloudPlan.FREE.sessionLimits())
         assertFalse("secret" in spec.toString())
+        val withPrompt = spec.copy(prompt = "private words")
+        assertFalse("private" in withPrompt.toString())
     }
 
     @Test

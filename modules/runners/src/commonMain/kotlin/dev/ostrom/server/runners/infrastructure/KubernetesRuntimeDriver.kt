@@ -88,7 +88,10 @@ class KubernetesRuntimeDriver(
                 put("labels", labels(spec.sessionId, spec.epoch))
             }
             put("type", "Opaque")
-            putJsonObject("stringData") { put("token", spec.runnerToken) }
+            putJsonObject("stringData") {
+                put("token", spec.runnerToken)
+                spec.prompt?.let { put("prompt", it) }
+            }
         }
         create("/api/v1/namespaces/$namespace/secrets", secret)
         create("/api/v1/namespaces/$namespace/pods", podManifest(spec, name))
