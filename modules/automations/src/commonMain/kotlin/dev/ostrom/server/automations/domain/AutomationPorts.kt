@@ -39,22 +39,23 @@ interface AutomationsRepository {
     /** Writes the status of [run]. */
     suspend fun updateRun(run: AutomationRun)
 
-    /** The run of [automationId] with [deliveryKey]. */
-    suspend fun findRunByDelivery(automationId: Uuid, deliveryKey: String): AutomationRun?
+    /** The run of [automationId] (of [orgId]) with [deliveryKey]. */
+    suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun?
 
     /** The runs of [automationId], newest first, after [before]. */
     suspend fun listRuns(orgId: Uuid, automationId: Uuid, before: Uuid?, limit: Int): List<AutomationRun>
 
-    /** How many runs of [automationId] from [sources] and in [statuses] were recorded since [since]. */
+    /** How many runs of [automationId] (of [orgId]) from [sources] and in [statuses] were recorded since [since]. */
     suspend fun countRuns(
+        orgId: Uuid,
         automationId: Uuid,
         since: Instant,
         sources: Set<RunSource>,
         statuses: Set<RunStatus>,
     ): Int
 
-    /** The session of the latest started run of [automationId] other than [except]. */
-    suspend fun latestSession(automationId: Uuid, except: Uuid): String?
+    /** The session of the latest started run of [automationId] (of [orgId]) other than [except]. */
+    suspend fun latestSession(orgId: Uuid, automationId: Uuid, except: Uuid): String?
 
     /**
      * Claims the enabled crons due at [now] (at most [limit], each by one replica): for each, [decide] gives its next

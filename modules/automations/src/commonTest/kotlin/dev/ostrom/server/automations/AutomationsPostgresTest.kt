@@ -14,11 +14,15 @@ import dev.ostrom.server.automations.fakes.ORG_A
 import dev.ostrom.server.automations.fakes.ORG_B
 import dev.ostrom.server.automations.fakes.cronDefinition
 import dev.ostrom.server.automations.fakes.webhookDefinition
+import dev.ostrom.server.automations.infrastructure.inTenant
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -52,6 +56,7 @@ class AutomationsPostgresTest {
         assertEquals(first, repository.get(ORG_A, first.id))
         assertNull(repository.get(ORG_B, first.id))
         assertEquals(second, repository.getById(second.id))
+        assertNull(repository.getById(Uuid.random()))
         assertEquals(3, repository.list(ORG_A, null, null, 10).size)
         assertEquals(listOf(second.id, first.id), repository.list(ORG_A, ALICE.toString(), null, 10).map { it.id })
         assertEquals(listOf(first.id), repository.list(ORG_A, ALICE.toString(), second.id, 10).map { it.id })
@@ -79,8 +84,8 @@ class AutomationsPostgresTest {
         val first = run(automation, "k1")
         assertEquals(first, repository.insertRun(first))
         assertEquals(first, repository.insertRun(run(automation, "k1")))
-        assertEquals(first, repository.findRunByDelivery(automation.id, "k1"))
-        assertNull(repository.findRunByDelivery(automation.id, "k2"))
+        assertEquals(first, repository.findRunByDelivery(ORG_A, automation.id, "k1"))
+        assertNull(repository.findRunByDelivery(ORG_A, automation.id, "k2"))
         val started = first.copy(status = RunStatus.STARTED, sessionId = "s1", updatedAt = t0 + 1.minutes)
         repository.updateRun(started)
         val second = repository.insertRun(run(automation, "k2", t0 + 1.minutes))
@@ -90,22 +95,52 @@ class AutomationsPostgresTest {
         assertEquals(listOf(started), repository.listRuns(ORG_A, automation.id, second.id, 10))
         assertEquals(emptyList(), repository.listRuns(ORG_B, automation.id, null, 10))
         val sources = setOf(RunSource.WEBHOOK)
-        assertEquals(2, repository.countRuns(automation.id, t0 - 1.minutes, sources, RunStatus.entries.toSet()))
-        assertEquals(1, repository.countRuns(automation.id, t0, sources, RunStatus.entries.toSet()))
-        assertEquals(1, repository.countRuns(automation.id, t0 - 1.minutes, sources, setOf(RunStatus.STARTED)))
+        assertEquals(2, repository.countRuns(ORG_A, automation.id, t0 - 1.minutes, sources, RunStatus.entries.toSet()))
+        assertEquals(1, repository.countRuns(ORG_A, automation.id, t0, sources, RunStatus.entries.toSet()))
+        assertEquals(1, repository.countRuns(ORG_A, automation.id, t0 - 1.minutes, sources, setOf(RunStatus.STARTED)))
         val cronOnly = setOf(RunSource.CRON)
-        assertEquals(0, repository.countRuns(automation.id, t0 - 1.minutes, cronOnly, setOf(RunStatus.STARTED)))
-        assertEquals("s1", repository.latestSession(automation.id, second.id))
-        assertNull(repository.latestSession(automation.id, first.id))
+        assertEquals(0, repository.countRuns(ORG_A, automation.id, t0 - 1.minutes, cronOnly, setOf(RunStatus.STARTED)))
+        assertEquals("s1", repository.latestSession(ORG_A, automation.id, second.id))
+        assertNull(repository.latestSession(ORG_A, automation.id, first.id))
         val queued = repository.insertRun(run(automation, "k3", t0 + 2.minutes))
         repository.failQueuedBefore(t0 + 3.minutes, t0 + 4.minutes)
-        val interrupted = repository.findRunByDelivery(automation.id, "k3")
+        val interrupted = repository.findRunByDelivery(ORG_A, automation.id, "k3")
         val expected = queued.copy(status = RunStatus.FAILED, reason = "interrupted", updatedAt = t0 + 4.minutes)
         assertEquals(expected, interrupted)
         repository.deleteRunsBefore(t0 + 1.minutes)
         assertEquals(2, repository.listRuns(ORG_A, automation.id, null, 10).size)
         repository.delete(ORG_A, automation.id)
-        assertNull(repository.findRunByDelivery(automation.id, "k2"))
+        assertNull(repository.findRunByDelivery(ORG_A, automation.id, "k2"))
+    }
+
+    @Test
+    fun anotherOrganizationsRowsAreNeitherSeenNorWritten() = serverTest(listOf(AutomationsModule)) {
+        val repository = it.koin.get<AutomationsRepository>()
+        val ofA = automation().also { automation -> repository.createWithinLimit(automation, 20) }
+        repository.insertRun(run(ofA, "k1"))
+        suspend fun count(org: Uuid, table: String) = it.driver.inTenant(org) {
+            fetchAll(Statement.create("SELECT COUNT(*) AS n FROM $table")).getOrThrow().first().get("n").asLong()
+        }
+        for (table in listOf("automations_automations", "automations_runs")) {
+            assertEquals(1L, count(ORG_A, table), table)
+            // No WHERE org_id: the policy alone hides organization A's rows.
+            assertEquals(0L, count(ORG_B, table), table)
+        }
+        // A write for another organization is refused, and no run of B points at an automation of A.
+        assertFailsWith<Exception> {
+            it.driver.inTenant(ORG_B) {
+                execute(
+                    Statement.create(
+                        "INSERT INTO automations_automations (id, org_id, owner, name, trigger_kind, definition, " +
+                            "enabled, version, secret_generation, created_at, updated_at) VALUES (:id, :org, 'a', " +
+                            "'n', 'cron', '{}', false, 1, 1, now(), now())",
+                    ).bind("id", Uuid.random()).bind("org", ORG_A),
+                ).getOrThrow()
+            }
+        }
+        assertFailsWith<Exception> { repository.insertRun(run(ofA, "k2").copy(orgId = ORG_B)) }
+        assertNull(repository.get(ORG_B, ofA.id))
+        assertEquals(emptyList(), repository.listRuns(ORG_B, ofA.id, null, 10))
     }
 
     @Test
@@ -126,7 +161,7 @@ class AutomationsPostgresTest {
         assertEquals(listOf(due.id), claimed.map { claim -> claim.automation.id })
         assertEquals(t0, claimed.single().slot)
         assertEquals(RunStatus.QUEUED, claimed.single().run.status)
-        assertEquals(t0, repository.findRunByDelivery(due.id, "cron:${t0.epochSeconds}")?.slotAt)
+        assertEquals(t0, repository.findRunByDelivery(ORG_A, due.id, "cron:${t0.epochSeconds}")?.slotAt)
         assertEquals(t0 + 1.minutes, repository.get(ORG_A, due.id)?.nextRunAt)
         assertEquals(t0 + 1.minutes, repository.get(ORG_A, skipped.id)?.nextRunAt)
         assertEquals(emptyList(), repository.claimDue(t0, 10) { _, _ -> CronClaim(null, null) })

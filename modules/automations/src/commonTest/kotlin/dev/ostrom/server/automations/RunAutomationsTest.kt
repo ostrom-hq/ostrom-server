@@ -175,7 +175,8 @@ class RunAutomationsTest {
             runs.trigger(automation.id, signed(automation, key = "k32"), body)
         }
         assertEquals("This automation used its runs of the day.", budget.message)
-        assertEquals(RunStatus.SKIPPED_BUDGET, repository.findRunByDelivery(automation.id, "delivery:k32")?.status)
+        val skipped = repository.findRunByDelivery(automation.orgId, automation.id, "delivery:k32")
+        assertEquals(RunStatus.SKIPPED_BUDGET, skipped?.status)
         assertEquals(31, launcher.launched.size)
     }
 

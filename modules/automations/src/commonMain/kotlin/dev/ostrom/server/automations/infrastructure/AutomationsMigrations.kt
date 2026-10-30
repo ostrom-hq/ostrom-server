@@ -5,7 +5,9 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 
 /**
  * The schema of the automations module; its tables start with `automations_`, and each is confined by row-level
- * security to the organization of the transaction (S2-01).
+ * security to the organization of the transaction (S2-01), except `automations_routes`: the one table read across
+ * organizations, by a webhook (an automation found by its id) and by the scheduler (the due crons of every
+ * organization). It holds no customer content, only an automation's id and organization and its next cron slot.
  */
 val AutomationsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -57,15 +59,14 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
                 next_run_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL,
-                UNIQUE (org_id, owner, name)
+                UNIQUE (org_id, owner, name),
+                UNIQUE (id, org_id)
             );
             CREATE INDEX automations_automations_owner
                 ON automations_automations (org_id, owner, created_at DESC, id DESC);
-            CREATE INDEX automations_automations_due
-                ON automations_automations (next_run_at) WHERE enabled AND next_run_at IS NOT NULL;
             CREATE TABLE automations_runs (
                 id UUID PRIMARY KEY,
-                automation_id UUID NOT NULL REFERENCES automations_automations (id) ON DELETE CASCADE,
+                automation_id UUID NOT NULL,
                 org_id UUID NOT NULL,
                 source TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -77,11 +78,23 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
                 slot_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL,
                 updated_at TIMESTAMPTZ NOT NULL,
-                UNIQUE (automation_id, delivery_key)
+                UNIQUE (automation_id, delivery_key),
+                -- A run belongs to an automation of its own organization.
+                FOREIGN KEY (automation_id, org_id) REFERENCES automations_automations (id, org_id) ON DELETE CASCADE
             );
             CREATE INDEX automations_runs_history ON automations_runs (automation_id, created_at DESC, id DESC);
-            CREATE INDEX automations_runs_created ON automations_runs (created_at);
-            CREATE INDEX automations_runs_queued ON automations_runs (created_at) WHERE status = 'queued';
+            CREATE INDEX automations_runs_created ON automations_runs (org_id, created_at);
+            CREATE INDEX automations_runs_queued ON automations_runs (org_id, created_at) WHERE status = 'queued';
+            CREATE TABLE automations_routes (
+                automation_id UUID PRIMARY KEY REFERENCES automations_automations (id) ON DELETE CASCADE,
+                org_id UUID NOT NULL,
+                next_run_at TIMESTAMPTZ
+            );
+            CREATE INDEX automations_routes_due ON automations_routes (next_run_at) WHERE next_run_at IS NOT NULL;
+            CREATE INDEX automations_routes_org ON automations_routes (org_id);
+            ${tenantTableSql("automations_automations")}
+            ${tenantTableSql("automations_runs")}
+            GRANT SELECT, INSERT, UPDATE ON automations_routes TO $TENANT_ROLE;
         """,
     ),
 )

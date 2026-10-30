@@ -25,46 +25,58 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [AutomationsRepository] on PostgreSQL (tables `automations_automations` and `automations_runs` of
- * [AutomationsMigrations]). The definition is JSON; the name and trigger kind are columns for the unique name per
- * owner and the scheduler's index.
+ * [AutomationsRepository] on PostgreSQL (tables of [AutomationsMigrations]). The definition is JSON; the name and
+ * trigger kind are columns for the unique name per owner.
+ *
+ * Every read and write of an automation or a run runs confined to its organization ([inTenant], S2-01). Only
+ * `automations_routes` is read across organizations: a webhook finds its automation's organization there, and the
+ * scheduler claims the due crons of every organization there, then reads and writes each in its organization.
  *
  * @param driver The database.
  */
 @Suppress("TooManyFunctions") // One implementation of the one port of the feature.
 internal class AutomationsRepositoryImpl(private val driver: Driver) : AutomationsRepository {
-    override suspend fun createWithinLimit(automation: Automation, maxPerOwner: Int): Boolean = driver.transaction {
-        // Serialize the count and the insert of one owner, so that two concurrent creations never pass the limit.
-        fetchAll(
-            Statement.create("""SELECT pg_advisory_xact_lock(hashtext(:key))""")
-                .bind("key", "automations:${automation.orgId}:${automation.owner}"),
-        ).getOrThrow()
-        val owned = fetchAll(
-            Statement.create(
-                """SELECT COUNT(*) AS n FROM automations_automations WHERE org_id = :org_id AND owner = :owner""",
-            ).bind("org_id", automation.orgId).bind("owner", automation.owner),
-        ).getOrThrow().first().get("n").asInt()
-        if (owned >= maxPerOwner) return@transaction false
-        execute(
-            Statement.create(
-                """
-                INSERT INTO automations_automations ($COLUMNS) VALUES (:id, :org_id, :owner, :name, :trigger_kind,
-                :definition, :enabled, :version, :secret_generation, :previous_secret_valid_until, :next_run_at,
-                :created_at, :updated_at)
-                """,
-            ).bindAutomation(automation).bind("created_at", automation.createdAt),
-        ).getOrThrow()
-        true
+    override suspend fun createWithinLimit(automation: Automation, maxPerOwner: Int): Boolean =
+        driver.inTenant(automation.orgId) {
+            // Serialize the count and the insert of one owner, so that two concurrent creations never pass the limit.
+            fetchAll(
+                Statement.create("""SELECT pg_advisory_xact_lock(hashtext(:key))""")
+                    .bind("key", "automations:${automation.orgId}:${automation.owner}"),
+            ).getOrThrow()
+            val owned = fetchAll(
+                Statement.create(
+                    """SELECT COUNT(*) AS n FROM automations_automations WHERE org_id = :org_id AND owner = :owner""",
+                ).bind("org_id", automation.orgId).bind("owner", automation.owner),
+            ).getOrThrow().first().get("n").asInt()
+            if (owned >= maxPerOwner) return@inTenant false
+            execute(
+                Statement.create(
+                    """
+                    INSERT INTO automations_automations ($COLUMNS) VALUES (:id, :org_id, :owner, :name,
+                    :trigger_kind, :definition, :enabled, :version, :secret_generation,
+                    :previous_secret_valid_until, :next_run_at, :created_at, :updated_at)
+                    """,
+                ).bindAutomation(automation).bind("created_at", automation.createdAt),
+            ).getOrThrow()
+            execute(
+                Statement.create(
+                    """
+                    INSERT INTO automations_routes (automation_id, org_id, next_run_at) VALUES (:id, :org_id,
+                    :next_run_at)
+                    """,
+                ).bind("id", automation.id).bind("org_id", automation.orgId).bind("next_run_at", automation.due),
+            ).getOrThrow()
+            true
+        }
+
+    override suspend fun get(orgId: Uuid, id: Uuid): Automation? = driver.inTenant(orgId) { select(id) }
+
+    override suspend fun getById(id: Uuid): Automation? {
+        val orgId = driver.fetchAll(
+            Statement.create("""SELECT org_id FROM automations_routes WHERE automation_id = :id""").bind("id", id),
+        ).getOrThrow().firstOrNull()?.get("org_id")?.asUuid() ?: return null
+        return get(orgId, id)
     }
-
-    override suspend fun get(orgId: Uuid, id: Uuid): Automation? = driver.fetchAll(
-        Statement.create("""SELECT $COLUMNS FROM automations_automations WHERE id = :id AND org_id = :org_id""")
-            .bind("id", id).bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.toAutomation()
-
-    override suspend fun getById(id: Uuid): Automation? = driver.fetchAll(
-        Statement.create("""SELECT $COLUMNS FROM automations_automations WHERE id = :id""").bind("id", id),
-    ).getOrThrow().firstOrNull()?.toAutomation()
 
     override suspend fun list(orgId: Uuid, owner: String?, before: Uuid?, limit: Int): List<Automation> {
         val cursor = if (before == null) {
@@ -80,53 +92,66 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
             """,
         ).bind("org_id", orgId).bind("owner", owner).bind("limit", limit)
         if (before != null) statement.bind("before", before)
-        return driver.fetchAll(statement).getOrThrow().map { it.toAutomation() }
+        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toAutomation() } }
     }
 
-    override suspend fun update(automation: Automation, expected: Automation): Automation? = driver.fetchAll(
-        Statement.create(
-            """
-            UPDATE automations_automations SET name = :name, trigger_kind = :trigger_kind, definition = :definition,
-            enabled = :enabled, version = :version, secret_generation = :secret_generation,
-            previous_secret_valid_until = :previous_secret_valid_until, next_run_at = :next_run_at, updated_at =
-            :updated_at WHERE id = :id AND org_id = :org_id AND owner = :owner AND version = :expected_version AND
-            updated_at = :expected_updated_at RETURNING $COLUMNS
-            """,
-        ).bindAutomation(automation)
-            .bind("expected_version", expected.version)
-            .bind("expected_updated_at", expected.updatedAt),
-    ).getOrThrow().firstOrNull()?.toAutomation()
+    override suspend fun update(automation: Automation, expected: Automation): Automation? =
+        driver.inTenant(automation.orgId) {
+            val updated = fetchAll(
+                Statement.create(
+                    """
+                    UPDATE automations_automations SET name = :name, trigger_kind = :trigger_kind, definition =
+                    :definition, enabled = :enabled, version = :version, secret_generation = :secret_generation,
+                    previous_secret_valid_until = :previous_secret_valid_until, next_run_at = :next_run_at,
+                    updated_at = :updated_at WHERE id = :id AND org_id = :org_id AND owner = :owner AND version =
+                    :expected_version AND updated_at = :expected_updated_at RETURNING $COLUMNS
+                    """,
+                ).bindAutomation(automation)
+                    .bind("expected_version", expected.version)
+                    .bind("expected_updated_at", expected.updatedAt),
+            ).getOrThrow().firstOrNull()?.toAutomation()
+            if (updated != null) schedule(updated.id, updated.due)
+            updated
+        }
 
-    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.fetchAll(
-        Statement.create("""DELETE FROM automations_automations WHERE id = :id AND org_id = :org_id RETURNING id""")
-            .bind("id", id).bind("org_id", orgId),
-    ).getOrThrow().isNotEmpty()
+    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.inTenant(orgId) {
+        fetchAll(
+            Statement.create(
+                """DELETE FROM automations_automations WHERE id = :id AND org_id = :org_id RETURNING id""",
+            ).bind("id", id).bind("org_id", orgId),
+        ).getOrThrow().isNotEmpty()
+    }
 
-    override suspend fun insertRun(run: AutomationRun): AutomationRun = driver.storeRun(run)
+    override suspend fun insertRun(run: AutomationRun): AutomationRun = driver.inTenant(run.orgId) { storeRun(run) }
 
     override suspend fun updateRun(run: AutomationRun) {
-        driver.execute(
-            Statement.create(
-                """
-                UPDATE automations_runs SET status = :status, session_id = :session_id, reason = :reason, updated_at
-                = :updated_at WHERE id = :id
-                """,
-            ).bind("status", run.status.wire)
-                .bind("session_id", run.sessionId)
-                .bind("reason", run.reason)
-                .bind("updated_at", run.updatedAt)
-                .bind("id", run.id),
-        ).getOrThrow()
+        driver.inTenant(run.orgId) {
+            execute(
+                Statement.create(
+                    """
+                    UPDATE automations_runs SET status = :status, session_id = :session_id, reason = :reason,
+                    updated_at = :updated_at WHERE id = :id
+                    """,
+                ).bind("status", run.status.wire)
+                    .bind("session_id", run.sessionId)
+                    .bind("reason", run.reason)
+                    .bind("updated_at", run.updatedAt)
+                    .bind("id", run.id),
+            ).getOrThrow()
+        }
     }
 
-    override suspend fun findRunByDelivery(automationId: Uuid, deliveryKey: String): AutomationRun? =
-        driver.fetchAll(
-            Statement.create(
-                """
-                SELECT $RUN_COLUMNS FROM automations_runs WHERE automation_id = :automation_id AND delivery_key = :key
-                """,
-            ).bind("automation_id", automationId).bind("key", deliveryKey),
-        ).getOrThrow().firstOrNull()?.toRun()
+    override suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun? =
+        driver.inTenant(orgId) {
+            fetchAll(
+                Statement.create(
+                    """
+                    SELECT $RUN_COLUMNS FROM automations_runs WHERE automation_id = :automation_id AND delivery_key =
+                    :key
+                    """,
+                ).bind("automation_id", automationId).bind("key", deliveryKey),
+            ).getOrThrow().firstOrNull()?.toRun()
+        }
 
     override suspend fun listRuns(orgId: Uuid, automationId: Uuid, before: Uuid?, limit: Int): List<AutomationRun> {
         val cursor = if (before == null) {
@@ -142,76 +167,123 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
             """,
         ).bind("automation_id", automationId).bind("org_id", orgId).bind("limit", limit)
         if (before != null) statement.bind("before", before)
-        return driver.fetchAll(statement).getOrThrow().map { it.toRun() }
+        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toRun() } }
     }
 
     override suspend fun countRuns(
+        orgId: Uuid,
         automationId: Uuid,
         since: Instant,
         sources: Set<RunSource>,
         statuses: Set<RunStatus>,
-    ): Int = driver.fetchAll(
-        Statement.create(
-            """
-            SELECT COUNT(*) AS n FROM automations_runs WHERE automation_id = :automation_id AND created_at > :since
-            AND source IN (:sources) AND status IN (:statuses)
-            """,
-        ).bind("automation_id", automationId)
-            .bind("since", since)
-            .bind("sources", sources.map { it.wire })
-            .bind("statuses", statuses.map { it.wire }),
-    ).getOrThrow().first().get("n").asInt()
+    ): Int = driver.inTenant(orgId) {
+        fetchAll(
+            Statement.create(
+                """
+                SELECT COUNT(*) AS n FROM automations_runs WHERE automation_id = :automation_id AND created_at >
+                :since AND source IN (:sources) AND status IN (:statuses)
+                """,
+            ).bind("automation_id", automationId)
+                .bind("since", since)
+                .bind("sources", sources.map { it.wire })
+                .bind("statuses", statuses.map { it.wire }),
+        ).getOrThrow().first().get("n").asInt()
+    }
 
-    override suspend fun latestSession(automationId: Uuid, except: Uuid): String? = driver.fetchAll(
-        Statement.create(
-            """
-            SELECT session_id FROM automations_runs WHERE automation_id = :automation_id AND status = 'started' AND
-            id <> :except ORDER BY created_at DESC, id DESC LIMIT 1
-            """,
-        ).bind("automation_id", automationId).bind("except", except),
-    ).getOrThrow().firstOrNull()?.let { it.get("session_id").asStringOrNull() }
+    override suspend fun latestSession(orgId: Uuid, automationId: Uuid, except: Uuid): String? =
+        driver.inTenant(orgId) {
+            fetchAll(
+                Statement.create(
+                    """
+                    SELECT session_id FROM automations_runs WHERE automation_id = :automation_id AND status =
+                    'started' AND id <> :except ORDER BY created_at DESC, id DESC LIMIT 1
+                    """,
+                ).bind("automation_id", automationId).bind("except", except),
+            ).getOrThrow().firstOrNull()?.let { it.get("session_id").asStringOrNull() }
+        }
 
     override suspend fun claimDue(
         now: Instant,
         limit: Int,
         decide: suspend (Automation, Instant) -> CronClaim,
     ): List<ClaimedRun> = driver.transaction {
-        // Each due row is locked by one replica; another replica skips it, and the new next slot is written before
-        // the lock is released, so a slot is never run twice.
+        // Each due route is locked by one replica; another replica skips it, and the new next slot is written before
+        // the lock is released, so a slot is never run twice. The transaction runs as the tenant role and switches
+        // its organization for each automation, whose rows are read and written confined to it.
+        execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
         val due = fetchAll(
             Statement.create(
                 """
-                SELECT $COLUMNS FROM automations_automations WHERE enabled AND next_run_at IS NOT NULL AND next_run_at
-                <= :now ORDER BY next_run_at LIMIT :limit FOR UPDATE SKIP LOCKED
+                SELECT automation_id, org_id, next_run_at FROM automations_routes WHERE next_run_at <= :now ORDER BY
+                next_run_at LIMIT :limit FOR UPDATE SKIP LOCKED
                 """,
             ).bind("now", now).bind("limit", limit),
-        ).getOrThrow().map { it.toAutomation() to it.get("next_run_at").asInstant() }
-        due.mapNotNull { (automation, slot) ->
-            val claim = decide(automation, slot)
-            execute(
-                Statement.create("""UPDATE automations_automations SET next_run_at = :next WHERE id = :id""")
-                    .bind("next", claim.nextRunAt).bind("id", automation.id),
+        ).getOrThrow().map { row ->
+            Triple(row.get("automation_id").asUuid(), row.get("org_id").asUuid(), row.get("next_run_at").asInstant())
+        }
+        due.flatMap { (id, orgId, slot) ->
+            fetchAll(
+                Statement.create("SELECT set_config('$TENANT_SETTING', :org, true)").bind("org", orgId.toString()),
             ).getOrThrow()
-            claim.run?.let { ClaimedRun(automation, storeRun(it), slot) }
+            // The automation is there: its route is deleted with it.
+            fetchAll(Statement.create("""SELECT $COLUMNS FROM automations_automations WHERE id = :id""").bind("id", id))
+                .getOrThrow().map { it.toAutomation() }.mapNotNull { automation ->
+                    val claim = decide(automation, slot)
+                    execute(
+                        Statement.create("""UPDATE automations_automations SET next_run_at = :next WHERE id = :id""")
+                            .bind("next", claim.nextRunAt).bind("id", id),
+                    ).getOrThrow()
+                    schedule(id, claim.nextRunAt)
+                    claim.run?.let { ClaimedRun(automation, storeRun(it), slot) }
+                }
         }
     }
 
     override suspend fun deleteRunsBefore(before: Instant) {
-        driver.execute(
-            Statement.create("""DELETE FROM automations_runs WHERE created_at < :before""").bind("before", before),
-        ).getOrThrow()
+        for (orgId in organizations()) {
+            driver.inTenant(orgId) {
+                execute(
+                    Statement.create("""DELETE FROM automations_runs WHERE org_id = :org_id AND created_at < :before""")
+                        .bind("org_id", orgId).bind("before", before),
+                ).getOrThrow()
+            }
+        }
     }
 
     override suspend fun failQueuedBefore(before: Instant, now: Instant) {
-        driver.execute(
-            Statement.create(
-                """
-                UPDATE automations_runs SET status = 'failed', reason = 'interrupted', updated_at = :now WHERE status
-                = 'queued' AND created_at < :before
-                """,
-            ).bind("now", now).bind("before", before),
+        for (orgId in organizations()) {
+            driver.inTenant(orgId) {
+                execute(
+                    Statement.create(
+                        """
+                        UPDATE automations_runs SET status = 'failed', reason = 'interrupted', updated_at = :now
+                        WHERE org_id = :org_id AND status = 'queued' AND created_at < :before
+                        """,
+                    ).bind("now", now).bind("org_id", orgId).bind("before", before),
+                ).getOrThrow()
+            }
+        }
+    }
+
+    /** The organizations that have automations, from the one table read across organizations. */
+    private suspend fun organizations(): List<Uuid> = driver.fetchAll(
+        Statement.create("""SELECT DISTINCT org_id FROM automations_routes"""),
+    ).getOrThrow().map { it.get("org_id").asUuid() }
+
+    /** Writes the next slot the scheduler looks at. */
+    private suspend fun QueryExecutor.schedule(id: Uuid, nextRunAt: Instant?) {
+        execute(
+            Statement.create("""UPDATE automations_routes SET next_run_at = :next WHERE automation_id = :id""")
+                .bind("next", nextRunAt).bind("id", id),
         ).getOrThrow()
     }
+
+    private suspend fun QueryExecutor.select(id: Uuid): Automation? = fetchAll(
+        Statement.create("""SELECT $COLUMNS FROM automations_automations WHERE id = :id""").bind("id", id),
+    ).getOrThrow().firstOrNull()?.toAutomation()
+
+    /** The slot the scheduler waits for: only an enabled automation has one. */
+    private val Automation.due: Instant? get() = nextRunAt.takeIf { enabled }
 
     private suspend fun QueryExecutor.storeRun(run: AutomationRun): AutomationRun = fetchAll(
         // A conflict on the delivery key returns the earlier run (the no-op update makes RETURNING give its row).

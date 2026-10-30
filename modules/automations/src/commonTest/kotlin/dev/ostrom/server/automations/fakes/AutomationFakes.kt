@@ -96,7 +96,7 @@ class InMemoryAutomations : AutomationsRepository {
     }
 
     override suspend fun insertRun(run: AutomationRun): AutomationRun {
-        findRunByDelivery(run.automationId, run.deliveryKey.orEmpty())?.let { return it }
+        findRunByDelivery(run.orgId, run.automationId, run.deliveryKey.orEmpty())?.let { return it }
         runs[run.id] = run
         return run
     }
@@ -105,8 +105,10 @@ class InMemoryAutomations : AutomationsRepository {
         runs[run.id] = run
     }
 
-    override suspend fun findRunByDelivery(automationId: Uuid, deliveryKey: String): AutomationRun? =
-        runs.values.firstOrNull { it.automationId == automationId && it.deliveryKey == deliveryKey }
+    override suspend fun findRunByDelivery(orgId: Uuid, automationId: Uuid, deliveryKey: String): AutomationRun? =
+        runs.values.firstOrNull {
+            it.orgId == orgId && it.automationId == automationId && it.deliveryKey == deliveryKey
+        }
 
     override suspend fun listRuns(orgId: Uuid, automationId: Uuid, before: Uuid?, limit: Int): List<AutomationRun> {
         val all = runs.values.reversed().filter { it.orgId == orgId && it.automationId == automationId }
@@ -115,6 +117,7 @@ class InMemoryAutomations : AutomationsRepository {
     }
 
     override suspend fun countRuns(
+        orgId: Uuid,
         automationId: Uuid,
         since: Instant,
         sources: Set<RunSource>,
@@ -123,7 +126,7 @@ class InMemoryAutomations : AutomationsRepository {
         it.automationId == automationId && it.createdAt > since && it.source in sources && it.status in statuses
     }
 
-    override suspend fun latestSession(automationId: Uuid, except: Uuid): String? = runs.values.reversed()
+    override suspend fun latestSession(orgId: Uuid, automationId: Uuid, except: Uuid): String? = runs.values.reversed()
         .firstOrNull { it.automationId == automationId && it.status == RunStatus.STARTED && it.id != except }
         ?.sessionId
 

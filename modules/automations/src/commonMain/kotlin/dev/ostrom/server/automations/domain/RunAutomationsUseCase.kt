@@ -112,8 +112,14 @@ class RunAutomationsUseCaseImpl(
         if (!automation.enabled) throw AutomationDisabledException()
         val payload = payloadOf(body)
         val key = deliveryKey(delivery.deliveryKey, body, now)
-        repository.findRunByDelivery(id, key)?.let { return Triggered(it, deduplicated = true) }
-        val recent = repository.countRuns(id, now - 1.minutes, setOf(RunSource.WEBHOOK), RunStatus.entries.toSet())
+        repository.findRunByDelivery(automation.orgId, id, key)?.let { return Triggered(it, deduplicated = true) }
+        val recent = repository.countRuns(
+            automation.orgId,
+            id,
+            now - 1.minutes,
+            setOf(RunSource.WEBHOOK),
+            RunStatus.entries.toSet(),
+        )
         if (recent >= MAX_PER_MINUTE) throw AutomationRateLimitException("At most $MAX_PER_MINUTE requests a minute.")
         val triggered = record(automation, RunSource.WEBHOOK, key, payload, now)
         if (triggered.run.status == RunStatus.SKIPPED_BUDGET) {
@@ -252,6 +258,7 @@ class RunAutomationsUseCaseImpl(
 
     /** Cron and webhook runs that count towards the day's budget, recorded over the 24 hours before [at]. */
     private suspend fun runsOfDay(automation: Automation, at: Instant): Int = repository.countRuns(
+        automation.orgId,
         automation.id,
         at - 1.days,
         setOf(RunSource.CRON, RunSource.WEBHOOK),
@@ -259,7 +266,8 @@ class RunAutomationsUseCaseImpl(
     )
 
     private suspend fun overlapping(automation: Automation, except: Uuid): Boolean =
-        repository.latestSession(automation.id, except)?.let { launcher.isWorking(automation.orgId, it) } ?: false
+        repository.latestSession(automation.orgId, automation.id, except)
+            ?.let { launcher.isWorking(automation.orgId, it) } ?: false
 
     private suspend fun verify(automation: Automation, delivery: WebhookDelivery, body: ByteArray, now: Instant) {
         val timestamp = delivery.timestamp?.toLongOrNull()
