@@ -20,7 +20,8 @@ import org.koin.core.module.Module
 
 /**
  * Runs a test against a real server: a fresh PostgreSQL database (see [TestDatabase]), the kernel, the given
- * modules with their migrations applied, and their routes. Skipped when no test database is configured.
+ * modules with their migrations applied, and their routes. Skipped when no test database is configured. With
+ * [CONTRACT_ANSWERS_DIR] set, every answer is recorded for the contract check ([recordContractAnswers]).
  *
  * @param modules The modules under test, in dependency order.
  * @param overrides Koin definitions replacing real ones (a fake clock, a fake token authenticator).
@@ -50,7 +51,10 @@ internal fun serverTest(
             val migrations = koin.get<MigrationRunner>()
             modules.forEach { migrations.migrate(it.name, it.migrations) }
             modules.forEach { it.initialize(koin) }
-            application { configureHttp(koin, modules) }
+            application {
+                recordContractAnswers(environment)
+                configureHttp(koin, modules)
+            }
             // Started now, not lazily at the first request: a test that never calls the client would otherwise start
             // the application after the finally below has closed Koin.
             startApplication()

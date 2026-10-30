@@ -121,9 +121,44 @@ jobs:
         run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Every answer the server tests receive, checked against the contract below.
+          OSTROM_CONTRACT_ANSWERS_DIR: ${{ runner.temp }}/contract-answers
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
+      # The answers the tests received have the bodies of the API contract (ci/contract/check-answers.mjs), at the
+      # ostrom-core commit of ci/contract/core.ref; the known differences are listed, with their reason, in
+      # ci/contract/answers-drift.txt.
+      - name: Contract version
+        if: ${{ !cancelled() }}
+        id: contract
+        run: echo "ref=$(tr -d '[:space:]' < ci/contract/core.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.contract.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: contract-core
+          sparse-checkout: api/openapi.yaml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ !cancelled() }}
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ci/contract/package-lock.json
+      - name: Every answer of the tests has the contract's shape
+        if: ${{ !cancelled() }}
+        working-directory: ci/contract
+        run: |
+          npm ci --no-audit --no-fund --ignore-scripts
+          status=0
+          node check-answers.mjs ../../contract-core/api/openapi.yaml "$RUNNER_TEMP/contract-answers" \
+            answers-drift.txt "$RUNNER_TEMP/contract-answers.md" || status=$?
+          cat "$RUNNER_TEMP/contract-answers.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds

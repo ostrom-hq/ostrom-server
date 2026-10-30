@@ -16,3 +16,5 @@
 # Python tooling of ops/ (coverage, bytecode).
 __pycache__/
 .coverage
+# The contract check's packages (ci/contract, npm ci).
+/ci/contract/node_modules/

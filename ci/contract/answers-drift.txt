@@ -1,0 +1,5 @@
+# Answers of the server tests that differ from the ostrom-core contract, kept on purpose until fixed, one per line:
+#   <operationId> <status>  <reason>
+# check-answers.mjs fails on a difference not listed here, and on a listed one the tests now answer as the contract
+# (remove its line in the pull request that fixes it). The rule of the product wave: the server serves the contract's
+# schema unless the reason is written here and in the coordination journal.

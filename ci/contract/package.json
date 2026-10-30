@@ -1,0 +1,15 @@
+{
+  "name": "ostrom-server-contract-check",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Checks the answers recorded by the server tests against the bodies of the ostrom-core API contract.",
+  "type": "module",
+  "scripts": {
+    "check": "node check-answers.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "yaml": "2.9.1"
+  }
+}
