@@ -4,7 +4,7 @@ package dev.ostrom.server.compiler.presentation
 import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
-import dev.ostrom.server.compiler.domain.services.RulesHarness
+import dev.ostrom.server.compiler.domain.usecases.catalogJson
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -17,11 +17,8 @@ import io.ktor.server.resources.post
 import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 /**
  * The packages, workflows and gates catalogue routes of the contract. Every route is authenticated and scoped to the
@@ -40,16 +37,11 @@ fun Route.compilerRoutes(dependencies: CompilerRoutesDependencies) {
 private fun Route.catalogRoutes(dependencies: CompilerRoutesDependencies) = with(dependencies) {
     get<GateCatalogApi> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
-        val entries = catalog(actor.orgId, params.repo)
-        call.respond(
-            buildJsonObject {
-                val gated = entries.filter { it.gate != null }.distinctBy { it.gate }
-                put("gates", JsonArray(gated.map { RulesHarness.gateJson(it) }))
-                put("actions", JsonArray(entries.map { RulesHarness.actionJson(it) }))
-                put("failMode", "closed")
-                put("waitSeconds", WAIT_SECONDS)
-            },
-        )
+        call.respond(catalogJson(catalog(actor.orgId, params.repo)))
+    }
+    get<GateCatalogApi.Signed> { params ->
+        val actor = actorOf(call, CompilerScopes.readingPackages)
+        call.respond(policy(actor.orgId, params.parent.repo))
     }
 }
 
@@ -132,7 +124,6 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
 }
 
 private const val MAX_AUDIT = 200
-private const val WAIT_SECONDS = 300
 
 private suspend fun CompilerRoutesDependencies.find(actor: GateActor, digest: String): StoredPackage =
     repository.findPackage(actor.orgId, digest) ?: throw OstromException(ErrorKind.NOT_FOUND, "Package not found.")
