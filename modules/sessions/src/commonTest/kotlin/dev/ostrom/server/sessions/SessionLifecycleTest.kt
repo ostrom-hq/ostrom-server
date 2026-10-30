@@ -22,6 +22,7 @@ import dev.ostrom.server.sessions.fakes.agent
 import dev.ostrom.server.sessions.fakes.user
 import dev.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import kotlinx.coroutines.test.runTest
+import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -189,6 +190,9 @@ class SessionLifecycleTest {
             object : CloseSessionUseCase {
                 override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session =
                     if (id == "s-1") error("boom") else bench.close(orgId, id, end)
+
+                override suspend fun closeLocked(tx: SessionsTransaction, session: Session, end: EndSession) =
+                    bench.close.closeLocked(tx, session, end)
             },
             bench.clock,
             bench.logger,
