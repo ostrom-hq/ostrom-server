@@ -71,7 +71,7 @@ class TestClock(var now: Instant = Relay.epoch) : Clock {
 class FakeReveal(val values: MutableMap<Uuid, String> = mutableMapOf()) : RevealSecretsUseCase {
     var failing = false
 
-    override suspend fun invoke(orgId: Uuid, ids: List<Uuid>): Map<Uuid, SecretValue> {
+    override suspend fun invoke(orgId: Uuid, ids: Collection<Uuid>): Map<Uuid, SecretValue> {
         if (failing) error("key changed")
         return ids.mapNotNull { id -> values[id]?.let { id to SecretValue(it) } }.toMap()
     }
