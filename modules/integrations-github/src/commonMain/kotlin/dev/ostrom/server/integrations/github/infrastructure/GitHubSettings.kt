@@ -30,6 +30,7 @@ data class GitHubSettings(
     // The key never appears in a log or a dump of the settings.
     override fun toString(): String = "GitHubSettings(appId=$appId, slug=$slug, apiUrl=$apiUrl, configured=$configured)"
 
+    /** Reads the settings. */
     companion object {
         /**
          * Reads the settings.

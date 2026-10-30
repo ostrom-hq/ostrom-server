@@ -120,12 +120,6 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
         }
     }
 
-    private fun ResultSet.Row.toInstallation() = GitHubInstallation(
-        orgId = Uuid.parse(get("org_id").asString()),
-        installationId = get("installation_id").asString().toLong(),
-        account = get("account").asString(),
-    )
-
     private class Tx(private val executor: QueryExecutor) {
         suspend fun fetch(statement: Statement): List<ResultSet.Row> =
             executor.fetchAll(statement).getOrThrow().toList()
@@ -135,5 +129,11 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
 
     private companion object {
         const val INSTALLATION_COLUMNS = "org_id, installation_id, account"
+
+        fun ResultSet.Row.toInstallation() = GitHubInstallation(
+            orgId = Uuid.parse(get("org_id").asString()),
+            installationId = get("installation_id").asString().toLong(),
+            account = get("account").asString(),
+        )
     }
 }
