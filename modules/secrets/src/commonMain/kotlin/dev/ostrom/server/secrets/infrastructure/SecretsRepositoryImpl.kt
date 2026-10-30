@@ -22,8 +22,8 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
     override suspend fun create(stored: StoredSecret): Boolean {
         val secret = stored.secret
         val statement = Statement.create(
-            "INSERT INTO secrets_entries (id, org_id, name, owner_member_id, envelope, version, created_at, updated_at) " +
-                "VALUES (:id, :org_id, :name, :owner, :envelope, :version, :created_at, :updated_at) " +
+            "INSERT INTO secrets_entries (id, org_id, name, owner_member_id, envelope, version, created_at, updated_at, updated_by) " +
+                "VALUES (:id, :org_id, :name, :owner, :envelope, :version, :created_at, :updated_at, :updated_by) " +
                 "ON CONFLICT (org_id, name, owner_member_id) DO NOTHING",
         )
             .bind("id", secret.id)
@@ -34,6 +34,7 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
             .bind("version", secret.version)
             .bind("created_at", secret.createdAt)
             .bind("updated_at", secret.updatedAt)
+            .bind("updated_by", secret.updatedBy)
         return driver.execute(statement).getOrThrow() == 1L
     }
 
@@ -65,16 +66,37 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
         return driver.fetchAll(statement).getOrThrow().map { it.toSecret() }
     }
 
-    override suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant): Secret? = driver.fetchAll(
+    override suspend fun rotate(orgId: Uuid, id: Uuid, envelope: String, updatedAt: Instant, updatedBy: Uuid): Secret? = driver.fetchAll(
         Statement.create(
-            "UPDATE secrets_entries SET envelope = :envelope, version = version + 1, updated_at = :updated_at " +
+            "UPDATE secrets_entries SET envelope = :envelope, version = version + 1, updated_at = :updated_at, updated_by = :updated_by " +
                 "WHERE org_id = :org_id AND id = :id RETURNING $COLUMNS",
         )
             .bind("envelope", envelope)
             .bind("updated_at", updatedAt)
+            .bind("updated_by", updatedBy)
             .bind("org_id", orgId)
             .bind("id", id),
     ).getOrThrow().firstOrNull()?.toSecret()
+
+    override suspend fun findByName(orgId: Uuid, ownerMemberId: Uuid?, name: String): Secret? {
+        val owner = if (ownerMemberId == null) "owner_member_id IS NULL" else "owner_member_id = :owner"
+        val statement = Statement.create("SELECT $COLUMNS FROM secrets_entries WHERE org_id = :org_id AND name = :name AND $owner")
+            .bind("org_id", orgId)
+            .bind("name", name)
+        if (ownerMemberId != null) statement.bind("owner", ownerMemberId)
+        return driver.fetchAll(statement).getOrThrow().firstOrNull()?.toSecret()
+    }
+
+    override suspend fun getOrgSecretsByName(orgId: Uuid, names: Collection<String>): List<StoredSecret> {
+        if (names.isEmpty()) return emptyList()
+        return driver.fetchAll(
+            Statement.create(
+                "SELECT $COLUMNS, envelope FROM secrets_entries WHERE org_id = :org_id AND owner_member_id IS NULL AND name IN :names",
+            )
+                .bind("org_id", orgId)
+                .bind("names", names.toList()),
+        ).getOrThrow().map { StoredSecret(it.toSecret(), it.get("envelope").asString()) }
+    }
 
     override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.execute(
         Statement.create("DELETE FROM secrets_entries WHERE org_id = :org_id AND id = :id")
@@ -93,9 +115,10 @@ class SecretsRepositoryImpl(private val driver: Driver) : SecretsRepository {
         version = get("version").asInt(),
         createdAt = get("created_at").asInstant(),
         updatedAt = get("updated_at").asInstant(),
+        updatedBy = get("updated_by").asUuid(),
     )
 
     private companion object {
-        const val COLUMNS = "id, org_id, name, owner_member_id, version, created_at, updated_at"
+        const val COLUMNS = "id, org_id, name, owner_member_id, version, created_at, updated_at, updated_by"
     }
 }
