@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.infrastructure
 
 import dev.ostrom.server.runners.domain.CloudSession
@@ -130,7 +131,7 @@ class KubernetesRuntimeDriver(
         if (policiesApplied) return
         for (restricted in listOf(true, false)) {
             val name = if (restricted) RESTRICTED_POLICY else OPEN_POLICY
-            val policy = SessionNetworkPolicy.manifest(name, restricted)
+            val policy = SessionNetworkPolicy.manifest(name, restricted, settings.serverSelector)
             val path = "$base/apis/networking.k8s.io/v1/namespaces/$namespace/networkpolicies"
             val created = call(HttpMethod.Post, path, policy)
             if (created.status == HttpStatusCode.Conflict) {

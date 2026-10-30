@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.infrastructure
 
 import kotlinx.serialization.json.JsonObject
@@ -21,9 +22,7 @@ object SessionNetworkPolicy {
     /** DNS, over UDP and TCP. */
     private const val DNS_PORT = 53
 
-    /** The label of the server's pods, which the runners may reach (set by the deployment). */
-    const val SERVER_POD_LABEL = "app.kubernetes.io/name"
-    const val SERVER_POD_NAME = "ostrom-server"
+    /** The server's port, which the runners reach. */
     const val SERVER_PORT = 8080
 
     /** IPv4 ranges never reachable from a session. */
@@ -49,10 +48,11 @@ object SessionNetworkPolicy {
      *
      * @param name The policy's name.
      * @param restricted Whether it is the free plan's variant.
+     * @param serverSelector The labels of the server's pods.
      *
      * @return The NetworkPolicy manifest.
      */
-    fun manifest(name: String, restricted: Boolean): JsonObject = buildJsonObject {
+    fun manifest(name: String, restricted: Boolean, serverSelector: Map<String, String>): JsonObject = buildJsonObject {
         put("apiVersion", "networking.k8s.io/v1")
         put("kind", "NetworkPolicy")
         putJsonObject("metadata") {
@@ -88,7 +88,9 @@ object SessionNetworkPolicy {
                             add(
                                 buildJsonObject {
                                     putJsonObject("podSelector") {
-                                        putJsonObject("matchLabels") { put(SERVER_POD_LABEL, SERVER_POD_NAME) }
+                                        putJsonObject("matchLabels") {
+                                            serverSelector.forEach { (key, value) -> put(key, value) }
+                                        }
                                     }
                                 },
                             )

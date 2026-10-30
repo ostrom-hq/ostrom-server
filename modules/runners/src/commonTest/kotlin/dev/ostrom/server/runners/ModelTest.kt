@@ -23,6 +23,7 @@ import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.infrastructure.DisabledRuntimeDriver
+import dev.ostrom.server.runners.infrastructure.KubernetesSettings
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.presentation.CLOUD_READ
@@ -185,6 +186,7 @@ class ModelTest {
                     "OSTROM_RUNNERS_WORKSPACE_SIZE" to "5Gi",
                     "OSTROM_RUNNERS_KUBERNETES_IMAGE_PULL_SECRET" to "ghcr",
                     "OSTROM_RUNNERS_KUBERNETES_PRIORITY_CLASS" to "ostrom-low",
+                    "OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to " app.kubernetes.io/instance=prod , role=api",
                     "OSTROM_RUNNERS_DOCKER_API_URL" to "http://docker:2375",
                     "OSTROM_RUNNERS_DOCKER_NETWORK" to "ostrom",
                 ),
@@ -201,6 +203,7 @@ class ModelTest {
         assertEquals("5Gi", config.kubernetes.workspaceSize)
         assertEquals("ghcr", config.kubernetes.imagePullSecret)
         assertEquals("ostrom-low", config.kubernetes.priorityClass)
+        assertEquals(mapOf("app.kubernetes.io/instance" to "prod", "role" to "api"), config.kubernetes.serverSelector)
         assertEquals("http://docker:2375", config.docker.apiUrl)
         assertEquals("ostrom", config.docker.network)
         assertEquals(
@@ -209,6 +212,15 @@ class ModelTest {
                 MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "https://x")),
             ).driver,
         )
+    }
+
+    @Test
+    fun theServerSelectorDefaultsToTheChartLabelsAndIsChecked() {
+        val default = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to " ")))
+        assertEquals(KubernetesSettings.DEFAULT_SERVER_SELECTOR, default.kubernetes.serverSelector)
+        assertFailsWith<InvalidConfigException> {
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_KUBERNETES_SERVER_SELECTOR" to "a=b,c")))
+        }
     }
 
     @Test
