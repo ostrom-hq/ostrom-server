@@ -21,6 +21,7 @@ import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -59,6 +60,9 @@ class OrgsServingRolePostgresTest {
                     .getOrThrow()
                 server.database.superuser.execute("GRANT ostrom_tenant TO $role").getOrThrow()
                 val orgs = OrgsRepositoryImpl(serving)
+                // Without its own EXECUTE grant, a role cannot run them: PUBLIC has none (S2-60).
+                assertFails { orgs.slugTaken("acme") }
+                server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
                 val members = MembersRepositoryImpl(serving)
                 val invitations = InvitationsRepositoryImpl(serving)
 
@@ -92,5 +96,20 @@ class OrgsServingRolePostgresTest {
                 assertEquals(invitation, invitations.findLiveByTokenHash("hash-1", now))
                 assertNull(invitations.findLiveByTokenHash("hash-2", now))
             }
+        }
+
+    @Test
+    fun theCrossOrganizationFunctionsPutTheTemporarySchemaLast() =
+        serverTest(listOf(IdentityModule, OrgsModule)) { server ->
+            val hardened =
+                server.driver
+                    .fetchAll(
+                        "SELECT count(*) AS n FROM pg_proc WHERE proname LIKE 'orgs\\_%' " +
+                            "AND proconfig = ARRAY['search_path=pg_catalog, public, pg_temp']"
+                    ).getOrThrow()
+                    .single()
+                    .get("n")
+                    .asLong()
+            assertEquals(6L, hardened)
         }
 }

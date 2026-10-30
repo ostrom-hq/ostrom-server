@@ -47,7 +47,9 @@ rolls back on any failure.
 What must run before or across organizations (resolving a token, sign-in, creating an organization, invitations,
 billing webhooks…) goes through narrow `SECURITY DEFINER` functions, each listed here with its test. They are owned
 by **`ostrom_router`** (`NOLOGIN`, owner of no table, never a member of the serving role), reach the rows through a
-policy `TO ostrom_router` of their tables, and set `search_path = pg_catalog, public`.
+policy `TO ostrom_router` of their tables, and set `search_path = pg_catalog, public, pg_temp` (`pg_temp` last, so
+a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLIC` and granted to `ostrom_app` only
+(audit S2-60).
 
 | Function | Module | What it touches | Test |
 |---|---|---|---|
