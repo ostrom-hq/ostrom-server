@@ -4,6 +4,7 @@ package dev.ostrom.server.identity.presentation
 import dev.ostrom.server.identity.domain.SessionRequiredException
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import kotlin.uuid.Uuid
 
 /**
@@ -27,3 +28,22 @@ fun AuthenticatedPrincipal.userId(): Uuid {
  */
 internal fun AuthenticatedPrincipal.credentialUuid(): Uuid =
     credentialId?.let(Uuid::parseOrNull) ?: throw SessionRequiredException()
+
+/**
+ * The member and organization the request names in `Ostrom-Org`, for `/me`.
+ *
+ * @param principal The caller.
+ * @return Both, or null when the header names no organization the caller is a member of.
+ */
+internal suspend fun PrincipalOrgResolver.currentOrganization(
+    principal: AuthenticatedPrincipal,
+): Pair<MeMemberResponse, MeOrganizationResponse>? {
+    val member = resolve(principal, null)
+    val org = member?.let { profile(it.orgId) }
+    return if (member == null || org == null) {
+        null
+    } else {
+        MeMemberResponse(member.memberId.toString(), member.role.name.lowercase()) to
+            MeOrganizationResponse(org.id.toString(), org.slug, org.name)
+    }
+}

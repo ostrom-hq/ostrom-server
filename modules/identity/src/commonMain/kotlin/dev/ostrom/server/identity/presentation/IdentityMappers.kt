@@ -8,8 +8,16 @@ import dev.ostrom.server.identity.domain.DevicePollResult
 import dev.ostrom.server.identity.domain.IssuedToken
 import dev.ostrom.server.identity.domain.Profile
 
-/** Maps the profile; [csrfToken] only for a browser session. */
-fun Profile.toProfileResponse(csrfToken: String?) = ProfileResponse(
+/**
+ * Maps the profile.
+ *
+ * @param csrfToken Only for a browser session.
+ * @param current The member and organization the request named in `Ostrom-Org`, if any.
+ */
+fun Profile.toProfileResponse(
+    csrfToken: String?,
+    current: Pair<MeMemberResponse, MeOrganizationResponse>?,
+) = ProfileResponse(
     id = user.id.toString(),
     login = user.login,
     displayName = user.displayName,
@@ -19,6 +27,8 @@ fun Profile.toProfileResponse(csrfToken: String?) = ProfileResponse(
     emails = emails.map { EmailResponse(it.email, it.verified) },
     providers = issuers,
     csrfToken = csrfToken,
+    member = current?.first,
+    organization = current?.second,
 )
 
 /** Maps a token, without its secret. */

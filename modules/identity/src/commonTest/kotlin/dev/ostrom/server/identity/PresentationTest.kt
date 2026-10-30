@@ -3,20 +3,31 @@ package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.AuditEntry
 import dev.ostrom.server.identity.domain.AuditEvent
+import dev.ostrom.server.identity.domain.Profile
 import dev.ostrom.server.identity.domain.SessionRequiredException
+import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.trimmedOrNull
+import dev.ostrom.server.identity.presentation.MeMemberResponse
+import dev.ostrom.server.identity.presentation.MeOrganizationResponse
 import dev.ostrom.server.identity.presentation.credentialUuid
+import dev.ostrom.server.identity.presentation.currentOrganization
 import dev.ostrom.server.identity.presentation.toAuditEventResponse
 import dev.ostrom.server.identity.presentation.toAuditEventsResponse
+import dev.ostrom.server.identity.presentation.toProfileResponse
 import dev.ostrom.server.identity.presentation.userId
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgProfile
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.test.runTest
 
 /** The mappers and principal helpers of the routes, and the free-text rule they share with the use cases. */
 class PresentationTest {
@@ -69,4 +80,35 @@ class PresentationTest {
         assertNull(trimmedOrNull("   ", 10))
         assertNull(trimmedOrNull(null, 10))
     }
+
+    @Test
+    fun meShowsTheNamedOrganizationOnlyWhenTheCallerIsAMemberOfAKnownOne() = runTest {
+        val known = Uuid.random()
+        val unknown = Uuid.random()
+        val member = Uuid.random()
+        val resolver = object : PrincipalOrgResolver {
+            override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
+                principal.namedOrg?.let(Uuid::parseOrNull)?.takeIf { it != Uuid.NIL }?.let {
+                    OrgPrincipal(it, member, OrgRole.ADMIN)
+                }
+
+            override suspend fun profile(orgId: Uuid): OrgProfile? =
+                OrgProfile(orgId, "acme", "Acme").takeIf { orgId == known }
+        }
+        val caller = AuthenticatedPrincipal(Uuid.random().toString(), PrincipalKind.USER, setOf("user:*"))
+
+        val current = resolver.currentOrganization(caller.copy(namedOrg = known.toString()))
+        assertEquals(
+            MeMemberResponse(member.toString(), "admin") to MeOrganizationResponse(known.toString(), "acme", "Acme"),
+            current,
+        )
+        assertNull(resolver.currentOrganization(caller.copy(namedOrg = unknown.toString())), "No profile")
+        assertNull(resolver.currentOrganization(caller.copy(namedOrg = Uuid.NIL.toString())), "No membership")
+
+        val user = User(Uuid.random(), "ada", "Ada", null, null, Instant.fromEpochSeconds(0))
+        val profile = Profile(user, emptyList(), emptyList()).toProfileResponse(null, current)
+        assertEquals("admin", profile.member?.role)
+        assertEquals("acme", profile.organization?.slug)
+    }
 }
+

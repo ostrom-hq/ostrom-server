@@ -3,6 +3,7 @@ package dev.ostrom.server.orgs.infrastructure
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgProfile
 import dev.ostrom.server.kernel.auth.OrgRequiredException
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -45,6 +46,9 @@ class MembershipOrgResolver(
         val member = if (target == null) onlyMembership(userId) else members.findByUser(target, userId)
         return member?.let { OrgPrincipal(it.orgId, it.id, it.role) }
     }
+
+    override suspend fun profile(orgId: Uuid): OrgProfile? =
+        orgs.get(orgId)?.let { OrgProfile(it.id, it.slug, it.name) }
 
     private suspend fun onlyMembership(userId: Uuid): Member? {
         val memberships = orgs.listOfUser(userId)

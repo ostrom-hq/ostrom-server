@@ -21,6 +21,7 @@ import dev.ostrom.server.identity.presentation.DeviceTokenResponse
 import dev.ostrom.server.identity.presentation.ProfileResponse
 import dev.ostrom.server.identity.presentation.TokensResponse
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
+import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
@@ -90,6 +91,14 @@ class IdentityRoutesPostgresTest {
         assertEquals("user1@example.com", profile.primaryEmail)
         assertEquals(listOf("github"), profile.providers)
         assertEquals(started.csrfToken, profile.csrfToken)
+        assertNull(profile.member)
+        // Without the orgs module no organization is a membership: the header is ignored, never an error.
+        val named = server.client.get("/api/v1/auth/me") {
+            session(started, csrf = false)
+            header(ORG_HEADER, Uuid.random().toString())
+        }
+        assertEquals(HttpStatusCode.OK, named.status)
+        assertNull(named.body<ProfileResponse>().organization)
     }
 
     @Test

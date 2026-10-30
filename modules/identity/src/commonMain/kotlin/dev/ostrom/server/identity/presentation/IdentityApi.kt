@@ -226,6 +226,8 @@ data class EmailResponse(val email: String, val verified: Boolean)
  * @property emails Every e-mail of the user.
  * @property providers How the user signs in (`github`, `google`, `email`, `oidc:<connection>`).
  * @property csrfToken For a browser session, the token to send in `X-CSRF-Token` on state-changing requests.
+ * @property member With `Ostrom-Org` naming one of the caller's organizations, their membership there.
+ * @property organization With `Ostrom-Org` naming one of the caller's organizations, that organization.
  */
 @Serializable
 data class ProfileResponse(
@@ -238,7 +240,28 @@ data class ProfileResponse(
     val emails: List<EmailResponse>,
     val providers: List<String>,
     val csrfToken: String? = null,
+    val member: MeMemberResponse? = null,
+    val organization: MeOrganizationResponse? = null,
 )
+
+/**
+ * The caller's membership in the organization `Ostrom-Org` names (the contract's `Me.member`).
+ *
+ * @property id The member id (`OrgPrincipal.memberId`).
+ * @property role `owner`, `admin`, `member`, `approver` or `billing`.
+ */
+@Serializable
+data class MeMemberResponse(val id: String, val role: String)
+
+/**
+ * The organization `Ostrom-Org` names (the contract's `Me.organization`).
+ *
+ * @property id The id.
+ * @property slug The short name.
+ * @property name The name.
+ */
+@Serializable
+data class MeOrganizationResponse(val id: String, val slug: String, val name: String)
 
 /**
  * A token, without its secret.
