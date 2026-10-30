@@ -2,8 +2,7 @@
 package dev.ostrom.server.notifications.presentation
 
 import dev.ostrom.server.gates.domain.models.GateActor
-import dev.ostrom.server.gates.presentation.GateScopes
-import dev.ostrom.server.gates.presentation.requireAnyScope
+import dev.ostrom.server.gates.presentation.requireAnswering
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -46,7 +45,8 @@ fun Route.notificationsRoutes(dependencies: NotificationsRoutesDependencies) = w
 
 private suspend fun NotificationsRoutesDependencies.personOf(call: ApplicationCall): GateActor {
     val principal = call.requirePrincipal()
-    principal.requireAnyScope(GateScopes.answering)
+    // The same credentials as a yes: a browser session or the unlocked app, never an API token (S2-03, S2-31).
+    principal.requireAnswering()
     return actors.resolve(principal)
         ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
 }
