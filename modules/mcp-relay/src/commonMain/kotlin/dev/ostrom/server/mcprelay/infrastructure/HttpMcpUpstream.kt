@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.infrastructure
 
 import dev.ostrom.server.mcprelay.domain.McpOutcome
 import dev.ostrom.server.mcprelay.domain.McpUpstream
+import dev.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
 import dev.ostrom.server.mcprelay.domain.UpstreamResult
 import dev.ostrom.server.mcprelay.domain.UpstreamTarget
-import dev.ostrom.server.mcprelay.domain.RelayMcpMessageUseCaseImpl
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.header
@@ -63,29 +64,43 @@ class HttpMcpUpstream(
                         cursor = (page.value["nextCursor"] as? JsonPrimitive)?.takeIf { it.isString }?.content
                         if (cursor == null) return@session UpstreamResult.Ok(tools.toList(), bytes)
                     }
-                    is Reply.Error -> return@session UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server could not list its tools: ${page.message}")
+                    is Reply.Error -> return@session UpstreamResult.Failure(
+                        McpOutcome.UPSTREAM_ERROR,
+                        "The MCP server could not list its tools: ${page.message}",
+                    )
                     is Reply.Refused -> return@session page.failure
                 }
             }
             UpstreamResult.Ok(tools.toList(), bytes)
         }
 
-    override suspend fun callTool(target: UpstreamTarget, tool: String, arguments: JsonObject, deadline: Duration): UpstreamResult<JsonObject> =
-        session(target, deadline) { session ->
-            val params = buildJsonObject {
-                put("name", tool)
-                put("arguments", arguments)
-            }
-            when (val reply = session.request("tools/call", params)) {
-                is Reply.Result -> UpstreamResult.Ok(reply.value, reply.bytes)
-                is Reply.Error -> UpstreamResult.Failure(McpOutcome.TOOL_ERROR, "The MCP server returned an error: ${reply.message}")
-                is Reply.Refused -> reply.failure
-            }
+    override suspend fun callTool(
+        target: UpstreamTarget,
+        tool: String,
+        arguments: JsonObject,
+        deadline: Duration,
+    ): UpstreamResult<JsonObject> = session(target, deadline) { session ->
+        val params = buildJsonObject {
+            put("name", tool)
+            put("arguments", arguments)
         }
+        when (val reply = session.request("tools/call", params)) {
+            is Reply.Result -> UpstreamResult.Ok(reply.value, reply.bytes)
+            is Reply.Error -> UpstreamResult.Failure(
+                McpOutcome.TOOL_ERROR,
+                "The MCP server returned an error: ${reply.message}",
+            )
+            is Reply.Refused -> reply.failure
+        }
+    }
 
-    private suspend fun <T> session(target: UpstreamTarget, deadline: Duration, block: suspend (Session) -> UpstreamResult<T>): UpstreamResult<T> {
-        val url = target.server.url ?: return UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server has no URL.")
-        if (!guard.allows(url)) return UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server's address is not allowed.")
+    private suspend fun <T> session(
+        target: UpstreamTarget,
+        deadline: Duration,
+        block: suspend (Session) -> UpstreamResult<T>,
+    ): UpstreamResult<T> {
+        val url = target.server.url?.takeIf { guard.allows(it) }
+            ?: return UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server's address is not allowed.")
         val session = Session(url, target)
         try {
             return withTimeoutOrNull(deadline) {
@@ -93,11 +108,17 @@ class HttpMcpUpstream(
                     is Reply.Result -> {
                         session.protocolVersion = (initialized.value["protocolVersion"] as? JsonPrimitive)?.content
                             ?.takeIf { it in RelayMcpMessageUseCaseImpl.PROTOCOL_VERSIONS }
-                            ?: return@withTimeoutOrNull UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server speaks an unsupported protocol version.")
+                            ?: return@withTimeoutOrNull UpstreamResult.Failure(
+                                McpOutcome.UPSTREAM_ERROR,
+                                "The MCP server speaks an unsupported protocol version.",
+                            )
                         session.notify("notifications/initialized")
                         block(session)
                     }
-                    is Reply.Error -> UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server refused to initialize: ${initialized.message}")
+                    is Reply.Error -> UpstreamResult.Failure(
+                        McpOutcome.UPSTREAM_ERROR,
+                        "The MCP server refused to initialize: ${initialized.message}",
+                    )
                     is Reply.Refused -> initialized.failure
                 }
             } ?: UpstreamResult.Failure(McpOutcome.TIMEOUT, "The MCP server did not answer in time.")
@@ -127,27 +148,50 @@ class HttpMcpUpstream(
             }
             return post(body) { response ->
                 if (!response.status.isSuccess()) {
-                    return@post Reply.Refused(UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server answered HTTP ${response.status.value}."))
+                    return@post Reply.Refused(
+                        UpstreamResult.Failure(
+                            McpOutcome.UPSTREAM_ERROR,
+                            "The MCP server answered HTTP ${response.status.value}.",
+                        ),
+                    )
                 }
-                response.headers["Mcp-Session-Id"]?.takeIf { it.length in 1..256 && it.all { c -> c.code in 0x21..0x7e } }?.let { sessionId = it }
+                response.headers["Mcp-Session-Id"]
+                    ?.takeIf { it.length in SESSION_ID_LENGTH && it.all { c -> c.code in VISIBLE_ASCII } }
+                    ?.let { sessionId = it }
                 val bytes = response.bodyAsChannel().readRemaining(maxResponseBytes.toLong() + 1).readByteArray()
                 if (bytes.size > maxResponseBytes) {
-                    return@post Reply.Refused(UpstreamResult.Failure(McpOutcome.TOO_LARGE, "The MCP server's response exceeds the relay limit."))
+                    return@post Reply.Refused(
+                        UpstreamResult.Failure(
+                            McpOutcome.TOO_LARGE,
+                            "The MCP server's response exceeds the relay limit.",
+                        ),
+                    )
                 }
                 val message = parse(bytes.decodeToString(), response.headers[HttpHeaders.ContentType], id)
-                    ?: return@post Reply.Refused(UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server sent an invalid answer."))
+                    ?: return@post Reply.Refused(
+                        UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server sent an invalid answer."),
+                    )
                 val error = message["error"] as? JsonObject
                 val result = message["result"] as? JsonObject
                 when {
-                    error != null -> Reply.Error((error["message"] as? JsonPrimitive)?.content?.take(MAX_ERROR) ?: "unknown error")
+                    error != null -> Reply.Error(
+                        (error["message"] as? JsonPrimitive)?.content?.take(MAX_ERROR) ?: "unknown error",
+                    )
                     result != null -> Reply.Result(result, bytes.size.toLong())
-                    else -> Reply.Refused(UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server sent an invalid answer."))
+                    else -> Reply.Refused(
+                        UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server sent an invalid answer."),
+                    )
                 }
             }
         }
 
         suspend fun notify(method: String) {
-            post(buildJsonObject { put("jsonrpc", "2.0"); put("method", method) }) { }
+            post(
+                buildJsonObject {
+                    put("jsonrpc", "2.0")
+                    put("method", method)
+                },
+            ) { }
         }
 
         suspend fun close() {
@@ -155,7 +199,10 @@ class HttpMcpUpstream(
             withContext(NonCancellable) {
                 withTimeoutOrNull(2.seconds) {
                     try {
-                        client.delete(url) { header("Mcp-Session-Id", id); credential(this) }
+                        client.delete(url) {
+                            header("Mcp-Session-Id", id)
+                            credential(this)
+                        }
                     } catch (error: CancellationException) {
                         throw error
                     } catch (_: Exception) {
@@ -165,20 +212,25 @@ class HttpMcpUpstream(
             }
         }
 
-        private suspend fun <R> post(body: JsonObject, read: suspend (HttpResponse) -> R): R =
-            client.preparePost(url) {
-                contentType(ContentType.Application.Json)
-                header(HttpHeaders.Accept, "application/json, text/event-stream")
-                protocolVersion?.let { header("MCP-Protocol-Version", it) }
-                sessionId?.let { header("Mcp-Session-Id", it) }
-                credential(this)
-                setBody(body.toString())
-            }.execute { read(it) }
+        private suspend fun <R> post(body: JsonObject, read: suspend (HttpResponse) -> R): R = client.preparePost(url) {
+            contentType(ContentType.Application.Json)
+            header(HttpHeaders.Accept, "application/json, text/event-stream")
+            protocolVersion?.let { header("MCP-Protocol-Version", it) }
+            sessionId?.let { header("Mcp-Session-Id", it) }
+            credential(this)
+            setBody(body.toString())
+        }.execute { read(it) }
 
         private fun credential(builder: io.ktor.client.request.HttpRequestBuilder) {
             val value = target.credential?.reveal() ?: return
             val name = target.server.credentialHeader
-            if (name == null) builder.header(HttpHeaders.Authorization, "Bearer $value") else builder.header(name, value)
+            if (name ==
+                null
+            ) {
+                builder.header(HttpHeaders.Authorization, "Bearer $value")
+            } else {
+                builder.header(name, value)
+            }
         }
     }
 
@@ -186,7 +238,9 @@ class HttpMcpUpstream(
         val candidates: List<String> = if (contentType?.startsWith("text/event-stream") == true) {
             // One message per event; the data lines of an event are joined by newlines.
             text.split("\n\n", "\r\n\r\n").mapNotNull { event ->
-                event.lines().filter { it.startsWith("data:") }.joinToString("\n") { it.removePrefix("data:").trimStart() }.takeIf { it.isNotEmpty() }
+                event.lines().filter {
+                    it.startsWith("data:")
+                }.joinToString("\n") { it.removePrefix("data:").trimStart() }.takeIf { it.isNotEmpty() }
             }
         } else {
             listOf(text)
@@ -203,10 +257,13 @@ class HttpMcpUpstream(
 
     private fun JsonElement?.isId(id: Int): Boolean = (this as? JsonPrimitive)?.content == id.toString()
 
+    /** Limits of the client. */
     companion object {
         /** The default bound of an upstream answer: 4 MiB. */
         const val DEFAULT_MAX_RESPONSE_BYTES: Int = 4 * 1024 * 1024
         private const val MAX_PAGES = 16
+        private val SESSION_ID_LENGTH = 1..256
+        private val VISIBLE_ASCII = 0x21..0x7e
         private const val MAX_ERROR = 1000
         private val INITIALIZE_PARAMS = buildJsonObject {
             put("protocolVersion", RelayMcpMessageUseCaseImpl.PROTOCOL_VERSIONS.first())

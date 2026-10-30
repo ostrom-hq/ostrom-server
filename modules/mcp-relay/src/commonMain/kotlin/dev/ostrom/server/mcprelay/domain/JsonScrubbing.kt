@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.domain
 
 import dev.ostrom.server.secrets.domain.SecretScrubber
@@ -16,7 +17,12 @@ import kotlinx.serialization.json.JsonPrimitive
 fun JsonElement.scrubbed(secrets: List<String>): JsonElement {
     if (secrets.none { it.length >= SecretScrubber.MIN_LENGTH }) return this
     return when (this) {
-        is JsonObject -> JsonObject(entries.associate { (key, value) -> SecretScrubber.scrub(key, secrets) to value.scrubbed(secrets) })
+        is JsonObject -> JsonObject(
+            entries.associate { (key, value) ->
+                SecretScrubber.scrub(key, secrets) to
+                    value.scrubbed(secrets)
+            },
+        )
         is JsonArray -> JsonArray(map { it.scrubbed(secrets) })
         is JsonPrimitive -> if (isString) JsonPrimitive(SecretScrubber.scrub(content, secrets)) else this
     }

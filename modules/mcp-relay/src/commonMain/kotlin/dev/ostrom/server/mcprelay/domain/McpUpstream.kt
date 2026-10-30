@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.domain
 
 import dev.ostrom.server.secrets.domain.SecretValue
@@ -65,7 +66,12 @@ interface McpUpstream {
      *
      * @return The `CallToolResult`.
      */
-    suspend fun callTool(target: UpstreamTarget, tool: String, arguments: JsonObject, deadline: Duration): UpstreamResult<JsonObject>
+    suspend fun callTool(
+        target: UpstreamTarget,
+        tool: String,
+        arguments: JsonObject,
+        deadline: Duration,
+    ): UpstreamResult<JsonObject>
 }
 
 /**

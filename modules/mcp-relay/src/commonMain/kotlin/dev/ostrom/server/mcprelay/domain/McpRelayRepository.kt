@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.domain
 
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** Storage of the relay; every method is scoped by the org. */
+/**
+ * Storage of the relay; every method is scoped by the org. One port for the five tables of the module (servers,
+ * assignments, policies, settings, journal), which are written together and confined by the same policy.
+ */
+@Suppress("TooManyFunctions") // One port per module's storage, as in the other modules.
 interface McpRelayRepository {
     /**
      * Inserts a server.
@@ -69,8 +74,17 @@ interface McpRelayRepository {
     /** Appends a journal row. */
     suspend fun record(call: McpCall)
 
-    /** The org's journal, newest first, before [before] (keyset), at most [limit], of one server or member when given. */
-    suspend fun listCalls(orgId: Uuid, before: Instant?, limit: Int, server: String? = null, memberId: Uuid? = null): List<McpCall>
+    /**
+     * The org's journal, newest first, before [before] (keyset), at most [limit], of one server or member when
+     * given.
+     */
+    suspend fun listCalls(
+        orgId: Uuid,
+        before: Instant?,
+        limit: Int,
+        server: String? = null,
+        memberId: Uuid? = null,
+    ): List<McpCall>
 
     /** Totals per member and server since [since]; only [memberId]'s when set. */
     suspend fun usage(orgId: Uuid, since: Instant, memberId: Uuid?): List<McpUsage>
