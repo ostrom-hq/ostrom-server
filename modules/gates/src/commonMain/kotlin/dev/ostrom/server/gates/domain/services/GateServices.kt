@@ -27,7 +27,7 @@ interface GatePolicies {
      * Reads the self-approval setting.
      *
      * @param orgId The organization.
-     * @return The setting; [SelfApprovalPolicy.SOLE_APPROVER] when the organization never chose.
+     * @return The setting; [SelfApprovalPolicy.NEVER] when the organization never chose (S2-15).
      */
     suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy
 }
@@ -105,7 +105,18 @@ interface GateSessions {
 
      */
     suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?)
+
+    /**
+     * Names the coding agent of a session, for the receipt of a gate it asked.
+     *
+     * @param orgId The organization.
+     * @param sessionId The session segment.
+     * @return The agent (`claude-code`, `codex`…), or null when the session is unknown (the default: a port that
+     *   does not keep sessions knows no agent).
+     */
+    suspend fun agentOf(orgId: Uuid, sessionId: String): String? = null
 }
+
 
 /** Finds the gate node that covers an action (the compiled workflows of the organization). */
 interface GateNodeResolver {

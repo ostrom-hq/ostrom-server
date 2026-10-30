@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
+import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateAlreadyDecidedException
 import dev.ostrom.server.gates.domain.models.GateChangedException
 import dev.ostrom.server.gates.domain.models.GateNotFoundException
@@ -12,12 +14,16 @@ import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.models.SelfApprovalRefusedException
+import dev.ostrom.server.gates.domain.models.StepUp
+import dev.ostrom.server.gates.domain.models.StepUpRequiredException
 import dev.ostrom.server.gates.fakes.GateBench
+import dev.ostrom.server.gates.fakes.ORG
 import dev.ostrom.server.gates.fakes.OTHER_ORG
 import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.ciService
 import dev.ostrom.server.gates.fakes.device
 import dev.ostrom.server.gates.fakes.user
+import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.logging.LogLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -29,9 +35,45 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class AnswerGateUseCaseTest {
+    @Test
+    fun s254AYesNeedsASignInOfAtMostFiveMinutesANoDoesNot() = runTest {
+        val bench = GateBench()
+        val view = bench.open(bench.pushRequest())
+        val request = view.requests.first { it.approverId == "rev-b" }.id
+        suspend fun yes(signedIn: Instant?) = bench.answer(
+            user("rev-b").copy(authenticatedAt = signedIn),
+            request,
+            Answer.YES,
+            view.gate.shownDigest,
+            AnswerChannel.CONSOLE,
+        )
+        for (stale in listOf(null, bench.clock.now - StepUp.WITHIN - 1.seconds)) {
+            val refused = assertFailsWith<StepUpRequiredException> { yes(stale) }
+            assertEquals(ErrorKind.FORBIDDEN, refused.kind)
+        }
+        assertEquals(GateStatus.PENDING, bench.repository.gates.values.single().status, "nothing written")
+        assertEquals(GateStatus.APPROVED, yes(bench.clock.now - StepUp.WITHIN).gate.status)
+
+        val other = bench.open(bench.pushRequest(sha = "b".repeat(40)))
+        val no = other.requests.first { it.approverId == "rev-b" }.id
+        val refused = bench.answer(user("rev-b"), no, Answer.NO, other.gate.shownDigest, AnswerChannel.CONSOLE)
+        assertEquals(GateStatus.REJECTED, refused.gate.status, "saying no never needs a fresh sign-in")
+    }
+
+    @Test
+    fun s215APersonAnswersNeverACredentialWithoutPerson() = runTest {
+        val bench = GateBench()
+        val view = bench.open(bench.pushRequest())
+        val keyless = GateActor("rev-b", ORG, ActorKind.USER)
+        assertFailsWith<OnlyPeopleAnswerException> { bench.answer(view, "rev-b", actor = keyless) }
+        assertEquals(GateStatus.PENDING, bench.repository.gates.getValue(view.gate.id).status)
+    }
+
     @Test
     fun theFirstYesOpensTheGateAndClosesTheOtherRequests() = runTest {
         val bench = GateBench()

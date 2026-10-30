@@ -58,7 +58,11 @@ class InMemoryGatesRepository : GatesRepository {
     override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
         requests.values.filter { it.gateId == gateId && it.orgId == orgId }
 
+    override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> =
+        gates.values.filter { it.orgId == orgId && sessionId in it.sessionIds }.sortedBy { it.createdAt }
+
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? =
+
         requests[id]?.takeIf { it.orgId == orgId }
             ?.let { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
 
@@ -145,7 +149,11 @@ class FakeSessions : GateSessions {
             throw OstromException(ErrorKind.FORBIDDEN, "other launch")
         }
     }
+
+    override suspend fun agentOf(orgId: Uuid, sessionId: String): String? =
+        "claude-code".takeIf { sessionId == SESSION }
 }
+
 
 class FakeSigner : GateReceiptSigner {
     val signed = mutableListOf<Gate>()
@@ -193,10 +201,11 @@ val OTHER_ORG: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000000b")
 const val SESSION = "s-0000051"
 const val OTHER_SESSION = "s-0000052"
 
-fun user(id: String, org: Uuid = ORG) = GateActor(id, org, ActorKind.USER)
+// Every credential acts for a person (S2-15): a user and a device for their own, an agent session for `lyes`.
+fun user(id: String, org: Uuid = ORG) = GateActor(id, org, ActorKind.USER, personId = id)
 fun agent(session: String = SESSION, org: Uuid = ORG) =
-    GateActor("agent-$session", org, ActorKind.AGENT_SESSION, launchId = "launch-$session")
-fun device(id: String = "lyes") = GateActor("device-$id", ORG, ActorKind.DEVICE)
+    GateActor("agent-$session", org, ActorKind.AGENT_SESSION, launchId = "launch-$session", personId = "lyes")
+fun device(id: String = "lyes") = GateActor("device-$id", ORG, ActorKind.DEVICE, personId = id)
 fun ciService() = GateActor("github-app", ORG, ActorKind.SERVICE)
 
 const val SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
