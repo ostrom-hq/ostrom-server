@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
+import dev.ostrom.server.identity.domain.trimmedOrNull
 import dev.ostrom.server.identity.infrastructure.OAuthClient
 import dev.ostrom.server.identity.infrastructure.OidcEndpoints
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -47,18 +48,19 @@ data class SignInConfig(
             val issuer = value(source, "OSTROM_GOOGLE_ISSUER")
             val authorization = value(source, "OSTROM_GOOGLE_AUTHORIZATION_URL")
             val token = value(source, "OSTROM_GOOGLE_TOKEN_URL")
-            val endpoints = when {
-                issuer == null && authorization == null && token == null -> OidcEndpoints.GOOGLE
-                issuer != null && authorization != null && token != null ->
-                    OidcEndpoints(setOf(issuer), authorization, token)
-                else -> throw InvalidConfigException(
+            val endpoints = if (issuer == null && authorization == null && token == null) {
+                OidcEndpoints.GOOGLE
+            } else if (issuer == null || authorization == null || token == null) {
+                throw InvalidConfigException(
                     "OSTROM_GOOGLE_ISSUER, OSTROM_GOOGLE_AUTHORIZATION_URL and OSTROM_GOOGLE_TOKEN_URL go together.",
                 )
+            } else {
+                OidcEndpoints(setOf(issuer), authorization, token)
             }
             return SignInConfig(
                 github = client(source, "GITHUB"),
-                githubWebUrl = value(source, "OSTROM_GITHUB_WEB_URL")?.trimEnd('/') ?: "https://github.com",
-                githubApiUrl = value(source, "OSTROM_GITHUB_API_URL")?.trimEnd('/') ?: "https://api.github.com",
+                githubWebUrl = (value(source, "OSTROM_GITHUB_WEB_URL") ?: "https://github.com").trimEnd('/'),
+                githubApiUrl = (value(source, "OSTROM_GITHUB_API_URL") ?: "https://api.github.com").trimEnd('/'),
                 google = client(source, "GOOGLE"),
                 googleEndpoints = endpoints,
                 resendApiKey = value(source, "OSTROM_RESEND_API_KEY"),
@@ -70,13 +72,14 @@ data class SignInConfig(
         private fun client(source: ConfigSource, provider: String): OAuthClient? {
             val id = value(source, "OSTROM_${provider}_CLIENT_ID")
             val secret = value(source, "OSTROM_${provider}_CLIENT_SECRET")
-            if ((id == null) != (secret == null)) {
+            if (id == null && secret == null) return null
+            if (id == null || secret == null) {
                 val keys = "OSTROM_${provider}_CLIENT_ID and OSTROM_${provider}_CLIENT_SECRET"
                 throw InvalidConfigException("$keys go together.")
             }
-            return if (id != null && secret != null) OAuthClient(id, secret) else null
+            return OAuthClient(id, secret)
         }
 
-        private fun value(source: ConfigSource, key: String): String? = source[key]?.trim()?.takeIf { it.isNotEmpty() }
+        private fun value(source: ConfigSource, key: String): String? = trimmedOrNull(source[key], Int.MAX_VALUE)
     }
 }

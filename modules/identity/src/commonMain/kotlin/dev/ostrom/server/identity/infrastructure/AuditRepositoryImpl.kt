@@ -30,7 +30,7 @@ class AuditRepositoryImpl(private val driver: Driver) : AuditRepository {
         orgId: Uuid?,
         build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
     ): AuditEvent {
-        val chain = orgId?.toString() ?: ACCOUNT_CHAIN
+        val chain = if (orgId == null) ACCOUNT_CHAIN else orgId.toString()
         val write: suspend Transaction.() -> AuditEvent = {
             // Serializes the appends of one chain until the transaction ends: no two events get the same sequence.
             val lock = Statement.create("SELECT pg_advisory_xact_lock(hashtext(:chain))").bind("chain", chain)
@@ -41,7 +41,11 @@ class AuditRepositoryImpl(private val driver: Driver) : AuditRepository {
                         "DESC LIMIT 1",
                 ).bind("chain", chain),
             ).getOrThrow().firstOrNull()
-            val event = build(last?.get("hash")?.asString(), (last?.get("sequence")?.asLong() ?: 0L) + 1)
+            val event = if (last == null) {
+                build(null, 1L)
+            } else {
+                build(last.get("hash").asString(), last.get("sequence").asLong() + 1)
+            }
             execute(
                 Statement.create(
                     "INSERT INTO identity_audit_events (id, chain, sequence, org_id, actor_id, action, " +

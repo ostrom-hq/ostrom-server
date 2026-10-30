@@ -2,6 +2,7 @@
 package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.trimmedOrNull
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
 
@@ -54,7 +55,7 @@ data class IdentityConfig(
         )
 
         private fun url(source: ConfigSource, key: String, default: String): String {
-            val value = source[key]?.trim()?.takeIf { it.isNotEmpty() } ?: default
+            val value = trimmedOrNull(source[key], Int.MAX_VALUE) ?: default
             if (!value.startsWith("https://") && !value.startsWith("http://")) {
                 throw InvalidConfigException("$key must be an http:// or https:// URL.")
             }

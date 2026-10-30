@@ -121,7 +121,7 @@ class ResolveUserUseCaseImpl(
         val user = User(
             id = Uuid.random(),
             login = freeLogin(identity, email),
-            displayName = identity.displayName?.trim()?.take(MAX_DISPLAY_NAME)?.takeIf { it.isNotEmpty() }
+            displayName = trimmedOrNull(identity.displayName, MAX_DISPLAY_NAME)
                 ?: email?.substringBefore('@')
                 ?: DEFAULT_DISPLAY_NAME,
             primaryEmail = email,

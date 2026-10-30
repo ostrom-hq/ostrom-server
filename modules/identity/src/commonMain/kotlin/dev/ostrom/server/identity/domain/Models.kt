@@ -90,7 +90,7 @@ data class VerifiedIdentity(
     val hostedDomain: String? = null,
 ) {
     /** The scope in which [subject] is unique: the provider, plus the connection for organization SSO. */
-    val issuer: String get() = connectionId?.let { "${provider.key}:$it" } ?: provider.key
+    val issuer: String get() = if (connectionId == null) provider.key else "${provider.key}:$connectionId"
 }
 
 /**

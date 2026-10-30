@@ -129,6 +129,19 @@ class OAuthProvidersTest {
     }
 
     @Test
+    fun gitHubWithoutANameShowsTheLogin() = runTest {
+        val provider = github { request ->
+            when (request.url.encodedPath) {
+                "/login/oauth/access_token" -> json("""{"access_token":"gho_x"}""")
+                "/user" -> json("""{"id":2,"login":"bob"}""")
+                else -> json("[]")
+            }
+        }
+
+        assertEquals("bob", provider.identity("code", "v", "n", "r").displayName)
+    }
+
+    @Test
     fun gitHubRefusalsBecomeSignInErrors() = runTest {
         assertEquals(
             "The provider refused the sign-in: bad_verification_code",

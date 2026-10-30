@@ -21,6 +21,7 @@ import dev.ostrom.server.identity.domain.WebSession
 import dev.ostrom.server.identity.domain.WebSessionsRepository
 import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -83,6 +84,8 @@ class IdentityPostgresTest {
         assertEquals(listOf("github", "google"), users.listIssuers(bob.id))
         // Linking an identity of another user changes nothing and fails, so the caller retries.
         assertFailsWith<DuplicateIdentityException> { users.link(bob.id, github("1"), null, now) }
+        // Any other database refusal (here, a user that does not exist) is not dressed up as a duplicate.
+        assertFailsWith<SQLError> { users.link(Uuid.random(), github("9"), null, now) }
         assertEquals(ada, users.findByIdentity("github", "1"))
     }
 

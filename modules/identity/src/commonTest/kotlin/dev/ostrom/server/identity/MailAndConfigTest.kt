@@ -157,6 +157,8 @@ class MailAndConfigTest {
             mapOf("OSTROM_GOOGLE_CLIENT_SECRET" to "a"),
             mapOf("OSTROM_GOOGLE_ISSUER" to "http://x"),
             mapOf("OSTROM_GOOGLE_ISSUER" to "http://x", "OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://x/a"),
+            mapOf("OSTROM_GOOGLE_AUTHORIZATION_URL" to "http://x/a"),
+            mapOf("OSTROM_GOOGLE_TOKEN_URL" to "http://x/t"),
         ).forEach { assertFailsWith<InvalidConfigException>(it.toString()) { SignInConfig.from(MapConfigSource(it)) } }
     }
 
