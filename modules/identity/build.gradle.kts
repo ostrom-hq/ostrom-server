@@ -1,4 +1,5 @@
-// Module identity: users, devices, login and the tokens the kernel's TokenAuthenticator resolves.
+// Module identity: users, sign-in identities, browser sessions, API/CLI/agent tokens, the device login, the signed
+// audit log, and the TokenAuthenticator the kernel resolves credentials with.
 plugins {
     id("ostrom.native-module")
 }
@@ -7,6 +8,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kernel"))
+            implementation(libs.cryptography.core)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

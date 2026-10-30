@@ -22,8 +22,14 @@ import kotlin.system.exitProcess
 
 /** Starts the server; the configuration keys are documented in docs/MODULES.md. */
 fun main() {
+    val source = try {
+        ServerConfig.source()
+    } catch (error: InvalidConfigException) {
+        JsonLogger(LogLevel.ERROR).error("invalid configuration", mapOf("reason" to error.message))
+        exitProcess(2)
+    }
     val config = try {
-        ServerConfig.load()
+        ServerConfig.from(source)
     } catch (error: InvalidConfigException) {
         JsonLogger(LogLevel.ERROR).error("invalid configuration", mapOf("reason" to error.message))
         exitProcess(2)
@@ -34,7 +40,7 @@ fun main() {
     val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }
     val koin = koinApplication {
         allowOverride(true)
-        modules(listOf(kernelModule(logger, driver, signer)) + modules.map { it.koinModule })
+        modules(listOf(kernelModule(logger, driver, signer, config = source)) + modules.map { it.koinModule })
     }.koin
     runBlocking {
         val migrations = koin.get<MigrationRunner>()

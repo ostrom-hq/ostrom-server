@@ -4,6 +4,7 @@ import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.respondError
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.AuthenticationConfig
 import io.ktor.server.auth.AuthenticationContext
@@ -11,6 +12,7 @@ import io.ktor.server.auth.AuthenticationFailedCause
 import io.ktor.server.auth.AuthenticationProvider
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.principal
+import io.ktor.server.request.httpMethod
 import io.ktor.server.response.header
 import io.ktor.server.routing.Route
 
@@ -34,16 +36,31 @@ class TokenAuthenticationProvider internal constructor(config: Config) : Authent
         AuthenticationProvider.Config(name)
 
     override suspend fun onAuthenticate(context: AuthenticationContext) {
-        val token = context.call.bearerToken()
-        val principal = token?.let { authenticator.authenticate(it) }
+        val call = context.call
+        val token = call.bearerToken()
+        // A bearer token wins over a cookie: a CLI or an API client never depends on a browser cookie.
+        val session = if (token == null) call.request.cookies[SESSION_COOKIE]?.takeIf { it.isNotEmpty() } else null
+        val principal = when {
+            token != null -> authenticator.authenticate(token)
+            session != null -> authenticator.authenticateSession(
+                sessionToken = session,
+                csrfToken = call.request.headers[CSRF_HEADER],
+                requireCsrf = call.request.httpMethod !in SAFE_METHODS,
+            )
+            else -> null
+        }
         if (principal != null) {
             context.principal(principal)
             return
         }
-        val cause = if (token == null) AuthenticationFailedCause.NoCredentials else AuthenticationFailedCause.InvalidCredentials
+        val cause = if (token == null && session == null) {
+            AuthenticationFailedCause.NoCredentials
+        } else {
+            AuthenticationFailedCause.InvalidCredentials
+        }
         context.challenge(TOKEN_AUTH, cause) { challenge, call ->
             call.response.header(HttpHeaders.WWWAuthenticate, "Bearer")
-            call.respondError(ErrorKind.UNAUTHORIZED, "A valid bearer token is required.")
+            call.respondError(ErrorKind.UNAUTHORIZED, "A valid bearer token or session is required.")
             challenge.complete()
         }
     }
@@ -74,6 +91,25 @@ fun Route.authenticated(build: Route.() -> Unit): Route = authenticate(TOKEN_AUT
  */
 fun ApplicationCall.requirePrincipal(): AuthenticatedPrincipal =
     principal<AuthenticatedPrincipal>() ?: throw OstromException(ErrorKind.UNAUTHORIZED, "A valid bearer token is required.")
+
+/**
+ * The principal of an authenticated route, refused unless it may do what [scope] names
+ * ([AuthenticatedPrincipal.allows]): an agent token never passes a console route (audit A2).
+ *
+ * @param scope The scope the route requires, such as `orgs:write`.
+ *
+ * @return The principal.
+ *
+ * @throws OstromException A 403 when the credential lacks the scope.
+ */
+fun ApplicationCall.requireScope(scope: String): AuthenticatedPrincipal {
+    val principal = requirePrincipal()
+    if (!principal.allows(scope)) throw OstromException(ErrorKind.FORBIDDEN, "This credential does not allow $scope.")
+    return principal
+}
+
+/** The methods that never change state, and so need no CSRF token. */
+private val SAFE_METHODS = setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Options)
 
 private fun ApplicationCall.bearerToken(): String? {
     val header = request.headers[HttpHeaders.Authorization] ?: return null
