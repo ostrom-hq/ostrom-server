@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.logging
 
 /** The severity of a log line, from the most verbose to the most severe. */

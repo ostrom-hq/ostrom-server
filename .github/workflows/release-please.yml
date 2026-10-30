@@ -1,0 +1,43 @@
+name: Release
+
+# release-please keeps a release pull request open from the Conventional Commit titles merged on main.
+# Merging it tags the version, writes CHANGELOG.md and creates the GitHub release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # tags, releases, CHANGELOG.md
+      issues: write # release labels
+      pull-requests: write # the release pull request
+    steps:
+      # With a GitHub App (variables RELEASE_APP_ID and secret RELEASE_APP_PRIVATE_KEY), the release pull request
+      # starts the CI like any other; with GITHUB_TOKEN it does not, so the App is preferred when it exists.
+      - name: Token of the release App
+        id: app
+        if: vars.RELEASE_APP_ID != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      - name: release-please
+        id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app.outputs.token || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
