@@ -145,7 +145,7 @@ class GitHubPostgresTest {
     }
 
     private suspend fun TestServer.deliver(event: String, body: String, signature: String? = null): HttpResponse =
-        client.post("/api/v1/github/webhook") {
+        client.post("/webhooks/github") {
             header("X-GitHub-Event", event)
             header("X-Hub-Signature-256", signature ?: sign(body))
             contentType(ContentType.Application.Json)
@@ -199,6 +199,14 @@ class GitHubPostgresTest {
     @Test
     fun aWebhookIsAcceptedOnlyWithTheAppsSignature() = gitHubTest { server ->
         server.install("user:a:owner", 42)
+        // Incoming webhooks live outside the API prefix (contract 0.1.129): the old path is gone.
+        val old = server.client.post("/api/v1/github/webhook") {
+            header("X-GitHub-Event", "pull_request")
+            header("X-Hub-Signature-256", sign(opened))
+            contentType(ContentType.Application.Json)
+            setBody(opened)
+        }
+        assertEquals(HttpStatusCode.NotFound, old.status)
         assertEquals(HttpStatusCode.Unauthorized, server.deliver("pull_request", opened, "sha256=00").status)
         assertEquals(HttpStatusCode.Unauthorized, server.deliver("pull_request", opened, "").status)
         assertTrue(github.published.isEmpty())
