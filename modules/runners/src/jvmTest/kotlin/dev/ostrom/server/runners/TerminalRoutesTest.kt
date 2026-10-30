@@ -8,6 +8,7 @@ import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.fakes.ALICE
 import dev.ostrom.server.runners.fakes.testIdentities
 import dev.ostrom.server.runners.fakes.session
+import dev.ostrom.server.runners.infrastructure.TerminalRelay
 import dev.ostrom.server.runners.presentation.TerminalCloseCodes
 import dev.ostrom.server.runners.presentation.TerminalControl
 import dev.ostrom.server.runners.presentation.TerminalJson
@@ -64,6 +65,8 @@ class TerminalRoutesTest {
             val runner = this
             ws.webSocket("/api/v1/cloud/sessions/${running.id}/terminal", request = { bearerAuth("alice") }) {
                 assertEquals(TerminalControl.Runner(true), nextControl())
+                // A runner's text frame means nothing: only its bytes are output.
+                runner.send("noise")
                 runner.send(Frame.Binary(true, "$ ".encodeToByteArray()))
                 assertEquals("$ ", (incoming.receive() as Frame.Binary).readBytes().decodeToString())
 
@@ -79,6 +82,9 @@ class TerminalRoutesTest {
                 )
                 // Out-of-range sizes are ignored; an unknown frame closes the socket.
                 send("""{"type":"resize","columns":0,"rows":40}""")
+                send("""{"type":"resize","columns":1001,"rows":40}""")
+                send("""{"type":"resize","columns":80,"rows":0}""")
+                send("""{"type":"resize","columns":80,"rows":1001}""")
                 send("""{"type":"runner","connected":false}""")
                 send("""{"type":"dance"}""")
                 assertEquals(TerminalCloseCodes.BAD_REQUEST, closeCode())
@@ -179,6 +185,7 @@ class TerminalRoutesTest {
         }
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=${running.id}&epoch=2", null))
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=${running.id}", "Bearer $token"))
+        assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?epoch=2", "Bearer $token"))
         assertEquals(TerminalCloseCodes.UNAUTHORIZED, code("?sessionId=nope&epoch=2", "Bearer $token"))
         assertEquals(
             TerminalCloseCodes.UNAUTHORIZED,
@@ -186,5 +193,8 @@ class TerminalRoutesTest {
         )
         assertEquals(TerminalCloseCodes.CONFLICT, code("?sessionId=${running.id}&epoch=1", "Bearer $token"))
         assertEquals(TerminalCloseCodes.CONFLICT, code("?sessionId=${Uuid.random()}&epoch=2", "Bearer $token"))
+        // A newer execution already holds the relay: this runner is the older one.
+        server.koin.get<TerminalRelay>().connectRunner(running.id, 3)
+        assertEquals(TerminalCloseCodes.CONFLICT, code("?sessionId=${running.id}&epoch=2", "Bearer $token"))
     }
 }

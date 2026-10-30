@@ -92,8 +92,10 @@ class TerminalUseCasesTest {
         val late = issue(alice, live.id)
         clock.now += 61.seconds
         assertNull(tickets.redeem(late.value, live.id))
-        // Expired tickets are purged at the next issue.
+        val kept = issue(alice, live.id)
+        // Expired tickets are purged at the next issue, live ones kept.
         issue(alice, live.id)
+        assertEquals(alice, tickets.redeem(kept.value, live.id))
     }
 
     @Test
@@ -116,5 +118,27 @@ class TerminalUseCasesTest {
         clock.now += 30.seconds
         assertTrue(activity.touch(first))
         assertEquals(listOf(first, second, first), recorded)
+    }
+
+    @Test
+    fun beyondItsLimitTheActivityForgetsQuietSessions() = runTest {
+        var records = 0
+        val activity = TerminalActivity(
+            object : RecordCloudSessionActivityUseCase {
+                override suspend fun invoke(sessionId: Uuid) {
+                    records++
+                }
+            },
+            clock,
+            maxTracked = 1,
+        )
+        val quiet = Uuid.random()
+        val busy = Uuid.random()
+        assertTrue(activity.touch(quiet))
+        clock.now += 30.seconds
+        // Two sessions are over the limit: the quiet one is forgotten, the busy one kept.
+        assertTrue(activity.touch(busy))
+        assertFalse(activity.touch(busy))
+        assertEquals(2, records)
     }
 }

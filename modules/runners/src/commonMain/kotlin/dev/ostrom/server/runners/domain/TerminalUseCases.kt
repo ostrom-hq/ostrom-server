@@ -134,11 +134,13 @@ class IssueTerminalTicketUseCaseImpl(
  * @param record Records the activity.
  * @param clock The clock.
  * @param interval The shortest gap between two records of one session.
+ * @param maxTracked The sessions remembered before the ones quiet for an [interval] are forgotten.
  */
 class TerminalActivity(
     private val record: RecordCloudSessionActivityUseCase,
     private val clock: Clock,
     private val interval: kotlin.time.Duration = DEFAULT_INTERVAL,
+    private val maxTracked: Int = MAX_TRACKED,
 ) {
     private val mutex = Mutex()
     private val last = mutableMapOf<Uuid, Instant>()
@@ -156,7 +158,7 @@ class TerminalActivity(
             val previous = last[sessionId]
             if (previous != null && now - previous < interval) return@withLock false
             last[sessionId] = now
-            if (last.size > MAX_TRACKED) last.entries.removeAll { now - it.value >= interval }
+            if (last.size > maxTracked) last.entries.removeAll { now - it.value >= interval }
             true
         }
         if (!due) return false
