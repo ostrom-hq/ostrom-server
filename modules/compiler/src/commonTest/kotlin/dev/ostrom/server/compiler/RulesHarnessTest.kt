@@ -3,8 +3,11 @@ package dev.ostrom.server.compiler
 
 import dev.ostrom.core.api.models.WorkflowNodeKind.GATE
 import dev.ostrom.core.api.models.WorkflowStatus
+import dev.ostrom.server.compiler.domain.models.ActionClasses
+import dev.ostrom.server.compiler.domain.models.CatalogEntry
 import dev.ostrom.server.compiler.domain.services.GatesCatalog
 import dev.ostrom.server.compiler.domain.services.RulesHarness
+import kotlinx.serialization.json.JsonNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -92,5 +95,7 @@ class RulesHarnessTest {
             listOf(".claude-plugin/plugin.json", "ostrom/gates.json", "ostrom/AGENTS-block.md"),
             empty.build(null, "https://x", "h1", emptyList(), emptyList()).files.map { it.first },
         )
+        val ungated = CatalogEntry(ActionClasses.builtIn.first(), gate = null)
+        assertEquals(JsonNull, RulesHarness.gateJson(ungated), "an action no gate covers")
     }
 }

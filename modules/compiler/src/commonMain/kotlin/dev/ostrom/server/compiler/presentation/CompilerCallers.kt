@@ -76,4 +76,5 @@ internal fun CompilerRoutesDependencies.urlOf(call: ApplicationCall): String = s
  * @param origin The request's origin.
  * @return The public URL without its trailing slash, else the origin.
  */
-internal fun serverUrlOf(publicUrl: String?, origin: () -> String): String = publicUrl?.trimEnd('/') ?: origin()
+internal fun serverUrlOf(publicUrl: String?, origin: () -> String): String =
+    if (publicUrl == null) origin() else publicUrl.trimEnd('/')

@@ -98,7 +98,7 @@ class RulesHarness(
      */
     fun digest(repo: String?, picked: List<HarnessRule>, catalog: List<CatalogEntry>): String = Digests.digestOf(
         buildJsonObject {
-            put("repo", repo?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("repo", if (repo == null) JsonNull else JsonPrimitive(repo))
             putJsonArray("rules") {
                 picked.forEach { rule ->
                     add(
@@ -157,7 +157,7 @@ class RulesHarness(
         val gatesJson = buildJsonObject {
             put("version", version)
             put("digest", digest)
-            put("repo", repo?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("repo", if (repo == null) JsonNull else JsonPrimitive(repo))
             put("server", serverUrl)
             put("failMode", "closed")
             put("waitSeconds", WAIT_SECONDS)

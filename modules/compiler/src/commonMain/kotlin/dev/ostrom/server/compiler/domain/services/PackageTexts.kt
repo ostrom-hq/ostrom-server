@@ -83,7 +83,8 @@ object PackageTexts {
 
     private fun instructions(node: WorkflowNode): String =
         listOf(NodeRules.run(node).instructions, node.detail)
-            .firstNotNullOfOrNull { it?.trim()?.ifEmpty { null } }
+            .map { it.orEmpty().trim() }
+            .firstOrNull { it.isNotEmpty() }
             ?: node.label
 
     private fun doneLine(node: WorkflowNode): String =
@@ -128,7 +129,8 @@ object PackageTexts {
         )
         for (node in ordered) {
             lines += "## ${node.label} (${node.kind.name.lowercase()})"
-            node.detail?.takeIf { it.isNotEmpty() }?.let { lines += listOf("", it.trim()) }
+            val detail = node.detail.orEmpty()
+            if (detail.isNotEmpty()) lines += listOf("", detail.trim())
             val classes = compiled.first { it.id == node.id }.trigger?.classes.orEmpty()
             lines += nodeLines(node, classes, scripts, notes)
             val linked = node.ruleIds.orEmpty().mapNotNull { id -> rules.firstOrNull { it.id == id } }
@@ -166,23 +168,24 @@ object PackageTexts {
                     "`ostrom wait <id>` command it gives, then the same command again. Never work around a gate.",
             )
         }
-        WorkflowNodeKind.NOTIFY -> notes.firstOrNull { it.nodeId == node.id }?.let {
+        // Every notification node compiles to a note.
+        WorkflowNodeKind.NOTIFY -> notes.first { it.nodeId == node.id }.let {
             listOf(
                 "",
                 "After the action, Ostrom tells ${it.channel.replaceFirst(CHANNEL_PREFIX, "")} by itself: do not " +
                     "send the message yourself.",
             )
-        }.orEmpty()
+        }
         WorkflowNodeKind.AGENT -> {
             val name = codexAgentName(node.label)
-            val instructions = NodeRules.run(node).instructions?.ifEmpty { null }
+            val instructions = NodeRules.run(node).instructions.orEmpty()
             listOf(
                 "",
                 "Hand this step to a sub-agent where your agent has them: `ostrom-${slug(node.label)}` in Claude " +
                     "Code; in Codex, spawn_agent with agent_type `$name` (and task_name `$name`). Otherwise do it " +
                     "yourself. Then call `node_done` (MCP server \"ostrom-workflow\") with node \"${node.id}\" and a " +
                     "one-line summary of what was really done; never report a sub-agent that did not run.",
-            ) + listOfNotNull(instructions?.let { "" }, instructions)
+            ) + if (instructions.isEmpty()) emptyList() else listOf("", instructions)
         }
         else -> emptyList()
     }
