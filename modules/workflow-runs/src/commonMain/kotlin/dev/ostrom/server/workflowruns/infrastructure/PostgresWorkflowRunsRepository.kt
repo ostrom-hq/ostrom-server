@@ -52,16 +52,14 @@ class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsR
             if (inserted.isNotEmpty()) notification else first(tx, orgId, notification, actionKey)
         }
 
-    override suspend fun firstNotification(
-        orgId: Uuid,
-        sessionId: String,
-        notifyId: String,
-        actionKey: String,
-    ): Notification? = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(
-            Statement.create(RunQueries.FIRST_NOTIFICATION).bind("org_id", orgId).bind("session_id", sessionId)
-                .bind("notify_id", notifyId).bind("action_key", actionKey),
-        ).getOrThrow().firstOrNull()?.let { decodeNotification(it.get("body").asString()) }
+    override suspend fun updateNotification(orgId: Uuid, notification: Notification) {
+        driver.withOrganization(orgId) { tx ->
+            tx.execute(
+                Statement.create(RunQueries.UPDATE_NOTIFICATION).bind("org_id", orgId).bind("id", notification.id)
+                    .bind("status", notification.status.value)
+                    .bind("body", OstromJson.encodeToString(Notification.serializer(), notification)),
+            ).getOrThrow()
+        }
     }
 
     private suspend fun first(tx: Transaction, orgId: Uuid, notification: Notification, actionKey: String) =
@@ -101,6 +99,11 @@ object RunQueries {
             "VALUES (:org_id, :id, :at, :session_id, :notify_id, :status, :action_key, CAST(:body AS JSONB)) " +
             "ON CONFLICT (org_id, session_id, notify_id, action_key) " +
             "WHERE session_id IS NOT NULL AND status <> 'not-sent' DO NOTHING RETURNING id"
+
+    /** Writes what became of a claimed notification. */
+    const val UPDATE_NOTIFICATION: String =
+        "UPDATE workflow_runs_notifications SET status = :status, body = CAST(:body AS JSONB) " +
+            "WHERE org_id = :org_id AND id = :id"
 
     /** The notification an action of a session had first. */
     const val FIRST_NOTIFICATION: String =

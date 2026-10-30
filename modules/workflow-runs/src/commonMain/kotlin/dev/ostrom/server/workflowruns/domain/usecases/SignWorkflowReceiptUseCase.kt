@@ -52,6 +52,7 @@ interface SignWorkflowReceiptUseCase {
      *
      * @throws dev.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException When the session is unknown.
      * @throws dev.ostrom.server.workflowruns.domain.models.RunPackageNotFoundException When the package is unknown.
+     * @throws dev.ostrom.server.workflowruns.domain.models.SessionStillOpenException When the session has not ended.
      */
     suspend operator fun invoke(actor: GateActor, request: WorkflowReceiptRequest): VerifiedReceipt
 }
@@ -75,8 +76,9 @@ class SignWorkflowReceiptUseCaseImpl(
     override suspend fun invoke(actor: GateActor, request: WorkflowReceiptRequest): VerifiedReceipt {
         RunTexts.bounded("agent", request.agent)
         RunTexts.bounded("model", request.model)
-        val session = access.owned(actor, request.sessionId)
-        val pack = access.pack(actor, request.digest)
+        // Once the session has ended: the receipt is signed once, with everything the session reported.
+        val session = access.ended(actor, request.sessionId)
+        val pack = access.pack(actor, request.digest, session)
         val orgId = actor.orgId
         val all = RunQuery(sessionId = session.id, limit = MAX_ITEMS)
         val gates = sessions.gates(orgId, session.id)

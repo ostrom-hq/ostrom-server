@@ -4,6 +4,7 @@ package dev.ostrom.server.workflowruns
 import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
+import dev.ostrom.server.sessions.domain.models.SessionClosedException
 import dev.ostrom.server.workflowruns.domain.models.NotInPackageException
 import dev.ostrom.server.workflowruns.domain.models.RunPackageRevokedException
 import dev.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
@@ -15,6 +16,7 @@ import dev.ostrom.server.workflowruns.fakes.ADA
 import dev.ostrom.server.workflowruns.fakes.AGENT
 import dev.ostrom.server.workflowruns.fakes.BOB
 import dev.ostrom.server.workflowruns.fakes.FakePackages
+import dev.ostrom.server.workflowruns.fakes.FakeSessions
 import dev.ostrom.server.workflowruns.fakes.FixedClock
 import dev.ostrom.server.workflowruns.fakes.InMemoryRuns
 import dev.ostrom.server.workflowruns.fakes.OTHER_AGENT
@@ -22,13 +24,13 @@ import dev.ostrom.server.workflowruns.fakes.PACKAGE
 import dev.ostrom.server.workflowruns.fakes.RecordingChannels
 import dev.ostrom.server.workflowruns.fakes.access
 import dev.ostrom.server.workflowruns.fakes.envelope
-import kotlinx.coroutines.test.runTest
+import dev.ostrom.server.workflowruns.fakes.session
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
-import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
 
 class NotificationsTest {
     private val runs = InMemoryRuns()
@@ -54,10 +56,31 @@ class NotificationsTest {
     @Test
     fun theSameActionOfASessionIsNotifiedOnce() = runTest {
         val first = send(AGENT, request())
-        assertSame(first, send(AGENT, request()), "A hook passing twice gets the first one back")
+        assertEquals(first, send(AGENT, request()), "A hook passing twice gets the first one back")
         send(AGENT, request(command = "git push --tags"))
         assertEquals(2, channels.delivered.size, "Sent once per action")
         assertEquals(2, runs.notifications.size)
+    }
+
+    @Test
+    fun theCommandsSecretsAreMaskedAndItsBracesStayText() = runTest {
+        val command = "curl -H 'Authorization: Bearer abcdefghijkl' https://x.test/{session}?token=1 --password=hunter2"
+        val sent = send(AGENT, request(command = command))
+        val masked = "curl -H 'Authorization: Bearer ***' https://x.test/{session}?token=*** --password=***"
+        assertEquals("ada ran $masked in acme/api (s-1)", sent.text)
+        assertEquals(sent.text, channels.delivered.single().second, "The channel gets the masked text only")
+    }
+
+    @Test
+    fun anEndedSessionIsNotNotifiedFor() = runTest {
+        val ended = SendNotificationUseCaseImpl(
+            access(FakeSessions(listOf(session(ended = true)))),
+            runs,
+            channels,
+            FixedClock(),
+        )
+        assertFailsWith<SessionClosedException> { ended(AGENT, request()) }
+        assertTrue(channels.delivered.isEmpty())
     }
 
     @Test

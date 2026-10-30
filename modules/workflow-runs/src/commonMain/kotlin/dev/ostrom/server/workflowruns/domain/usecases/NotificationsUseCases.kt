@@ -13,7 +13,6 @@ import dev.ostrom.server.workflowruns.domain.models.NotInPackageException
 import dev.ostrom.server.workflowruns.domain.models.RunPackageRevokedException
 import dev.ostrom.server.workflowruns.domain.repositories.RunQuery
 import dev.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
-import dev.ostrom.server.workflowruns.domain.services.Delivery
 import dev.ostrom.server.workflowruns.domain.services.NotificationChannels
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
@@ -71,28 +70,26 @@ class SendNotificationUseCaseImpl(
     override suspend fun invoke(actor: GateActor, request: NotificationRequest): Notification {
         RunTexts.bounded("sessionId", request.sessionId)
         val session = access.writing(actor, request.sessionId)
-        val pack = access.pack(actor, request.digest)
+        val pack = access.pack(actor, request.digest, session)
         if (pack.envelope.revoked) throw RunPackageRevokedException()
         val notify = pack.notifications.firstOrNull { it.id == request.notifyId && it.nodeId == request.nodeId }
             ?: throw NotInPackageException("Notification ${request.notifyId.take(RunTexts.ID)}")
         val dev = session?.dev ?: SessionAccess.person(actor)
         val repo = session?.repo ?: pack.envelope.repo
-        val command = request.command.orEmpty().replace(BRANCH_NOTE, "").take(RunTexts.COMMAND)
-        val text = notify.message
-            .replace("{dev}", dev)
-            .replace("{repo}", repo.orEmpty())
-            .replace("{command}", command)
-            .replace("{session}", (session?.id ?: "-").take(SHORT_SESSION))
-        // The key of the action is the command's digest: the text kept may be masked, a failed send may go again.
+        // The command reaches a channel and every member's list: its secrets are masked first.
+        val command = RunTexts.masked(request.command.orEmpty().replace(BRANCH_NOTE, "")).take(RunTexts.COMMAND)
+        val values = mapOf(
+            "dev" to dev,
+            "repo" to repo.orEmpty(),
+            "command" to command,
+            "session" to (session?.id ?: "-").take(SHORT_SESSION),
+        )
+        // One pass: a `{session}` inside the command is text, never a placeholder.
+        val text = PLACEHOLDER.replace(notify.message) { values.getValue(it.groupValues[1]) }
+        // The key of the action is the command's digest: one notification per action of a session.
         val actionKey = Digests.sha256Hex(request.command.orEmpty().take(RunTexts.COMMAND).encodeToByteArray())
-        // A hook passing twice on the same action gets the first notification back, and nothing is sent again.
-        session?.let { repository.firstNotification(actor.orgId, it.id, notify.id, actionKey) }?.let { return it }
-        val delivery = if (notify.mode == PackageMode.SHADOW) {
-            Delivery(NotificationStatus.LOGGED_ONLY)
-        } else {
-            channels.deliver(actor.orgId, notify.channel, text)
-        }
-        val notification = Notification(
+        val shadow = notify.mode == PackageMode.SHADOW
+        val claim = Notification(
             id = "ntf_" + Uuid.random().toHexString(),
             at = clock.now().isoMillis(),
             sessionId = session?.id,
@@ -102,18 +99,27 @@ class SendNotificationUseCaseImpl(
             notifyId = notify.id,
             channel = notify.channel,
             mode = notify.mode,
-            status = delivery.status,
+            status = if (shadow) NotificationStatus.LOGGED_ONLY else NotificationStatus.QUEUED,
             text = text,
             dev = dev,
             repo = repo,
-            error = delivery.error,
         )
-        return repository.addNotification(actor.orgId, notification, actionKey)
+        // The action is claimed before anything is sent: two passes of a hook at once send it once, and the second
+        // gets the first one back. A crash before the update leaves it queued, never sent twice.
+        val stored = repository.addNotification(actor.orgId, claim, actionKey)
+        if (stored.id != claim.id || shadow) return stored
+        val delivery = channels.deliver(actor.orgId, notify.channel, text)
+        val delivered = claim.copy(status = delivery.status, error = delivery.error)
+        repository.updateNotification(actor.orgId, delivered)
+        return delivered
     }
 
     private companion object {
         /** The note the launcher appends to a command, never part of the message. */
         val BRANCH_NOTE = Regex("\\s+#\\s*current branch:.*$")
+
+        /** The placeholders of a package's message. */
+        val PLACEHOLDER = Regex("\\{(dev|repo|command|session)\\}")
 
         /** The session in a message: its first characters. */
         const val SHORT_SESSION = 8

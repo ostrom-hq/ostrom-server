@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.domain.usecases
 
+import dev.ostrom.core.api.models.CheckOutcome
 import dev.ostrom.core.api.models.CheckRun
+import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.core.api.models.ReportCheckRequest
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -47,13 +49,17 @@ class ReportCheckUseCaseImpl(
         RunTexts.bounded("head", report.head)
         RunTexts.bounded("sandbox", report.sandbox)
         val session = access.writing(actor, report.sessionId)
-        val pack = access.pack(actor, report.digest)
+        val pack = access.pack(actor, report.digest, session)
         val script = pack.scripts.firstOrNull { it.id == report.scriptId && it.nodeId == report.nodeId }
             ?: throw NotInPackageException("Script ${report.scriptId.take(RunTexts.ID)}")
+        // The receipt reads the exit code: an outcome that contradicts it is refused, never guessed.
+        if (!consistent(report, script.mode)) {
+            throw InvalidRunException("outcome: ${report.outcome.value.ifEmpty { "unknown" }} contradicts exit.")
+        }
         val duration = report.durationMs
         if (duration != null && duration < 0) throw InvalidRunException("durationMs: zero or more.")
         val run = CheckRun(
-            id = "chk_" + Uuid.random().toHexString(),
+            id = "run_" + Uuid.random().toHexString(),
             at = clock.now().isoMillis(),
             sessionId = session?.id,
             digest = pack.digest,
@@ -69,12 +75,21 @@ class ReportCheckUseCaseImpl(
             head = report.head,
             cached = report.cached,
             sandbox = report.sandbox,
-            outputTail = report.outputTail?.takeLast(RunTexts.OUTPUT),
+            outputTail = report.outputTail?.let(RunTexts::masked)?.takeLast(RunTexts.OUTPUT),
             dev = session?.dev ?: SessionAccess.person(actor),
             repo = session?.repo ?: pack.envelope.repo,
         )
         repository.addCheck(actor.orgId, run)
         return run
+    }
+
+    // As the launcher's hooks report: passed on exit 0; failed or timed out otherwise (not run: no exit); skipped
+    // for a shadow script only, which runs nothing.
+    private fun consistent(report: ReportCheckRequest, mode: PackageMode): Boolean = when (report.outcome) {
+        CheckOutcome.PASSED -> report.exit == 0
+        CheckOutcome.FAILED, CheckOutcome.TIMEOUT -> report.exit != 0
+        CheckOutcome.SKIPPED -> report.exit == null && mode == PackageMode.SHADOW
+        CheckOutcome.UNKNOWN -> false
     }
 }
 

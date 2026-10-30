@@ -7,8 +7,10 @@ import dev.ostrom.core.api.models.ReportCheckRequest
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
+import dev.ostrom.server.sessions.domain.models.SessionClosedException
 import dev.ostrom.server.workflowruns.domain.models.InvalidRunException
 import dev.ostrom.server.workflowruns.domain.models.NotInPackageException
+import dev.ostrom.server.workflowruns.domain.models.RunPackageMismatchException
 import dev.ostrom.server.workflowruns.domain.models.RunPackageNotFoundException
 import dev.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
 import dev.ostrom.server.workflowruns.domain.repositories.RunQuery
@@ -18,6 +20,7 @@ import dev.ostrom.server.workflowruns.fakes.ADA
 import dev.ostrom.server.workflowruns.fakes.AGENT
 import dev.ostrom.server.workflowruns.fakes.BOB
 import dev.ostrom.server.workflowruns.fakes.FakePackages
+import dev.ostrom.server.workflowruns.fakes.FakeSessions
 import dev.ostrom.server.workflowruns.fakes.FixedClock
 import dev.ostrom.server.workflowruns.fakes.InMemoryRuns
 import dev.ostrom.server.workflowruns.fakes.ORG
@@ -25,13 +28,14 @@ import dev.ostrom.server.workflowruns.fakes.OTHER_AGENT
 import dev.ostrom.server.workflowruns.fakes.PACKAGE
 import dev.ostrom.server.workflowruns.fakes.access
 import dev.ostrom.server.workflowruns.fakes.envelope
-import kotlinx.coroutines.test.runTest
+import dev.ostrom.server.workflowruns.fakes.session
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
 
 class ChecksTest {
     private val runs = InMemoryRuns()
@@ -62,7 +66,7 @@ class ChecksTest {
     @Test
     fun aRunIsRecordedForTheSessionsPersonWithThePackagesModeAndVersion() = runTest {
         val run = report(AGENT, request())
-        assertTrue(Regex("chk_[0-9a-f]{32}").matches(run.id), run.id)
+        assertTrue(Regex("run_[0-9a-f]{32}").matches(run.id), run.id)
         assertEquals("2026-10-30T10:05:00.123Z", run.at)
         assertEquals(
             listOf("s-1", "sha256:pkg", "v3", "n-check", "sc-1"),
@@ -86,6 +90,46 @@ class ChecksTest {
         assertEquals(4000, report(AGENT, request(outputTail = long)).outputTail?.length)
         assertTrue(report(AGENT, request(outputTail = long)).outputTail!!.endsWith("END"))
         assertNull(report(AGENT, request(outputTail = null, durationMs = null)).outputTail)
+    }
+
+    @Test
+    fun theOutputsSecretsAreMasked() = runTest {
+        val output = "push https://ada:hunter2@github.com/acme/api failed; GITHUB_TOKEN=ghp_x"
+        val run = report(AGENT, request(outputTail = output))
+        assertEquals("push https://***@github.com/acme/api failed; GITHUB_TOKEN=***", run.outputTail)
+    }
+
+    @Test
+    fun anOutcomeThatContradictsItsExitIsRefused() = runTest {
+        val failed = request(exit = 1).copy(outcome = CheckOutcome.FAILED)
+        assertEquals(1, report(AGENT, failed).exit)
+        assertNull(report(AGENT, request(exit = null).copy(outcome = CheckOutcome.FAILED)).exit, "Not run")
+        assertNull(report(AGENT, request(exit = null).copy(outcome = CheckOutcome.TIMEOUT)).exit)
+        val shadow = request(exit = null).copy(outcome = CheckOutcome.SKIPPED, scriptId = "sc-2")
+        assertEquals(PackageMode.SHADOW, report(AGENT, shadow).mode)
+        val contradictions = listOf(
+            request(exit = 1),
+            request(exit = null),
+            request(exit = 0).copy(outcome = CheckOutcome.FAILED),
+            request(exit = 0).copy(outcome = CheckOutcome.TIMEOUT),
+            request(exit = null).copy(outcome = CheckOutcome.SKIPPED),
+            shadow.copy(exit = 0),
+            request().copy(outcome = CheckOutcome.UNKNOWN),
+        )
+        contradictions.forEach { assertFailsWith<InvalidRunException>(it.toString()) { report(AGENT, it) } }
+        assertEquals(4, runs.checks.size)
+    }
+
+    @Test
+    fun anEndedSessionOrAnotherPackageTakesNoRun() = runTest {
+        val ended = ReportCheckUseCaseImpl(access(FakeSessions(listOf(session(ended = true)))), runs, FixedClock())
+        assertFailsWith<SessionClosedException> { ended(AGENT, request()) }
+        val pinned = FakeSessions(listOf(session(packageDigest = "sha256:started")))
+        val other = ReportCheckUseCaseImpl(access(pinned), runs, FixedClock())
+        assertFailsWith<RunPackageMismatchException> { other(AGENT, request()) }
+        val same = FakeSessions(listOf(session(packageDigest = "sha256:pkg")))
+        assertEquals("sha256:pkg", ReportCheckUseCaseImpl(access(same), runs, FixedClock())(AGENT, request()).digest)
+        assertEquals(1, runs.checks.size)
     }
 
     @Test

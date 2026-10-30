@@ -141,7 +141,11 @@ class WorkflowRunsPostgresTest {
             val again = server.call(agent, "/api/v1/notifications", NOTIFY).body<Notification>()
             assertEquals(notification.id, again.id, "A hook passing twice on the same action gets the first one")
 
+            val early = server.call(agent, "/api/v1/sessions/s-1/workflow-receipt", RECEIPT)
+            assertEquals(HttpStatusCode.Conflict, early.status, "Signed once the session has ended")
             assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/sessions/s-1/end", "{}").status)
+            val late = server.call(agent, "/api/v1/checks", CHECK)
+            assertEquals(HttpStatusCode.Conflict, late.status, "An ended session takes nothing more")
             val signed = server.call(agent, "/api/v1/sessions/s-1/workflow-receipt", RECEIPT)
             assertEquals(HttpStatusCode.OK, signed.status, signed.bodyAsText())
             val receipt = signed.body<WorkflowReceiptResponse>()
@@ -302,10 +306,16 @@ class WorkflowRunsPostgresTest {
             server.driver.execute("ANALYZE workflow_runs_notifications").getOrThrow()
             val plans = listOf(
                 Triple("checks of a session", RunQueries.checks(RunQuery(sessionId = "s-1")), "session"),
+                Triple("checks of a node", RunQueries.checks(RunQuery(nodeId = "n-check")), "workflow_runs_checks_"),
                 Triple("checks of the organization", RunQueries.checks(RunQuery()), "at"),
                 Triple("checks before a cursor", RunQueries.checks(RunQuery(before = "chk_x")), "pkey"),
                 Triple("notifications of a session", RunQueries.notifications(RunQuery(sessionId = "s-1")), "session"),
                 Triple("notifications of the organization", RunQueries.notifications(RunQuery()), "at"),
+                Triple(
+                    "notifications by status",
+                    RunQueries.notifications(RunQuery(status = NotificationStatus.SENT)),
+                    "workflow_runs_notifications_",
+                ),
                 Triple("an action's first notification", RunQueries.FIRST_NOTIFICATION, "once"),
             )
             plans.forEach { (name, sql, index) ->
@@ -314,7 +324,8 @@ class WorkflowRunsPostgresTest {
                     val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ada.org.id)
                         .bindIfPresent(sql, "limit", PAGE).bindIfPresent(sql, "session_id", "s-1")
                         .bindIfPresent(sql, "before", "chk_x").bindIfPresent(sql, "notify_id", "nt-1")
-                        .bindIfPresent(sql, "action_key", "k")
+                        .bindIfPresent(sql, "action_key", "k").bindIfPresent(sql, "node_id", "n-check")
+                        .bindIfPresent(sql, "status", "sent")
                     tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
                 }
                 println("-- $name\n$plan")

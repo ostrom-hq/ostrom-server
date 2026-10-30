@@ -61,16 +61,12 @@ interface WorkflowRunsRepository {
     suspend fun addNotification(orgId: Uuid, notification: Notification, actionKey: String): Notification
 
     /**
-     * Reads the notification an action of a session already had, not counting one not sent (it may go again).
+     * Writes what became of a claimed notification (its status, its error).
      *
      * @param orgId The organization.
-     * @param sessionId The session.
-     * @param notifyId The notification of the package.
-     * @param actionKey The digest of the command that triggered it.
-     *
-     * @return The notification, or null.
+     * @param notification The notification, as delivered.
      */
-    suspend fun firstNotification(orgId: Uuid, sessionId: String, notifyId: String, actionKey: String): Notification?
+    suspend fun updateNotification(orgId: Uuid, notification: Notification)
 
     /**
      * Lists notifications, newest first.

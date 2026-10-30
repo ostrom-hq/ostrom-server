@@ -10,6 +10,7 @@ import dev.ostrom.server.sessions.domain.models.NotYourSessionException
 import dev.ostrom.server.workflowruns.domain.models.InvalidRunException
 import dev.ostrom.server.workflowruns.domain.models.RunPackageNotFoundException
 import dev.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
+import dev.ostrom.server.workflowruns.domain.models.SessionStillOpenException
 import dev.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.WorkflowReceiptRequest
@@ -23,13 +24,6 @@ import dev.ostrom.server.workflowruns.fakes.OTHER_AGENT
 import dev.ostrom.server.workflowruns.fakes.access
 import dev.ostrom.server.workflowruns.fakes.gate
 import dev.ostrom.server.workflowruns.fakes.session
-import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -37,6 +31,13 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class WorkflowReceiptTest {
     private val runs = InMemoryRuns()
@@ -54,7 +55,10 @@ class WorkflowReceiptTest {
         override suspend fun verify(receipt: JsonObject): Verification =
             Verification(receipt["signature"]?.jsonPrimitive?.content == "sig", "d", "k1", null)
     }
-    private val sessions = FakeSessions(gates = listOf(gate(approved = true, self = true), gate(false, false)))
+    private val sessions = FakeSessions(
+        listOf(session(ended = true)),
+        gates = listOf(gate(approved = true, self = true), gate(false, false)),
+    )
     private val sign = SignWorkflowReceiptUseCaseImpl(access(sessions), sessions, runs, signer, verifier)
 
     private fun request(agent: String? = null, model: String? = null, sessionId: String = "s-1") =
@@ -104,7 +108,11 @@ class WorkflowReceiptTest {
         assertFailsWith<InvalidRunException> { sign(AGENT, request(agent = "a\nb")) }
         assertFailsWith<InvalidRunException> { sign(AGENT, request(model = "m".repeat(201))) }
         assertTrue(signed.isEmpty())
-        val alone = FakeSessions(listOf(session()))
+        val open = FakeSessions(listOf(session()))
+        val early = SignWorkflowReceiptUseCaseImpl(access(open), open, runs, signer, verifier)
+        assertFailsWith<SessionStillOpenException> { early(AGENT, request()) }
+        assertTrue(signed.isEmpty(), "An open session's receipt would miss what it reports next")
+        val alone = FakeSessions(listOf(session(ended = true)))
         val ownSession = SignWorkflowReceiptUseCaseImpl(access(alone), alone, runs, signer, verifier)
         assertEquals(0, ownSession(AGENT, request()).receipt.getValue("decisions").jsonArray.size)
     }

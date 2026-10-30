@@ -42,7 +42,12 @@ val BOB: GateActor = GateActor("bob", ORG, ActorKind.USER, personId = "bob")
 val OTHER_AGENT: GateActor =
     GateActor("agent-lch_2", ORG, ActorKind.AGENT_SESSION, launchId = "lch_2", personId = "ada")
 
-fun session(id: String = "s-1", receiptId: String? = null) = Session(
+fun session(
+    id: String = "s-1",
+    receiptId: String? = null,
+    ended: Boolean = false,
+    packageDigest: String? = null,
+) = Session(
     orgId = ORG,
     id = id,
     rootId = id,
@@ -52,6 +57,8 @@ fun session(id: String = "s-1", receiptId: String? = null) = Session(
     agent = "claude-code",
     dev = "ada",
     startedAt = STARTED,
+    endedAt = STARTED.takeIf { ended },
+    packageDigest = packageDigest,
     receiptId = receiptId,
 )
 
@@ -75,7 +82,10 @@ fun node(id: String, kind: String, workflow: String = "wf1", mode: PackageMode =
 val PACKAGE: RunPackage = RunPackage(
     envelope(),
     nodes = listOf(node("n-check", "check"), node("n-notify", "notify")),
-    scripts = listOf(PackageScript("sc-1", "n-check", "sha-good", PackageMode.ENFORCE)),
+    scripts = listOf(
+        PackageScript("sc-1", "n-check", "sha-good", PackageMode.ENFORCE),
+        PackageScript("sc-2", "n-check", "sha-shadow", PackageMode.SHADOW),
+    ),
     notifications = listOf(
         PackageNotify("nt-1", "n-notify", "log:team", "{dev} ran {command} in {repo} ({session})", PackageMode.ENFORCE),
         PackageNotify("nt-2", "n-notify", "slack:#ops", "to slack", PackageMode.ENFORCE),
@@ -125,20 +135,15 @@ class InMemoryRuns : WorkflowRunsRepository {
                 stored.notifyId == notification.notifyId && key == actionKey &&
                 stored.status != NotificationStatus.NOT_SENT
         }
-        if (first != null && notification.status != NotificationStatus.NOT_SENT) return first.first
+        if (first != null) return first.first
         notifications += notification to actionKey
         return notification
     }
 
-    override suspend fun firstNotification(
-        orgId: Uuid,
-        sessionId: String,
-        notifyId: String,
-        actionKey: String,
-    ): Notification? = notifications.firstOrNull { (stored, key) ->
-        stored.sessionId == sessionId && stored.notifyId == notifyId && key == actionKey &&
-            stored.status != NotificationStatus.NOT_SENT
-    }?.first
+    override suspend fun updateNotification(orgId: Uuid, notification: Notification) {
+        val index = notifications.indexOfFirst { it.first.id == notification.id }
+        notifications[index] = notification to notifications[index].second
+    }
 
     override suspend fun notifications(orgId: Uuid, query: RunQuery): List<Notification> {
         queries += query

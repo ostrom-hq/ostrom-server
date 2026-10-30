@@ -6,9 +6,12 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.SessionAccess
+import dev.ostrom.server.sessions.domain.models.SessionClosedException
 import dev.ostrom.server.workflowruns.domain.models.RunPackage
+import dev.ostrom.server.workflowruns.domain.models.RunPackageMismatchException
 import dev.ostrom.server.workflowruns.domain.models.RunPackageNotFoundException
 import dev.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
+import dev.ostrom.server.workflowruns.domain.models.SessionStillOpenException
 import dev.ostrom.server.workflowruns.domain.services.RunPackages
 import dev.ostrom.server.workflowruns.domain.services.RunSessions
 
@@ -30,9 +33,12 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
      * @throws RunSessionNotFoundException When the organization has no such session.
      * @throws NotYourSessionException When it is another person's, or another
      *   launch's; or when an agent token names no session.
+     * @throws SessionClosedException When the session has ended: its receipt is signed, nothing is added to it.
      */
     suspend fun writing(actor: GateActor, sessionId: String?): Session? {
-        if (sessionId != null) return owned(actor, sessionId)
+        if (sessionId != null) {
+            return owned(actor, sessionId).also { if (it.endedAt != null) throw SessionClosedException(it) }
+        }
         // An agent token acts inside its launch's sessions only: never outside one.
         if (actor.kind == ActorKind.AGENT_SESSION) throw NotYourSessionException()
         SessionAccess.person(actor)
@@ -57,6 +63,19 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
     }
 
     /**
+     * An ended session of the caller's: its workflow receipt is signed once, with everything it reported.
+     *
+     * @param actor The caller.
+     * @param sessionId The session.
+     *
+     * @return The session.
+     *
+     * @throws SessionStillOpenException When it has not ended.
+     */
+    suspend fun ended(actor: GateActor, sessionId: String): Session =
+        owned(actor, sessionId).takeIf { it.endedAt != null } ?: throw SessionStillOpenException(sessionId)
+
+    /**
      * The session a read is about: any member reads it, an agent token its own launch's only (answered as absent).
      *
      * @param actor The caller.
@@ -71,15 +90,20 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
             ?: throw RunSessionNotFoundException()
 
     /**
-     * The package a report names.
+     * The package a report names, which must be its session's: an agent never reports under another package.
      *
      * @param actor The caller.
      * @param digest The package's digest.
+     * @param session The session reported for, or null outside one.
      *
      * @return The package.
      *
      * @throws RunPackageNotFoundException When the organization has none with that digest.
+     * @throws RunPackageMismatchException When the session started with another package.
      */
-    suspend fun pack(actor: GateActor, digest: String): RunPackage =
-        packages.find(actor.orgId, digest) ?: throw RunPackageNotFoundException()
+    suspend fun pack(actor: GateActor, digest: String, session: Session?): RunPackage {
+        val started = session?.packageDigest
+        if (started != null && started != digest) throw RunPackageMismatchException()
+        return packages.find(actor.orgId, digest) ?: throw RunPackageNotFoundException()
+    }
 }

@@ -17,6 +17,19 @@ class NotInPackageException(what: String) : OstromException(ErrorKind.NOT_FOUND,
 /** The package was revoked: Ostrom sends nothing in its name. */
 class RunPackageRevokedException : OstromException(ErrorKind.CONFLICT, "Package revoked.")
 
+/** The session runs another package than the one the report names. */
+class RunPackageMismatchException : OstromException(ErrorKind.CONFLICT, "This session runs another package.")
+
+/**
+ * The session is still open: its workflow receipt is signed once, after it ends, with everything it reported.
+ *
+ * @param sessionId The session.
+ */
+class SessionStillOpenException(sessionId: String) : OstromException(
+    ErrorKind.CONFLICT,
+    "Session ${sessionId.take(ID_SHOWN)} is still open: end it before signing its workflow receipt.",
+)
+
 /** No session of the organization, or none the caller may see, has this id. */
 class RunSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Session not found.")
 
@@ -26,3 +39,6 @@ class RunSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Sessio
  * @param reason Which, and what it must be.
  */
 class InvalidRunException(reason: String) : OstromException(ErrorKind.INVALID_REQUEST, reason)
+
+// The most of an id a message shows.
+private const val ID_SHOWN = 200

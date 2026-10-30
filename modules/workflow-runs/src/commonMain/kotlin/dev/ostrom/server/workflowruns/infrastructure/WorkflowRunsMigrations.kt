@@ -32,6 +32,7 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
         );
         CREATE INDEX workflow_runs_checks_at ON workflow_runs_checks (org_id, at DESC, id DESC);
         CREATE INDEX workflow_runs_checks_session ON workflow_runs_checks (org_id, session_id, at DESC, id DESC);
+        CREATE INDEX workflow_runs_checks_node ON workflow_runs_checks (org_id, node_id, at DESC, id DESC);
         ${policy("workflow_runs_checks")}
         CREATE TABLE workflow_runs_notifications (
             org_id UUID NOT NULL,
@@ -45,6 +46,8 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
             PRIMARY KEY (org_id, id)
         );
         CREATE INDEX workflow_runs_notifications_at ON workflow_runs_notifications (org_id, at DESC, id DESC);
+        CREATE INDEX workflow_runs_notifications_status
+            ON workflow_runs_notifications (org_id, status, at DESC, id DESC);
         CREATE INDEX workflow_runs_notifications_session
             ON workflow_runs_notifications (org_id, session_id, at DESC, id DESC);
         -- One notification per action of a session; one not sent may go again.
