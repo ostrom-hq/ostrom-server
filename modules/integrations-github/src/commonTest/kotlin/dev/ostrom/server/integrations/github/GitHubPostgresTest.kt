@@ -67,7 +67,8 @@ class GitHubPostgresTest {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
-                    "user", "member" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
+                    "user", "member", "admin" ->
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
                     "reader" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("orgs:read"))
                     else -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, emptySet())
                 }
@@ -85,7 +86,11 @@ class GitHubPostgresTest {
             object : PrincipalOrgResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? {
                     val (kind, org, _) = principal.subjectId.split(":")
-                    val role = if (kind == "user") OrgRole.OWNER else OrgRole.MEMBER
+                    val role = when (kind) {
+                        "user" -> OrgRole.OWNER
+                        "admin" -> OrgRole.ADMIN
+                        else -> OrgRole.MEMBER
+                    }
                     return OrgPrincipal(orgOf(org), Uuid.random(), role).takeIf { orgId == null || it.orgId == orgId }
                 }
             }
@@ -108,9 +113,12 @@ class GitHubPostgresTest {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
             }
         }
-        single { GitHubSettings("123", null, secret, "ostrom-dev", webOrigin = "https://console.example") }
+        single { GitHubSettings("123", null, secret, slug, webOrigin = "https://console.example") }
         single<GitHubApi> { github }
     }
+
+    // Read when the server starts: a test sets it before.
+    private var slug: String? = "ostrom-dev"
 
     private fun orgOf(letter: String) = if (letter == "a") ORG else OTHER_ORG
 
@@ -137,7 +145,7 @@ class GitHubPostgresTest {
     }
 
     private suspend fun TestServer.deliver(event: String, body: String, signature: String? = null): HttpResponse =
-        client.post("/api/v1/github/webhook") {
+        client.post("/webhooks/github") {
             header("X-GitHub-Event", event)
             header("X-Hub-Signature-256", signature ?: sign(body))
             contentType(ContentType.Application.Json)
@@ -180,8 +188,25 @@ class GitHubPostgresTest {
     }
 
     @Test
+    fun withoutItsNameTheAppHasNoPageToLinkTo() = run {
+        slug = null
+        gitHubTest { server ->
+            val status = server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>()
+            assertEquals(GitHubAppStatus(false, null, null, null), status)
+        }
+    }
+
+    @Test
     fun aWebhookIsAcceptedOnlyWithTheAppsSignature() = gitHubTest { server ->
         server.install("user:a:owner", 42)
+        // Incoming webhooks live outside the API prefix (contract 0.1.129): the old path is gone.
+        val old = server.client.post("/api/v1/github/webhook") {
+            header("X-GitHub-Event", "pull_request")
+            header("X-Hub-Signature-256", sign(opened))
+            contentType(ContentType.Application.Json)
+            setBody(opened)
+        }
+        assertEquals(HttpStatusCode.NotFound, old.status)
         assertEquals(HttpStatusCode.Unauthorized, server.deliver("pull_request", opened, "sha256=00").status)
         assertEquals(HttpStatusCode.Unauthorized, server.deliver("pull_request", opened, "").status)
         assertTrue(github.published.isEmpty())
@@ -194,6 +219,7 @@ class GitHubPostgresTest {
     @Test
     fun onlyAnOwnerOrAnAdminStartsAnInstallAndAStateServesOnce() = gitHubTest { server ->
         assertEquals(HttpStatusCode.Forbidden, server.get("member:a:dev", "/api/v1/github/app/install/start").status)
+        assertEquals(HttpStatusCode.Found, server.get("admin:a:ops", "/api/v1/github/app/install/start").status)
         assertEquals(HttpStatusCode.Forbidden, server.get("reader:a:ops", "/api/v1/github/app/install/start").status)
         assertEquals(HttpStatusCode.Forbidden, server.get("agent:a:x", "/api/v1/github/app").status)
         assertEquals(HttpStatusCode.Unauthorized, server.get(null, "/api/v1/github/app").status)

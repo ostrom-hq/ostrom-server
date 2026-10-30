@@ -165,8 +165,6 @@ class PostgresCompilerRepository(
         const val MAX_ROWS = 1000
         const val PACKAGE_COLUMNS = "content_digest, digest, version, repo, compiled_at, envelope, counts, revoked, " +
             "revoked_by, revoke_reason"
-        val json = Json { ignoreUnknownKeys = true }
-        val counts = MapSerializer(String.serializer(), Int.serializer())
 
         fun ResultSet.Row.toPackage() = StoredPackage(
             envelope = json.decodeFromString(PackageEnvelope.serializer(), get("envelope").asString())
@@ -201,3 +199,7 @@ private suspend fun CompilerTx.harnesses(orgId: Uuid, repo: String?, digest: Str
 
 // The organization's own pin and harnesses live under `*`, as in the prototype.
 private fun keyOf(repo: String?): String = repo ?: "*"
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val json = Json { ignoreUnknownKeys = true }
+private val counts = MapSerializer(String.serializer(), Int.serializer())

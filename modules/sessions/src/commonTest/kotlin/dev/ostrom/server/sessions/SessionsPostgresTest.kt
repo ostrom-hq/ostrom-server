@@ -8,7 +8,10 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
@@ -32,6 +35,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -75,6 +79,15 @@ class SessionsPostgresTest {
                             GateActor("agent-$id", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
                         else -> GateActor(id, orgId, ActorKind.USER, personId = id)
                     }
+                }
+            }
+        }
+        // The receipts routes read the organization through the orgs module's resolver: the token's org letter.
+        single<PrincipalOrgResolver> {
+            object : PrincipalOrgResolver {
+                override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? {
+                    val org = principal.subjectId.split(":").getOrNull(1) ?: return null
+                    return OrgPrincipal(if (org == "a") orgA else orgB, Uuid.random(), OrgRole.MEMBER)
                 }
             }
         }
@@ -241,16 +254,25 @@ class SessionsPostgresTest {
             listOf(none, other, swept, written.toString())
         }
         assertEquals(listOf("0", "0", "1", "0"), seen, "The sweep reads every organization and writes none")
-        val insert = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
-            fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
-                .getOrThrow()
-            execute(
-                Statement.create(
-                    "INSERT INTO sessions_sessions (org_id, id, root_id, segment, agent, dev, started_at) " +
-                        "VALUES (:org, 'x', 'x', 1, 'a', 'd', now())",
-                ).bind("org", orgA),
-            )
+        // The driver throws a refused write rather than returning it as a failure: both count as refused.
+        val insert = try {
+            server.driver.transaction {
+                execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
+                fetchAll(
+                    Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()),
+                ).getOrThrow()
+                execute(
+                    Statement.create(
+                        "INSERT INTO sessions_sessions (org_id, id, root_id, segment, agent, dev, started_at) " +
+                            "VALUES (:org, 'x', 'x', 1, 'a', 'd', now())",
+                    ).bind("org", orgA),
+                ).getOrThrow()
+            }
+            Result.success(Unit)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (expected: Exception) {
+            Result.failure(expected)
         }
         assertTrue(insert.isFailure, "A row of another organization cannot be written")
         assertEquals("lyes", server.koin.get<SessionsRepository>().get(orgA, "s-1")?.dev)

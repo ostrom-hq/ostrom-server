@@ -13,6 +13,7 @@ import dev.ostrom.server.sessions.domain.models.SessionNotFoundException
 import dev.ostrom.server.sessions.domain.models.SessionQuery
 import dev.ostrom.server.sessions.domain.models.SessionResumedElsewhereException
 import dev.ostrom.server.sessions.domain.models.StartSession
+import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import dev.ostrom.server.sessions.domain.usecases.CloseSessionUseCase
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
 import dev.ostrom.server.sessions.fakes.ORG
@@ -22,7 +23,6 @@ import dev.ostrom.server.sessions.fakes.agent
 import dev.ostrom.server.sessions.fakes.user
 import dev.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import kotlinx.coroutines.test.runTest
-import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -31,6 +31,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class SessionLifecycleTest {
@@ -85,7 +86,8 @@ class SessionLifecycleTest {
         assertEquals("launch-1", next.launchId)
         assertEquals("pkg", next.packageDigest)
         assertEquals("rcpt_session_s-1", next.previousReceiptId)
-        assertEquals(bench.clock.now, next.lastSeenAt, "A reopened segment is followed at once")
+        val now = Instant.fromEpochMilliseconds(bench.clock.now.toEpochMilliseconds())
+        assertEquals(now, next.lastSeenAt, "A reopened segment is followed at once, to the millisecond")
         assertTrue(next.source.orEmpty().startsWith("reopened: the launcher came back after \"launcher lost"))
 
         val again = bench.reopen(agent(), session.id)

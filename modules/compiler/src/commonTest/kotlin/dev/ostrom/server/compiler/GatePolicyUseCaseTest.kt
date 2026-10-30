@@ -45,7 +45,8 @@ class GatePolicyUseCaseTest {
         assertEquals("2026-10-30T08:55:00Z", body.getValue("expiresAt").jsonPrimitive.content)
         assertEquals("closed", body.getValue("failMode").jsonPrimitive.content)
         assertTrue(body.getValue("actions").jsonArray.isEmpty() && body.getValue("gates").jsonArray.isEmpty())
-        assertEquals(listOf(org to "acme-api"), asked, "the organization's catalogue for that repository")
+        val expected: List<Pair<Uuid, String?>> = listOf(org to "acme-api")
+        assertEquals(expected, asked.toList(), "the organization's catalogue for that repository")
     }
 
     @Test

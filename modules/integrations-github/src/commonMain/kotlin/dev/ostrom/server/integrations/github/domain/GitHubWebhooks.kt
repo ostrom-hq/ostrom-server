@@ -130,10 +130,9 @@ class HandleWebhookUseCaseImpl(
 
     @Serializable
     private data class Login(val login: String)
-
-    private companion object {
-        val json = Json { ignoreUnknownKeys = true }
-        val GATED_ACTIONS = setOf("opened", "reopened", "synchronize", "ready_for_review", "edited")
-        val MAIN_BRANCHES = setOf("main", "master")
-    }
 }
+
+// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
+private val json = Json { ignoreUnknownKeys = true }
+private val GATED_ACTIONS = setOf("opened", "reopened", "synchronize", "ready_for_review", "edited")
+private val MAIN_BRANCHES = setOf("main", "master")
