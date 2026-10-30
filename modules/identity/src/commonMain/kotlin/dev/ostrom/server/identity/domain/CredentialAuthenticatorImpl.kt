@@ -15,6 +15,8 @@ import kotlin.time.Instant
  *
  * - A personal or CLI token acts as its user, limited to its scopes, and never to more than [grantedScopes] allows
  *   for its kind: whatever its row says, a token never answers a gate (S2-04, S2-31).
+ * - The phone app's token acts as its user on the [PrincipalChannel.MOBILE_APP] channel, limited to [MOBILE_SCOPES];
+ *   its `authenticatedAt` is the phone's last biometric unlock, never its issuance (S2-54).
  * - An agent token is an [PrincipalKind.AGENT] whose subject is its agent session, with the single [AGENT_SCOPE]:
  *   it never passes a console route (audit A2) and can only act on that session.
  * - A browser session acts as its user with all their rights, and needs the CSRF token and an allowed `Origin` on
@@ -46,6 +48,15 @@ class CredentialAuthenticatorImpl(
                 scopes = grantedScopes(stored.kind, stored.scopes),
                 credentialId = stored.id.toString(),
                 orgId = stored.orgId?.toString(),
+            )
+            // The app's token: held in the phone's keychain; a yes needs its last biometric unlock (S2-31, S2-54).
+            TokenKind.MOBILE -> AuthenticatedPrincipal(
+                subjectId = stored.userId.toString(),
+                kind = PrincipalKind.USER,
+                scopes = grantedScopes(stored.kind, stored.scopes),
+                credentialId = stored.id.toString(),
+                channel = PrincipalChannel.MOBILE_APP,
+                authenticatedAt = stored.authenticatedAt,
             )
             TokenKind.PERSONAL, TokenKind.CLI -> AuthenticatedPrincipal(
                 subjectId = stored.userId.toString(),

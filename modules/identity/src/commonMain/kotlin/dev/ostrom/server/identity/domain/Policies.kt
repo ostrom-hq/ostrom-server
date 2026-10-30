@@ -35,9 +35,10 @@ val DEVICE_POLL_INTERVAL: Duration = 5.seconds
 const val AGENT_SCOPE = "agent:session"
 
 /**
- * The scope that answers a gate. No token ever holds it (audit S2-04, S2-31): a token lives on the developer's
- * machine, where the agent can read it and say yes to itself. A yes comes from a browser session (the passkey
- * step-up of the console) or the phone app after biometrics, never from the CLI.
+ * The scope that answers a gate. No token the person can create or the CLI holds has it (audit S2-04, S2-31): such a
+ * token lives on the developer's machine, where the agent can read it and say yes to itself. A yes comes from a
+ * browser session (the console) or the phone app's token ([MOBILE_SCOPES]), which lives in the phone's keychain and
+ * says yes only after the phone's biometric unlock (S2-54); never from the CLI.
  */
 const val ANSWER_SCOPE = "gates:answer"
 
@@ -53,10 +54,22 @@ val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, ALL_USER_SC
  */
 val CLI_SCOPES: Set<String> = setOf("profile:read", "orgs:read", "workflows:read", "sessions:write")
 
+/** The scope that changes the caller's notification preferences (`PUT /api/v1/me/notifications`). */
+const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
+
+/**
+ * The scopes of the phone app's token: what the app shows (the person, their organizations, the approvals and their
+ * receipts, the usage) and does (answer a gate, register for push, set its notifications). Nothing of the console's
+ * administration, no workflow write, no token management.
+ */
+val MOBILE_SCOPES: Set<String> = setOf(
+    "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", NOTIFICATIONS_WRITE_SCOPE,
+)
+
 /**
  * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written
  * before S2-04, or by hand, cannot grant more): an agent token only [AGENT_SCOPE], a CLI token at most [CLI_SCOPES],
- * a personal token what it lists minus [NEVER_ON_A_TOKEN].
+ * the app's token at most [MOBILE_SCOPES], a personal token what it lists minus [NEVER_ON_A_TOKEN].
  *
  * @param kind The kind of the token.
  * @param stored The scopes its row lists.
@@ -66,6 +79,7 @@ val CLI_SCOPES: Set<String> = setOf("profile:read", "orgs:read", "workflows:read
 fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kind) {
     TokenKind.AGENT -> setOf(AGENT_SCOPE)
     TokenKind.CLI -> stored intersect CLI_SCOPES
+    TokenKind.MOBILE -> stored intersect MOBILE_SCOPES
     TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN
 }
 

@@ -2,6 +2,7 @@
 package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.AccountLinkRequiredException
+import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCase
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.IdentityTakenException
 import dev.ostrom.server.identity.domain.InvalidSignInStateException
@@ -14,6 +15,8 @@ import dev.ostrom.server.identity.domain.RequestMagicLinkUseCase
 import dev.ostrom.server.identity.domain.SignInMethods
 import dev.ostrom.server.identity.domain.StartOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
+import dev.ostrom.server.identity.domain.constantTimeEquals
+import dev.ostrom.server.identity.domain.mobileClientOf
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.Cookie
@@ -30,6 +33,12 @@ import io.ktor.server.routing.Route
 /** The cookie that binds an OAuth sign-in to the browser that started it. */
 const val OAUTH_STATE_COOKIE = "ostrom_oauth_state"
 
+/**
+ * The cookie that binds a sign-in the phone app started to its in-app browser: the callback that matches it returns a
+ * one-time code to the app instead of opening a browser session.
+ */
+const val MOBILE_OAUTH_STATE_COOKIE = "ostrom_mobile_oauth_state"
+
 private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
 
 /**
@@ -42,6 +51,7 @@ private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
  * @property requestMagicLink E-mails a sign-in link.
  * @property verifyMagicLink Signs in with it.
  * @property launcherLogin Exchanges a GitHub token of Ostrom's app for a CLI token.
+ * @property completeMobile Completes a sign-in the phone app started.
  */
 data class SignInRoutesDependencies(
     val config: IdentityConfig,
@@ -51,6 +61,7 @@ data class SignInRoutesDependencies(
     val requestMagicLink: RequestMagicLinkUseCase,
     val verifyMagicLink: VerifyMagicLinkUseCase,
     val launcherLogin: LauncherLoginUseCase,
+    val completeMobile: CompleteMobileSignInUseCase,
 )
 
 /**
@@ -66,16 +77,23 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
         call.respond(ProvidersResponse(methods.keys))
     }
     get<SignInApi.Provider.Start> { params ->
+        // Invalid mobile parameters answer 400 here: nothing is redirected to a deep link that is not the app's.
+        val mobile = mobileClientOf(params.redirectUri, params.state, params.codeChallenge, params.codeChallengeMethod)
         val started = try {
             val source = call.request.origin.remoteAddress
-            startOAuth(params.parent.provider, params.redirect, source, reauthenticate = params.reauth)
+            val provider = params.parent.provider
+            mobile?.let { startOAuth.mobile(provider, source, it) }
+                ?: startOAuth(provider, params.redirect, source, reauthenticate = params.reauth)
         } catch (error: OstromException) {
             return@get call.redirectToLogin(config, error)
         }
-        call.response.cookies.append(stateCookie(started.state, OAUTH_STATE_LIFETIME.inWholeSeconds.toInt(), config))
+        val cookie = if (mobile == null) OAUTH_STATE_COOKIE else MOBILE_OAUTH_STATE_COOKIE
+        val lifetime = OAUTH_STATE_LIFETIME.inWholeSeconds.toInt()
+        call.response.cookies.append(stateCookie(started.state, lifetime, config, cookie))
         call.respondRedirect(started.authorizationUrl)
     }
     get<SignInApi.Provider.Callback> { params ->
+        if (call.answeredTheApp(params, completeMobile, config)) return@get
         // The state cookie served its purpose whatever happens next.
         call.response.cookies.append(stateCookie("", 0, config))
         if (params.error != null) return@get call.redirectToLogin(config, "access_denied")
@@ -114,8 +132,38 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
     }
 }
 
-private fun stateCookie(value: String, maxAge: Int, config: IdentityConfig) = Cookie(
-    name = OAUTH_STATE_COOKIE,
+/**
+ * Ends a sign-in the phone app started, when the provider's state is the one of the mobile cookie: the in-app browser
+ * goes to the app's deep link with the code or the error, or to the console's login page when the attempt is unknown.
+ *
+ * @param params The callback's parameters.
+ * @param completeMobile Completes the app's sign-in.
+ * @param config The console URL and the cookie settings.
+ *
+ * @return Whether the callback was the app's, and is answered.
+ */
+private suspend fun ApplicationCall.answeredTheApp(
+    params: SignInApi.Provider.Callback,
+    completeMobile: CompleteMobileSignInUseCase,
+    config: IdentityConfig,
+): Boolean {
+    val mobileState = request.cookies[MOBILE_OAUTH_STATE_COOKIE]
+    val state = params.state
+    val theApps = mobileState != null && state != null && constantTimeEquals(state, mobileState)
+    if (theApps) {
+        response.cookies.append(stateCookie("", 0, config, MOBILE_OAUTH_STATE_COOKIE))
+        try {
+            val back = completeMobile(params.parent.provider, state, mobileState, params.code, params.error)
+            respondRedirect(back.toUrl())
+        } catch (error: OstromException) {
+            redirectToLogin(config, error)
+        }
+    }
+    return theApps
+}
+
+private fun stateCookie(value: String, maxAge: Int, config: IdentityConfig, name: String = OAUTH_STATE_COOKIE) = Cookie(
+    name = name,
     value = value,
     maxAge = maxAge,
     path = SIGN_IN_COOKIE_PATH,
