@@ -210,7 +210,10 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                     Statement.create(
                         "UPDATE gates_requests SET status = :status, answered_at = :answered_at, channel = :channel " +
                             "WHERE org_id = :org_id AND id = :id",
-                    ).bindRequest(request),
+                    ).bind("org_id", request.orgId).bind("id", request.id).bind("status", request.status.name)
+                        // sqlx4k refuses a bound name the statement does not use: only this update's own.
+                        .bindOrNull("answered_at", request.answeredAt, Instant::class)
+                        .bind("channel", request.channel?.name),
                 ).getOrThrow()
             }
         }
