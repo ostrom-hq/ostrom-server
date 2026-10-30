@@ -58,7 +58,7 @@ interface WaitsRepository {
 }
 
 /** Who is an active member of an organization; bound by the module that owns the members. */
-fun interface MemberDirectory {
+interface MemberDirectory {
     /** Whether [memberId] is an active member of [orgId]. */
     suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean
 }
