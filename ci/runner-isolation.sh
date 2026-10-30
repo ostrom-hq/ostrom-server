@@ -14,10 +14,9 @@ set -euo pipefail
 binary="$1"
 image=ostrom-runner:isolation
 context=$(mktemp -d)
-mkdir -p "$context/bin"
-cp "$binary" "$context/bin/ostrom-runner"
-cp runner/Dockerfile "$context/Dockerfile"
-docker build -q -t "$image" "$context" > /dev/null
+ci/session-image-context.sh "$context" "$binary"
+# Not quiet: when the agents' install fails, its output and the npm log are the only diagnosis (run 41045488208).
+docker build --progress=plain -t "$image" "$context"
 
 token="ostrom_runner_$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 session=$(cat /proc/sys/kernel/random/uuid)
