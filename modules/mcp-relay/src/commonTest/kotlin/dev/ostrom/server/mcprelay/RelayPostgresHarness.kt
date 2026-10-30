@@ -52,11 +52,14 @@ abstract class RelayPostgresHarness {
         "agent-a" to Relay.memberA,
         "device-a" to Relay.memberA,
         "cli-a" to Relay.adminA,
+        "admin-agent-a" to Relay.adminA,
     )
 
-    /** Browser sessions by default; an agent, a device, and a console token that may only read. */
+    /** Browser sessions by default; agents (one an admin's), a device, and a console token that may only read. */
     protected val principals = mapOf(
         "agent-a" to AuthenticatedPrincipal("agent-a", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
+        "admin-agent-a" to
+            AuthenticatedPrincipal("admin-agent-a", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
         "device-a" to AuthenticatedPrincipal("device-a", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
         "cli-a" to AuthenticatedPrincipal("cli-a", PrincipalKind.USER, setOf(RelayScopes.MCP_READ)),
     )

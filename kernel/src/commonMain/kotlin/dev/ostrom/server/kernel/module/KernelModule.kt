@@ -7,7 +7,9 @@ import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
 import dev.ostrom.server.kernel.http.HealthCheck
+import dev.ostrom.server.kernel.http.Readiness
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.kernel.network.TrustedProxies
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
 import org.koin.core.module.Module
@@ -38,6 +40,9 @@ fun kernelModule(
     single { driver }
     single { signer }
     single { clock }
+    // Validated at start by ServerConfig.from: read again here so that tests set it through the ConfigSource.
+    single { TrustedProxies.parse(config["OSTROM_TRUSTED_PROXIES"], config["OSTROM_CLIENT_ADDRESS_HEADER"]) }
+    single { Readiness() }
     single<MigrationRunner> { MigrationRunnerImpl(get(), get()) }
     single<HealthCheck>(named("database")) { DatabaseHealthCheck(get()) }
 }

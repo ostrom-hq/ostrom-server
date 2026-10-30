@@ -106,12 +106,14 @@ class HttpMcpUpstream(
             return withTimeoutOrNull(deadline) {
                 when (val initialized = session.request("initialize", INITIALIZE_PARAMS)) {
                     is Reply.Result -> {
-                        session.protocolVersion = (initialized.value["protocolVersion"] as? JsonPrimitive)?.content
-                            ?.takeIf { it in RelayMcpMessageUseCaseImpl.PROTOCOL_VERSIONS }
-                            ?: return@withTimeoutOrNull UpstreamResult.Failure(
+                        val version = (initialized.value["protocolVersion"] as? JsonPrimitive)?.content
+                        if (version == null || version !in RelayMcpMessageUseCaseImpl.PROTOCOL_VERSIONS) {
+                            return@withTimeoutOrNull UpstreamResult.Failure(
                                 McpOutcome.UPSTREAM_ERROR,
                                 "The MCP server speaks an unsupported protocol version.",
                             )
+                        }
+                        session.protocolVersion = version
                         session.notify("notifications/initialized")
                         block(session)
                     }
@@ -174,9 +176,10 @@ class HttpMcpUpstream(
                 val error = message["error"] as? JsonObject
                 val result = message["result"] as? JsonObject
                 when {
-                    error != null -> Reply.Error(
-                        (error["message"] as? JsonPrimitive)?.content?.take(MAX_ERROR) ?: "unknown error",
-                    )
+                    error != null -> {
+                        val text = error["message"] as? JsonPrimitive
+                        Reply.Error(if (text == null) "unknown error" else text.content.take(MAX_ERROR))
+                    }
                     result != null -> Reply.Result(result, bytes.size.toLong())
                     else -> Reply.Refused(
                         UpstreamResult.Failure(McpOutcome.UPSTREAM_ERROR, "The MCP server sent an invalid answer."),
@@ -222,7 +225,8 @@ class HttpMcpUpstream(
         }.execute { read(it) }
 
         private fun credential(builder: io.ktor.client.request.HttpRequestBuilder) {
-            val value = target.credential?.reveal() ?: return
+            val secret = target.credential ?: return
+            val value = secret.reveal()
             val name = target.server.credentialHeader
             if (name ==
                 null

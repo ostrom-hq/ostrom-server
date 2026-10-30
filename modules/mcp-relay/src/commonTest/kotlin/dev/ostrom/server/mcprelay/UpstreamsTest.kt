@@ -255,7 +255,8 @@ class UpstreamsTest {
 
     @Test
     fun anOddSessionIdIsIgnoredAndAMissingCredentialIsNotSent() = realTime {
-        for (sessionId in listOf("s 1", "s".repeat(257))) {
+        // Below 0x21, empty, above 0x7e and longer than 256: each is ignored.
+        for (sessionId in listOf("s 1", "", "s\u007f1", "s".repeat(257))) {
             requests.clear()
             val upstream = HttpMcpUpstream(
                 client { request, body ->
@@ -345,6 +346,13 @@ class UpstreamsTest {
         }
         assertTrue(UpstreamAddressGuard(allowPrivate = true).allows("https://10.0.0.5/mcp"))
         assertFalse(UpstreamAddressGuard(allowPrivate = true).allows("http://10.0.0.5/mcp"))
+    }
+
+    @Test
+    fun anIpv6BelowGlobalUnicastIsRefusedAndAMinusSignMakesAName() {
+        val guard = UpstreamAddressGuard()
+        assertFalse(guard.allows("https://[1000::1]/"), "Below 2000::/3")
+        assertTrue(guard.allows("https://1.2.3.-1/"), "inet_aton reads no negative octet: a name, left to DNS")
     }
 
     private fun stdioTarget() = UpstreamTarget(

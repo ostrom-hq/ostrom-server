@@ -120,7 +120,7 @@ class McpServerAdministration(
                 "A per-member server takes each member's credential at assignment, not a shared one.",
             )
         }
-        val referenced = listOfNotNull(server.credentialSecretId) + server.stdio?.secretEnv?.values.orEmpty()
+        val referenced = listOfNotNull(server.credentialSecretId) + server.stdio?.secretEnv.orEmpty().values
         requireSecrets(revealSecrets, caller, referenced)
         requireDistinctAgentName(caller, server)
     }
