@@ -41,7 +41,7 @@ class DockerRuntimeDriverTest {
     private val session = session().copy(epoch = 2)
     private val hex = session.id.toHexString()
     private val name = "ostrom-s-$hex-e2"
-    private val spec = ExecutionSpec(session.id, ORG_A, 2, AgentKind.SHELL, null, "ostrom_runner_xyz", CloudPlan.FREE.sessionLimits())
+    private val spec = ExecutionSpec(session.id, ORG_A, 2, AgentKind.SHELL, null, "ostrom_runner_xyz", CloudPlan.FREE.sessionLimits(), prompt = "hi")
 
     private fun body(index: Int): JsonObject = Json.parseToJsonElement(api.calls[index].body!!).jsonObject
 
@@ -66,6 +66,8 @@ class DockerRuntimeDriverTest {
         val env = container["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertTrue("OSTROM_RUNNER_TOKEN=ostrom_runner_xyz" in env)
         assertTrue("OSTROM_AGENT_COMMAND=bash" in env)
+        assertTrue("OSTROM_AGENT_PROMPT=hi" in env)
+        assertFalse(env.any { it.startsWith("OSTROM_AGENT_MODEL") })
         assertTrue("OSTROM_SERVER_URL=http://host.docker.internal:8080" in env)
         assertFalse(env.any { it.startsWith("OSTROM_REPOSITORY_URL") })
         val host = container["HostConfig"]!!.jsonObject
