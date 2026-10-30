@@ -48,3 +48,9 @@ class InvalidWebhookSignatureException :
 /** The credential is not a person's, or lacks the billing scope the route needs (S2-03). */
 class BillingScopeRequiredException(scope: String) :
     OstromException(ErrorKind.FORBIDDEN, "This credential cannot use billing: it needs the $scope scope.")
+
+/** A billing change made with a token: only a person signed in to the console makes one (403, S2-52). */
+class BillingSessionRequiredException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This change needs a signed-in session in the console: a token cannot make it.",
+)
