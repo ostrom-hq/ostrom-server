@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.runners.domain.CloudSession
@@ -60,7 +61,13 @@ class CloudSessionsPostgresTest {
         assertEquals(created, repository.getById(created.id))
         assertNull(repository.get(ORG_B, created.id))
 
-        val next = created.copy(state = SessionState.RUNNING, epoch = 1, runnerTokenHash = "h1", readyAt = t0, lastActivityAt = t0 + 5.seconds)
+        val next = created.copy(
+            state = SessionState.RUNNING,
+            epoch = 1,
+            runnerTokenHash = "h1",
+            readyAt = t0,
+            lastActivityAt = t0 + 5.seconds,
+        )
         val stored = assertNotNull(repository.compareAndSet(next, t0))
         assertEquals(1, stored.generation)
         assertEquals(stored, repository.findByRunnerTokenHash("h1"))
@@ -79,7 +86,9 @@ class CloudSessionsPostgresTest {
     @Test
     fun theRunningCapHoldsUnderConcurrentCreations() = serverTest(listOf(RunnersModule)) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
-        val results = coroutineScope { (1..12).map { async { repository.createWithinCap(session(createdAt = t0), 5) } }.awaitAll() }
+        val results = coroutineScope { (
+            1..12,
+        ).map { async { repository.createWithinCap(session(createdAt = t0), 5) } }.awaitAll() }
         assertEquals(5, results.count { it })
     }
 
@@ -102,7 +111,10 @@ class CloudSessionsPostgresTest {
         val repository = server.koin.get<CloudSessionsRepository>()
         val over = session(state = SessionState.TERMINATED, desired = DesiredState.TERMINATED, createdAt = t0)
         repository.createWithinCap(over, 5)
-        assertEquals(DesiredState.TERMINATED, repository.setDesiredState(ORG_A, over.id, DesiredState.RUNNING, t0)?.desiredStatus)
+        assertEquals(
+            DesiredState.TERMINATED,
+            repository.setDesiredState(ORG_A, over.id, DesiredState.RUNNING, t0)?.desiredStatus,
+        )
     }
 
     @Test
@@ -149,7 +161,9 @@ class CloudSessionsPostgresTest {
     @Test
     fun listPagesByKeyset() = serverTest(listOf(RunnersModule)) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
-        val sessions = (0 until 3).map { index -> session(createdAt = t0 + index.seconds).also { repository.createWithinCap(it, 10) } }
+        val sessions = (
+            0 until 3,
+        ).map { index -> session(createdAt = t0 + index.seconds).also { repository.createWithinCap(it, 10) } }
         repository.createWithinCap(session(ownerId = "bob", createdAt = t0), 10)
 
         assertEquals(sessions.reversed().map { it.id }, repository.list(ORG_A, "alice", null, 10).map { it.id })
@@ -162,7 +176,16 @@ class CloudSessionsPostgresTest {
         val created = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("alice")
             contentType(ContentType.Application.Json)
-            setBody(CreateCloudSessionRequest(agent = "codex", name = "Fix it", repo = "https://github.com/acme/api", ref = "main", prompt = "Fix the tests", model = "gpt-5.5-codex"))
+            setBody(
+                CreateCloudSessionRequest(
+                    agent = "codex",
+                    name = "Fix it",
+                    repo = "https://github.com/acme/api",
+                    ref = "main",
+                    prompt = "Fix the tests",
+                    model = "gpt-5.5-codex",
+                ),
+            )
         }
         assertEquals(HttpStatusCode.Created, created.status)
         val session = created.body<CloudSessionResponse>()
@@ -174,13 +197,22 @@ class CloudSessionsPostgresTest {
         assertEquals("main", session.ref)
         assertEquals(30, session.limits.idleTimeoutMinutes)
 
-        val list = server.client.get("/api/v1/cloud/sessions?limit=1") { bearerAuth("alice") }.body<CloudSessionsResponse>()
+        val list = server.client.get(
+            "/api/v1/cloud/sessions?limit=1",
+        ) { bearerAuth("alice") }.body<CloudSessionsResponse>()
         assertEquals(listOf(session.id), list.items.map { it.id })
         assertEquals(session.id, list.next)
-        val empty = server.client.get("/api/v1/cloud/sessions?before=${session.id}") { bearerAuth("alice") }.body<CloudSessionsResponse>()
+        val empty = server.client.get(
+            "/api/v1/cloud/sessions?before=${session.id}",
+        ) { bearerAuth("alice") }.body<CloudSessionsResponse>()
         assertEquals(emptyList(), empty.items)
         assertNull(empty.next)
-        assertEquals(session.id, server.client.get("/api/v1/cloud/sessions/${session.id}") { bearerAuth("reader") }.body<CloudSessionResponse>().id)
+        assertEquals(
+            session.id,
+            server.client.get(
+                "/api/v1/cloud/sessions/${session.id}",
+            ) { bearerAuth("reader") }.body<CloudSessionResponse>().id,
+        )
 
         val paused = server.client.post("/api/v1/cloud/sessions/${session.id}/pause") { bearerAuth("alice") }
         assertEquals(HttpStatusCode.Accepted, paused.status)
@@ -195,8 +227,14 @@ class CloudSessionsPostgresTest {
     @Test
     fun routesRefuseWithoutTokenOrganizationOrScope() = serverTest(listOf(RunnersModule), identities) { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/sessions").status)
-        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/sessions") { bearerAuth("unknown") }.status)
-        assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/cloud/sessions") { bearerAuth("nobody") }.status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            server.client.get("/api/v1/cloud/sessions") { bearerAuth("unknown") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.get("/api/v1/cloud/sessions") { bearerAuth("nobody") }.status,
+        )
         val readOnly = server.client.post("/api/v1/cloud/sessions") {
             bearerAuth("reader")
             contentType(ContentType.Application.Json)
@@ -214,14 +252,31 @@ class CloudSessionsPostgresTest {
         }.body<CloudSessionResponse>()
 
         for (stranger in listOf("carol", "bob")) {
-            assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/cloud/sessions/${session.id}") { bearerAuth(stranger) }.status)
-            assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/cloud/sessions/${session.id}/pause") { bearerAuth(stranger) }.status)
-            assertEquals(HttpStatusCode.NotFound, server.client.post("/api/v1/cloud/sessions/${session.id}/resume") { bearerAuth(stranger) }.status)
-            assertEquals(HttpStatusCode.NotFound, server.client.delete("/api/v1/cloud/sessions/${session.id}") { bearerAuth(stranger) }.status)
-            val list = server.client.get("/api/v1/cloud/sessions") { bearerAuth(stranger) }.body<CloudSessionsResponse>()
+            assertEquals(
+                HttpStatusCode.NotFound,
+                server.client.get("/api/v1/cloud/sessions/${session.id}") { bearerAuth(stranger) }.status,
+            )
+            assertEquals(
+                HttpStatusCode.NotFound,
+                server.client.post("/api/v1/cloud/sessions/${session.id}/pause") { bearerAuth(stranger) }.status,
+            )
+            assertEquals(
+                HttpStatusCode.NotFound,
+                server.client.post("/api/v1/cloud/sessions/${session.id}/resume") { bearerAuth(stranger) }.status,
+            )
+            assertEquals(
+                HttpStatusCode.NotFound,
+                server.client.delete("/api/v1/cloud/sessions/${session.id}") { bearerAuth(stranger) }.status,
+            )
+            val list = server.client.get(
+                "/api/v1/cloud/sessions",
+            ) { bearerAuth(stranger) }.body<CloudSessionsResponse>()
             assertEquals(emptyList(), list.items)
         }
-        assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/cloud/sessions/not-a-uuid") { bearerAuth("alice") }.status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.get("/api/v1/cloud/sessions/not-a-uuid") { bearerAuth("alice") }.status,
+        )
     }
 
     @Test
@@ -245,43 +300,89 @@ class CloudSessionsPostgresTest {
             setBody(CreateCloudSessionRequest(agent = "claude", name = "one too many"))
         }
         assertEquals(HttpStatusCode.PaymentRequired, capped.status)
-        assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/cloud/sessions?before=nope") { bearerAuth("alice") }.status)
-        assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/cloud/sessions?limit=99") { bearerAuth("alice") }.status)
+        val closed = server.client.post("/api/v1/cloud/sessions") {
+            bearerAuth("carol")
+            contentType(ContentType.Application.Json)
+            setBody(CreateCloudSessionRequest(agent = "claude", name = "not allowed here"))
+        }
+        assertEquals(HttpStatusCode.Forbidden, closed.status)
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.client.get("/api/v1/cloud/sessions?before=nope") { bearerAuth("alice") }.status,
+        )
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            server.client.get("/api/v1/cloud/sessions?limit=99") { bearerAuth("alice") }.status,
+        )
     }
 
     @Test
-    fun theRunnerChannelAuthenticatesByRunnerTokenAndFencesOldEpochs() = serverTest(listOf(RunnersModule), identities) { server ->
+    fun theRunnerChannelAuthenticatesByRunnerTokenAndFencesOldEpochs() = serverTest(
+        listOf(RunnersModule),
+        identities,
+    ) { server ->
         val repository = server.koin.get<CloudSessionsRepository>()
         val tokens = server.koin.get<RunnerTokens>()
         val token = tokens.mint()
-        val starting: CloudSession = session(createdAt = t0).copy(epoch = 2, runnerTokenHash = tokens.hash(token), executionStartedAt = t0)
+        val starting: CloudSession = session(
+            createdAt = t0,
+        ).copy(epoch = 2, runnerTokenHash = tokens.hash(token), executionStartedAt = t0)
         repository.createWithinCap(starting, 5)
 
-        suspend fun beat(body: RunnerHeartbeatRequest, auth: String? = token) = server.client.post("/api/v1/cloud/runner/heartbeat") {
+        suspend fun beat(
+            body: RunnerHeartbeatRequest,
+            auth: String? = token,
+        ) = server.client.post("/api/v1/cloud/runner/heartbeat") {
             if (auth != null) header(HttpHeaders.Authorization, auth)
             contentType(ContentType.Application.Json)
             setBody(body)
         }
 
-        val ready = beat(RunnerHeartbeatRequest(starting.id.toString(), 2, ready = true, lastModelRequestAt = "2026-10-30T10:00:00Z"), "Bearer $token")
+        val ready = beat(
+            RunnerHeartbeatRequest(
+                starting.id.toString(),
+                2,
+                ready = true,
+                lastModelRequestAt = "2026-10-30T10:00:00Z",
+            ),
+            "Bearer $token",
+        )
         assertEquals(HttpStatusCode.OK, ready.status)
         assertEquals(RunnerHeartbeatResponse("run", "running"), ready.body<RunnerHeartbeatResponse>())
-        assertEquals(HttpStatusCode.Conflict, beat(RunnerHeartbeatRequest(starting.id.toString(), 1), "Bearer $token").status)
-        assertEquals(HttpStatusCode.Unauthorized, beat(RunnerHeartbeatRequest(starting.id.toString(), 2), "Bearer ostrom_runner_wrong").status)
+        assertEquals(
+            HttpStatusCode.Conflict,
+            beat(RunnerHeartbeatRequest(starting.id.toString(), 1), "Bearer $token").status,
+        )
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            beat(RunnerHeartbeatRequest(starting.id.toString(), 2), "Bearer ostrom_runner_wrong").status,
+        )
         assertEquals(HttpStatusCode.Unauthorized, beat(RunnerHeartbeatRequest(starting.id.toString(), 2), null).status)
         assertEquals(HttpStatusCode.Unauthorized, beat(RunnerHeartbeatRequest(starting.id.toString(), 2), token).status)
-        assertEquals(HttpStatusCode.Unauthorized, beat(RunnerHeartbeatRequest(starting.id.toString(), 2), "Bearer ").status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            beat(RunnerHeartbeatRequest(starting.id.toString(), 2), "Bearer ").status,
+        )
         // A member's token is not a runner token.
-        assertEquals(HttpStatusCode.Unauthorized, beat(RunnerHeartbeatRequest(starting.id.toString(), 2), "Bearer alice").status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            beat(RunnerHeartbeatRequest(starting.id.toString(), 2), "Bearer alice").status,
+        )
         assertEquals(HttpStatusCode.BadRequest, beat(RunnerHeartbeatRequest("nope", 2), "Bearer $token").status)
         assertEquals(
             HttpStatusCode.BadRequest,
-            beat(RunnerHeartbeatRequest(starting.id.toString(), 2, lastModelRequestAt = "yesterday"), "Bearer $token").status,
+            beat(
+                RunnerHeartbeatRequest(starting.id.toString(), 2, lastModelRequestAt = "yesterday"),
+                "Bearer $token",
+            ).status,
         )
     }
 
     @Test
     fun aRandomIdIsNotFound() = serverTest(listOf(RunnersModule), identities) { server ->
-        assertEquals(HttpStatusCode.NotFound, server.client.get("/api/v1/cloud/sessions/${Uuid.random()}") { bearerAuth("alice") }.status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.get("/api/v1/cloud/sessions/${Uuid.random()}") { bearerAuth("alice") }.status,
+        )
     }
 }

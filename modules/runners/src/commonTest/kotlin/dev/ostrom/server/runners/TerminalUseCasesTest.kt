@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
@@ -37,7 +38,9 @@ class TerminalUseCasesTest {
 
     @Test
     fun aRunnerIsItsTokensCurrentExecution() = runTest {
-        val running = session(state = SessionState.RUNNING).copy(epoch = 3, runnerTokenHash = "hash(tok)").also { repository.put(it) }
+        val running = session(
+            state = SessionState.RUNNING,
+        ).copy(epoch = 3, runnerTokenHash = "hash(tok)").also { repository.put(it) }
         val authenticate = AuthenticateRunnerUseCaseImpl(repository, tokens)
 
         assertEquals(running, authenticate("tok", running.id, 3))
@@ -54,9 +57,15 @@ class TerminalUseCasesTest {
         assertFailsWith<CloudSessionNotFoundException> { open(Caller(ORG_A, "bob"), live.id) }
         assertFailsWith<CloudSessionNotFoundException> { open(Caller(ORG_B, "alice"), live.id) }
 
-        val over = session(state = SessionState.TERMINATED, desired = DesiredState.TERMINATED).also { repository.put(it) }
+        val over = session(
+            state = SessionState.TERMINATED,
+            desired = DesiredState.TERMINATED,
+        ).also { repository.put(it) }
         assertFailsWith<CloudSessionStateException> { open(alice, over.id) }
-        val deleting = session(state = SessionState.RUNNING, desired = DesiredState.TERMINATED).also { repository.put(it) }
+        val deleting = session(
+            state = SessionState.RUNNING,
+            desired = DesiredState.TERMINATED,
+        ).also { repository.put(it) }
         assertFailsWith<CloudSessionStateException> { open(alice, deleting.id) }
         val failed = session(state = SessionState.FAILED).also { repository.put(it) }
         assertFailsWith<CloudSessionStateException> { open(alice, failed.id) }

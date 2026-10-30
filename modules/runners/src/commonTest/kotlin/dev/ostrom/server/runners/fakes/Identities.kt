@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.fakes
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -6,6 +7,8 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import org.koin.dsl.module
 import kotlin.uuid.Uuid
 
@@ -15,7 +18,8 @@ val CAROL: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000ca01")
 
 /**
  * The test identities: the tokens `alice` and `bob` (members of org A), `carol` (org B) and `nobody` (no org) are
- * browser sessions with every user scope; `reader` is a service token of alice's with `cloud:read` only.
+ * browser sessions with every user scope; `reader` is a service token of alice's with `cloud:read` only. Cloud
+ * sessions are open to org A only.
  */
 val testIdentities = module {
     single<TokenAuthenticator> {
@@ -28,6 +32,7 @@ val testIdentities = module {
         }
     }
     single<PrincipalOrgResolver> { TestOrgResolver }
+    single<ConfigSource> { MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to ORG_A.toString())) }
 }
 
 /** Resolves the test identities' organizations (the credential's own: the cloud routes name none). */

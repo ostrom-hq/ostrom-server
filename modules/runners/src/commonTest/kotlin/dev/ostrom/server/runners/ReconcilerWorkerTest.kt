@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -31,7 +32,9 @@ class ReconcilerWorkerTest {
     private val clock = SettableClock()
     private val logger = RecordingLogger()
 
-    private fun worker(step: suspend (CloudSession) -> Instant?) = dev.ostrom.server.runners.infrastructure.ReconcilerWorker(
+    private fun worker(
+        step: suspend (CloudSession) -> Instant?,
+    ) = dev.ostrom.server.runners.infrastructure.ReconcilerWorker(
         repository,
         object : ReconcileCloudSessionUseCase {
             override suspend fun invoke(session: CloudSession): Instant? = step(session)

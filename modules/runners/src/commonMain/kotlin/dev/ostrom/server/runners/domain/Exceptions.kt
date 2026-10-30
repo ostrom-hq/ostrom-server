@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.domain
 
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -64,4 +65,10 @@ class NotAMemberException : OstromException(ErrorKind.NOT_FOUND, "Organization n
 class MissingScopeException(scope: String) : OstromException(
     ErrorKind.FORBIDDEN,
     "This credential lacks the $scope scope.",
+)
+
+/** Cloud sessions are not open to the organization on this server (audit S2-10). */
+class CloudSessionsClosedException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Cloud sessions are not open to this organization on this server.",
 )

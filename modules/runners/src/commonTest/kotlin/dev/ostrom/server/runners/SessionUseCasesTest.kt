@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.runners.domain.AgentKind
 import dev.ostrom.server.runners.domain.Caller
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.CloudHoursExhaustedException
+import dev.ostrom.server.runners.domain.CloudSessionsClosedException
 import dev.ostrom.server.runners.domain.CloudPlan
 import dev.ostrom.server.runners.domain.CloudSessionLimitException
 import dev.ostrom.server.runners.domain.CloudSessionNotFoundException
@@ -41,12 +43,19 @@ class SessionUseCasesTest {
     private val create = CreateCloudSessionUseCaseImpl(repository, plans, clock)
     private val change = ChangeCloudSessionUseCaseImpl(repository, plans, clock)
 
-    private fun payload(name: String = "Fix the relist retry", agent: String = "claude", repository: RepositorySpec? = null) =
+    private fun payload(
+        name: String = "Fix the relist retry",
+        agent: String = "claude",
+        repository: RepositorySpec? = null,
+    ) =
         CreateCloudSessionPayload(name, agent, repository)
 
     @Test
     fun createStoresACreatingSessionWithThePlansLimits() = runTest {
-        val created = create(alice, payload(name = "  Fix it  ", repository = RepositorySpec("https://github.com/acme/api.git", "main")))
+        val created = create(
+            alice,
+            payload(name = "  Fix it  ", repository = RepositorySpec("https://github.com/acme/api.git", "main")),
+        )
 
         assertEquals(SessionState.CREATING, created.state)
         assertEquals(DesiredState.RUNNING, created.desiredState)
@@ -63,20 +72,35 @@ class SessionUseCasesTest {
 
     @Test
     fun aSessionWithoutNameIsNamedAfterItsRepositoryOrAgent() = runTest {
-        assertEquals("api", create(alice, CreateCloudSessionPayload(null, "codex", RepositorySpec("https://github.com/acme/api.git", null))).name)
+        assertEquals(
+            "api",
+            create(
+                alice,
+                CreateCloudSessionPayload(null, "codex", RepositorySpec("https://github.com/acme/api.git", null)),
+            ).name,
+        )
         assertEquals("codex", create(alice, CreateCloudSessionPayload("  ", "codex", null)).name)
     }
 
     @Test
     fun theModelAndPromptAreKeptWithinBounds() = runTest {
-        val created = create(alice, CreateCloudSessionPayload("x", "claude", null, model = " claude-opus-5-5 ", prompt = "Fix the tests"))
+        val created = create(
+            alice,
+            CreateCloudSessionPayload("x", "claude", null, model = " claude-opus-5-5 ", prompt = "Fix the tests"),
+        )
         assertEquals("claude-opus-5-5", created.model)
         assertEquals("Fix the tests", created.prompt)
         val bare = create(alice, CreateCloudSessionPayload("x", "claude", null, model = "", prompt = "  "))
         assertEquals(null, bare.model)
         assertEquals(null, bare.prompt)
-        assertFailsWith<InvalidCloudSessionRequestException> { create(alice, CreateCloudSessionPayload("x", "claude", null, model = "a b")) }
-        assertFailsWith<InvalidCloudSessionRequestException> { create(alice, CreateCloudSessionPayload("x", "claude", null, prompt = "x".repeat(20_001))) }
+        assertFailsWith<InvalidCloudSessionRequestException> { create(
+            alice,
+            CreateCloudSessionPayload("x", "claude", null, model = "a b"),
+        ) }
+        assertFailsWith<InvalidCloudSessionRequestException> { create(
+            alice,
+            CreateCloudSessionPayload("x", "claude", null, prompt = "x".repeat(20_001)),
+        ) }
     }
 
     @Test
@@ -110,7 +134,9 @@ class SessionUseCasesTest {
             RepositorySpec("https://github.com/acme/api", "main branch"),
         )
         for (repository in bad) {
-            assertFailsWith<InvalidCloudSessionRequestException>(repository.toString()) { create(alice, payload(repository = repository)) }
+            assertFailsWith<InvalidCloudSessionRequestException>(
+                repository.toString(),
+            ) { create(alice, payload(repository = repository)) }
         }
     }
 
@@ -226,6 +252,9 @@ class SessionUseCasesTest {
         assertFailsWith<CloudSessionLimitException> { change.resume(alice, paused.id) }
         repository.usage[ORG_A to "2026-10"] = 300 * 3600L
         assertFailsWith<CloudHoursExhaustedException> { change.resume(alice, paused.id) }
+        plans.plan = CloudPlan.FREE.copy(available = false)
+        assertFailsWith<CloudSessionsClosedException> { change.resume(alice, paused.id) }
+        assertFailsWith<CloudSessionsClosedException> { create(alice, payload()) }
     }
 
     @Test

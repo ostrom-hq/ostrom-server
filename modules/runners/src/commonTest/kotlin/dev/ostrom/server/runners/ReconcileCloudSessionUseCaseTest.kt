@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
 import dev.ostrom.server.runners.domain.CloudPlan
@@ -216,25 +217,51 @@ class ReconcileCloudSessionUseCaseTest {
         val idle = runningSession().copy(lastHeartbeatAt = t0 + 30.minutes).also { put(it) }
         clock.now = t0 + 30.minutes
         reconcile(idle)
-        assertEquals(SessionFailure("idle_timeout", "Paused after 30 minutes without a request to the model."), stored(idle).failure)
+        assertEquals(
+            SessionFailure("idle_timeout", "Paused after 30 minutes without a request to the model."),
+            stored(idle).failure,
+        )
         assertEquals(SessionState.PAUSING, stored(idle).state)
         assertEquals(DesiredState.PAUSED, stored(idle).desiredState)
 
-        val busy = runningSession().copy(lastActivityAt = t0 + 240.minutes, lastHeartbeatAt = t0 + 240.minutes).also { put(it) }
+        val busy = runningSession().copy(
+            lastActivityAt = t0 + 240.minutes,
+            lastHeartbeatAt = t0 + 240.minutes,
+        ).also { put(it) }
         clock.now = t0 + 240.minutes
         reconcile(busy)
         assertEquals("max_duration", stored(busy).failure?.code)
 
-        val overBudget = runningSession().copy(lastActivityAt = t0 + 10.minutes, lastHeartbeatAt = t0 + 10.minutes).also { put(it) }
+        val overBudget = runningSession().copy(
+            lastActivityAt = t0 + 10.minutes,
+            lastHeartbeatAt = t0 + 10.minutes,
+        ).also { put(it) }
         clock.now = t0 + 10.minutes
         repository.usage[ORG_A to "2026-10"] = 300 * 3600L
         reconcile(overBudget)
         assertEquals("hours_exhausted", stored(overBudget).failure?.code)
+
+        repository.usage.clear()
+        plans.plan = CloudPlan.FREE.copy(available = false)
+        val closed = runningSession().copy(
+            lastActivityAt = t0 + 10.minutes,
+            lastHeartbeatAt = t0 + 10.minutes,
+        ).also { put(it) }
+        reconcile(closed)
+        assertEquals("closed", stored(closed).failure?.code)
+        val waiting = put(session())
+        assertNull(reconcile(waiting))
+        assertEquals("closed", stored(waiting).failure?.code)
+        assertEquals(SessionState.PAUSED, stored(waiting).state)
     }
 
     @Test
     fun aRunningSessionWithoutActivityCountsFromItsReadiness() = runTest {
-        val running = runningSession().copy(lastActivityAt = null, readyAt = t0 + 5.minutes, lastHeartbeatAt = t0 + 34.minutes).also { put(it) }
+        val running = runningSession().copy(
+            lastActivityAt = null,
+            readyAt = t0 + 5.minutes,
+            lastHeartbeatAt = t0 + 34.minutes,
+        ).also { put(it) }
         driver.status = ExecutionStatus.RUNNING
         clock.now = t0 + 34.minutes
         assertEquals(clock.now + 15.seconds, reconcile(running))
@@ -242,7 +269,14 @@ class ReconcileCloudSessionUseCaseTest {
 
     @Test
     fun aDrainEndsWhenTheRunnerStoppedOrAtTheDeadline() = runTest {
-        val stopped = put(runningSession().copy(state = SessionState.PAUSING, desiredState = DesiredState.PAUSED, pausingSince = t0, runnerStoppedAt = t0 + 3.seconds))
+        val stopped = put(
+            runningSession().copy(
+                state = SessionState.PAUSING,
+                desiredState = DesiredState.PAUSED,
+                pausingSince = t0,
+                runnerStoppedAt = t0 + 3.seconds,
+            ),
+        )
         clock.now = t0 + 4.seconds
         assertNull(reconcile(stopped))
         val after = stored(stopped)
@@ -251,20 +285,42 @@ class ReconcileCloudSessionUseCaseTest {
         assertNull(after.executionStartedAt)
         assertEquals(clock.now, after.pausedAt)
 
-        val draining = put(runningSession().copy(state = SessionState.PAUSING, desiredState = DesiredState.PAUSED, pausingSince = t0, lastHeartbeatAt = t0 + 100.seconds))
+        val draining = put(
+            runningSession().copy(
+                state = SessionState.PAUSING,
+                desiredState = DesiredState.PAUSED,
+                pausingSince = t0,
+                lastHeartbeatAt = t0 + 100.seconds,
+            ),
+        )
         clock.now = t0 + 110.seconds
         assertEquals(clock.now + 2.seconds, reconcile(draining))
         clock.now = t0 + 121.seconds
         assertNull(reconcile(draining))
         assertEquals(SessionState.PAUSED, stored(draining).state)
 
-        val silent = put(runningSession().copy(state = SessionState.PAUSING, desiredState = DesiredState.PAUSED, pausingSince = null, lastHeartbeatAt = null))
+        val silent = put(
+            runningSession().copy(
+                state = SessionState.PAUSING,
+                desiredState = DesiredState.PAUSED,
+                pausingSince = null,
+                lastHeartbeatAt = null,
+            ),
+        )
         assertEquals(clock.now + 2.seconds, reconcile(silent))
     }
 
     @Test
     fun aResumeAskedDuringTheDrainResumesRightAfter() = runTest {
-        val pausing = put(runningSession().copy(state = SessionState.PAUSING, desiredState = DesiredState.RUNNING, pausingSince = t0, runnerStoppedAt = t0, prompt = "once"))
+        val pausing = put(
+            runningSession().copy(
+                state = SessionState.PAUSING,
+                desiredState = DesiredState.RUNNING,
+                pausingSince = t0,
+                runnerStoppedAt = t0,
+                prompt = "once",
+            ),
+        )
 
         assertEquals(t0, reconcile(pausing))
         val paused = stored(pausing)

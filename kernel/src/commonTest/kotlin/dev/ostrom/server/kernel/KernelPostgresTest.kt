@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
@@ -15,7 +18,9 @@ import dev.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.koin.core.qualifier.named
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,12 +35,19 @@ import kotlin.time.Duration
 class KernelPostgresTest {
     private val lines = mutableListOf<String>()
 
+    // On the real clock: runTest's virtual time would fire the health check's timeout before the database answers.
     private fun databaseTest(block: suspend (TestDatabase, MigrationRunner) -> Unit) = runTest {
-        val database = TestDatabase.create() ?: return@runTest
+        withContext(Dispatchers.Default) { runDatabaseTest(block) }
+    }
+
+    private suspend fun runDatabaseTest(block: suspend (TestDatabase, MigrationRunner) -> Unit) {
+        val database = TestDatabase.create() ?: return
         try {
             val logger = JsonLogger(LogLevel.INFO, sink = { lines += it })
             val signer = Ed25519InstanceSigner.generate()
-            val koin = serverKoin(kernelModule(logger, database.driver, signer), emptyList())
+            val config = MapConfigSource(mapOf("OSTROM_PROBE" to "on"))
+            val koin = serverKoin(kernelModule(logger, database.driver, signer, config), emptyList())
+            assertSame(config, koin.get<ConfigSource>())
             assertSame(logger, koin.get<Logger>())
             assertSame(database.driver, koin.get<Driver>())
             assertSame(signer, koin.get<InstanceSigner>())
