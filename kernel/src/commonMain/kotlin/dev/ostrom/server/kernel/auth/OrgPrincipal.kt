@@ -26,13 +26,16 @@ data class OrgPrincipal(val orgId: Uuid, val memberId: Uuid, val role: OrgRole)
  */
 interface PrincipalOrgResolver {
     /**
-     * Resolves the member a principal acts for.
+     * Resolves the member a principal acts for: in the organization the path names ([orgId]), else the one the
+     * [ORG_HEADER] header names ([AuthenticatedPrincipal.namedOrg]), else the one the credential is bound to, else the
+     * caller's only organization.
      *
      * @param principal The authenticated principal.
-     * @param orgId The organization named by the request, or null when the credential is bound to one organization
-     *   (an agent token).
+     * @param orgId The organization named by the request's path, or null when the path names none.
      *
      * @return The member, or null when the principal is not a member of that organization (or of any).
+     *
+     * @throws OrgRequiredException When nothing names the organization and the caller belongs to several.
      */
     suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal?
 }
@@ -55,3 +58,7 @@ class RejectingPrincipalOrgResolver : PrincipalOrgResolver {
  */
 suspend fun ApplicationCall.requireOrgPrincipal(resolver: PrincipalOrgResolver, orgId: Uuid?): OrgPrincipal =
     resolver.resolve(requirePrincipal(), orgId) ?: throw OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
+
+/** Nothing names the organization (path, [ORG_HEADER], bound credential) and the caller belongs to several: 409. */
+class OrgRequiredException :
+    OstromException(ErrorKind.ORG_REQUIRED, "You belong to several organizations: name one in the $ORG_HEADER header.")

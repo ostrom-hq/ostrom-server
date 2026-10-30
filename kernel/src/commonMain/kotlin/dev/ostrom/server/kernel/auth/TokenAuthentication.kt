@@ -51,7 +51,7 @@ class TokenAuthenticationProvider internal constructor(config: Config) : Authent
             else -> null
         }
         if (principal != null) {
-            context.principal(principal)
+            context.principal(principal.copy(namedOrg = call.request.headers[ORG_HEADER]))
             return
         }
         val cause = if (token == null && session == null) {

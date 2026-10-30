@@ -26,7 +26,7 @@ val ErrorKind.httpStatus: HttpStatusCode
         ErrorKind.PAYMENT_REQUIRED -> HttpStatusCode.PaymentRequired
         ErrorKind.FORBIDDEN -> HttpStatusCode.Forbidden
         ErrorKind.NOT_FOUND -> HttpStatusCode.NotFound
-        ErrorKind.CONFLICT -> HttpStatusCode.Conflict
+        ErrorKind.CONFLICT, ErrorKind.ORG_REQUIRED -> HttpStatusCode.Conflict
         ErrorKind.PAYLOAD_TOO_LARGE -> HttpStatusCode.PayloadTooLarge
         ErrorKind.UNSUPPORTED_MEDIA_TYPE -> HttpStatusCode.UnsupportedMediaType
         ErrorKind.RATE_LIMITED -> HttpStatusCode.TooManyRequests

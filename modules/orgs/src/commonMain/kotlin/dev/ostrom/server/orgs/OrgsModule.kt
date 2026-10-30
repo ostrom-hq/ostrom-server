@@ -99,7 +99,7 @@ object OrgsModule : ServerModule {
         single<OrgRateLimiter> { IdentityRateLimiter(get()) }
         single<InvitationMailer> { MailInvitationMailer(get()) }
         single<SeatPolicy> { FreePlanSeats() }
-        single<PrincipalOrgResolver> { MembershipOrgResolver(get()) }
+        single<PrincipalOrgResolver> { MembershipOrgResolver(get(), get()) }
         // Identity has no teams: the QA account (a person, their team, a token) is assembled here.
         single<TestAccountSeeder> { TestAccountSeederImpl(get(), get(), get(), get()) }
         single {
