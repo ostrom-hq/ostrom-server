@@ -161,7 +161,7 @@ class HostMcpUpstream(
     }
 
     private fun hostError(code: String?, message: String?): HostAnswer {
-        val text = message?.take(MAX_ERROR) ?: "unknown error"
+        val text = if (message == null) "unknown error" else message.take(MAX_ERROR)
         return when (code) {
             "timeout" -> HostAnswer.Failed(UpstreamResult.Failure(McpOutcome.TIMEOUT, text))
             "too_large" -> HostAnswer.Failed(

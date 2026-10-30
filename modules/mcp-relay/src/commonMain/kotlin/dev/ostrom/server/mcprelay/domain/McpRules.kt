@@ -176,13 +176,13 @@ object McpRules {
                 condition.path.isNotBlank() && condition.path.length <= MAX_PATH,
                 "A condition path has 1 to $MAX_PATH characters.",
             )
+            if (condition.operator in valueless) continue
             val value = condition.value
+            if (value == null || value.length > MAX_VALUE) {
+                invalid("This condition needs a value of at most $MAX_VALUE characters.")
+            }
             rule(
-                condition.operator in valueless || (value != null && value.length <= MAX_VALUE),
-                "This condition needs a value of at most $MAX_VALUE characters.",
-            )
-            rule(
-                condition.operator != ConditionOperator.MATCHES || SafePattern.isSafe(value.orEmpty()),
+                condition.operator != ConditionOperator.MATCHES || SafePattern.isSafe(value),
                 "A pattern may not repeat a group that repeats or alternates, refer back to a group, nor repeat " +
                     "without bound more than twice (it could run for minutes).",
             )

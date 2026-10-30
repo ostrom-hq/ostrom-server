@@ -30,13 +30,8 @@ enum class ConditionOperator { EQUALS, NOT_EQUALS, MATCHES, PREFIX, CONTAINS, EX
  *   [ConditionOperator.EXISTS] and [ConditionOperator.ABSENT].
  */
 data class ArgumentCondition(val path: String, val operator: ConditionOperator, val value: String? = null) {
-    private val regex: Regex? = if (operator ==
-        ConditionOperator.MATCHES
-    ) {
-        Regex(requireNotNull(value), RegexOption.IGNORE_CASE)
-    } else {
-        null
-    }
+    // Compiled on the first test, which only a MATCHES condition makes: the other operators have no pattern.
+    private val regex: Regex by lazy { Regex(requireNotNull(value), RegexOption.IGNORE_CASE) }
 
     /**
      * Tests the condition.
@@ -58,7 +53,7 @@ data class ArgumentCondition(val path: String, val operator: ConditionOperator, 
             // Text too long to match in bounded time counts as matching: a deny still applies to what it cannot read.
             ConditionOperator.MATCHES ->
                 text != null &&
-                    (text.length > MAX_MATCHED_LENGTH || requireNotNull(regex).containsMatchIn(text))
+                    (text.length > MAX_MATCHED_LENGTH || regex.containsMatchIn(text))
         }
     }
 

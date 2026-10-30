@@ -96,8 +96,10 @@ data class McpRelayConfig(val host: McpHostConfig?, val allowPrivateUpstreams: B
         fun from(source: ConfigSource): McpRelayConfig {
             val url = source["OSTROM_MCP_HOST_URL"]?.takeIf { it.isNotBlank() }
             val token = source["OSTROM_MCP_HOST_TOKEN"]?.takeIf { it.isNotBlank() }
-            if ((url == null) != (token == null)) {
-                throw InvalidConfigException("OSTROM_MCP_HOST_URL and OSTROM_MCP_HOST_TOKEN go together.")
+            val host = when {
+                url == null && token == null -> null
+                url != null && token != null -> McpHostConfig(url, token)
+                else -> throw InvalidConfigException("OSTROM_MCP_HOST_URL and OSTROM_MCP_HOST_TOKEN go together.")
             }
             fun millis(key: String, default: Long): Long {
                 val value = source[key] ?: return default
@@ -105,7 +107,7 @@ data class McpRelayConfig(val host: McpHostConfig?, val allowPrivateUpstreams: B
                     ?: throw InvalidConfigException("$key is 1000 to 600000 ms.")
             }
             return McpRelayConfig(
-                host = if (url != null && token != null) McpHostConfig(url, token) else null,
+                host = host,
                 allowPrivateUpstreams = source["OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS"] == "true",
                 deadlines = RelayDeadlines(
                     list = millis("OSTROM_MCP_LIST_TIMEOUT_MS", LIST_MILLIS).milliseconds,
