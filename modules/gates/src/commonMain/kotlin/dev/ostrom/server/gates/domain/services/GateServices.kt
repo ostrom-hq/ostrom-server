@@ -2,6 +2,8 @@ package dev.ostrom.server.gates.domain.services
 
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
 import dev.ostrom.server.gates.domain.models.Gate
+import dev.ostrom.server.gates.domain.models.GateNode
+import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import kotlin.uuid.Uuid
 
@@ -68,4 +70,30 @@ interface GateSessions {
      * @throws dev.ostrom.server.kernel.errors.OstromException When the session is closed or unknown.
      */
     suspend fun assertOpen(orgId: Uuid, sessionId: Uuid)
+}
+
+/** Finds the gate node that covers an action (the compiled workflows of the organization). */
+interface GateNodeResolver {
+    /**
+     * Finds the gate of an action. A workflow without a repository applies to every repository of the organization.
+     *
+     * @param orgId The organization.
+     * @param repo The repository, or null outside one.
+     * @param actionClass The action class.
+     * @return The gate node, or null when no workflow gates the action.
+     */
+    suspend fun resolve(orgId: Uuid, repo: String?, actionClass: String): GateNode?
+}
+
+/** Reads pull requests from GitHub (integrations-github), never from a ref the agent can move. */
+interface PullRequestHeads {
+    /**
+     * Reads a pull request's head commit and base branch.
+     *
+     * @param orgId The organization (its GitHub installation).
+     * @param repo The repository (`owner/name`).
+     * @param number The pull request number.
+     * @return The pull request, or null when GitHub does not answer or does not know it.
+     */
+    suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest?
 }

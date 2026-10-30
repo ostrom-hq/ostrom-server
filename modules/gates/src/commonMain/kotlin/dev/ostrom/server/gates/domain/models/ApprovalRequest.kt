@@ -55,12 +55,15 @@ enum class Answer { YES, NO }
  * @property orgId The organization the credential belongs to.
  * @property kind What the caller is.
  * @property sessionId The agent session an agent token is scoped to.
+ * @property personId The person behind a device or agent token (the developer), who becomes the asker of the gates
+ * the token opens; the user itself for a person.
  */
 data class GateActor(
     val id: String,
     val orgId: Uuid,
     val kind: ActorKind,
     val sessionId: Uuid? = null,
+    val personId: String? = null,
 )
 
 /** The kinds of caller. Only a [USER] answers a request. */
