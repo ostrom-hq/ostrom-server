@@ -14,6 +14,7 @@ import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,7 +39,12 @@ fun main() {
     val modules = serverModules()
     var driver: Driver? = null
     var koin: Koin? = null
-    val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // On Kotlin/Native an uncaught coroutine exception ends the process: a failing background job is logged instead,
+    // with its class only (its message may quote a provider error), and the other jobs keep running.
+    val failures = CoroutineExceptionHandler { _, error ->
+        logger.error("background job failed", mapOf("error" to error::class.simpleName))
+    }
+    val workers = CoroutineScope(SupervisorJob() + Dispatchers.Default + failures)
     try {
         val database = connectPostgres(config.database).also { driver = it }
         val signer = runBlocking { Ed25519InstanceSigner.loadOrCreate(config.signingKeyFile) }

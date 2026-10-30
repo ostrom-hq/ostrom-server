@@ -52,7 +52,7 @@ jobs:
       - name: Never serve a test task from the cache (ENG-032)
         run: |
           mkdir -p ~/.gradle/init.d
-          cat > ~/.gradle/init.d/always-run-tests.gradle.kts <<'KTS'
+          cat > ~/.gradle/init.d/always-run-tests.init.gradle.kts <<'KTS'
           allprojects {
               tasks.withType<AbstractTestTask>().configureEach {
                   outputs.cacheIf { false }

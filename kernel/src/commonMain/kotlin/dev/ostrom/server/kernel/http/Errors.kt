@@ -85,11 +85,12 @@ private suspend fun ApplicationCall.answerFailure(cause: Throwable, logger: Logg
         is SQLError -> if (cause.kind == SQLError.Kind.UniqueViolation) {
             respondError(ErrorKind.CONFLICT, "The resource already exists.")
         } else {
-            logger.error("database failure", fields, cause)
+            // Never the message: PostgreSQL quotes row values in it (AGENTS.md rule 9).
+            logger.error("database failure", fields + mapOf("error" to "SQLError", "sql_kind" to cause.kind.name))
             respondError(ErrorKind.INTERNAL, "Internal error.")
         }
         else -> {
-            logger.error("unexpected failure", fields, cause)
+            logger.error("unexpected failure", fields + mapOf("error" to cause::class.simpleName))
             respondError(ErrorKind.INTERNAL, "Internal error.")
         }
     }
