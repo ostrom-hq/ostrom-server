@@ -108,7 +108,6 @@ class VerifyReceiptUseCaseImpl(
             kid = (outcome as? ReceiptVerification.Verified)?.kid,
             reason = (outcome as? ReceiptVerification.Failed)?.let { it.reason.message },
         )
-
     }
 }
 
