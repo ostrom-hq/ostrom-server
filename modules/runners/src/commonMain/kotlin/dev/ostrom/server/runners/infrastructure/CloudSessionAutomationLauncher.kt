@@ -16,7 +16,7 @@ import kotlin.uuid.Uuid
 
 /**
  * The automations' [AutomationLauncher] on cloud sessions: a run starts a session owned by the automation's owner,
- * through [CreateCloudSessionUseCase], so the organization's plan (allowlist, running cap, monthly hours) applies to
+ * through [CreateCloudSessionUseCase], so the organization's plan (allowlist, running cap, hours) applies to
  * automations exactly as to a member. An expected refusal becomes a [LaunchResult.Refused] with a stable reason the
  * run history shows; anything else propagates, and the automation records `launch_failed`.
  *
