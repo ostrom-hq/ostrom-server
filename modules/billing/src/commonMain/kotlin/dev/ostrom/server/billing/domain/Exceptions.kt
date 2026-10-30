@@ -43,3 +43,7 @@ class SubscriptionStateException(message: String) : OstromException(ErrorKind.CO
 /** The webhook signature is missing, wrong or too old. */
 class InvalidWebhookSignatureException :
     OstromException(ErrorKind.INVALID_REQUEST, "Invalid Stripe signature.")
+
+/** The credential is not a person's, or lacks the billing scope the route needs (S2-03). */
+class BillingScopeRequiredException(scope: String) :
+    OstromException(ErrorKind.FORBIDDEN, "This credential cannot use billing: it needs the $scope scope.")

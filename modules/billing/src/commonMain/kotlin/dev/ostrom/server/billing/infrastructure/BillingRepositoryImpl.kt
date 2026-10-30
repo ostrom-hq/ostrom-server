@@ -11,6 +11,7 @@ import dev.ostrom.server.billing.domain.Plan
 import dev.ostrom.server.billing.domain.SubscriptionStatus
 import dev.ostrom.server.billing.domain.Usage
 import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
@@ -34,17 +35,28 @@ private const val ACCOUNT_COLUMNS = "org_id, stripe_customer_id, stripe_subscrip
  */
 @Suppress("TooManyFunctions") // implements BillingRepository, one function per query
 class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
-    override suspend fun get(orgId: Uuid): OrgBilling? = driver.fetchAll(
-        Statement.create("SELECT $ACCOUNT_COLUMNS FROM billing_accounts WHERE org_id = :org_id").bind("org_id", orgId),
-    ).getOrThrow().firstOrNull()?.toBilling()
+    override suspend fun get(orgId: Uuid): OrgBilling? = scoped(orgId) {
+        fetchAll(
+            Statement.create("SELECT $ACCOUNT_COLUMNS FROM billing_accounts WHERE org_id = :org_id")
+                .bind("org_id", orgId),
+        ).getOrThrow().firstOrNull()?.toBilling()
+    }
 
     override suspend fun findByCustomer(customerId: String): OrgBilling? = driver.fetchAll(
-        Statement.create("SELECT $ACCOUNT_COLUMNS FROM billing_accounts WHERE stripe_customer_id = :customer")
+        Statement.create("SELECT org_id FROM billing_customers WHERE stripe_customer_id = :customer")
             .bind("customer", customerId),
-    ).getOrThrow().firstOrNull()?.toBilling()
+    ).getOrThrow().firstOrNull()?.get("org_id")?.asUuid()?.let { get(it) }
 
-    override suspend fun save(billing: OrgBilling) {
-        driver.execute(
+    override suspend fun save(billing: OrgBilling): Unit = scoped(billing.orgId) {
+        billing.stripeCustomerId?.let { customerId ->
+            execute(
+                Statement.create(
+                    "INSERT INTO billing_customers (stripe_customer_id, org_id) VALUES (:customer, :org_id) " +
+                        "ON CONFLICT (stripe_customer_id) DO NOTHING",
+                ).bind("customer", customerId).bind("org_id", billing.orgId),
+            ).getOrThrow()
+        }
+        execute(
             Statement.create(
                 "INSERT INTO billing_accounts ($ACCOUNT_COLUMNS) VALUES (:org_id, :customer, :subscription, :item, " +
                     ":plan, :interval, :status, :period_start, :period_end, :cancel, :committed, :issue_kind, " +
@@ -92,60 +104,73 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
     }
 
     override suspend fun recordActivePerson(orgId: Uuid, periodStart: Instant, userId: String, at: Instant): Boolean =
-        driver.execute(
+        scoped(orgId) {
+            execute(
+                Statement.create(
+                    "INSERT INTO billing_active_people (org_id, period_start, user_id, first_active_at) " +
+                        "VALUES (:org_id, :period, :user_id, :at) ON CONFLICT DO NOTHING",
+                ).bind("org_id", orgId).bind("period", periodStart).bind("user_id", userId).bind("at", at),
+            ).getOrThrow() > 0
+        }
+
+    override suspend fun countActivePeople(orgId: Uuid, periodStart: Instant): Int = scoped(orgId) {
+        fetchAll(
             Statement.create(
-                "INSERT INTO billing_active_people (org_id, period_start, user_id, first_active_at) " +
-                    "VALUES (:org_id, :period, :user_id, :at) ON CONFLICT DO NOTHING",
-            ).bind("org_id", orgId).bind("period", periodStart).bind("user_id", userId).bind("at", at),
-        ).getOrThrow() > 0
+                "SELECT COUNT(*) AS people FROM billing_active_people " +
+                    "WHERE org_id = :org_id AND period_start = :period",
+            ).bind("org_id", orgId).bind("period", periodStart),
+        ).getOrThrow().first().get("people").asInt()
+    }
 
-    override suspend fun countActivePeople(orgId: Uuid, periodStart: Instant): Int = driver.fetchAll(
-        Statement.create(
-            "SELECT COUNT(*) AS people FROM billing_active_people WHERE org_id = :org_id AND period_start = :period",
-        ).bind("org_id", orgId).bind("period", periodStart),
-    ).getOrThrow().first().get("people").asInt()
-
-    override suspend fun listActivePeople(
-        orgId: Uuid,
-        periodStart: Instant,
-        limit: Int,
-    ): List<String> = driver.fetchAll(
-        Statement.create(
-            "SELECT user_id FROM billing_active_people WHERE org_id = :org_id AND period_start = :period " +
-                "ORDER BY first_active_at, user_id LIMIT :limit",
-        ).bind("org_id", orgId).bind("period", periodStart).bind("limit", limit),
-    ).getOrThrow().map { it.get("user_id").asString() }
+    override suspend fun listActivePeople(orgId: Uuid, periodStart: Instant, limit: Int): List<String> = scoped(orgId) {
+        fetchAll(
+            Statement.create(
+                "SELECT user_id FROM billing_active_people WHERE org_id = :org_id AND period_start = :period " +
+                    "ORDER BY first_active_at, user_id LIMIT :limit",
+            ).bind("org_id", orgId).bind("period", periodStart).bind("limit", limit),
+        ).getOrThrow().map { it.get("user_id").asString() }
+    }
 
     override suspend fun addUsage(orgId: Uuid, periodStart: Instant, agentSeconds: Long, sessions: Long): Usage =
-        driver.fetchAll(
-            Statement.create(
-                "INSERT INTO billing_usage (org_id, period_start, agent_seconds, sessions) " +
-                    "VALUES (:org_id, :period, :seconds, :sessions) ON CONFLICT (org_id, period_start) DO UPDATE SET " +
-                    "agent_seconds = billing_usage.agent_seconds + EXCLUDED.agent_seconds, " +
-                    "sessions = billing_usage.sessions + EXCLUDED.sessions RETURNING agent_seconds, sessions",
-            ).bind("org_id", orgId).bind("period", periodStart)
-                .bind("seconds", agentSeconds).bind("sessions", sessions),
-        ).getOrThrow().first().toUsage(periodStart)
+        scoped(orgId) {
+            fetchAll(
+                Statement.create(
+                    "INSERT INTO billing_usage (org_id, period_start, agent_seconds, sessions) " +
+                        "VALUES (:org_id, :period, :seconds, :sessions) " +
+                        "ON CONFLICT (org_id, period_start) DO UPDATE SET " +
+                        "agent_seconds = billing_usage.agent_seconds + EXCLUDED.agent_seconds, " +
+                        "sessions = billing_usage.sessions + EXCLUDED.sessions RETURNING agent_seconds, sessions",
+                ).bind("org_id", orgId).bind("period", periodStart)
+                    .bind("seconds", agentSeconds).bind("sessions", sessions),
+            ).getOrThrow().first().toUsage(periodStart)
+        }
 
-    override suspend fun usage(orgId: Uuid, periodStart: Instant): Usage = driver.fetchAll(
-        Statement.create(
-            "SELECT agent_seconds, sessions FROM billing_usage WHERE org_id = :org_id AND period_start = :period",
-        ).bind("org_id", orgId).bind("period", periodStart),
-    ).getOrThrow().firstOrNull()?.toUsage(periodStart) ?: Usage(periodStart, 0, 0)
+    override suspend fun usage(orgId: Uuid, periodStart: Instant): Usage = scoped(orgId) {
+        fetchAll(
+            Statement.create(
+                "SELECT agent_seconds, sessions FROM billing_usage WHERE org_id = :org_id AND period_start = :period",
+            ).bind("org_id", orgId).bind("period", periodStart),
+        ).getOrThrow().firstOrNull()?.toUsage(periodStart) ?: Usage(periodStart, 0, 0)
+    }
 
     override suspend fun recordAlert(orgId: Uuid, periodStart: Instant, percent: Int, at: Instant): Boolean =
-        driver.execute(
-            Statement.create(
-                "INSERT INTO billing_alerts (org_id, period_start, percent, raised_at) " +
-                    "VALUES (:org_id, :period, :percent, :at) ON CONFLICT DO NOTHING",
-            ).bind("org_id", orgId).bind("period", periodStart).bind("percent", percent).bind("at", at),
-        ).getOrThrow() > 0
+        scoped(orgId) {
+            execute(
+                Statement.create(
+                    "INSERT INTO billing_alerts (org_id, period_start, percent, raised_at) " +
+                        "VALUES (:org_id, :period, :percent, :at) ON CONFLICT DO NOTHING",
+                ).bind("org_id", orgId).bind("period", periodStart).bind("percent", percent).bind("at", at),
+            ).getOrThrow() > 0
+        }
 
-    override suspend fun alerts(orgId: Uuid, periodStart: Instant): List<Int> = driver.fetchAll(
-        Statement.create(
-            "SELECT percent FROM billing_alerts WHERE org_id = :org_id AND period_start = :period ORDER BY percent",
-        ).bind("org_id", orgId).bind("period", periodStart),
-    ).getOrThrow().map { it.get("percent").asInt() }
+    override suspend fun alerts(orgId: Uuid, periodStart: Instant): List<Int> = scoped(orgId) {
+        fetchAll(
+            Statement.create(
+                "SELECT percent FROM billing_alerts WHERE org_id = :org_id AND period_start = :period " +
+                    "ORDER BY percent",
+            ).bind("org_id", orgId).bind("period", periodStart),
+        ).getOrThrow().map { it.get("percent").asInt() }
+    }
 
     override suspend fun enqueue(task: OutboxTask) {
         driver.execute(
@@ -191,6 +216,16 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
                 "UPDATE billing_outbox SET attempts = attempts + 1, next_attempt_at = :retry WHERE id = :id",
             ).bind("id", id).bind("retry", retryAt),
         ).getOrThrow()
+    }
+
+    /**
+     * Runs [block] in a transaction whose `ostrom.org_id` is [orgId]: the row-level policies of [BillingMigrations]
+     * show and accept only that organization's rows (S2-01).
+     */
+    private suspend fun <T> scoped(orgId: Uuid, block: suspend QueryExecutor.() -> T): T = driver.transaction {
+        fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgId.toString()))
+            .getOrThrow()
+        block()
     }
 
     private fun ResultSet.Row.toBilling(): OrgBilling {
