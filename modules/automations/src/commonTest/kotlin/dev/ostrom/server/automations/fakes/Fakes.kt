@@ -60,6 +60,9 @@ class RecordingEvents : WaitEvents {
     }
 }
 
+/** A browser session's scopes. */
+private val allUserScopes = setOf("user:*")
+
 /**
  * The test identities: `alice`, `bob` (members of org A), `dave` (admin of org A), `carol` (owner of org B) and
  * `nobody` (no org) sign in themselves; `reader`, `agent` and `writer` are bob's tokens with `waits:read`,
@@ -72,10 +75,10 @@ val testIdentities = module {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
                 "alice", "bob", "dave", "carol", "nobody" ->
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"), PrincipalChannel.BROWSER)
+                    AuthenticatedPrincipal(token, PrincipalKind.USER, allUserScopes, channel = PrincipalChannel.BROWSER)
                 "alicekey" -> AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("waits:write"))
                 "aliceapp" ->
-                    AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("user:*"), PrincipalChannel.MOBILE_APP)
+                    AuthenticatedPrincipal("alice", PrincipalKind.USER, allUserScopes, channel = PrincipalChannel.MOBILE_APP)
                 "reader" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:read"))
                 "agent" -> AuthenticatedPrincipal("bob", PrincipalKind.DEVICE, setOf("waits:ask"))
                 "writer" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:write"))

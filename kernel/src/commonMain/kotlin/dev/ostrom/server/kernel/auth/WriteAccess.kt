@@ -20,7 +20,8 @@ class WriteAccess private constructor(val mobileApp: Boolean, val tokenKinds: Se
 
         /**
          * A browser session, or an API token of one of [kinds] (a personal or CLI token is [PrincipalKind.USER], an
-         * agent's [PrincipalKind.SERVICE], a device's [PrincipalKind.DEVICE]): for a route made for programs.
+         * agent session's [PrincipalKind.AGENT], a machine's [PrincipalKind.SERVICE] or [PrincipalKind.DEVICE]): for a
+         * route made for programs.
          *
          * @param kinds The kinds of token admitted.
          *

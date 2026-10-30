@@ -189,7 +189,7 @@ private fun Route.endpointRoutes(dependencies: McpRelayRoutesDependencies) = wit
                 callers,
                 RelayScopes.AGENT_SESSION,
                 RelayScopes.MCP_USE,
-                writers = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.SERVICE),
+                writers = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.AGENT, PrincipalKind.SERVICE),
             )
             // The kernel caps the message at 1 MiB (S2-46), chunked or not.
             val bytes = call.receiveChannel().readRemaining().readByteArray()

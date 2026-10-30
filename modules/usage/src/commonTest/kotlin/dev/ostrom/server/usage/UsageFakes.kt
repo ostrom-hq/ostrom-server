@@ -70,7 +70,8 @@ object TestCallers {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when {
                     token !in byToken -> null
                     // A token without its own kind is a browser session, with every user scope.
-                    token !in principals -> AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, BROWSER)
+                    token !in principals ->
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, channel = BROWSER)
                     else -> principals.getValue(token).let { (kind, scopes) ->
                         AuthenticatedPrincipal(token, kind, scopes)
                     }

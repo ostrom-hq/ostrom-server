@@ -106,7 +106,7 @@ abstract class RelayPostgresHarness {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: byToken[token]?.let {
                         val scopes = setOf(RelayScopes.ALL_USER)
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, scopes, PrincipalChannel.BROWSER)
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER)
                     }
             }
         }

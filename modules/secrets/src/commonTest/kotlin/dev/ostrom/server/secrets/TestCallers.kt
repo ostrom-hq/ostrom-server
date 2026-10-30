@@ -59,7 +59,7 @@ object TestCallers {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: (byToken[token] ?: token.takeIf { it == "stranger" })
-                        ?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, BROWSER) }
+                        ?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, channel = BROWSER) }
             }
         }
         single<CallerResolver> {

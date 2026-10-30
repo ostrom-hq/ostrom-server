@@ -29,7 +29,7 @@ class AutomationCallersTest {
         AuthenticatedPrincipal(subject, kind, scopes.toSet())
 
     private fun session(channel: PrincipalChannel) =
-        AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("user:*"), channel)
+        AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("user:*"), channel = channel)
 
     @Test
     fun aLoginOrTheScopeOrWriteAllows() {
@@ -37,6 +37,7 @@ class AutomationCallersTest {
         assertTrue(login.allowsAutomations(AUTOMATIONS_WRITE))
         assertFalse(principal(PrincipalKind.DEVICE, "user:*").allowsAutomations(AUTOMATIONS_READ))
         assertFalse(principal(PrincipalKind.DEVICE, AUTOMATIONS_WRITE).allowsAutomations(AUTOMATIONS_READ))
+        assertFalse(principal(PrincipalKind.AGENT, AUTOMATIONS_WRITE).allowsAutomations(AUTOMATIONS_READ))
         assertTrue(principal(PrincipalKind.USER, AUTOMATIONS_READ).allowsAutomations(AUTOMATIONS_READ))
         assertTrue(principal(PrincipalKind.USER, AUTOMATIONS_WRITE).allowsAutomations(AUTOMATIONS_READ))
         assertFalse(principal(PrincipalKind.USER).allowsAutomations(AUTOMATIONS_READ))

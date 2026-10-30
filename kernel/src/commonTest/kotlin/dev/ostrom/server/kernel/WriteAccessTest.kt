@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 /** SECURITY-AUDIT S2-52: a console write takes a person's session; a token only where the route declares it. */
 class WriteAccessTest {
     private fun principal(kind: PrincipalKind, channel: PrincipalChannel = PrincipalChannel.API_TOKEN) =
-        AuthenticatedPrincipal("someone", kind, setOf("user:*", "secrets:write"), channel)
+        AuthenticatedPrincipal("someone", kind, setOf("user:*", "secrets:write"), channel = channel)
 
     private val browser = principal(PrincipalKind.USER, PrincipalChannel.BROWSER)
     private val app = principal(PrincipalKind.USER, PrincipalChannel.MOBILE_APP)

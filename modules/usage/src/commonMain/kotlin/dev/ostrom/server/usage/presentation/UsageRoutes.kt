@@ -45,7 +45,7 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
                 callers,
                 UsageScopes.WRITE,
                 RelayScopes.AGENT_SESSION,
-                writers = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.SERVICE),
+                writers = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.AGENT, PrincipalKind.SERVICE),
             )
             // The kernel caps the body at 1 MiB (S2-46), chunked or not: 500 events of a few hundred bytes fit well.
             val bytes = call.receiveChannel().readRemaining().readByteArray()

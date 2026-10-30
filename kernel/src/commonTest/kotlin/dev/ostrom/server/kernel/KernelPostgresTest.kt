@@ -8,6 +8,8 @@ import dev.ostrom.server.kernel.database.MigrationsNotAppliedException
 import dev.ostrom.server.kernel.database.ROUTER_ROLE
 import dev.ostrom.server.kernel.database.ROUTER_ROLE_SQL
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.kernel.database.TENANT_ROLE
+import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.kernel.database.migrateUnderLock
 import dev.ostrom.server.kernel.database.routedTableSql
 import dev.ostrom.server.kernel.database.routerFunctionsSql
@@ -45,6 +47,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.uuid.Uuid
 
 class KernelPostgresTest {
     private val lines = mutableListOf<String>()
@@ -131,6 +134,52 @@ class KernelPostgresTest {
     fun aDatabaseThatDoesNotAnswerInTimeIsDown() = databaseTest { database, _ ->
         assertFalse(DatabaseHealthCheck(database.driver, timeout = Duration.ZERO).isUp())
     }
+
+    @Test
+    fun aTransactionInOneOrganizationSeesAndWritesOnlyItsRows() = databaseTest { database, runner ->
+        val orgA = Uuid.random()
+        val orgB = Uuid.random()
+        runner.migrate("probe", tenantTable)
+        val driver = database.driver
+        for ((org, name) in listOf(orgA to "a", orgB to "b")) {
+            driver.execute(
+                Statement.create("INSERT INTO probe_notes (org_id, name) VALUES (:org, :name)")
+                    .bind("org", org).bind("name", name),
+            ).getOrThrow()
+        }
+
+        val seen = driver.inOrg(orgA) {
+            fetchAll("SELECT name FROM probe_notes ORDER BY name").getOrThrow().map { it.get("name").asString() }
+        }
+        assertEquals(listOf("a"), seen)
+        assertFails {
+            driver.inOrg(orgA) {
+                execute(
+                    Statement.create("INSERT INTO probe_notes (org_id, name) VALUES (:org, 'x')")
+                        .bind("org", orgB),
+                ).getOrThrow()
+            }
+        }
+        assertEquals(2, driver.count("probe_notes"), "The refused write left nothing")
+    }
+
+    // The role is global to the cluster: its creation tolerates one made by another database or test.
+    private val tenantTable = listOf(
+        SchemaMigration(
+            1,
+            "create_notes",
+            """
+            DO $$ BEGIN CREATE ROLE $TENANT_ROLE NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+            DO $$ BEGIN GRANT $TENANT_ROLE TO CURRENT_USER; EXCEPTION WHEN unique_violation THEN NULL; END $$;
+            CREATE TABLE probe_notes (org_id UUID NOT NULL, name TEXT NOT NULL);
+            ALTER TABLE probe_notes ENABLE ROW LEVEL SECURITY;
+            CREATE POLICY probe_notes_tenant ON probe_notes
+                USING (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID))
+                WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID));
+            GRANT SELECT, INSERT ON probe_notes TO $TENANT_ROLE;
+            """.trimIndent(),
+        ),
+    )
 
     private class Probe(override val name: String, override val migrations: List<SchemaMigration>) : ServerModule {
         override val koinModule: Module = module {}

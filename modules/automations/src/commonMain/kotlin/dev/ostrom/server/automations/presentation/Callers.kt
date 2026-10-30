@@ -71,7 +71,7 @@ val AUTOMATION_WRITERS: WriteAccess = WriteAccess.tokens(PrincipalKind.SERVICE)
  * or agent token never manages automations, whatever its scopes (S2-03): only a member or a service key does.
  */
 fun AuthenticatedPrincipal.allowsAutomations(scope: String): Boolean = when (kind) {
-    PrincipalKind.DEVICE -> false
+    PrincipalKind.DEVICE, PrincipalKind.AGENT -> false
     PrincipalKind.USER -> ALL_USER_SCOPES in scopes || scope in scopes || AUTOMATIONS_WRITE in scopes
     PrincipalKind.SERVICE -> scope in scopes || AUTOMATIONS_WRITE in scopes
 }
