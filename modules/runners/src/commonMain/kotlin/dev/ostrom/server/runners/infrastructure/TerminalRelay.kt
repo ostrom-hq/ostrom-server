@@ -19,6 +19,7 @@ import kotlin.uuid.Uuid
  * @param scrollbackBytes The scrollback kept per session.
  * @param clientQueue Frames queued per client before it is dropped.
  */
+@Suppress("TooManyFunctions") // One function per event of the two sides, each under the room's lock.
 class TerminalRelay(
     private val scrollbackBytes: Int = DEFAULT_SCROLLBACK_BYTES,
     private val clientQueue: Int = DEFAULT_CLIENT_QUEUE,
@@ -191,6 +192,7 @@ class TerminalRelay(
         if (runner == null && clients.isEmpty()) rooms.remove(sessionId)
     }
 
+    /** Constants and readers of the enclosing type. */
     companion object {
         /** 256 KiB of output: a few screens of a busy agent. */
         const val DEFAULT_SCROLLBACK_BYTES = 256 * 1024
