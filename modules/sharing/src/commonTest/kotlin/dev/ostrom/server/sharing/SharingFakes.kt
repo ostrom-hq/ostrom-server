@@ -5,12 +5,18 @@ import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.sharing.domain.AccountCredentials
 import dev.ostrom.server.sharing.domain.AccountProvider
+import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.AccountStatus
+import dev.ostrom.server.sharing.domain.AccountTokenCipher
+import dev.ostrom.server.sharing.domain.AccountTokens
 import dev.ostrom.server.sharing.domain.OAuthRefresher
 import dev.ostrom.server.sharing.domain.QuotaWindow
+import dev.ostrom.server.sharing.domain.QuotaWindowRepository
 import dev.ostrom.server.sharing.domain.RefreshResult
 import dev.ostrom.server.sharing.domain.SharedAccount
+import dev.ostrom.server.sharing.domain.SharedAccountPool
 import dev.ostrom.server.sharing.domain.SharedAccountRepository
+import dev.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -54,37 +60,53 @@ class FakeRefresher(var result: RefreshResult = RefreshResult.Unavailable) : OAu
     }
 }
 
-/** [SharedAccountRepository] in memory. */
-class InMemoryAccounts : SharedAccountRepository {
+/** [SharedAccountRepository] and [QuotaWindowRepository] in memory. */
+class InMemoryAccounts :
+    SharedAccountRepository,
+    QuotaWindowRepository {
     val accounts = mutableListOf<SharedAccount>()
     val envelopes = mutableMapOf<Uuid, String>()
     val windows = mutableMapOf<Uuid, MutableList<QuotaWindow>>()
 
+    /** Rows vanish between a read and the write that follows (a concurrent delete). */
+    var vanishing = false
+
+    /** Reading tokens fails (the database is down). */
+    var failing = false
+
     override suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount {
-        val index = accounts.indexOfFirst { it.orgId == account.orgId && it.provider == account.provider && it.providerAccountId == account.providerAccountId }
+        val index = accounts.indexOfFirst { it.sameProviderAccount(account) }
         if (index >= 0) accounts[index] = account.copy(id = accounts[index].id) else accounts += account
-        val stored = accounts.first { it.orgId == account.orgId && it.providerAccountId == account.providerAccountId && it.provider == account.provider }
+        val stored = accounts.first { it.sameProviderAccount(account) }
         envelopes[stored.id] = envelope
         return stored
     }
 
+    private fun SharedAccount.sameProviderAccount(other: SharedAccount) =
+        orgId == other.orgId && provider == other.provider && providerAccountId == other.providerAccountId
+
     override suspend fun get(orgId: Uuid, id: Uuid) = accounts.firstOrNull { it.orgId == orgId && it.id == id }
 
-    override suspend fun list(orgId: Uuid) = accounts.filter { it.orgId == orgId }.sortedWith(compareByDescending<SharedAccount> { it.priority }.thenBy { it.label })
+    override suspend fun list(orgId: Uuid) = accounts.filter { it.orgId == orgId }
+        .sortedWith(compareByDescending<SharedAccount> { it.priority }.thenBy { it.label })
 
     override suspend fun ready(orgId: Uuid, provider: AccountProvider) =
         accounts.filter { it.orgId == orgId && it.provider == provider && it.status == AccountStatus.READY }
 
     override suspend fun update(account: SharedAccount): SharedAccount? {
         val index = accounts.indexOfFirst { it.orgId == account.orgId && it.id == account.id }
-        if (index < 0) return null
+        if (index < 0 || vanishing) return null
         accounts[index] = account
         return account
     }
 
-    override suspend fun delete(orgId: Uuid, id: Uuid) = accounts.removeAll { it.orgId == orgId && it.id == id }
+    override suspend fun delete(orgId: Uuid, id: Uuid) =
+        !vanishing && accounts.removeAll { it.orgId == orgId && it.id == id }
 
-    override suspend fun envelope(orgId: Uuid, id: Uuid) = envelopes[id]?.takeIf { get(orgId, id) != null }
+    override suspend fun envelope(orgId: Uuid, id: Uuid): String? {
+        check(!failing) { "database down" }
+        return envelopes[id]?.takeIf { get(orgId, id) != null }
+    }
 
     override suspend fun putEnvelope(orgId: Uuid, id: Uuid, envelope: String) {
         envelopes[id] = envelope
@@ -94,11 +116,11 @@ class InMemoryAccounts : SharedAccountRepository {
         get(orgId, id)?.let { update(it.copy(status = status)) }
     }
 
-    override suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant?) {
+    override suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant) {
         get(orgId, id)?.let { update(it.copy(cooldownUntil = until)) }
     }
 
-    override suspend fun putWindows(orgId: Uuid, id: Uuid, windows: List<QuotaWindow>) {
+    override suspend fun put(orgId: Uuid, id: Uuid, windows: List<QuotaWindow>) {
         val list = this.windows.getOrPut(id) { mutableListOf() }
         windows.forEach { window ->
             list.removeAll { it.window == window.window }
@@ -106,5 +128,22 @@ class InMemoryAccounts : SharedAccountRepository {
         }
     }
 
-    override suspend fun windows(orgId: Uuid) = windows.filterKeys { id -> accounts.any { it.id == id && it.orgId == orgId } }
+    override suspend fun byAccount(orgId: Uuid) =
+        windows.filterKeys { id -> accounts.any { it.id == id && it.orgId == orgId } }
 }
+
+/** The pool and its collaborators over [InMemoryAccounts], as the module wires them. */
+fun pool(
+    repository: InMemoryAccounts,
+    cipher: AccountTokenCipher,
+    refresher: OAuthRefresher,
+    spend: AccountSpendReader,
+    clock: TestClock,
+) = SharedAccountPool(
+    repository,
+    repository,
+    AccountTokens(repository, cipher, refresher, clock),
+    ProviderQuotaHeaderParser(),
+    spend,
+    clock,
+)

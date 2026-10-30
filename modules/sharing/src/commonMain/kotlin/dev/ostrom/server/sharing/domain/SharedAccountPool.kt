@@ -1,19 +1,19 @@
 package dev.ostrom.server.sharing.domain
 
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * An account taken for one request. The gateway sends [credentials], reports the answer with [observe], and always
- * calls [release].
+ * An account taken for one request. The gateway sends [credentials] to the provider (never to a member), reports the
+ * answer with [observe], and always calls [release].
  *
  * @property account The account.
  * @property credentials Fresh tokens.
@@ -62,22 +62,21 @@ sealed interface LeaseResult {
  * The org's pool of shared personal accounts, as TeamCode runs it: an account serves when READY, out of cool-down,
  * under its own limits (concurrency, utilization ceiling of every current window, monthly budget) and allowed for the
  * member. Among those, a session sticks to its account (the provider's prompt cache lives there), otherwise the least
- * used account wins, then the higher priority. Tokens are refreshed five minutes before they expire, once per account
- * at a time; a refused refresh token marks the account RECONNECT_REQUIRED.
+ * used account wins, then the higher priority. An account whose tokens cannot be renewed is skipped for the next one.
  *
  * Concurrency and affinity are per replica, in memory.
  *
- * @param repository Accounts, sealed tokens and windows.
- * @param cipher Opens and seals the tokens.
- * @param refresher Renews tokens.
+ * @param accounts The accounts.
+ * @param windows Their observed quota windows.
+ * @param tokens Their tokens.
  * @param parser Reads quota headers.
  * @param spend What each account served this month.
  * @param clock The time.
  */
 class SharedAccountPool(
-    private val repository: SharedAccountRepository,
-    private val cipher: AccountTokenCipher,
-    private val refresher: OAuthRefresher,
+    private val accounts: SharedAccountRepository,
+    private val windows: QuotaWindowRepository,
+    private val tokens: AccountTokens,
     private val parser: QuotaHeaderParser,
     private val spend: AccountSpendReader,
     private val clock: Clock,
@@ -85,7 +84,6 @@ class SharedAccountPool(
     private val mutex = Mutex()
     private val inFlight = mutableMapOf<Uuid, Int>()
     private val affinity = mutableMapOf<String, Pair<Uuid, Instant>>()
-    private val refreshLocks = mutableMapOf<Uuid, Mutex>()
 
     /**
      * Leases an account.
@@ -95,105 +93,115 @@ class SharedAccountPool(
      * @param provider The subscription the request needs.
      * @param sessionKey The agent session, for affinity, if known.
      */
-    suspend fun lease(orgId: Uuid, memberId: Uuid, provider: AccountProvider, sessionKey: String?): LeaseResult =
-        lease(orgId, memberId, provider, sessionKey, emptySet())
-
-    private suspend fun lease(orgId: Uuid, memberId: Uuid, provider: AccountProvider, sessionKey: String?, tried: Set<Uuid>): LeaseResult {
-        val now = clock.now()
-        val accounts = repository.ready(orgId, provider)
-            .filter { it.id !in tried && (it.limits.allowedMembers?.contains(memberId) ?: true) }
-        if (accounts.isEmpty()) return refused("No shared ${provider.wire} account is available to you in this organization.", null)
-        val windows = repository.windows(orgId)
-        val monthStart = monthStart(now)
-        val eligible = mutableListOf<Pair<SharedAccount, Double>>()
-        var retryAt: Instant? = null
-        for (account in accounts) {
-            val current = windows[account.id].orEmpty().filter { it.isCurrent(now) && !it.window.startsWith("model:") }
-            val cooling = account.cooldownUntil?.takeIf { it > now }
-            val full = current.filter { it.utilization >= account.limits.utilizationCeiling }
-            val budget = account.limits.monthlyBudgetMicros
-            val overBudget = budget != null && spend.spentMicros(account.id, monthStart) >= budget
-            when {
-                cooling != null -> retryAt = minOf(retryAt ?: cooling, cooling)
-                full.isNotEmpty() -> full.mapNotNull { it.resetsAt }.maxOrNull()?.let { retryAt = minOf(retryAt ?: it, it) }
-                overBudget -> Unit
-                else -> eligible += account to (current.maxOfOrNull { it.utilization } ?: 0.0)
-            }
-        }
-        val chosen = mutex.withLock {
-            val open = eligible.filter { (account, _) -> (inFlight[account.id] ?: 0) < account.limits.maxConcurrent }
-            val sticky = sessionKey?.let { key -> affinity[key]?.takeIf { it.second > now }?.first }
-            val pick = open.firstOrNull { it.first.id == sticky }?.first
-                ?: open.sortedWith(compareBy<Pair<SharedAccount, Double>> { it.second }.thenByDescending { it.first.priority }.thenBy { it.first.id.toString() })
-                    .firstOrNull()?.first
-            pick?.also { account ->
-                inFlight[account.id] = (inFlight[account.id] ?: 0) + 1
-                if (sessionKey != null) affinity[sessionKey] = account.id to now + AFFINITY
-                if (affinity.size > MAX_AFFINITY) affinity.entries.removeAll { it.value.second <= now }
-            }
-        }
-        if (chosen == null) {
-            val reason = if (eligible.isNotEmpty()) "Every shared ${provider.wire} account is busy." else "Every shared ${provider.wire} account is at its limit."
-            return refused(reason, retryAt ?: if (eligible.isNotEmpty()) now + 5.seconds else null)
-        }
-        return try {
-            when (val credentials = credentials(chosen)) {
-                null -> {
-                    release(chosen.id)
-                    // This account just failed to refresh: try the others.
-                    lease(orgId, memberId, provider, sessionKey, tried + chosen.id)
-                }
-                else -> LeaseResult.Leased(AccountLease(chosen, credentials, this))
-            }
-        } catch (error: CancellationException) {
-            release(chosen.id)
-            throw error
+    suspend fun lease(orgId: Uuid, memberId: Uuid, provider: AccountProvider, sessionKey: String?): LeaseResult {
+        val request = Request(orgId, memberId, provider, sessionKey)
+        val tried = mutableSetOf<Uuid>()
+        // Each turn either answers or adds one account to `tried`: the loop ends within the org's account count.
+        while (true) {
+            attempt(request, tried)?.let { return it }
         }
     }
 
-    /** Fresh tokens of the account, refreshed when close to expiry; null when the account can no longer serve. */
-    private suspend fun credentials(account: SharedAccount): AccountCredentials? {
-        val lock = mutex.withLock { refreshLocks.getOrPut(account.id) { Mutex() } }
-        return lock.withLock {
-            val envelope = repository.envelope(account.orgId, account.id) ?: return@withLock null
-            val stored = cipher.open(envelope, account.orgId, account.id)
-            if (stored == null) {
-                repository.setStatus(account.orgId, account.id, AccountStatus.RECONNECT_REQUIRED)
-                return@withLock null
-            }
-            if (stored.expiresAt > clock.now() + REFRESH_MARGIN) return@withLock stored
-            when (val result = refresher.refresh(account.provider, stored)) {
-                is RefreshResult.Renewed -> {
-                    repository.putEnvelope(account.orgId, account.id, cipher.seal(result.credentials, account.orgId, account.id))
-                    result.credentials
-                }
-                RefreshResult.Revoked -> {
-                    repository.setStatus(account.orgId, account.id, AccountStatus.RECONNECT_REQUIRED)
-                    null
-                }
-                // Still valid for a few minutes: serve with it; expired: let the provider's 401 speak.
-                RefreshResult.Unavailable -> stored.takeIf { it.expiresAt > clock.now() }
+    private class Request(val orgId: Uuid, val memberId: Uuid, val provider: AccountProvider, val sessionKey: String?)
+
+    /** The accounts that may serve now with their load, and when a blocked one frees up. */
+    private class Candidates(val open: List<Pair<SharedAccount, Double>>, val retryAt: Instant?)
+
+    /** One try: a lease, a refusal, or null when the chosen account could not renew its tokens (now in [tried]). */
+    private suspend fun attempt(request: Request, tried: MutableSet<Uuid>): LeaseResult? {
+        val now = clock.now()
+        val usable = accounts.ready(request.orgId, request.provider).filter {
+            it.id !in tried && it.limits.allowedMembers?.contains(request.memberId) != false
+        }
+        val candidates = candidates(request.orgId, usable, now)
+        val chosen = take(candidates.open, request.sessionKey, now)
+        return when {
+            usable.isEmpty() -> refused("No shared ${request.provider.wire} account is available to you.", null)
+            chosen == null && candidates.open.isEmpty() ->
+                refused("Every shared ${request.provider.wire} account is at its limit.", candidates.retryAt)
+            chosen == null ->
+                refused(
+                    "Every shared ${request.provider.wire} account is busy.",
+                    candidates.retryAt ?: (now + BUSY_RETRY),
+                )
+            else -> serve(chosen, tried)
+        }
+    }
+
+    private suspend fun candidates(orgId: Uuid, usable: List<SharedAccount>, now: Instant): Candidates {
+        val observed = if (usable.isEmpty()) emptyMap() else windows.byAccount(orgId)
+        val monthStart = monthStart(now)
+        val open = mutableListOf<Pair<SharedAccount, Double>>()
+        var retryAt: Instant? = null
+        for (account in usable) {
+            val current = observed[account.id].orEmpty().filter { it.isCurrent(now) && !it.window.startsWith("model:") }
+            when (val standing = standing(account, current, now, monthStart)) {
+                is Standing.Open -> open += account to standing.load
+                is Standing.Closed -> retryAt = listOfNotNull(retryAt, standing.until).minOrNull()
             }
         }
+        return Candidates(open, retryAt)
+    }
+
+    private sealed interface Standing {
+        class Open(val load: Double) : Standing
+
+        class Closed(val until: Instant?) : Standing
+    }
+
+    private suspend fun standing(
+        account: SharedAccount,
+        current: List<QuotaWindow>,
+        now: Instant,
+        monthStart: Instant,
+    ): Standing {
+        val cooling = account.cooldownUntil?.takeIf { it > now }
+        val full = current.filter { it.utilization >= account.limits.utilizationCeiling }
+        val budget = account.limits.monthlyBudgetMicros
+        return when {
+            cooling != null -> Standing.Closed(cooling)
+            full.isNotEmpty() -> Standing.Closed(full.mapNotNull { it.resetsAt }.maxOrNull())
+            budget != null && spend.spentMicros(account.id, monthStart) >= budget -> Standing.Closed(null)
+            else -> Standing.Open(current.maxOfOrNull { it.utilization } ?: 0.0)
+        }
+    }
+
+    /** Takes a slot on the session's account if it is open, otherwise on the least used one. */
+    private suspend fun take(open: List<Pair<SharedAccount, Double>>, sessionKey: String?, now: Instant) =
+        mutex.withLock {
+            val free = open.filter { (account, _) -> (inFlight[account.id] ?: 0) < account.limits.maxConcurrent }
+            val sticky = sessionKey?.let { affinity[it] }?.takeIf { it.second > now }?.first
+            val pick = free.firstOrNull { it.first.id == sticky }?.first ?: free.minWithOrNull(ORDER)?.first
+            if (pick != null) {
+                inFlight[pick.id] = (inFlight[pick.id] ?: 0) + 1
+                if (sessionKey != null) remember(sessionKey, pick.id, now)
+            }
+            pick
+        }
+
+    private fun remember(sessionKey: String, accountId: Uuid, now: Instant) {
+        affinity[sessionKey] = accountId to now + AFFINITY
+        if (affinity.size > MAX_AFFINITY) affinity.entries.removeAll { it.value.second <= now }
+    }
+
+    private suspend fun serve(account: SharedAccount, tried: MutableSet<Uuid>): LeaseResult? {
+        var credentials: AccountCredentials? = null
+        try {
+            credentials = tokens.fresh(account)
+        } finally {
+            if (credentials == null) withContext(NonCancellable) { release(account.id) }
+        }
+        tried += account.id
+        return credentials?.let { LeaseResult.Leased(AccountLease(account, it, this)) }
     }
 
     internal suspend fun observe(account: SharedAccount, status: Int, headers: Map<String, String>) {
         val now = clock.now()
-        val windows = parser.parse(account.provider, headers, now)
-        if (windows.isNotEmpty()) repository.putWindows(account.orgId, account.id, windows)
+        val observed = parser.parse(account.provider, headers, now)
+        if (observed.isNotEmpty()) windows.put(account.orgId, account.id, observed)
         when (status) {
-            429 -> {
-                val retryAfter = headers["retry-after"]?.toLongOrNull()?.takeIf { it in 1..86_400 }?.seconds
-                val reset = windows.filter { it.utilization >= 1.0 }.mapNotNull { it.resetsAt }.minOrNull()
-                repository.setCooldown(account.orgId, account.id, reset ?: (now + (retryAfter ?: DEFAULT_COOLDOWN)))
-            }
-            401 -> {
-                // The access token was refused before its expiry: force a refresh next time.
-                val envelope = repository.envelope(account.orgId, account.id) ?: return
-                val stored = cipher.open(envelope, account.orgId, account.id) ?: return
-                val expired = AccountCredentials(stored.accessToken, stored.refreshToken, Instant.fromEpochMilliseconds(0))
-                repository.putEnvelope(account.orgId, account.id, cipher.seal(expired, account.orgId, account.id))
-            }
+            TOO_MANY_REQUESTS -> accounts.setCooldown(account.orgId, account.id, cooldownEnd(observed, headers, now))
+            UNAUTHORIZED -> tokens.expire(account)
         }
     }
 
@@ -207,31 +215,39 @@ class SharedAccountPool(
     /** Requests in flight on the account, on this replica. */
     suspend fun inFlight(accountId: Uuid): Int = mutex.withLock { inFlight[accountId] ?: 0 }
 
-    private fun refused(reason: String, retryAt: Instant?) = LeaseResult.Refused(PoolRefusal(reason, retryAt))
-
+    /** Timing and the calendar. */
     companion object {
         /** How long a session sticks to its account. */
         val AFFINITY: Duration = 1.hours
 
-        /** Tokens are renewed this long before they expire. */
-        val REFRESH_MARGIN: Duration = 5.minutes
-
         /** Cool-down after a 429 that names no reset. */
         val DEFAULT_COOLDOWN: Duration = 60.seconds
 
-        private const val MAX_AFFINITY = 10_000
+        /** When to try again while every open account is busy. */
+        val BUSY_RETRY: Duration = 5.seconds
 
-        /** The first instant of the UTC calendar month of [now] (civil calendar from epoch days, H. Hinnant). */
-        fun monthStart(now: Instant): Instant {
-            val days = now.epochSeconds.floorDiv(86_400L)
-            val z = days + 719_468
-            val era = z.floorDiv(146_097L)
-            val dayOfEra = z - era * 146_097
-            val yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36_524 - dayOfEra / 146_096) / 365
-            val dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)
-            val mp = (5 * dayOfYear + 2) / 153
-            val dayOfMonth = dayOfYear - (153 * mp + 2) / 5 + 1
-            return Instant.fromEpochSeconds((days - dayOfMonth + 1) * 86_400L)
-        }
+        /** Sessions remembered before the expired ones are dropped. */
+        const val MAX_AFFINITY: Int = 10_000
+
+        private const val TOO_MANY_REQUESTS = 429
+        private const val UNAUTHORIZED = 401
+        private val ORDER = compareBy<Pair<SharedAccount, Double>> { it.second }
+            .thenByDescending { it.first.priority }
+            .thenBy { it.first.id.toString() }
+
+        /** The first instant of the UTC calendar month of [now]. */
+        fun monthStart(now: Instant): Instant = CivilCalendar.monthStart(now)
     }
 }
+
+/** The longest `retry-after` believed: a day. */
+private const val MAX_RETRY_AFTER_SECONDS = 86_400L
+
+/** A cool-down ends when the full window resets, else after `retry-after`, else after the default. */
+private fun cooldownEnd(observed: List<QuotaWindow>, headers: Map<String, String>, now: Instant): Instant {
+    val reset = observed.filter { it.utilization >= 1.0 }.mapNotNull { it.resetsAt }.minOrNull()
+    val retryAfter = headers["retry-after"]?.toLongOrNull()?.takeIf { it in 1..MAX_RETRY_AFTER_SECONDS }?.seconds
+    return reset ?: (now + (retryAfter ?: SharedAccountPool.DEFAULT_COOLDOWN))
+}
+
+private fun refused(reason: String, retryAt: Instant?) = LeaseResult.Refused(PoolRefusal(reason, retryAt))

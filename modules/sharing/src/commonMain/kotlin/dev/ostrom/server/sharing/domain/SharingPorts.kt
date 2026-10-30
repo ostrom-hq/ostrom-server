@@ -3,7 +3,7 @@ package dev.ostrom.server.sharing.domain
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-/** Storage of shared accounts, their sealed tokens and quota windows. Every read and write is scoped by org. */
+/** Storage of shared accounts and their sealed tokens. Every read and write is confined to one org. */
 interface SharedAccountRepository {
     /** Inserts, or replaces the tokens and label of the same provider account in the org; returns the stored row. */
     suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount
@@ -32,14 +32,17 @@ interface SharedAccountRepository {
     /** Sets the status. */
     suspend fun setStatus(orgId: Uuid, id: Uuid, status: AccountStatus)
 
-    /** Sets (or clears) the cool-down. */
-    suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant?)
+    /** Sets the cool-down: no request before [until]. */
+    suspend fun setCooldown(orgId: Uuid, id: Uuid, until: Instant)
+}
 
+/** The provider quota windows last observed on each account; scoped by org like the accounts. */
+interface QuotaWindowRepository {
     /** Replaces observed windows of the account (same name replaced, others kept). */
-    suspend fun putWindows(orgId: Uuid, id: Uuid, windows: List<QuotaWindow>)
+    suspend fun put(orgId: Uuid, id: Uuid, windows: List<QuotaWindow>)
 
     /** Observed windows of the org's accounts, by account. */
-    suspend fun windows(orgId: Uuid): Map<Uuid, List<QuotaWindow>>
+    suspend fun byAccount(orgId: Uuid): Map<Uuid, List<QuotaWindow>>
 }
 
 /** Renews OAuth tokens at the provider. */

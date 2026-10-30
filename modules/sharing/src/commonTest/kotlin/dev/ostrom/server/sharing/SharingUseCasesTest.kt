@@ -13,12 +13,10 @@ import dev.ostrom.server.sharing.domain.QuotaWindow
 import dev.ostrom.server.sharing.domain.RemoveSharedAccountUseCaseImpl
 import dev.ostrom.server.sharing.domain.ShareAccountPayload
 import dev.ostrom.server.sharing.domain.ShareAccountUseCaseImpl
-import dev.ostrom.server.sharing.domain.SharedAccountPool
 import dev.ostrom.server.sharing.domain.SharingRules
 import dev.ostrom.server.sharing.domain.TooManyAccountsException
 import dev.ostrom.server.sharing.domain.UpdateAccountPayload
 import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCaseImpl
-import dev.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,14 +31,22 @@ class SharingUseCasesTest {
     private val clock = TestClock()
     private val cipher = AccountTokenCipher(ContextCipher())
     private val share = ShareAccountUseCaseImpl(repository, cipher, clock)
-    private val pool = SharedAccountPool(repository, cipher, FakeRefresher(), ProviderQuotaHeaderParser(), NoAccountSpendReader(), clock)
-    private val list = ListSharedAccountsUseCaseImpl(repository, pool, { _, _ -> 42 }, clock)
+    private val pool = pool(repository, cipher, FakeRefresher(), NoAccountSpendReader(), clock)
+    private val list = ListSharedAccountsUseCaseImpl(repository, repository, pool, { _, _ -> 42 }, clock)
     private val update = UpdateSharedAccountUseCaseImpl(repository)
     private val remove = RemoveSharedAccountUseCaseImpl(repository)
 
-    private fun payload(id: String = "acct-1", label: String = "Lyes Max", limits: AccountLimits = AccountLimits()) = ShareAccountPayload(
-        AccountProvider.CLAUDE, label, "lyes@example.com", id, "sk-ant-oat01-access", "sk-ant-ort01-refresh", clock.now() + 8.hours, limits,
-    )
+    private fun payload(id: String = "acct-1", label: String = "Lyes Max", limits: AccountLimits = AccountLimits()) =
+        ShareAccountPayload(
+            AccountProvider.CLAUDE,
+            label,
+            "lyes@example.com",
+            id,
+            "sk-ant-oat01-access",
+            "sk-ant-ort01-refresh",
+            clock.now() + 8.hours,
+            limits,
+        )
 
     @Test
     fun aMemberSharesItsAccountSealedAndOwned() = runTest {
@@ -71,15 +77,48 @@ class SharingUseCasesTest {
         assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload().copy(accessToken = "short")) }
         assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload().copy(email = "a\nb")) }
         assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload().copy(email = "a".repeat(321))) }
-        assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload(limits = AccountLimits(maxConcurrent = 0))) }
-        assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload(limits = AccountLimits(utilizationCeiling = 2.0))) }
-        assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload(limits = AccountLimits(utilizationCeiling = Double.NaN))) }
-        assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload(limits = AccountLimits(monthlyBudgetMicros = -1))) }
+        assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload().copy(refreshToken = "short")) }
+        for (limits in listOf(
+            AccountLimits(maxConcurrent = 0),
+            AccountLimits(maxConcurrent = 65),
+            AccountLimits(utilizationCeiling = 0.01),
+            AccountLimits(utilizationCeiling = 2.0),
+        )) {
+            assertFailsWith<InvalidAccountException>(limits.toString()) {
+                share(Sharing.memberA, payload(limits = limits))
+            }
+        }
+        assertFailsWith<InvalidAccountException> {
+            share(Sharing.memberA, payload(limits = AccountLimits(utilizationCeiling = Double.NaN)))
+        }
+        assertFailsWith<InvalidAccountException> {
+            share(Sharing.memberA, payload(limits = AccountLimits(monthlyBudgetMicros = -1)))
+        }
         val many = (0..1000).map { Uuid.random() }.toSet()
-        assertFailsWith<InvalidAccountException> { share(Sharing.memberA, payload(limits = AccountLimits(allowedMembers = many))) }
+        assertFailsWith<InvalidAccountException> {
+            share(Sharing.memberA, payload(limits = AccountLimits(allowedMembers = many)))
+        }
         val account = share(Sharing.memberA, payload())
-        assertFailsWith<InvalidAccountException> { update(Sharing.memberA, account.id, UpdateAccountPayload(priority = 101)) }
-        assertFailsWith<InvalidAccountException> { update(Sharing.memberA, account.id, UpdateAccountPayload(label = "")) }
+        for (priority in listOf(-101, 101)) {
+            assertFailsWith<InvalidAccountException> {
+                update(Sharing.memberA, account.id, UpdateAccountPayload(priority = priority))
+            }
+        }
+        assertFailsWith<InvalidAccountException> {
+            update(Sharing.memberA, account.id, UpdateAccountPayload(limits = AccountLimits(maxConcurrent = 0)))
+        }
+        val accepted = share(
+            Sharing.memberA,
+            payload(
+                id = "with-limits",
+                limits = AccountLimits(monthlyBudgetMicros = 5, allowedMembers = many.take(3).toSet()),
+            )
+                .copy(email = null),
+        )
+        assertEquals(5, accepted.limits.monthlyBudgetMicros)
+        assertFailsWith<InvalidAccountException> {
+            update(Sharing.memberA, account.id, UpdateAccountPayload(label = ""))
+        }
     }
 
     @Test
@@ -113,19 +152,40 @@ class SharingUseCasesTest {
     @Test
     fun onlyAdminsAndOwnersChangeOrRemove() = runTest {
         val account = share(Sharing.memberA, payload())
-        assertFailsWith<AccountNotFoundException> { update(Sharing.otherA, account.id, UpdateAccountPayload(label = "x")) }
+        assertFailsWith<AccountNotFoundException> {
+            update(Sharing.otherA, account.id, UpdateAccountPayload(label = "x"))
+        }
         assertFailsWith<AccountNotFoundException> { remove(Sharing.otherA, account.id) }
         assertFailsWith<AccountNotFoundException> { remove(Sharing.adminB, account.id) }
         assertFailsWith<AccountNotFoundException> { update(Sharing.adminA, Uuid.random(), UpdateAccountPayload()) }
-        val changed = update(Sharing.adminA, account.id, UpdateAccountPayload(label = "Team", limits = AccountLimits(maxConcurrent = 2)))
+        val changed =
+            update(
+                Sharing.adminA,
+                account.id,
+                UpdateAccountPayload(label = "Team", limits = AccountLimits(maxConcurrent = 2)),
+            )
         assertEquals("Team", changed.label)
         assertEquals(2, changed.limits.maxConcurrent)
         val off = update(Sharing.memberA, account.id, UpdateAccountPayload(disabled = true))
         assertEquals(AccountStatus.DISABLED, off.status)
-        assertEquals(AccountStatus.READY, update(Sharing.memberA, account.id, UpdateAccountPayload(disabled = false)).status)
+        assertEquals(
+            AccountStatus.READY,
+            update(Sharing.memberA, account.id, UpdateAccountPayload(disabled = false)).status,
+        )
         repository.setStatus(Sharing.orgA, account.id, AccountStatus.RECONNECT_REQUIRED)
-        assertEquals(AccountStatus.RECONNECT_REQUIRED, update(Sharing.memberA, account.id, UpdateAccountPayload(disabled = false)).status)
+        assertEquals(
+            AccountStatus.RECONNECT_REQUIRED,
+            update(Sharing.memberA, account.id, UpdateAccountPayload(disabled = false)).status,
+        )
         remove(Sharing.memberA, account.id)
         assertEquals(emptyList(), repository.accounts)
+    }
+
+    @Test
+    fun anAccountRemovedMeanwhileIsNotFound() = runTest {
+        val account = share(Sharing.memberA, payload())
+        repository.vanishing = true
+        assertFailsWith<AccountNotFoundException> { update(Sharing.memberA, account.id, UpdateAccountPayload()) }
+        assertFailsWith<AccountNotFoundException> { remove(Sharing.memberA, account.id) }
     }
 }

@@ -61,7 +61,12 @@ data class UpdateAccountRequest(
 
 /** A provider window. */
 @Serializable
-data class QuotaWindowDto(val window: String, val utilization: Double, val resetsAt: String? = null, val observedAt: String)
+data class QuotaWindowDto(
+    val window: String,
+    val utilization: Double,
+    val resetsAt: String? = null,
+    val observedAt: String,
+)
 
 /**
  * An account (contract `SharedAccount`, with additions), tokens never included; identity fields only for admins and
@@ -116,4 +121,8 @@ data class CapacityPoolDto(val provider: String, val accounts: Int, val ready: I
  * @property computedAt When.
  */
 @Serializable
-data class CapacityResponse(val accounts: List<SharedAccountResponse>, val pools: List<CapacityPoolDto>, val computedAt: String)
+data class CapacityResponse(
+    val accounts: List<SharedAccountResponse>,
+    val pools: List<CapacityPoolDto>,
+    val computedAt: String,
+)

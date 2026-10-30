@@ -63,7 +63,12 @@ object SecretRules {
      * @throws InvalidSecretException When it is not 1 to 128 characters of `A-Z a-z 0-9 _ . -`.
      */
     fun requireName(name: String) {
-        if (!namePattern.matches(name)) throw InvalidSecretException("A secret name is 1 to 128 characters of A-Z a-z 0-9 _ . -.")
+        if (!namePattern.matches(
+                name,
+            )
+        ) {
+            throw InvalidSecretException("A secret name is 1 to 128 characters of A-Z a-z 0-9 _ . -.")
+        }
     }
 
     /**
@@ -90,4 +95,5 @@ class SecretNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Secret not
 class SecretNameTakenException : OstromException(ErrorKind.CONFLICT, "A secret with this name already exists.")
 
 /** A stored envelope that does not decrypt with the instance key (wrong key, or a row moved to another org). */
-class SecretUnreadableException : OstromException(ErrorKind.UNAVAILABLE, "A stored secret cannot be decrypted with this instance's key.")
+class SecretUnreadableException :
+    OstromException(ErrorKind.UNAVAILABLE, "A stored secret cannot be decrypted with this instance's key.")

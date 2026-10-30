@@ -16,19 +16,25 @@ import kotlin.uuid.Uuid
 class AccountTokenCipher(private val cipher: SecretCipher) {
     /** Seals. */
     suspend fun seal(credentials: AccountCredentials, orgId: Uuid, accountId: Uuid): String {
-        val payload = Payload(credentials.accessToken, credentials.refreshToken, credentials.expiresAt.toEpochMilliseconds())
-        return cipher.seal(Json.encodeToString(Payload.serializer(), payload).encodeToByteArray(), context(orgId, accountId))
+        val payload = Payload(
+            credentials.accessToken,
+            credentials.refreshToken,
+            credentials.expiresAt.toEpochMilliseconds(),
+        )
+        val bytes = Json.encodeToString(Payload.serializer(), payload).encodeToByteArray()
+        return cipher.seal(bytes, context(orgId, accountId))
     }
 
-    /** Opens; null when the envelope is not this account's or the key changed. */
-    suspend fun open(envelope: String, orgId: Uuid, accountId: Uuid): AccountCredentials? {
-        val bytes = cipher.open(envelope, context(orgId, accountId)) ?: return null
-        val payload = try {
-            Json.decodeFromString(Payload.serializer(), bytes.decodeToString())
-        } catch (_: SerializationException) {
-            return null
+    /** Opens; null when the envelope is not this account's, the key changed, or what it holds is not tokens. */
+    suspend fun open(envelope: String, orgId: Uuid, accountId: Uuid): AccountCredentials? =
+        cipher.open(envelope, context(orgId, accountId))?.let(::decode)?.let {
+            AccountCredentials(it.accessToken, it.refreshToken, Instant.fromEpochMilliseconds(it.expiresAtMillis))
         }
-        return AccountCredentials(payload.accessToken, payload.refreshToken, Instant.fromEpochMilliseconds(payload.expiresAtMillis))
+
+    private fun decode(bytes: ByteArray): Payload? = try {
+        Json.decodeFromString(Payload.serializer(), bytes.decodeToString())
+    } catch (_: SerializationException) {
+        null
     }
 
     @Serializable
