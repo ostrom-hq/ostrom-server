@@ -320,8 +320,8 @@ def test_aWebhookDriftUpdatesTheEndpointWithoutANewSecret(change: Any) -> None:
 def test_aWebhookUrlOverrideIsApplied() -> None:
     fake = FakeStripe()
     secrets: list[str] = []
-    provision.Provisioner(fake, CATALOG, False, secrets.append, "https://staging.example/api/v1/billing/stripe/webhook").run()
-    assert fake.webhooks[0]["url"] == "https://staging.example/api/v1/billing/stripe/webhook"
+    provision.Provisioner(fake, CATALOG, False, secrets.append, "https://staging.example/webhooks/stripe").run()
+    assert fake.webhooks[0]["url"] == "https://staging.example/webhooks/stripe"
 
 
 def test_endpointsAndMetersNotOursAreIgnored() -> None:

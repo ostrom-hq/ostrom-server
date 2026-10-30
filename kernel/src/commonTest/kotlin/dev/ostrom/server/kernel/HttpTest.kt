@@ -419,9 +419,18 @@ class HttpTest {
 
     @Test
     fun requestFieldsTolerateAMissingStatusOrStart() {
-        val fields = requestFields("GET", "/x", status = null, start = null, requestId = null)
+        val fields = requestFields("GET", "/x", status = null, start = null, requestId = null, span = null)
         assertEquals(
-            mapOf("method" to "GET", "path" to "/x", "status" to null, "duration_ms" to null, "request_id" to null),
+            mapOf(
+                "method" to "GET",
+                "route" to "/x",
+                "status" to null,
+                "duration_ms" to null,
+                "request_id" to null,
+                "trace_id" to null,
+                "span_id" to null,
+                "trace_flags" to null,
+            ),
             fields,
         )
     }

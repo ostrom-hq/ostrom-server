@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
+import dev.ostrom.server.automations.domain.AutomationLauncher
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
@@ -24,6 +25,7 @@ import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerTokens
 import dev.ostrom.server.runners.domain.RuntimeDriver
+import dev.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import dev.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import dev.ostrom.server.runners.infrastructure.ReconcilerWorker
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
@@ -85,6 +87,7 @@ object RunnersModule : ServerModule {
         single<IssueTerminalTicketUseCase> { IssueTerminalTicketUseCaseImpl(get(), get()) }
         single { TerminalActivity(get(), get()) }
         single { TerminalRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single<AutomationLauncher> { CloudSessionAutomationLauncher(get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = RunnersMigrations
