@@ -1,6 +1,6 @@
 # ostrom-server
 
-The Ostrom server, in Kotlin/Native (no JVM): one static-ish binary for Linux x64 and arm64, Ktor on the CIO engine,
+The Ostrom server, in Kotlin/Native (no JVM at run time): one binary for Linux x64 and arm64, Ktor on the CIO engine,
 PostgreSQL, Koin, Clean Architecture with one Gradle module per functional domain.
 
 ## Licensing
@@ -25,22 +25,33 @@ complete AGPL server. `ostrom-core` and `ostrom-cli` are Apache 2.0.
 | `testing/` | Test helpers: a throwaway PostgreSQL database per test, a test server |
 | `app/` | The binary: wires the kernel and every module, applies migrations, serves HTTP |
 | `ee/` | Enterprise modules (commercial license) |
-| `build-logic/` | The `ostrom.native-module` convention plugin (targets, serialization, Koin) |
+| `build-logic/` | The `ostrom.kmp` convention plugin of ostrom-core's CONVENTIONS (native targets, the test-only `jvm()` target, Kover 100 %, detekt), applied as `ostrom.native-module` |
+| `ci/build-linux.sh` | Builds the release linuxX64 binary into `dist/ostrom-server` (image, end-to-end and load tests) |
 
 Adding a module: [`docs/MODULES.md`](docs/MODULES.md).
 
 ## Build and run
 
-Builds run in GitHub Actions (Linux): tests on linuxX64 against a PostgreSQL service, binaries for linuxX64 and
-linuxArm64, a distroless Docker image and a smoke test of it. Locally (macOS arm64):
+Builds run in GitHub Actions (Linux, job `linux`), exactly:
+
+```sh
+python3 scripts/check-conventions.py
+./gradlew detekt jvmTest koverVerify koverXmlReport linuxX64Test   # with a PostgreSQL service
+ci/build-linux.sh                                                   # dist/ostrom-server
+./gradlew :app:linkReleaseExecutableLinuxArm64
+docker build -t ostrom-server .                                     # distroless image, smoke-tested in CI
+```
+
+The JVM target only runs the tests and measures coverage; nothing JVM is shipped. Locally (macOS arm64; on the
+shared Mac, only through `.coord/build-lock.sh`):
 
 ```sh
 docker compose up -d postgres            # PostgreSQL on localhost:5432
-export OSTROM_TEST_DATABASE_URL=postgresql://localhost:5432/postgres
-./gradlew macosArm64Test                 # unit and database tests
+export OSTROM_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
+./gradlew jvmTest koverHtmlReport        # unit and database tests, coverage report
 ./gradlew :app:linkDebugExecutableMacosArm64
-OSTROM_DATABASE_URL=postgresql://localhost:5432/postgres OSTROM_DATABASE_USER=postgres \
-  OSTROM_DATABASE_PASSWORD=postgres ./app/build/bin/macosArm64/debugExecutable/ostrom-server.kexe
+OSTROM_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres \
+  ./app/build/bin/macosArm64/debugExecutable/ostrom-server.kexe
 curl localhost:8080/health
 ```
 

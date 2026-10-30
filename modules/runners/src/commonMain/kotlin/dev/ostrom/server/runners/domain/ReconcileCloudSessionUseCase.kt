@@ -34,6 +34,8 @@ interface ReconcileCloudSessionUseCase {
  * @param plans The organizations' plans, for the monthly hours.
  * @param clock The time.
  */
+// Each step is a decision table read top to bottom: an early return per outcome reads better than nested branches.
+@Suppress("ReturnCount")
 class ReconcileCloudSessionUseCaseImpl(
     private val repository: CloudSessionsRepository,
     private val driver: RuntimeDriver,
@@ -57,7 +59,9 @@ class ReconcileCloudSessionUseCaseImpl(
     private suspend fun terminate(session: CloudSession, now: Instant): Instant? {
         driver.stopExecutions(session)
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
-        write(session.moveTo(SessionState.TERMINATED, now).copy(terminatedAt = now, runnerTokenHash = null, phase = "cleaned"), null)
+        val terminated = session.moveTo(SessionState.TERMINATED, now)
+            .copy(terminatedAt = now, runnerTokenHash = null, phase = "cleaned")
+        write(terminated, null)
         return null
     }
 
@@ -72,10 +76,15 @@ class ReconcileCloudSessionUseCaseImpl(
             (status == ExecutionStatus.MISSING && now - startedAt > MISSING_GRACE) || now - startedAt > START_TIMEOUT
         if (!failed) return now + STEP_DELAY
         driver.stopExecutions(session)
-        val failure = SessionFailure("start_failed", "The session's runner did not start. Try again, or check the image.")
+        val failure = SessionFailure(
+            "start_failed",
+            "The session's runner did not start. Try again, or check the image.",
+        )
         if (session.state == SessionState.RESUMING) return write(session.toPaused(now, failure), null)
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
-        return write(session.moveTo(SessionState.FAILED, now).copy(failure = failure, runnerTokenHash = null, executionStartedAt = null), null)
+        val failed = session.moveTo(SessionState.FAILED, now)
+            .copy(failure = failure, runnerTokenHash = null, executionStartedAt = null)
+        return write(failed, null)
     }
 
     private suspend fun startExecution(session: CloudSession, now: Instant): Instant? {
@@ -123,14 +132,22 @@ class ReconcileCloudSessionUseCaseImpl(
             status == ExecutionStatus.MISSING
         ) {
             driver.stopExecutions(session)
-            val failure = SessionFailure("execution_lost", "The session's runner stopped answering; the workspace was kept.")
+            val failure = SessionFailure(
+                "execution_lost",
+                "The session's runner stopped answering; the workspace was kept.",
+            )
             return write(session.toPaused(now, failure).copy(desiredState = DesiredState.PAUSED), null)
         }
-        if (session.desiredState != DesiredState.RUNNING) return write(session.toPausing(now, session.failure), now + STEP_DELAY)
+        if (session.desiredState != DesiredState.RUNNING) {
+            return write(session.toPausing(now, session.failure), now + STEP_DELAY)
+        }
         val idleSince = session.lastActivityAt ?: session.readyAt ?: now
         val reason = when {
             now - idleSince >= session.limits.idleTimeoutMinutes.minutes ->
-                SessionFailure("idle_timeout", "Paused after ${session.limits.idleTimeoutMinutes} minutes without a request to the model.")
+                SessionFailure(
+                    "idle_timeout",
+                    "Paused after ${session.limits.idleTimeoutMinutes} minutes without a request to the model.",
+                )
             now - (session.readyAt ?: now) >= session.limits.maxRunMinutes.minutes ->
                 SessionFailure("max_duration", "Paused after ${session.limits.maxRunMinutes} minutes of running.")
             hoursExhausted(session, plans.planFor(session.orgId), now) ->
@@ -153,7 +170,8 @@ class ReconcileCloudSessionUseCaseImpl(
     private suspend fun paused(session: CloudSession, now: Instant): Instant? {
         if (session.desiredState != DesiredState.RUNNING) return null
         return write(
-            session.moveTo(SessionState.RESUMING, now).copy(phase = "scheduling", executionStartedAt = null, failure = null),
+            session.moveTo(SessionState.RESUMING, now)
+                .copy(phase = "scheduling", executionStartedAt = null, failure = null),
             now,
         )
     }
@@ -173,18 +191,20 @@ class ReconcileCloudSessionUseCaseImpl(
     }
 
     private fun CloudSession.toPausing(now: Instant, reason: SessionFailure?): CloudSession =
-        moveTo(SessionState.PAUSING, now).copy(pausingSince = now, runnerStoppedAt = null, phase = "draining", failure = reason)
+        moveTo(SessionState.PAUSING, now)
+            .copy(pausingSince = now, runnerStoppedAt = null, phase = "draining", failure = reason)
 
-    private fun CloudSession.toPaused(now: Instant, reason: SessionFailure?): CloudSession = moveTo(SessionState.PAUSED, now).copy(
-        pausedAt = now,
-        executionStartedAt = null,
-        runnerTokenHash = null,
-        runnerStoppedAt = null,
-        pausingSince = null,
-        readyAt = null,
-        phase = null,
-        failure = reason,
-    )
+    private fun CloudSession.toPaused(now: Instant, reason: SessionFailure?): CloudSession =
+        moveTo(SessionState.PAUSED, now).copy(
+            pausedAt = now,
+            executionStartedAt = null,
+            runnerTokenHash = null,
+            runnerStoppedAt = null,
+            pausingSince = null,
+            readyAt = null,
+            phase = null,
+            failure = reason,
+        )
 
     companion object {
         /** A start must report ready within this time, image pull and repository clone included. */

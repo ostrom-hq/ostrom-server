@@ -50,20 +50,21 @@ class CreateCloudSessionUseCaseImpl(
     private val clock: Clock,
 ) : CreateCloudSessionUseCase {
     override suspend fun invoke(caller: Caller, payload: CreateCloudSessionPayload): CloudSession {
-        val agent = AgentKind.fromWire(payload.agent)
-            ?: throw InvalidCloudSessionRequestException("Unknown agent ${payload.agent.take(32)}: use ${AgentKind.entries.joinToString { it.wire }}.")
+        val agent = AgentKind.fromWire(payload.agent) ?: throw InvalidCloudSessionRequestException(
+            "Unknown agent ${payload.agent.take(MAX_ECHO)}: use ${AgentKind.entries.joinToString { it.wire }}.",
+        )
         val name = payload.name?.trim()?.takeIf { it.isNotEmpty() }
             ?: payload.repository?.url?.substringAfterLast('/')?.removeSuffix(".git")
             ?: agent.wire
-        if (name.length > MAX_NAME_LENGTH || name.any { it.isISOControl() }) {
-            throw InvalidCloudSessionRequestException("The name must be 1 to $MAX_NAME_LENGTH characters, without control characters.")
+        ensureValid(name.length <= MAX_NAME_LENGTH && name.none { it.isISOControl() }) {
+            "The name must be 1 to $MAX_NAME_LENGTH characters, without control characters."
         }
         payload.repository?.let { validateRepository(it) }
         val model = payload.model?.trim()?.takeIf { it.isNotEmpty() }
-        if (model != null && !MODEL.matches(model)) throw InvalidCloudSessionRequestException("The model is not a valid model name.")
+        ensureValid(model == null || MODEL.matches(model)) { "The model is not a valid model name." }
         val prompt = payload.prompt?.takeIf { it.isNotBlank() }
-        if (prompt != null && prompt.length > MAX_PROMPT_LENGTH) {
-            throw InvalidCloudSessionRequestException("The prompt must be at most $MAX_PROMPT_LENGTH characters.")
+        ensureValid(prompt == null || prompt.length <= MAX_PROMPT_LENGTH) {
+            "The prompt must be at most $MAX_PROMPT_LENGTH characters."
         }
         val plan = plans.planFor(caller.orgId)
         val now = clock.now()
@@ -94,20 +95,23 @@ class CreateCloudSessionUseCaseImpl(
     }
 
     private fun validateRepository(repository: RepositorySpec) {
-        if (!GITHUB_REPOSITORY.matches(repository.url)) {
-            throw InvalidCloudSessionRequestException("The repository must be an https://github.com/<owner>/<name> URL.")
+        ensureValid(GITHUB_REPOSITORY.matches(repository.url)) {
+            "The repository must be an https://github.com/<owner>/<name> URL."
         }
         val ref = repository.ref ?: return
-        if (!GIT_REF.matches(ref) || ref.contains("..") || ref.startsWith("-")) {
-            throw InvalidCloudSessionRequestException("The repository ref is not a valid branch, tag or commit.")
+        ensureValid(GIT_REF.matches(ref) && !ref.contains("..") && !ref.startsWith("-")) {
+            "The repository ref is not a valid branch, tag or commit."
         }
     }
 
     private companion object {
         const val MAX_NAME_LENGTH = 120
         const val MAX_PROMPT_LENGTH = 20_000
+        const val MAX_ECHO = 32
         val MODEL = Regex("[A-Za-z0-9._:/@-]{1,100}")
-        val GITHUB_REPOSITORY = Regex("https://github\\.com/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}(\\.git)?")
+        val GITHUB_REPOSITORY = Regex(
+            "https://github\\.com/[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}(\\.git)?",
+        )
         val GIT_REF = Regex("[A-Za-z0-9._/-]{1,200}")
     }
 }
@@ -117,9 +121,16 @@ class CreateCloudSessionUseCaseImpl(
  *
  * @throws CloudHoursExhaustedException When no hour is left.
  */
-internal suspend fun requireHoursLeft(repository: CloudSessionsRepository, plan: CloudPlan, orgId: Uuid, now: kotlin.time.Instant) {
+internal suspend fun requireHoursLeft(
+    repository: CloudSessionsRepository,
+    plan: CloudPlan,
+    orgId: Uuid,
+    now: kotlin.time.Instant,
+) {
     val hours = plan.monthlyHours ?: return
-    if (repository.usageSeconds(orgId, monthOf(now)) >= hours * SECONDS_PER_HOUR) throw CloudHoursExhaustedException(hours)
+    if (repository.usageSeconds(orgId, monthOf(now)) >= hours * SECONDS_PER_HOUR) {
+        throw CloudHoursExhaustedException(hours)
+    }
 }
 
 internal const val SECONDS_PER_HOUR: Long = 3600
@@ -180,7 +191,7 @@ interface ListCloudSessionsUseCase {
 class ListCloudSessionsUseCaseImpl(private val repository: CloudSessionsRepository) : ListCloudSessionsUseCase {
     override suspend fun invoke(caller: Caller, before: Uuid?, limit: Int?): List<CloudSession> {
         val size = limit ?: DEFAULT_PAGE
-        if (size !in 1..MAX_PAGE) throw InvalidCloudSessionRequestException("The limit must be between 1 and $MAX_PAGE.")
+        ensureValid(size in 1..MAX_PAGE) { "The limit must be between 1 and $MAX_PAGE." }
         return repository.list(caller.orgId, caller.memberId, before, size)
     }
 
@@ -249,7 +260,8 @@ class ChangeCloudSessionUseCaseImpl(
         val session = repository.ownedBy(caller, id)
         if (session.state.isFinal) throw CloudSessionStateException("This session is over.")
         if (session.desiredState == DesiredState.PAUSED) return session
-        return repository.setDesiredState(caller.orgId, id, DesiredState.PAUSED, clock.now()) ?: throw CloudSessionNotFoundException()
+        return repository.setDesiredState(caller.orgId, id, DesiredState.PAUSED, clock.now())
+            ?: throw CloudSessionNotFoundException()
     }
 
     override suspend fun resume(caller: Caller, id: Uuid): CloudSession {
@@ -261,16 +273,19 @@ class ChangeCloudSessionUseCaseImpl(
         val plan = plans.planFor(caller.orgId)
         val now = clock.now()
         requireHoursLeft(repository, plan, caller.orgId, now)
-        return when (val outcome = repository.resumeWithinCap(caller.orgId, id, plan.maxRunningSessions, now)) {
-            is ResumeOutcome.Resumed -> outcome.session
-            ResumeOutcome.AtCap -> throw CloudSessionLimitException(plan.maxRunningSessions)
-            ResumeOutcome.NotFound -> throw CloudSessionNotFoundException()
+        val outcome = repository.resumeWithinCap(caller.orgId, id, plan.maxRunningSessions, now)
+        if (outcome is ResumeOutcome.Resumed) return outcome.session
+        throw if (outcome == ResumeOutcome.AtCap) {
+            CloudSessionLimitException(plan.maxRunningSessions)
+        } else {
+            CloudSessionNotFoundException()
         }
     }
 
     override suspend fun delete(caller: Caller, id: Uuid): CloudSession {
         val session = repository.ownedBy(caller, id)
         if (session.desiredState == DesiredState.TERMINATED || session.state.isFinal) return session
-        return repository.setDesiredState(caller.orgId, id, DesiredState.TERMINATED, clock.now()) ?: throw CloudSessionNotFoundException()
+        return repository.setDesiredState(caller.orgId, id, DesiredState.TERMINATED, clock.now())
+            ?: throw CloudSessionNotFoundException()
     }
 }

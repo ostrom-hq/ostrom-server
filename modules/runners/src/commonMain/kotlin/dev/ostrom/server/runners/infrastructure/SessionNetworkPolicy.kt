@@ -30,8 +30,13 @@ object SessionNetworkPolicy {
         "224.0.0.0/4", "240.0.0.0/4", "168.63.129.16/32",
     )
 
-    /** IPv6 ranges never reachable from a session (unique-local holds AWS's IPv6 metadata, NAT64 and 6to4 embed IPv4). */
-    val BLOCKED_V6 = listOf("::1/128", "fc00::/7", "fe80::/10", "ff00::/8", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32")
+    /**
+     * IPv6 ranges never reachable from a session (unique-local holds AWS's IPv6 metadata, NAT64 and 6to4 embed
+     * IPv4).
+     */
+    val BLOCKED_V6 = listOf(
+        "::1/128", "fc00::/7", "fe80::/10", "ff00::/8", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "2001::/32",
+    )
 
     /** The ports a restricted session may reach on the internet: HTTP, HTTPS, SSH and the Git protocol. */
     val RESTRICTED_PORTS = listOf(80, 443, 22, 9418)
@@ -49,7 +54,9 @@ object SessionNetworkPolicy {
         put("kind", "NetworkPolicy")
         putJsonObject("metadata") {
             put("name", name)
-            putJsonObject("labels") { put(KubernetesRuntimeDriver.MANAGED_BY_LABEL, KubernetesRuntimeDriver.MANAGED_BY) }
+            putJsonObject("labels") {
+                put(KubernetesRuntimeDriver.MANAGED_BY_LABEL, KubernetesRuntimeDriver.MANAGED_BY)
+            }
         }
         putJsonObject("spec") {
             putJsonObject("podSelector") {
@@ -75,7 +82,13 @@ object SessionNetworkPolicy {
                 add(
                     buildJsonObject {
                         putJsonArray("to") {
-                            add(buildJsonObject { putJsonObject("podSelector") { putJsonObject("matchLabels") { put(SERVER_POD_LABEL, SERVER_POD_NAME) } } })
+                            add(
+                                buildJsonObject {
+                                    putJsonObject("podSelector") {
+                                        putJsonObject("matchLabels") { put(SERVER_POD_LABEL, SERVER_POD_NAME) }
+                                    }
+                                },
+                            )
                         }
                         putJsonArray("ports") { add(port("TCP", SERVER_PORT)) }
                     },

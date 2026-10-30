@@ -61,7 +61,7 @@ object RunnersModule : ServerModule {
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
         single<ReconcileCloudSessionUseCase> { ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get()) }
         single { ReconcilerWorker(get(), get(), get(), get()) }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get()) }
+        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = RunnersMigrations

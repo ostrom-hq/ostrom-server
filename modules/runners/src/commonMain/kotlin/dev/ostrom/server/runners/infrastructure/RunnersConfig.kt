@@ -41,11 +41,15 @@ data class RunnersConfig(
                 null, "", "none" -> DriverKind.NONE
                 "kubernetes" -> DriverKind.KUBERNETES
                 "docker" -> DriverKind.DOCKER
-                else -> throw InvalidConfigException("OSTROM_RUNNERS_DRIVER must be none, kubernetes or docker, not $raw.")
+                else -> throw InvalidConfigException(
+                    "OSTROM_RUNNERS_DRIVER must be none, kubernetes or docker, not $raw.",
+                )
             }
             val serverUrl = source["OSTROM_RUNNERS_SERVER_URL"]?.trimEnd('/').orEmpty()
             if (driver != DriverKind.NONE && !serverUrl.startsWith("http://") && !serverUrl.startsWith("https://")) {
-                throw InvalidConfigException("OSTROM_RUNNERS_SERVER_URL must be the http(s) URL runners reach the server at.")
+                throw InvalidConfigException(
+                    "OSTROM_RUNNERS_SERVER_URL must be the http(s) URL runners reach the server at.",
+                )
             }
             return RunnersConfig(
                 driver = driver,
@@ -54,7 +58,8 @@ data class RunnersConfig(
                 kubernetes = KubernetesSettings(
                     apiUrl = source["OSTROM_RUNNERS_KUBERNETES_API_URL"] ?: KubernetesSettings.IN_CLUSTER_API_URL,
                     namespace = source["OSTROM_RUNNERS_KUBERNETES_NAMESPACE"] ?: "ostrom",
-                    tokenFile = source["OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE"] ?: KubernetesSettings.IN_CLUSTER_TOKEN_FILE,
+                    tokenFile = source["OSTROM_RUNNERS_KUBERNETES_TOKEN_FILE"]
+                        ?: KubernetesSettings.IN_CLUSTER_TOKEN_FILE,
                     caFile = source["OSTROM_RUNNERS_KUBERNETES_CA_FILE"] ?: KubernetesSettings.IN_CLUSTER_CA_FILE,
                     storageClass = source["OSTROM_RUNNERS_KUBERNETES_STORAGE_CLASS"]?.takeIf { it.isNotBlank() },
                     workspaceSize = source["OSTROM_RUNNERS_WORKSPACE_SIZE"] ?: "10Gi",

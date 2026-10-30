@@ -2,6 +2,7 @@ package dev.ostrom.server.runners
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.runners.domain.AgentKind
@@ -11,7 +12,7 @@ import dev.ostrom.server.runners.domain.DesiredState
 import dev.ostrom.server.runners.domain.ExecutionSpec
 import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.MissingScopeException
-import dev.ostrom.server.runners.domain.NoOrganizationException
+import dev.ostrom.server.runners.domain.NotAMemberException
 import dev.ostrom.server.runners.domain.RuntimeNames
 import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.domain.SessionStateMachine
@@ -22,8 +23,12 @@ import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.presentation.CLOUD_READ
 import dev.ostrom.server.runners.presentation.CLOUD_WRITE
-import dev.ostrom.server.runners.presentation.toCaller
+import dev.ostrom.server.runners.presentation.callerOf
+import dev.ostrom.server.runners.fakes.ALICE
+import dev.ostrom.server.runners.fakes.TestOrgResolver
 import kotlinx.coroutines.test.runTest
+import org.koin.dsl.koinApplication
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -101,18 +106,31 @@ class ModelTest {
     }
 
     @Test
-    fun theCallerComesFromTheOrgScope() {
-        val org = "org:$ORG_A"
-        assertEquals(Caller(ORG_A, "alice"), principal(org).toCaller(CLOUD_WRITE))
-        assertEquals(Caller(ORG_A, "alice"), principal(org, CLOUD_READ).toCaller(CLOUD_READ))
-        assertEquals(Caller(ORG_A, "alice"), principal(org, CLOUD_WRITE).toCaller(CLOUD_READ))
-        assertFailsWith<MissingScopeException> { principal(org, CLOUD_READ).toCaller(CLOUD_WRITE) }
-        assertFailsWith<MissingScopeException> { principal(org, "artifacts:write").toCaller(CLOUD_READ) }
-        assertFailsWith<NoOrganizationException> { principal().toCaller(CLOUD_READ) }
-        assertFailsWith<NoOrganizationException> { principal("org:not-a-uuid").toCaller(CLOUD_READ) }
+    fun theCallerIsTheMemberTheCredentialActsFor() = runTest {
+        val alice = Caller(ORG_A, ALICE.toString())
+        assertEquals(alice, TestOrgResolver.callerOf(principal("user:*"), CLOUD_WRITE))
+        assertEquals(alice, TestOrgResolver.callerOf(principal(CLOUD_READ), CLOUD_READ))
+        assertEquals(alice, TestOrgResolver.callerOf(principal(CLOUD_WRITE), CLOUD_READ))
+        assertEquals(alice, TestOrgResolver.callerOf(principal(CLOUD_WRITE), CLOUD_WRITE))
+        assertFailsWith<MissingScopeException> { TestOrgResolver.callerOf(principal(CLOUD_READ), CLOUD_WRITE) }
+        assertFailsWith<MissingScopeException> { TestOrgResolver.callerOf(principal("artifacts:write"), CLOUD_READ) }
+        assertFailsWith<MissingScopeException> { TestOrgResolver.callerOf(principal(), CLOUD_READ) }
+        // Only a user's browser session carries every scope: a service token naming it does not.
+        val service = AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("user:*"))
+        assertFailsWith<MissingScopeException> { TestOrgResolver.callerOf(service, CLOUD_READ) }
+        val stranger = AuthenticatedPrincipal("nobody", PrincipalKind.USER, setOf("user:*"))
+        assertFailsWith<NotAMemberException> { TestOrgResolver.callerOf(stranger, CLOUD_READ) }
     }
 
     private fun principal(vararg scopes: String) = AuthenticatedPrincipal("alice", PrincipalKind.USER, scopes.toSet())
+
+    @Test
+    fun theModuleReadsTheBoundConfiguration() {
+        val bound = module { single<ConfigSource> { MapConfigSource(mapOf("OSTROM_RUNNERS_IMAGE" to "runner:1")) } }
+        val koin = koinApplication { modules(bound, RunnersModule.koinModule) }
+        assertEquals("runner:1", koin.koin.get<RunnersConfig>().runnerImage)
+        koin.close()
+    }
 
     @Test
     fun theConfigurationDefaultsToNoRuntime() {

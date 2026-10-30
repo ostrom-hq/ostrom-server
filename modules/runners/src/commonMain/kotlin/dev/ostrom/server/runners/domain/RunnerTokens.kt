@@ -23,4 +23,7 @@ interface RunnerTokens {
 }
 
 /** Months are counted in UTC, `YYYY-MM`. */
-internal fun monthOf(instant: kotlin.time.Instant): String = instant.toString().substring(0, 7)
+internal fun monthOf(instant: kotlin.time.Instant): String = instant.toString().substring(0, MONTH_LENGTH)
+
+/** `YYYY-MM`. */
+private const val MONTH_LENGTH = 7

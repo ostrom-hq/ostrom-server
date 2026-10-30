@@ -4,6 +4,8 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Storage of cloud sessions and of their organizations' monthly usage. */
+// One port per table: splitting it would only spread the same SQL over several classes.
+@Suppress("TooManyFunctions")
 interface CloudSessionsRepository {
     /**
      * Creates a session unless its organization already has [maxRunning] sessions holding an execution. The check

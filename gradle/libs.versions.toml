@@ -1,42 +1,93 @@
+# Reference version catalog of every Ostrom Kotlin repository (docs/CONVENTIONS.md section 9).
+# Copy it to gradle/libs.versions.toml and keep only what the repository uses; bump a version in all repositories at once.
+# Checked on 30/10/2026 against Maven Central and Nathan's latest builds (teamcode, pkg, asonar on Kotlin 2.4.20).
+
 [versions]
 kotlin = "2.4.21"
+ksp = "2.3.12"
+coroutines = "1.11.0"        # the version Ktor 3.6.1 depends on
+serialization = "1.11.0"     # the version Ktor 3.6.1 depends on
+kotlinx-io = "0.9.1"
+kotlinx-datetime = "0.8.0"
 ktor = "3.6.1"
 koin = "4.2.2"
-coroutines = "1.11.0"
-serialization = "1.12.0"
-kotlinx-io = "0.9.1"
-# PostgreSQL (and SQLite) driver for Kotlin/Native: sqlx (Rust) bundled as a static library, no system libpq.
-sqlx4k = "1.17.0"
-# Ed25519 for the provisional instance signer, until ostrom-core publishes its own (see docs/MODULES.md).
+okio = "3.18.2"
+clikt = "5.1.0"
+mordant = "3.0.2"
 cryptography = "0.6.0"
-
-[libraries]
-kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
-kotlin-serialization-plugin = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
-kotlinx-io = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "kotlinx-io" }
-koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
-ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
-ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
-ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation", version.ref = "ktor" }
-ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor" }
-ktor-server-resources = { module = "io.ktor:ktor-server-resources", version.ref = "ktor" }
-ktor-server-auth = { module = "io.ktor:ktor-server-auth", version.ref = "ktor" }
-ktor-server-call-id = { module = "io.ktor:ktor-server-call-id", version.ref = "ktor" }
-ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
-ktor-serialization-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
-ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
-ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
-ktor-client-curl = { module = "io.ktor:ktor-client-curl", version.ref = "ktor" }
-ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
-ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
-ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
-sqlx4k-postgres = { module = "io.github.smyrgeorge:sqlx4k-postgres", version.ref = "sqlx4k" }
-cryptography-core = { module = "dev.whyoleg.cryptography:cryptography-core", version.ref = "cryptography" }
-cryptography-openssl = { module = "dev.whyoleg.cryptography:cryptography-provider-openssl3-prebuilt", version.ref = "cryptography" }
+sqlx4k = "1.17.0"
+junit = "5.11.4"
+junit-platform = "1.11.4"
+kover = "0.9.11"
+detekt = "1.23.8"
+maven-publish = "0.37.0"
+zodable = "1.7.6"
 
 [plugins]
 multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+maven = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }
+zodable = { id = "dev.zodable", version.ref = "zodable" }
+
+[libraries]
+# Gradle plugins as libraries, for build-logic/build.gradle.kts
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+kotlin-serialization-plugin = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
+kover-gradle-plugin = { module = "org.jetbrains.kotlinx:kover-gradle-plugin", version.ref = "kover" }
+detekt-gradle-plugin = { module = "io.gitlab.arturbosch.detekt:detekt-gradle-plugin", version.ref = "detekt" }
+
+# Kotlinx
+coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+kotlinx-io = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "kotlinx-io" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
+
+# Ktor: CIO server on native; client engines picked per platform by engine-defaults (Darwin, Curl, WinHttp)
+ktor-resources = { module = "io.ktor:ktor-resources", version.ref = "ktor" }
+ktor-serialization-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
+ktor-server-resources = { module = "io.ktor:ktor-server-resources", version.ref = "ktor" }
+ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation", version.ref = "ktor" }
+ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor" }
+ktor-server-auth = { module = "io.ktor:ktor-server-auth", version.ref = "ktor" }
+ktor-server-call-id = { module = "io.ktor:ktor-server-call-id", version.ref = "ktor" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-engine-defaults = { module = "io.ktor:ktor-client-engine-defaults", version.ref = "ktor" }
+ktor-client-resources = { module = "io.ktor:ktor-client-resources", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
+# Explicit engines of the runners module: Curl on native (TLS, a custom CA), CIO on the test-only JVM target
+ktor-client-curl = { module = "io.ktor:ktor-client-curl", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
+ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
+
+# Koin (constructor injection, wired in the composition root only)
+koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
+
+# Files and CLI
+okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
+okio-fakefilesystem = { module = "com.squareup.okio:okio-fakefilesystem", version.ref = "okio" }
+clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
+mordant = { module = "com.github.ajalt.mordant:mordant-coroutines", version.ref = "mordant" }
+
+# Crypto: one static OpenSSL 3.5 LTS on every native target; JDK provider for the test-only JVM target
+cryptography-core = { module = "dev.whyoleg.cryptography:cryptography-core", version.ref = "cryptography" }
+cryptography-openssl3-prebuilt = { module = "dev.whyoleg.cryptography:cryptography-provider-openssl3-prebuilt", version.ref = "cryptography" }
+cryptography-openssl3-shared = { module = "dev.whyoleg.cryptography:cryptography-provider-openssl3-shared", version.ref = "cryptography" }
+cryptography-jdk = { module = "dev.whyoleg.cryptography:cryptography-provider-jdk", version.ref = "cryptography" }
+
+# Database (server infrastructure only)
+sqlx4k-postgres = { module = "io.github.smyrgeorge:sqlx4k-postgres", version.ref = "sqlx4k" }
+sqlx4k-sqlite = { module = "io.github.smyrgeorge:sqlx4k-sqlite", version.ref = "sqlx4k" }
+
+# Tests (the JVM target is the test and coverage runner only)
+junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit" }
+# Gradle 9 no longer puts the JUnit Platform launcher on the test runtime classpath.
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit-platform" }

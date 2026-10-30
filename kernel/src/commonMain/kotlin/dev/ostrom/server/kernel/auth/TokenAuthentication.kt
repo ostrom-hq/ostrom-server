@@ -40,7 +40,11 @@ class TokenAuthenticationProvider internal constructor(config: Config) : Authent
             context.principal(principal)
             return
         }
-        val cause = if (token == null) AuthenticationFailedCause.NoCredentials else AuthenticationFailedCause.InvalidCredentials
+        val cause = if (token == null) {
+            AuthenticationFailedCause.NoCredentials
+        } else {
+            AuthenticationFailedCause.InvalidCredentials
+        }
         context.challenge(TOKEN_AUTH, cause) { challenge, call ->
             call.response.header(HttpHeaders.WWWAuthenticate, "Bearer")
             call.respondError(ErrorKind.UNAUTHORIZED, "A valid bearer token is required.")
@@ -72,12 +76,12 @@ fun Route.authenticated(build: Route.() -> Unit): Route = authenticate(TOKEN_AUT
  *
  * @throws OstromException When called outside [authenticated] (a programming error, answered as a 401).
  */
-fun ApplicationCall.requirePrincipal(): AuthenticatedPrincipal =
-    principal<AuthenticatedPrincipal>() ?: throw OstromException(ErrorKind.UNAUTHORIZED, "A valid bearer token is required.")
+fun ApplicationCall.requirePrincipal(): AuthenticatedPrincipal = principal<AuthenticatedPrincipal>()
+    ?: throw OstromException(ErrorKind.UNAUTHORIZED, "A valid bearer token is required.")
 
 private fun ApplicationCall.bearerToken(): String? {
     val header = request.headers[HttpHeaders.Authorization] ?: return null
-    val separator = header.indexOf(' ')
-    if (separator <= 0 || !header.substring(0, separator).equals("Bearer", ignoreCase = true)) return null
-    return header.substring(separator + 1).trim().takeIf { it.isNotEmpty() }
+    val scheme = header.substringBefore(' ')
+    val token = header.substringAfter(' ', missingDelimiterValue = "").trim()
+    return token.takeIf { scheme.equals("Bearer", ignoreCase = true) && it.isNotEmpty() }
 }
