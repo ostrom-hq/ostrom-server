@@ -19,6 +19,13 @@ import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 // The gates module's ports are owned by other modules (identity, orgs, sessions, receipts, compiler,
@@ -48,8 +55,9 @@ class UnknownPullRequestHeads : PullRequestHeads {
 }
 
 /**
- * Tells every bound [GateChannel], one after the other. A channel that fails is logged and skipped: the request is
- * stored and visible in the console, and the other channels still hear of it. Without any channel, approvers find
+ * Tells every bound [GateChannel] at once, each within [CHANNEL_TIMEOUT]: a slow upstream holds an ask or an answer
+ * one timeout at most. A channel that fails or times out is logged and skipped: the request is stored and visible in
+ * the console, and the other channels still hear of it. Without any channel, approvers find
  * their requests in the console and the hooks poll the gate.
  *
  * @param channels The channels, read at the first event (the integrations bind theirs after this module).
@@ -64,16 +72,28 @@ class ChannelsGateNotifier(channels: () -> List<GateChannel>, private val logger
     override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) =
         each(gate) { it.decided(gate, requests) }
 
+    // `async`, not `launch`: a channel's own cancellation reaches the caller through `awaitAll`.
     private suspend fun each(gate: Gate, event: suspend (GateChannel) -> Unit) {
-        for (channel in channels) {
-            try {
-                event(channel)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                logger.warn("gate channel failed", mapOf("channel" to channel.name, "gate_id" to gate.id), error)
-            }
+        coroutineScope { channels.map { channel -> async { tell(gate, channel, event) } }.awaitAll() }
+    }
+
+    private suspend fun tell(gate: Gate, channel: GateChannel, event: suspend (GateChannel) -> Unit) {
+        val fields = mapOf("channel" to channel.name, "gate_id" to gate.id)
+        try {
+            withTimeout(CHANNEL_TIMEOUT) { event(channel) }
+        } catch (error: TimeoutCancellationException) {
+            logger.warn("gate channel timed out", fields, error)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            logger.warn("gate channel failed", fields, error)
         }
+    }
+
+    /** The notifier's constants. */
+    companion object {
+        /** How long one channel may take to hear of a gate event. */
+        val CHANNEL_TIMEOUT: Duration = 5.seconds
     }
 }
 

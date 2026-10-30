@@ -52,7 +52,8 @@ fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies) = with(depend
         }
         post<SessionsApi.Id.End> { params ->
             val body = call.receive<EndSessionRequest>()
-            val end = EndSession(body.tools, body.model, body.costUsd, body.source, body.exitCode)
+            // S2-48: `costUsd` of the request is never read; the server measures the cost.
+            val end = EndSession(tools = body.tools, model = body.model, source = body.source, exitCode = body.exitCode)
             call.respond(get.view(end(call.actor(actors, SessionScopes.writing), params.parent.id, end)).toResponse())
         }
         post<SessionsApi.Id.Reopen> { params ->

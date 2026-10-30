@@ -46,7 +46,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
     }
 
     override suspend fun get(orgId: Uuid, id: Uuid): Gate? = driver.transaction {
-        Tx(this).run { scoped(orgId); executor.selectGate(orgId, id, lock = false) }
+        Tx(this).run { scope.enter(orgId); executor.selectGate(orgId, id, lock = false) }
     }
 
     override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> = driver.transaction {
@@ -55,7 +55,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> = driver.transaction {
         Tx(this).run {
-            scoped(orgId)
+            scope.enter(orgId)
             // Served by the GIN index on the session ids (migration 2).
             executor.rows(
                 Statement.create(
@@ -69,8 +69,9 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? = driver.transaction {
         Tx(this).run {
+            // The foreign key keeps a request's gate: read as the one gate it must be.
             request(orgId, id)?.let { request ->
-                executor.selectGate(orgId, request.gateId, lock = false)?.let { ApprovalView(request, it) }
+                ApprovalView(request, listOfNotNull(executor.selectGate(orgId, request.gateId, lock = false)).single())
             }
         }
     }
@@ -82,10 +83,11 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         limit: Int,
     ): List<ApprovalView> = driver.transaction {
         Tx(this).run {
-            scoped(orgId)
+            scope.enter(orgId)
             val filters = buildString {
                 append("org_id = :org")
-                if (approverId != null) append(" AND approver_id = :approver")
+                // Identities compare without case everywhere (`SelfApproval.same`), the inbox too.
+                if (approverId != null) append(" AND lower(approver_id) = lower(:approver)")
                 if (status != null) append(" AND status = :status")
             }
             val page = Statement.create(
@@ -112,26 +114,31 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         }
     }
 
-    private class Tx(val executor: QueryExecutor) : GatesTransaction {
+    // The organization the transaction's row-level security is set to, set once per organization.
+    private class OrgScope(private val executor: QueryExecutor) {
         private var org: Uuid? = null
 
-        suspend fun scoped(orgId: Uuid) {
+        suspend fun enter(orgId: Uuid) {
             if (org == orgId) return
             executor.fetchAll(
                 Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgId.toString()),
             ).getOrThrow()
             org = orgId
         }
+    }
+
+    private class Tx(val executor: QueryExecutor) : GatesTransaction {
+        val scope = OrgScope(executor)
 
         override suspend fun lockKey(orgId: Uuid, key: String) {
-            scoped(orgId)
+            scope.enter(orgId)
             executor.fetchAll(
                 Statement.create("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))").bind("key", key),
             ).getOrThrow()
         }
 
         override suspend fun byKey(orgId: Uuid, key: String, limit: Int): List<Gate> {
-            scoped(orgId)
+            scope.enter(orgId)
             return executor.rows(
                 Statement.create(
                     "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND gate_key = :key " +
@@ -141,12 +148,12 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         }
 
         override suspend fun lockGate(orgId: Uuid, id: Uuid): Gate? {
-            scoped(orgId)
+            scope.enter(orgId)
             return executor.selectGate(orgId, id, lock = true)
         }
 
         override suspend fun request(orgId: Uuid, id: Uuid): ApprovalRequest? {
-            scoped(orgId)
+            scope.enter(orgId)
             return executor.rows(
                 Statement.create("SELECT $REQUEST_COLUMNS FROM gates_requests WHERE org_id = :org AND id = :id")
                     .bind("org", orgId).bind("id", id),
@@ -154,7 +161,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         }
 
         override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> {
-            scoped(orgId)
+            scope.enter(orgId)
             return executor.rows(
                 Statement.create(
                     "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE org_id = :org AND gate_id = :gate " +
@@ -164,7 +171,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         }
 
         override suspend fun insertGate(gate: Gate) {
-            scoped(gate.orgId)
+            scope.enter(gate.orgId)
             executor.execute(
                 Statement.create(
                     "INSERT INTO gates_gates ($GATE_COLUMNS) VALUES (:id, :org_id, :gate_key, :subject, :node, " +
@@ -175,8 +182,23 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             ).getOrThrow()
         }
 
+        override suspend fun addAskers(gate: Gate) {
+            scope.enter(gate.orgId)
+            executor.execute(
+                Statement.create(
+                    "UPDATE gates_gates SET asked_by = :asked_by, asked_via = :asked_via, " +
+                        "session_ids = :session_ids, launch_ids = :launch_ids WHERE org_id = :org_id AND id = :id",
+                ).bind("asked_by", json.encodeToString(strings, gate.askedBy))
+                    .bind("asked_via", json.encodeToString(strings, gate.askedVia.map { it.name }.sorted()))
+                    .bind("session_ids", json.encodeToString(strings, gate.sessionIds))
+                    .bind("launch_ids", json.encodeToString(strings, gate.launchIds))
+                    .bind("org_id", gate.orgId)
+                    .bind("id", gate.id),
+            ).getOrThrow()
+        }
+
         override suspend fun updateGate(gate: Gate) {
-            scoped(gate.orgId)
+            scope.enter(gate.orgId)
             executor.execute(
                 Statement.create(
                     "UPDATE gates_gates SET gate_key = :gate_key, subject = :subject, node = :node, label = :label, " +
@@ -192,7 +214,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
         override suspend fun insertRequests(requests: List<ApprovalRequest>) {
             requests.forEachIndexed { position, request ->
-                scoped(request.orgId)
+                scope.enter(request.orgId)
                 executor.execute(
                     Statement.create(
                         "INSERT INTO gates_requests (id, gate_id, org_id, position, approver_id, status, " +
@@ -205,7 +227,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
 
         override suspend fun updateRequests(requests: List<ApprovalRequest>) {
             for (request in requests) {
-                scoped(request.orgId)
+                scope.enter(request.orgId)
                 executor.execute(
                     Statement.create(
                         "UPDATE gates_requests SET status = :status, answered_at = :answered_at, channel = :channel " +

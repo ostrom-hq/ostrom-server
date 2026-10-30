@@ -3,6 +3,7 @@ package dev.ostrom.server.sessions.domain.usecases
 
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.sessions.domain.models.EndSession
+import dev.ostrom.server.sessions.domain.models.Opening
 import dev.ostrom.server.sessions.domain.models.Reopened
 import dev.ostrom.server.sessions.domain.models.SeenItem
 import dev.ostrom.server.sessions.domain.models.Session
@@ -42,7 +43,7 @@ class StartSessionUseCaseImpl(
         val bounded = SessionSegments.bounded(start.copy(launchId = actor.launchId ?: start.launchId))
         return repository.transaction(actor.orgId) {
             lockRoot(bounded.id)
-            segments.open(this, actor.orgId, SessionAccess.person(actor), bounded, null)
+            segments.open(this, actor.orgId, SessionAccess.person(actor), bounded, Opening.of(actor, null))
         }
     }
 }
@@ -148,7 +149,10 @@ class ReopenSessionUseCaseImpl(
             // The same launch (or, outside the launcher, no launch on either side): the segment already reopened.
             last.endedAt == null && last.launchId == closed.launchId -> Reopened(last, reopened = false)
             last.endedAt == null -> throw SessionResumedElsewhereException(closed.rootId, last.id)
-            else -> Reopened(segments.open(tx, actor.orgId, closed.dev, nextOf(closed), reasonAfter(last)), true)
+            else -> {
+                val opening = Opening.of(actor, reasonAfter(last))
+                Reopened(segments.open(tx, actor.orgId, closed.dev, nextOf(closed), opening), true)
+            }
         }
     }
 
