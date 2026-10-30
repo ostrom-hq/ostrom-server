@@ -382,19 +382,26 @@ class SharedAccountPoolTest {
     }
 
     @Test
-    fun expiredSessionsAreForgottenOnceTooManyAreRemembered() = runTest {
-        account("a")
+    fun theSessionUsedLongestAgoIsForgottenOnceTooManyAreRemembered() = runTest {
+        account("a", priority = 1)
+        account("b")
         val pool = pool()
-        repeat(SharedAccountPool.MAX_AFFINITY) {
-            assertIs<LeaseResult.Leased>(
-                pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "s$it"),
-            ).lease.release()
-        }
-        clock.advance(2.hours)
-        val last = assertIs<LeaseResult.Leased>(
-            pool.lease(Sharing.orgA, Sharing.memberA.memberId, AccountProvider.CLAUDE, "last"),
-        ).lease
-        assertEquals("a", last.account.label)
+        suspend fun lease(session: String, member: Uuid = Sharing.memberA.memberId) =
+            assertIs<LeaseResult.Leased>(pool.lease(Sharing.orgA, member, AccountProvider.CLAUDE, session)).lease
+        lease("kept").release()
+        lease("oldest").release()
+        // Raise b: a session still remembered keeps a, a forgotten one moves to b.
+        val b = repository.accounts.indexOfFirst { it.label == "b" }
+        repository.accounts[b] = repository.accounts[b].copy(priority = 5)
+        lease("kept").release()
+        repeat(SharedAccountPool.MAX_AFFINITY - 1) { lease("s$it").release() }
+        assertEquals("a", lease("kept").account.label, "Used recently: remembered")
+        assertEquals("b", lease("oldest").account.label, "Used longest ago: forgotten")
+        assertEquals(
+            "b",
+            lease("kept", Sharing.otherA.memberId).account.label,
+            "Another member's same id is another session",
+        )
     }
 
     @Test
