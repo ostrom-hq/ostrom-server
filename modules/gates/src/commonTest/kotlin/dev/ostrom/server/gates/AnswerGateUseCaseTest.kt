@@ -220,8 +220,8 @@ class AnswerGateUseCaseTest {
         bench.notifier.failure = CancellationException("caller gone")
         assertFailsWith<CancellationException> { bench.answer(view, "rev-b") }
 
-        val other = bench.open(bench.pushRequest(sha = dev.ostrom.server.gates.fakes.SHA_B))
         bench.notifier.failure = null
+        val other = bench.open(bench.pushRequest(sha = dev.ostrom.server.gates.fakes.SHA_B))
         bench.signer.failure = CancellationException("caller gone")
         assertFailsWith<CancellationException> { bench.answer(other, "rev-b") }
     }

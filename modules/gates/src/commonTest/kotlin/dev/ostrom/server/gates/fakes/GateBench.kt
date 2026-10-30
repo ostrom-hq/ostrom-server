@@ -19,7 +19,6 @@ import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.OpenGate
 import dev.ostrom.server.gates.domain.usecases.OpenGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
-import kotlin.uuid.Uuid
 
 /** Every gate use case wired on the fakes, with helpers that build the requests of the prototype's tests. */
 class GateBench {

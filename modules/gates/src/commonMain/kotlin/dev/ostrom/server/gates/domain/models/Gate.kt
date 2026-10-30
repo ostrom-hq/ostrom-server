@@ -21,7 +21,7 @@ import kotlin.uuid.Uuid
  * @property askedBy Who asked for the action (the developer of each session, the author of the pull request). None
  * of them may say yes while another approver exists.
  * @property askedVia The paths that asked (hook, GitHub check, MCP).
- * @property sessionIds The agent sessions that asked or joined; only they may reserve and consume the yes.
+ * @property sessionIds The agent sessions that asked or joined (the session receipts list the gate).
  * @property shownDigest The digest of what the approvers are shown ([evidence] and [subject]); a yes names it.
  * @property evidence What the approvers are shown, computed by the server.
  * @property decidedBy The approver who answered, or null while pending.
