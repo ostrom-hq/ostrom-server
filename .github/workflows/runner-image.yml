@@ -1,0 +1,74 @@
+name: Runner image
+
+# Builds the cloud session image (runner/Dockerfile) on every pull request that touches the runner, and pushes it to
+# GHCR (private package) from main.
+on:
+  pull_request:
+    paths: ["runner/**", ".github/workflows/runner-image.yml"]
+  push:
+    branches: [main]
+    paths: ["runner/**", ".github/workflows/runner-image.yml"]
+
+concurrency:
+  group: runner-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache Kotlin/Native toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: konan-${{ runner.os }}-
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Runner binary (linuxX64)
+        run: ./gradlew :runner:linkReleaseExecutableLinuxX64
+
+      - name: Build context
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p image/bin
+          cp runner/build/bin/linuxX64/releaseExecutable/ostrom-runner.kexe image/bin/ostrom-runner
+          cp runner/Dockerfile image/Dockerfile
+          # The ostrom CLI, from its latest release when there is one (the image works without it).
+          gh release download -R ostrom-hq/ostrom-cli --pattern 'ostrom-linux-x64*' -D cli 2>/dev/null \
+            && find cli -type f -name 'ostrom-linux-x64*' ! -name '*.sha256' -exec cp {} image/bin/ostrom \; || echo "no ostrom CLI release yet"
+          ls -l image/bin
+
+      - name: Image
+        run: docker build -t ostrom-runner:ci image
+
+      - name: Smoke test (the runner refuses a missing configuration, the agents are installed)
+        run: |
+          set +e
+          docker run --rm ostrom-runner:ci; code=$?
+          set -e
+          test "$code" = 2
+          docker run --rm --entrypoint sh ostrom-runner:ci -c 'claude --version && codex --version && git --version && id -u | grep -x 1000'
+
+      - name: Push to GHCR
+        if: github.event_name == 'push'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag ostrom-runner:ci ghcr.io/ostrom-hq/ostrom-runner:${{ github.sha }}
+          docker tag ostrom-runner:ci ghcr.io/ostrom-hq/ostrom-runner:latest
+          docker push ghcr.io/ostrom-hq/ostrom-runner:${{ github.sha }}
+          docker push ghcr.io/ostrom-hq/ostrom-runner:latest
