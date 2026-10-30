@@ -3,7 +3,6 @@ package dev.ostrom.server.app
 
 import dev.ostrom.core.telemetry.Telemetry
 import dev.ostrom.core.telemetry.otlp.Resource
-import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.config.ServerConfig
 import dev.ostrom.server.kernel.database.MigrationRunner
@@ -53,7 +52,7 @@ fun main() {
             serviceName = config.telemetry.serviceName,
             serviceVersion = SERVER_VERSION,
             environment = config.telemetry.environment,
-            instanceId = EnvironmentConfigSource()["OSTROM_POD_NAME"] ?: Uuid.random().toString(),
+            instanceId = source["OSTROM_POD_NAME"] ?: Uuid.random().toString(),
         ),
         scope = exporters,
         httpClient = { HttpClient() },

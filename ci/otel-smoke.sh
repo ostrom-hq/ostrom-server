@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # Proves the server's telemetry reaches a real OpenTelemetry collector (BRIEF, rule TESTS: integration with a collector
 # in CI): one traced request, then its span, the request metrics and a log line are read back from the collector's
 # files. Needs the image ostrom-server:ci and the CI job's PostgreSQL service (ostrom/ostrom on localhost:5432).
