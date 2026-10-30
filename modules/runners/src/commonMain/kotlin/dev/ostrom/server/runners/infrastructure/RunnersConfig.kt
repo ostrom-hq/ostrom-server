@@ -2,6 +2,8 @@ package dev.ostrom.server.runners.infrastructure
 
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
+import dev.ostrom.server.runners.domain.AllowedOrgs
+import kotlin.uuid.Uuid
 
 /**
  * The runners module's configuration (keys `OSTROM_RUNNERS_…`, docs/MODULES.md). It chooses infrastructure (which
@@ -12,6 +14,8 @@ import dev.ostrom.server.kernel.config.InvalidConfigException
  * @property runnerImage The image of the session pod: the runner, the agents and the `ostrom` CLI.
  * @property kubernetes The Kubernetes runtime's settings, when [driver] is `kubernetes`.
  * @property docker The Docker runtime's settings, when [driver] is `docker`.
+ * @property allowedOrgs The organizations cloud sessions are open to (`OSTROM_RUNNERS_ALLOWED_ORGS`: `*`, or ids
+ *   separated by commas; none when unset, audit S2-10).
  */
 data class RunnersConfig(
     val driver: DriverKind,
@@ -19,6 +23,7 @@ data class RunnersConfig(
     val runnerImage: String,
     val kubernetes: KubernetesSettings,
     val docker: DockerSettings,
+    val allowedOrgs: AllowedOrgs = AllowedOrgs.NONE,
 ) {
     /** The runtimes. */
     enum class DriverKind { NONE, KUBERNETES, DOCKER }
@@ -69,7 +74,19 @@ data class RunnersConfig(
                     apiUrl = source["OSTROM_RUNNERS_DOCKER_API_URL"] ?: "http://127.0.0.1:2375",
                     network = source["OSTROM_RUNNERS_DOCKER_NETWORK"]?.takeIf { it.isNotBlank() },
                 ),
+                allowedOrgs = allowedOrgs(source["OSTROM_RUNNERS_ALLOWED_ORGS"].orEmpty()),
             )
+        }
+
+        private fun allowedOrgs(raw: String): AllowedOrgs {
+            val entries = raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            if (entries == listOf("*")) return AllowedOrgs(all = true, orgs = emptySet())
+            val orgs = entries.map {
+                Uuid.parseOrNull(it) ?: throw InvalidConfigException(
+                    "OSTROM_RUNNERS_ALLOWED_ORGS must be * or organization ids separated by commas.",
+                )
+            }
+            return AllowedOrgs(all = false, orgs = orgs.toSet())
         }
     }
 }

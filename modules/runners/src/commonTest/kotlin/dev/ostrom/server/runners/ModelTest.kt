@@ -1,5 +1,7 @@
 package dev.ostrom.server.runners
 
+import dev.ostrom.server.runners.domain.AllowlistedCloudPlanProvider
+import dev.ostrom.server.runners.domain.AllowedOrgs
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -17,6 +19,7 @@ import dev.ostrom.server.runners.domain.RuntimeNames
 import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.domain.SessionStateMachine
 import dev.ostrom.server.runners.fakes.ORG_A
+import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.infrastructure.DisabledRuntimeDriver
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
@@ -65,7 +68,7 @@ class ModelTest {
 
     @Test
     fun theFreePlanIsTheDecidedOne() = runTest {
-        assertEquals(CloudPlan(5, 300, 30, 240, true), FreeCloudPlanProvider().planFor(ORG_A))
+        assertEquals(CloudPlan(5, 300, 30, 240, true, true), FreeCloudPlanProvider().planFor(ORG_A))
     }
 
     @Test
@@ -192,5 +195,21 @@ class ModelTest {
         assertFailsWith<InvalidConfigException> {
             RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_DRIVER" to "docker", "OSTROM_RUNNERS_SERVER_URL" to "ftp://x")))
         }
+    }
+
+    @Test
+    fun cloudSessionsAreOpenOnlyToTheAllowedOrganizations() = runTest {
+        assertEquals(AllowedOrgs.NONE, RunnersConfig.from(MapConfigSource(emptyMap())).allowedOrgs)
+        val everyone = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to " * "))).allowedOrgs
+        assertTrue(ORG_B in everyone)
+        val listed = RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to "$ORG_A, ,"))).allowedOrgs
+        assertTrue(ORG_A in listed)
+        assertFalse(ORG_B in listed)
+        assertFailsWith<InvalidConfigException> {
+            RunnersConfig.from(MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to "acme")))
+        }
+        val plans = AllowlistedCloudPlanProvider(listed, FreeCloudPlanProvider())
+        assertTrue(plans.planFor(ORG_A).available)
+        assertFalse(plans.planFor(ORG_B).available)
     }
 }

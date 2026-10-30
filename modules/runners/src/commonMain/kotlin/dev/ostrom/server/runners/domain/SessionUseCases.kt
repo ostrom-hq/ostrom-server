@@ -119,6 +119,7 @@ class CreateCloudSessionUseCaseImpl(
 /**
  * Refuses when the organization used the hours of its plan this month.
  *
+ * @throws CloudSessionsClosedException When cloud sessions are closed to the organization.
  * @throws CloudHoursExhaustedException When no hour is left.
  */
 internal suspend fun requireHoursLeft(
@@ -127,6 +128,7 @@ internal suspend fun requireHoursLeft(
     orgId: Uuid,
     now: kotlin.time.Instant,
 ) {
+    if (!plan.available) throw CloudSessionsClosedException()
     val hours = plan.monthlyHours ?: return
     if (repository.usageSeconds(orgId, monthOf(now)) >= hours * SECONDS_PER_HOUR) {
         throw CloudHoursExhaustedException(hours)
