@@ -73,7 +73,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
                 .bind("created_at", wait.createdAt)
                 .bind("key", wait.idempotencyKey),
         ).getOrThrow()
-        if (inserted.isEmpty()) CreateOutcome.DUPLICATE else CreateOutcome.CREATED
+        if (inserted.none()) CreateOutcome.DUPLICATE else CreateOutcome.CREATED
     }
 
     override suspend fun findByIdempotencyKey(orgId: Uuid, createdBy: String, key: String): Wait? = driver.fetchInOrg(

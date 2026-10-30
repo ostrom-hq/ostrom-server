@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
  * @property before The cursor of the previous page.
  * @property limit The page size, 1 to 100.
  */
+@Suppress("LongParameterList") // One property per query parameter of the contract.
 @Serializable
 @Resource("/api/v1/waits")
 class WaitsApi(

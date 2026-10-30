@@ -9,6 +9,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 
 /** The checks of a wait's question and of its answer (TeamCode's `waits.md`, ported). */
+@Suppress("TooManyFunctions") // One small check per field of the question and per kind of answer.
 internal object WaitRules {
     const val MAX_TITLE = 200
     const val MAX_BODY = 32_000
