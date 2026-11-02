@@ -55,6 +55,13 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         ).bind("org_id", orgId).bind("account_id", accountId).bind("since", since),
     ).getOrThrow().first().get("spent").asLong()
 
+    override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? =
+        driver.fetchInOrg(
+            orgId,
+            Statement.create(UsageQueries.LAUNCH_SPENT)
+                .bind("org_id", orgId).bind("launch_id", launchId).bind("from", from).bind("to", to),
+        ).getOrThrow().first().get("spent").asStringOrNull()?.toLong()
+
     override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> {
         val sql = UsageQueries.summary(groupBy, until = window.until != null, member = window.memberId != null)
         val statement = Statement.create(

@@ -25,6 +25,14 @@ internal object UsageQueries {
         "SELECT CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS spent FROM usage_events " +
             "WHERE org_id = :org_id AND account_id = :account_id AND at >= :since"
 
+    /**
+     * What a launch spent in a window, NULL for nothing: `:org_id`, `:launch_id`, `:from`, `:to`. The window bounds the
+     * read to the org's index on `at`, a session's hours.
+     */
+    const val LAUNCH_SPENT: String =
+        "SELECT CAST(SUM(cost_micros) AS BIGINT) AS spent FROM usage_events " +
+            "WHERE org_id = :org_id AND at >= :from AND at <= :to AND launch_id = :launch_id"
+
     /** One batch of the retention purge: `:before`, `:limit`. */
     const val PURGE: String =
         "DELETE FROM usage_events WHERE id IN (SELECT id FROM usage_events WHERE at < :before LIMIT :limit)"
