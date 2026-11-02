@@ -231,9 +231,8 @@ class EndDeletedOrgSubscriptionUseCaseImpl(
     private val settings: BillingSettings,
 ) : EndDeletedOrgSubscriptionUseCase {
     override suspend fun invoke(orgId: Uuid) {
-        val billing = repository.get(orgId)?.takeUnless { it.ended() }
-        val subscriptionId = billing?.stripeSubscriptionId
-        if (!settings.stripeEnabled || subscriptionId == null) return
+        if (!settings.stripeEnabled) return
+        val (billing, subscriptionId) = notEnded(orgId) ?: return
         // Read first: a retry after a cancellation whose sync failed must not cancel twice.
         val current = sync(billing, subscriptionId)
         if (!current.ended()) {
@@ -242,9 +241,14 @@ class EndDeletedOrgSubscriptionUseCaseImpl(
         }
     }
 
+    // The billing row and its subscription, unless there is none or it ended.
+    private suspend fun notEnded(orgId: Uuid): Pair<OrgBilling, String>? {
+        val billing = repository.get(orgId)?.takeUnless { it.ended() } ?: return null
+        return billing.stripeSubscriptionId?.let { billing to it }
+    }
+
     private fun OrgBilling.ended(): Boolean =
         status == SubscriptionStatus.CANCELED || status == SubscriptionStatus.INCOMPLETE_EXPIRED
-    }
 }
 
 /** Lists an organization's invoices and receipts. */

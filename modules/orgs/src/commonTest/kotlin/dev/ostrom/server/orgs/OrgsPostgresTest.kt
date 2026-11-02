@@ -89,6 +89,7 @@ class OrgsPostgresTest {
         )
 
     @Test
+    @Suppress("LongMethod") // One organization's life through the repositories, read top to bottom.
     fun organizationsAreCreatedReadRenamedAndDeleted() =
         serverTest(modules) { server ->
             val orgs = server.koin.get<OrgsRepository>()
