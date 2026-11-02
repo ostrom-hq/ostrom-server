@@ -182,8 +182,6 @@ class SchemaTenancyPostgresTest {
         // The known exceptions, each a finding of the RLS audit (docs/tenancy.md, "Known exceptions"): remove a line
         // with the fix that closes it.
         val UNCONFINED_TABLES = setOf(
-            "billing_customers: row level security disabled",
-            "billing_outbox: row level security disabled",
             "orgs_organizations: row level security not forced",
             "orgs_members: row level security not forced",
             "orgs_invitations: row level security not forced",
