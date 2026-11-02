@@ -19,6 +19,58 @@ class GateCatalogApi(val repo: String? = null) {
     class Signed(val parent: GateCatalogApi = GateCatalogApi())
 }
 
+/**
+ * Who approves what in a repository, from the gates catalogue (not yet in the contract: additive).
+ *
+ * @property repo The repository, or null for the organization.
+ */
+@Serializable
+@Resource("/api/v1/gates/approvers")
+class ApproversApi(val repo: String? = null)
+
+/**
+ * Who approves what: every approver with their gates, the gates nobody answers, the actions no gate covers.
+ *
+ * @property approvers The approvers, by name.
+ * @property unanswered The gates that name no approver: their actions can never run.
+ * @property ungated The action classes no gate covers.
+ */
+@Serializable
+data class ApproversGraphResponse(
+    val approvers: List<ApproverDto>,
+    val unanswered: List<ApproverGateDto>,
+    val ungated: List<String>,
+)
+
+/**
+ * One approver and the gates they answer.
+ *
+ * @property approver The approver, as the workflow names them.
+ * @property gates Their gates.
+ */
+@Serializable
+data class ApproverDto(val approver: String, val gates: List<ApproverGateDto>)
+
+/**
+ * A gate and the actions it covers.
+ *
+ * @property workflowId The workflow.
+ * @property workflowName Its name.
+ * @property nodeId The gate node.
+ * @property label The gate's label.
+ * @property enforce False while the workflow is only proposed.
+ * @property actions The action classes it covers.
+ */
+@Serializable
+data class ApproverGateDto(
+    val workflowId: String,
+    val workflowName: String,
+    val nodeId: String,
+    val label: String,
+    val enforce: Boolean,
+    val actions: List<String>,
+)
+
 /** The packages (contract `getCurrentPackage`, `listPackages`, `previewPackage`, `getPackage`…). */
 @Serializable
 @Resource("/api/v1/packages")
