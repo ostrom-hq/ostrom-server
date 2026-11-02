@@ -15,9 +15,12 @@ import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
+import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.AgentPolicyResponse
 import dev.ostrom.server.launches.presentation.LaunchResponse
+import dev.ostrom.server.orgs.domain.Invitation
+import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -45,9 +48,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -58,6 +58,9 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 /**
  * `ostrom claude` up to its first session, on the real identity, orgs, gates and sessions modules and PostgreSQL: the
@@ -89,6 +92,25 @@ class LaunchesPostgresTest {
         return Person(user, org, member.id, secret)
     }
 
+    /** A person who joins [org] with [role] by an invitation, and a CLI token of theirs bound to it. */
+    private suspend fun TestServer.joins(login: String, org: Org, role: OrgRole, invitedBy: Uuid): Person {
+        val user = koin.get<ResolveUserUseCase>()(
+            VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
+        )
+        val invitation = Invitation(Uuid.random(), org.id, null, role, invitedBy, now, now + 1.hours, null, 0, null)
+        val invitations = koin.get<InvitationsRepository>()
+        invitations.create(invitation, "hash-" + Uuid.random().toHexString())
+        val member = Member(Uuid.random(), org.id, user.id, role, now)
+        assertTrue(invitations.accept(invitation, member, now))
+        val secret = "osc_" + Uuid.random().toHexString()
+        val token = ApiToken(
+            Uuid.random(), user.id, org.id, "cli", TokenKind.CLI, CLI_SCOPES, "hint", null, now, now + 1.hours, null,
+            null,
+        )
+        koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
+        return Person(user, org, member.id, secret)
+    }
+
     private suspend fun TestServer.call(token: String?, path: String, body: String? = null): HttpResponse =
         if (body == null) {
             client.get(path) { token?.let { header(HttpHeaders.Authorization, "Bearer $it") } }
@@ -110,7 +132,7 @@ class LaunchesPostgresTest {
     fun theCliReadsThePolicyLaunchesAndItsAgentTokenRunsTheLaunchsSession() =
         serverTest(modules) { server ->
             val ada = server.person("ada")
-            val policy = server.call(ada.cliToken, "/api/v1/policy/agents?agent=claude-code&dev=mallory&model=opus")
+            val policy = server.call(ada.cliToken, "/api/v1/policy/agents?agent=claude-code&dev=ada&model=opus")
             assertEquals(AgentPolicyResponse(allowed = true), policy.body<AgentPolicyResponse>())
 
             val launch = server.launch(ada)
@@ -135,6 +157,36 @@ class LaunchesPostgresTest {
             assertEquals(false, alive.body<SessionDto>().ended)
             val read = server.call(ada.cliToken, "/api/v1/sessions/s-1")
             assertEquals(HttpStatusCode.OK, read.status, "The person reads the session of their launch")
+        }
+
+    @Test
+    fun anAdminReadsAMembersVerdictAndAMemberOnlyTheirOwn() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val bob = server.joins("bob", ada.org, OrgRole.BILLING, ada.memberId)
+            val cy = server.joins("cy", ada.org, OrgRole.ADMIN, ada.memberId)
+            val billing = AgentPolicyResponse(false, LaunchPolicy.BILLING_ONLY)
+            for (admin in listOf(ada, cy)) {
+                val verdict = server.call(admin.cliToken, "/api/v1/policy/agents?agent=codex&dev=bob")
+                assertEquals(billing, verdict.body<AgentPolicyResponse>(), admin.user.login)
+            }
+            assertEquals(billing, server.call(bob.cliToken, "/api/v1/policy/agents?agent=codex&dev=bob").body())
+            // A member who is not an admin: refused before any lookup, a login of the organization or not.
+            for (dev in listOf("ada", "cy", "nobody")) {
+                val refused = server.call(bob.cliToken, "/api/v1/policy/agents?agent=codex&dev=$dev")
+                assertEquals(HttpStatusCode.Forbidden, refused.status, dev)
+            }
+        }
+
+    @Test
+    fun anAdminLearnsNothingOfAnotherOrganizationsDevelopers() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            server.person("mallory")
+            val elsewhere = server.call(ada.cliToken, "/api/v1/policy/agents?agent=codex&dev=mallory")
+            val nobody = server.call(ada.cliToken, "/api/v1/policy/agents?agent=codex&dev=nobody")
+            assertEquals(HttpStatusCode.NotFound, elsewhere.status, elsewhere.bodyAsText())
+            assertEquals(nobody.status to nobody.bodyAsText(), elsewhere.status to elsewhere.bodyAsText())
         }
 
     @Test

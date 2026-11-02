@@ -69,8 +69,10 @@ data class CreatedLaunch(val launch: Launch, val agentToken: String)
  *
  * @property allowed Whether the agent may start.
  * @property reason Why not, when it may not.
+ * @property note What a rule of the policy tells the developer, when it has something to say. No rule of the model
+ * policy holds a note today: it is absent until one does.
  */
-data class AgentVerdict(val allowed: Boolean, val reason: String? = null)
+data class AgentVerdict(val allowed: Boolean, val reason: String? = null, val note: String? = null)
 
 /**
  * How many launches a window takes: per person in an organization, and per organization (AUDIT-SECU-2 B9). A launch

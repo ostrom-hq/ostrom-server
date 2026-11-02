@@ -4,6 +4,7 @@ package dev.ostrom.server.identity.presentation
 import dev.ostrom.server.identity.domain.CreateSignInLinkUseCase
 import dev.ostrom.server.identity.domain.ExchangeSignInLinkUseCase
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.HttpHeaders
@@ -103,6 +104,9 @@ fun Route.sessionRoutes(dependencies: SessionRoutesDependencies) = with(dependen
     authenticated {
         post<SessionLinkApi.Create> {
             val principal = call.requireBrowserSession()
+            // The link starts a new session, signed in now: made from an old session, it would turn it into a fresh
+            // sign-in and pass every step-up. It takes the same fresh sign-in as the writes it would unlock.
+            call.requireRecentSignIn("make a sign-in link")
             val created = createSignInLink(principal.userId())
             val url = config.consoleUrl + SIGN_IN_LINK_LANDING + "#signin=" + created.token
             val expiresAt = created.link.expiresAt.toString()

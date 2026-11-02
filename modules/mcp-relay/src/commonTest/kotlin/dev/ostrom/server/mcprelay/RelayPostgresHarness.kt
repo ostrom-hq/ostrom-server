@@ -38,6 +38,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.assertEquals
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
 /**
@@ -54,6 +57,8 @@ abstract class RelayPostgresHarness {
         "device-a" to Relay.memberA,
         "cli-a" to Relay.adminA,
         "admin-agent-a" to Relay.adminA,
+        // A browser session of the admin signed in more than five minutes ago (web audit n°2 M3).
+        "stale-admin-a" to Relay.adminA,
     )
 
     /** Browser sessions by default; agents (one an admin's), a device, and a console token that may only read. */
@@ -106,7 +111,11 @@ abstract class RelayPostgresHarness {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: byToken[token]?.let {
                         val scopes = setOf(RelayScopes.ALL_USER)
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER)
+                        val signedIn = Clock.System.now() - if (token.startsWith("stale-")) 10.minutes else ZERO
+                        AuthenticatedPrincipal(
+                            token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER,
+                            authenticatedAt = signedIn,
+                        )
                     }
             }
         }

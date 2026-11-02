@@ -19,7 +19,7 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [RegisteredRunnersRepository] on PostgreSQL (`runners_registered`, migrations 2 and 3 of [RunnersMigrations]):
+ * [RegisteredRunnersRepository] on PostgreSQL (`runners_registered`, migrations 2 and 4 of [RunnersMigrations]):
  * every read and write runs confined to the runner's organization ([inTenant], S2-01), except [keyOf]. The
  * labels are a JSON array of strings.
  *
@@ -63,7 +63,7 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
         ).getOrThrow() > 0
     }
 
-    // The one read across organizations, through `runners_registered_key` (owned by `ostrom_router`, migration 3): the
+    // The one read across organizations, through `runners_registered_key` (owned by `ostrom_router`, migration 4): the
     // serving role itself, never inside an organization's transaction.
     override suspend fun keyOf(id: Uuid): RegisteredRunnerKey? = driver.fetchAll(
         Statement.create(KEY_SQL).bind("id", id),

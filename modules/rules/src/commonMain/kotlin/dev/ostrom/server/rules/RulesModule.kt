@@ -6,7 +6,9 @@ import dev.ostrom.server.compiler.infrastructure.DefaultCompilerSources
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
+import dev.ostrom.server.rules.domain.services.AnalysisEngine
 import dev.ostrom.server.rules.domain.services.DecisionSigner
 import dev.ostrom.server.rules.domain.usecases.BulkUpdateRulesUseCase
 import dev.ostrom.server.rules.domain.usecases.BulkUpdateRulesUseCaseImpl
@@ -14,8 +16,12 @@ import dev.ostrom.server.rules.domain.usecases.CreateRuleUseCase
 import dev.ostrom.server.rules.domain.usecases.CreateRuleUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.DeleteRuleUseCase
 import dev.ostrom.server.rules.domain.usecases.DeleteRuleUseCaseImpl
+import dev.ostrom.server.rules.domain.usecases.GetAnalysisStateUseCase
+import dev.ostrom.server.rules.domain.usecases.GetAnalysisStateUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.GetGatePolicyUseCase
 import dev.ostrom.server.rules.domain.usecases.GetGatePolicyUseCaseImpl
+import dev.ostrom.server.rules.domain.usecases.GetReplayUseCase
+import dev.ostrom.server.rules.domain.usecases.GetReplayUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.GetRuleUseCase
 import dev.ostrom.server.rules.domain.usecases.GetRuleUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.ListDecisionsUseCase
@@ -26,14 +32,20 @@ import dev.ostrom.server.rules.domain.usecases.SetGatePolicyUseCase
 import dev.ostrom.server.rules.domain.usecases.SetGatePolicyUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.SignDecisionsUseCase
 import dev.ostrom.server.rules.domain.usecases.SignDecisionsUseCaseImpl
+import dev.ostrom.server.rules.domain.usecases.StartAnalysisUseCase
+import dev.ostrom.server.rules.domain.usecases.StartAnalysisUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.UpdateRuleUseCase
 import dev.ostrom.server.rules.domain.usecases.UpdateRuleUseCaseImpl
+import dev.ostrom.server.rules.infrastructure.NoAnalysisEngine
+import dev.ostrom.server.rules.infrastructure.PostgresAnalysisRepository
 import dev.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import dev.ostrom.server.rules.infrastructure.ReceiptsDecisionSigner
 import dev.ostrom.server.rules.infrastructure.RulesCompilerSources
 import dev.ostrom.server.rules.infrastructure.RulesGatePolicies
 import dev.ostrom.server.rules.infrastructure.RulesMigrations
+import dev.ostrom.server.rules.presentation.AnalysisRoutesDependencies
 import dev.ostrom.server.rules.presentation.RulesRoutesDependencies
+import dev.ostrom.server.rules.presentation.analysisRoutes
 import dev.ostrom.server.rules.presentation.rulesRoutes
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
@@ -47,7 +59,8 @@ import org.koin.dsl.module
  * The rules module: the team's rules and their signed decisions, the decisions log, and the self-approval policy. It
  * owns the gates module's [GatePolicies] port: what the console sets on `/api/v1/gates/policy` is what every gate of
  * the organization applies. It also binds the compiler's [CompilerSources]: the rules harness carries the rules, and
- * a rule's gate enters the gates catalogue that the hooks and the gates module both read.
+ * a rule's gate enters the gates catalogue that the hooks and the gates module both read. The analysis of the
+ * organization and the replay of its pull requests run on an [AnalysisEngine]; without one, each run fails visibly.
  */
 object RulesModule : ServerModule {
     override val name: String = "rules"
@@ -69,6 +82,11 @@ object RulesModule : ServerModule {
         // The compiler binds its default sources only when none is bound: these replace them, repositories and
         // settings still read from the compiler's configuration.
         single<CompilerSources> { RulesCompilerSources(get(), DefaultCompilerSources(get())) }
+        single<AnalysisRepository> { PostgresAnalysisRepository(get()) }
+        single<StartAnalysisUseCase> { StartAnalysisUseCaseImpl(get(), get(), get(), get()) }
+        single<GetAnalysisStateUseCase> { GetAnalysisStateUseCaseImpl(get(), get(), get()) }
+        single<GetReplayUseCase> { GetReplayUseCaseImpl(get()) }
+        single { AnalysisRoutesDependencies(callerResolver(), get(), get(), get(), get()) }
         single {
             RulesRoutesDependencies(
                 callerResolver(),
@@ -88,8 +106,18 @@ object RulesModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = RulesMigrations
 
+    /** Binds the engine that refuses every run when no module bound a real one (Koin refuses two bindings). */
+    override suspend fun initialize(koin: Koin) {
+        koin.loadModules(listOf(defaultPorts(koin)))
+    }
+
+    internal fun defaultPorts(koin: Koin): Module = module {
+        if (koin.getOrNull<AnalysisEngine>() == null) single<AnalysisEngine> { NoAnalysisEngine() }
+    }
+
     override fun routes(route: Route, koin: Koin) {
         route.rulesRoutes(koin.get())
+        route.analysisRoutes(koin.get())
     }
 }
 

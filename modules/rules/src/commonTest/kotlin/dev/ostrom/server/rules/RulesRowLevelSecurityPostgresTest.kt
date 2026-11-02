@@ -4,6 +4,9 @@ package dev.ostrom.server.rules
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.database.withOrganization
+import dev.ostrom.server.rules.domain.models.AnalysisFailure
+import dev.ostrom.server.rules.domain.models.AnalysisKind
+import dev.ostrom.server.rules.domain.models.AnalysisRun
 import dev.ostrom.server.rules.domain.models.Decision
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.DecisionSubject
@@ -16,6 +19,7 @@ import dev.ostrom.server.rules.fakes.RecordingLogger
 import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.fakes.RulesFixtures.orgA
 import dev.ostrom.server.rules.fakes.RulesFixtures.orgB
+import dev.ostrom.server.rules.infrastructure.PostgresAnalysisRepository
 import dev.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import dev.ostrom.server.rules.infrastructure.RulesMigrations
 import dev.ostrom.server.testing.TestDatabase
@@ -24,6 +28,8 @@ import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -36,7 +42,7 @@ import kotlin.time.Duration.Companion.minutes
  * nothing): each organization reads and writes only its own rows, and without an organization no row at all.
  */
 class RulesRowLevelSecurityPostgresTest {
-    private val tables = listOf("rules_rules", "rules_decisions", "rules_gate_policy")
+    private val tables = listOf("rules_rules", "rules_decisions", "rules_gate_policy", "rules_analyses")
 
     private fun asServingRole(
         block: suspend (superuser: Driver, serving: PostgresRulesRepository, raw: Driver) -> Unit,
@@ -152,6 +158,37 @@ class RulesRowLevelSecurityPostgresTest {
         assertEquals(listOf("rule_c"), rules.gatedRules(orgB).map { it.id })
         assertEquals(listOf("dec_2", "dec_3"), rules.lastRuleDecisions(orgA).map { it.id }, "The last one per rule")
         assertEquals(listOf("dec_b"), rules.lastRuleDecisions(orgB).map { it.id })
+    }
+
+    @Test
+    fun eachOrganizationReadsAndLocksOnlyItsOwnRuns() = asServingRole { _, _, raw ->
+        val runs = PostgresAnalysisRepository(raw)
+        val failed = AnalysisRun(
+            orgId = orgA,
+            kind = AnalysisKind.ANALYSIS,
+            id = "run_a",
+            phase = AnalysisRun.FAILED,
+            progress = 0.5,
+            failure = AnalysisFailure("engine", "No engine.", RulesFixtures.epoch, "/api/v1/analysis/restart"),
+            startedBy = "lyes",
+            startedAt = RulesFixtures.epoch,
+            updatedAt = RulesFixtures.epoch,
+            items = listOf(JsonObject(mapOf("judged" to JsonPrimitive(true)))),
+        )
+        assertNull(runs.transaction(orgA) { lock(AnalysisKind.ANALYSIS) }, "Never started: an empty row")
+        runs.transaction(orgA) { put(failed) }
+        assertEquals(failed, runs.run(orgA, AnalysisKind.ANALYSIS), "Read back as written")
+        val running = failed.copy(id = "run_b", phase = AnalysisRun.CONNECT, failure = null, items = listOf())
+        runs.transaction(orgA) {
+            assertEquals(failed, lock(AnalysisKind.ANALYSIS))
+            put(running)
+        }
+        assertEquals(running, runs.run(orgA, AnalysisKind.ANALYSIS))
+        assertNull(runs.run(orgA, AnalysisKind.REPLAY))
+        assertNull(runs.run(orgB, AnalysisKind.ANALYSIS), "Org B sees none of A's runs")
+        runs.transaction(orgB) { put(running.copy(orgId = orgB, id = "run_c")) }
+        assertEquals(running, runs.run(orgA, AnalysisKind.ANALYSIS), "B's write never reaches A's row")
+        assertNull(runs.run(orgB, AnalysisKind.ANALYSIS), "Without its row, B's update changes nothing")
     }
 
     @Test

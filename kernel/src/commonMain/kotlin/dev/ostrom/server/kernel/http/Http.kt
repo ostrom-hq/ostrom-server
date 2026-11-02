@@ -2,6 +2,7 @@
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.core.telemetry.Telemetry
+import dev.ostrom.server.kernel.auth.stepUpClockKey
 import dev.ostrom.server.kernel.auth.token
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
@@ -20,6 +21,7 @@ import io.ktor.server.resources.Resources
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
 import org.koin.core.Koin
+import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
 /** The JSON settings of every request and answer. */
@@ -57,6 +59,7 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     install(RequestLogging) { this.logger = logger }
     configureErrors(logger)
     install(Authentication) { token(koin.get()) }
+    attributes.put(stepUpClockKey, koin.getOrNull<Clock>() ?: Clock.System)
     routing {
         healthRoutes(koin.getAll(), SERVER_VERSION, koin.getOrNull<Readiness>() ?: Readiness())
         modules.forEach { it.routes(this, koin) }
