@@ -48,9 +48,11 @@ class SchemaTenancyPostgresTest {
 
     @Test
     fun everySecurityDefinerFunctionIsPinnedAndNarrow() = schemaTest { server ->
-        val found = server.rows(DEFINER_FUNCTIONS, "name", "owner", "config", "public_execute").flatMap { function ->
+        val columns = arrayOf("name", "owner", "search_path", "public_execute")
+        val found = server.rows(DEFINER_FUNCTIONS, *columns).flatMap { function ->
             val name = function.getValue("name")
-            val searchPath = function["config"].orEmpty().split(',').firstOrNull { it.startsWith("search_path=") }
+            // One proconfig entry, `search_path=pg_catalog, public, pg_temp`: its own commas are not separators.
+            val searchPath = function["search_path"]
             listOfNotNull(
                 "$name: no search_path".takeIf { searchPath == null },
                 "$name: pg_temp not last in its search_path".takeIf {
@@ -150,7 +152,7 @@ class SchemaTenancyPostgresTest {
 
         const val DEFINER_FUNCTIONS = """
             SELECT CAST(CAST(p.oid AS regprocedure) AS TEXT) AS name, pg_get_userbyid(p.proowner) AS owner,
-                array_to_string(p.proconfig, ',') AS config,
+                (SELECT c FROM unnest(p.proconfig) AS c WHERE c LIKE 'search_path=%') AS search_path,
                 CAST(p.proacl IS NULL OR EXISTS (
                     SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
                 ) AS TEXT) AS public_execute
