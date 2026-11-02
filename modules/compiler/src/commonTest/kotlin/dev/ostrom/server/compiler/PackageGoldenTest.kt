@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler
 
+import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.receipts.ReceiptSigningKey
 import dev.ostrom.server.compiler.domain.models.CompileInputs
 import dev.ostrom.server.compiler.domain.services.CompilerDocs
@@ -9,6 +10,10 @@ import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.domain.services.PackageSigner
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.writeString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -81,6 +86,12 @@ class PackageGoldenTest {
     fun theSignedEnvelopeIsTheSameBytes() = runTest {
         val inputs = goldenInputs()
         val envelope = PackageSigner.sign(compile(), inputs.now, SeedSigner(hex(GoldenPackage.SEED_HEX)), pinned = true)
+        // What this server signs, written before the comparison: the source to update the golden from when the
+        // catalogue changes on purpose (CI uploads build/reports).
+        SystemFileSystem.createDirectories(Path("build/reports/golden"))
+        SystemFileSystem.sink(Path("build/reports/golden/package.json")).buffered().use {
+            it.writeString(Json.encodeToString(PackageEnvelope.serializer(), envelope))
+        }
         assertEquals(GoldenPackage.CONTENT_DIGEST, envelope.contentDigest)
         assertEquals(GoldenPackage.VERSION, envelope.version)
         assertEquals(GoldenPackage.PAYLOAD, envelope.payload)

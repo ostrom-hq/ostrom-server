@@ -4,10 +4,12 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgProfile
 import dev.ostrom.server.kernel.auth.OrgRequiredException
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.auth.RejectingPrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
@@ -78,6 +80,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.concurrent.atomics.AtomicReference
@@ -629,6 +632,21 @@ class HttpTest {
         val stranger = client.get("/probe/orgs/${Uuid.random()}") { bearerAuth("good-token") }
         assertEquals(HttpStatusCode.NotFound, stranger.status)
         assertEquals("Organization not found.", stranger.error().error.message)
+    }
+
+    @Test
+    fun theRejectingResolverKnowsNoOrganization() = runTest {
+        assertNull(RejectingPrincipalOrgResolver().profile(ORG))
+    }
+
+    @Test
+    fun anOrganizationIsShownToItsMemberByItsNamesAndPicture() {
+        val acme = OrgProfile(ORG, "acme", "Acme", "https://avatars.githubusercontent.com/u/7", linkedToGitHub = true)
+
+        assertEquals(ORG, acme.id)
+        assertEquals("acme" to "Acme", acme.slug to acme.name)
+        assertEquals("https://avatars.githubusercontent.com/u/7", acme.avatarUrl)
+        assertTrue(acme.linkedToGitHub)
     }
 
     @Test

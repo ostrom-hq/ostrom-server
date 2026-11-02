@@ -67,6 +67,7 @@ class CreateLaunchUseCaseImpl(
             model = request.model,
             createdAt = now,
             expiresAt = now + LIFETIME,
+            cloudSessionId = request.cloudSessionId,
         )
         // The launch first: its token never exists without the launch it is scoped to.
         repository.create(launch)
