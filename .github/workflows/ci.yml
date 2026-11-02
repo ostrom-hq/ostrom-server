@@ -123,6 +123,23 @@ jobs:
           kotlin.daemon.jvmargs=-Xmx2g
           PROPS
       - run: python3 scripts/check-conventions.py
+      # Ktor's CIO client has no TLS on Kotlin/Native, and with two engines linked Ktor gives CIO to every engine-less
+      # HttpClient { }: one CIO in a shipped source set of the server and every https call fails (ostrom-server#89).
+      # The runner binary (runner/) talks plain http to the in-cluster Service; tests and the JVM target never ship.
+      - name: The server binary links no CIO HTTP client (no TLS on Kotlin/Native)
+        shell: python3 {0}
+        run: |
+          import pathlib, re, sys
+          found = []
+          for build in sorted(pathlib.Path(".").glob("**/build.gradle.kts")):
+              if build.parts[0] in ("runner", "build-logic") or "build" in build.parts[:-1]:
+                  continue
+              for block in re.finditer(r"(\w+)\.dependencies\s*\{(.*?)\n\s*\}", build.read_text(), re.S):
+                  shipped = not re.search(r"Test$|^jvm", block.group(1))
+                  if shipped and "libs.ktor.client.cio" in block.group(2):
+                      found.append(f"{build}: {block.group(1)} links ktor-client-cio")
+          print("\n".join(found) or "no CIO client in the server's shipped source sets")
+          sys.exit(1 if found else 0)
       - name: License signing tool (ee/tools/license, 100 % lines and branches)
         working-directory: ee/tools/license
         run: |

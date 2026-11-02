@@ -2,7 +2,9 @@
 package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRequiredException
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -94,6 +96,8 @@ class HttpTest {
 
     private class ProbeGoneException : OstromException(ErrorKind.NOT_FOUND, "Probe gone.")
 
+    private class ProbeNotYoursException : OstromException(ErrorKind.FORBIDDEN, "Not yours.", "probe_not_yours")
+
     @Serializable
     private data class ProbeBody(val name: String)
 
@@ -104,6 +108,7 @@ class HttpTest {
         override fun routes(route: Route, koin: Koin) {
             route.get("/probe/missing") { throw OstromException(ErrorKind.NOT_FOUND, "Probe not found.") }
             route.get("/probe/subclass") { throw ProbeGoneException() }
+            route.get("/probe/typed") { throw ProbeNotYoursException() }
             route.get("/probe/quota") { throw OstromException(ErrorKind.PAYMENT_REQUIRED, "Plan limit reached.") }
             route.get("/probe/crash") { throw IllegalStateException("database password is hunter2") }
             route.get("/probe/gone") { throw NotFoundException("internal detail") }
@@ -124,6 +129,8 @@ class HttpTest {
             route.post("/probe/echo") { call.respondText(call.receive<ProbeBody>().name) }
             route.authenticated {
                 get("/probe/me") { call.respondText(call.requirePrincipal().subjectId) }
+                get("/probe/named-org") { call.respondText(call.requirePrincipal().namedOrg.toString()) }
+                get("/probe/org-required") { throw OrgRequiredException() }
                 get("/probe/orgs/{org}") {
                     val member = call.requireOrgPrincipal(koin.get(), call.parameters["org"]?.let { Uuid.parse(it) })
                     call.respondText("${member.memberId} ${member.role}")
@@ -296,6 +303,13 @@ class HttpTest {
     }
 
     @Test
+    fun aDomainErrorWithItsOwnTypeKeepsTheStatusOfItsKind() = probeServer {
+        val response = client.get("/probe/typed")
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertEquals("""{"error":{"type":"probe_not_yours","message":"Not yours."}}""", response.bodyAsText())
+    }
+
+    @Test
     fun domainErrorSubclassKeepsItsKindAndMessage() = probeServer {
         val response = client.get("/probe/subclass")
         assertEquals(HttpStatusCode.NotFound, response.status)
@@ -378,6 +392,7 @@ class HttpTest {
             ErrorKind.FORBIDDEN to 403,
             ErrorKind.NOT_FOUND to 404,
             ErrorKind.CONFLICT to 409,
+            ErrorKind.ORG_REQUIRED to 409,
             ErrorKind.PAYLOAD_TOO_LARGE to 413,
             ErrorKind.UNSUPPORTED_MEDIA_TYPE to 415,
             ErrorKind.RATE_LIMITED to 429,
@@ -466,6 +481,20 @@ class HttpTest {
         val stranger = client.get("/probe/orgs/${Uuid.random()}") { bearerAuth("good-token") }
         assertEquals(HttpStatusCode.NotFound, stranger.status)
         assertEquals("Organization not found.", stranger.error().error.message)
+    }
+
+    @Test
+    fun theOrgHeaderReachesTheResolverAndAnUnnamedOrgIsA409() = probeServer {
+        val named = client.get("/probe/named-org") {
+            bearerAuth("good-token")
+            header(ORG_HEADER, ORG.toString())
+        }
+        assertEquals(ORG.toString(), named.bodyAsText())
+        assertEquals("null", client.get("/probe/named-org") { bearerAuth("good-token") }.bodyAsText())
+
+        val unnamed = client.get("/probe/org-required") { bearerAuth("good-token") }
+        assertEquals(HttpStatusCode.Conflict, unnamed.status)
+        assertEquals("org_required", unnamed.error().error.type)
     }
 
     private companion object {

@@ -19,8 +19,11 @@ import kotlin.uuid.Uuid
  * @property refreshToken The OAuth refresh token.
  * @property expiresAt When the access token expires.
  * @property limits Its limits.
- * @property disabled Stores it turned off, in the same write: an account its source had disabled (an import from
- *   TeamCode) never serves, not even for a moment. Sharing again never turns an account back on.
+ * @property disabled Stores a new account, or one waiting for a reconnection, turned off in the same write: an
+ *   account its source had disabled never serves, not even for a moment. Only an import sets it (the share route
+ *   never does); re-sharing a serving account never turns it off, and sharing again never turns one back on.
+ * @property ifVersion Shares only if the org's account is still at this [SharedAccount.version] (0: only if the org
+ *   does not have it), so a reconnection or an edit made since it was read is never overwritten; null shares anyway.
  */
 data class ShareAccountPayload(
     val provider: AccountProvider,
@@ -32,6 +35,7 @@ data class ShareAccountPayload(
     val expiresAt: Instant,
     val limits: AccountLimits = AccountLimits(),
     val disabled: Boolean = false,
+    val ifVersion: Long? = null,
 ) {
     override fun toString(): String =
         "ShareAccountPayload(provider=$provider, label=$label, providerAccountId=$providerAccountId, tokens=[REDACTED])"
@@ -44,12 +48,14 @@ data class ShareAccountPayload(
  * @property priority New priority.
  * @property disabled Turns it off or back on (a RECONNECT_REQUIRED account comes back only by sharing it again).
  * @property limits The new limits from the current ones, so a change of one limit keeps the others.
+ * @property ifVersion Changes it only if it is still at this [SharedAccount.version]; null changes it anyway.
  */
 data class UpdateAccountPayload(
     val label: String? = null,
     val priority: Int? = null,
     val disabled: Boolean? = null,
     val limits: ((AccountLimits) -> AccountLimits)? = null,
+    val ifVersion: Long? = null,
 )
 
 /**
@@ -111,7 +117,7 @@ class ShareAccountUseCaseImpl(
     override suspend fun invoke(caller: Caller, payload: ShareAccountPayload): SharedAccount {
         val account = sameAccount(caller, payload).sharedAgain(caller, payload, clock)
         val credentials = AccountCredentials(payload.accessToken, payload.refreshToken, payload.expiresAt)
-        return repository.upsert(account, cipher.seal(credentials, account.orgId, account.id))
+        return repository.upsert(account, cipher.seal(credentials, account.orgId, account.id), payload.ifVersion)
     }
 
     override suspend fun check(caller: Caller, payload: ShareAccountPayload) {
@@ -128,19 +134,23 @@ class ShareAccountUseCaseImpl(
         val same = existing.firstOrNull {
             it.provider == payload.provider && it.providerAccountId == payload.providerAccountId
         }
-        when {
-            same == null && existing.size >= SharingRules.MAX_ACCOUNTS -> throw TooManyAccountsException()
-            same != null && !caller.mayChange(same) -> throw AccountOwnedByAnotherMemberException()
-            else -> Unit
+        val expected = payload.ifVersion
+        val refusal = when {
+            expected != null && (same?.version ?: 0) != expected -> AccountChangedException()
+            same == null && existing.size >= SharingRules.MAX_ACCOUNTS -> TooManyAccountsException()
+            same != null && !caller.mayChange(same) -> AccountOwnedByAnotherMemberException()
+            else -> null
         }
+        if (refusal != null) throw refusal
         return same
     }
 }
 
 /**
  * The account a share stores: a new one owned by the caller with the requested limits, or [this] with new tokens and
- * label (its owner, priority, limits, creation and a DISABLED status kept: an admin's restrictions survive the owner
- * sharing again after a reconnection; limits change through an update).
+ * label (its owner, priority, limits, creation and a READY or DISABLED status kept: an admin's restrictions survive
+ * the owner sharing again after a reconnection; limits change through an update). An account waiting for a
+ * reconnection comes back READY, or DISABLED when the payload asks it.
  */
 private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayload, clock: Clock): SharedAccount {
     val fresh = SharedAccount(
@@ -165,7 +175,7 @@ private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayl
             ownerMemberId = ownerMemberId ?: caller.memberId,
             priority = priority,
             limits = limits,
-            status = if (status == AccountStatus.DISABLED) AccountStatus.DISABLED else fresh.status,
+            status = if (status == AccountStatus.RECONNECT_REQUIRED) fresh.status else status,
             createdAt = createdAt,
         )
     }
@@ -229,7 +239,8 @@ class UpdateSharedAccountUseCaseImpl(private val repository: SharedAccountReposi
             limits = limits,
             status = status,
         )
-        return repository.update(updated) ?: throw AccountNotFoundException()
+        return repository.update(updated, payload.ifVersion)
+            ?: throw if (payload.ifVersion == null) AccountNotFoundException() else AccountChangedException()
     }
 }
 
