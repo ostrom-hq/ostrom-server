@@ -49,8 +49,7 @@ jobs:
       contents: read
       packages: read
     env:
-      # A pull request changing this workflow runs it against the ostrom-helm branch that adds compose/demo.
-      HELM_REF: ${{ inputs.helm_ref || 'feat/compose-demo' }}
+      HELM_REF: ${{ inputs.helm_ref || 'main' }}
       SERVER_IMAGE: ${{ inputs.server_image || 'ghcr.io/ostrom-hq/ostrom-server:edge' }}
       RUNNER_IMAGE: ghcr.io/ostrom-hq/ostrom-runner:latest
     steps:
