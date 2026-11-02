@@ -39,8 +39,8 @@ object GateScopes {
     /** Who reads a gate. */
     val readingGates: Set<String> = setOf(ALL_USER, AGENT_SESSION, ASK, READ)
 
-    /** Who reads approvals. */
-    val readingApprovals: Set<String> = setOf(ALL_USER, READ, ANSWER)
+    /** Who reads approvals. [READ] last: a refusal names the reading scope, never [ANSWER] (LOGIN-009). */
+    val readingApprovals: Set<String> = setOf(ALL_USER, ANSWER, READ)
 
     /** Who answers. */
     val answering: Set<String> = setOf(ALL_USER, ANSWER)
@@ -49,8 +49,8 @@ object GateScopes {
 /**
  * Refuses a credential that holds none of the accepted scopes.
  *
- * @param accepted The scopes that open the route.
- * @throws OstromException A 403 that names the first accepted scope.
+ * @param accepted The scopes that open the route, the one a refused credential should ask for last.
+ * @throws OstromException A 403 that names the last accepted scope.
  */
 fun AuthenticatedPrincipal.requireAnyScope(accepted: Set<String>) {
     if (scopes.none { it in accepted }) {
