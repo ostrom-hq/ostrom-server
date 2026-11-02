@@ -16,11 +16,13 @@ import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.infrastructure.IdentityAgentTokens
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
 import dev.ostrom.server.launches.infrastructure.LaunchGateActors
+import dev.ostrom.server.launches.infrastructure.LaunchRelayCallers
 import dev.ostrom.server.launches.infrastructure.LaunchesMigrations
 import dev.ostrom.server.launches.infrastructure.NoLaunchModelRules
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.LaunchesRoutesDependencies
 import dev.ostrom.server.launches.presentation.launchesRoutes
+import dev.ostrom.server.secrets.domain.CallerResolver
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -29,7 +31,9 @@ import org.koin.dsl.module
 /**
  * The launches module: `ostrom <agent>` reads the organization's policy, then creates a launch and gets the agent
  * token its hooks use, scoped to the launch's sessions (audit A12/A13). It also resolves the callers of the gates,
- * sessions and compiler routes ([LaunchGateActors]). Needs the identity, orgs and gates modules.
+ * sessions and compiler routes ([LaunchGateActors]), and those of the MCP relay, the inference gateway and the budgets
+ * ([LaunchRelayCallers]), so that an agent token reaches the organization's MCP servers. Needs the identity, orgs and
+ * gates modules.
  */
 object LaunchesModule : ServerModule {
     override val name: String = "launches"
@@ -39,6 +43,7 @@ object LaunchesModule : ServerModule {
         single<LauncherResolver> { IdentityLauncherResolver(get(), get()) }
         single<AgentTokenService> { IdentityAgentTokens(get()) }
         single<GateActorResolver> { LaunchGateActors(get(), get(), get()) }
+        single<CallerResolver> { LaunchRelayCallers(get(), get(), get()) }
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }
