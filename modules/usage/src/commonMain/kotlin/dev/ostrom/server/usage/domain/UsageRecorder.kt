@@ -15,6 +15,14 @@ interface UsageRecorder {
      * @param event The event.
      */
     suspend fun record(event: UsageEvent)
+
+    /**
+     * Records a model call's event and drops the budget hold of the call ([UsageRepository.settle]); the same failure
+     * handling as [record]. A hold left by a failed write counts until it expires.
+     *
+     * @param event The call's event.
+     */
+    suspend fun settle(event: UsageEvent)
 }
 
 /**
@@ -29,9 +37,13 @@ class UsageRecorderImpl(
     private val feed: UsageFeed,
     private val logger: Logger,
 ) : UsageRecorder {
-    override suspend fun record(event: UsageEvent) {
+    override suspend fun record(event: UsageEvent) = write(event) { repository.insert(event.orgId, listOf(event)) }
+
+    override suspend fun settle(event: UsageEvent) = write(event) { repository.settle(event) }
+
+    private suspend fun write(event: UsageEvent, store: suspend () -> Unit) {
         try {
-            repository.insert(event.orgId, listOf(event))
+            store()
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

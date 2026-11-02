@@ -192,7 +192,7 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
         update(id) { it.copy(lastUsedAt = at) }
     }
 
-    override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant): Boolean {
+    override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant, orgId: Uuid?): Boolean {
         val token = get(userId, id)?.takeIf { it.revokedAt == null && it.kind != TokenKind.AGENT } ?: return false
         update(token.id) { it.copy(revokedAt = at) }
         return true
@@ -256,11 +256,17 @@ class InMemoryDeviceAuthorizationsRepository(
             it.userCode == userCode && it.status == DeviceAuthorizationStatus.PENDING && it.expiresAt > now
         }
 
-    override suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant): Boolean {
+    override suspend fun answer(
+        id: Uuid,
+        userId: Uuid,
+        approved: Boolean,
+        now: Instant,
+        approvingOrgId: Uuid?,
+    ): Boolean {
         if (refuseAnswer) return false
         update(id) {
             val status = if (approved) DeviceAuthorizationStatus.APPROVED else DeviceAuthorizationStatus.DENIED
-            it.copy(status = status, userId = userId)
+            it.copy(status = status, userId = userId, approvingOrgId = approvingOrgId)
         }
         return true
     }

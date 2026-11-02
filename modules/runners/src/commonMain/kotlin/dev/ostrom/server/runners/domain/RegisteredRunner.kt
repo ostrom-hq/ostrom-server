@@ -41,3 +41,13 @@ enum class RunnerRegistrationOutcome {
     /** The organization already has as many runners as allowed: nothing is stored. */
     LIMIT_REACHED,
 }
+
+/**
+ * What authenticates a registered runner: its organization and the hash of its key.
+ *
+ * @property orgId The organization.
+ * @property keyHash The SHA-256 hex digest of its key.
+ */
+data class RegisteredRunnerKey(val orgId: Uuid, val keyHash: String) {
+    override fun toString(): String = "RegisteredRunnerKey(orgId=$orgId, keyHash=***)"
+}

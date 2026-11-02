@@ -134,7 +134,9 @@ class InMemoryRuns : WorkflowRunsRepository {
 
     override suspend fun checks(orgId: Uuid, query: RunQuery): List<CheckRun> {
         queries += query
-        return checks.filter { query.sessionId == null || it.sessionId == query.sessionId }.reversed()
+        return checks.filter { query.sessionId == null || it.sessionId == query.sessionId }
+            .filter { query.nodeId == null || it.nodeId == query.nodeId }
+            .reversed().take(query.limit)
     }
 
     override suspend fun addNotification(orgId: Uuid, notification: Notification, actionKey: String): Notification {
