@@ -357,7 +357,7 @@ class AskGateUseCaseTest {
         val toMain = pushAsk(diff = "deploy").copy(actionClass = "deploy")
         val enforced = askByClass(bench, mapOf("deploy" to node, "push-main" to node))(agent(), toMain)
         assertEquals("deploy", enforced.gate.subject.actionClass)
-        val kept = askByClass(bench, mapOf("deploy" to shadow, "push-main" to shadow))(agent(), toMain)
+        val kept = askByClass(GateBench(), mapOf("deploy" to shadow, "push-main" to shadow))(agent(), toMain)
         assertEquals("deploy", kept.gate.subject.actionClass)
         assertEquals(GateMode.SHADOW, kept.gate.mode)
     }
