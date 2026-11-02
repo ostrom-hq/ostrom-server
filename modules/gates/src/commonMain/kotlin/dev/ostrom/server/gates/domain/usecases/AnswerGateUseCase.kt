@@ -111,7 +111,8 @@ class AnswerGateUseCaseImpl(
         val gate = receipts.ensureSigned(decided.first)
         changes.changed(gate.id)
         notifier.decided(gate, requests)
-        return viewOf(gate, requests) { policy }
+        // An answer decides the gate: it waits for no one.
+        return GateView(gate, requests, waitingFor = emptyList())
     }
 
     private fun checkAnswerable(person: String, request: ApprovalRequest, gate: Gate, shownDigest: String) {

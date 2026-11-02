@@ -55,6 +55,8 @@ class GetGateAndRulesTest {
         val alone = bench.open(bench.pushRequest(sha = SHA_B, node = bench.node("lyes")))
         assertEquals(listOf("lyes"), alone.waitingFor)
         assertEquals(1, bench.policies.reads, "lyes asked and is the only approver: the setting decides")
+        assertEquals(listOf("lyes"), bench.get(user("lyes"), alone.gate.id).waitingFor)
+        assertEquals(2, bench.policies.reads, "A read of that gate reads the setting again")
     }
 
     @Test
