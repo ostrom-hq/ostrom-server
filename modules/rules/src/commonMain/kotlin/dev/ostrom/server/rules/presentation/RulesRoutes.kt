@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules.presentation
 
+import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.authenticated
@@ -8,6 +9,7 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.rules.domain.models.Decider
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.OnlyConsoleDecidesException
+import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.HttpStatusCode
@@ -36,7 +38,7 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
             call.respond(RulesPage(listRules(caller.orgId, filters.toQuery()).map { it.toDto() }))
         }
         post<RulesApi> {
-            val decider = call.decider(this@with)
+            val decider = call.decider(callers, actors)
             val rule = createRule(decider, call.receive<NewRuleRequest>().toNewRule())
             call.respond(HttpStatusCode.Created, rule.toDto())
         }
@@ -45,15 +47,15 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
             call.respond(getRule(caller.orgId, path.id).toDto())
         }
         patch<RulesApi.Id> { path ->
-            val decider = call.decider(this@with)
+            val decider = call.decider(callers, actors)
             call.respond(updateRule(decider, path.id, call.receive<JsonObject>().toRulePatch()).toDto())
         }
         delete<RulesApi.Id> { path ->
-            deleteRule(call.decider(this@with), path.id)
+            deleteRule(call.decider(callers, actors), path.id)
             call.respond(HttpStatusCode.NoContent)
         }
         post<RulesApi.Bulk> {
-            val decider = call.decider(this@with)
+            val decider = call.decider(callers, actors)
             val request = call.receive<BulkRulesRequest>()
             val status = ruleStatusOf(request.status)
             call.respond(BulkRulesResponse(bulkUpdateRules(decider, request.ids, status)))
@@ -71,7 +73,7 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
             call.respond(getGatePolicy(caller.orgId).toDto())
         }
         put<GatePolicyApi> {
-            val decider = call.decider(this@with)
+            val decider = call.decider(callers, actors)
             call.respond(setGatePolicy(decider, call.receive<GatePolicyDto>().toPolicy()).toDto())
         }
     }
@@ -81,13 +83,13 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
  * The person who decides: signed in to the console (a user's browser session, which holds every user scope), owner or
  * admin of the organization, named by their GitHub login when the gates know it.
  */
-private suspend fun ApplicationCall.decider(dependencies: RulesRoutesDependencies): Decider {
+internal suspend fun ApplicationCall.decider(callers: CallerResolver, actors: GateActorResolver): Decider {
     val principal = requirePrincipal()
     if (principal.kind != PrincipalKind.USER || RelayScopes.ALL_USER !in principal.scopes) {
         throw OnlyConsoleDecidesException()
     }
-    val caller = requireCaller(dependencies.callers)
+    val caller = requireCaller(callers)
     caller.requireAdmin()
-    val name = dependencies.actors.resolve(principal)?.personId ?: caller.memberId.toString()
+    val name = actors.resolve(principal)?.personId ?: caller.memberId.toString()
     return Decider(caller.orgId, name)
 }

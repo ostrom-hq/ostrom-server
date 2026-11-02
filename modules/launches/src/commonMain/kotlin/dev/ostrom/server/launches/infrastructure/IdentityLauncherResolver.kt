@@ -44,4 +44,9 @@ class IdentityLauncherResolver(
         val member = members.findById(orgId, memberId) ?: return null
         return users.get(member.userId)?.let { Launcher(orgId, it.id, it.login, member.role) }
     }
+
+    override suspend fun colleague(orgId: Uuid, login: String): Launcher? {
+        val user = users.findByLogin(login) ?: return null
+        return members.findByUser(orgId, user.id)?.let { Launcher(orgId, user.id, user.login, it.role) }
+    }
 }
