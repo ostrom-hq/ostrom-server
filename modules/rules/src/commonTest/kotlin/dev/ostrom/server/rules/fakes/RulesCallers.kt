@@ -33,7 +33,6 @@ import kotlinx.serialization.json.JsonElement
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.time.Clock
-import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -79,7 +78,16 @@ object RulesCallers {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? =
-                    people[token]?.let { AuthenticatedPrincipal(token, it.kind, it.scopes, channel = it.channel) }
+                    people[token]?.let {
+                        // Signed in just now: the fresh proof a yes needs (S2-54), read by the gates from here.
+                        AuthenticatedPrincipal(
+                            token,
+                            it.kind,
+                            it.scopes,
+                            channel = it.channel,
+                            authenticatedAt = clock.now(),
+                        )
+                    }
             }
         }
         single<CallerResolver> {
@@ -97,8 +105,7 @@ object RulesCallers {
                     return if (person == null || caller == null || login == null) {
                         null
                     } else {
-                        // Signed in just now, the fresh proof a yes needs (S2-54).
-                        actorOf(person.kind, caller.orgId, login, clock.now())
+                        actorOf(person.kind, caller.orgId, login)
                     }
                 }
             }
@@ -158,8 +165,8 @@ suspend fun TestServer.call(method: String, path: String, token: String?, body: 
     }
 }
 
-private fun actorOf(kind: PrincipalKind, orgId: Uuid, login: String, signedInAt: Instant): GateActor = when (kind) {
+private fun actorOf(kind: PrincipalKind, orgId: Uuid, login: String): GateActor = when (kind) {
     PrincipalKind.SERVICE -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = "launch-1", personId = login)
     PrincipalKind.DEVICE -> GateActor(login, orgId, ActorKind.DEVICE, personId = login)
-    else -> GateActor(login, orgId, ActorKind.USER, personId = login, authenticatedAt = signedInAt)
+    else -> GateActor(login, orgId, ActorKind.USER, personId = login)
 }
