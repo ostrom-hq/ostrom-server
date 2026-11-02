@@ -43,6 +43,10 @@ private fun Route.catalogRoutes(dependencies: CompilerRoutesDependencies) = with
         val actor = actorOf(call, CompilerScopes.readingPackages)
         call.respond(policy(actor.orgId, params.parent.repo))
     }
+    get<ApproversApi> { params ->
+        val actor = actorOf(call, CompilerScopes.readingPackages)
+        call.respond(approvers(actor.orgId, params.repo).toResponse())
+    }
 }
 
 private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = with(dependencies) {

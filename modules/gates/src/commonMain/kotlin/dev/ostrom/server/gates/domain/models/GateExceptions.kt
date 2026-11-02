@@ -15,6 +15,7 @@ class NotTheApproverException :
 class StepUpRequiredException : OstromException(
     ErrorKind.FORBIDDEN,
     "Sign in again to say yes: a yes needs a sign-in of less than 5 minutes, or the app's biometrics.",
+    "step_up_required",
 )
 
 /** A device, agent or service token tried to answer: only a signed-in person says yes or no. */
@@ -33,15 +34,18 @@ class SelfApprovalRefusedException(val others: List<String>) : OstromException(
     } else {
         "You asked for this action and cannot approve it: ${others.joinToString(" or ")} must say yes."
     },
+    "self_approval_refused",
 )
 
 /** The gate or request was already answered: a yes is given once. */
-class GateAlreadyDecidedException : OstromException(ErrorKind.CONFLICT, "This gate was already answered.")
+class GateAlreadyDecidedException :
+    OstromException(ErrorKind.CONFLICT, "This gate was already answered.", "approval_closed")
 
 /** What the approver saw is not what the gate covers now: the yes is bound to what was shown. */
 class GateChangedException : OstromException(
     ErrorKind.CONFLICT,
     "What this gate covers changed since you opened it. Reload it and answer again.",
+    "shown_digest_mismatch",
 )
 
 /** The gate has no approver: nobody can open it, so it is refused before anyone waits. */
