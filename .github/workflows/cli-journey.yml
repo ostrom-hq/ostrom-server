@@ -5,8 +5,9 @@ name: CLI journey
 # never `edge`, which a slower run of an older commit may still hold. The CLI is built here from ostrom-cli (its
 # linuxX64 release binary, with ostrom-core from the commit it pins). It runs in this repository because its token
 # reads its own GHCR packages, which ostrom-cli's cannot yet (the CLI's own journey is skipped there, "package Actions
-# access"). On demand, every night (main's CLI against main's image: step 5.8 holds the hook's latency, a local decision
-# under 20 ms and a round trip to Ostrom under 75 ms at p95), and, off the org's one-`ci`-job rule on purpose (as
+# access"). On demand, every night (main's CLI against `edge`, the last image main published, whose own commit gives the
+# database roles: at night no slower run holds it, and a main whose image failed still gets its journey; the hook's
+# latency budgets of step 5.8 live in ostrom-cli's e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as
 # demo-stack.yml), on a pull request only when the pull request changes this file.
 on:
   schedule:
@@ -24,7 +25,8 @@ on:
     paths: [.github/workflows/cli-journey.yml]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # the night's run and a dispatch on main never replace each other
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -51,7 +53,7 @@ jobs:
           --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       CLI_REF: ${{ inputs.cli_ref || 'main' }}
-      WANTED_IMAGE: ${{ inputs.server_image }}
+      WANTED_IMAGE: ${{ inputs.server_image || (github.event_name == 'schedule' && 'ghcr.io/ostrom-hq/ostrom-server:edge') || '' }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
