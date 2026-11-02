@@ -407,7 +407,7 @@ class CompilerPostgresTest {
         for (who in listOf("user:a:member", "user:a:approver")) {
             val accepted = server.call(who, "/api/v1/workflows", "POST", release())
             assertEquals(HttpStatusCode.Forbidden, accepted.status, who)
-            assertTrue(accepted.bodyAsText().contains("Only an owner or an admin signed in to the console"))
+            assertTrue(accepted.bodyAsText().contains("Only an owner or an admin accepts"))
         }
         val proposed = server.call("user:a:member", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))
         assertEquals(HttpStatusCode.Created, proposed.status)

@@ -84,6 +84,7 @@ class RulesGovernanceChange(private val dependencies: RulesGovernanceDependencie
             val decider = Decider(
                 orgId,
                 actors.resolve(confirmer.principal)?.personId ?: confirmer.member.memberId.toString(),
+                confirmer.principal,
             )
             val payload = write.payload
             when (write.kind) {

@@ -2,6 +2,11 @@
 package dev.ostrom.server.rules.fakes
 
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
+import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.rules.domain.models.Decider
@@ -25,8 +30,17 @@ import kotlin.uuid.Uuid
 object RulesFixtures {
     val orgA: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     val orgB: Uuid = Uuid.parse("0000000b-0000-0000-0000-000000000000")
-    val lyes = Decider(orgA, "lyes")
-    val bob = Decider(orgB, "bob")
+    val lyes = Decider(orgA, "lyes", person("0000000a-0000-0000-0000-0000000000a1"))
+    val bob = Decider(orgB, "bob", person("0000000b-0000-0000-0000-0000000000a1"))
+
+    /**
+     * A person signed in to the console.
+     *
+     * @param id Their user id.
+     * @return Their credential.
+     */
+    fun person(id: String): AuthenticatedPrincipal =
+        AuthenticatedPrincipal(id, PrincipalKind.USER, setOf("user:*"), channel = PrincipalChannel.BROWSER)
 
     /** 30 October 2026, 12:00 UTC. */
     val epoch: Instant = Instant.parse("2026-10-30T12:00:00Z")
@@ -180,12 +194,23 @@ class FakeRulesRepository : RulesRepository {
  * @property signer The receipts.
  * @property logger The logs.
  * @property clock The time.
+ * @property audit The organization's audit log.
  */
 class RulesBench(
     val repository: FakeRulesRepository = FakeRulesRepository(),
     val signer: FakeDecisionSigner = FakeDecisionSigner(),
     val logger: RecordingLogger = RecordingLogger(),
     val clock: TestClock = TestClock(),
+    val audit: RecordingAuditTrail = RecordingAuditTrail(),
 ) {
     val signDecisions = SignDecisionsUseCaseImpl(repository, signer, logger)
+}
+
+/** An audit log in memory: the lines written, in order. */
+class RecordingAuditTrail : OrgAuditTrail {
+    val records = mutableListOf<OrgAuditRecord>()
+
+    override suspend fun record(record: OrgAuditRecord) {
+        records += record
+    }
 }

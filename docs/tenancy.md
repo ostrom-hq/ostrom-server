@@ -115,7 +115,6 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 every table, policy, grant and `SECURITY DEFINER` function. The exceptions it still lists are open findings of the RLS
 audit, each to be closed by moving the cross-organization path into a function of the table above:
 
-- `orgs_organizations`, `orgs_members`, `orgs_invitations`: row-level security enabled, not forced;
 - policies a setting opens to one row of any organization: the read and delete policies of
   `github_installations` (`ostrom.github_installation`) and `github_install_states` (`ostrom.github_state`).
 

@@ -170,8 +170,10 @@ private fun Route.deviceAnswerRoutes(dependencies: IdentityRoutesDependencies) =
     post<AuthApi.Device.Answer, AnswerDeviceRequest> { _, request ->
         val principal = call.requireBrowserSession()
         // `ostrom login --admin`: the organization the person acts in (`Ostrom-Org`, or their only one), if they own
-        // or administer it; read only when they approve such a login.
+        // or administer it; read only when they approve such a login, after a sign-in of less than five minutes (it
+        // gives the governance writes, like the console's sensitive writes, web audit n°2 M3).
         val managedOrg: suspend () -> Uuid? = {
+            call.requireRecentSignIn("approve an admin sign-in")
             orgResolver.resolve(principal, null)?.takeIf { it.role in MANAGERS }?.orgId
         }
         answerDeviceAuthorization(principal.userId(), request.userCode, request.approve, managedOrg)

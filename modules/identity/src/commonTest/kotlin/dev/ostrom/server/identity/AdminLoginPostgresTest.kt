@@ -25,6 +25,7 @@ import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.auth.STEP_UP_REQUIRED
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.governs
 import dev.ostrom.server.kernel.auth.holdForConfirmation
@@ -38,6 +39,7 @@ import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -197,6 +199,30 @@ class AdminLoginPostgresTest {
         val codes = server.start(ADMIN_SCOPES.toList()).body<DeviceCodeResponse>()
         assertEquals(HttpStatusCode.NoContent, server.answer(session, codes.userCode, approve = false))
         assertEquals(HttpStatusCode.BadRequest, server.poll(codes.deviceCode).status, "access_denied")
+    }
+
+    @Test
+    fun approvingAnAdminLoginNeedsASignInOfLessThanFiveMinutes() = adminTest { server ->
+        val (admin, stale) = server.signIn("5", OrgRole.ADMIN)
+        // Signed in six minutes ago.
+        val aged = "UPDATE identity_web_sessions SET created_at = created_at - interval '6 minutes'"
+        server.driver.execute("$aged WHERE user_id = '${admin.id}'").getOrThrow()
+        val codes = server.start(ADMIN_SCOPES.toList()).body<DeviceCodeResponse>()
+        val refused = server.client.post("/api/v1/auth/device/answer") {
+            browserSession(stale.secret, stale.csrfToken)
+            json(AnswerDeviceRequest(codes.userCode, true))
+        }
+        assertEquals(HttpStatusCode.Forbidden, refused.status)
+        assertTrue(STEP_UP_REQUIRED in refused.bodyAsText(), refused.bodyAsText())
+
+        // The old session still says no, and yes to the ordinary sign-in; signed in again, it approves the same code.
+        val other = server.start(ADMIN_SCOPES.toList()).body<DeviceCodeResponse>()
+        assertEquals(HttpStatusCode.NoContent, server.answer(stale, other.userCode, approve = false))
+        val ordinary = server.start(null).body<DeviceCodeResponse>()
+        assertEquals(HttpStatusCode.NoContent, server.answer(stale, ordinary.userCode))
+        val (_, fresh) = server.signIn("5", OrgRole.ADMIN)
+        assertEquals(HttpStatusCode.NoContent, server.answer(fresh, codes.userCode))
+        assertTrue(server.poll(codes.deviceCode).body<AuthTokenResponse>().token.startsWith("osg_"))
     }
 
     private companion object {

@@ -119,7 +119,7 @@ class GatewayPostgresTest {
     )
 
     /** The tokens of `ostrom login --admin`: a person's API token holding the governance scopes. */
-    private val elevated = setOf("elevated-a", "elevated-member-a")
+    private val elevated = setOf("elevated-a", "elevated-member-a", "elevated-orphan")
 
     /** The governance writes a token asked for, held for the console, as `kind METHOD /path scope`. */
     private val held = mutableListOf<String>()
@@ -529,6 +529,8 @@ class GatewayPostgresTest {
                 val policy = ModelPolicyDto(allowed = listOf("claude-"), defaultModel = "claude-sonnet-5")
                 val refused = putJson("/api/v1/policy/models", "elevated-member-a", policy)
                 assertEquals(HttpStatusCode.Forbidden, refused.status, "A member's elevated token")
+                val orphan = putJson("/api/v1/policy/models", "elevated-orphan", policy)
+                assertEquals(HttpStatusCode.NotFound, orphan.status, "A token of nobody's organization")
                 assertEquals(emptyList(), held, "Refused before anything is held")
                 val asked = putJson("/api/v1/policy/models", "elevated-a", policy)
                 assertEquals(HttpStatusCode.Accepted, asked.status)

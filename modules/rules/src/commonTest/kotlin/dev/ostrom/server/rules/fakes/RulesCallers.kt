@@ -54,8 +54,12 @@ object RulesCallers {
     private val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     private val ownerB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
 
+    /** Lyes' browser session named by his user id, as the identity module names a person: the audit log's actor. */
+    const val PERSON_A: String = "0000000a-0000-0000-0000-0000000000c1"
+
     // token -> (caller, person, kind, scopes, channel): every user scope (ALL_USER) is a browser session
     private val people = mapOf(
+        PERSON_A to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "admin-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "nameless-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "unlinked-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),

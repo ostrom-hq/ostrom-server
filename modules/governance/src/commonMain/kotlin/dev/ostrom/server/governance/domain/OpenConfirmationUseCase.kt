@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Opens a confirmation for a governance write a person's token asked for (audit CLI H1). */
@@ -54,7 +55,8 @@ class OpenConfirmationUseCaseImpl(
         waiting.firstOrNull { it.asksFor(request.write, request.method, request.path) }?.let { return it }
         if (waiting.size >= ConfirmationRules.MAX_WAITING) throw ConfirmationLimitException()
         val preview = changes.of(request.write.kind).preview(request.orgId, request.write)
-        val now = clock.now()
+        // To the millisecond, as stored and as the 202 and every read show it (PostgreSQL keeps microseconds).
+        val now = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
         val confirmation = Confirmation(
             id = "gcf_" + Uuid.random().toHexString(),
             orgId = request.orgId,

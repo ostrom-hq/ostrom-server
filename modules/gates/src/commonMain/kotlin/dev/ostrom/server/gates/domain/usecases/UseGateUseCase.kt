@@ -74,10 +74,7 @@ class UseGateUseCaseImpl(
         val next = when (use) {
             GateUse.RESERVE -> reserved(gate, launch, now)
             GateUse.CONSUME -> consumed(gate, launch, now)
-            GateUse.RELEASE -> {
-                heldBy(gate, launch)
-                gate.copy(status = GateStatus.APPROVED, reservedBy = null, reservedAt = null)
-            }
+            GateUse.RELEASE -> released(gate, launch, now)
         }
         if (next != gate) updateGate(next)
         next
@@ -115,6 +112,13 @@ class UseGateUseCaseImpl(
         return gate
     }
 
+    // A yes goes back in play once: a second release would let reserve, launch and release loop until it expires.
+    private fun released(gate: Gate, launch: String, now: Instant): Gate {
+        heldBy(gate, launch)
+        if (gate.releasedAt != null) throw GateNotUsableException(RELEASED)
+        return gate.copy(status = GateStatus.APPROVED, reservedBy = null, reservedAt = null, releasedAt = now)
+    }
+
     private fun heldBy(gate: Gate, launch: String) {
         if (gate.status == GateStatus.RESERVED && gate.reservedBy == launch) return
         throw GateNotUsableException(
@@ -136,6 +140,7 @@ class UseGateUseCaseImpl(
 
     private companion object {
         const val EXPIRED = "This yes expired: it waits 15 minutes for its action. Ask again."
+        const val RELEASED = "This yes was already released once: use it for this action, or ask again."
         const val UNSIGNED = "This yes has no signed receipt yet: it cannot be used. Try again in a moment."
     }
 }

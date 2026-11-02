@@ -134,7 +134,7 @@ internal suspend fun ApplicationCall.decider(
     caller.requireAdmin()
     auditGovernance(principal, scope)
     val name = actors.resolve(principal)?.personId ?: caller.memberId.toString()
-    return Decider(caller.orgId, name)
+    return Decider(caller.orgId, name, principal)
 }
 
 /**
@@ -159,7 +159,7 @@ private suspend fun ApplicationCall.writer(
     val caller = requireCaller(dependencies.callers, scope)
     caller.requireAdmin()
     val name = dependencies.actors.resolve(principal)?.personId ?: caller.memberId.toString()
-    return Writer.Now(Decider(caller.orgId, name))
+    return Writer.Now(Decider(caller.orgId, name, principal))
 }
 
 /** Makes the write now, or holds it for the console with the path's [id] and the [body] as asked. */

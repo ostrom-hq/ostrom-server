@@ -5,9 +5,13 @@ import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceConfirmer
+import dev.ostrom.server.kernel.auth.GovernancePreview
 import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.GovernanceWrite
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -151,6 +155,19 @@ class GovernanceConfirmationsTest {
         for (kind in listOf(PrincipalKind.AGENT, PrincipalKind.SERVICE, PrincipalKind.DEVICE)) {
             assertFalse(AuthenticatedPrincipal("x", kind, GovernanceScopes.ALL).confirmsByConsole, kind.name)
         }
+    }
+
+    @Test
+    fun aChangeIsShownBeforeAndAfterThenMadeAsItsConfirmersDecision() {
+        val member = OrgPrincipal(org, Uuid.random(), OrgRole.ADMIN)
+        val confirmer = GovernanceConfirmer(principals.getValue("browser"), member)
+        val preview = GovernancePreview("Set the gate policy", JsonPrimitive("sole-approver"), JsonPrimitive("never"))
+        assertEquals("Set the gate policy", preview.summary)
+        assertEquals(JsonPrimitive("sole-approver"), preview.before)
+        assertEquals(JsonPrimitive("never"), preview.after)
+        assertEquals(PrincipalChannel.BROWSER, confirmer.principal.channel)
+        assertEquals(OrgRole.ADMIN, confirmer.member.role)
+        assertEquals(org, confirmer.member.orgId)
     }
 
     private companion object {
