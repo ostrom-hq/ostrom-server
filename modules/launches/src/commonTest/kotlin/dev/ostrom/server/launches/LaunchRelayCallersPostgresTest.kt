@@ -15,16 +15,20 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.launches.presentation.LaunchResponse
 import dev.ostrom.server.mcprelay.McpRelayModule
-import dev.ostrom.server.mcprelay.presentation.McpAssignmentRequest
+import dev.ostrom.server.mcprelay.domain.AssignMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.CreateMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.ToolPolicy
 import dev.ostrom.server.mcprelay.presentation.McpServerDto
 import dev.ostrom.server.mcprelay.presentation.McpServersPage
+import dev.ostrom.server.mcprelay.presentation.toPayload
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.secrets.SecretsModule
-import dev.ostrom.server.secrets.domain.RelayScopes
+import dev.ostrom.server.secrets.domain.Caller
+import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.sessions.SessionsModule
@@ -37,7 +41,6 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.post
-import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -100,8 +103,8 @@ class LaunchRelayCallersPostgresTest {
         single(McpRelayModule.HTTP_CLIENT) { fakeMcp }
     }
 
-    /** The owner of a new organization: their member id, the CLI's token and a console token for the relay. */
-    private class Owner(val memberId: Uuid, val cliToken: String, val consoleToken: String)
+    /** The owner of a new organization, as the relay's admin use cases see them, and the CLI's token. */
+    private class Owner(val caller: Caller, val cliToken: String)
 
     private suspend fun TestServer.owner(login: String): Owner {
         val user = koin.get<ResolveUserUseCase>()(
@@ -120,11 +123,19 @@ class LaunchRelayCallersPostgresTest {
             tokens.create(token, hasher.hash(secret))
             return secret
         }
-        return Owner(
-            member.id,
-            token(TokenKind.CLI, CLI_SCOPES),
-            token(TokenKind.PERSONAL, setOf(RelayScopes.MCP_ADMIN)),
-        )
+        return Owner(Caller(org.id, member.id, MemberRole.OWNER), token(TokenKind.CLI, CLI_SCOPES))
+    }
+
+    /**
+     * The owner declares Grafana, and assigns it to themself with [tools] unless null. Through the use cases: a console
+     * write needs a browser session (S2-52), which a test of the agent's routes does not need to sign in for.
+     */
+    private suspend fun TestServer.grafana(owner: Owner, tools: Set<String>?) {
+        val dto = McpServerDto("grafana", "https://mcp.grafana.example.com/mcp", "http")
+        val server = koin.get<CreateMcpServerUseCase>()(owner.caller, dto.toPayload(emptyMap()))
+        if (tools != null) {
+            koin.get<AssignMcpServerUseCase>()(owner.caller, server.id, owner.caller.memberId, ToolPolicy(tools), null)
+        }
     }
 
     private suspend fun TestServer.agentTokenOf(owner: Owner): String {
@@ -147,18 +158,7 @@ class LaunchRelayCallersPostgresTest {
     fun anAgentTokenListsAndReachesTheServersItsPersonIsAssigned() = serverTest(modules, overrides) { server ->
         with(server) {
             val ada = owner("ada")
-            val grafana = client.post("/api/v1/mcp/servers") {
-                bearerAuth(ada.consoleToken)
-                contentType(ContentType.Application.Json)
-                setBody(McpServerDto("grafana", "https://mcp.grafana.example.com/mcp", "http"))
-            }
-            assertEquals(HttpStatusCode.Created, grafana.status, grafana.bodyAsText())
-            val assigned = client.put("/api/v1/mcp/servers/grafana/assignments/${ada.memberId}") {
-                bearerAuth(ada.consoleToken)
-                contentType(ContentType.Application.Json)
-                setBody(McpAssignmentRequest(listOf("query_loki_logs")))
-            }
-            assertEquals(HttpStatusCode.OK, assigned.status, assigned.bodyAsText())
+            grafana(ada, setOf("query_loki_logs"))
             val agent = agentTokenOf(ada)
 
             val listed = client.get("/api/v1/mcp/servers") { bearerAuth(agent) }
@@ -189,12 +189,7 @@ class LaunchRelayCallersPostgresTest {
     fun anotherOrganizationsAgentNeitherSeesNorReachesTheServer() = serverTest(modules, overrides) { server ->
         with(server) {
             val ada = owner("ada")
-            val created = client.post("/api/v1/mcp/servers") {
-                bearerAuth(ada.consoleToken)
-                contentType(ContentType.Application.Json)
-                setBody(McpServerDto("grafana", "https://mcp.grafana.example.com/mcp", "http"))
-            }
-            assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+            grafana(ada, tools = null)
             val bob = agentTokenOf(owner("bob"))
 
             val listed = client.get("/api/v1/mcp/servers") { bearerAuth(bob) }
