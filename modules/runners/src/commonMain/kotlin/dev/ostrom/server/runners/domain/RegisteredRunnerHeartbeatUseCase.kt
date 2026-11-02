@@ -41,18 +41,16 @@ class RegisteredRunnerHeartbeatUseCaseImpl(
     override suspend fun invoke(id: Uuid, key: String): List<CloudSession> {
         val hash = tokens.hash(key)
         val stored = repository.keyOf(id)
-        val matches = constantTimeEquals(hash, stored?.keyHash ?: NO_KEY_HASH)
+        val matches = constantTimeEquals(hash, if (stored == null) NO_KEY_HASH else stored.keyHash)
         if (stored == null || !matches || !repository.touch(stored.orgId, id, hash, clock.now())) {
             throw RunnerUnauthenticatedException()
         }
         return emptyList()
     }
-
-    private companion object {
-        /** Compared with when no runner has the id: a SHA-256 hex digest no key hashes to in practice. */
-        val NO_KEY_HASH = "0".repeat(64)
-    }
 }
+
+/** Compared with when no runner has the id: a SHA-256 hex digest no key hashes to in practice. */
+private const val NO_KEY_HASH = "0000000000000000000000000000000000000000000000000000000000000000"
 
 /**
  * Compares two strings in a time that depends on their length only, never on where they first differ (the lengths of
