@@ -42,6 +42,7 @@ import kotlinx.coroutines.supervisorScope
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
+import org.koin.core.scope.Scope
 import org.koin.dsl.module
 
 /**
@@ -55,8 +56,9 @@ object SessionsModule : ServerModule {
     override val koinModule: Module = module {
         single<SessionsRepository> { PostgresSessionsRepository(get()) }
         single<GateSessions> { SessionsGateGuard(get()) }
-        single<SessionCosts> { NoSessionCosts() }
-        single<CloseSessionUseCase> { CloseSessionUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<CloseSessionUseCase> {
+            CloseSessionUseCaseImpl(get(), get(), get(), get(), sessionCosts(), get())
+        }
         single { SessionSegments(get(), get(), get()) }
         single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get()) }
         single<EndSessionUseCase> { EndSessionUseCaseImpl(get(), get()) }
@@ -96,3 +98,6 @@ object SessionsModule : ServerModule {
     /** The Koin name of the running sessions' count. */
     const val ACTIVE_SESSIONS: String = "sessions.active"
 }
+
+/** The cost the usage module measures when it is there; without it, none ([NoSessionCosts]), never the agent's. */
+internal fun Scope.sessionCosts(): SessionCosts = getOrNull<SessionCosts>() ?: NoSessionCosts()

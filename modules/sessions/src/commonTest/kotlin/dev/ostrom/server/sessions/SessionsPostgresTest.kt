@@ -17,9 +17,9 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
+import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import dev.ostrom.server.sessions.fakes.SettableClock
-import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.sessions.presentation.SessionScopes
@@ -52,6 +52,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class SessionsPostgresTest {
@@ -95,10 +96,10 @@ class SessionsPostgresTest {
             }
         }
         single<Clock> { clock }
-        // The server's measure of a session's cost (the usage module, later).
+        // The server's measure of a session's cost (the usage module binds the real one).
         single<SessionCosts> {
             object : SessionCosts {
-                override suspend fun costOf(orgId: Uuid, sessionId: String): Double = 0.42
+                override suspend fun costOf(orgId: Uuid, launchId: String?, from: Instant, to: Instant): Double = 0.42
             }
         }
     }

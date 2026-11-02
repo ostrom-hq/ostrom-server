@@ -15,7 +15,8 @@ class LaunchesApi
  * The organization's policy on launches (contract `checkAgentPolicy`).
  *
  * @property agent The agent's name in Ostrom.
- * @property dev Sent by the CLI; never read: the person is the credential's.
+ * @property dev The developer the verdict is for, by login: the caller when absent or their own; anyone else's
+ * verdict is read by an owner or an admin of the organization only.
  * @property model The model.
  */
 @Serializable
@@ -47,9 +48,10 @@ data class LaunchResponse(val launchId: String, val agentToken: String, val expi
  *
  * @property allowed Whether the agent may start.
  * @property reason Why not.
+ * @property note What a rule of the policy tells the developer, when it has something to say.
  */
 @Serializable
-data class AgentPolicyResponse(val allowed: Boolean, val reason: String? = null)
+data class AgentPolicyResponse(val allowed: Boolean, val reason: String? = null, val note: String? = null)
 
 /**
  * `POST /api/v1/cloud/runner/launch`: the launch of a cloud session, asked by its runner with the execution's runner
