@@ -16,6 +16,7 @@ import dev.ostrom.server.secrets.domain.CreateSecretUseCase
 import dev.ostrom.server.secrets.domain.FindSecretUseCase
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
 import dev.ostrom.server.secrets.domain.RotateSecretUseCase
+import kotlin.uuid.Uuid
 
 /**
  * The secrets use cases the import writes through: it owns no table, the secrets module checks and seals.
@@ -59,17 +60,40 @@ data class McpPorts(
     val putSettings: PutMcpSettingsUseCase,
 )
 
-/** Imports a shared subscription account ([SharedAccountImporter] when the sharing module is installed). */
+/** Imports shared subscription accounts ([SharedAccountImporter] when the sharing module is installed). */
 fun interface AccountImporter {
     /**
-     * Imports it, or says what it would do: a dry run makes the same reads and refuses the same accounts.
+     * Starts one run: reads the org's accounts once, then imports TeamCode's one by one.
      *
      * @param caller The admin running the import.
-     * @param account The account.
-     * @param dryRun Whether to write nothing.
-     *
-     * @return [ImportAction.CREATED], [ImportAction.UPDATED] or [ImportAction.UNCHANGED]; [ImportAction.PLANNED]
-     *   instead of a write in a dry run.
+     * @param dryRun Whether to write nothing: the run then makes the same reads and refuses the same accounts, the
+     *   earlier accounts of the same run counted as if written.
+     * @param cutover Whether this is the final run, TeamCode stopped: only then are accounts waiting for a
+     *   reconnection revived with TeamCode's tokens (testing them rotates them); otherwise they are reported
+     *   [ImportAction.REVIVE_AT_CUTOVER] and no token is touched at the provider.
      */
-    suspend fun import(caller: Caller, account: TeamCodeAccount, dryRun: Boolean): ImportAction
+    suspend fun begin(caller: Caller, dryRun: Boolean, cutover: Boolean): AccountImportRun
+}
+
+/** Records the cutover run in the audit log (the identity module's, when it is installed). */
+fun interface ImportAudit {
+    /**
+     * Records it, before it writes anything.
+     *
+     * @param caller The owner running it, as a member of the org.
+     * @param user The same person as a user: the event's actor.
+     * @param accounts How many of TeamCode's shared accounts it imports.
+     */
+    suspend fun cutover(caller: Caller, user: Uuid, accounts: Int)
+}
+
+/** One run of an [AccountImporter]. */
+fun interface AccountImportRun {
+    /**
+     * Imports the account, or says what it would do.
+     *
+     * @return [ImportAction.CREATED], [ImportAction.UPDATED], [ImportAction.UNCHANGED] or
+     *   [ImportAction.REVIVE_AT_CUTOVER]; [ImportAction.PLANNED] instead of a write in a dry run.
+     */
+    suspend fun import(account: TeamCodeAccount): ImportAction
 }

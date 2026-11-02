@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing
 
+import dev.ostrom.server.sharing.domain.AccountChangedException
 import dev.ostrom.server.sharing.domain.AccountLimits
 import dev.ostrom.server.sharing.domain.AccountNotFoundException
 import dev.ostrom.server.sharing.domain.AccountOwnedByAnotherMemberException
@@ -73,13 +74,33 @@ class SharingUseCasesTest {
     }
 
     @Test
-    fun anAccountSharedDisabledNeverServesAndSharingAgainNeverTurnsItOn() = runTest {
+    fun onlyANewOrDisconnectedAccountIsStoredOffAndSharingAgainNeverTurnsOneOn() = runTest {
         val off = share(Sharing.adminA, payload(id = "acct-off").copy(disabled = true))
         assertEquals(AccountStatus.DISABLED, off.status, "Stored off in the same write")
-        assertEquals(AccountStatus.DISABLED, share(Sharing.adminA, payload(id = "acct-off")).status)
+        assertEquals(AccountStatus.DISABLED, share(Sharing.adminA, payload(id = "acct-off")).status, "Never on again")
         val on = share(Sharing.adminA, payload())
+        val serving = share(Sharing.adminA, payload().copy(disabled = true))
+        assertEquals(AccountStatus.READY, serving.status, "Re-sharing a serving account never turns it off")
+        repository.setStatus(Sharing.orgA, on.id, AccountStatus.RECONNECT_REQUIRED)
         assertEquals(AccountStatus.DISABLED, share(Sharing.adminA, payload().copy(disabled = true)).status)
-        assertEquals(on.id, repository.list(Sharing.orgA).single { it.providerAccountId == "acct-1" }.id)
+    }
+
+    @Test
+    fun aConditionalWriteNeverOverwritesAChangeMadeSinceItsRead() = runTest {
+        assertFailsWith<AccountChangedException> { share(Sharing.adminA, payload().copy(ifVersion = 3)) }
+        assertEquals(emptyList(), repository.list(Sharing.orgA), "Nothing written")
+        val first = share(Sharing.adminA, payload().copy(ifVersion = 0))
+        assertEquals(1L, first.version)
+        assertFailsWith<AccountChangedException>("The org has it now") {
+            share.check(Sharing.adminA, payload().copy(ifVersion = 0))
+        }
+        assertEquals(2L, share(Sharing.adminA, payload(label = "Again").copy(ifVersion = 1)).version)
+        assertFailsWith<AccountChangedException> {
+            update(Sharing.adminA, first.id, UpdateAccountPayload(disabled = true, ifVersion = 1))
+        }
+        assertEquals(AccountStatus.READY, repository.get(Sharing.orgA, first.id)!!.status, "Nothing overwritten")
+        val off = update(Sharing.adminA, first.id, UpdateAccountPayload(disabled = true, ifVersion = 2))
+        assertEquals(AccountStatus.DISABLED, off.status)
     }
 
     @Test
