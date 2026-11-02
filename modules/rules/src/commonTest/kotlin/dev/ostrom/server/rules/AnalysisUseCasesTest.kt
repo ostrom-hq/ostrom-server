@@ -18,6 +18,7 @@ import dev.ostrom.server.rules.fakes.FakeAnalysisEngine
 import dev.ostrom.server.rules.fakes.FakeAnalysisRepository
 import dev.ostrom.server.rules.fakes.FakeRulesRepository
 import dev.ostrom.server.rules.fakes.FakeWorkflows
+import dev.ostrom.server.rules.fakes.RecordingAuditTrail
 import dev.ostrom.server.rules.fakes.RecordingLogger
 import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.fakes.TestClock
@@ -42,7 +43,8 @@ class AnalysisUseCasesTest {
     private val runs = FakeAnalysisRepository()
     private val engine = FakeAnalysisEngine()
     private val logger = RecordingLogger()
-    private val start = StartAnalysisUseCaseImpl(runs, engine, logger, clock)
+    private val audit = RecordingAuditTrail()
+    private val start = StartAnalysisUseCaseImpl(runs, engine, logger, clock, audit)
 
     @Test
     fun aStartedRunIsRecordedThenHandedToTheEngine() = runTest {
@@ -56,6 +58,12 @@ class AnalysisUseCasesTest {
         assertEquals(listOf(run), engine.started, "Recorded before the engine starts")
         assertEquals(run, runs.run(org, AnalysisKind.ANALYSIS))
         assertEquals(1, runs.transactions)
+        val line = audit.records.single()
+        assertEquals("rule.analysis.started", line.event)
+        assertEquals(RulesFixtures.lyes.actor, line.actor)
+        assertEquals(org, line.orgId)
+        assertEquals("analysis" to run.id, line.subjectType to line.subjectId)
+        assertEquals(mapOf("kind" to "analysis"), line.details)
     }
 
     @Test
@@ -64,6 +72,9 @@ class AnalysisUseCasesTest {
         assertFailsWith<AnalysisBusyException> { start(RulesFixtures.lyes, AnalysisKind.ANALYSIS) }
         assertEquals(AnalysisKind.REPLAY, start(RulesFixtures.lyes, AnalysisKind.REPLAY).kind)
         assertEquals(AnalysisKind.ANALYSIS, start(RulesFixtures.bob, AnalysisKind.ANALYSIS).kind, "Another org")
+        // A refused start is no start: three lines, the replay's kind and Bob's organization among them.
+        assertEquals(listOf("analysis", "replay", "analysis"), audit.records.map { it.details.getValue("kind") })
+        assertEquals(RulesFixtures.orgB, audit.records.last().orgId)
     }
 
     @Test
@@ -126,7 +137,7 @@ class AnalysisUseCasesTest {
 
     @Test
     fun withoutAnEngineEveryRunFailsWithItsReason() = runTest {
-        val none = StartAnalysisUseCaseImpl(runs, NoAnalysisEngine(), logger, clock)
+        val none = StartAnalysisUseCaseImpl(runs, NoAnalysisEngine(), logger, clock, audit)
         val failed = none(RulesFixtures.lyes, AnalysisKind.ANALYSIS)
         assertEquals("engine", failed.failure?.stage)
         assertEquals("No analysis engine runs on this server yet.", failed.failure?.reason)

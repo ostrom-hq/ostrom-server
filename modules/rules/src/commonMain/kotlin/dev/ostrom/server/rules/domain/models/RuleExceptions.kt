@@ -14,8 +14,8 @@ class RuleNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Rule not fou
  */
 class InvalidRuleException(reason: String) : OstromException(ErrorKind.INVALID_REQUEST, reason)
 
-/** Only a person signed in to the console decides a rule or a policy (CONVENTIONS 16.2, SECURITY-AUDIT S2-04). */
+/** Only an owner or admin, in the console or with `ostrom login --admin`, decides a rule or a policy (S2-04, S2-52). */
 class OnlyConsoleDecidesException : OstromException(
     ErrorKind.FORBIDDEN,
-    "Only a person signed in to the console writes or decides rules and policies.",
+    "Only an owner or admin, in the console or with ostrom login --admin, writes or decides rules and policies.",
 )

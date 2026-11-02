@@ -5,6 +5,7 @@ import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCase
 import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.AuditLog
+import dev.ostrom.server.identity.domain.AuditLogGovernanceAudit
 import dev.ostrom.server.identity.domain.AuditLogImpl
 import dev.ostrom.server.identity.domain.AuditRepository
 import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCase
@@ -139,6 +140,7 @@ import dev.ostrom.server.identity.presentation.orgAuditRoutes
 import dev.ostrom.server.identity.presentation.sessionRoutes
 import dev.ostrom.server.identity.presentation.signInRoutes
 import dev.ostrom.server.kernel.audit.OrgAuditTrail
+import dev.ostrom.server.kernel.auth.GovernanceAudit
 import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -182,6 +184,7 @@ object IdentityModule : ServerModule {
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
+        single<GovernanceAudit> { AuditLogGovernanceAudit(get()) }
         single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }
         single<ListOrgAuditUseCase> { ListOrgAuditUseCaseImpl(get(), get()) }
         single { OrgAuditRoutesDependencies(get(), get()) }

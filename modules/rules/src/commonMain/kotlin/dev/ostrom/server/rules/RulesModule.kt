@@ -3,6 +3,7 @@ package dev.ostrom.server.rules
 
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.infrastructure.DefaultCompilerSources
+import dev.ostrom.server.gates.domain.services.GateCheckNeeds
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
@@ -45,6 +46,7 @@ import dev.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import dev.ostrom.server.rules.infrastructure.RepositoryAnalysisEngine
 import dev.ostrom.server.rules.infrastructure.ReceiptsDecisionSigner
 import dev.ostrom.server.rules.infrastructure.RulesCompilerSources
+import dev.ostrom.server.rules.infrastructure.RulesGateCheckNeeds
 import dev.ostrom.server.rules.infrastructure.RulesGatePolicies
 import dev.ostrom.server.rules.infrastructure.RulesMigrations
 import dev.ostrom.server.rules.presentation.AnalysisRoutesDependencies
@@ -78,19 +80,20 @@ object RulesModule : ServerModule {
         single<SignDecisionsUseCase> { SignDecisionsUseCaseImpl(get(), get(), get()) }
         single<ListRulesUseCase> { ListRulesUseCaseImpl(get()) }
         single<GetRuleUseCase> { GetRuleUseCaseImpl(get()) }
-        single<CreateRuleUseCase> { CreateRuleUseCaseImpl(get(), get(), get(), get()) }
-        single<UpdateRuleUseCase> { UpdateRuleUseCaseImpl(get(), get(), get(), get()) }
-        single<BulkUpdateRulesUseCase> { BulkUpdateRulesUseCaseImpl(get(), get(), get(), get()) }
-        single<DeleteRuleUseCase> { DeleteRuleUseCaseImpl(get(), get(), get(), get()) }
+        single<CreateRuleUseCase> { CreateRuleUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<UpdateRuleUseCase> { UpdateRuleUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<BulkUpdateRulesUseCase> { BulkUpdateRulesUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<DeleteRuleUseCase> { DeleteRuleUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ListDecisionsUseCase> { ListDecisionsUseCaseImpl(get(), get()) }
         single<GetGatePolicyUseCase> { GetGatePolicyUseCaseImpl(get()) }
         single<SetGatePolicyUseCase> { SetGatePolicyUseCaseImpl(get(), get(), get()) }
         single<GatePolicies> { RulesGatePolicies(get()) }
+        single<GateCheckNeeds> { RulesGateCheckNeeds(get()) }
         // The compiler binds its default sources only when none is bound: these replace them, repositories and
         // settings still read from the compiler's configuration.
         single<CompilerSources> { RulesCompilerSources(get(), DefaultCompilerSources(get())) }
         single<AnalysisRepository> { PostgresAnalysisRepository(get()) }
-        single<StartAnalysisUseCase> { StartAnalysisUseCaseImpl(get(), get(), get(), get()) }
+        single<StartAnalysisUseCase> { StartAnalysisUseCaseImpl(get(), get(), get(), get(), get()) }
         single<GetAnalysisStateUseCase> { GetAnalysisStateUseCaseImpl(get(), get(), get()) }
         single<GetReplayUseCase> { GetReplayUseCaseImpl(get()) }
         single<AnalyzeOrganizationUseCase> { AnalyzeOrganizationUseCaseImpl(get(), get(), get(), get(), get()) }
