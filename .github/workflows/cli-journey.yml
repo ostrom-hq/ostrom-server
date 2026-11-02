@@ -5,9 +5,12 @@ name: CLI journey
 # never `edge`, which a slower run of an older commit may still hold. The CLI is built here from ostrom-cli (its
 # linuxX64 release binary, with ostrom-core from the commit it pins). It runs in this repository because its token
 # reads its own GHCR packages, which ostrom-cli's cannot yet (the CLI's own journey is skipped there, "package Actions
-# access"). On demand, and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull request only when
-# the pull request changes this file.
+# access"). On demand, every night (main's CLI against main's image: step 5.8 holds the hook's latency, a local decision
+# under 20 ms and a round trip to Ostrom under 75 ms at p95), and, off the org's one-`ci`-job rule on purpose (as
+# demo-stack.yml), on a pull request only when the pull request changes this file.
 on:
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       server_image:
