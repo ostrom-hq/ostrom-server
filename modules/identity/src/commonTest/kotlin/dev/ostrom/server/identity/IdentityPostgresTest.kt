@@ -32,6 +32,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -131,9 +132,10 @@ class IdentityPostgresTest {
         val sessions = server.koin.get<WebSessionsRepository>()
         val ada = user().also { users.create(it, github("1"), null, now) }
         val bob = user("Bob").also { users.create(it, github("2"), null, now) }
-        val older = WebSession(Uuid.random(), ada.id, now, now + 30.days, now, null)
+        // Three distinct last uses, so the order says which was used last (a tie would fall to the random ids).
+        val older = WebSession(Uuid.random(), ada.id, now, now + 30.days, now + 2.hours, null)
         val newer = older.copy(id = Uuid.random(), lastSeenAt = now + 1.days)
-        val short = older.copy(id = Uuid.random(), expiresAt = now + 1.days)
+        val short = older.copy(id = Uuid.random(), expiresAt = now + 1.days, lastSeenAt = now)
         val bobs = older.copy(id = Uuid.random(), userId = bob.id)
         listOf(older, newer, short, bobs).forEachIndexed { index, session -> sessions.create(session, "hash-$index") }
 
