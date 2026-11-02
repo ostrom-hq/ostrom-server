@@ -94,13 +94,14 @@ class GitHubIntegrationModuleRegistrationTest {
     fun theDirectoryIsRefreshedInTheBackgroundOnceTheServerStarts() = runTest {
         val directory = MemoryGitHubDirectoryRepository()
         val api = FakeGitHubDirectoryApi()
+        val logger = RecordingLogger()
         val app = koinApplication {
             allowOverride(true)
             modules(
                 GitHubIntegrationModule.koinModule,
                 module {
                     single<Clock> { SettableClock() }
-                    single<Logger> { RecordingLogger() }
+                    single<Logger> { logger }
                     single<GitHubRepository> {
                         MemoryGitHubRepository().apply { installations += GitHubInstallation(ORG, 42, "acme") }
                     }
@@ -114,7 +115,7 @@ class GitHubIntegrationModuleRegistrationTest {
         GitHubIntegrationModule.start(backgroundScope, app.koin)
         assertTrue(sync.ensure(ORG))
         testScheduler.advanceUntilIdle()
-        assertEquals(1, api.reads, "Read by the worker the module started")
+        assertEquals(1, api.reads, "Read by the worker the module started; logged: ${logger.lines}")
         sync.stop()
         app.close()
     }
