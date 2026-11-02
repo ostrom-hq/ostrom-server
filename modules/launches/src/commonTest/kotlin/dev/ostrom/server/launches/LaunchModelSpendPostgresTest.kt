@@ -254,4 +254,39 @@ class LaunchModelSpendPostgresTest {
             assertEquals("0", holds.first().get("n").asString(), "Every hold is settled by its call's record")
         }
     }
+
+    @Test
+    fun theSpendTheProviderBilledBlocksTheNextCall() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val bob = owner("bob")
+            // A personal limit of 5 000 µ$: one call of the fake Anthropic bills 7 200.
+            koin.get<BudgetsRepository>().putMemberLimit(bob.orgId, bob.memberId, 5_000, now)
+            val launch = send(bob.cliToken, "/api/v1/launches", """{"repo":"acme/api","agent":"claude-code"}""")
+                .body<LaunchResponse>()
+            val session = """{"id":"s-3","agent":"claude-code","repo":"acme/api","launchId":"${launch.launchId}"}"""
+            assertEquals(HttpStatusCode.OK, send(launch.agentToken, "/api/v1/sessions", session).status)
+
+            // Admitted on its reserve (200 µ$), billed 7 200 by the provider: the real spend passes the limit.
+            val billed = infer(launch.agentToken, maxTokens = 1)
+            assertEquals(HttpStatusCode.OK, billed.status, billed.bodyAsText())
+            val budget = client.get("/api/v1/budgets/me") { bearerAuth(bob.readerToken) }.body<MyBudgetResponse>()
+            assertEquals(7_200L to 5_000L, budget.spentMicros to budget.limitMicros, "The budget reads the real spend")
+            assertEquals(0L, budget.remainingMicros)
+
+            // The next call is refused on what was billed, not on what was held.
+            val refused = infer(launch.agentToken, maxTokens = 1)
+            assertEquals(HttpStatusCode.TooManyRequests, refused.status, refused.bodyAsText())
+            val (type, message) = errorOf(refused)
+            assertEquals("rate_limit_error", type)
+            val reached = "Monthly budget reached: your limit of \$0.005 is spent; it resets on "
+            assertTrue(message.startsWith(reached), message)
+            assertTrue(refused.headers["retry-after"]!!.toLong() > 0, "Retry when the month resets")
+            val ledger = koin.get<UsageRepository>().list(bob.orgId, null, null, 10)
+            assertEquals(
+                listOf("budget_exhausted" to 0L, "ok" to 7_200L),
+                ledger.map { it.outcome to it.costMicros }.sortedBy { it.first },
+                "The refused call reached no provider and costs nothing",
+            )
+        }
+    }
 }
