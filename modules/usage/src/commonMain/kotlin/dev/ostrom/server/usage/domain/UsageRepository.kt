@@ -57,6 +57,27 @@ interface UsageRepository {
     suspend fun insert(orgId: Uuid, events: List<UsageEvent>)
 
     /**
+     * Writes a model call's event and drops its budget hold ([holdWithin]), in one transaction: what the call cost
+     * replaces what it held, with no instant where both or neither count.
+     *
+     * @param event The call's event; its id is the hold's call.
+     */
+    suspend fun settle(event: UsageEvent)
+
+    /**
+     * Admits a call against the limits and writes its hold, in one transaction of the org's, on one connection, under
+     * a lock of the org: the calls of an org are admitted one at a time, each seeing every hold written before it.
+     * Expired holds of the org are dropped there.
+     *
+     * @param hold The call and its reserve; a call asking again replaces its hold.
+     * @param limits The limits that apply; only their sums are read.
+     * @param window The month counted, now, and when the new hold expires.
+     *
+     * @return The answer of [SpendLimits.admit]; the hold is written only when [Admission.Admitted].
+     */
+    suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission
+
+    /**
      * Sums the cost of the org, or of one member, since a time.
      *
      * @param orgId The org.

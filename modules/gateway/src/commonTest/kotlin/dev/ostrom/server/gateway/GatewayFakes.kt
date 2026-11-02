@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gateway
 
+import dev.ostrom.server.gateway.domain.BudgetCheck
 import dev.ostrom.server.gateway.domain.AllowAllSpend
 import dev.ostrom.server.gateway.domain.ByteSink
 import dev.ostrom.server.gateway.domain.ByteSource
@@ -14,6 +15,7 @@ import dev.ostrom.server.gateway.domain.InferenceUpstream
 import dev.ostrom.server.gateway.domain.InstanceProviderKeys
 import dev.ostrom.server.gateway.domain.ModelPolicy
 import dev.ostrom.server.gateway.domain.ProviderEndpoints
+import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.SpendGuard
 import dev.ostrom.server.gateway.domain.UpstreamAnswer
 import dev.ostrom.server.gateway.domain.UpstreamRequest
@@ -197,7 +199,14 @@ fun planner(
     secrets: FakeSecrets = FakeSecrets(),
     keys: InstanceProviderKeys = InstanceProviderKeys(),
     spend: SpendGuard = AllowAllSpend,
-) = InferencePlanner(settings, shared, secrets, spend, keys, UpstreamRequests(Gw.endpoints))
+) = InferencePlanner(
+    settings,
+    shared,
+    secrets,
+    BudgetCheck(spend, PriceTable()),
+    keys,
+    UpstreamRequests(Gw.endpoints),
+)
 
 /** What the agent received. */
 class RecordingResponder : InferenceResponder {
