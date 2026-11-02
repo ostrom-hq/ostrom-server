@@ -2,9 +2,13 @@ name: App journey
 
 # The mobile app's flows against the real server (ostrom-app .maestro/real/, demo/PARCOURS.md 6.7) on a PUBLISHED image
 # of this server: by default `sha-<7>` of main's head, never `edge`, which a slower run of an older commit may still
-# hold. The app is built here from ostrom-app (a release APK for an x86_64 emulator, signed in with a personal token the
-# job makes for a new person of a new organization) and its Maestro flows run on an Android emulator of this same Linux
-# runner: the server runs on the host, the emulator reaches it at 10.0.2.2. It runs in this repository because its
+# hold. The job prepares the server through its own routes (ostrom-app scripts/real-server-session.sh): the phone's
+# person signs in with GitHub (the demo stack's fake GitHub, ostrom-helm compose/demo/fake-github.mjs), owns the
+# organization and approves pushes to main; another member asks two; the phone's session comes from the app's own
+# sign-in routes (PKCE, `POST /auth/mobile/token`). The app is built here from ostrom-app with that session (a release
+# APK for an x86_64 emulator), its Maestro flows say yes to one request and no to the other on an Android emulator of
+# this same Linux runner (the server runs on the host, the emulator reaches it at 10.0.2.2), and the job then checks the
+# gates and their receipts through the API. It runs in this repository because its
 # token reads its own GHCR packages, which ostrom-app's cannot yet (as cli-journey.yml and console-journey.yml). On
 # demand, and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull request only when the pull
 # request changes this file.
@@ -61,6 +65,25 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_APP }}
           path: app
           persist-credentials: false
+      # The demo stack's fake GitHub: the OAuth web flow the server's GitHub sign-in uses, without any real account.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          sparse-checkout: compose/demo/fake-github.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Start the fake GitHub
+        env:
+          PORT: "8080"
+          FAKE_GITHUB_CLIENT_ID: Iv1.ostromappe2e
+          # Not a secret: the fake's own value, known to it and the server of this job only.
+          FAKE_GITHUB_CLIENT_SECRET: app-e2e-client-secret-of-the-fake-github
+        run: |
+          nohup node helm/compose/demo/fake-github.mjs > "$RUNNER_TEMP/fake-github.log" 2>&1 &
+          for _ in $(seq 1 30); do curl -fsS 127.0.0.1:8080/health >/dev/null 2>&1 && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/fake-github.log"; exit 1
       - name: The server image (sha-<7> of main's head unless named)
         id: server
         env:
@@ -100,25 +123,30 @@ jobs:
           OSTROM_STRIPE_SECRET_KEY=sk_test_app_e2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_app_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
+          OSTROM_GITHUB_CLIENT_ID=Iv1.ostromappe2e
+          OSTROM_GITHUB_CLIENT_SECRET=app-e2e-client-secret-of-the-fake-github
+          OSTROM_GITHUB_WEB_URL=http://127.0.0.1:8080
+          OSTROM_GITHUB_API_URL=http://127.0.0.1:8080/api
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
-      - name: A person, an organization and a token on the server
+      - name: Two requests waiting for the phone's person, and the phone's session
         id: session
-        # The script masks the token and writes token= and login= to $GITHUB_OUTPUT itself.
-        run: app/scripts/real-server-session.sh http://127.0.0.1:4600 "$RUNNER_TEMP/ostrom-mail"
-      - name: The session gave a token and a login
+        # The script masks the secrets and writes its outputs to $GITHUB_OUTPUT itself.
+        run: app/scripts/real-server-session.sh http://127.0.0.1:4600 "$RUNNER_TEMP/ostrom-mail" http://127.0.0.1:8080
+      - name: The session gave all its outputs
         env:
-          TOKEN: ${{ steps.session.outputs.token }}
-          LOGIN: ${{ steps.session.outputs.login }}
+          OUTPUTS: ${{ toJSON(steps.session.outputs) }}
         run: |
-          if [ -z "$TOKEN" ] || [ -z "$LOGIN" ]; then
-            echo "::error::The session step gave no token or no login: the app would stop at launch"
-            exit 1
-          fi
+          for name in token unlock_key login yes_approval no_approval yes_gate no_gate asker_token; do
+            if [ -z "$(jq -r --arg n "$name" '.[$n] // ""' <<< "$OUTPUTS")" ]; then
+              echo "::error::The session step gave no $name: the app or the checks would fail later, unclearly"
+              exit 1
+            fi
+          done
       - name: The member the app signs in as, seen with and without Ostrom-Org
         # The app reads no role from /auth/me (it gates the yes on the approval's `you.canApprove`, which the gates
         # resolve for the only organization without the header, server#64); this keeps the contract's case in the
@@ -173,6 +201,7 @@ jobs:
           EXPO_PUBLIC_OSTROM_E2E_SERVER: http://10.0.2.2:4600
           EXPO_PUBLIC_OSTROM_E2E_TOKEN: ${{ steps.session.outputs.token }}
           EXPO_PUBLIC_OSTROM_E2E_LOGIN: ${{ steps.session.outputs.login }}
+          EXPO_PUBLIC_OSTROM_E2E_UNLOCK_KEY: ${{ steps.session.outputs.unlock_key }}
         run: |
           npx expo prebuild --platform android --no-install
           sed -i 's/<application /<application android:usesCleartextTraffic="true" /' android/app/src/main/AndroidManifest.xml
@@ -188,6 +217,8 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           OSTROM_E2E_LOGIN: ${{ steps.session.outputs.login }}
+          OSTROM_E2E_YES: ${{ steps.session.outputs.yes_approval }}
+          OSTROM_E2E_NO: ${{ steps.session.outputs.no_approval }}
         with:
           working-directory: app
           api-level: 35
@@ -197,10 +228,34 @@ jobs:
           disk-size: 4096M
           script: |
             adb install android/app/build/outputs/apk/release/app-release.apk
-            scripts/run-maestro.sh .maestro/real -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN"
+            scripts/run-maestro.sh .maestro/real -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN" -e OSTROM_E2E_YES="$OSTROM_E2E_YES" -e OSTROM_E2E_NO="$OSTROM_E2E_NO"
+      - name: The server took the yes and the no, and signed both receipts
+        # Read by the asker's token (gates:read, receipts:read): what the phone sent, as the server recorded it.
+        env:
+          TOKEN: ${{ steps.session.outputs.asker_token }}
+          YES_GATE: ${{ steps.session.outputs.yes_gate }}
+          NO_GATE: ${{ steps.session.outputs.no_gate }}
+        run: |
+          auth=(-H "accept: application/json" -H "authorization: Bearer $TOKEN")
+          api=http://127.0.0.1:4600/api/v1
+          check() {
+            local gate="$1" wanted="$2" status receipt verified
+            status="$(curl -fsS "${auth[@]}" "$api/gates/$gate" | jq -r '.gate.status')"
+            [ "$status" = "$wanted" ] || { echo "::error::Gate $gate is $status, not $wanted"; return 1; }
+            receipt="$(curl -fsS "${auth[@]}" "$api/receipts?subjectKind=gate&subjectId=$gate" | jq -er '.items[0].id')" \
+              || { echo "::error::No receipt for gate $gate"; return 1; }
+            verified="$(curl -fsS "${auth[@]}" "$api/receipts/$receipt/verify")"
+            [ "$(jq -r '.ok' <<< "$verified")" = "true" ] || { echo "::error::Receipt $receipt does not verify: $verified"; return 1; }
+            echo "Gate $gate: $status; receipt $receipt verifies ($(jq -r '.kid' <<< "$verified"))"
+          }
+          check "$YES_GATE" approved
+          check "$NO_GATE" rejected
       - name: Server logs
         if: always()
-        run: docker logs ostrom-server 2>&1 | tail -n 300 || true
+        run: |
+          docker logs ostrom-server 2>&1 | tail -n 300 || true
+          echo "--- fake GitHub"
+          tail -n 50 "$RUNNER_TEMP/fake-github.log" || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
