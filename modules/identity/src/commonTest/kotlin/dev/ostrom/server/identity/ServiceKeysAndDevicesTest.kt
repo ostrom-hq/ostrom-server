@@ -85,7 +85,7 @@ class ServiceKeysAndDevicesTest {
 
     @Test
     fun aKeyIsListedWithItsLastUseAndWithoutAnExpiryItDoesNotHave() = runTest {
-        val key = create(owner, ada, "runner", listOf("cloud:write"), null).token.copy(lastUsedAt = clock.now)
+        val key = create(owner, ada, "runner", listOf("sessions:write"), null).token.copy(lastUsedAt = clock.now)
         val answer = key.toServiceKeyResponse()
         assertNull(answer.expiresAt)
         assertEquals(clock.now.toString(), answer.lastUsedAt)
@@ -95,10 +95,10 @@ class ServiceKeysAndDevicesTest {
 
     @Test
     fun anAdminListsAndDeletesOnlyItsOrganizationsLiveKeys() = runTest {
-        val forever = create(admin, ada, "runner", listOf("cloud:write"), null).token
+        val forever = create(admin, ada, "runner", listOf("sessions:write"), null).token
         assertNull(forever.expiresAt)
-        val short = create(admin, ada, "short", listOf("cloud:write"), 1.days).token
-        val other = create(adminOfB, ada, "b", listOf("cloud:write"), null).token
+        val short = create(admin, ada, "short", listOf("sessions:write"), 1.days).token
+        val other = create(adminOfB, ada, "b", listOf("sessions:write"), null).token
         assertEquals(setOf(forever.id, short.id), list(admin).map { it.id }.toSet())
         assertEquals(listOf(other.id), list(adminOfB).map { it.id })
 
@@ -143,7 +143,8 @@ class ServiceKeysAndDevicesTest {
     fun eachCallOfAKeyIsAnEventOfItsOrganizationInTheKeysName() = runTest {
         ServiceKeyAuditImpl(audit).record(ServiceKeyCall("key-1", orgA, "reportCheck", "/api/v1/checks"))
         val entry = audit.entries.single()
-        assertEquals(AuditEntry(orgA, null, "service_key.used", "service_key", "key-1"), entry.copy(details = emptyMap()))
+        val expected = AuditEntry(orgA, null, "service_key.used", "service_key", "key-1")
+        assertEquals(expected, entry.copy(details = emptyMap()))
         assertEquals(mapOf("operation" to "reportCheck", "path" to "/api/v1/checks"), entry.details)
     }
 

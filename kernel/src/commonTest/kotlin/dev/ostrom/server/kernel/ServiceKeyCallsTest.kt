@@ -10,14 +10,17 @@ import dev.ostrom.server.kernel.auth.ServiceKeyCall
 import dev.ostrom.server.kernel.auth.admitServiceKey
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.kernel.module.serverKoin
 import kotlinx.coroutines.test.runTest
+import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
@@ -63,6 +66,17 @@ class ServiceKeyCallsTest {
             key(setOf("rules:read"), orgId = "nope").admitServiceKey(audit, "rules:read", "listRules", "/r")
         }
         assertTrue(calls.isEmpty())
+    }
+
+    private class ProbeModule(override val koinModule: Module) : ServerModule {
+        override val name: String = "identity"
+    }
+
+    @Test
+    fun theAuditTheIdentityModuleBindsIsKept() {
+        val identity = ProbeModule(module { single<ServiceKeyAudit> { audit } })
+        val bound = serverKoin(module { single<Clock> { Clock.System } }, listOf(identity)).get<ServiceKeyAudit>()
+        assertSame(audit, bound)
     }
 
     @Test
