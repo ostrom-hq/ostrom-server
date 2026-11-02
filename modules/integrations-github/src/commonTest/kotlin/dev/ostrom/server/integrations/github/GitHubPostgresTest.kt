@@ -45,6 +45,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -295,10 +296,12 @@ class GitHubPostgresTest {
             Triple("user:a:owner", "globex", HttpStatusCode.NotFound),
             Triple("user:a:owner", "nope", HttpStatusCode.NotFound),
         )
-        for ((token, org, status) in refusals) {
+        val bodies = refusals.map { (token, org, status) ->
             val start = server.get(token, "/api/v1/github/app/install/start?org=$org")
             assertEquals(status, start.status, "$token ?org=$org")
+            start.bodyAsText()
         }
+        assertEquals(bodies[1], bodies[2], "A stranger and an unknown organization read the same answer")
         assertEquals(INSTALLED, server.install("admin:b:ops", 43))
     }
 

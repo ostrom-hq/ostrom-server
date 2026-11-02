@@ -10,8 +10,8 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.usecases.GateUse
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.OrganizationNotFoundException
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
@@ -87,7 +87,7 @@ private suspend fun RoutingContext.respondUse(dependencies: GatesRoutesDependenc
 private suspend fun GateActorResolver.actorOf(principal: AuthenticatedPrincipal, accepted: Set<String>): GateActor {
     principal.requireAnyScope(accepted)
     return resolve(principal)
-        ?: throw OrganizationNotFoundException()
+        ?: throw principal.outsideOrganization()
 }
 
 private fun String.toUuid(): Uuid = Uuid.parseOrNull(this) ?: throw InvalidGateRequestException("Malformed id.")

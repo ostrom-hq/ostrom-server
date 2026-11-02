@@ -6,7 +6,7 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.OrgRole
-import dev.ostrom.server.kernel.auth.OrganizationNotFoundException
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -20,7 +20,7 @@ internal suspend fun CompilerRoutesDependencies.actorOf(call: ApplicationCall, a
     val principal = call.requirePrincipal()
     principal.requireAnyScope(accepted)
     return actors.resolve(principal)
-        ?: throw OrganizationNotFoundException()
+        ?: throw principal.outsideOrganization()
 }
 
 internal suspend fun CompilerRoutesDependencies.personOf(call: ApplicationCall, accepted: Set<String>): GateActor =

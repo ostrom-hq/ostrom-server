@@ -446,6 +446,11 @@ class CompilerPostgresTest {
         assertNull(repository.pin(orgA, "acme-api"))
         assertNull(repository.saveWorkflow(orgA, "w", release(), 3, Authorship("lead", NOW)), "no such version")
         assertFalse(repository.deleteWorkflow(orgA, "w"))
+        // A creation never replaces: the second one of an id finds it taken.
+        assertEquals(1, repository.saveWorkflow(orgA, "w", release(), null, Authorship("lead", NOW))?.version)
+        assertNull(repository.saveWorkflow(orgA, "w", release(), null, Authorship("ops", NOW)), "the id is taken")
+        assertEquals("lead", repository.workflow(orgA, "w")?.updatedBy)
+        assertTrue(repository.deleteWorkflow(orgA, "w"))
     }
 
     @Test

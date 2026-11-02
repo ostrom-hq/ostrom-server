@@ -93,6 +93,23 @@ suspend fun ApplicationCall.requireOrgPrincipal(resolver: PrincipalOrgResolver, 
  */
 class OrganizationNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 
+/**
+ * A credential that is not a person's (an agent token whose launch is over, a device, a service key) acts in no
+ * organization here: 403. It never names an organization, so the answer tells nothing about one.
+ */
+class NoOrganizationCredentialException :
+    OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+
+/**
+ * The refusal of a caller that resolves to no member of the organization its request acts in: a person's credential
+ * names an organization they are not in, or none, and gets [OrganizationNotFoundException] (404); any other credential
+ * gets [NoOrganizationCredentialException] (403), which says why.
+ *
+ * @return The exception to throw.
+ */
+fun AuthenticatedPrincipal.outsideOrganization(): OstromException =
+    if (kind == PrincipalKind.USER) OrganizationNotFoundException() else NoOrganizationCredentialException()
+
 /** Nothing names the organization (path, [ORG_HEADER], bound credential) and the caller belongs to several: 409. */
 class OrgRequiredException :
     OstromException(ErrorKind.ORG_REQUIRED, "You belong to several organizations: name one in the $ORG_HEADER header.")

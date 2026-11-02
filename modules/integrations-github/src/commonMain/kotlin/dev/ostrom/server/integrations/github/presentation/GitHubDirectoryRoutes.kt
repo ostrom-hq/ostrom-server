@@ -9,11 +9,10 @@ import dev.ostrom.server.integrations.github.domain.GitHubTeam
 import dev.ostrom.server.integrations.github.domain.NamePage
 import dev.ostrom.server.kernel.auth.OrganizationNotFoundException
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireScope
-import dev.ostrom.server.kernel.errors.ErrorKind
-import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.resources.Resource
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.resources.get
@@ -116,8 +115,7 @@ fun Route.gitHubDirectoryRoutes(dependencies: GitHubDirectoryRoutesDependencies)
         }
         get<OrgTeamsPath> { params ->
             call.requireScope(ORGS_READ)
-            val orgId = orgs.orgId(params.org)
-                ?: throw OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
+            val orgId = orgs.orgId(params.org) ?: throw OrganizationNotFoundException()
             val member = call.requireOrgPrincipal(members, orgId)
             val page = teams(member.orgId, params.after, params.limit)
             call.respond(TeamsResponse(page.items.map { it.toTeamResponse() }, page.next))
@@ -129,7 +127,7 @@ private suspend fun GitHubDirectoryRoutesDependencies.actorOf(call: ApplicationC
     val principal = call.requirePrincipal()
     principal.requireAnyScope(accepted)
     return actors.resolve(principal)
-        ?: throw OrganizationNotFoundException()
+        ?: throw principal.outsideOrganization()
 }
 
 private const val ORGS_READ = "orgs:read"

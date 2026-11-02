@@ -10,6 +10,8 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.OrganizationNotFoundException
 import dev.ostrom.server.kernel.auth.TOKEN_AUTH
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
+import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -133,7 +135,7 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
             // A named organization the caller is not in, or that does not exist, is not found (404, as the contract
             // says); a member whose role is too low is refused (403).
             val orgId = if (params.org == null) actor.orgId else orgs.orgId(params.org)
-            val member = orgId?.let { members.resolve(principal, it) } ?: throw OrganizationNotFoundException()
+            val member = call.requireOrgPrincipal(members, orgId ?: throw OrganizationNotFoundException())
             if (member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) {
                 throw OstromException(ErrorKind.FORBIDDEN, "Only an owner or an admin installs the GitHub App.")
             }
@@ -146,7 +148,7 @@ private suspend fun GitHubRoutesDependencies.actorOf(call: ApplicationCall, acce
     val principal = call.requirePrincipal()
     principal.requireAnyScope(accepted)
     return actors.resolve(principal)
-        ?: throw OrganizationNotFoundException()
+        ?: throw principal.outsideOrganization()
 }
 
 // The session of a browser, or the credential of a token: what finishes an install must be what started it.
