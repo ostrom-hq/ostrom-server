@@ -48,11 +48,11 @@ class IdentityLauncherResolverTest {
 
     @Test
     fun aPersonsRoleIsReadNowInTheLaunchsOrganization() = runTest {
-        assertEquals(OrgRole.MEMBER, resolver.role(ORG, ADA.userId))
+        assertEquals(OrgRole.MEMBER, resolver.member(ORG, ADA.userId)?.role)
         assertEquals(listOf<Uuid?>(ORG), asked)
         assertEquals(ORG.toString(), seen.single().orgId, "As a credential bound to that organization")
         assertEquals(PrincipalKind.USER to ADA.userId.toString(), seen.single().kind to seen.single().subjectId)
-        assertNull(resolver.role(ORG, outsider), "No longer a member")
+        assertNull(resolver.member(ORG, outsider), "No longer a member")
     }
 
     @Test
