@@ -76,9 +76,11 @@ interface RelayInferenceUseCase {
  * @param upstream Sends to the providers.
  * @param prices Prices the usage.
  * @param usage The usage ledger.
- * @param observer Traces.
+ * @param observer Metrics and Langfuse, once a call is recorded.
  * @param clock The time.
+ * @param tracer The span of each call, from before its first try to its record.
  */
+@Suppress("LongParameterList") // Six collaborators and the tracer, named at the composition root.
 class RelayInferenceUseCaseImpl(
     private val planner: InferencePlanner,
     private val upstream: InferenceUpstream,
@@ -86,9 +88,10 @@ class RelayInferenceUseCaseImpl(
     private val usage: ModelUsageSink,
     private val observer: ModelCallObserver,
     private val clock: Clock,
+    private val tracer: ModelCallTracer = NoModelCallTracer,
 ) : RelayInferenceUseCase {
     override suspend fun invoke(caller: Caller, call: InferenceCall, responder: InferenceResponder) {
-        val exchange = Exchange(caller, call, responder, clock.now(), planner.configOf(caller), Uuid.random())
+        val exchange = Exchange(caller, call, responder, planner.configOf(caller), Uuid.random(), tracer.start())
         var tries = 1
         var done = exchange.attempt(tries)
         while (done == null) {
@@ -98,15 +101,20 @@ class RelayInferenceUseCaseImpl(
         record(done)
     }
 
-    /** One call of an agent, over its tries; [id] names it in the ledger and holds its budget across the tries. */
+    /**
+     * One call of an agent, over its tries; [id] names it in the ledger and holds its budget across the tries, [trace]
+     * spans them all.
+     */
     private inner class Exchange(
         val caller: Caller,
         val call: InferenceCall,
         val responder: InferenceResponder,
-        val started: Instant,
         val org: GatewayOrgConfig,
         val id: Uuid,
+        val trace: ModelCallTrace,
     ) {
+        val started: Instant = clock.now()
+
         /** One try: the finished call, or null to try again on another account. */
         suspend fun attempt(tries: Int): CallState? = when (val plan = plan()) {
             is InferencePlan.Refused -> refuse(plan)
@@ -285,10 +293,11 @@ class RelayInferenceUseCaseImpl(
         withContext(NonCancellable) {
             deliver { usage.record(record) }
             deliver { observer.observe(record) }
+            deliver { state.exchange.trace.end(record) }
         }
     }
 
-    /** Runs [block]; the ledger or the traces being down must not fail a call already answered. */
+    /** Runs [block]; the ledger, the metrics or the traces being down must not fail a call already answered. */
     private suspend fun deliver(block: suspend () -> Unit) {
         try {
             block()

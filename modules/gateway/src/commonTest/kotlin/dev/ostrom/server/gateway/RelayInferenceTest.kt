@@ -7,6 +7,8 @@ import dev.ostrom.server.gateway.domain.InferenceProvider
 import dev.ostrom.server.gateway.domain.InstanceProviderKeys
 import dev.ostrom.server.gateway.domain.ModelCallObserver
 import dev.ostrom.server.gateway.domain.ModelCallRecord
+import dev.ostrom.server.gateway.domain.ModelCallTrace
+import dev.ostrom.server.gateway.domain.ModelCallTracer
 import dev.ostrom.server.gateway.domain.ModelUsageSink
 import dev.ostrom.server.gateway.domain.NoModelCallObserver
 import dev.ostrom.server.gateway.domain.NoModelUsageSink
@@ -14,6 +16,7 @@ import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
 import dev.ostrom.server.gateway.domain.SpendDecision
+import dev.ostrom.server.gateway.domain.SpendGuard
 import dev.ostrom.server.gateway.domain.SpendRequest
 import dev.ostrom.server.gateway.domain.TokenUsage
 import dev.ostrom.server.gateway.domain.UpstreamAnswer
@@ -370,5 +373,35 @@ class RelayInferenceTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun eachCallIsTracedOnceOverItsTriesAndItsTraceEndsWithItsRecord() = runTest {
+        repeat(2) { accounts.share(AccountProvider.CLAUDE, "t$it", clock) }
+        val started = mutableListOf<Unit>()
+        val ended = mutableListOf<ModelCallRecord>()
+        val tracer = ModelCallTracer {
+            started += Unit
+            ModelCallTrace { ended += it }
+        }
+        var spend = SpendGuard { SpendDecision.Allowed }
+        val relay = RelayInferenceUseCaseImpl(
+            planner(settings, shared, spend = { spend.check(it) }),
+            FakeUpstream(UpstreamAnswer(429, emptyMap(), source()), eventAnswer()),
+            PriceTable(),
+            { records += it },
+            { },
+            clock,
+            tracer,
+        )
+        relay(Gw.memberA, call(), RecordingResponder())
+        assertEquals(1, started.size, "One trace for the two tries")
+        assertEquals(records, ended)
+        assertEquals(listOf(200), ended.map { it.status })
+
+        spend = SpendGuard { throw CancellationException("agent gone") }
+        assertFailsWith<CancellationException> { relay(Gw.memberA, call(), RecordingResponder()) }
+        assertEquals(2, started.size)
+        assertEquals(records, ended, "A call abandoned while planned ends its trace too")
     }
 }
