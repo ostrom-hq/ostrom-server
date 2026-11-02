@@ -22,10 +22,11 @@ import kotlinx.serialization.json.JsonTransformingSerializer
  * @param serializer The class's generated serializer.
  * @param paths The fields to write as `null` when null, in the [withNulls] form.
  */
-open class NullsKept<T : Any>(serializer: KSerializer<T>, private vararg val paths: String) :
+open class NullsKept<T : Any>(serializer: KSerializer<T>, vararg paths: String) :
     JsonTransformingSerializer<T>(serializer) {
+    private val paths: List<String> = paths.asList()
 
-    override fun transformSerialize(element: JsonElement): JsonElement = element.withNulls(*paths)
+    override fun transformSerialize(element: JsonElement): JsonElement = element.withNullsAt(paths)
 }
 
 /**
@@ -40,7 +41,9 @@ open class NullsKept<T : Any>(serializer: KSerializer<T>, private vararg val pat
  *
  * @return The element with the fields.
  */
-fun JsonElement.withNulls(vararg paths: String): JsonElement =
+fun JsonElement.withNulls(vararg paths: String): JsonElement = withNullsAt(paths.asList())
+
+private fun JsonElement.withNullsAt(paths: List<String>): JsonElement =
     paths.fold(this) { element, path -> element.withNull(path.split('.')) }
 
 private fun JsonElement.withNull(path: List<String>): JsonElement {

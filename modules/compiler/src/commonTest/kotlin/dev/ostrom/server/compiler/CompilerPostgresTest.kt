@@ -178,7 +178,8 @@ class CompilerPostgresTest {
 
     @Test
     fun anEndingEdgeAndAnOrganizationsPackageAnswerTheContractsRequiredNulls() = compilerTest { server ->
-        val ending = JsonObject(mapOf("from" to JsonPrimitive("g")))
+        // The contract's `to` is required and nullable: a client writes it, null for an edge that ends the workflow.
+        val ending = JsonObject(mapOf("from" to JsonPrimitive("g"), "to" to JsonNull))
         val edges = JsonArray(release().getValue("edges").jsonArray + ending)
         val doc = JsonObject(release() + ("edges" to edges))
         val created = server.call("user:a:lead", "/api/v1/workflows", "POST", doc).body<JsonObject>()
