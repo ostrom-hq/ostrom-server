@@ -16,6 +16,7 @@ import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.presentation.GateActionDto
 import dev.ostrom.server.rules.presentation.GatePolicyDto
 import dev.ostrom.server.rules.presentation.NewRuleRequest
+import dev.ostrom.server.rules.presentation.RuleGateCheckDto
 import dev.ostrom.server.rules.presentation.RuleGateDto
 import dev.ostrom.server.rules.presentation.RulesApi
 import dev.ostrom.server.rules.presentation.toDto
@@ -104,6 +105,7 @@ class RulesMappersTest {
                 listOf(GateActionDto("push-main", "Push", listOf("p"), listOf("r"))),
                 listOf("lyes"),
                 "x",
+                listOf(RuleGateCheckDto("tests", attested = true)),
             ),
         ).toNewRule()
         assertEquals(RuleStrength.RECOMMENDED, gated.strength)
@@ -121,7 +123,8 @@ class RulesMappersTest {
         val full = patch(
             """{"statement":"s","status":"edited","strength":"recommended","reviewBy":"2027-01-01","scope":["a"],""" +
                 """"group":"g","why":"w","output":"check","gate":{"actions":[{"class":"push-main","label":"Push",""" +
-                """"patterns":["p"],"repos":["r"]}],"approvers":["lyes"],"reason":"x"}}""",
+                """"patterns":["p"],"repos":["r"]}],"approvers":["lyes"],"reason":"x",""" +
+                """"checks":[{"check":"tests","attested":true}]}}""",
         )
         assertEquals("s", full.statement)
         assertEquals(RuleStatus.EDITED, full.status)
