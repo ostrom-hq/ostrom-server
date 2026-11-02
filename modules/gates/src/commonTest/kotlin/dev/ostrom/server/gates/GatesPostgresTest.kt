@@ -372,6 +372,8 @@ class GatesPostgresTest {
         val gates = list(orgA, session)
         assertEquals(listOf(first.gate.id, second.gate.id), gates.map { it.id.toString() })
         assertEquals(listOf("rev-b"), gates.first().decisions.map { it.by })
+        // The other session took the yes of the same push (one yes, one action): the gate is linked to it too.
+        assertEquals(listOf(first.gate.id), list(orgA, "other-session").map { it.id.toString() })
         assertEquals(emptyList(), list(orgB, session), "Another organization's session has none of them")
     }
 
