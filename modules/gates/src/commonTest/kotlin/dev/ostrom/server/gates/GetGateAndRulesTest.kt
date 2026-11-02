@@ -14,13 +14,13 @@ import dev.ostrom.server.gates.domain.models.NotYourGateException
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
-import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.OTHER_ORG
 import dev.ostrom.server.gates.fakes.OTHER_SESSION
 import dev.ostrom.server.gates.fakes.SHA_A
 import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.user
+import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
