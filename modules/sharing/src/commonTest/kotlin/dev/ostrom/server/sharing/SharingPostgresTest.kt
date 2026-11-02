@@ -12,6 +12,7 @@ import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
+import dev.ostrom.server.sharing.domain.AccountChangedException
 import dev.ostrom.server.sharing.domain.AccountCredentials
 import dev.ostrom.server.sharing.domain.AccountOwnedByAnotherMemberException
 import dev.ostrom.server.sharing.domain.AccountProvider
@@ -143,8 +144,8 @@ class SharingPostgresTest {
             assertFalse("secret" in created.bodyAsText(), "Tokens never come back")
             val account = created.body<SharedAccountResponse>()
             assertTrue(account.mine)
-            val stored = driver.fetchAll("SELECT envelope FROM sharing_accounts").getOrThrow().single()
-                .get("envelope").asString()
+            val stored = driver.fetchInOrg(Sharing.orgA, Statement.create("SELECT envelope FROM sharing_accounts"))
+                .getOrThrow().single().get("envelope").asString()
             assertFalse("secret" in stored, "Sealed at rest")
 
             val lease = koin.get<SharedAccountPool>()
@@ -318,6 +319,38 @@ class SharingPostgresTest {
             }
         }
     }
+
+    @Test
+    fun sharesEditsAndStatusesBumpTheVersionAndAConditionalWriteNeverOverwritesALaterOne() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                val id = Uuid.parse(shareAs("member-a").body<SharedAccountResponse>().id)
+                val repository = koin.get<SharedAccountRepository>()
+                val read = repository.get(Sharing.orgA, id)!!
+                assertEquals(1L, read.version)
+                repository.setCooldown(Sharing.orgA, id, Clock.System.now())
+                repository.putEnvelope(Sharing.orgA, id, repository.envelope(Sharing.orgA, id)!!)
+                assertEquals(1L, repository.get(Sharing.orgA, id)!!.version, "The pool's routine writes do not count")
+                repository.setStatus(Sharing.orgA, id, AccountStatus.READY)
+                assertNull(
+                    repository.update(read.copy(label = "Stale"), expectedVersion = 1),
+                    "Never over a later write",
+                )
+                assertEquals(3L, repository.update(read.copy(label = "Fresh"), expectedVersion = 2)!!.version)
+                val envelope = repository.envelope(Sharing.orgA, id)!!
+                assertFailsWith<AccountChangedException> { repository.upsert(read, envelope, expectedVersion = 2) }
+                assertFailsWith<AccountChangedException>("Not new any more") {
+                    repository.upsert(read, envelope, expectedVersion = 0)
+                }
+                assertEquals("Fresh", repository.get(Sharing.orgA, id)!!.label, "Nothing overwritten")
+                assertEquals(4L, repository.upsert(read, envelope, expectedVersion = 3).version)
+                assertTrue(repository.delete(Sharing.orgA, id))
+                assertFailsWith<AccountChangedException>("Deleted meanwhile: never inserted again") {
+                    repository.upsert(read, envelope, expectedVersion = 4)
+                }
+                assertNull(repository.get(Sharing.orgA, id))
+            }
+        }
 
     private suspend fun TestServer.patchAs(token: String, path: String, request: UpdateAccountRequest) =
         client.patch(path) {

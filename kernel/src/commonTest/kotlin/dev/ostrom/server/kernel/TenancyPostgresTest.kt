@@ -39,13 +39,13 @@ class TenancyPostgresTest {
         ).forEach { owner.execute(it).getOrThrow() }
     }
 
-    private fun asServingRole(block: suspend (owner: Driver, serving: Driver) -> Unit) = runTest {
+    private fun asServingRole(block: suspend (superuser: Driver, serving: Driver) -> Unit) = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
             // One connection: every query of the test runs on the connection the previous one used.
             database.withRole(poolSize = 1) { role, serving ->
-                createNotes(database.driver, role)
-                block(database.driver, serving)
+                createNotes(database.owner, role)
+                block(database.superuser, serving)
             }
         } finally {
             database.close()
@@ -64,12 +64,12 @@ class TenancyPostgresTest {
         fetchAll("SELECT count(*) AS n FROM notes").getOrThrow().single().get("n").asLong()
 
     @Test
-    fun anOrganizationSeesAndWritesOnlyItsOwnRows() = asServingRole { owner, serving ->
+    fun anOrganizationSeesAndWritesOnlyItsOwnRows() = asServingRole { superuser, serving ->
         serving.withOrganization(alpha) { it.insert(alpha, "alpha's") }
         serving.withOrganization(beta) { it.insert(beta, "beta's") }
         assertEquals(1L, serving.withOrganization(alpha) { it.count() })
         assertEquals(1L, serving.withOrganization(beta) { it.count() })
-        assertEquals(2L, owner.count(), "The owner, a superuser in tests, sees both")
+        assertEquals(2L, superuser.count(), "The superuser sees both")
         assertFailsWith<SQLError>("A row of another organization is refused") {
             serving.withOrganization(alpha) { it.insert(beta, "planted") }
         }
@@ -130,30 +130,33 @@ class TenancyPostgresTest {
     fun aSuperuserOrBypassingRoleIsRefusedAtStart() = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            // The test database's own user is a superuser (CI's postgres service).
-            assertFailsWith<UnsafeDatabaseRoleException> { database.driver.requireRowLevelSecurity() }
+            // The configured user is a superuser (CI's postgres service); the owner owns the tables.
+            assertFailsWith<UnsafeDatabaseRoleException> { database.superuser.requireRowLevelSecurity() }
+            database.owner.execute("CREATE TABLE owned_by_owner (id int)").getOrThrow()
+            assertFailsWith<UnsafeDatabaseRoleException> { database.owner.requireRowLevelSecurity() }
+            database.driver.requireRowLevelSecurity()
             database.withRole(bypassRowLevelSecurity = true) { _, bypassing ->
                 val error = assertFailsWith<UnsafeDatabaseRoleException> { bypassing.requireRowLevelSecurity() }
                 assertNull(error.cause)
             }
             database.withRole { role, owning ->
                 // A serving role that owns a table could disable its row-level security.
-                database.driver.execute("CREATE TABLE owned (id int)").getOrThrow()
-                database.driver.execute("ALTER TABLE owned OWNER TO $role").getOrThrow()
+                database.superuser.execute("CREATE TABLE owned (id int)").getOrThrow()
+                database.superuser.execute("ALTER TABLE owned OWNER TO $role").getOrThrow()
                 assertFailsWith<UnsafeDatabaseRoleException> { owning.requireRowLevelSecurity() }
             }
             database.withRole { role, member ->
                 // Without inheriting the owner's rights, a member can still SET ROLE to it.
                 val owner = "${role}_owner"
-                database.driver.execute("CREATE ROLE $owner NOLOGIN").getOrThrow()
+                database.superuser.execute("CREATE ROLE $owner NOLOGIN").getOrThrow()
                 try {
-                    database.driver.execute("CREATE TABLE owned_by_group (id int)").getOrThrow()
-                    database.driver.execute("ALTER TABLE owned_by_group OWNER TO $owner").getOrThrow()
-                    database.driver.execute("GRANT $owner TO $role WITH INHERIT FALSE").getOrThrow()
+                    database.superuser.execute("CREATE TABLE owned_by_group (id int)").getOrThrow()
+                    database.superuser.execute("ALTER TABLE owned_by_group OWNER TO $owner").getOrThrow()
+                    database.superuser.execute("GRANT $owner TO $role WITH INHERIT FALSE").getOrThrow()
                     assertFailsWith<UnsafeDatabaseRoleException> { member.requireRowLevelSecurity() }
                 } finally {
-                    database.driver.execute("DROP TABLE IF EXISTS owned_by_group").getOrThrow()
-                    database.driver.execute("DROP ROLE $owner").getOrThrow()
+                    database.superuser.execute("DROP TABLE IF EXISTS owned_by_group").getOrThrow()
+                    database.superuser.execute("DROP ROLE $owner").getOrThrow()
                 }
             }
         } finally {

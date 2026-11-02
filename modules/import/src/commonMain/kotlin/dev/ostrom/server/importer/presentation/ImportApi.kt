@@ -11,10 +11,12 @@ import kotlinx.serialization.Serializable
  * ostrom-core).
  *
  * @property dryRun Reports the plan without writing anything.
+ * @property cutover The final run, once TeamCode is stopped (owners only, recorded in the audit log): it also revives
+ *   the shared accounts waiting for a reconnection, testing TeamCode's tokens first.
  */
 @Serializable
 @Resource("/api/v1/import/teamcode")
-class TeamCodeImportApi(val dryRun: Boolean = false)
+class TeamCodeImportApi(val dryRun: Boolean = false, val cutover: Boolean = false)
 
 /** The scope a console token needs to import (a browser session has every user scope). */
 const val IMPORT_SCOPE: String = "import:write"
@@ -158,7 +160,8 @@ data class TeamCodeImportRequest(
  *
  * @property kind `setting`, `secret`, `server`, `policy`, `assignment` or `account`.
  * @property name Its name.
- * @property action `planned`, `created`, `updated`, `unchanged` or `skipped`.
+ * @property action `planned`, `created`, `updated`, `unchanged`, `skipped` or `revive_at_cutover` (a shared account
+ *   left waiting for a reconnection until the cutover run).
  * @property reason Why it was skipped.
  */
 @Serializable
@@ -172,6 +175,7 @@ data class ImportItemDto(val kind: String, val name: String, val action: String,
  * @property updated How many were updated.
  * @property unchanged How many were already as in TeamCode.
  * @property skipped How many were not imported.
+ * @property reviveAtCutover How many shared accounts wait for a reconnection until the cutover run.
  */
 @Serializable
 data class ImportReportDto(
@@ -180,4 +184,5 @@ data class ImportReportDto(
     val updated: Int,
     val unchanged: Int,
     val skipped: Int,
+    val reviveAtCutover: Int,
 )
