@@ -43,7 +43,7 @@ class YesLifetimeTest {
         val bench = GateBench()
         val view = approved(bench)
         bench.clock.now += Gate.YES_LIFETIME - 1.seconds
-        assertEquals(view.gate.id, bench.open(bench.pushRequest()).gate.id, "Asking again joins the live yes")
+        // Asking again would take the yes (second audit H1): the reservation below is the use that still serves.
         assertEquals(GateStatus.RESERVED, bench.use(agent(), view.gate.id, GateUse.RESERVE).status)
         bench.clock.now += 30.minutes
         assertEquals(GateStatus.CONSUMED, bench.use(agent(), view.gate.id, GateUse.CONSUME).status)

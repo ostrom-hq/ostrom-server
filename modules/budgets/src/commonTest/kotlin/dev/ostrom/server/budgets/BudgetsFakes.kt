@@ -10,6 +10,7 @@ import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.MemberBudget
 import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -45,6 +46,8 @@ object TestCallers {
         "stranger" to null,
     )
 
+    private val browserScopes = setOf(RelayScopes.ALL_USER)
+
     /** The scopes and kind of each token: a browser session has every user scope (`user:*`). */
     private val principals = mapOf(
         "agent-a" to (PrincipalKind.SERVICE to setOf(RelayScopes.AGENT_SESSION)),
@@ -68,10 +71,14 @@ object TestCallers {
         single<Clock> { clock }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
-                    if (token !in byToken) return null
-                    val (kind, scopes) = principals[token] ?: (PrincipalKind.USER to setOf(RelayScopes.ALL_USER))
-                    return AuthenticatedPrincipal(token, kind, scopes)
+                override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when {
+                    token !in byToken -> null
+                    // A token without its own kind is a browser session, with every user scope.
+                    token !in principals ->
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, channel = BROWSER)
+                    else -> principals.getValue(token).let { (kind, scopes) ->
+                        AuthenticatedPrincipal(token, kind, scopes)
+                    }
                 }
             }
         }

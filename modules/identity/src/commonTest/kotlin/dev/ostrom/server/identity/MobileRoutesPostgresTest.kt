@@ -9,13 +9,13 @@ import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.fakes.FakeOAuthProvider
 import dev.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import dev.ostrom.server.identity.presentation.MOBILE_OAUTH_STATE_COOKIE
+import dev.ostrom.server.identity.presentation.MeResponse
 import dev.ostrom.server.identity.presentation.MobileTokenRequest
 import dev.ostrom.server.identity.presentation.MobileTokenResponse
 import dev.ostrom.server.identity.presentation.MobileUnlockRequest
 import dev.ostrom.server.identity.presentation.MobileUnlockResponse
 import dev.ostrom.server.identity.presentation.NotificationPreferencesBody
 import dev.ostrom.server.identity.presentation.OAUTH_STATE_COOKIE
-import dev.ostrom.server.identity.presentation.ProfileResponse
 import dev.ostrom.server.identity.presentation.QuietHoursBody
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
@@ -134,7 +134,8 @@ class MobileRoutesPostgresTest {
         assertNotNull(token.expiresAt)
 
         val me = phone.get("/api/v1/auth/me") { bearerAuth(token.token) }
-        assertEquals("Ada", me.body<ProfileResponse>().displayName)
+        // The phone reads the contract's Me (#92), the caller as the console sees it.
+        assertEquals(token.user.login, me.body<MeResponse>().dev.login)
 
         val refused = phone.post("/api/v1/auth/mobile/unlock") {
             bearerAuth(token.token)

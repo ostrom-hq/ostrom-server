@@ -13,6 +13,7 @@ import dev.ostrom.server.gateway.domain.ModelCallObserver
 import dev.ostrom.server.gateway.domain.ModelUsageSink
 import dev.ostrom.server.gateway.domain.NoModelCallObserver
 import dev.ostrom.server.gateway.domain.NoModelUsageSink
+import dev.ostrom.server.gateway.domain.PolicyModelAccess
 import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.PutGatewaySettingsUseCase
 import dev.ostrom.server.gateway.domain.PutGatewaySettingsUseCaseImpl
@@ -25,8 +26,10 @@ import dev.ostrom.server.gateway.domain.UpstreamRequests
 import dev.ostrom.server.gateway.infrastructure.GatewayMigrations
 import dev.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
 import dev.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
+import dev.ostrom.server.gateway.infrastructure.MeteredModelCallObserver
 import dev.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import dev.ostrom.server.gateway.presentation.gatewayRoutes
+import dev.ostrom.server.kernel.auth.ModelAccess
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
@@ -39,12 +42,14 @@ import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The gateway module: agents send their model calls to Ostrom; the gateway serves them with the org's shared
  * subscription accounts or its provider keys, streams the answer back untouched, and records usage. Budgets, the usage
  * ledger and traces are ports ([SpendGuard], [ModelUsageSink], [ModelCallObserver]) bound by the modules that own
- * them; unbound, every call is allowed, and nothing is recorded or traced.
+ * them; unbound, every call is allowed, and nothing is recorded or traced. It binds [ModelAccess] with the org's model
+ * policy, which a launch reads before it starts.
  */
 object GatewayModule : ServerModule {
     override val name: String = "gateway"
@@ -53,7 +58,9 @@ object GatewayModule : ServerModule {
     val HTTP_CLIENT = named("gatewayHttpClient")
 
     private const val CONNECT_TIMEOUT_MS = 10_000L
-    private const val SOCKET_TIMEOUT_MS = 300_000L
+
+    /** How long a provider may stay silent: the socket timeout of engines that apply it, and the gateway's own cut. */
+    private const val SILENCE_MS = 300_000L
 
     override val koinModule: Module = module {
         single { GatewayConfig.from(get<ConfigSource>()) }
@@ -63,12 +70,12 @@ object GatewayModule : ServerModule {
                 expectSuccess = false
                 install(HttpTimeout) {
                     connectTimeoutMillis = CONNECT_TIMEOUT_MS
-                    socketTimeoutMillis = SOCKET_TIMEOUT_MS
+                    socketTimeoutMillis = SILENCE_MS
                 }
             }
         }
         single<GatewaySettingsRepository> { GatewaySettingsRepositoryImpl(get()) }
-        single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT)) }
+        single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT), SILENCE_MS.milliseconds) }
         single {
             val config = get<GatewayConfig>()
             InferencePlanner(
@@ -86,13 +93,14 @@ object GatewayModule : ServerModule {
                 upstream = get(),
                 prices = PriceTable(),
                 usage = getOrNull<ModelUsageSink>() ?: NoModelUsageSink,
-                observer = getOrNull<ModelCallObserver>() ?: NoModelCallObserver,
+                observer = MeteredModelCallObserver(get(), getOrNull<ModelCallObserver>() ?: NoModelCallObserver),
                 clock = get(),
             )
         }
         single<GetGatewaySettingsUseCase> { GetGatewaySettingsUseCaseImpl(get()) }
         single<PutGatewaySettingsUseCase> { PutGatewaySettingsUseCaseImpl(get()) }
         single<GetModelPolicyUseCase> { GetModelPolicyUseCaseImpl(get()) }
+        single<ModelAccess> { PolicyModelAccess(get()) }
         single<PutModelPolicyUseCase> { PutModelPolicyUseCaseImpl(get()) }
         single {
             GatewayRoutesDependencies(

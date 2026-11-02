@@ -53,7 +53,7 @@ object SessionsModule : ServerModule {
         single<GateSessions> { SessionsGateGuard(get()) }
         single<SessionCosts> { NoSessionCosts() }
         single<CloseSessionUseCase> { CloseSessionUseCaseImpl(get(), get(), get(), get(), get(), get()) }
-        single { SessionSegments(get(), get()) }
+        single { SessionSegments(get(), get(), get()) }
         single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get()) }
         single<EndSessionUseCase> { EndSessionUseCaseImpl(get(), get()) }
         single<SessionAliveUseCase> { SessionAliveUseCaseImpl(get(), get()) }

@@ -29,6 +29,7 @@ import dev.ostrom.server.automations.presentation.AnswerWaitRequest
 import dev.ostrom.server.automations.presentation.CreateWaitRequest
 import dev.ostrom.server.automations.presentation.WaitResponse
 import dev.ostrom.server.automations.presentation.WaitsResponse
+import dev.ostrom.server.kernel.http.ApiError
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -173,6 +174,10 @@ class WaitsPostgresTest {
             val approve = AnswerWaitRequest("approve")
             assertEquals(HttpStatusCode.Forbidden, client.answer("writer", wait.id, approve).status)
             assertEquals(HttpStatusCode.Forbidden, client.answer("davekey", wait.id, approve).status)
+            // S2-52: a personal token holding waits:write is still not a person answering.
+            val byToken = client.answer("alicekey", wait.id, approve)
+            assertEquals(HttpStatusCode.Forbidden, byToken.status)
+            assertEquals("forbidden", byToken.body<ApiError>().error.type)
             assertEquals(HttpStatusCode.BadRequest, client.answer("alice", wait.id, AnswerWaitRequest("reject")).status)
             val values = mapOf("feedback" to JsonPrimitive("Go"))
             val answered = client.answer("alice", wait.id, AnswerWaitRequest("approve", values))
@@ -181,7 +186,7 @@ class WaitsPostgresTest {
             assertEquals("resolved", resolved.status)
             assertEquals("Go", resolved.answer?.values?.get("feedback")?.let { (it as JsonPrimitive).content })
             assertEquals(ALICE.toString(), resolved.answer?.author)
-            assertEquals(resolved, client.answer("alice", wait.id, AnswerWaitRequest("approve", values)).body())
+            assertEquals(resolved, client.answer("aliceapp", wait.id, AnswerWaitRequest("approve", values)).body())
             assertEquals(HttpStatusCode.Conflict, client.answer("dave", wait.id, AnswerWaitRequest("approve")).status)
 
             val other = client.ask("bob", CreateWaitRequest(question)).body<WaitResponse>()

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.presentation
 
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -40,9 +42,6 @@ import kotlin.uuid.Uuid
 import io.ktor.server.routing.delete as routeDelete
 import io.ktor.server.routing.get as routeGet
 import io.ktor.server.routing.post as routePost
-
-/** The largest MCP message an agent may send. */
-const val MAX_MCP_REQUEST_BYTES: Long = 1024 * 1024
 
 /**
  * The relay routes, in the org of the caller's token: administration under `/api/v1/mcp` (servers addressed by name,
@@ -185,11 +184,15 @@ private fun Route.endpointRoutes(dependencies: McpRelayRoutesDependencies) = wit
             if (version != null && version !in RelayMcpMessageUseCaseImpl.PROTOCOL_VERSIONS) {
                 throw OstromException(ErrorKind.INVALID_REQUEST, "Unsupported MCP-Protocol-Version.")
             }
-            val caller = call.requireCaller(callers, RelayScopes.AGENT_SESSION, RelayScopes.MCP_USE)
-            val bytes = call.receiveChannel().readRemaining(MAX_MCP_REQUEST_BYTES + 1).readByteArray()
-            if (bytes.size > MAX_MCP_REQUEST_BYTES) {
-                throw OstromException(ErrorKind.PAYLOAD_TOO_LARGE, "The MCP message exceeds 1 MiB.")
-            }
+            // Made for programs (S2-52, declared): an agent's session or a member's CLI token calls the relay.
+            val caller = call.requireCaller(
+                callers,
+                RelayScopes.AGENT_SESSION,
+                RelayScopes.MCP_USE,
+                writers = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.AGENT, PrincipalKind.SERVICE),
+            )
+            // The kernel caps the message at 1 MiB (S2-46), chunked or not.
+            val bytes = call.receiveChannel().readRemaining().readByteArray()
             val message = try {
                 Json.parseToJsonElement(bytes.decodeToString())
             } catch (_: SerializationException) {

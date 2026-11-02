@@ -207,6 +207,37 @@ class OpenGateUseCaseTest {
     }
 
     @Test
+    fun aYesCoversOneRunOfItsActionAndTheNextRunAsksAgain() = runTest {
+        val bench = GateBench()
+        val first = bench.open(bench.pushRequest())
+        bench.answer(first, "rev-b")
+        // The GitHub check shares the yes of a merge with the hook: it reads it, never takes it.
+        val check = bench.open(bench.pushRequest().copy(via = AskedVia.CI))
+        assertEquals(GateStatus.APPROVED, check.gate.status)
+        assertEquals(GateStatus.APPROVED, bench.repository.gates.getValue(first.gate.id).status)
+
+        val run = bench.open(bench.pushRequest())
+        assertEquals(first.gate.id, run.gate.id)
+        assertEquals(GateStatus.APPROVED, run.gate.status, "the run that takes the yes is told it may go")
+        assertEquals(GateStatus.CONSUMED, bench.repository.gates.getValue(first.gate.id).status)
+        val again = bench.open(bench.pushRequest())
+        assertNotEquals(first.gate.id, again.gate.id, "second audit H1: one yes, one run")
+        assertEquals(GateStatus.PENDING, again.gate.status)
+    }
+
+    @Test
+    fun aYesGoneBeforeItIsTakenAsksAnew() = runTest {
+        val bench = GateBench()
+        val first = bench.open(bench.pushRequest())
+        bench.answer(first, "rev-b")
+        bench.repository.vanishOnLock = first.gate.id
+        val again = bench.open(bench.pushRequest())
+
+        assertNotEquals(first.gate.id, again.gate.id)
+        assertEquals(GateStatus.PENDING, again.gate.status)
+    }
+
+    @Test
     fun joiningNeverRewritesWhatAnotherTransactionCommitted() = runTest {
         val bench = GateBench()
         val first = bench.open(bench.pushRequest())

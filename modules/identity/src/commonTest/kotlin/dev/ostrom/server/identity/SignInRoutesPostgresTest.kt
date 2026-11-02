@@ -15,7 +15,8 @@ import dev.ostrom.server.identity.fakes.FakeOAuthProvider
 import dev.ostrom.server.identity.fakes.RecordingMailSender
 import dev.ostrom.server.identity.presentation.MagicLinkRequest
 import dev.ostrom.server.identity.presentation.OAUTH_STATE_COOKIE
-import dev.ostrom.server.identity.presentation.ProfileResponse
+import dev.ostrom.server.identity.presentation.AccountResponse
+import dev.ostrom.server.identity.presentation.MeResponse
 import dev.ostrom.server.identity.presentation.ProvidersResponse
 import dev.ostrom.server.identity.presentation.SignedInResponse
 import dev.ostrom.server.identity.presentation.VerifyMagicLinkRequest
@@ -126,9 +127,9 @@ class SignInRoutesPostgresTest {
         assertEquals(listOf("Lax", "Lax"), listOf(sessionCookie, csrfCookie).map { it.extensions["SameSite"] })
         assertEquals(listOf("/", "/"), listOf(sessionCookie.path, csrfCookie.path))
         val session = sessionCookie.value
-        val profile = browser.get("/api/v1/auth/me") {
+        val profile = browser.get("/api/v1/auth/me/account") {
             header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session")
-        }.body<ProfileResponse>()
+        }.body<AccountResponse>()
         assertEquals("Ada", profile.displayName)
 
         // Google proves the same verified e-mail: same account, one more way in.
@@ -140,9 +141,9 @@ class SignInRoutesPostgresTest {
         }
         assertEquals("http://localhost:5173/", googleCallback.headers[HttpHeaders.Location])
         val second = assertNotNull(googleCallback.cookie(SESSION_COOKIE)).value
-        val merged = browser.get("/api/v1/auth/me") {
+        val merged = browser.get("/api/v1/auth/me/account") {
             header(HttpHeaders.Cookie, "$SESSION_COOKIE=$second")
-        }.body<ProfileResponse>()
+        }.body<AccountResponse>()
         assertEquals(profile.id, merged.id)
         assertEquals(listOf("github", "google"), merged.providers)
     }
@@ -226,11 +227,15 @@ class SignInRoutesPostgresTest {
         assertFalse(secret in verified.bodyAsText(), "No session in the body")
         assertEquals("/welcome", signedIn.redirect)
         val session = assertNotNull(verified.cookie(SESSION_COOKIE)).value
-        val profile = server.client.get("/api/v1/auth/me") {
+        val profile = server.client.get("/api/v1/auth/me/account") {
             header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session")
-        }.body<ProfileResponse>()
+        }.body<AccountResponse>()
         assertEquals("ada@example.com", profile.primaryEmail)
-        assertEquals(signedIn.csrfToken, profile.csrfToken)
+        val me = server.client.get("/api/v1/auth/me") {
+            header(HttpHeaders.Cookie, "$SESSION_COOKIE=$session")
+        }.body<MeResponse>()
+        assertEquals(signedIn.csrfToken, me.csrfToken)
+        assertEquals("email", me.dev.via, "Signed in by an e-mail link only")
         assertEquals(signedIn.csrfToken, assertNotNull(verified.cookie(CSRF_COOKIE)).value)
         val logout = server.client.post("/api/v1/auth/logout") { browserSession(session, signedIn.csrfToken) }
         assertEquals(HttpStatusCode.NoContent, logout.status)

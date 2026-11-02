@@ -51,6 +51,16 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingApprovals)
             call.respond(approval(actor, params.id.toUuid()).toApproval())
         }
+        get<ApprovalsApi.Queue> {
+            val principal = call.requirePrincipal()
+            val actor = actors.actorOf(principal, GateScopes.readingApprovals)
+            call.respond(queue(actor, principal.toViewer()).toQueue())
+        }
+        get<ApprovalsApi.Id.View> { params ->
+            val principal = call.requirePrincipal()
+            val actor = actors.actorOf(principal, GateScopes.readingApprovals)
+            call.respond(view(actor, principal.toViewer(), params.parent.id.toUuid()).toViewResponse())
+        }
         post<ApprovalsApi.Id.Answer> { params ->
             val principal = call.requirePrincipal()
             principal.requireAnswering()

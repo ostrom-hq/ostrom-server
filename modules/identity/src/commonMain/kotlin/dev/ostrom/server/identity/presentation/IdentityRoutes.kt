@@ -3,6 +3,7 @@ package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.DEVICE_POLL_INTERVAL
 import dev.ostrom.server.identity.domain.DevicePollResult
+import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import dev.ostrom.server.identity.domain.SessionRequiredException
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.TokenNotFoundException
@@ -81,7 +82,14 @@ private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with
         val cookie = call.request.cookies[config.sessionCookiePrefix + SESSION_COOKIE]
         val session = cookie?.takeIf { principal.isBrowserSession }
         val csrf = session?.let { hasher.csrfToken(it) }
-        call.respond(getProfile(principal.userId()).toProfileResponse(csrf))
+        // With `Ostrom-Org`, the member and organization of that organization; an id that is not a membership is
+        // ignored, never a 404 or a 409 (`/me` is how the console learns the caller's organizations).
+        val current = principal.namedOrg?.let { orgResolver.currentOrganization(principal) }
+        call.respond(getProfile(principal.userId()).toMeResponse(principal.scopes, csrf, current))
+    }
+    get<MeApi.Account> {
+        val principal = call.requireScope("profile:read")
+        call.respond(getProfile(principal.userId()).toAccountResponse())
     }
     get<MeApi.Audit> { params ->
         val principal = call.requireScope("profile:read")
@@ -113,6 +121,10 @@ private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with
 
 /** Personal and CLI tokens, managed from a browser session only. */
 private fun Route.tokenRoutes(dependencies: IdentityRoutesDependencies) = with(dependencies) {
+    get<TokensApi.Scopes> {
+        call.requireBrowserSession()
+        call.respond(TokenScopesResponse(PERSONAL_TOKEN_SCOPES.map { it.toTokenScopeResponse() }))
+    }
     get<TokensApi> {
         val principal = call.requireBrowserSession()
         call.respond(TokensResponse(listTokens(principal.userId()).map { it.toTokenResponse() }))
