@@ -16,6 +16,7 @@ import kotlin.uuid.Uuid
  *   `user:<id>`), so that one GitHub organization, one company domain or one person has a single
  *   free team; null once it pays (BILLING releases it) or is deleted.
  * @property createdAt When it was created.
+ * @property timeZone Its IANA time zone (`Europe/Paris`), [DEFAULT_TIME_ZONE] until an owner or admin sets it.
  */
 data class Org(
     val id: Uuid,
@@ -24,10 +25,29 @@ data class Org(
     val githubOrgId: Long?,
     val freeClaim: String?,
     val createdAt: Instant,
+    val timeZone: String = DEFAULT_TIME_ZONE,
 ) {
     /** Its picture: the linked GitHub organization's avatar, or empty when it is not linked. */
     val avatarUrl: String get() = githubOrgId?.let { "https://avatars.githubusercontent.com/u/$it" }.orEmpty()
 }
+
+/**
+ * What an owner or admin changes in an organization's settings; a null field stays as it is.
+ *
+ * @property name The new name.
+ * @property timeZone The new IANA time zone.
+ * @property slug The short name, accepted only unchanged: it never changes.
+ */
+data class OrgChange(val name: String? = null, val timeZone: String? = null, val slug: String? = null)
+
+/**
+ * What one pass over the deleted organizations did.
+ *
+ * @property settled The deletions every module was told of.
+ * @property purged The organizations erased for good.
+ * @property failed The organizations a module failed on, tried again at the next pass.
+ */
+data class DeletionPass(val settled: Int, val purged: Int, val failed: Int)
 
 /**
  * A person's membership of an organization.
