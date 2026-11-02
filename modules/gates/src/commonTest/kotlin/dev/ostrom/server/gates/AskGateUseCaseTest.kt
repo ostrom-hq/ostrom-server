@@ -353,9 +353,11 @@ class AskGateUseCaseTest {
         assertFailsWith<MissingPullRequestException> {
             askByClass(bench, mapOf("deploy" to shadow, "merge" to node))(agent(), merge)
         }
-        // A claimed class that is enforced keeps its own gate; a merge gate that is not enforced changes nothing.
-        assertEquals(GateMode.ENFORCED, askByClass(bench, mapOf("deploy" to node))(agent(), merge).gate.mode)
-        val kept = askByClass(bench, mapOf("deploy" to shadow, "merge" to shadow))(agent(), merge)
+        // A claimed class that is enforced keeps its own gate; a read gate that is not enforced changes nothing.
+        val toMain = pushAsk(diff = "deploy").copy(actionClass = "deploy")
+        val enforced = askByClass(bench, mapOf("deploy" to node, "push-main" to node))(agent(), toMain)
+        assertEquals("deploy", enforced.gate.subject.actionClass)
+        val kept = askByClass(bench, mapOf("deploy" to shadow, "push-main" to shadow))(agent(), toMain)
         assertEquals("deploy", kept.gate.subject.actionClass)
         assertEquals(GateMode.SHADOW, kept.gate.mode)
     }
@@ -366,7 +368,9 @@ class AskGateUseCaseTest {
         val asks = askByClass(bench, emptyMap())
         val fromAgent = asks(agent(), pushAsk().copy(via = AskedVia.CI, actionClass = "lint"))
         assertEquals(setOf(AskedVia.HOOK), fromAgent.gate.askedVia, "second audit L2: an agent saying ci is a hook")
-        val fromCheck = asks(ciService(), pushAsk().copy(via = AskedVia.CI, actionClass = "lint", sessionId = null))
+        // The GitHub check's key is a service on behalf of the person who installed it.
+        val check = ciService().copy(personId = "lead")
+        val fromCheck = asks(check, pushAsk().copy(via = AskedVia.CI, actionClass = "lint", sessionId = null))
         assertEquals(setOf(AskedVia.CI), fromCheck.gate.askedVia)
     }
 

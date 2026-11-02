@@ -159,15 +159,6 @@ class OpenGateUseCaseImpl(
         return Opened(gate, requests, created = true)
     }
 
-    private fun modeOf(node: GateNode?): Pair<GateMode, List<String>> = when {
-        node == null -> GateMode.UNGATED to emptyList()
-        !node.enforced -> GateMode.SHADOW to emptyList()
-        // Each approver once, whatever their case.
-        else -> GateMode.ENFORCED to node.approvers.fold(emptyList<String>()) { all, approver ->
-            SelfApproval.withAskers(all, approver)
-        }
-    }
-
     private fun newGate(request: OpenGate, key: String, mode: GateMode) = Gate(
         id = Uuid.random(),
         orgId = request.actor.orgId,
@@ -188,13 +179,6 @@ class OpenGateUseCaseImpl(
         shownDigest = digester.digest(GateKeys.shownPreimage(request.label, request.subject, request.evidence)),
         evidence = request.evidence,
         createdAt = clock.now(),
-    )
-
-    private fun join(gate: Gate, request: OpenGate): Gate = gate.copy(
-        askedBy = SelfApproval.withAskers(gate.askedBy, request.asker),
-        askedVia = gate.askedVia + request.via,
-        sessionIds = (gate.sessionIds + listOfNotNull(request.sessionId)).distinct(),
-        launchIds = (gate.launchIds + listOfNotNull(request.actor.launchId)).distinct(),
     )
 
     private fun validate(request: OpenGate) {
@@ -278,3 +262,20 @@ internal fun viewOf(gate: Gate, requests: List<ApprovalRequest>, policy: SelfApp
     }
     return GateView(gate, requests, waiting)
 }
+
+// Out of the class: neither reads its state.
+private fun modeOf(node: GateNode?): Pair<GateMode, List<String>> = when {
+    node == null -> GateMode.UNGATED to emptyList()
+    !node.enforced -> GateMode.SHADOW to emptyList()
+    // Each approver once, whatever their case.
+    else -> GateMode.ENFORCED to node.approvers.fold(emptyList<String>()) { all, approver ->
+        SelfApproval.withAskers(all, approver)
+    }
+}
+
+private fun join(gate: Gate, request: OpenGate): Gate = gate.copy(
+    askedBy = SelfApproval.withAskers(gate.askedBy, request.asker),
+    askedVia = gate.askedVia + request.via,
+    sessionIds = (gate.sessionIds + listOfNotNull(request.sessionId)).distinct(),
+    launchIds = (gate.launchIds + listOfNotNull(request.actor.launchId)).distinct(),
+)
