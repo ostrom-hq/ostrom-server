@@ -12,6 +12,8 @@ import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
+import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
+import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.infrastructure.IdentityAgentTokens
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
@@ -29,20 +31,22 @@ import org.koin.dsl.module
 /**
  * The launches module: `ostrom <agent>` reads the organization's policy, then creates a launch and gets the agent
  * token its hooks use, scoped to the launch's sessions (audit A12/A13). It also resolves the callers of the gates,
- * sessions and compiler routes ([LaunchGateActors]). Needs the identity, orgs and gates modules.
+ * sessions and compiler routes ([LaunchGateActors]), and opens the launch of a cloud session its runner asks for.
+ * Needs the identity, orgs, gates and runners modules.
  */
 object LaunchesModule : ServerModule {
     override val name: String = "launches"
 
     override val koinModule: Module = module {
         single<LaunchesRepository> { PostgresLaunchesRepository(get()) }
-        single<LauncherResolver> { IdentityLauncherResolver(get(), get()) }
+        single<LauncherResolver> { IdentityLauncherResolver(get(), get(), get()) }
         single<AgentTokenService> { IdentityAgentTokens(get()) }
         single<GateActorResolver> { LaunchGateActors(get(), get(), get()) }
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }
-        single { LaunchesRoutesDependencies(get(), get(), get()) }
+        single<OpenRunnerLaunchUseCase> { OpenRunnerLaunchUseCaseImpl(get(), get()) }
+        single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = LaunchesMigrations

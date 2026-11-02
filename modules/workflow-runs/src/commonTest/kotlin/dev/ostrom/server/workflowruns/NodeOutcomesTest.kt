@@ -57,7 +57,8 @@ class NodeOutcomesTest {
         notes: List<Notification> = emptyList(),
         gates: List<SessionGate> = emptyList(),
         session: Session = session(receiptId = "rcpt_session_s-1"),
-    ) = NodeOutcomes(PACKAGE.copy(nodes = nodes), session, runs, notes, gates).nodes()
+        attestations: Map<String, CheckAttestation> = emptyMap(),
+    ) = NodeOutcomes(PACKAGE.copy(nodes = nodes), session, runs, notes, gates, attestations).nodes()
 
     private fun one(node: PackageNode, runs: List<CheckRun> = emptyList(), notes: List<Notification> = emptyList()) =
         outcomes(listOf(node), runs, notes).single()
@@ -94,6 +95,20 @@ class NodeOutcomesTest {
         assertEquals(declared, one(check).attestation)
         assertEquals(null, one(node("n-gate", "gate")).attestation)
         assertEquals(null, one(node("n-notify", "notify")).attestation)
+    }
+
+    @Test
+    fun aCheckNodeIsTheRunnersWhenItsLastRunIs() {
+        val check = node("n-check", "check")
+        val runner = mapOf("chk_2" to CheckAttestation.ISOLATED_RUNNER)
+        val byRunner = outcomes(listOf(check), listOf(run("chk_1", 1), run("chk_2", 0)), attestations = runner).single()
+        assertEquals(CheckAttestation.ISOLATED_RUNNER, byRunner.attestation)
+        assertEquals("chk_2", byRunner.ref)
+        val afterIt = outcomes(listOf(check), listOf(run("chk_2", 0), run("chk_3", 0)), attestations = runner).single()
+        assertEquals(CheckAttestation.WORKSTATION_DECLARED, afterIt.attestation, "The last run is the workstation's")
+        val shadow = node("n-check", "check", mode = PackageMode.SHADOW)
+        val notRun = outcomes(listOf(shadow), listOf(run("chk_2", 0)), attestations = runner).single()
+        assertEquals(CheckAttestation.WORKSTATION_DECLARED, notRun.attestation, "A shadow check runs nothing")
     }
 
     @Test

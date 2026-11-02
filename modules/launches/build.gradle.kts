@@ -12,6 +12,8 @@ kotlin {
             implementation(project(":modules:gates"))
             // The people behind a credential, and the agent token of a launch.
             implementation(project(":modules:identity"))
+            implementation(project(":modules:orgs"))
+            implementation(project(":modules:runners"))
         }
         commonTest.dependencies {
             implementation(project(":testing"))
