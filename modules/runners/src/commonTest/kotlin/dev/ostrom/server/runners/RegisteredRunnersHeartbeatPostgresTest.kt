@@ -100,8 +100,8 @@ class RegisteredRunnersHeartbeatPostgresTest {
         for ((why, response) in refused) assertEquals(HttpStatusCode.Unauthorized, response.status, why)
 
         // Nothing was marked seen, in either organization.
-        assertEquals("offline", server.status("dana"))
-        assertEquals("offline", server.status("carol"))
+        assertEquals(listOf("offline", "offline"), server.statuses("dana"))
+        assertEquals(listOf("offline"), server.statuses("carol"))
     }
 
     @Test
@@ -196,6 +196,8 @@ class RegisteredRunnersHeartbeatPostgresTest {
     private suspend fun TestServer.heartbeat(id: String, key: String): HttpResponse =
         client.post("/api/v1/runners/$id/heartbeat") { bearerAuth(key) }
 
-    private suspend fun TestServer.status(token: String): String =
-        client.get("/api/v1/runners") { bearerAuth(token) }.body<RunnersPage>().items.single().status
+    private suspend fun TestServer.statuses(token: String): List<String> =
+        client.get("/api/v1/runners") { bearerAuth(token) }.body<RunnersPage>().items.map { it.status }
+
+    private suspend fun TestServer.status(token: String): String = statuses(token).single()
 }
