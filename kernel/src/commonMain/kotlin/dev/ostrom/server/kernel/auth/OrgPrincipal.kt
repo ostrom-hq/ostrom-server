@@ -38,7 +38,34 @@ interface PrincipalOrgResolver {
      * @throws OrgRequiredException When nothing names the organization and the caller belongs to several.
      */
     suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal?
+
+    /**
+     * Reads what a caller is shown of an organization they were resolved in (`GET /api/v1/auth/me`).
+     *
+     * @param orgId The organization.
+     *
+     * @return Its short name, name and picture, or null when it is unknown (always, until the orgs module binds its
+     *   resolver).
+     */
+    suspend fun profile(orgId: Uuid): OrgProfile? = null
 }
+
+/**
+ * An organization as its member is shown it.
+ *
+ * @property id The id.
+ * @property slug The short name.
+ * @property name The name.
+ * @property avatarUrl Its picture (the linked GitHub organization's), or empty.
+ * @property linkedToGitHub Whether it is linked to a GitHub organization.
+ */
+data class OrgProfile(
+    val id: Uuid,
+    val slug: String,
+    val name: String,
+    val avatarUrl: String,
+    val linkedToGitHub: Boolean,
+)
 
 /** Resolves no one: the default until the identity and orgs modules bind theirs. */
 class RejectingPrincipalOrgResolver : PrincipalOrgResolver {

@@ -122,6 +122,7 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                     McpCall(
                         Uuid.random(), Relay.adminA.orgId, Relay.adminA.memberId, Uuid.random(), "grafana",
                         McpOperation.CALL, "query", McpOutcome.OK, Instant.parse("2026-10-30T05:00:00Z"), 1, 1,
+                        launchId = "lch_$it".takeIf { _ -> it > 0 },
                     )
                 }
                 tied.forEach { journal.record(it) }
@@ -132,6 +133,11 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                 assertEquals(tied.map { it.id.toString() }.toSet(), (first.items + second.items).map { it.id }.toSet())
                 assertEquals(3, (first.items + second.items).size)
                 assertNull(second.next)
+                assertEquals(
+                    tied.associate { it.id.toString() to it.launchId },
+                    (first.items + second.items).associate { it.id to it.launchId },
+                    "The journal keeps the launch of an agent token's call, and none for a member's own",
+                )
             }
         }
 

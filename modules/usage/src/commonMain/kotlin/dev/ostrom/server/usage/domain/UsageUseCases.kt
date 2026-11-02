@@ -163,6 +163,7 @@ class IngestUsageEventsUseCaseImpl(
         kind = kind,
         name = name,
         sessionId = sessionId,
+        launchId = caller.launchId,
         durationMillis = durationMillis,
         outcome = outcome,
         at = at ?: now,

@@ -250,6 +250,7 @@ data class McpSettingsDto(val agentPrefix: String)
  * @property outcome `OK`, `DENIED`, `UPSTREAM_ERROR`, ...
  * @property responseBytes The upstream answer size.
  * @property policyId The argument policy that refused it.
+ * @property launchId The launch whose agent token made it; absent for the member's own credential.
  */
 @Serializable
 data class McpCallDto(
@@ -263,6 +264,7 @@ data class McpCallDto(
     val outcome: String,
     val responseBytes: Long,
     val policyId: String? = null,
+    val launchId: String? = null,
 )
 
 /**

@@ -26,7 +26,10 @@ data class Org(
     val freeClaim: String?,
     val createdAt: Instant,
     val timeZone: String = DEFAULT_TIME_ZONE,
-)
+) {
+    /** Its picture: the linked GitHub organization's avatar, or empty when it is not linked. */
+    val avatarUrl: String get() = githubOrgId?.let { "https://avatars.githubusercontent.com/u/$it" }.orEmpty()
+}
 
 /**
  * What an owner or admin changes in an organization's settings; a null field stays as it is.

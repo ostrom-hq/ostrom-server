@@ -25,6 +25,7 @@ kotlin {
             implementation(project(":modules:sessions"))
             // An agent token lists and calls the organization's MCP servers through the relay.
             implementation(project(":modules:mcp-relay"))
+            implementation(project(":modules:usage"))
             implementation(libs.ktor.client.mock)
         }
     }
