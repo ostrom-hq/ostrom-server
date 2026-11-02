@@ -9,9 +9,12 @@ import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
+import dev.ostrom.server.kernel.auth.auditGovernance
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -54,6 +57,9 @@ private val INFERENCE_SCOPES = arrayOf(RelayScopes.AGENT_SESSION, RelayScopes.IN
 /** Who changes the policy and the settings besides a browser session (S2-52, declared): an `inference:admin` key. */
 private val INFERENCE_ADMINS = WriteAccess.tokens(PrincipalKind.SERVICE)
 
+/** Who changes the model policy: an `inference:admin` key, or the token of `ostrom login --admin` (`policy:write`). */
+private val POLICY_WRITERS = WriteAccess.governance(GovernanceScopes.POLICY_WRITE, PrincipalKind.SERVICE)
+
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
 
@@ -65,7 +71,8 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  * Chat Completions), take the member's Ostrom token as `Authorization: Bearer` or `x-api-key`, and answer errors in
  * the provider's shape. An agent session reads the model policy; only `inference:admin` (or a browser session)
  * changes it and reads or changes the settings (SECURITY-AUDIT S2-03), and a token that changes them is a service key
- * (S2-52).
+ * (S2-52), or, for the model policy, the token of `ostrom login --admin`: an owner or admin, audited before the
+ * write.
  *
  * @param dependencies The use cases.
  */
@@ -87,7 +94,19 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             call.respond(getPolicy(caller).toDto())
         }
         put<ModelPolicyApi> {
-            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
+            val caller = call.requireCaller(
+                callers,
+                RelayScopes.INFERENCE_ADMIN,
+                GovernanceScopes.POLICY_WRITE,
+                writers = POLICY_WRITERS,
+            )
+            // A person (their browser session, or the elevated token): an owner or admin, at every request, and the
+            // token's write recorded before it happens.
+            val principal = call.requirePrincipal()
+            if (principal.kind == PrincipalKind.USER) {
+                caller.requireAdmin()
+                call.auditGovernance(principal, GovernanceScopes.POLICY_WRITE)
+            }
             val request = call.receive<ModelPolicyDto>()
             call.respond(
                 putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember)).toDto(),
