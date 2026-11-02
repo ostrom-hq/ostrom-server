@@ -131,5 +131,7 @@ val GatesMigrations: List<SchemaMigration> = listOf(
         REVOKE CREATE ON SCHEMA public FROM ostrom_router
         """.trimIndent(),
     ),
+    // A yes is released once (AUDIT-GATES-2 M2): no more reserve, launch, release, relaunch until it expires.
+    SchemaMigration(5, "gates_released_once", "ALTER TABLE gates_gates ADD COLUMN released_at TIMESTAMPTZ"),
 )
 

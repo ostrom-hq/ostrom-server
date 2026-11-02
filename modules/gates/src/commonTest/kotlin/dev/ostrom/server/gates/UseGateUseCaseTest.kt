@@ -97,6 +97,20 @@ class UseGateUseCaseTest {
     }
 
     @Test
+    fun aYesIsReleasedOnlyOnce() = runTest {
+        val bench = GateBench()
+        val view = approved(bench)
+        bench.use(agent(), view.gate.id, GateUse.RESERVE)
+        bench.use(agent(), view.gate.id, GateUse.RELEASE)
+        bench.use(agent(), view.gate.id, GateUse.RESERVE)
+
+        // Reserve, launch, release, relaunch: a second release would put the yes back in play again and again.
+        val error = assertFailsWith<GateNotUsableException> { bench.use(agent(), view.gate.id, GateUse.RELEASE) }
+        assertEquals("This yes was already released once: use it for this action, or ask again.", error.message)
+        assertEquals(GateStatus.CONSUMED, bench.use(agent(), view.gate.id, GateUse.CONSUME).status, "Still usable")
+    }
+
+    @Test
     fun releasingNeedsTheReservation() = runTest {
         val bench = GateBench()
         val view = approved(bench)
