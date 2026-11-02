@@ -75,7 +75,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
 
     override suspend fun getById(id: Uuid): Automation? {
         val route = driver.fetchAll(
-            Statement.create("""SELECT automations_route_org(:id) AS org_id""").bind("id", id),
+            Statement.create("""SELECT automations_route_org(CAST(:id AS UUID)) AS org_id""").bind("id", id),
         ).getOrThrow().first().get("org_id").asUuidOrNull() ?: return null
         return get(route, id)
     }
@@ -217,7 +217,10 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         // it.
         val due = fetchAll(
             Statement.create(
-                """SELECT automation_id, org_id, next_run_at FROM automations_due_routes(:now, :limit)""",
+                """
+                SELECT automation_id, org_id, next_run_at FROM automations_due_routes(CAST(:now AS TIMESTAMPTZ),
+                CAST(:limit AS INTEGER))
+                """,
             ).bind("now", now).bind("limit", limit),
         ).getOrThrow().map { row ->
             Triple(row.get("automation_id").asUuid(), row.get("org_id").asUuid(), row.get("next_run_at").asInstant())
