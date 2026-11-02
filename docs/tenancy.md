@@ -65,6 +65,7 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `automations_route_org(id)` | automations | an automation's organization, for its webhook | `AutomationsRoutesTenancyPostgresTest` |
 | `automations_due_routes(now, limit)` | automations | claims the due crons of every organization (`FOR UPDATE SKIP LOCKED`) | `AutomationsPostgresTest` |
 | `automations_organizations()` | automations | the organizations that have automations, for the retention jobs | `AutomationsPostgresTest` |
+| `governance_expired_organizations(now, limit)` | governance | the organizations with confirmations past their 15 minutes, for the sweep | `GovernancePostgresTest` |
 
 ## Known exceptions
 

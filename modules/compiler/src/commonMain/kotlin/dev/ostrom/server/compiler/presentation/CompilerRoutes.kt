@@ -7,10 +7,15 @@ import dev.ostrom.server.compiler.domain.models.StoredWorkflow
 import dev.ostrom.server.compiler.domain.usecases.catalogJson
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.OstromJson
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -103,7 +108,10 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     post<WorkflowsApi> {
         val actor = personOf(call, CompilerScopes.writingWorkflows)
         val body = call.receive<JsonObject>()
-        if (!call.decidesWorkflows(actor)) onlyProposed(body)
+        if (call.holdsDecision(actor, proposed(body))) {
+            return@post call.hold(actor, WorkflowWrites.CREATE, CompilerGovernanceChange.payload(null, body))
+        }
+        if (!call.decides(actor)) onlyProposed(body)
         val saved = workflows.save(actor.orgId, body, null, actor.id, create = true)
         call.respond(HttpStatusCode.Created, documentOf(saved))
     }
@@ -117,16 +125,23 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
         if (id != params.id) {
             throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
         }
-        if (!call.decidesWorkflows(actor)) {
-            onlyProposed(body.workflow)
-            onlyProposed(workflows.get(actor.orgId, params.id).doc.raw)
+        if (!call.decides(actor)) {
+            val proposal = proposed(body.workflow) && proposed(workflows.get(actor.orgId, params.id).doc.raw)
+            if (call.holdsDecision(actor, proposal)) {
+                val payload = CompilerGovernanceChange.payload(params.id, OstromJson.encodeToJsonElement(body))
+                return@put call.hold(actor, WorkflowWrites.SAVE, payload)
+            }
+            if (!proposal) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
         }
         val saved = workflows.save(actor.orgId, body.workflow, body.expectedVersion, actor.id, create = false)
         call.respond(documentOf(saved))
     }
     delete<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        if (!call.decidesWorkflows(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+        if (call.holdsDecision(actor, proposal = false)) {
+            return@delete call.hold(actor, WorkflowWrites.DELETE, CompilerGovernanceChange.payload(params.id, null))
+        }
+        if (!call.decides(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
         workflows.delete(actor.orgId, params.id)
         call.respond(HttpStatusCode.NoContent)
     }
@@ -158,7 +173,18 @@ private fun statusOf(value: String): WorkflowStatus =
         ?: throw OstromException(ErrorKind.INVALID_REQUEST, "Unknown workflow status.")
 
 // The document as saved, with its version, author and date: `version` is what a save sends back as `expectedVersion`.
-private fun documentOf(stored: StoredWorkflow): JsonObject = JsonObject(
+// A token's decision on a workflow, held for the console: nothing is written.
+private suspend fun ApplicationCall.hold(actor: GateActor, kind: String, payload: JsonObject) =
+    holdForConfirmation(actor.orgId, GovernanceScopes.HARNESS_WRITE, GovernanceWrite(kind, payload))
+
+/**
+ * A stored workflow as the routes show it.
+ *
+ * @param stored The workflow.
+ *
+ * @return Its document, with its version and last change.
+ */
+internal fun documentOf(stored: StoredWorkflow): JsonObject = JsonObject(
     stored.doc.raw + mapOf(
         "version" to JsonPrimitive(stored.version),
         "updatedBy" to JsonPrimitive(stored.updatedBy),

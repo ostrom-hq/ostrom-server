@@ -13,7 +13,9 @@ import dev.ostrom.server.gateway.presentation.InferenceSettingsDto
 import dev.ostrom.server.gateway.presentation.MAX_INFERENCE_REQUEST_BYTES
 import dev.ostrom.server.gateway.presentation.ModelPolicyDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
+import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -107,8 +109,8 @@ class GatewayPostgresTest {
     /** The tokens of `ostrom login --admin`: a person's API token holding the governance scopes. */
     private val elevated = setOf("elevated-a", "elevated-member-a")
 
-    /** The governance writes recorded before they happen, as `METHOD /path scope`. */
-    private val audited = mutableListOf<String>()
+    /** The governance writes a token asked for, held for the console, as `kind METHOD /path scope`. */
+    private val held = mutableListOf<String>()
 
     /** Browser sessions hold every right of the user; the others hold what they list. */
     private val principals = mapOf(
@@ -165,10 +167,11 @@ class GatewayPostgresTest {
 
     private val overrides: Module = module {
         includes(authenticator)
-        single<GovernanceAudit> {
-            object : GovernanceAudit {
-                override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String) {
-                    audited += "$target $scope"
+        single<GovernanceConfirmations> {
+            object : GovernanceConfirmations {
+                override suspend fun open(request: GovernanceRequest): GovernanceConfirmationPending {
+                    held += "${request.write.kind} ${request.method} ${request.path} ${request.scope}"
+                    return GovernanceConfirmationPending("gcf_1", "http://console/confirm/gcf_1", "later")
                 }
             }
         }
@@ -492,20 +495,23 @@ class GatewayPostgresTest {
     }
 
     @Test
-    fun theTokenOfAnAdminLoginSetsTheModelPolicyAuditedFirstAndOnlyForAnOwnerOrAdmin() =
+    fun theTokenOfAnAdminLoginSetsNoModelPolicyButHoldsItForTheConsoleAndOnlyForAnOwnerOrAdmin() =
         serverTest(modules, overrides) { server ->
             with(server) {
                 val policy = ModelPolicyDto(allowed = listOf("claude-"), defaultModel = "claude-sonnet-5")
                 val refused = putJson("/api/v1/policy/models", "elevated-member-a", policy)
                 assertEquals(HttpStatusCode.Forbidden, refused.status, "A member's elevated token")
-                assertEquals(emptyList(), audited, "Refused before its record")
-                val saved = putJson("/api/v1/policy/models", "elevated-a", policy)
-                assertEquals(policy, saved.body<ModelPolicyDto>())
-                assertEquals(listOf("PUT /api/v1/policy/models policy:write"), audited)
-                // The console and the service key write as before, recorded elsewhere or not at all.
+                assertEquals(emptyList(), held, "Refused before anything is held")
+                val asked = putJson("/api/v1/policy/models", "elevated-a", policy)
+                assertEquals(HttpStatusCode.Accepted, asked.status)
+                assertEquals("gcf_1", asked.body<GovernanceConfirmationPending>().confirmationId)
+                assertEquals(listOf("models.policy PUT /api/v1/policy/models policy:write"), held)
+                val unchanged = client.get("/api/v1/policy/models") { bearerAuth("admin-a") }.body<ModelPolicyDto>()
+                assertEquals(ModelPolicyDto(), unchanged, "Nothing written")
+                // The console and the service key write at once.
                 assertEquals(HttpStatusCode.OK, putJson("/api/v1/policy/models", "admin-a", policy).status)
                 assertEquals(HttpStatusCode.OK, putJson("/api/v1/policy/models", "inference-admin-a", policy).status)
-                assertEquals(1, audited.size)
+                assertEquals(1, held.size)
                 // policy:write opens the model policy, never the inference settings.
                 val settings = putJson("/api/v1/inference/settings", "elevated-a", InferenceSettingsDto())
                 assertEquals(HttpStatusCode.Forbidden, settings.status)

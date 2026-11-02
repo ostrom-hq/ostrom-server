@@ -8,6 +8,7 @@ import dev.ostrom.server.budgets.BudgetsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gateway.GatewayModule
+import dev.ostrom.server.governance.GovernanceModule
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.importer.ImportModule
 import dev.ostrom.server.instance.InstanceModule
@@ -59,4 +60,6 @@ fun serverModules(): List<ServerModule> = listOf(
     SharingModule,
     ImportModule,
     ReportsModule,
+    // After the modules whose governance writes it holds (rules, compiler, gateway).
+    GovernanceModule,
 ) + eeModules()

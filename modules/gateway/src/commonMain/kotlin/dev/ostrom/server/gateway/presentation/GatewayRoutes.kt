@@ -10,13 +10,16 @@ import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
-import dev.ostrom.server.kernel.auth.auditGovernance
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.confirmsByConsole
+import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
+import dev.ostrom.server.secrets.domain.OrgNotFoundException
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.mayUse
 import dev.ostrom.server.secrets.presentation.requireCaller
@@ -57,8 +60,8 @@ private val INFERENCE_SCOPES = arrayOf(RelayScopes.AGENT_SESSION, RelayScopes.IN
 /** Who changes the policy and the settings besides a browser session (S2-52, declared): an `inference:admin` key. */
 private val INFERENCE_ADMINS = WriteAccess.tokens(PrincipalKind.SERVICE)
 
-/** Who changes the model policy: an `inference:admin` key, or the token of `ostrom login --admin` (`policy:write`). */
-private val POLICY_WRITERS = WriteAccess.governance(GovernanceScopes.POLICY_WRITE, PrincipalKind.SERVICE)
+/** Who changes the model policy at once, besides a browser session: an `inference:admin` service key. */
+private val POLICY_WRITERS = WriteAccess.tokens(PrincipalKind.SERVICE)
 
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
@@ -94,19 +97,19 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             call.respond(getPolicy(caller).toDto())
         }
         put<ModelPolicyApi> {
-            val caller = call.requireCaller(
-                callers,
-                RelayScopes.INFERENCE_ADMIN,
-                GovernanceScopes.POLICY_WRITE,
-                writers = POLICY_WRITERS,
-            )
-            // A person (their browser session, or the elevated token): an owner or admin, at every request, and the
-            // token's write recorded before it happens.
             val principal = call.requirePrincipal()
-            if (principal.kind == PrincipalKind.USER) {
+            if (principal.confirmsByConsole) {
+                // A person's token (the CLI's, elevated or not): an owner's or admin's change, held for the console.
+                val caller = callers.resolve(principal, null) ?: throw OrgNotFoundException()
                 caller.requireAdmin()
-                call.auditGovernance(principal, GovernanceScopes.POLICY_WRITE)
+                val request = call.receive<ModelPolicyDto>()
+                val payload = GatewayGovernanceChange.payload(request)
+                val write = GovernanceWrite(GatewayGovernanceChange.MODEL_POLICY, payload)
+                return@put call.holdForConfirmation(caller.orgId, GovernanceScopes.POLICY_WRITE, write)
             }
+            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = POLICY_WRITERS)
+            // A person signed in to the console: an owner or admin, at every request.
+            if (principal.kind == PrincipalKind.USER) caller.requireAdmin()
             val request = call.receive<ModelPolicyDto>()
             call.respond(
                 putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember)).toDto(),

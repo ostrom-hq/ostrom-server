@@ -2,6 +2,7 @@
 package dev.ostrom.server.rules
 
 import dev.ostrom.server.gates.domain.services.GatePolicies
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
@@ -30,6 +31,8 @@ import dev.ostrom.server.rules.infrastructure.PostgresRulesRepository
 import dev.ostrom.server.rules.infrastructure.ReceiptsDecisionSigner
 import dev.ostrom.server.rules.infrastructure.RulesGatePolicies
 import dev.ostrom.server.rules.infrastructure.RulesMigrations
+import dev.ostrom.server.rules.presentation.RulesGovernanceChange
+import dev.ostrom.server.rules.presentation.RulesGovernanceDependencies
 import dev.ostrom.server.rules.presentation.RulesRoutesDependencies
 import dev.ostrom.server.rules.presentation.rulesRoutes
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -37,6 +40,7 @@ import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
 
@@ -62,6 +66,9 @@ object RulesModule : ServerModule {
         single<GetGatePolicyUseCase> { GetGatePolicyUseCaseImpl(get()) }
         single<SetGatePolicyUseCase> { SetGatePolicyUseCaseImpl(get(), get(), get()) }
         single<GatePolicies> { RulesGatePolicies(get()) }
+        single<GovernanceChange>(named("rules")) {
+            RulesGovernanceChange(RulesGovernanceDependencies(get(), get(), get(), get(), get(), get(), get(), get()))
+        }
         single {
             RulesRoutesDependencies(
                 callerResolver(),

@@ -27,8 +27,10 @@ import dev.ostrom.server.gateway.infrastructure.GatewayMigrations
 import dev.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
 import dev.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
 import dev.ostrom.server.gateway.infrastructure.MeteredModelCallObserver
+import dev.ostrom.server.gateway.presentation.GatewayGovernanceChange
 import dev.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import dev.ostrom.server.gateway.presentation.gatewayRoutes
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.ModelAccess
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -102,6 +104,9 @@ object GatewayModule : ServerModule {
         single<GetModelPolicyUseCase> { GetModelPolicyUseCaseImpl(get()) }
         single<ModelAccess> { PolicyModelAccess(get()) }
         single<PutModelPolicyUseCase> { PutModelPolicyUseCaseImpl(get()) }
+        single<GovernanceChange>(named("gateway")) {
+            GatewayGovernanceChange(get(), get<GatewayRoutesDependencies>().callers, get())
+        }
         single {
             GatewayRoutesDependencies(
                 tokens = get(),

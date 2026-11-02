@@ -36,9 +36,12 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
+import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -99,14 +102,19 @@ class CompilerPostgresTest {
     // The token of `ostrom login --admin`: what the CLI reads, plus the governance writes.
     private val elevatedScopes = GovernanceScopes.ALL + CompilerScopes.WORKFLOWS_READ
 
-    // The governance writes recorded before they happen, as `METHOD /path`.
-    private val audited = mutableListOf<String>()
+    // The governance writes a token asked for, held for the console: their kind and request.
+    private val held = mutableListOf<String>()
 
     private fun overrides(config: Map<String, String>?, sources: CompilerSources? = null): Module = module {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
-                    "user" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
+                    "user" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.ALL_USER),
+                        channel = PrincipalChannel.BROWSER,
+                    )
                     "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
                     "cli" -> AuthenticatedPrincipal(token, PrincipalKind.USER, cliScopes)
                     "gates" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
@@ -132,10 +140,11 @@ class CompilerPostgresTest {
                 }
             }
         }
-        single<GovernanceAudit> {
-            object : GovernanceAudit {
-                override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String) {
-                    audited += target
+        single<GovernanceConfirmations> {
+            object : GovernanceConfirmations {
+                override suspend fun open(request: GovernanceRequest): GovernanceConfirmationPending {
+                    held += "${request.write.kind} ${request.method} ${request.path} ${request.scope}"
+                    return GovernanceConfirmationPending("gcf_${held.size}", "http://console/confirm", "later")
                 }
             }
         }
@@ -263,44 +272,60 @@ class CompilerPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, orgless.status)
         assertTrue(orgless.bodyAsText().contains("This credential belongs to no organization."))
 
+        // An owner's CLI token asks for a decision: it waits for the console (audit CLI H1); a member's is refused.
         val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
-        assertEquals(HttpStatusCode.Forbidden, accepted.status)
-        assertTrue(accepted.bodyAsText().contains("Only an owner or an admin signed in to the console"))
+        assertEquals(HttpStatusCode.Accepted, accepted.status)
         val noStatus = JsonObject(mapOf("id" to JsonPrimitive("bare")))
-        assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", "/api/v1/workflows", "POST", noStatus).status)
+        assertEquals(HttpStatusCode.Accepted, server.call("cli:a:dev", "/api/v1/workflows", "POST", noStatus).status)
+        val memberAsks = server.call("cli:a:member", "/api/v1/workflows", "POST", release())
+        assertEquals(HttpStatusCode.Forbidden, memberAsks.status)
+        assertTrue(memberAsks.bodyAsText().contains("Only an owner or an admin accepts"))
         val proposed = server.call("cli:a:dev", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))
         assertEquals(HttpStatusCode.Created, proposed.status)
         val path = "/api/v1/workflows/release"
         val accepting = SaveWorkflowRequest(release(), expectedVersion = 1)
-        assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", path, "PUT", accepting).status)
+        assertEquals(HttpStatusCode.Accepted, server.call("cli:a:dev", path, "PUT", accepting).status)
         val reproposed = SaveWorkflowRequest(release(WorkflowStatus.PROPOSED, command = "make check"), 1)
         assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", path, "PUT", reproposed).status)
-        assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", path, "DELETE").status)
+        assertEquals(HttpStatusCode.Accepted, server.call("cli:a:dev", path, "DELETE").status)
+        val written = server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>()
+        assertEquals(listOf("proposed"), written.items.map { it["status"]?.toString()?.trim('"') }, "Only the proposal")
 
         val accept = server.call("user:a:lead", path, "PUT", SaveWorkflowRequest(release(), 2))
         assertEquals(HttpStatusCode.OK, accept.status)
         val edit = SaveWorkflowRequest(release(WorkflowStatus.PROPOSED), 3)
-        assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", path, "PUT", edit).status, "Accepted stays so")
+        assertEquals(HttpStatusCode.Accepted, server.call("cli:a:dev", path, "PUT", edit).status, "Accepted stays so")
+        val kinds = held.map { it.substringBefore(' ') }
+        val expected = listOf("create", "create", "save", "delete", "save").map { "workflows.$it" }
+        assertEquals(expected, kinds)
         assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", "/api/v1/gates/catalog?repo=acme-api").status)
         assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", path).status)
     }
 
     @Test
-    fun theTokenOfAnAdminLoginDecidesWorkflowsEachUseAuditedFirst() = compilerTest { server ->
+    fun theTokenOfAnAdminLoginDecidesNoWorkflowButHoldsEachForTheConsole() = compilerTest { server ->
         val path = "/api/v1/workflows/release"
         val created = server.call("elevated:a:lead", "/api/v1/workflows", "POST", release())
-        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        assertEquals(HttpStatusCode.Accepted, created.status, created.bodyAsText())
         val edit = SaveWorkflowRequest(release(command = "make check"), expectedVersion = 1)
-        assertEquals(HttpStatusCode.OK, server.call("elevated:a:lead", path, "PUT", edit).status)
-        // A member's elevated token decides nothing; nor does it restore a package (not a harness write).
+        assertEquals(HttpStatusCode.Accepted, server.call("elevated:a:lead", path, "PUT", edit).status)
+        // A member's elevated token asks nothing; nor does it restore a package (not a harness write).
         assertEquals(HttpStatusCode.Forbidden, server.call("elevated:a:member", path, "DELETE").status)
         val restore = server.call("elevated:a:lead", "/api/v1/packages/x/restore", "POST")
         assertEquals(HttpStatusCode.Forbidden, restore.status)
-        assertEquals(HttpStatusCode.NoContent, server.call("elevated:a:lead", path, "DELETE").status)
-        assertEquals(listOf("POST /api/v1/workflows", "PUT $path", "DELETE $path"), audited)
-        // The console's decisions are not recorded there: they are the workflows' own history.
-        server.call("user:a:lead", "/api/v1/workflows", "POST", release())
-        assertEquals(3, audited.size)
+        assertEquals(HttpStatusCode.Accepted, server.call("elevated:a:lead", path, "DELETE").status)
+        assertEquals(
+            listOf(
+                "workflows.create POST /api/v1/workflows harness:write",
+                "workflows.save PUT $path harness:write",
+                "workflows.delete DELETE $path harness:write",
+            ),
+            held,
+        )
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:lead", path).status, "Nothing written")
+        // The console decides at once.
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", release()).status)
+        assertEquals(3, held.size)
     }
 
     @Test

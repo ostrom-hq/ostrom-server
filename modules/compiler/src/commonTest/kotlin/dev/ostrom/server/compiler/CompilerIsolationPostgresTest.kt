@@ -21,6 +21,7 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -71,7 +72,12 @@ class CompilerIsolationPostgresTest {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = when (token.substringBefore(':')) {
-                    "user" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER))
+                    "user" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.ALL_USER),
+                        channel = PrincipalChannel.BROWSER,
+                    )
                     "agent" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(GateScopes.AGENT_SESSION))
                     "cli" -> AuthenticatedPrincipal(token, PrincipalKind.USER, cliScopes)
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
