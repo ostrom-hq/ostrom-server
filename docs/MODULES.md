@@ -1,11 +1,11 @@
 # Adding a functional module
 
 Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches`, `gates`, `receipts`, `compiler`,
-`mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`, `integrations-github`,
-`integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already exists as an empty
-skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its single line in
-`app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference example: copy
-its shape.
+`workflow-runs`, `mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`,
+`integrations-github`, `integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already
+exists as an empty skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its
+single line in `app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference
+example: copy its shape.
 
 Read [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md)
 first: it wins over this page wherever they differ.

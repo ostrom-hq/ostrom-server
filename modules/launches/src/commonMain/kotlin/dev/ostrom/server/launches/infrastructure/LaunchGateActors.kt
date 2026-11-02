@@ -6,50 +6,36 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
-import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.domain.services.LauncherResolver
-import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
-import kotlin.time.Clock
-import kotlin.uuid.Uuid
 
 /**
  * The server's [GateActorResolver], which the gates, sessions and compiler routes resolve their callers with (it
  * replaces the gates module's fail-closed default):
  * - a person's credential (CLI, personal token, browser session) is a [ActorKind.USER] of the organization the orgs
- *   module resolves, named by their login, the `dev` of their sessions and the asker of their gates; whether it may
- *   say yes is the answer route's (S2-31: the browser or the app only);
+ *   module resolves, named by their login, the `dev` of their sessions and the asker of their gates, with their role
+ *   in it; whether it may say yes is the answer route's (S2-31: the browser or the app only);
  * - an agent token is the [ActorKind.AGENT_SESSION] of its launch, read in the token's own organization: its person
  *   is the launch's, and it acts only on that launch's sessions and gates (audit A12), until the launch expires or
  *   its person may no longer launch;
  * - a device or a service key belongs to no organization here.
  *
  * @param launchers Resolves a person and their organization.
- * @param launches The launches.
- * @param clock The clock.
+ * @param agents Reads an agent token ([LaunchAgents]).
  */
-class LaunchGateActors(
-    private val launchers: LauncherResolver,
-    private val launches: LaunchesRepository,
-    private val clock: Clock,
-) : GateActorResolver {
+class LaunchGateActors(private val launchers: LauncherResolver, private val agents: LaunchAgents) : GateActorResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? = when (principal.kind) {
         PrincipalKind.AGENT -> agent(principal)
         PrincipalKind.USER -> launchers.resolve(principal)?.let {
             val signedIn = principal.authenticatedAt
-            GateActor(it.login, it.orgId, ActorKind.USER, personId = it.login, authenticatedAt = signedIn)
+            // The role decides who may change what is decided (the compiler's workflows, its package pin).
+            val (login, orgId) = it.login to it.orgId
+            GateActor(login, orgId, ActorKind.USER, personId = login, authenticatedAt = signedIn, role = it.role)
         }
         PrincipalKind.DEVICE, PrincipalKind.SERVICE -> null
     }
 
-    private suspend fun agent(principal: AuthenticatedPrincipal): GateActor? {
-        val orgId = principal.orgId?.let(Uuid::parseOrNull)
-        val launch = orgId?.let { launches.find(it, principal.subjectId) }?.takeIf { it.expiresAt > clock.now() }
-        // The person still may: a member removed (or made billing only) stops their agents at once, like their own
-        // credentials (the orgs module checks a role at each request).
-        val role = launch?.let { launchers.role(it.orgId, it.userId) }
-        return if (launch == null || role == null || !LaunchPolicy.launches(role)) {
-            null
-        } else {
+    private suspend fun agent(principal: AuthenticatedPrincipal): GateActor? =
+        agents.resolve(principal, null)?.let { (launch) ->
             GateActor(
                 "agent-${launch.id}",
                 launch.orgId,
@@ -58,5 +44,4 @@ class LaunchGateActors(
                 personId = launch.dev,
             )
         }
-    }
 }

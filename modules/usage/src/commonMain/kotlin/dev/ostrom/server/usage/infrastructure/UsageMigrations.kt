@@ -52,6 +52,12 @@ val UsageMigrations: List<SchemaMigration> = listOf(
                 "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
         ).joinToString("\n"),
     ),
+    SchemaMigration(
+        version = 3,
+        name = "usage_events_name_the_agent_launch",
+        // The launch whose agent token sent the event (server#108), null for a person's own credential.
+        sql = "ALTER TABLE usage_events ADD COLUMN launch_id TEXT",
+    ),
 )
 
 /** The transaction-local setting that opens the retention policies of `usage_events`. */

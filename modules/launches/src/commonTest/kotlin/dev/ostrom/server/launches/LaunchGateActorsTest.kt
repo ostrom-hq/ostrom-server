@@ -13,6 +13,7 @@ import dev.ostrom.server.launches.fakes.FixedClock
 import dev.ostrom.server.launches.fakes.InMemoryLaunches
 import dev.ostrom.server.launches.fakes.ORG
 import dev.ostrom.server.launches.fakes.OTHER_ORG
+import dev.ostrom.server.launches.infrastructure.LaunchAgents
 import dev.ostrom.server.launches.infrastructure.LaunchGateActors
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,7 +27,7 @@ class LaunchGateActorsTest {
     private val launches = InMemoryLaunches()
     private val launchers = FakeLaunchers(mapOf(ADA.userId.toString() to ADA))
     private val clock = FixedClock(signedIn)
-    private val actors = LaunchGateActors(launchers, launches, clock)
+    private val actors = LaunchGateActors(launchers, LaunchAgents(launchers, launches, clock))
     private val launch = Launch(
         "lch_1", ORG, ADA.userId, "ada", "acme/api", "claude-code", null, signedIn, signedIn + 24.hours,
     )
@@ -38,7 +39,7 @@ class LaunchGateActorsTest {
     fun aPersonIsAUserOfTheirOrganizationNamedByTheirLogin() = runTest {
         val person = principal(ADA.userId.toString(), PrincipalKind.USER)
         assertEquals(
-            GateActor("ada", ORG, ActorKind.USER, personId = "ada", authenticatedAt = signedIn),
+            GateActor("ada", ORG, ActorKind.USER, personId = "ada", authenticatedAt = signedIn, role = OrgRole.MEMBER),
             actors.resolve(person),
         )
         assertNull(actors.resolve(principal("000000ff-0000-0000-0000-000000000000", PrincipalKind.USER)))

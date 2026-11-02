@@ -113,7 +113,7 @@ class OstromMetrics(private val meter: Meter) {
      * Counts an agent session.
      *
      * @param agent The agent's label (`claude`, `codex`, `opencode`, `gemini`, `shell`, `other`).
-     * @param where `local` or `cloud`; any other place is refused.
+     * @param where `local` or `cloud`.
      */
     fun sessionStarted(agent: String, where: String) {
         sessionsStarted.increment(Attributes.of("agent" to agent, "where" to where))

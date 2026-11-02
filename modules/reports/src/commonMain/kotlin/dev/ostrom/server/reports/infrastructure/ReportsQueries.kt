@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.reports.infrastructure
+
+/**
+ * The SQL of the reports, apart from the repository so that the query-plan test runs the very same text under
+ * `EXPLAIN ANALYZE`.
+ */
+internal object ReportsQueries {
+    /**
+     * The ledger of a window joined to the session of each event, grouped four ways: `dim` is `agent`, `repo`,
+     * `person` or `day`. Parameters `:org_id`, `:from`, `:to`, and `:member_id` if [member].
+     *
+     * @param member Whether one member's spending only.
+     * @return The statement.
+     */
+    fun spending(member: Boolean): String {
+        val mine = if (member) " AND e.member_id = :member_id" else ""
+        return """
+            WITH spent AS (
+                SELECT e.member_id, e.session_id, e.cost_micros, e.at, s.agent, s.repo, u.login
+                FROM usage_events e
+                LEFT JOIN sessions_sessions s ON s.org_id = e.org_id AND s.id = e.session_id
+                LEFT JOIN orgs_members m ON m.org_id = e.org_id AND m.id = e.member_id
+                LEFT JOIN identity_users u ON u.id = m.user_id
+                WHERE e.org_id = :org_id AND e.at >= :from AND e.at < :to AND e.cost_micros > 0$mine
+            )
+            SELECT 'agent' AS dim, COALESCE(agent, '') AS group_key, COALESCE(agent, '') AS label,
+                CAST(SUM(cost_micros) AS BIGINT) AS micros, COUNT(DISTINCT session_id) AS sessions
+                FROM spent GROUP BY agent
+            UNION ALL
+            SELECT 'repo', COALESCE(repo, ''), COALESCE(repo, ''), CAST(SUM(cost_micros) AS BIGINT),
+                COUNT(DISTINCT session_id) FROM spent GROUP BY repo
+            UNION ALL
+            SELECT 'person', COALESCE(CAST(member_id AS TEXT), ''),
+                COALESCE(MIN(login), CAST(member_id AS TEXT), ''), CAST(SUM(cost_micros) AS BIGINT),
+                COUNT(DISTINCT session_id) FROM spent GROUP BY member_id
+            UNION ALL
+            SELECT 'day', to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), '', CAST(SUM(cost_micros) AS BIGINT), 0
+                FROM spent GROUP BY 2
+        """.trimIndent()
+    }
+
+    /**
+     * A page of the activity, newest first by (`at`, `item_id`): each source gives its newest `:limit` rows in that
+     * very order (its index gives the time, the id only breaks ties), then the union keeps the newest `:limit`. Params
+     * `:org_id`, `:limit`, `:before_at` and `:before_id` if [cursor], `:repo` if [repo]. With a repository, only
+     * sessions concern it: gates and workflows have none.
+     *
+     * @param cursor Whether the page starts before a position.
+     * @param repo Whether only one repository's sessions.
+     * @return The statement.
+     */
+    fun activity(cursor: Boolean, repo: Boolean): String {
+        // The plain bound on the time lets the index start at the cursor; the row comparison breaks the ties.
+        fun before(at: String, id: String) =
+            if (cursor) " AND $at <= :before_at AND ($at, $id) < (:before_at, :before_id)" else ""
+        val ofRepo = if (repo) " AND s.repo = :repo" else ""
+        val started = "CONCAT('session.started:', s.id)"
+        val ended = "CONCAT('session.ended:', s.id)"
+        val asked = "CONCAT('gate.requested:', CAST(g.id AS TEXT))"
+        val decided = "CONCAT('gate.decided:', CAST(g.id AS TEXT))"
+        val changed = "CONCAT('workflow.changed:', d.id)"
+        val decidedAt = "CAST(d.decided_at AS TIMESTAMPTZ)"
+        // The askers are a JSON array, the first one opened the gate.
+        val firstAsker = "COALESCE(CAST(g.asked_by AS JSONB) ->> 0, '')"
+        val endedBefore = before("s.ended_at", ended)
+        val decidedBefore = before("g.decided_at", decided)
+        val sessions = """
+            (SELECT $started AS item_id, s.started_at AS at, 'session.started' AS kind, s.agent AS actor,
+                s.dev AS subject, CAST(NULL AS TEXT) AS outcome, s.repo AS repo,
+                CAST(NULL AS DOUBLE PRECISION) AS cost_usd, s.id AS session_id, CAST(NULL AS TEXT) AS gate_id
+                FROM sessions_sessions s WHERE s.org_id = :org_id$ofRepo${before("s.started_at", started)}
+                ORDER BY s.started_at DESC, $started DESC LIMIT :limit)
+            UNION ALL
+            (SELECT $ended, s.ended_at, 'session.ended', s.agent, s.dev, NULL, s.repo, s.cost_usd, s.id, NULL
+                FROM sessions_sessions s WHERE s.org_id = :org_id AND s.ended_at IS NOT NULL$ofRepo$endedBefore
+                ORDER BY s.ended_at DESC, $ended DESC LIMIT :limit)
+        """
+        val others = """
+            UNION ALL
+            (SELECT $asked, g.created_at, 'gate.requested', $firstAsker, g.label, NULL, NULL, NULL, NULL,
+                CAST(g.id AS TEXT) FROM gates_gates g
+                WHERE g.org_id = :org_id AND g.status NOT IN ('SHADOW', 'UNGATED')${before("g.created_at", asked)}
+                ORDER BY g.created_at DESC, $asked DESC LIMIT :limit)
+            UNION ALL
+            (SELECT $decided, g.decided_at, 'gate.decided', g.decided_by, g.label,
+                CASE WHEN g.status = 'REJECTED' THEN 'rejected' ELSE 'approved' END, NULL, NULL, NULL,
+                CAST(g.id AS TEXT) FROM gates_gates g
+                WHERE g.org_id = :org_id AND g.decided_at IS NOT NULL AND g.decided_by IS NOT NULL$decidedBefore
+                ORDER BY g.decided_at DESC, $decided DESC LIMIT :limit)
+            UNION ALL
+            (SELECT $changed, $decidedAt, 'workflow.changed', d.decided_by, d.subject_id, NULL, NULL, NULL, NULL,
+                NULL FROM compiler_decisions d
+                WHERE d.org_id = :org_id AND d.subject_kind = 'workflow'${before(decidedAt, changed)}
+                ORDER BY $decidedAt DESC, $changed DESC LIMIT :limit)
+        """
+        val sources = if (repo) sessions else sessions + others
+        return """
+            SELECT feed.item_id, feed.at, feed.kind, COALESCE(u.login, feed.actor) AS actor, feed.subject,
+                feed.outcome, feed.repo, feed.cost_usd, feed.session_id, feed.gate_id
+            FROM ($sources) feed
+            LEFT JOIN (orgs_members m JOIN identity_users u ON u.id = m.user_id)
+                ON m.org_id = :org_id AND feed.kind IN ('gate.decided', 'workflow.changed')
+                AND m.user_id = CASE WHEN feed.actor ~ '$UUID_PATTERN' THEN CAST(feed.actor AS UUID) END
+            ORDER BY feed.at DESC, feed.item_id DESC LIMIT :limit
+        """.trimIndent()
+    }
+
+    // A person who decided, kept as a user's id, is shown by their login, and only if they are a member of the
+    // organization: an id written anywhere else, or of a stranger, is shown as it is (never another org's login).
+    private const val UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+}
