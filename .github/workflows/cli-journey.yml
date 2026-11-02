@@ -3,12 +3,12 @@ name: CLI journey
 # The CLI's journey (ostrom-cli e2e/journey.py, demo/PARCOURS.md from `ostrom login` to `ostrom claude`, its gate, the
 # second person's yes and the receipt) against a PUBLISHED image of this server: by default the newest `sha-<7>` of
 # main's last commits published, never `edge`, which names no commit and a slower run of an older one may still hold.
-# The CLI is built here from ostrom-cli (its linuxX64 release binary, with ostrom-core from the commit it pins). It runs in this repository because its token
-# reads its own GHCR packages, which ostrom-cli's cannot yet (the CLI's own journey is skipped there, "package Actions
-# access"). On demand, every night (main's CLI against the newest `sha-<7>` of main published, named in the run's
-# summary, so a red night points at a commit; the hook's latency budgets of step 5.8 live in ostrom-cli's
-# e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull request only when the
-# pull request changes this file.
+# The CLI is built here from ostrom-cli (its linuxX64 release binary, with ostrom-core from the commit it pins). It runs
+# in this repository because its token reads its own GHCR packages, which ostrom-cli's cannot yet (the CLI's own journey
+# is skipped there, "package Actions access"). On demand, every night (main's CLI against the newest `sha-<7>` of main
+# published, named in the run's summary, so a red night points at a commit; the hook's latency budgets of step 5.8 live
+# in ostrom-cli's e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull
+# request only when the pull request changes this file.
 on:
   schedule:
     - cron: '17 3 * * *'
