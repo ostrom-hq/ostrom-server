@@ -18,6 +18,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
 import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
+import dev.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import dev.ostrom.server.integrations.github.domain.GitHubRepo
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.integrations.github.domain.GitHubTeam
@@ -56,7 +57,6 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
-import io.ktor.client.statement.request
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -77,6 +77,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
@@ -231,12 +232,16 @@ class GitHubDirectoryPostgresTest {
         directoryApi.failure = gitHubDown()
         assertEquals(HttpStatusCode.ServiceUnavailable, server.get("user:a:owner", "/api/v1/repos").status)
         directoryApi.failure = null
+        // GitHub rests 30 s after a failed first read (AUDIT-SECU-2 B4): a console that keeps reloading waits.
+        assertEquals(HttpStatusCode.ServiceUnavailable, server.get("user:a:owner", "/api/v1/repos").status)
+        clock.now += 31.seconds
         assertEquals(2, server.get("user:a:owner", "/api/v1/repos").body<ReposResponse>().items.size)
     }
 
     @Test
     fun anInstallReadsTheDirectoryAgainAtTheNextList() = gitHubTest { server ->
         server.koin.get<GitHubRepository>().saveInstallation(GitHubInstallation(ORG, 42, "acme"), NOW)
+        server.koin.get<GitHubOriginsRepository>().saveOrigin(ACME_ORIGIN, NOW)
         server.get("user:a:owner", "/api/v1/repos")
         val apps = server.koin.get<GitHubAppStore>()
         apps.saveApp(createdApp(), "user:a:owner", NOW)
@@ -332,18 +337,23 @@ class GitHubDirectoryPostgresTest {
         val state = Regex("state=([0-9a-f]+)").find(page)?.groupValues?.get(1).orEmpty()
 
         directoryApi.created["code1"] = createdApp()
-        val back = server.get(null, "/api/v1/github/app/manifest/callback?code=code1&state=$state")
+        val callback = "/api/v1/github/app/manifest/callback?code=code1&state=$state"
+        // The state is the session's that started (AUDIT-SECU-2 B2): another session's, or none, is refused.
+        assertEquals(HttpStatusCode.Forbidden, server.get("admin:a:ops", callback).status)
+        assertEquals(HttpStatusCode.Unauthorized, server.get(null, callback).status)
+        val back = server.get("user:a:owner", callback)
         assertEquals(HttpStatusCode.Found, back.status)
         assertEquals("https://console.example/console/settings?github=created", back.headers[HttpHeaders.Location])
         val status = server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>()
         assertEquals("ostrom-acme" to "https://github.com/apps/ostrom-acme", status.slug to status.htmlUrl)
-        assertEquals(HttpStatusCode.Forbidden, server.get(null, back.request.url.encodedPathAndQuery).status, "Once")
+        assertEquals(HttpStatusCode.Forbidden, server.get("user:a:owner", callback).status, "Once")
         assertEquals(HttpStatusCode.Conflict, server.get("user:a:owner", "/api/v1/github/app/manifest/start").status)
 
         // The webhook secret GitHub chose for the App is the one checked now.
         val body = """{"action":"deleted","installation":{"id":99}}"""
         val delivered = server.client.post("/webhooks/github") {
             header("X-GitHub-Event", "installation")
+            header("X-GitHub-Delivery", "72f2a3c0-0000-0000-0000-000000000001")
             header("X-Hub-Signature-256", sign("whsec-created", body))
             contentType(ContentType.Application.Json)
             setBody(body)
@@ -361,7 +371,14 @@ class GitHubDirectoryPostgresTest {
         assertEquals(HttpStatusCode.BadRequest, server.get("user:a:owner", "$path?owner=-bad").status)
         val callback = "/api/v1/github/app/manifest/callback"
         assertEquals(HttpStatusCode.BadRequest, server.get(null, callback).status)
-        assertEquals(HttpStatusCode.Forbidden, server.get(null, "$callback?code=c&state=forged").status)
+        assertEquals(HttpStatusCode.Unauthorized, server.get(null, "$callback?code=c&state=forged").status)
+        assertEquals(HttpStatusCode.Forbidden, server.get("user:a:owner", "$callback?code=c&state=forged").status)
+        // Opened by another site in the administrator's browser (AUDIT-SECU-2 B1): refused before anything.
+        val elsewhere = server.client.config { followRedirects = false }.get(path) {
+            header(HttpHeaders.Authorization, "Bearer user:a:owner")
+            header("Sec-Fetch-Site", "cross-site")
+        }
+        assertEquals(HttpStatusCode.Forbidden, elsewhere.status)
     }
 
     @Test

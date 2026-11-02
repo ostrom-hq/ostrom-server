@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.integrations.github
 
+import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.integrations.github.domain.ConfiguredInstanceAdmins
@@ -9,6 +10,8 @@ import dev.ostrom.server.integrations.github.domain.GitHubAppManifests
 import dev.ostrom.server.integrations.github.domain.GitHubAppSource
 import dev.ostrom.server.integrations.github.domain.GitHubAppSourceImpl
 import dev.ostrom.server.integrations.github.domain.GitHubAppStore
+import dev.ostrom.server.integrations.github.domain.GitHubCiApi
+import dev.ostrom.server.integrations.github.domain.GitHubCiChecks
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.domain.GitHubDirectorySync
@@ -16,6 +19,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubGateChecks
 import dev.ostrom.server.integrations.github.domain.GitHubInstalls
 import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
 import dev.ostrom.server.integrations.github.domain.GitHubManifestTarget
+import dev.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import dev.ostrom.server.integrations.github.domain.GitHubPullRequestHeads
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCase
@@ -26,6 +30,7 @@ import dev.ostrom.server.integrations.github.domain.ListGitHubReposUseCaseImpl
 import dev.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCase
 import dev.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCaseImpl
 import dev.ostrom.server.integrations.github.domain.OrgReferences
+import dev.ostrom.server.integrations.github.domain.installPage
 import dev.ostrom.server.integrations.github.infrastructure.AppJwts
 import dev.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import dev.ostrom.server.integrations.github.infrastructure.GitHubMigrations
@@ -34,6 +39,7 @@ import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
 import dev.ostrom.server.integrations.github.infrastructure.OrgsOrgReferences
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubDirectoryRepository
+import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubOriginsRepository
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubRepository
 import dev.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import dev.ostrom.server.integrations.github.infrastructure.credentials
@@ -85,6 +91,7 @@ object GitHubIntegrationModule : ServerModule {
         single { GitHubSettings.from(get()) }
         single { GitHubAppSetup.from(get()) }
         single<GitHubRepository> { PostgresGitHubRepository(get()) }
+        single<GitHubOriginsRepository> { PostgresGitHubOriginsRepository(get()) }
         // The orgs module's lookup: `?org=` and `{org}` read an id or a short name, as the `Ostrom-Org` header does.
         single<OrgReferences> { OrgsOrgReferences(get()) }
         single<GitHubAppStore> { PostgresGitHubAppStore(get(), get()) }
@@ -102,6 +109,7 @@ object GitHubIntegrationModule : ServerModule {
         single<GitHubApi> { get<HttpGitHubApi>() }
         single<GitHubDirectoryApi> { get<HttpGitHubApi>() }
         single<GitHubManifestApi> { get<HttpGitHubApi>() }
+        single<GitHubCiApi> { get<HttpGitHubApi>() }
         single<GitHubDirectoryRepository> { PostgresGitHubDirectoryRepository(get()) }
         single { GitHubDirectorySync(get(), get(), get(), get(), get()) }
         single<ListGitHubReposUseCase> { ListGitHubReposUseCaseImpl(get(), get()) }
@@ -114,12 +122,17 @@ object GitHubIntegrationModule : ServerModule {
         }
         single { GitHubAppManifests(get(), get(), get(), get(), get(), get()) }
         single<PullRequestHeads> { GitHubPullRequestHeads(get(), get(), get()) }
+        single<CiChecks> {
+            val apps = get<GitHubAppSource>()
+            GitHubCiChecks(get(), get(), { apps.current().slug }, get())
+        }
         single { GitHubGateChecks(get(), get(), get<GitHubSettings>().webOrigin, get()) } bind GateChannel::class
-        single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get()) }
+        single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single {
             val apps = get<GitHubAppSource>()
             val sync = get<GitHubDirectorySync>()
-            GitHubInstalls(get(), get(), { apps.current().installSlug }, get<GitHubSettings>().webUrl, get()) {
+            val webUrl = get<GitHubSettings>().webUrl
+            GitHubInstalls(get(), get(), get(), { installPage(webUrl, apps.current().installSlug) }, get()) {
                 sync.installed(it)
             }
         }

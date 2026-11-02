@@ -83,8 +83,9 @@ data class GitHubManifestTarget(
  * Creates the instance's GitHub App by GitHub's manifest flow (`manifest.ts` of the prototype): an administrator of
  * the instance starts it, GitHub creates the App under their account (or an organization they name), then sends the
  * browser back with a code that [finish] exchanges for the App's id, key and secrets, stored sealed. The state of the
- * start is kept as its SHA-256 only, used once and for 10 minutes; the callback is unauthenticated, so the state is
- * its only proof. Closed whenever an App exists: the environment's always wins ([GitHubAppSourceImpl]).
+ * start is kept as its SHA-256 only, over the state and the session that started the flow, used once and for 10
+ * minutes: GitHub sends the browser back with that session's cookie, and a state another session brings back matches
+ * nothing (AUDIT-SECU-2 B2). Closed whenever an App exists: the environment's always wins ([GitHubAppSourceImpl]).
  *
  * The App asks what the integration uses and no more: `checks: write` for the `ostrom-gate` check; read-only
  * metadata, contents, pull requests, issues, actions and members (the directory and the analysis); the
@@ -111,12 +112,13 @@ class GitHubAppManifests(
      *
      * @param principal The caller, a person signed in to the console.
      * @param owner The GitHub organization that will own the App, or null for the caller's own account.
+     * @param session The session that starts it: only that session finishes it (AUDIT-SECU-2 B2).
      * @return The form to post to GitHub.
      * @throws NotAnInstanceAdminException When the caller does not administer the instance.
      * @throws GitHubAppExistsException When an App exists.
      * @throws OstromException 400 for an owner that is not a GitHub login.
      */
-    suspend fun start(principal: AuthenticatedPrincipal, owner: String?): ManifestForm {
+    suspend fun start(principal: AuthenticatedPrincipal, owner: String?, session: String): ManifestForm {
         when {
             !admins.isAdmin(principal) -> refuse(NotAnInstanceAdminException())
             apps.current().named -> refuse(GitHubAppExistsException())
@@ -124,7 +126,7 @@ class GitHubAppManifests(
                 refuse(OstromException(ErrorKind.INVALID_REQUEST, "owner is not a GitHub organization."))
         }
         val state = Uuid.random().toHexString() + Uuid.random().toHexString()
-        store.saveState(sha256Hex(state), principal.subjectId, clock.now() + STATE_LIFETIME)
+        store.saveState(sha256Hex("$state:$session"), principal.subjectId, clock.now() + STATE_LIFETIME)
         val page = if (owner == null) {
             "${target.webUrl}/settings/apps/new"
         } else {
@@ -138,16 +140,22 @@ class GitHubAppManifests(
      *
      * @param code GitHub's code.
      * @param state The state of [start].
+     * @param session The session the browser came back with, or null without one.
      * @return The App, stored.
-     * @throws OstromException 400 for a malformed callback or a code GitHub does not know, 403 for an unknown, used
-     *   or expired state, 409 when an App exists, 503 when GitHub does not answer.
+     * @throws OstromException 400 for a malformed callback or a code GitHub does not know, 401 without a session, 403
+     *   for an unknown, used or expired state or one another session started, 409 when an App exists, 503 when GitHub
+     *   does not answer.
      */
-    suspend fun finish(code: String?, state: String?): CreatedGitHubApp {
+    suspend fun finish(code: String?, state: String?, session: String?): CreatedGitHubApp {
         val malformed = OstromException(ErrorKind.INVALID_REQUEST, "This is not a GitHub App creation callback.")
         if (code == null || !CODE.matches(code)) refuse(malformed)
         if (state.isNullOrEmpty() || state.length > MAX_STATE) refuse(malformed)
-        val by = store.takeState(sha256Hex(state), clock.now())
-            ?: refuse(OstromException(ErrorKind.FORBIDDEN, "This link expired or was already used."))
+        if (session == null) {
+            refuse(OstromException(ErrorKind.UNAUTHORIZED, "Sign in to the console, then create the App again."))
+        }
+        // A state brought back by another session (one that leaked through a proxy log) matches no row.
+        val by = store.takeState(sha256Hex("$state:$session"), clock.now())
+            ?: refuse(OstromException(ErrorKind.FORBIDDEN, "This link expired, was used or is another session's."))
         if (apps.current().named) refuse(GitHubAppExistsException())
         val app = convert(code)
             ?: refuse(OstromException(ErrorKind.INVALID_REQUEST, "GitHub does not know this code: start again."))
@@ -176,6 +184,8 @@ class GitHubAppManifests(
         // Where GitHub returns after an install if the authorization on install is turned off.
         put("setup_url", "$api/api/v1/github/app/install/callback")
         put("request_oauth_on_install", true)
+        // An install started again (GitHub's webhook was late) comes back to the callback after its settings are saved.
+        put("setup_on_update", true)
         put("public", false)
         putJsonObject("hook_attributes") {
             put("url", "$api/webhooks/github")

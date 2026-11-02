@@ -69,10 +69,40 @@ val GatesMigrations: List<SchemaMigration> = listOf(
         "gates_by_session",
         "CREATE INDEX gates_gates_by_session ON gates_gates USING GIN ((CAST(session_ids AS JSONB)))",
     ),
+    // Under row level security, a qual that is not leakproof (`lower()`, `jsonb @>`) is never an index condition: the
+    // inbox and a session's gates read every row of the organization. The inbox compares a stored lowered approver
+    // with a leakproof `=`; a session finds its gates through a link table, filled from the existing gates (the owner
+    // reads them all for that one statement, with the policy no longer forced on it).
+    SchemaMigration(
+        3,
+        "gates_reads_under_row_level_security",
+        """
+        ALTER TABLE gates_requests ADD COLUMN approver_key TEXT GENERATED ALWAYS AS (lower(approver_id)) STORED;
+        DROP INDEX gates_requests_inbox;
+        CREATE INDEX gates_requests_inbox ON gates_requests (org_id, approver_key, status, created_at DESC, id DESC);
+        CREATE TABLE gates_sessions (
+            org_id UUID NOT NULL,
+            session_id TEXT NOT NULL,
+            gate_id UUID NOT NULL REFERENCES gates_gates (id) ON DELETE CASCADE,
+            PRIMARY KEY (org_id, session_id, gate_id)
+        );
+        ALTER TABLE gates_gates NO FORCE ROW LEVEL SECURITY;
+        INSERT INTO gates_sessions (org_id, session_id, gate_id)
+            SELECT g.org_id, s.session_id, g.id
+            FROM gates_gates g, jsonb_array_elements_text(CAST(g.session_ids AS JSONB)) AS s (session_id);
+        ALTER TABLE gates_gates FORCE ROW LEVEL SECURITY;
+        DROP INDEX gates_gates_by_session;
+        ALTER TABLE gates_sessions ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE gates_sessions FORCE ROW LEVEL SECURITY;
+        CREATE POLICY gates_sessions_org ON gates_sessions
+            USING (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
+            WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
+        """.trimIndent(),
+    ),
     // The count of the `ostrom.gates.pending` gauge, across organizations (docs/tenancy.md): a function of
     // `ostrom_router`, which sees the status column alone, through a read-only policy of its own.
     SchemaMigration(
-        3,
+        4,
         "gates_pending_count",
         """
         DO $$ BEGIN

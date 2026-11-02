@@ -14,6 +14,7 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.kernel.http.withNulls
 import dev.ostrom.server.receipts.presentation.requireReceiptReader
 import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.sessions.presentation.SessionScopes
@@ -51,7 +52,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
         post<ChecksApi> {
             val actor = actorOf(call, SessionScopes.writing)
             val run = reportCheck(actor, call.receive<ReportCheckRequest>())
-            call.respond(HttpStatusCode.Created, run)
+            call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
         }
         get<ChecksApi> { params ->
             val actor = actorOf(call, SessionScopes.reading)
@@ -92,7 +93,8 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
         val cloudSession = Uuid.parseOrNull(body.sessionId)
             ?: throw InvalidRunException("sessionId: the cloud session's id.")
         val execution = authenticateRunner(token, cloudSession, body.epoch)
-        call.respond(HttpStatusCode.Created, reportRunnerCheck(execution.orgId, execution.id, body.check))
+        val run = reportRunnerCheck(execution.orgId, execution.id, body.check)
+        call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
     }
 }
 
@@ -123,13 +125,14 @@ private fun statusOf(value: String?): NotificationStatus? = value?.let { text ->
         ?: throw InvalidRunException("status: queued, sent, logged-only or not-sent.")
 }
 
-// `package` is always written, null when the receipt cites none (the contract requires the key).
+// `package` is always written, null when the receipt cites none, and so is its `repo`, null for an organization's
+// package (the contract requires both keys).
 private fun ReceiptBundle.toJson(): JsonObject = buildJsonObject {
     put("format", BUNDLE_FORMAT)
     put("receipt", receipt)
     put("chain", JsonArray(chain))
-    val pack = envelope
-    put("package", if (pack == null) JsonNull else OstromJson.encodeToJsonElement(PackageEnvelope.serializer(), pack))
+    val pack = envelope?.let { OstromJson.encodeToJsonElement(PackageEnvelope.serializer(), it).withNulls("repo") }
+    put("package", pack ?: JsonNull)
     put(
         "keys",
         JsonArray(
