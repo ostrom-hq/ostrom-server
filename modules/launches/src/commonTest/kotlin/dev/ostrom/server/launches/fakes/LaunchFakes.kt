@@ -72,8 +72,8 @@ class RecordingTokens : AgentTokenService {
 class FakeModelRules(private val refused: Map<String, String> = emptyMap()) : LaunchModelRules {
     val asked = mutableListOf<Triple<Uuid, String, String>>()
 
-    override suspend fun refusal(orgId: Uuid, login: String, model: String): String? {
-        asked += Triple(orgId, login, model)
+    override suspend fun refusal(launcher: Launcher, model: String): String? {
+        asked += Triple(launcher.orgId, launcher.login, model)
         return refused[model]
     }
 }
