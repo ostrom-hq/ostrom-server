@@ -84,9 +84,9 @@ interface UsageRepository {
      * @param orgId The org.
      * @param launchId The launch.
      * @param from The start, included.
-     * @param to The end, included.
+     * @param to The end, excluded.
      *
-     * @return USD millionths, or null when the launch spent nothing in the window.
+     * @return USD millionths, or null when no priced call of the launch falls in the window.
      */
     suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long?
 

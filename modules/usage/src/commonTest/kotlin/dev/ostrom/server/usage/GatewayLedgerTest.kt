@@ -15,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
@@ -105,7 +106,9 @@ class GatewayLedgerTest {
             TestCallers.orgA,
             listOf(
                 modelEvent(1_000_000, at = from).copy(launchId = "lch_1"),
-                modelEvent(500_000, at = to).copy(launchId = "lch_1"),
+                modelEvent(500_000, at = to - 1.milliseconds).copy(launchId = "lch_1"),
+                modelEvent(9_000_000, at = to).copy(launchId = "lch_1"),
+                modelEvent(0, at = from).copy(launchId = "lch_4"),
                 modelEvent(9_000_000, at = from + 1.minutes).copy(launchId = "lch_2"),
                 modelEvent(9_000_000, at = to + 1.minutes).copy(launchId = "lch_1"),
                 modelEvent(9_000_000, at = from + 1.minutes),
@@ -114,6 +117,7 @@ class GatewayLedgerTest {
 
         assertEquals(1.5, costs.costOf(TestCallers.orgA, "lch_1", from, to))
         assertNull(costs.costOf(TestCallers.orgA, "lch_3", from, to), "Nothing measured: no cost, never zero")
+        assertNull(costs.costOf(TestCallers.orgA, "lch_4", from, to), "Only unpriced calls: no cost, never zero")
         assertNull(costs.costOf(TestCallers.orgA, null, from, to), "Without a launch, the gateway saw nothing of it")
     }
 }

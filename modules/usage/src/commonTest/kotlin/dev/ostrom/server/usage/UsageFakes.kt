@@ -155,7 +155,7 @@ class InMemoryUsageRepository : UsageRepository {
         events.filter { it.orgId == orgId && it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
 
     override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? = events
-        .filter { it.orgId == orgId && it.launchId == launchId && it.at >= from && it.at <= to }
+        .filter { it.orgId == orgId && it.launchId == launchId && it.at >= from && it.at < to && it.costMicros > 0 }
         .takeIf { it.isNotEmpty() }
         ?.sumOf { it.costMicros }
 
