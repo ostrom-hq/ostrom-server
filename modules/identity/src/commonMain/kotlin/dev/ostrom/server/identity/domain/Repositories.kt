@@ -242,7 +242,13 @@ interface ApiTokensRepository {
      * @return How many tokens were revoked.
      */
     suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long
+}
 
+/**
+ * An organization's service keys: the `SERVICE` tokens of [ApiTokensRepository], read and revoked inside their
+ * organization (they are created with [ApiTokensRepository.create], found by hash like any token).
+ */
+interface ServiceKeysRepository {
     /**
      * Lists an organization's live service keys (not revoked, not expired), inside that organization.
      *
@@ -251,7 +257,7 @@ interface ApiTokensRepository {
      *
      * @return At most [MAX_SERVICE_KEYS_PER_ORG] keys, newest first.
      */
-    suspend fun listLiveServiceKeys(orgId: Uuid, now: Instant): List<ApiToken>
+    suspend fun listLive(orgId: Uuid, now: Instant): List<ApiToken>
 
     /**
      * Revokes a live service key of an organization, inside that organization.
@@ -263,7 +269,7 @@ interface ApiTokensRepository {
      * @return True when a live key was revoked; false when it is absent, another organization's, not a service key,
      *   expired or already revoked.
      */
-    suspend fun revokeServiceKey(orgId: Uuid, id: Uuid, at: Instant): Boolean
+    suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean
 }
 
 /** Device authorizations of `ostrom login`. */

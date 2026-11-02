@@ -15,6 +15,7 @@ import dev.ostrom.server.identity.domain.DuplicateIdentityException
 import dev.ostrom.server.identity.domain.RateLimiter
 import dev.ostrom.server.identity.domain.SecretGenerator
 import dev.ostrom.server.identity.domain.SecretHasher
+import dev.ostrom.server.identity.domain.ServiceKeysRepository
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.UserEmail
@@ -217,6 +218,21 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
 
     private fun update(id: Uuid, change: (ApiToken) -> ApiToken) {
         tokens.entries.firstOrNull { it.value.id == id }?.let { it.setValue(change(it.value)) }
+    }
+}
+
+class InMemoryServiceKeysRepository(private val tokens: InMemoryApiTokensRepository) : ServiceKeysRepository {
+    override suspend fun listLive(orgId: Uuid, now: Instant): List<ApiToken> =
+        tokens.tokens.values.filter {
+            it.orgId == orgId && it.kind == TokenKind.SERVICE && it.revokedAt == null &&
+                (it.expiresAt?.let { e -> e > now } ?: true)
+        }
+            .sortedByDescending { it.createdAt }
+
+    override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean {
+        listLive(orgId, at).firstOrNull { it.id == id } ?: return false
+        tokens.tokens.entries.first { it.value.id == id }.let { it.setValue(it.value.copy(revokedAt = at)) }
+        return true
     }
 }
 

@@ -53,7 +53,8 @@ interface CreateServiceKeyUseCase {
 /**
  * [CreateServiceKeyUseCase] on the tokens repository.
  *
- * @param tokens The tokens.
+ * @param tokens The tokens, where the key is created.
+ * @param keys The organization's keys, for the cap.
  * @param secrets Makes secrets.
  * @param hasher Hashes them.
  * @param audit The audit log.
@@ -61,6 +62,7 @@ interface CreateServiceKeyUseCase {
  */
 class CreateServiceKeyUseCaseImpl(
     private val tokens: ApiTokensRepository,
+    private val keys: ServiceKeysRepository,
     private val secrets: SecretGenerator,
     private val hasher: SecretHasher,
     private val audit: AuditLog,
@@ -81,7 +83,7 @@ class CreateServiceKeyUseCaseImpl(
             throw InvalidTokenLifetimeException()
         }
         val now = clock.nowMillis()
-        val live = tokens.listLiveServiceKeys(orgId, now)
+        val live = keys.listLive(orgId, now)
         if (live.size >= MAX_SERVICE_KEYS_PER_ORG) throw TooManyServiceKeysException()
         val issued = issue(secrets, TokenKind.SERVICE) { id, hint ->
             val expiresAt = lifetime?.let { now + it }
@@ -114,17 +116,17 @@ interface ListServiceKeysUseCase {
 }
 
 /**
- * [ListServiceKeysUseCase] on the tokens repository.
+ * [ListServiceKeysUseCase] on the service keys repository.
  *
- * @param tokens The tokens.
+ * @param keys The keys.
  * @param clock The clock.
  */
 class ListServiceKeysUseCaseImpl(
-    private val tokens: ApiTokensRepository,
+    private val keys: ServiceKeysRepository,
     private val clock: Clock,
 ) : ListServiceKeysUseCase {
     override suspend fun invoke(member: OrgPrincipal): List<ApiToken> =
-        tokens.listLiveServiceKeys(member.requireKeyAdmin().orgId, clock.now())
+        keys.listLive(member.requireKeyAdmin().orgId, clock.now())
 }
 
 /** Deletes (revokes) a service key of an organization: it stops working at once. */
@@ -143,21 +145,21 @@ interface DeleteServiceKeyUseCase {
 }
 
 /**
- * [DeleteServiceKeyUseCase] on the tokens repository.
+ * [DeleteServiceKeyUseCase] on the service keys repository.
  *
- * @param tokens The tokens.
+ * @param keys The keys.
  * @param audit The audit log.
  * @param clock The clock.
  */
 class DeleteServiceKeyUseCaseImpl(
-    private val tokens: ApiTokensRepository,
+    private val keys: ServiceKeysRepository,
     private val audit: AuditLog,
     private val clock: Clock,
 ) : DeleteServiceKeyUseCase {
     override suspend fun invoke(member: OrgPrincipal, userId: Uuid, keyId: Uuid) {
         val orgId = member.requireKeyAdmin().orgId
         val at: Instant = clock.nowMillis()
-        if (!tokens.revokeServiceKey(orgId, keyId, at)) throw ServiceKeyNotFoundException()
+        if (!keys.revoke(orgId, keyId, at)) throw ServiceKeyNotFoundException()
         audit.record(AuditEntry(orgId, userId, "service_key.deleted", "service_key", keyId.toString()))
     }
 }

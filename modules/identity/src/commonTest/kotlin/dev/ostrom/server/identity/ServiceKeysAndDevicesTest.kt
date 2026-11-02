@@ -20,6 +20,7 @@ import dev.ostrom.server.identity.domain.TooManyServiceKeysException
 import dev.ostrom.server.identity.fakes.CountingSecretGenerator
 import dev.ostrom.server.identity.fakes.FakeHasher
 import dev.ostrom.server.identity.fakes.InMemoryApiTokensRepository
+import dev.ostrom.server.identity.fakes.InMemoryServiceKeysRepository
 import dev.ostrom.server.identity.fakes.RecordingAuditLog
 import dev.ostrom.server.identity.fakes.SettableClock
 import dev.ostrom.server.identity.presentation.toCreatedServiceKeyResponse
@@ -41,9 +42,11 @@ class ServiceKeysAndDevicesTest {
     private val tokens = InMemoryApiTokensRepository()
     private val audit = RecordingAuditLog()
     private val clock = SettableClock()
-    private val create = CreateServiceKeyUseCaseImpl(tokens, CountingSecretGenerator(), FakeHasher(), audit, clock)
-    private val list = ListServiceKeysUseCaseImpl(tokens, clock)
-    private val delete = DeleteServiceKeyUseCaseImpl(tokens, audit, clock)
+    private val keys = InMemoryServiceKeysRepository(tokens)
+    private val secrets = CountingSecretGenerator()
+    private val create = CreateServiceKeyUseCaseImpl(tokens, keys, secrets, FakeHasher(), audit, clock)
+    private val list = ListServiceKeysUseCaseImpl(keys, clock)
+    private val delete = DeleteServiceKeyUseCaseImpl(keys, audit, clock)
     private val devices = ListDevicesUseCaseImpl(tokens, clock)
     private val signOut = SignOutDeviceUseCaseImpl(tokens, audit, clock)
     private val orgA = Uuid.random()
@@ -75,6 +78,16 @@ class ServiceKeysAndDevicesTest {
         assertNull(key.toServiceKeyResponse().secret, "Listed without its secret")
         assertNull(key.toServiceKeyResponse().lastUsedAt)
         assertEquals(key.expiresAt.toString(), answer.expiresAt)
+    }
+
+    @Test
+    fun aKeyIsListedWithItsLastUseAndWithoutAnExpiryItDoesNotHave() = runTest {
+        val key = create(owner, ada, "runner", listOf("cloud:write"), null).token.copy(lastUsedAt = clock.now)
+        val answer = key.toServiceKeyResponse()
+        assertNull(answer.expiresAt)
+        assertEquals(clock.now.toString(), answer.lastUsedAt)
+        val laptop = token(ada, TokenKind.CLI, "laptop").copy(lastUsedAt = clock.now)
+        assertEquals(clock.now.toString(), laptop.toDeviceResponse().lastSeenAt)
     }
 
     @Test
@@ -145,7 +158,8 @@ class ServiceKeysAndDevicesTest {
 
     private suspend fun token(userId: Uuid, kind: TokenKind, name: String): ApiToken {
         val token = ApiToken(
-            Uuid.random(), userId, null, name, kind, setOf("profile:read"), "osc_hint", null, clock.now, null, null, null,
+            Uuid.random(), userId, null, name, kind, setOf("profile:read"), "osc_hint", null, clock.now,
+            null, null, null,
         )
         tokens.create(token, "h(${token.id})")
         return token
