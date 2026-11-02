@@ -99,8 +99,7 @@ val RulesMigrations: List<SchemaMigration> = listOf(
             )
             """.trimIndent(),
             tenant("rules_analyses"),
-        ).joinToString(";
-"),
+        ).joinToString(";\n"),
     ),
 )
 
