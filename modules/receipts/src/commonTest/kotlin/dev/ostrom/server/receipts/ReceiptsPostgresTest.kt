@@ -140,12 +140,7 @@ class ReceiptsPostgresTest {
     @Test
     fun theDatabaseItselfKeepsOrganizationsApart() = receiptsTest { server ->
         server.sign(ORG_A, "gate-1")
-        server.driver.execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
-        server.driver.execute("GRANT SELECT, INSERT ON receipts_receipts TO ostrom_rls_probe").getOrThrow()
         val counts = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             val none = fetchAll("SELECT COUNT(*) AS n FROM receipts_receipts").getOrThrow().first().get("n").asString()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", ORG_B.toString()))
                 .getOrThrow()
@@ -156,7 +151,6 @@ class ReceiptsPostgresTest {
         // PostgreSQL refuses the row (WITH CHECK): the statement fails, and with it the transaction.
         val refused = assertFailsWith<SQLError> {
             server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
                 val setOrg = Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)")
                 fetchAll(setOrg.bind("org", ORG_B.toString())).getOrThrow()
                 execute(

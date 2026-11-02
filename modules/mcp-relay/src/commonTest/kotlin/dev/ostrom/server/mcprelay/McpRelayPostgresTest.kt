@@ -92,8 +92,9 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
         assertEquals(1L, usage.rows.single().denied)
         assertEquals(
             3L,
-            driver.fetchAll(
-                "SELECT COUNT(*) AS n FROM mcp_relay_calls",
+            driver.fetchInOrg(
+                Relay.orgA,
+                Statement.create("SELECT COUNT(*) AS n FROM mcp_relay_calls"),
             ).getOrThrow().single().get("n").asString().toLong(),
         )
     }
