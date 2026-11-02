@@ -56,8 +56,9 @@ class SecretsPostgresTest {
             assertFalse("glsa_very_secret_value" in created.bodyAsText(), "The value never comes back")
             val secret = created.body<SecretResponse>()
 
-            val stored = server.driver.fetchAll(
-                "SELECT envelope FROM secrets_entries",
+            val stored = server.driver.fetchInOrg(
+                TestCallers.orgA,
+                Statement.create("SELECT envelope FROM secrets_entries"),
             ).getOrThrow().single().get("envelope").asString()
             assertFalse("glsa_very_secret_value" in stored, "Encrypted at rest")
             assertEquals("org", secret.scope)
