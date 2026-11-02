@@ -259,7 +259,7 @@ class UsagePostgresTest {
     @Test
     fun theRepositoryPagesTiesByIdAndPurgesInBatches() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<UsageRepository>()
-        val sameInstant = List(3) { modelEvent(it.toLong()) }
+        val sameInstant = List(3) { modelEvent(it.toLong()).copy(launchId = "lch_$it".takeIf { _ -> it > 0 }) }
         repository.insert(TestCallers.orgA, sameInstant + modelEvent(9, at = TestCallers.epoch - 500.days))
         repository.insert(TestCallers.orgA, emptyList())
 
@@ -273,6 +273,7 @@ class UsagePostgresTest {
         )
         val adminEvents = repository.list(TestCallers.orgA, TestCallers.adminA.memberId, null, 10)
         assertEquals(sameInstant.first(), adminEvents.first { it.id == sameInstant.first().id })
+        assertEquals(sameInstant.last(), adminEvents.first { it.id == sameInstant.last().id }, "The launch is kept")
         assertEquals(UsageKind.MODEL, first.first().kind)
         val today = UsageWindow(TestCallers.orgA, TestCallers.adminA.memberId, TestCallers.epoch - 1.days)
         assertEquals(1, repository.summary(today, UsageGroupBy.KIND, 10).size)

@@ -17,8 +17,12 @@ import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCase
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.GetApprovalQueueUseCase
+import dev.ostrom.server.gates.domain.usecases.GetApprovalQueueUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCase
 import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCaseImpl
+import dev.ostrom.server.gates.domain.usecases.GetApprovalViewUseCase
+import dev.ostrom.server.gates.domain.usecases.GetApprovalViewUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCase
 import dev.ostrom.server.gates.domain.usecases.GetGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCase
@@ -32,6 +36,7 @@ import dev.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
 import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.GatesMigrations
+import dev.ostrom.server.gates.infrastructure.MetricsGateChannel
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
@@ -46,6 +51,7 @@ import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 /**
@@ -68,9 +74,13 @@ object GatesModule : ServerModule {
         single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get()) }
         single<ListApprovalsUseCase> { ListApprovalsUseCaseImpl(get()) }
         single<GetApprovalUseCase> { GetApprovalUseCaseImpl(get()) }
+        single<GetApprovalQueueUseCase> { GetApprovalQueueUseCaseImpl(get(), get()) }
+        single<GetApprovalViewUseCase> { GetApprovalViewUseCaseImpl(get(), get()) }
         single<ListSessionGatesUseCase> { ListSessionGatesUseCaseImpl(get()) }
+        // Named: the channels of other modules (notifications, Slack, GitHub) bind theirs next to it.
+        single<GateChannel>(named("metrics")) { MetricsGateChannel(get()) }
 
-        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = GatesMigrations

@@ -5,14 +5,14 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
 import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
-/** The setting that opened the retention policies of version 2, which version 3 drops: kept for version 2's SQL. */
+/** The setting that opened the retention policies of version 2, which version 4 drops: kept for version 2's SQL. */
 private const val RETENTION_SETTING_V2: String = "ostrom.usage_retention"
 
 /** The retention purge, the one operation across organizations: a function owned by `ostrom_router`. */
 private val ROUTER_FUNCTIONS = listOf("usage_purge(TIMESTAMPTZ, INTEGER)")
 
 /**
- * Version 3: the retention policies, which any transaction could open by setting the retention setting (SELECT and
+ * Version 4: the retention policies, which any transaction could open by setting the retention setting (SELECT and
  * DELETE on every organization's events, RLS audit R4), give way to a narrow `SECURITY DEFINER` function owned by
  * `ostrom_router` (`NOLOGIN`, never a member of the serving role), with `pg_temp` last in its `search_path` and
  * executable by the serving role only: it deletes one batch of old events, the query it replaces, unchanged.
@@ -99,5 +99,11 @@ val UsageMigrations: List<SchemaMigration> = listOf(
                 "USING (current_setting('$RETENTION_SETTING_V2', true) = 'on');",
         ).joinToString("\n"),
     ),
-    SchemaMigration(version = 3, name = "retention_through_the_router", sql = RETENTION_THROUGH_THE_ROUTER_SQL),
+    SchemaMigration(
+        version = 3,
+        name = "usage_events_name_the_agent_launch",
+        // The launch whose agent token sent the event (server#108), null for a person's own credential.
+        sql = "ALTER TABLE usage_events ADD COLUMN launch_id TEXT",
+    ),
+    SchemaMigration(version = 4, name = "retention_through_the_router", sql = RETENTION_THROUGH_THE_ROUTER_SQL),
 )

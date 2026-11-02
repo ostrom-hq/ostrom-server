@@ -9,7 +9,10 @@ import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.mayUse
@@ -17,6 +20,7 @@ import dev.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.plugins.PayloadTooLargeException
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.resources.get
@@ -47,6 +51,9 @@ const val INFERENCE_BASE: String = "/api/v1/inference"
 /** The credentials that call models: an agent session, a personal token with the scope, a browser session. */
 private val INFERENCE_SCOPES = arrayOf(RelayScopes.AGENT_SESSION, RelayScopes.INFERENCE_USE)
 
+/** Who changes the policy and the settings besides a browser session (S2-52, declared): an `inference:admin` key. */
+private val INFERENCE_ADMINS = WriteAccess.tokens(PrincipalKind.SERVICE)
+
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
 
@@ -57,14 +64,18 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  * The gateway routes. The inference endpoints speak the providers' APIs (Anthropic Messages, OpenAI Responses and
  * Chat Completions), take the member's Ostrom token as `Authorization: Bearer` or `x-api-key`, and answer errors in
  * the provider's shape. An agent session reads the model policy; only `inference:admin` (or a browser session)
- * changes it and reads or changes the settings (SECURITY-AUDIT S2-03).
+ * changes it and reads or changes the settings (SECURITY-AUDIT S2-03), and a token that changes them is a service key
+ * (S2-52).
  *
  * @param dependencies The use cases.
  */
 fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependencies) {
-    routePost("$INFERENCE_BASE/v1/messages") { infer(dependencies, WireProtocol.MESSAGES) }
-    routePost("$INFERENCE_BASE/v1/responses") { infer(dependencies, WireProtocol.RESPONSES) }
-    routePost("$INFERENCE_BASE/v1/chat/completions") { infer(dependencies, WireProtocol.CHAT) }
+    // A model call carries the whole context: up to 32 MiB instead of the kernel's 1 MiB (S2-46).
+    bodyLimit(MAX_INFERENCE_REQUEST_BYTES) {
+        routePost("$INFERENCE_BASE/v1/messages") { infer(dependencies, WireProtocol.MESSAGES) }
+        routePost("$INFERENCE_BASE/v1/responses") { infer(dependencies, WireProtocol.RESPONSES) }
+        routePost("$INFERENCE_BASE/v1/chat/completions") { infer(dependencies, WireProtocol.CHAT) }
+    }
     routeGet("$INFERENCE_BASE/v1/models") {
         call.inferenceCaller(dependencies, WireProtocol.CHAT)?.let { (caller, _) ->
             call.respondText(modelList(getPolicy(caller), caller).toString(), ContentType.Application.Json)
@@ -76,7 +87,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             call.respond(getPolicy(caller).toDto())
         }
         put<ModelPolicyApi> {
-            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)
+            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
             val request = call.receive<ModelPolicyDto>()
             call.respond(
                 putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember)).toDto(),
@@ -86,7 +97,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             call.respond(getSettings(call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)).toDto())
         }
         put<InferenceSettingsApi> {
-            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)
+            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
             val request = call.receive<InferenceSettingsDto>()
             val settings = GatewaySettings(
                 request.anthropicKeySecret,
@@ -123,9 +134,14 @@ private fun modelList(policy: ModelPolicy, caller: Caller): JsonObject {
 
 private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies, protocol: WireProtocol) {
     val (caller, principal) = call.inferenceCaller(dependencies, protocol) ?: return
-    val bytes = call.receiveChannel().readRemaining(MAX_INFERENCE_REQUEST_BYTES + 1).readByteArray()
+    // The kernel cuts the body at MAX_INFERENCE_REQUEST_BYTES, chunked or not; the refusal is in the provider's shape.
+    val bytes = try {
+        call.receiveChannel().readRemaining().readByteArray()
+    } catch (_: PayloadTooLargeException) {
+        null
+    }
     val responder = KtorInferenceResponder(call, dependencies.clock)
-    if (bytes.size > MAX_INFERENCE_REQUEST_BYTES) {
+    if (bytes == null) {
         responder.refuse(protocol, InferenceRefusal(RefusalKind.INVALID, "The request exceeds 32 MiB."))
     } else {
         val headers = call.request.headers.entries()

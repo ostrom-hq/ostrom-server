@@ -26,9 +26,21 @@ private fun keyed(table: String, key: String) = """
     CREATE POLICY ${table}_update ON $table FOR UPDATE USING (org_id = $ORG) WITH CHECK (org_id = $ORG);
 """.trimIndent()
 
+// One organization's rows only, read and written in its transaction.
+private fun tenant(table: String) = """
+    ${forced(table)}
+    CREATE POLICY ${table}_org ON $table
+        USING (org_id = $ORG)
+        WITH CHECK (org_id = $ORG);
+""".trimIndent()
+
 /**
- * The GitHub integration's schema: one installation of the App per organization, the single-use states of the
- * install flow (their SHA-256 only), and the check run published per gate.
+ * The GitHub integration's schema. Version 1: one installation of the App per organization, the single-use states of
+ * the install flow (their SHA-256 only), and the check run published per gate. Version 2: each organization's
+ * directory as last read from GitHub (repositories, teams, when), under forced row level security like the rest;
+ * and the instance's App created by the manifest flow, with the single-use states of that flow. Those two are the
+ * instance's, not an organization's (no `org_id`, like `instance_info`): the App's key and secrets are sealed with
+ * the secrets key (`AesGcmSecretCipher`), so a read of the table alone opens nothing.
  */
 val GitHubMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -63,6 +75,56 @@ val GitHubMigrations: List<SchemaMigration> = listOf(
         CREATE POLICY github_checks_org ON github_checks
             USING (org_id = $ORG)
             WITH CHECK (org_id = $ORG)
+        """.trimIndent(),
+    ),
+    SchemaMigration(
+        2,
+        "create_github_directory_and_app",
+        """
+        CREATE TABLE github_repos (
+            org_id UUID NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            language TEXT,
+            default_branch TEXT NOT NULL,
+            archived BOOLEAN NOT NULL,
+            pushed_at TIMESTAMPTZ,
+            owners TEXT NOT NULL,
+            PRIMARY KEY (org_id, name)
+        );
+        CREATE TABLE github_teams (
+            org_id UUID NOT NULL,
+            slug TEXT NOT NULL,
+            name TEXT NOT NULL,
+            members TEXT NOT NULL,
+            repos TEXT NOT NULL,
+            PRIMARY KEY (org_id, slug)
+        );
+        CREATE TABLE github_directory_syncs (
+            org_id UUID PRIMARY KEY,
+            synced_at TIMESTAMPTZ,
+            checked_at TIMESTAMPTZ NOT NULL
+        );
+        ${tenant("github_repos")}
+        ${tenant("github_teams")}
+        ${tenant("github_directory_syncs")}
+        CREATE TABLE github_apps (
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+            app_id BIGINT NOT NULL,
+            slug TEXT NOT NULL,
+            owner TEXT,
+            client_id TEXT NOT NULL,
+            private_key_sealed TEXT NOT NULL,
+            client_secret_sealed TEXT NOT NULL,
+            webhook_secret_sealed TEXT,
+            created_by TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE TABLE github_manifest_states (
+            state_hash TEXT PRIMARY KEY,
+            created_by TEXT NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL
+        )
         """.trimIndent(),
     ),
 )

@@ -30,6 +30,6 @@ internal fun Membership.toMyOrganizationResponse() =
         org.id.toString(),
         org.slug,
         org.name,
-        org.githubOrgId?.let { "https://avatars.githubusercontent.com/u/$it" }.orEmpty(),
+        org.avatarUrl,
         member.role.key(),
     )

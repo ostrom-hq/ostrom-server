@@ -70,8 +70,14 @@ interface OAuthRefresher {
 
 /** The result of a refresh. */
 sealed interface RefreshResult {
-    /** New tokens. */
-    data class Renewed(val credentials: AccountCredentials) : RefreshResult
+    /**
+     * New tokens.
+     *
+     * @property credentials The new pair.
+     * @property accountId The provider account the provider says the tokens belong to (Claude's `account.uuid`, the
+     *   ChatGPT account id of Codex's `id_token`), or null when its answer does not say.
+     */
+    data class Renewed(val credentials: AccountCredentials, val accountId: String? = null) : RefreshResult
 
     /** Refused for good. */
     data object Revoked : RefreshResult

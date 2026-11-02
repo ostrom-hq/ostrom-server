@@ -65,8 +65,8 @@ class ReconcileCloudSessionUseCaseImpl(
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         val terminated = session.moveTo(SessionState.TERMINATED, now)
             .copy(terminatedAt = now, runnerTokenHash = null, phase = "cleaned")
-        write(terminated, null)
-        return null
+        // A lost write (the runner's last heartbeat, sent while its container stopped) asks for a new look.
+        return write(terminated, null)
     }
 
     private suspend fun starting(session: CloudSession, now: Instant): Instant? {
@@ -224,8 +224,8 @@ class ReconcileCloudSessionUseCaseImpl(
         /** A start must report ready within this time, image pull and repository clone included. */
         private val START_TIMEOUT: Duration = 15.minutes
 
-        /** A runner silent for this long is lost. */
-        private val HEARTBEAT_LOSS: Duration = 90.seconds
+        /** A runner silent for this long is lost; the runners list shows it offline after the same time. */
+        internal val HEARTBEAT_LOSS: Duration = 90.seconds
 
         /** What the runtime reports for an execution that is no longer there. */
         private val LOST_STATUSES = setOf(ExecutionStatus.ENDED, ExecutionStatus.FAILED, ExecutionStatus.MISSING)
