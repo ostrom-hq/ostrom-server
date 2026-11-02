@@ -54,7 +54,9 @@ internal fun serverTest(
         val logger = JsonLogger(LogLevel.WARN)
         database.owner.migrateUnderLock(MigrationRunnerImpl(database.owner, logger), modules)
         database.driver.requireRowLevelSecurity()
-        val kernel = kernelModule(logger, database.driver, signer, environment)
+        // The server's pool records what it sends, for the read benches (ReadBench.kt).
+        val driver = RecordingDriver(database.driver)
+        val kernel = kernelModule(logger, driver, signer, environment)
         val koin = serverKoin(kernel, modules, overrides)
         try {
             val migrations = koin.get<MigrationRunner>()
@@ -65,7 +67,7 @@ internal fun serverTest(
             // the application after the finally below has closed Koin.
             startApplication()
             val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
-            block(TestServer(koin, database.driver, client, database))
+            block(TestServer(koin, driver, client, database))
         } finally {
             koin.close()
         }
