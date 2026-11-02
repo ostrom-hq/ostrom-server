@@ -77,6 +77,16 @@ class CloudSessionsRepositoryImpl(private val driver: Driver) : CloudSessionsRep
         return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toSession() } }
     }
 
+    override suspend fun executions(orgId: Uuid, ownerId: String, limit: Int): List<CloudSession> {
+        val statement = Statement.create(
+            """
+            SELECT $COLUMNS FROM runners_sessions WHERE org_id = :org_id AND owner_id = :owner_id AND state IN
+            ('creating', 'running', 'pausing', 'resuming') ORDER BY created_at DESC, id DESC LIMIT :limit
+            """,
+        ).bind("org_id", orgId).bind("owner_id", ownerId).bind("limit", limit)
+        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toSession() } }
+    }
+
     override suspend fun setDesiredState(
         orgId: Uuid,
         id: Uuid,
