@@ -54,4 +54,11 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
             USING (current_setting('ostrom.sweep', TRUE) = 'lost-sessions')
         """.trimIndent(),
     ),
+    // A launch's sessions, first segment first: what a model call through the gateway is spent in (the reports'
+    // spending by agent and repository), and the sessions of a launch the API lists.
+    SchemaMigration(
+        2,
+        "index_sessions_by_launch",
+        "CREATE INDEX sessions_launch ON sessions_sessions (org_id, launch_id, segment)",
+    ),
 )

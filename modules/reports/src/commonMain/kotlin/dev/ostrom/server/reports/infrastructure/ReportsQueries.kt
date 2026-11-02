@@ -10,6 +10,10 @@ internal object ReportsQueries {
      * The ledger of a window joined to the session of each event, grouped four ways: `dim` is `agent`, `repo`,
      * `person` or `day`. Parameters `:org_id`, `:from`, `:to`, and `:member_id` if [member].
      *
+     * An event names its session by its id, or, for a model call through the gateway, by its launch (the event's
+     * `session_id` is then the launch's id, and `launch_id` too): the agent and the repository come from the session
+     * with that id, else from the first segment of that launch, one session only so that nothing counts twice.
+     *
      * @param member Whether one member's spending only.
      * @return The statement.
      */
@@ -17,9 +21,15 @@ internal object ReportsQueries {
         val mine = if (member) " AND e.member_id = :member_id" else ""
         return """
             WITH spent AS (
-                SELECT e.member_id, e.session_id, e.cost_micros, e.at, s.agent, s.repo, u.login
+                SELECT e.member_id, e.session_id, e.cost_micros, e.at, COALESCE(s.agent, l.agent) AS agent,
+                    COALESCE(s.repo, l.repo) AS repo, u.login
                 FROM usage_events e
                 LEFT JOIN sessions_sessions s ON s.org_id = e.org_id AND s.id = e.session_id
+                LEFT JOIN LATERAL (
+                    SELECT f.agent, f.repo FROM sessions_sessions f
+                    WHERE s.id IS NULL AND f.org_id = e.org_id AND f.launch_id = COALESCE(e.launch_id, e.session_id)
+                    ORDER BY f.segment LIMIT 1
+                ) l ON TRUE
                 LEFT JOIN orgs_members m ON m.org_id = e.org_id AND m.id = e.member_id
                 LEFT JOIN identity_users u ON u.id = m.user_id
                 WHERE e.org_id = :org_id AND e.at >= :from AND e.at < :to AND e.cost_micros > 0$mine
