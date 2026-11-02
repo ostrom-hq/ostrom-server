@@ -25,6 +25,13 @@ internal object GatesQueries {
         "WHERE s.org_id = :org AND s.session_id = :session AND g.org_id = :org " +
         "ORDER BY g.created_at, g.id LIMIT $MAX_SESSION_GATES"
 
+    /**
+     * The gates opened since `:since`, newest first, at most `:limit`: the rules' replay, read by a background worker
+     * once per replay, never on the request path. The organization's prefix of `gates_gates_by_key` finds its rows.
+     */
+    const val RECENT = "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND created_at >= :since " +
+        "ORDER BY created_at DESC, id DESC LIMIT :limit"
+
     /** The newest gates of one action (`:key`), under the action's advisory lock, at most `:limit`. */
     const val BY_KEY = "SELECT $GATE_COLUMNS FROM gates_gates WHERE org_id = :org AND gate_key = :key " +
         "ORDER BY created_at DESC, id DESC LIMIT :limit"

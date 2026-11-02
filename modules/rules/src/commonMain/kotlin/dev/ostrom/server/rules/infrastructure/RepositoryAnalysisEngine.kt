@@ -11,6 +11,7 @@ import dev.ostrom.server.rules.domain.services.AnalysisEngine
 import dev.ostrom.server.rules.domain.services.AnalysisStart
 import dev.ostrom.server.rules.domain.services.RepositoryReader
 import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCase
+import dev.ostrom.server.rules.domain.usecases.ReplayRulesUseCase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 
@@ -19,23 +20,25 @@ import kotlinx.coroutines.channels.Channel
  * cannot read GitHub fails where the console sees it; the run itself is queued and analysed in the background by the
  * module's workers ([work]), never in the request. The queue is bounded: past it, a start is refused visibly.
  *
- * The replay of pull requests needs their history, which this engine does not read: a replay fails visibly.
+ * A replay needs no repository: it replays the organization's rules on its gates' history, queued like an analysis.
  *
  * @param reader Lists the repositories.
  * @param analyze Runs an analysis.
+ * @param replay Runs a replay.
  * @param logger Where a run that broke the worker is logged.
  * @param capacity The runs waiting at most.
  */
 class RepositoryAnalysisEngine(
     private val reader: RepositoryReader,
     private val analyze: AnalyzeOrganizationUseCase,
+    private val replay: ReplayRulesUseCase,
     private val logger: Logger,
     capacity: Int = CAPACITY,
 ) : AnalysisEngine {
     private val queue = Channel<Pending>(capacity)
 
     override suspend fun start(run: AnalysisRun): AnalysisStart =
-        if (run.kind == AnalysisKind.ANALYSIS) listed(run) else AnalysisStart.Unavailable(ENGINE, NO_REPLAY)
+        if (run.kind == AnalysisKind.ANALYSIS) listed(run) else queued(Pending(run, emptyList()))
 
     private suspend fun listed(run: AnalysisRun): AnalysisStart {
         val listing = try {
@@ -47,17 +50,19 @@ class RepositoryAnalysisEngine(
             is RepositoryListing.NotConnected -> AnalysisStart.Unavailable(GITHUB, listing.reason)
             is RepositoryListing.Connected -> when {
                 listing.repos.isEmpty() -> AnalysisStart.Unavailable(GITHUB, NO_REPOS)
-                queue.trySend(Pending(run, listing.repos)).isSuccess -> AnalysisStart.Started
-                else -> AnalysisStart.Unavailable(ENGINE, BUSY)
+                else -> queued(Pending(run, listing.repos))
             }
         }
     }
+
+    private fun queued(pending: Pending): AnalysisStart =
+        if (queue.trySend(pending).isSuccess) AnalysisStart.Started else AnalysisStart.Unavailable(ENGINE, BUSY)
 
     /** Analyses the next queued run, waiting for one. A run that throws never stops the worker. */
     suspend fun runNext() {
         val pending = queue.receive()
         try {
-            analyze(pending.run, pending.repos)
+            if (pending.run.kind == AnalysisKind.ANALYSIS) analyze(pending.run, pending.repos) else replay(pending.run)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -83,7 +88,6 @@ class RepositoryAnalysisEngine(
 
         private const val ENGINE = "engine"
         private const val GITHUB = "github"
-        private const val NO_REPLAY = "The replay of pull requests is not available on this server yet."
         private const val NO_REPOS = "The GitHub App sees no repository of this organization: grant it the " +
             "repositories to analyse, then start again."
         private const val BUSY = "Too many analyses are waiting on this server; start again in a minute."

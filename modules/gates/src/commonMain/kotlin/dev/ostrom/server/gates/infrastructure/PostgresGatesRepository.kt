@@ -15,6 +15,7 @@ import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.RequestStatus
+import dev.ostrom.server.gates.domain.repositories.GateHistory
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.repositories.GatesTransaction
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -34,13 +35,13 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [GatesRepository] on PostgreSQL (sqlx4k). Every call is one transaction that first sets `ostrom.org_id`, which the
+ * [GatesRepository] and [GateHistory] on PostgreSQL (sqlx4k). Every call is one transaction that first sets `ostrom.org_id`, which the
  * row level security policies of the gates tables read: a query can never see or write another organization's rows,
  * even if its `WHERE` clause forgot the organization.
  *
  * @param driver The connection pool.
  */
-class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
+class PostgresGatesRepository(private val driver: Driver) : GatesRepository, GateHistory {
     override suspend fun <T> transaction(block: suspend GatesTransaction.() -> T): T = driver.transaction {
         Tx(this).block()
     }
@@ -69,6 +70,15 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             // Served by the primary key of the session links (migration 3).
             executor.rows(
                 Statement.create(GatesQueries.OF_SESSION).bind("org", orgId).bind("session", sessionId),
+            ).map { it.toGate() }
+        }
+    }
+
+    override suspend fun recent(orgId: Uuid, since: Instant, limit: Int): List<Gate> = driver.transaction {
+        Tx(this).run {
+            scope.enter(orgId)
+            executor.rows(
+                Statement.create(GatesQueries.RECENT).bind("org", orgId).bind("since", since).bind("limit", limit),
             ).map { it.toGate() }
         }
     }
