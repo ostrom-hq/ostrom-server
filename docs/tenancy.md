@@ -70,6 +70,7 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
 | `artifacts_route_by_id(id)` | artifacts | an artifact's organization by its id, for the content origin | `ArtifactsRoutesTenancyPostgresTest` |
 | `artifacts_route_by_slug(slug)` | artifacts | an artifact's organization by its public link | `ArtifactsRoutesTenancyPostgresTest` |
+| `runners_registered_org(id)` | runners | a registered runner's organization, for its heartbeat | `RegisteredRunnersHeartbeatPostgresTest` |
 
 ## Known exceptions
 

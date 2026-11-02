@@ -11,14 +11,17 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [RegisteredRunnersRepository] on PostgreSQL (`runners_registered`, migration 2 of [RunnersMigrations]): every read
- * and write runs confined to the runner's organization ([inTenant], S2-01). The labels are a JSON array of strings.
+ * [RegisteredRunnersRepository] on PostgreSQL (`runners_registered`, migrations 2 and 3 of [RunnersMigrations]):
+ * every read and write runs confined to the runner's organization ([inTenant], S2-01), except [organizationOf]. The
+ * labels are a JSON array of strings.
  *
  * @param driver The database.
  */
@@ -58,6 +61,32 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
             Statement.create("DELETE FROM runners_registered WHERE org_id = :org_id AND id = :id")
                 .bind("org_id", orgId).bind("id", id),
         ).getOrThrow() > 0
+    }
+
+    // The one read across organizations, through `runners_registered_org` (owned by `ostrom_router`, migration 3): the
+    // serving role itself, never inside an organization's transaction.
+    override suspend fun organizationOf(id: Uuid): Uuid? = driver.fetchAll(
+        Statement.create("SELECT runners_registered_org(CAST(:id AS UUID)) AS org_id").bind("id", id),
+    ).getOrThrow().first().get("org_id").asUuidOrNull()
+
+    override suspend fun get(orgId: Uuid, id: Uuid): RegisteredRunner? = driver.inTenant(orgId) {
+        fetchAll(
+            Statement.create("SELECT $COLUMNS FROM runners_registered WHERE org_id = :org_id AND id = :id")
+                .bind("org_id", orgId).bind("id", id),
+        ).getOrThrow().firstOrNull()?.toRunner()
+    }
+
+    override suspend fun touch(orgId: Uuid, id: Uuid, at: Instant) {
+        driver.inTenant(orgId) {
+            execute(
+                Statement.create(
+                    """
+                    UPDATE runners_registered SET last_seen_at = :at WHERE org_id = :org_id AND id = :id AND
+                    (last_seen_at IS NULL OR last_seen_at < :at)
+                    """,
+                ).bind("at", at).bind("org_id", orgId).bind("id", id),
+            ).getOrThrow()
+        }
     }
 
     private fun ResultSet.Row.toRunner() = RegisteredRunner(

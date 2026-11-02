@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.domain
 
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The runners organizations registered. */
@@ -35,4 +36,32 @@ interface RegisteredRunnersRepository {
      * @return True when it existed in that organization.
      */
     suspend fun delete(orgId: Uuid, id: Uuid): Boolean
+
+    /**
+     * The organization of a runner, read across organizations (the heartbeat names only the runner).
+     *
+     * @param id The runner.
+     *
+     * @return Its organization, or null when no runner has that id.
+     */
+    suspend fun organizationOf(id: Uuid): Uuid?
+
+    /**
+     * Reads a runner of an organization.
+     *
+     * @param orgId The organization.
+     * @param id The runner.
+     *
+     * @return The runner, or null when that organization has none with that id.
+     */
+    suspend fun get(orgId: Uuid, id: Uuid): RegisteredRunner?
+
+    /**
+     * Notes a runner's sign of life; an older one never replaces a newer one.
+     *
+     * @param orgId The organization.
+     * @param id The runner.
+     * @param at When.
+     */
+    suspend fun touch(orgId: Uuid, id: Uuid, at: Instant)
 }
