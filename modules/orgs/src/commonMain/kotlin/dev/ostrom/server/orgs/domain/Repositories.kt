@@ -85,6 +85,15 @@ interface MembersRepository {
     suspend fun findByUser(orgId: Uuid, userId: Uuid): Member?
 
     /**
+     * A member by its id, in its organization only.
+     *
+     * @param orgId The organization.
+     * @param memberId The member.
+     * @return The member, or null when the organization has none with this id.
+     */
+    suspend fun findById(orgId: Uuid, memberId: Uuid): Member?
+
+    /**
      * The members, oldest first.
      *
      * @param orgId The organization.

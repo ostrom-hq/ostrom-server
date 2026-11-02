@@ -57,18 +57,20 @@ class AppJwt(private val appId: String, private val privateKeyPem: String, priva
  * Checks GitHub's `X-Hub-Signature-256` on a webhook body: HMAC-SHA256 with the App's webhook secret, compared in
  * constant time.
  *
- * @param secret The webhook secret, or null: then no webhook is ever accepted.
+ * @param secret The webhook secret, read at each delivery (the App can be created later), or null: then no webhook is
+ *   ever accepted.
  */
-class WebhookSignature(private val secret: String?) {
+class WebhookSignature(private val secret: suspend () -> String?) {
     /**
      * @param body The raw body, as received.
      * @param header The `X-Hub-Signature-256` header.
      * @return True only for the signature of this body with this secret.
      */
     suspend fun verify(body: ByteArray, header: String?): Boolean {
-        if (secret == null || header == null || !header.startsWith(PREFIX)) return false
+        val shared = secret()
+        if (header == null || shared == null || !header.startsWith(PREFIX)) return false
         val key = CryptographyProvider.Default.get(HMAC).keyDecoder(SHA256)
-            .decodeFromByteArray(HMAC.Key.Format.RAW, secret.encodeToByteArray())
+            .decodeFromByteArray(HMAC.Key.Format.RAW, shared.encodeToByteArray())
         val mac = key.signatureGenerator().generateSignature(body)
         val expected = (PREFIX + mac.joinToString("") { HEX[it.toInt() and BYTE] }).encodeToByteArray()
         val got = header.encodeToByteArray()

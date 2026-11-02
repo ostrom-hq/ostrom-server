@@ -9,9 +9,12 @@ import dev.ostrom.server.automations.domain.NoOrganizationException
 import dev.ostrom.server.automations.domain.WaitCaller
 import dev.ostrom.server.automations.domain.WaitNotFoundException
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.BrowserSessionRequiredException
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.auth.WriteAccess
+import dev.ostrom.server.kernel.auth.requireWrite
 import kotlin.uuid.Uuid
 
 /** Reading waits. */
@@ -60,6 +63,9 @@ const val AUTOMATIONS_READ = "automations:read"
 /** Creating, changing, testing and deleting automations. Includes [AUTOMATIONS_READ]. */
 const val AUTOMATIONS_WRITE = "automations:write"
 
+/** Who writes automations besides a browser session (S2-52, declared): a service key, made for programs. */
+val AUTOMATION_WRITERS: WriteAccess = WriteAccess.tokens(PrincipalKind.SERVICE)
+
 /**
  * Whether a credential carries [scope], directly, through `automations:write`, or as a member's full login. A device
  * or agent token never manages automations, whatever its scopes (S2-03): only a member or a service key does.
@@ -71,9 +77,11 @@ fun AuthenticatedPrincipal.allowsAutomations(scope: String): Boolean = when (kin
 }
 
 /**
- * The member an automations request acts for.
+ * The member an automations request acts for. Writing ([AUTOMATIONS_WRITE]) takes a browser session or a service key
+ * ([AUTOMATION_WRITERS], S2-52): never a personal token, a device or the mobile app.
  *
  * @throws MissingAutomationScopeException When the credential lacks [scope].
+ * @throws BrowserSessionRequiredException When it may not write automations.
  * @throws NoOrganizationException When it acts for no organization.
  */
 suspend fun PrincipalOrgResolver.automationCallerOf(
@@ -81,6 +89,7 @@ suspend fun PrincipalOrgResolver.automationCallerOf(
     scope: String,
 ): AutomationCaller {
     if (!principal.allowsAutomations(scope)) throw MissingAutomationScopeException(scope)
+    if (scope == AUTOMATIONS_WRITE) principal.requireWrite(AUTOMATION_WRITERS)
     val member = resolve(principal, null) ?: throw NoOrganizationException()
     return AutomationCaller(
         orgId = member.orgId,

@@ -270,5 +270,10 @@ class TracingTest {
         assertEquals("/v1/gates/{id}", routeTemplate("/(authenticate token)/v1/gates/{id}/(method:GET)"))
         assertEquals("/", routeTemplate("/(method:GET)"))
         assertEquals("/", routeTemplate(""))
+        assertEquals(
+            "/api/v1/secrets/{name}",
+            routeTemplate("/(authenticate ostrom-token)/api/v1/secrets/{name}/[scope?]/[limit]/(method:PUT)"),
+        )
+        assertEquals("/a/(b/c]/[d)", routeTemplate("/a/(b/c]/[d)"))
     }
 }

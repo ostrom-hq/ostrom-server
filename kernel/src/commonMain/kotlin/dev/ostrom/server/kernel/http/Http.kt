@@ -33,9 +33,9 @@ val OstromJson: Json = Json {
 const val SERVER_VERSION: String = "0.1.0-dev"
 
 /**
- * Installs the kernel's HTTP layer (the client address behind trusted proxies, traces and request metrics when the
- * Koin has a [Telemetry], JSON, type-safe resources, request ids, request logs, uniform errors, token authentication,
- * `/health` and `/ready`) and the routes of every module.
+ * Installs the kernel's HTTP layer (the client address behind trusted proxies, request body limit, traces and request
+ * metrics when the Koin has a [Telemetry], JSON, type-safe resources, request ids, request logs by route template,
+ * uniform errors, token authentication, `/health` and `/ready`) and the routes of every module.
  *
  * @param koin The application's Koin, with the kernel module and every module's definitions loaded.
  * @param modules The functional modules, in order.
@@ -43,6 +43,7 @@ const val SERVER_VERSION: String = "0.1.0-dev"
 fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     val logger = koin.get<Logger>()
     install(ClientAddress) { proxies = koin.getOrNull<TrustedProxies>() ?: TrustedProxies.NONE }
+    install(BodyLimit)
     recordRouteTemplates()
     koin.getOrNull<Telemetry>()?.let { installTelemetry(it, koin.get<OstromMetrics>()) }
     install(ContentNegotiation) { json(OstromJson) }
