@@ -72,7 +72,13 @@ class ListOrgAuditUseCaseImpl(
         // AUDIT-SECU-LECTURES B1: the log is read whether the login exists or not, so the time of the answer does not
         // tell a login of the instance (another organization's included) from one that does not exist. An unknown login
         // is an actor no event names.
-        val actorId = actorLogin?.let { login -> users.findByLogin(login)?.id ?: NO_ACTOR }
+        val actorId = actorLogin?.let { login ->
+            // One test per case (`?.id ?:` would leave a branch no user can reach: a user without an id).
+            when (val user = users.findByLogin(login)) {
+                null -> NO_ACTOR
+                else -> user.id
+            }
+        }
         // One line more than a page: when it comes, there is a next page; never a cursor to an empty one.
         val read = events.listOrg(orgId, OrgAuditQuery(actorId, action, beforeSequence, ORG_AUDIT_PAGE + 1))
         val page = read.take(ORG_AUDIT_PAGE)
