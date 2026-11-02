@@ -7,6 +7,7 @@ import dev.ostrom.server.billing.domain.BillingMetrics
 import dev.ostrom.server.billing.domain.BillingSettings
 import dev.ostrom.server.billing.domain.ChangePlanUseCaseImpl
 import dev.ostrom.server.billing.domain.CheckEntitlementUseCaseImpl
+import dev.ostrom.server.billing.domain.EndDeletedOrgSubscriptionUseCaseImpl
 import dev.ostrom.server.billing.domain.GetAgentUsageUseCaseImpl
 import dev.ostrom.server.billing.domain.GetBillingOverviewUseCaseImpl
 import dev.ostrom.server.billing.domain.GetPlanLimitsUseCaseImpl
@@ -56,6 +57,7 @@ internal class World(stripeEnabled: Boolean = true) {
     val changePlan = ChangePlanUseCaseImpl(repository, stripe, sync, settings, clock)
     val cancellation = SetCancellationUseCaseImpl(repository, stripe, sync, settings)
     val invoices = ListInvoicesUseCaseImpl(repository, stripe)
+    val endSubscription = EndDeletedOrgSubscriptionUseCaseImpl(repository, stripe, sync, settings)
     val backfill = BackfillActivePeopleUseCaseImpl(repository, clock)
     val metrics = FakeBillingMetrics()
     val events = HandleStripeEventUseCaseImpl(repository, sync, notifier, backfill, metrics, clock)

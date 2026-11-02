@@ -221,6 +221,17 @@ class StripeGatewayImplTest {
     }
 
     @Test
+    fun anImmediateCancellationIsADeleteWithoutBodyNorKey() = runTest {
+        val harness = Harness(200 to """{"id":"sub_1","status":"canceled"}""")
+        harness.gateway.cancelNow("sub_1")
+        val sent = harness.sent.single()
+        assertEquals("DELETE" to "/v1/subscriptions/sub_1", sent.method to sent.url)
+        assertEquals("", sent.body)
+        assertFalse("Idempotency-Key" in sent.headers, "Stripe ignores a key on a DELETE")
+        assertEquals(STRIPE_API_VERSION, sent.headers.getValue("Stripe-Version"))
+    }
+
+    @Test
     fun invoicesReadTheirTaxFromEitherShape() = runTest {
         val harness = Harness(
             200 to """{"data":[

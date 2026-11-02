@@ -20,6 +20,7 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -29,8 +30,9 @@ import kotlin.uuid.Uuid
  * trigger kind are columns for the unique name per owner.
  *
  * Every read and write of an automation or a run runs confined to its organization ([inTenant], S2-01). Only
- * `automations_routes` is read across organizations: a webhook finds its automation's organization there, and the
- * scheduler claims the due crons of every organization there, then reads and writes each in its organization.
+ * `automations_routes` is read across organizations, through the `SECURITY DEFINER` functions of
+ * [AutomationsMigrations] (version 3): a webhook finds its automation's organization there, and the scheduler claims
+ * the due crons of every organization there, then reads and writes each in its organization.
  *
  * @param driver The database.
  */
@@ -73,9 +75,9 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
 
     override suspend fun getById(id: Uuid): Automation? {
         val route = driver.fetchAll(
-            Statement.create("""SELECT org_id FROM automations_routes WHERE automation_id = :id""").bind("id", id),
-        ).getOrThrow().firstOrNull() ?: return null
-        return get(route.get("org_id").asUuid(), id)
+            Statement.create("""SELECT automations_route_org(CAST(:id AS UUID)) AS org_id""").bind("id", id),
+        ).getOrThrow().first().get("org_id").asUuidOrNull() ?: return null
+        return get(route, id)
     }
 
     override suspend fun list(orgId: Uuid, owner: String?, before: Uuid?, limit: Int): List<Automation> {
@@ -208,20 +210,22 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         limit: Int,
         decide: suspend (Automation, Instant) -> CronClaim,
     ): List<ClaimedRun> = driver.transaction {
-        // Each due route is locked by one replica; another replica skips it, and the new next slot is written before
-        // the lock is released, so a slot is never run twice. The transaction runs as the tenant role and switches
-        // its organization for each automation, whose rows are read and written confined to it.
-        execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
+        // Each due route is locked by one replica (automations_due_routes, FOR UPDATE SKIP LOCKED); another replica
+        // skips it, and the new next slot is written before the lock is released, so a slot is never run twice. The
+        // routes are claimed by the serving role, which alone may run the function; then the transaction runs as the
+        // tenant role and switches its organization for each automation, whose rows are read and written confined to
+        // it.
         val due = fetchAll(
             Statement.create(
                 """
-                SELECT automation_id, org_id, next_run_at FROM automations_routes WHERE next_run_at <= :now ORDER BY
-                next_run_at LIMIT :limit FOR UPDATE SKIP LOCKED
+                SELECT automation_id, org_id, next_run_at FROM automations_due_routes(CAST(:now AS TIMESTAMPTZ),
+                CAST(:limit AS INTEGER))
                 """,
             ).bind("now", now).bind("limit", limit),
         ).getOrThrow().map { row ->
             Triple(row.get("automation_id").asUuid(), row.get("org_id").asUuid(), row.get("next_run_at").asInstant())
         }
+        execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
         due.flatMap { (id, orgId, slot) ->
             fetchAll(
                 Statement.create("SELECT set_config('$TENANT_SETTING', :org, true)").bind("org", orgId.toString()),
@@ -268,7 +272,7 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
 
     /** The organizations that have automations, from the one table read across organizations. */
     private suspend fun organizations(): List<Uuid> = driver.fetchAll(
-        Statement.create("""SELECT DISTINCT org_id FROM automations_routes"""),
+        Statement.create("""SELECT org_id FROM automations_organizations() AS o (org_id)"""),
     ).getOrThrow().map { it.get("org_id").asUuid() }
 
     /** Writes the next slot the scheduler looks at. */
