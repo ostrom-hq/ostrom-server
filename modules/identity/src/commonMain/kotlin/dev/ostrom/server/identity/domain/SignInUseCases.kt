@@ -59,7 +59,38 @@ interface StartOAuthSignInUseCase {
         linkTo: Uuid? = null,
         reauthenticate: Boolean = false,
     ): StartedOAuth
+
+    /**
+     * Prepares the consent page of a sign-in the phone app starts (S2-24): the callback returns a one-time code to
+     * the app's deep link instead of opening a browser session. The provider always asks again: a new phone is never
+     * signed in silently.
+     *
+     * @param provider The provider key (`github`, `google`).
+     * @param source Who is asking (the client address), for the rate limit.
+     * @param mobile The app ([mobileClientOf]).
+     *
+     * @return The state and the consent page URL.
+     *
+     * @throws ProviderNotConfiguredException When the provider is unknown or not configured.
+     * @throws RateLimitedException When the address starts too many sign-ins.
+     */
+    suspend fun mobile(provider: String, source: String, mobile: MobileClient): StartedOAuth
 }
+
+/**
+ * What an attempt carries besides its provider.
+ *
+ * @property redirect The console path to return to.
+ * @property linkTo The user who links the provider, if any.
+ * @property reauthenticate Whether the provider must ask again.
+ * @property mobile The phone app that started it, if any.
+ */
+private data class AttemptOptions(
+    val redirect: String?,
+    val linkTo: Uuid? = null,
+    val reauthenticate: Boolean = false,
+    val mobile: MobileClient? = null,
+)
 
 /**
  * [StartOAuthSignInUseCase].
@@ -79,7 +110,12 @@ class StartOAuthSignInUseCaseImpl(
         source: String,
         linkTo: Uuid?,
         reauthenticate: Boolean,
-    ): StartedOAuth {
+    ): StartedOAuth = start(provider, source, AttemptOptions(redirect, linkTo, reauthenticate))
+
+    override suspend fun mobile(provider: String, source: String, mobile: MobileClient): StartedOAuth =
+        start(provider, source, AttemptOptions(null, reauthenticate = true, mobile = mobile))
+
+    private suspend fun start(provider: String, source: String, options: AttemptOptions): StartedOAuth {
         val oauth = configuredProvider(methods, provider)
         val (generator, hasher) = services.generator to services.hasher
         if (!services.limiter.tryAcquire("oauth-start:$source", START_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) {
@@ -96,15 +132,17 @@ class StartOAuthSignInUseCaseImpl(
                 connectionId = null,
                 codeVerifier = verifier,
                 nonce = nonce,
-                redirectPath = safeRedirectPath(redirect),
+                redirectPath = safeRedirectPath(options.redirect),
                 createdAt = now,
                 expiresAt = now + OAUTH_STATE_LIFETIME,
-                linkUserId = linkTo,
+                linkUserId = options.linkTo,
+                mobile = options.mobile,
             ),
             hasher.hash(state),
         )
         val callback = services.callbackUrl(oauth.provider)
-        val url = oauth.authorizationUrl(state, hasher.pkceChallenge(verifier), nonce, callback, reauthenticate)
+        val challenge = hasher.pkceChallenge(verifier)
+        val url = oauth.authorizationUrl(state, challenge, nonce, callback, options.reauthenticate)
         return StartedOAuth(state, url)
     }
 
@@ -167,12 +205,9 @@ class CompleteOAuthSignInUseCaseImpl(
         browserState: String?,
         code: String?,
     ): CompletedSignIn {
-        val oauth = configuredProvider(methods, provider)
-        if (state.isNullOrEmpty() || browserState == null || !constantTimeEquals(state, browserState)) {
-            throw InvalidSignInStateException()
-        }
-        val attempt = attempts.consume(services.hasher.hash(state), services.clock.nowMillis())
-        if (attempt == null || attempt.provider != oauth.provider) throw InvalidSignInStateException()
+        val (oauth, attempt) = takeAttempt(methods, attempts, services, TakenState(provider, state, browserState))
+        // A sign-in the phone app started ends in the app, never in a browser session.
+        if (attempt.mobile != null) throw InvalidSignInStateException()
         if (code.isNullOrEmpty()) throw ProviderRejectedException("no authorization code.")
         val identity = oauth.identity(code, attempt.codeVerifier, attempt.nonce, services.callbackUrl(oauth.provider))
         val linkTo = attempt.linkUserId
@@ -281,6 +316,46 @@ class VerifyMagicLinkUseCaseImpl(
     private companion object {
         const val MAX_TOKEN = 128
     }
+}
+
+/**
+ * The state of a provider's callback, as the browser brings it back.
+ *
+ * @property provider The provider key in the callback URL.
+ * @property state The state the provider returned.
+ * @property browserState The state in the browser's cookie, set at the start.
+ */
+internal data class TakenState(val provider: String, val state: String?, val browserState: String?)
+
+/**
+ * Checks a callback's state against the browser's cookie and takes its attempt, once.
+ *
+ * @param methods The configured providers.
+ * @param attempts Where attempts are kept.
+ * @param services Hashes the state; the clock.
+ * @param taken The provider and the two states.
+ *
+ * @return The provider and the attempt, now used.
+ *
+ * @throws ProviderNotConfiguredException When the provider is unknown or not configured.
+ * @throws InvalidSignInStateException When the state is missing, does not match the cookie, is unknown, used or
+ *   expired, or belongs to another provider.
+ */
+internal suspend fun takeAttempt(
+    methods: SignInMethods,
+    attempts: OAuthAttemptsRepository,
+    services: SignInServices,
+    taken: TakenState,
+): Pair<OAuthProvider, OAuthAttempt> {
+    val oauth = configuredProvider(methods, taken.provider)
+    val state = taken.state
+    val browserState = taken.browserState
+    if (state.isNullOrEmpty() || browserState == null || !constantTimeEquals(state, browserState)) {
+        throw InvalidSignInStateException()
+    }
+    val attempt = attempts.consume(services.hasher.hash(state), services.clock.nowMillis())
+    if (attempt == null || attempt.provider != oauth.provider) throw InvalidSignInStateException()
+    return oauth to attempt
 }
 
 private fun configuredProvider(methods: SignInMethods, key: String): OAuthProvider {
