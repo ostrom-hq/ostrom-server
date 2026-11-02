@@ -155,6 +155,7 @@ class ModelTest {
     fun theConfigurationDefaultsToNoRuntime() {
         val config = RunnersConfig.from(MapConfigSource(emptyMap()))
         assertEquals(RunnersConfig.DriverKind.NONE, config.driver)
+        assertNull(config.runtimeLabel)
         assertEquals(RunnersConfig.DEFAULT_RUNNER_IMAGE, config.runnerImage)
         assertEquals("ostrom", config.kubernetes.namespace)
         assertEquals("https://kubernetes.default.svc", config.kubernetes.apiUrl)
@@ -193,6 +194,7 @@ class ModelTest {
             ),
         )
         assertEquals(RunnersConfig.DriverKind.KUBERNETES, config.driver)
+        assertEquals("kubernetes", config.runtimeLabel)
         assertEquals("http://ostrom-server.ostrom.svc:8080", config.serverUrl)
         assertEquals("ghcr.io/x/runner:1", config.runnerImage)
         assertEquals("https://k8s:6443", config.kubernetes.apiUrl)

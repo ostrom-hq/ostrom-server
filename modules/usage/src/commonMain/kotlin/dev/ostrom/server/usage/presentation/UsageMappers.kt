@@ -67,6 +67,7 @@ fun UsageEvent.toResponse() = UsageEventResponse(
     provider = provider,
     accountId = accountId?.toString(),
     sessionId = sessionId,
+    launchId = launchId,
     inputTokens = inputTokens,
     outputTokens = outputTokens,
     cacheReadTokens = cacheReadTokens,
