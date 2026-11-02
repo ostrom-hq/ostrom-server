@@ -61,17 +61,18 @@ class DockerRuntimeDriverTest {
     private fun body(index: Int): JsonObject = Json.parseToJsonElement(api.calls[index].body!!).jsonObject
 
     @Test
-    fun aWorkspaceIsANamedVolumeWithItsSocketVolume() = runTest {
+    fun aWorkspaceIsANamedVolumeWithItsSocketVolumes() = runTest {
         driver.ensureWorkspace(session)
-        assertEquals(listOf("POST /volumes/create", "POST /volumes/create"), api.lines())
+        assertEquals(List(3) { "POST /volumes/create" }, api.lines())
         assertEquals("ostrom-ws-$hex", body(0)["Name"]!!.jsonPrimitive.content)
         assertEquals("ostrom-ws-$hex-socket", body(1)["Name"]!!.jsonPrimitive.content)
+        assertEquals("ostrom-ws-$hex-checks", body(2)["Name"]!!.jsonPrimitive.content)
         api.on("POST", "/volumes/create", HttpStatusCode.InternalServerError to "{}")
         assertFailsWith<DockerApiException> { driver.ensureWorkspace(session) }
     }
 
     @Test
-    fun anExecutionIsTheAgentHostThenTheRunnerEachInItsContainer() = runTest {
+    fun anExecutionIsTheAgentHostTheCheckHostThenTheRunnerEachInItsContainer() = runTest {
         driver.startExecution(spec)
 
         assertEquals(
@@ -79,12 +80,15 @@ class DockerRuntimeDriverTest {
                 "POST /containers/create",
                 "POST /containers/$name-agent/start",
                 "POST /containers/create",
+                "POST /containers/$name-checks/start",
+                "POST /containers/create",
                 "POST /containers/$name/start",
             ),
             api.lines(),
         )
         assertEquals("$name-agent", api.calls[0].query["name"])
-        assertEquals(name, api.calls[2].query["name"])
+        assertEquals("$name-checks", api.calls[2].query["name"])
+        assertEquals(name, api.calls[4].query["name"])
         // The agent: its own uid, the workspace and the socket, and no secret (S2-49).
         val agent = body(0)
         assertEquals("1000:1000", agent["User"]!!.jsonPrimitive.content)
@@ -101,8 +105,26 @@ class DockerRuntimeDriverTest {
         )
         assertNull(agentHost["GroupAdd"])
         assertFalse("ostrom_runner_xyz" in agent.toString())
-        // The runner: another uid, the shared group for the socket, the token, and no workspace.
-        val container = body(2)
+        // The check host: the agent's uid, the workspace and the check socket only, no secret.
+        val checks = body(2)
+        assertEquals("1000:1000", checks["User"]!!.jsonPrimitive.content)
+        assertEquals(
+            listOf("/usr/local/bin/ostrom-runner", "check-host"),
+            checks["Entrypoint"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals(
+            listOf("OSTROM_CHECK_HOST_SOCKET=/run/ostrom-check/check.sock", "HOME=/tmp"),
+            checks["Env"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        val checkHost = checks["HostConfig"]!!.jsonObject
+        assertEquals(
+            listOf("ostrom-ws-$hex:/workspace", "ostrom-ws-$hex-checks:/run/ostrom-check"),
+            checkHost["Binds"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertNull(checkHost["GroupAdd"])
+        assertFalse("ostrom_runner_xyz" in checks.toString())
+        // The runner: another uid, the shared group for the sockets, the token, and no workspace.
+        val container = body(4)
         assertEquals("ghcr.io/ostrom-hq/ostrom-runner:1.2", container["Image"]!!.jsonPrimitive.content)
         assertEquals("1001:1001", container["User"]!!.jsonPrimitive.content)
         val groups = container["HostConfig"]!!.jsonObject["GroupAdd"]!!.jsonArray
@@ -114,18 +136,20 @@ class DockerRuntimeDriverTest {
         assertFalse(env.any { it.startsWith("OSTROM_AGENT_MODEL") })
         assertTrue("OSTROM_SERVER_URL=http://host.docker.internal:8080" in env)
         assertFalse(env.any { it.startsWith("OSTROM_REPOSITORY_URL") })
+        assertTrue("OSTROM_RUNNER_CHECKS=/run/ostrom/checks.sock" in env)
+        assertTrue("OSTROM_CHECK_HOST_SOCKET=/run/ostrom-check/check.sock" in env)
         val host = container["HostConfig"]!!.jsonObject
         assertEquals("true", host["ReadonlyRootfs"]!!.jsonPrimitive.content)
         assertEquals("rw,nosuid,size=1g", host["Tmpfs"]!!.jsonObject["/tmp"]!!.jsonPrimitive.content)
         val binds = host["Binds"]!!.jsonArray.map { it.jsonPrimitive.content }
-        assertEquals(listOf("ostrom-ws-$hex-socket:/run/ostrom"), binds)
+        assertEquals(listOf("ostrom-ws-$hex-socket:/run/ostrom", "ostrom-ws-$hex-checks:/run/ostrom-check"), binds)
         assertEquals("ostrom", host["NetworkMode"]!!.jsonPrimitive.content)
         assertEquals("no", host["RestartPolicy"]!!.jsonObject["Name"]!!.jsonPrimitive.content)
         assertEquals(hex, container["Labels"]!!.jsonObject["ostrom.run/session"]!!.jsonPrimitive.content)
         assertEquals("restricted", container["Labels"]!!.jsonObject["ostrom.run/egress"]!!.jsonPrimitive.content)
 
         driver.startExecution(spec.copy(prompt = null))
-        val silent = body(6)["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
+        val silent = body(10)["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertFalse(silent.any { it.startsWith("OSTROM_AGENT_PROMPT") })
     }
 
@@ -140,6 +164,8 @@ class DockerRuntimeDriverTest {
                 "POST /images/create",
                 "POST /containers/create",
                 "POST /containers/$name-agent/start",
+                "POST /containers/create",
+                "POST /containers/$name-checks/start",
                 "POST /containers/create",
                 "POST /containers/$name/start",
             ),
@@ -219,7 +245,9 @@ class DockerRuntimeDriverTest {
     fun aVolumeInUseIsNotGoneYet() = runTest {
         val path = "/volumes/ostrom-ws-$hex"
         val socket = "$path-socket"
+        val checks = "$path-checks"
         api.on("GET", socket, HttpStatusCode.NotFound to "{}")
+        api.on("GET", checks, HttpStatusCode.NotFound to "{}")
         api.on("DELETE", path, HttpStatusCode.Conflict to "{}")
         assertFalse(driver.deleteWorkspace(session))
         api.on("DELETE", path, HttpStatusCode.NoContent to "")
@@ -234,6 +262,10 @@ class DockerRuntimeDriverTest {
         // The socket's volume still used keeps the answer at "not yet".
         api.on("DELETE", path, HttpStatusCode.NotFound to "{}")
         api.on("DELETE", socket, HttpStatusCode.Conflict to "{}")
+        assertFalse(driver.deleteWorkspace(session))
+        // So does the check socket's.
+        api.on("DELETE", socket, HttpStatusCode.NotFound to "{}")
+        api.on("DELETE", checks, HttpStatusCode.Conflict to "{}")
         assertFalse(driver.deleteWorkspace(session))
     }
 

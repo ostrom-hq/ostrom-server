@@ -60,7 +60,13 @@ class Runner(
      * @return The exit code: 0 after a stop, 1 when the execution ended under it.
      */
     suspend fun run(): Int {
-        val agentEnvironment = SessionScript.environment(environment, config)
+        val launch = try {
+            if (config.governed) openLaunch() else null
+        } catch (error: ExecutionEndedException) {
+            log("execution ended: ${error.message}")
+            return 1
+        }
+        val agentEnvironment = SessionScript.environment(environment, config) - RUNNER_SOCKETS + launchVariables(launch)
         val current = Current(terminals.start(SessionScript.FIRST, agentEnvironment, config.workspace))
         return try {
             coroutineScope {
@@ -77,6 +83,40 @@ class Runner(
     }
 
     private fun lastOutput(): String? = lastOutputAt?.toString()
+
+    /** Opens the agent's launch, a few times while the server cannot be reached; then the agent does not start. */
+    private suspend fun openLaunch(): RunnerLaunch {
+        repeat(LAUNCH_ATTEMPTS) {
+            val launch = try {
+                server.openLaunch()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ExecutionEndedException) {
+                throw error
+            } catch (error: Exception) {
+                log("launch failed: ${error::class.simpleName}")
+                null
+            }
+            if (launch != null) {
+                log("launch $launch")
+                return launch
+            }
+            delay(reconnectDelay)
+        }
+        return RunnerLaunch.Refused(UNREACHABLE)
+    }
+
+    /** What the agent learns of its launch: its id, its token and where its hooks ask for checks, or the refusal. */
+    private fun launchVariables(launch: RunnerLaunch?): Map<String, String> = when (launch) {
+        null -> emptyMap()
+        is RunnerLaunch.Opened -> mapOf(
+            "OSTROM_LAUNCH_ID" to launch.launchId,
+            "OSTROM_AGENT_TOKEN" to launch.agentToken,
+            "OSTROM_URL" to config.serverUrl,
+            RunnerConfig.CHECKS_VARIABLE to config.checksSocket,
+        )
+        is RunnerLaunch.Refused -> mapOf("OSTROM_LAUNCH_REFUSED" to launch.reason)
+    }
 
     private suspend fun heartbeat(current: Current): Int {
         while (true) {
@@ -154,5 +194,17 @@ class Runner(
             }
             delay(reconnectDelay)
         }
+    }
+
+    /** Constants of the runner. */
+    private companion object {
+        /** How many times the launch is asked for before the agent is left out. */
+        const val LAUNCH_ATTEMPTS = 10
+
+        /** Why the agent does not start when the server never answered the launch. */
+        const val UNREACHABLE = "the server could not be reached."
+
+        /** The runner's sockets: the agent only learns the checks', and only with a launch. */
+        val RUNNER_SOCKETS = setOf(RunnerConfig.CHECKS_VARIABLE, "OSTROM_CHECK_HOST_SOCKET")
     }
 }

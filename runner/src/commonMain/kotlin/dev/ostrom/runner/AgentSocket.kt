@@ -50,32 +50,55 @@ object AgentSocket {
         host: AgentHost,
         log: (String) -> Unit,
         ready: (String) -> Unit,
+    ) = listen(selector, path, "agent host", log, ready) { input, output ->
+        try {
+            host.serve(input, output)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            log("terminal connection failed: ${error::class.simpleName}")
+        }
+    }
+
+    /**
+     * Listens on a Unix socket and serves each connection with [handle] in its own coroutine, until cancelled; the
+     * connection is closed after it. A socket file left by a previous process is replaced.
+     *
+     * @param selector The socket selector.
+     * @param path The socket's path.
+     * @param name What listens, for the log.
+     * @param log Writes a line to the container's log.
+     * @param ready Called once the socket listens, with its path.
+     * @param handle Serves one connection; it catches its own failures.
+     */
+    @Suppress("LongParameterList") // The socket, its log and the handler, named at the call sites.
+    suspend fun listen(
+        selector: SelectorManager,
+        path: String,
+        name: String,
+        log: (String) -> Unit,
+        ready: (String) -> Unit,
+        handle: suspend (ByteReadChannel, ByteWriteChannel) -> Unit,
     ) {
         SystemFileSystem.delete(Path(path), mustExist = false)
         val server = aSocket(selector).tcp().bind(UnixSocketAddress(path))
         try {
             ready(path)
-            log("agent host listening")
+            log("$name listening")
             coroutineScope {
                 while (true) {
                     val connection = SocketConnection(server.accept())
-                    launch { serveOne(host, connection, log) }
+                    launch {
+                        try {
+                            handle(connection.input, connection.output)
+                        } finally {
+                            connection.close()
+                        }
+                    }
                 }
             }
         } finally {
             server.close()
-        }
-    }
-
-    private suspend fun serveOne(host: AgentHost, connection: AgentConnection, log: (String) -> Unit) {
-        try {
-            host.serve(connection.input, connection.output)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            log("terminal connection failed: ${error::class.simpleName}")
-        } finally {
-            connection.close()
         }
     }
 

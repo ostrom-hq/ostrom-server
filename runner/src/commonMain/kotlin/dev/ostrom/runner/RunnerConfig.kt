@@ -16,6 +16,11 @@ import kotlin.uuid.Uuid
  * @property workspace The workspace volume.
  * @property model The model the agent starts with, if chosen.
  * @property prompt The agent's first message, if any (first execution only).
+ * @property agent The agent's kind (`claude-code`, `codex`, …, `shell`), if the server said it.
+ * @property checksSocket Where the runner serves the hooks' checks (`OSTROM_RUNNER_CHECKS`), in the socket directory
+ *   the agent's container mounts.
+ * @property checkHostSocket Where the check host listens (`OSTROM_CHECK_HOST_SOCKET`), in a directory the agent's
+ *   container does not mount.
  */
 data class RunnerConfig(
     val serverUrl: String,
@@ -28,7 +33,13 @@ data class RunnerConfig(
     val workspace: String,
     val model: String? = null,
     val prompt: String? = null,
+    val agent: String? = null,
+    val checksSocket: String = DEFAULT_CHECKS_SOCKET,
+    val checkHostSocket: String = DEFAULT_CHECK_HOST_SOCKET,
 ) {
+    /** Whether the agent runs under a launch: every agent but the plain shell. */
+    val governed: Boolean get() = agent != null && agent != SHELL_AGENT
+
     /** The token never appears in logs. */
     override fun toString(): String =
         "RunnerConfig(serverUrl=$serverUrl, sessionId=$sessionId, epoch=$epoch, agent=$agentCommand)"
@@ -78,10 +89,25 @@ data class RunnerConfig(
                 model = optional("OSTROM_AGENT_MODEL"),
                 prompt = optional("OSTROM_AGENT_PROMPT")
                     ?: optional("OSTROM_AGENT_PROMPT_FILE")?.let { readFile(it).takeIf(String::isNotBlank) },
+                agent = optional("OSTROM_AGENT"),
+                checksSocket = optional(CHECKS_VARIABLE) ?: DEFAULT_CHECKS_SOCKET,
+                checkHostSocket = optional("OSTROM_CHECK_HOST_SOCKET") ?: DEFAULT_CHECK_HOST_SOCKET,
             )
         }
 
         const val DEFAULT_WORKSPACE = "/workspace"
+
+        /** The agent kind of a plain shell, which no launch governs. */
+        const val SHELL_AGENT = "shell"
+
+        /** The variable that tells the agent's hooks where to ask for their checks. */
+        const val CHECKS_VARIABLE = "OSTROM_RUNNER_CHECKS"
+
+        /** Where the runner serves the checks: the agent socket's directory, which the agent's container mounts. */
+        const val DEFAULT_CHECKS_SOCKET = "/run/ostrom/checks.sock"
+
+        /** Where the check host listens: a directory only the runner's and the check host's containers mount. */
+        const val DEFAULT_CHECK_HOST_SOCKET = "/run/ostrom-check/check.sock"
     }
 }
 
@@ -108,6 +134,11 @@ if [ -n "${'$'}{OSTROM_REPOSITORY_URL:-}" ]; then
     fi
   fi
   [ -d "${'$'}dir" ] && cd "${'$'}dir"
+fi
+if [ -n "${'$'}{OSTROM_LAUNCH_REFUSED:-}" ]; then
+  echo "Ostrom did not open this launch: ${'$'}OSTROM_LAUNCH_REFUSED"
+  echo "${'$'}OSTROM_AGENT_COMMAND does not start; this shell is yours."
+  exec bash -l
 fi
 set --
 if [ -n "${'$'}{OSTROM_AGENT_MODEL:-}" ]; then

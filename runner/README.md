@@ -1,7 +1,7 @@
 # The runner of cloud sessions
 
 `ostrom-runner` is the process of a cloud session (module `runners` on the server side). A session runs the image
-twice, as two containers that share only a socket directory:
+three times, as three containers; each pair shares at most one socket directory:
 
 - **The agent host** (`ostrom-runner agent-host`, UID 1000, the agent's container). It owns the workspace and runs
   each terminal the runner asks for on a PTY: `/bin/sh -c` cloning the repository and starting the agent, then a
@@ -9,24 +9,66 @@ twice, as two containers that share only a socket directory:
 - **The runner** (`ostrom-runner`, UID 1001). It holds the runner token, relays the terminal to the server's
   WebSocket `/api/v1/cloud/runner/terminal`, and heartbeats the execution on `/api/v1/cloud/runner/heartbeat`. It
   reaches the agent host through the Unix socket `/run/ostrom/agent.sock` (`OSTROM_AGENT_SOCKET`), opened to the
-  group the two containers share (2000).
+  group the containers share (2000). For every agent but the plain shell, it opens the agent's launch on
+  `/api/v1/cloud/runner/launch` before starting the terminal, and gives the agent `OSTROM_LAUNCH_ID`,
+  `OSTROM_AGENT_TOKEN`, `OSTROM_URL` and `OSTROM_RUNNER_CHECKS`. When the server refuses the launch (the
+  organization's policy, a limit) or never answers it, the agent does not start: the terminal says why and leaves a
+  shell (`OSTROM_LAUNCH_REFUSED`).
+- **The check host** (`ostrom-runner check-host`, UID 1000, a container of its own). It mounts the workspace and runs
+  the hooks' checks the runner sends it, without a terminal (`/bin/sh -c`, stdin from `/dev/null`, stdout and stderr
+  on one pipe), and reports each exit code. Its socket `/run/ostrom-check/check.sock` (`OSTROM_CHECK_HOST_SOCKET`) is
+  on a volume only the runner's container also mounts. It never has the runner token.
 
 On Kubernetes the agent host is a native sidecar of the session pod (an init container with `restartPolicy: Always`,
 **Kubernetes 1.29 or later**), so the pod ends when the runner ends. The token and the first message reach the
 runner's container only, as variables the kubelet reads from the execution's Secret (`secretKeyRef`): they are in
-no file, in no volume, and not in the pod's spec. The pod does not share its process namespace. On Docker, the
-driver runs the same two containers.
+no file, in no volume, and not in the pod's spec. The check host is a second native sidecar. The pod does not share
+its process namespace. On Docker, the driver runs the same three containers.
+
+## Checks run by the runner (`isolated_runner`)
+
+In a cloud session, the agent's hook does not run a package check itself: it asks the runner on
+`/run/ostrom/checks.sock` (`OSTROM_RUNNER_CHECKS`), one JSON line per connection:
+
+```json
+{"sessionId": "…", "digest": "sha256:…", "nodeId": "…", "scriptId": "lint", "script": "npm run lint\n",
+ "directory": "/workspace/api", "timeoutMs": 600000, "head": "c0ffee…"}
+```
+
+The runner refuses a script over 64 KiB, a directory outside the workspace and a time limit outside 1 ms to 1 h. It
+computes the SHA-256 of the script text itself, runs the script on the check host with a clean environment (`PATH`,
+`LANG`, `HOME=/tmp`, `CI=1`, `OSTROM_CHECK`), stops it at its time limit, and posts the run to
+`/api/v1/cloud/runner/checks` with its runner token. The server records it with the attestation `isolated_runner`,
+and as tampered when the SHA-256 is not the package's. The hook gets one JSON line back:
+
+```json
+{"started": true, "exit": 0, "outcome": "passed", "scriptSha": "…", "outputTail": "…", "reported": true,
+ "error": null}
+```
+
+`started: false` means the check was not run (`error` says why): the hook refuses the action. Two checks run at a
+time at most.
+
+**What this proves, and what it does not: Ostrom launched the script and read its exit code, not that the agent left
+the workspace untouched.** The check runs on the agent's workspace, which the agent could have prepared.
+
+The check host runs under the agent's UID so that what a check writes in the workspace stays the agent's to change;
+what keeps the agent out of the check is the container: the agent's container mounts neither the check host's
+socket nor its temporary directory, and sees none of its processes.
 
 ## The agent cannot read the runner token (S2-49)
 
 The agent and the runner never share a UID, a container, a process namespace or the token. CI proves it on the real
 image (`ci/runner-isolation.sh`, step "Session image, the agent cannot read the runner token" of the `ci` job). It
-runs one session as the Docker driver does, then checks four things:
+runs one session as the Docker driver does, then checks:
 
 - the runner started the agent's terminal through the host;
 - the agent's container sees no process of another UID;
 - nothing the agent can read holds the token: process environments, command lines, writable directories;
-- the same search in the runner's container does find the token.
+- the same search in the runner's container does find the token;
+- a check asked from the agent's container runs on the check host, the runner returns its exit code and the SHA-256
+  of the script, the check's environment and the check host's container hold no token, and the agent's container
+  sees neither the check host's socket nor the running check.
 
 The image is built from `runner/Dockerfile`; the binary is native (Kotlin/Native, `linuxX64` and `linuxArm64`).
 

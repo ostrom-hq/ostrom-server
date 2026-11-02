@@ -23,6 +23,7 @@ kotlin {
             implementation(libs.ktor.client.cio)
             implementation(libs.ktor.client.websockets)
             implementation(libs.ktor.network)
+            implementation(libs.okio)
         }
         commonTest.dependencies {
             implementation(libs.ktor.client.mock)

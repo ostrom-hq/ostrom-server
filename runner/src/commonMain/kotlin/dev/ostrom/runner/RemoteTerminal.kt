@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -70,6 +71,11 @@ internal class RemoteTerminal(private val connection: AgentConnection, private v
     private val writes = Mutex()
     private val exited = CompletableDeferred<Unit>()
 
+    @Volatile
+    private var code: Int? = null
+
+    override val exitCode: Int? get() = code
+
     override suspend fun read(): ByteArray? {
         while (true) {
             val frame = try {
@@ -82,7 +88,8 @@ internal class RemoteTerminal(private val connection: AgentConnection, private v
             }
             when (frame) {
                 is AgentFrame.Output -> return frame.bytes
-                AgentFrame.Exit, null -> {
+                is AgentFrame.Exit, null -> {
+                    code = (frame as? AgentFrame.Exit)?.code
                     exited.complete(Unit)
                     return null
                 }
