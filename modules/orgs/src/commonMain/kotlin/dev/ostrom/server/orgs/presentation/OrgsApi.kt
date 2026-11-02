@@ -220,6 +220,8 @@ data class OrgResponse(
 /**
  * A member (the contract's `Member`).
  *
+ * @property id The member's id, stable across their tokens and sessions (`OrgPrincipal.memberId`): the id that
+ *   artifacts share with and that receipts name.
  * @property login The login.
  * @property name The name.
  * @property avatarUrl The picture, empty when none.
@@ -229,6 +231,7 @@ data class OrgResponse(
  */
 @Serializable
 data class MemberResponse(
+    val id: String,
     val login: String,
     val name: String,
     val avatarUrl: String,

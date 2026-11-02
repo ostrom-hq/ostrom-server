@@ -394,6 +394,21 @@ class ReconcileCloudSessionUseCaseTest {
         assertEquals(listOf("stop", "deleteWorkspace", "stop", "deleteWorkspace"), driver.calls)
     }
 
+    // The demo stack's journey (step D3, run 41471499629): the runner's last heartbeat, sent while its container
+    // stopped, won the row; the step dropped its lost write and the session stayed `running` for ever.
+    @Test
+    fun aDeletionThatLostItsWriteIsLookedAtAgain() = runTest {
+        val running = runningSession(desired = DesiredState.TERMINATED)
+        repository.loseNextRaces = 1
+        clock.now = t0 + 12.seconds
+
+        assertEquals(clock.now, reconcile(running))
+        assertEquals(SessionState.RUNNING, stored(running).state)
+
+        assertNull(reconcile(stored(running)))
+        assertEquals(SessionState.TERMINATED, stored(running).state)
+    }
+
     @Test
     fun finishedSessionsNeedNothing() = runTest {
         assertNull(reconcile(put(session(state = SessionState.TERMINATED, desired = DesiredState.TERMINATED))))
