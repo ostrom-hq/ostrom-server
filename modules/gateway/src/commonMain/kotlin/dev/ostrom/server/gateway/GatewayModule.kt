@@ -2,6 +2,7 @@
 package dev.ostrom.server.gateway
 
 import dev.ostrom.server.gateway.domain.AllowAllSpend
+import dev.ostrom.server.gateway.domain.BudgetCheck
 import dev.ostrom.server.gateway.domain.GatewaySettingsRepository
 import dev.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
 import dev.ostrom.server.gateway.domain.GetGatewaySettingsUseCaseImpl
@@ -73,13 +74,14 @@ object GatewayModule : ServerModule {
         }
         single<GatewaySettingsRepository> { GatewaySettingsRepositoryImpl(get()) }
         single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT), SILENCE_MS.milliseconds) }
+        single { PriceTable() }
         single {
             val config = get<GatewayConfig>()
             InferencePlanner(
                 settings = get(),
                 pool = get(),
                 revealSecrets = get(),
-                spend = getOrNull<SpendGuard>() ?: AllowAllSpend,
+                spend = BudgetCheck(getOrNull<SpendGuard>() ?: AllowAllSpend, get()),
                 keys = config.keys,
                 requests = UpstreamRequests(config.endpoints),
             )
@@ -88,7 +90,7 @@ object GatewayModule : ServerModule {
             RelayInferenceUseCaseImpl(
                 planner = get(),
                 upstream = get(),
-                prices = PriceTable(),
+                prices = get(),
                 usage = getOrNull<ModelUsageSink>() ?: NoModelUsageSink,
                 observer = MeteredModelCallObserver(get(), getOrNull<ModelCallObserver>() ?: NoModelCallObserver),
                 clock = get(),

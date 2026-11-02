@@ -178,8 +178,8 @@ class GatewayPostgresTest {
         }
         single<ModelCallObserver> { ModelCallObserver { traces += it } }
         single<SpendGuard> {
-            SpendGuard { _, member ->
-                if (member == Gw.otherA.memberId) {
+            SpendGuard { request ->
+                if (request.memberId == Gw.otherA.memberId) {
                     SpendDecision.Exhausted("Your monthly budget is reached.", Clock.System.now() + 1.hours)
                 } else {
                     SpendDecision.Allowed

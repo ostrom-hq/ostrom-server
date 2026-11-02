@@ -4,6 +4,12 @@ package dev.ostrom.server.usage.infrastructure
 import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
+import dev.ostrom.server.secrets.infrastructure.inTenant
+import dev.ostrom.server.usage.domain.Admission
+import dev.ostrom.server.usage.domain.HoldWindow
+import dev.ostrom.server.usage.domain.SpendHold
+import dev.ostrom.server.usage.domain.SpendLimits
+import dev.ostrom.server.usage.domain.SpendTotals
 import dev.ostrom.server.usage.domain.UsageCursor
 import dev.ostrom.server.usage.domain.UsageEvent
 import dev.ostrom.server.usage.domain.UsageGroupBy
@@ -40,6 +46,43 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         // Under the org's policy, a row of another org is refused (WITH CHECK).
         driver.executeInOrg(orgId, statement).getOrThrow()
     }
+
+    override suspend fun settle(event: UsageEvent) {
+        val insert = Statement.create("INSERT INTO usage_events ($COLUMNS) VALUES ($ONE_ROW)").bindEvent("", event)
+        driver.inTenant(event.orgId) {
+            execute(insert).getOrThrow()
+            execute(Statement.create(UsageQueries.DROP_HOLD).bind("call_id", event.id)).getOrThrow()
+        }
+    }
+
+    override suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission =
+        // One transaction on one connection: the lock is held until its end, and no read waits for another connection.
+        driver.inTenant(hold.orgId) {
+            fetchAll(Statement.create(UsageQueries.LOCK_HOLDS).bind("key", "usage_holds:${hold.orgId}")).getOrThrow()
+            execute(
+                Statement.create(UsageQueries.DROP_EXPIRED_HOLDS).bind("org_id", hold.orgId).bind("now", window.now),
+            ).getOrThrow()
+            val member = limits.memberMicros != null
+            val sums = Statement.create(UsageQueries.holdTotals(org = limits.orgMicros != null, member = member))
+                .bind("org_id", hold.orgId).bind("call_id", hold.callId)
+                .bind("since", window.since).bind("now", window.now)
+            if (member) sums.bind("member_id", hold.memberId)
+            val row = fetchAll(sums).getOrThrow().first()
+            val totals = SpendTotals(
+                orgSpent = row.get("org_spent").asLong(),
+                orgHeld = row.get("org_held").asLong(),
+                memberSpent = row.get("member_spent").asLong(),
+                memberHeld = row.get("member_held").asLong(),
+            )
+            limits.admit(totals, hold.micros).also { admission ->
+                if (admission == Admission.Admitted) {
+                    val put = Statement.create(UsageQueries.PUT_HOLD).bind("call_id", hold.callId)
+                        .bind("org_id", hold.orgId).bind("member_id", hold.memberId).bind("micros", hold.micros)
+                        .bind("expires_at", window.expiresAt)
+                    execute(put).getOrThrow()
+                }
+            }
+        }
 
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long {
         val statement = Statement.create(UsageQueries.spent(member = memberId != null))
@@ -155,3 +198,4 @@ private val PARAMETERS = listOf(
     "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micros", "duration_ms", "outcome", "at",
 )
 internal val COLUMNS = PARAMETERS.joinToString(", ")
+private val ONE_ROW = PARAMETERS.joinToString(", ") { ":$it" }

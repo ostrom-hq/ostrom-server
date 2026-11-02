@@ -88,7 +88,7 @@ class RelayInferenceUseCaseImpl(
     private val clock: Clock,
 ) : RelayInferenceUseCase {
     override suspend fun invoke(caller: Caller, call: InferenceCall, responder: InferenceResponder) {
-        val exchange = Exchange(caller, call, responder, clock.now(), planner.configOf(caller))
+        val exchange = Exchange(caller, call, responder, clock.now(), planner.configOf(caller), Uuid.random())
         var tries = 1
         var done = exchange.attempt(tries)
         while (done == null) {
@@ -98,16 +98,17 @@ class RelayInferenceUseCaseImpl(
         record(done)
     }
 
-    /** One call of an agent, over its tries. */
+    /** One call of an agent, over its tries; [id] names it in the ledger and holds its budget across the tries. */
     private inner class Exchange(
         val caller: Caller,
         val call: InferenceCall,
         val responder: InferenceResponder,
         val started: Instant,
         val org: GatewayOrgConfig,
+        val id: Uuid,
     ) {
         /** One try: the finished call, or null to try again on another account. */
-        suspend fun attempt(tries: Int): CallState? = when (val plan = planner.plan(caller, call, org)) {
+        suspend fun attempt(tries: Int): CallState? = when (val plan = planner.plan(caller, call, org, id)) {
             is InferencePlan.Refused -> refuse(plan)
             is InferencePlan.Ready -> send(plan, tries)
         }
@@ -241,7 +242,7 @@ class RelayInferenceUseCaseImpl(
         val tokens = state.usage
         val cost = state.provider?.let { provider -> tokens?.let { prices.costMicros(provider, state.model, it) } }
         val record = ModelCallRecord(
-            id = Uuid.random(),
+            id = state.exchange.id,
             orgId = state.exchange.caller.orgId,
             memberId = state.exchange.caller.memberId,
             sessionId = state.exchange.call.sessionId,

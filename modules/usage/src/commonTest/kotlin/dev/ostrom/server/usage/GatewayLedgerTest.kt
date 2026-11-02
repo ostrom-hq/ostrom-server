@@ -24,7 +24,9 @@ class GatewayLedgerTest {
     private val recorded = mutableListOf<UsageEvent>()
     private val sink = LedgerModelUsageSink(
         object : UsageRecorder {
-            override suspend fun record(event: UsageEvent) {
+            override suspend fun record(event: UsageEvent) = error("A model call settles its hold")
+
+            override suspend fun settle(event: UsageEvent) {
                 recorded += event
             }
         },

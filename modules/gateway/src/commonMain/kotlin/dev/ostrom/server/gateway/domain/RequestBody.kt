@@ -5,8 +5,8 @@ import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * An agent's request body, scanned once ([TopLevelJson]): the model it asks for (the org's default when it names
- * none), whether it streams, and where `metadata`, `store` and `stream_options` sit. Every rewrite is applied to the
- * original text in one pass ([render]).
+ * none), whether it streams, the most output tokens it allows, and where `metadata`, `store` and `stream_options` sit.
+ * Every rewrite is applied to the original text in one pass ([render]).
  *
  * @property text The body as the agent sent it.
  * @property fields Its scan.
@@ -20,6 +20,17 @@ class RequestBody private constructor(
     val stream: Boolean,
     private val inserted: List<String>,
 ) {
+    /**
+     * The most output tokens the body allows: the largest of `max_tokens` (Messages, Chat Completions),
+     * `max_output_tokens` (Responses) and `max_completion_tokens` (Chat Completions) written as a whole number, or null
+     * when it names none. A field named twice makes the body invalid ([TopLevelJson.scan]), so the provider reads the
+     * value read here.
+     */
+    val maxOutputTokens: Long?
+        get() = OUTPUT_LIMITS.mapNotNull { name ->
+            fields.ranges[name]?.let { text.substring(it).toLongOrNull()?.takeIf { tokens -> tokens >= 0 } }
+        }.maxOrNull()
+
     /**
      * The body to send.
      *
@@ -51,7 +62,10 @@ class RequestBody private constructor(
         /** The longest model name accepted. */
         const val MAX_MODEL = 200
 
-        private val FIELDS = setOf(MODEL, STREAM, METADATA, STORE, STREAM_OPTIONS)
+        /** The fields that bound the output tokens, by API. */
+        val OUTPUT_LIMITS: List<String> = listOf("max_tokens", "max_output_tokens", "max_completion_tokens")
+
+        private val FIELDS = setOf(MODEL, STREAM, METADATA, STORE, STREAM_OPTIONS) + OUTPUT_LIMITS
 
         /**
          * Reads a body.
