@@ -13,8 +13,9 @@ internal object ReportsQueries {
      * An event names its session by its id, or, for a model call through the gateway, by its launch (`launch_id`; its
      * `session_id` is then the launch's id too): the agent and the repository come from the session with that id, else
      * from the first segment of that launch, one session only so that nothing counts twice. The launch is compared as
-     * the column itself, no expression: under row level security only a leakproof comparison reaches the index. A line's
-     * `sessions` counts the sessions its spending was found in: a launch counts once, a call outside any session never.
+     * the column itself, no expression: under row level security only a leakproof comparison reaches the index. A
+     * line's `sessions` counts the sessions its spending was found in: a launch counts once, a call outside any session
+     * never.
      *
      * @param member Whether one member's spending only.
      * @return The statement.
