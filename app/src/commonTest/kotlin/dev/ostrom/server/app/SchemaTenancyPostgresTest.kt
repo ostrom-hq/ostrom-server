@@ -22,7 +22,7 @@ class SchemaTenancyPostgresTest {
                 else -> emptyList()
             }
         }
-        assertEquals(UNCONFINED_TABLES, found.toSet(), "Org tables without forced row level security")
+        assertEquals(emptySet(), found.toSet(), "Org tables without forced row level security")
     }
 
     @Test
@@ -52,7 +52,7 @@ class SchemaTenancyPostgresTest {
             .map { "PUBLIC: ${it["privilege"]} on ${it["name"]}" }
         val unconfined = server.rows(tenantWritesWithoutRls(), "name", "privilege")
             .map { "$TENANT: ${it["privilege"]} on ${it["name"]} without RLS" }
-        assertEquals(TOO_WIDE_GRANTS, (dangerous + public + unconfined).toSet(), "Grants wider than a request needs")
+        assertEquals(emptySet(), (dangerous + public + unconfined).toSet(), "Grants wider than a request needs")
     }
 
     @Test
@@ -224,27 +224,11 @@ class SchemaTenancyPostgresTest {
 
         // The known exceptions, each a finding of the RLS audit (docs/tenancy.md, "Known exceptions"): remove a line
         // with the fix that closes it.
-        val UNCONFINED_TABLES = setOf(
-            "orgs_organizations: row level security not forced",
-            "orgs_members: row level security not forced",
-            "orgs_invitations: row level security not forced",
-        )
-
         val UNBOUND = setOf(
             "github_installations.github_installations_read (SELECT)",
             "github_installations.github_installations_delete (DELETE)",
             "github_install_states.github_install_states_read (SELECT)",
             "github_install_states.github_install_states_delete (DELETE)",
-        )
-
-        val TOO_WIDE_GRANTS = setOf(
-            "$TENANT: UPDATE on orgs_organizations without RLS",
-            "$TENANT: INSERT on orgs_members without RLS",
-            "$TENANT: UPDATE on orgs_members without RLS",
-            "$TENANT: DELETE on orgs_members without RLS",
-            "$TENANT: INSERT on orgs_invitations without RLS",
-            "$TENANT: UPDATE on orgs_invitations without RLS",
-            "$TENANT: DELETE on orgs_invitations without RLS",
         )
     }
 }

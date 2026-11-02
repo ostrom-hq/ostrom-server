@@ -291,6 +291,35 @@ class AskGateUseCaseTest {
         IdentityDigester(),
     )
 
+    // The bench's push to main: the hook claims `git.push`, ungated, and the refs say main. The gates of the ask are
+    // read once, however many classes it looks up (each read compiles the organization's workflows and rules).
+    @Test
+    fun anAskReadsTheGatesOnce() = runTest {
+        val bench = GateBench()
+        var reads = 0
+        val gates = mapOf("push-main" to node)
+        val asks = AskGateUseCaseImpl(
+            bench.open,
+            object : GateNodeResolver {
+                override suspend fun resolve(orgId: Uuid, repo: String?, actionClass: String): GateNode? {
+                    reads++
+                    return gates[actionClass]
+                }
+
+                override suspend fun resolver(orgId: Uuid, repo: String?): suspend (String) -> GateNode? {
+                    reads++
+                    return { gates[it] }
+                }
+            },
+            UnknownPullRequestHeads(),
+            IdentityDigester(),
+        )
+        val view = asks(agent(), pushAsk().copy(actionClass = "git.push"))
+
+        assertEquals(GateStatus.PENDING, view.gate.status)
+        assertEquals(1, reads, "One read of the gates per ask")
+    }
+
     @Test
     fun aPushToMainTakesItsGateWhateverClassTheHookClaimed() = runTest {
         val bench = GateBench()
