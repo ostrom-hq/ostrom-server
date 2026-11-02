@@ -3,15 +3,17 @@
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.ApiToken
+import dev.ostrom.server.identity.domain.AuditEntry
 import dev.ostrom.server.identity.domain.CreateServiceKeyUseCaseImpl
 import dev.ostrom.server.identity.domain.DeleteServiceKeyUseCaseImpl
 import dev.ostrom.server.identity.domain.DeviceNotFoundException
-import dev.ostrom.server.identity.domain.InvalidScopesException
+import dev.ostrom.server.identity.domain.InvalidServiceKeyScopesException
 import dev.ostrom.server.identity.domain.InvalidTokenLifetimeException
 import dev.ostrom.server.identity.domain.InvalidTokenNameException
 import dev.ostrom.server.identity.domain.ListDevicesUseCaseImpl
 import dev.ostrom.server.identity.domain.ListServiceKeysUseCaseImpl
 import dev.ostrom.server.identity.domain.MAX_SERVICE_KEYS_PER_ORG
+import dev.ostrom.server.identity.domain.ServiceKeyAuditImpl
 import dev.ostrom.server.identity.domain.ServiceKeyNotFoundException
 import dev.ostrom.server.identity.domain.ServiceKeysAdminRequiredException
 import dev.ostrom.server.identity.domain.SignOutDeviceUseCaseImpl
@@ -28,7 +30,7 @@ import dev.ostrom.server.identity.presentation.toDeviceResponse
 import dev.ostrom.server.identity.presentation.toServiceKeyResponse
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
-import kotlinx.coroutines.test.runTest
+import dev.ostrom.server.kernel.auth.ServiceKeyCall
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -37,6 +39,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.test.runTest
 
 class ServiceKeysAndDevicesTest {
     private val tokens = InMemoryApiTokensRepository()
@@ -58,7 +61,7 @@ class ServiceKeysAndDevicesTest {
 
     @Test
     fun anOwnerCreatesAKeyOfTheOrganizationShownOnceAndAudited() = runTest {
-        val issued = create(owner, ada, "  CI deploy ", listOf("sessions:read", "receipts:read"), 30.days)
+        val issued = create(owner, ada, "  CI deploy ", listOf("sessions:write", "rules:read"), 30.days)
         val key = issued.token
         assertEquals("oss_secret1", issued.secret)
         assertEquals(TokenKind.SERVICE, key.kind)
@@ -70,11 +73,11 @@ class ServiceKeysAndDevicesTest {
         val entry = audit.entries.single()
         assertEquals(listOf(orgA, ada), listOf(entry.orgId, entry.actorId))
         assertEquals("service_key.created", entry.action)
-        assertEquals("receipts:read sessions:read", entry.details["scopes"])
+        assertEquals("rules:read sessions:write", entry.details["scopes"])
 
         val answer = issued.toCreatedServiceKeyResponse()
         assertEquals("oss_secret1", answer.secret)
-        assertEquals(listOf("receipts:read", "sessions:read"), answer.scopes)
+        assertEquals(listOf("rules:read", "sessions:write"), answer.scopes)
         assertNull(key.toServiceKeyResponse().secret, "Listed without its secret")
         assertNull(key.toServiceKeyResponse().lastUsedAt)
         assertEquals(key.expiresAt.toString(), answer.expiresAt)
@@ -113,7 +116,7 @@ class ServiceKeysAndDevicesTest {
     fun onlyAnOwnerOrAnAdminManagesKeys() = runTest {
         for (role in listOf(OrgRole.MEMBER, OrgRole.APPROVER, OrgRole.BILLING)) {
             val member = OrgPrincipal(orgA, Uuid.random(), role)
-            assertFailsWith<ServiceKeysAdminRequiredException> { create(member, ada, "k", listOf("cloud:read"), null) }
+            assertFailsWith<ServiceKeysAdminRequiredException> { create(member, ada, "k", listOf("rules:read"), null) }
             assertFailsWith<ServiceKeysAdminRequiredException> { list(member) }
             assertFailsWith<ServiceKeysAdminRequiredException> { delete(member, ada, Uuid.random()) }
         }
@@ -121,21 +124,34 @@ class ServiceKeysAndDevicesTest {
     }
 
     @Test
-    fun aKeyTakesTheNameScopesAndLifetimeOfAPersonalToken() = runTest {
-        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "  ", listOf("cloud:read"), null) }
-        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "x".repeat(101), listOf("cloud:read"), null) }
-        assertFailsWith<InvalidScopesException> { create(owner, ada, "k", emptyList(), null) }
-        assertFailsWith<InvalidScopesException> { create(owner, ada, "k", listOf("gates:answer"), null) }
-        assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("cloud:read"), 23.hours) }
-        assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("cloud:read"), 367.days) }
+    fun aKeyTakesTheNameAndLifetimeOfAPersonalTokenAndOnlyTheScopesACiCalls() = runTest {
+        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "  ", listOf("rules:read"), null) }
+        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "x".repeat(101), listOf("rules:read"), null) }
+        assertFailsWith<InvalidServiceKeyScopesException> { create(owner, ada, "k", emptyList(), null) }
+        // What a CI calls, nothing else: never a governance write, a token, a member or billing.
+        for (scope in listOf("gates:answer", "orgs:write", "billing:read", "accounts", "cloud:read", "a:b")) {
+            assertFailsWith<InvalidServiceKeyScopesException>(scope) {
+                create(owner, ada, "k", listOf("rules:read", scope), null)
+            }
+        }
+        assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("rules:read"), 23.hours) }
+        assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("rules:read"), 367.days) }
         assertTrue(tokens.tokens.isEmpty())
     }
 
     @Test
+    fun eachCallOfAKeyIsAnEventOfItsOrganizationInTheKeysName() = runTest {
+        ServiceKeyAuditImpl(audit).record(ServiceKeyCall("key-1", orgA, "reportCheck", "/api/v1/checks"))
+        val entry = audit.entries.single()
+        assertEquals(AuditEntry(orgA, null, "service_key.used", "service_key", "key-1"), entry.copy(details = emptyMap()))
+        assertEquals(mapOf("operation" to "reportCheck", "path" to "/api/v1/checks"), entry.details)
+    }
+
+    @Test
     fun anOrganizationHoldsAtMostAHundredLiveKeys() = runTest {
-        repeat(MAX_SERVICE_KEYS_PER_ORG) { create(owner, ada, "k$it", listOf("cloud:read"), null) }
-        assertFailsWith<TooManyServiceKeysException> { create(owner, ada, "one more", listOf("cloud:read"), null) }
-        create(adminOfB, ada, "elsewhere", listOf("cloud:read"), null)
+        repeat(MAX_SERVICE_KEYS_PER_ORG) { create(owner, ada, "k$it", listOf("rules:read"), null) }
+        assertFailsWith<TooManyServiceKeysException> { create(owner, ada, "one more", listOf("rules:read"), null) }
+        create(adminOfB, ada, "elsewhere", listOf("rules:read"), null)
     }
 
     @Test

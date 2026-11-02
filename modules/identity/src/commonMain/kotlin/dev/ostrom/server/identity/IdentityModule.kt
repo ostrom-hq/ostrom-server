@@ -73,6 +73,7 @@ import dev.ostrom.server.identity.domain.RotateTokenUseCase
 import dev.ostrom.server.identity.domain.RotateTokenUseCaseImpl
 import dev.ostrom.server.identity.domain.SecretGenerator
 import dev.ostrom.server.identity.domain.SecretHasher
+import dev.ostrom.server.identity.domain.ServiceKeyAuditImpl
 import dev.ostrom.server.identity.domain.ServiceKeysRepository
 import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCase
 import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCaseImpl
@@ -133,6 +134,7 @@ import dev.ostrom.server.identity.presentation.mobileRoutes
 import dev.ostrom.server.identity.presentation.noStoreOnIdentityRoutes
 import dev.ostrom.server.identity.presentation.sessionRoutes
 import dev.ostrom.server.identity.presentation.signInRoutes
+import dev.ostrom.server.kernel.auth.ServiceKeyAudit
 import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -176,6 +178,7 @@ object IdentityModule : ServerModule {
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
+        single<ServiceKeyAudit> { ServiceKeyAuditImpl(get()) }
         single<TokenAuthenticator> {
             val config = get<IdentityConfig>()
             CredentialAuthenticatorImpl(get(), get(), get(), get(), config.allowedOrigins, config.sessionCookiePrefix)

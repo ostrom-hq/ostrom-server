@@ -59,7 +59,7 @@ object WorkflowRunsModule : ServerModule {
         single<GetReceiptBundleUseCase> { GetReceiptBundleUseCaseImpl(get(), get(), get(), get(), get()) }
         single<RunLaunches> { LaunchesRunLaunches(get()) }
         single<ReportRunnerCheckUseCase> { ReportRunnerCheckUseCaseImpl(get(), get(), get()) }
-        single { WorkflowRunsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { WorkflowRunsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = WorkflowRunsMigrations
