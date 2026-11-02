@@ -168,7 +168,10 @@ class RegisteredRunnersHeartbeatPostgresTest {
             .use { it.writeString(report) }
         for ((name, plan) in plans) {
             assertFalse("Seq Scan on runners_registered" in plan, "$name scans the table:\n$plan")
-            assertTrue("runners_registered_pkey" in plan, "$name does not use the primary key:\n$plan")
+            // A unique index either way: the primary key, or the key's hash for the write (both are one row).
+            val unique = listOf("runners_registered_pkey", "runners_registered_key")
+                .any { "Index Scan using $it " in plan }
+            assertTrue(unique, "$name does not use a unique index:\n$plan")
         }
     }
 
