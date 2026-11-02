@@ -32,7 +32,14 @@ fun interface ByteSink {
  */
 class UpstreamAnswer(val status: Int, val headers: Map<String, String>, val body: ByteSource)
 
-/** Sends requests to providers. */
+/**
+ * The provider sent nothing for longer than the gateway waits: the call fails as the provider's failure, never as
+ * cancelled, and a shared account it ran on rests a short while
+ * ([AccountLease.stalled][dev.ostrom.server.sharing.domain.AccountLease.stalled]).
+ */
+class UpstreamStalledException : Exception("The provider stopped answering.")
+
+/** Sends requests to providers; a provider silent too long is cut with [UpstreamStalledException]. */
 interface InferenceUpstream {
     /** Sends [request] and hands the answer to [handle] while it streams; the connection closes after it. */
     suspend fun <T> exchange(request: UpstreamRequest, handle: suspend (UpstreamAnswer) -> T): T
@@ -62,7 +69,8 @@ interface RelayInferenceUseCase {
 /**
  * [RelayInferenceUseCase]: plans, sends, streams the answer back byte for byte while reading its usage, then records
  * the call. A shared account that answers 429 or 401 is observed (cool-down, refresh) and, before any byte reaches the
- * agent, the call moves to the next account, up to [MAX_ATTEMPTS] tries.
+ * agent, the call moves to the next account, up to [MAX_ATTEMPTS] tries. One that stalls rests a short while, so the
+ * next calls go elsewhere.
  *
  * @param planner Plans each try.
  * @param upstream Sends to the providers.
@@ -122,10 +130,12 @@ class RelayInferenceUseCaseImpl(
                 state.outcome = "cancelled"
                 record(state)
                 throw cancelled
+            } catch (_: UpstreamStalledException) {
+                stop(plan, state, rest = true)
+                false
             } catch (_: Exception) {
-                release(plan)
-                failed(state)
-                return state
+                stop(plan, state, rest = false)
+                false
             }
             release(plan)
             return state.takeUnless { retry }
@@ -133,6 +143,14 @@ class RelayInferenceUseCaseImpl(
 
         private suspend fun release(plan: InferencePlan.Ready) {
             plan.lease?.let { withContext(NonCancellable) { it.release() } }
+        }
+
+        /** The call failed: its slot goes back, and [rest] rests a shared account whose provider stalled. */
+        private suspend fun stop(plan: InferencePlan.Ready, state: CallState, rest: Boolean) {
+            release(plan)
+            // The next calls go to another account; the rest failing must not change this call's answer.
+            if (rest) deliver { plan.lease?.stalled() }
+            failed(state)
         }
 
         /** The provider failed: a 502 if the agent got nothing yet, otherwise the answer is cut. */
