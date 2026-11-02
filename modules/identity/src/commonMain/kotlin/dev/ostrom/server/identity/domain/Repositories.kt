@@ -148,6 +148,28 @@ interface WebSessionsRepository {
      * @return How many sessions were revoked.
      */
     suspend fun revokeAllOfUser(userId: Uuid, at: Instant): Long
+
+    /**
+     * Lists the live sessions of a user (neither revoked nor expired), the last used first.
+     *
+     * @param userId The user.
+     * @param now The time that decides which sessions are expired.
+     * @param limit The most sessions returned.
+     *
+     * @return The sessions.
+     */
+    suspend fun listLive(userId: Uuid, now: Instant, limit: Int): List<WebSession>
+
+    /**
+     * Revokes one live session of a user (sign out of that browser).
+     *
+     * @param userId The user: a session of anyone else is never revoked.
+     * @param id The session.
+     * @param at When, also the time that decides whether it is expired.
+     *
+     * @return Whether a live session of the user was revoked.
+     */
+    suspend fun revokeOfUser(userId: Uuid, id: Uuid, at: Instant): Boolean
 }
 
 /** API tokens. */

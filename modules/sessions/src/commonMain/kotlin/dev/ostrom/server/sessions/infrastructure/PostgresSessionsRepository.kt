@@ -64,18 +64,14 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
         )
     }
 
-    override suspend fun stale(seenBefore: Instant, limit: Int): List<StaleSession> = driver.transaction {
-        fetchAll("SET TRANSACTION READ ONLY").getOrThrow()
-        fetchAll("SELECT set_config('ostrom.sweep', 'lost-sessions', TRUE)").getOrThrow()
-        fetchAll(
-            Statement.create(
-                "SELECT org_id, id, last_seen_at FROM sessions_sessions " +
-                    "WHERE ended_at IS NULL AND last_seen_at IS NOT NULL AND last_seen_at < :cutoff " +
-                    "ORDER BY last_seen_at LIMIT :limit",
-            ).bind("cutoff", seenBefore).bind("limit", limit),
-        ).getOrThrow().map {
-            StaleSession(it.get("org_id").asUuid(), it.get("id").asString(), it.get("last_seen_at").asInstant())
-        }
+    // The one read across organizations, through the function of SessionsMigrations version 2.
+    override suspend fun stale(seenBefore: Instant, limit: Int): List<StaleSession> = driver.fetchAll(
+        Statement.create(
+            "SELECT org_id, id, last_seen_at FROM " +
+                "sessions_stale(CAST(:cutoff AS TIMESTAMPTZ), CAST(:limit AS INTEGER))",
+        ).bind("cutoff", seenBefore).bind("limit", limit),
+    ).getOrThrow().map {
+        StaleSession(it.get("org_id").asUuid(), it.get("id").asString(), it.get("last_seen_at").asInstant())
     }
 
     private class Tx(private val executor: QueryExecutor, private val orgId: Uuid) : SessionsTransaction {

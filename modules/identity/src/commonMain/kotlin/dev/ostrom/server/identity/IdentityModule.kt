@@ -92,6 +92,8 @@ import dev.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
 import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
+import dev.ostrom.server.identity.domain.WebSessionsOfUserUseCase
+import dev.ostrom.server.identity.domain.WebSessionsOfUserUseCaseImpl
 import dev.ostrom.server.identity.domain.WebSessionsRepository
 import dev.ostrom.server.identity.infrastructure.ApiTokensRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.AuditRepositoryImpl
@@ -183,6 +185,7 @@ object IdentityModule : ServerModule {
         single<GetProfileUseCase> { GetProfileUseCaseImpl(get()) }
         single<StartWebSessionUseCase> { StartWebSessionUseCaseImpl(get(), get(), get(), get()) }
         single<EndWebSessionUseCase> { EndWebSessionUseCaseImpl(get(), get(), get()) }
+        single<WebSessionsOfUserUseCase> { WebSessionsOfUserUseCaseImpl(get(), get(), get()) }
         single<ListAuditEventsUseCase> { ListAuditEventsUseCaseImpl(get()) }
         single<CreatePersonalTokenUseCase> { CreatePersonalTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ListTokensUseCase> { ListTokensUseCaseImpl(get(), get()) }
@@ -246,7 +249,7 @@ object IdentityModule : ServerModule {
         single { SessionRoutesDependencies(get(), get(), get()) }
         single {
             IdentityRoutesDependencies(
-                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
                 getAll<SignOutListener>(),
                 get(),
             )

@@ -78,7 +78,7 @@ data class QuotaWindowDto(
  * @property owner The member who shared it (empty for another member's account).
  * @property sharedWith The members allowed to use it; empty for the whole org.
  * @property paused Whether it is switched off.
- * @property status `ready`, `reconnect_required` or `disabled`.
+ * @property status `ready`, `reconnect_required`, `disabled` or `wrong_account`.
  */
 @Serializable
 data class SharedAccountResponse(
