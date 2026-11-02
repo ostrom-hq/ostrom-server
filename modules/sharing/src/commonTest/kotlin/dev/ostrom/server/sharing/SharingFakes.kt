@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing
 
+import dev.ostrom.server.kernel.logging.JsonLogger
+import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.SecretCipher
@@ -149,11 +151,17 @@ fun pool(
     refresher: OAuthRefresher,
     spend: AccountSpendReader,
     clock: TestClock,
-) = SharedAccountPool(
-    repository,
-    repository,
-    AccountTokens(repository, cipher, refresher, clock),
-    ProviderQuotaHeaderParser(),
-    spend,
-    clock,
-)
+) = pool(repository, tokens(repository, cipher, refresher, clock), spend, clock)
+
+/** The pool over [repository] with [tokens]. */
+fun pool(repository: InMemoryAccounts, tokens: AccountTokens, spend: AccountSpendReader, clock: TestClock) =
+    SharedAccountPool(repository, repository, tokens, ProviderQuotaHeaderParser(), spend, clock)
+
+/** The tokens over [repository], warnings written to [logged]. */
+fun tokens(
+    repository: InMemoryAccounts,
+    cipher: AccountTokenCipher,
+    refresher: OAuthRefresher,
+    clock: TestClock,
+    logged: (String) -> Unit = {},
+) = AccountTokens(repository, cipher, refresher, clock, JsonLogger(LogLevel.WARN, sink = logged))

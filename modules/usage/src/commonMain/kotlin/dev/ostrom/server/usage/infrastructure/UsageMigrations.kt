@@ -5,6 +5,53 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
 import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
+/** The setting that opened the retention policies of version 2, which version 4 drops: kept for version 2's SQL. */
+private const val RETENTION_SETTING_V2: String = "ostrom.usage_retention"
+
+/** The retention purge, the one operation across organizations: a function owned by `ostrom_router`. */
+private val ROUTER_FUNCTIONS = listOf("usage_purge(TIMESTAMPTZ, INTEGER)")
+
+/**
+ * Version 4: the retention policies, which any transaction could open by setting the retention setting (SELECT and
+ * DELETE on every organization's events, RLS audit R4), give way to a narrow `SECURITY DEFINER` function owned by
+ * `ostrom_router` (`NOLOGIN`, never a member of the serving role), with `pg_temp` last in its `search_path` and
+ * executable by the serving role only: it deletes one batch of old events, the query it replaces, unchanged.
+ */
+private val RETENTION_THROUGH_THE_ROUTER_SQL: String =
+    """
+    DO $$ BEGIN
+        CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+    END $$;
+    DO $$ BEGIN
+        GRANT ostrom_router TO CURRENT_USER;
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END $$;
+    GRANT USAGE ON SCHEMA public TO ostrom_router;
+    DROP POLICY usage_events_retention_read ON usage_events;
+    DROP POLICY usage_events_retention ON usage_events;
+    CREATE POLICY usage_events_router_read ON usage_events FOR SELECT TO ostrom_router USING (true);
+    CREATE POLICY usage_events_router_purge ON usage_events FOR DELETE TO ostrom_router USING (true);
+    GRANT SELECT, DELETE ON usage_events TO ostrom_router;
+    CREATE FUNCTION usage_purge(p_before TIMESTAMPTZ, p_limit INTEGER) RETURNS BIGINT
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH gone AS (
+            DELETE FROM usage_events WHERE id IN (SELECT e.id FROM usage_events e WHERE e.at < p_before LIMIT p_limit)
+            RETURNING 1
+        ) SELECT COUNT(*) FROM gone;
+    $$;
+    ${ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${ROUTER_FUNCTIONS.joinToString("\n") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /**
  * The schema of the usage module; its tables start with `usage_`. The spend indexes include `cost_micros` so that the
  * budget sums are index-only scans; `usage_events_at` serves the retention purge.
@@ -47,9 +94,9 @@ val UsageMigrations: List<SchemaMigration> = listOf(
             // Retention deletes old events of every org, and nothing else (UsageRepositoryImpl.purge); a DELETE with a
             // WHERE also needs the rows to pass a SELECT policy.
             "CREATE POLICY usage_events_retention_read ON usage_events FOR SELECT " +
-                "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
+                "USING (current_setting('$RETENTION_SETTING_V2', true) = 'on');",
             "CREATE POLICY usage_events_retention ON usage_events FOR DELETE " +
-                "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
+                "USING (current_setting('$RETENTION_SETTING_V2', true) = 'on');",
         ).joinToString("\n"),
     ),
     SchemaMigration(
@@ -58,7 +105,5 @@ val UsageMigrations: List<SchemaMigration> = listOf(
         // The launch whose agent token sent the event (server#108), null for a person's own credential.
         sql = "ALTER TABLE usage_events ADD COLUMN launch_id TEXT",
     ),
+    SchemaMigration(version = 4, name = "retention_through_the_router", sql = RETENTION_THROUGH_THE_ROUTER_SQL),
 )
-
-/** The transaction-local setting that opens the retention policies of `usage_events`. */
-const val RETENTION_SETTING: String = "ostrom.usage_retention"

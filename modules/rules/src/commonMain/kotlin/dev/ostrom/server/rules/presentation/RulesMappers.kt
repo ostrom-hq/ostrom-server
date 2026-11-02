@@ -9,6 +9,7 @@ import dev.ostrom.server.rules.domain.models.NewRule
 import dev.ostrom.server.rules.domain.models.Rule
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
+import dev.ostrom.server.rules.domain.models.RuleGateCheck
 import dev.ostrom.server.rules.domain.models.RuleQuery
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.models.RuleStrength
@@ -48,6 +49,7 @@ fun RuleGate.toDto(): RuleGateDto = RuleGateDto(
     actions = actions.map { GateActionDto(it.cls, it.label, it.patterns, it.repos, it.tools) },
     approvers = approvers,
     reason = reason,
+    checks = checks.map { RuleGateCheckDto(it.check, it.attested) },
 )
 
 /**
@@ -59,6 +61,7 @@ fun RuleGateDto.toGate(): RuleGate = RuleGate(
     actions = actions.map { RuleGateAction(it.cls, it.label, it.patterns, it.repos, it.tools) },
     approvers = approvers,
     reason = reason,
+    checks = checks.map { RuleGateCheck(it.check, it.attested) },
 )
 
 /**

@@ -25,6 +25,15 @@ interface GitHubPeopleApi {
      * @throws GitHubCallException When GitHub fails or refuses the token.
      */
     suspend fun userInstallations(userToken: String): Set<Long>
+
+    /**
+     * Reads the person's GitHub login (`GET /user`).
+     *
+     * @param userToken The person's token, from [userToken].
+     * @return Their login.
+     * @throws GitHubCallException When GitHub fails or refuses the token.
+     */
+    suspend fun userLogin(userToken: String): String
 }
 
 /** GitHub's REST API, as the GitHub App of the instance. */
@@ -88,11 +97,11 @@ interface GitHubRepository {
     suspend fun saveInstallation(installation: GitHubInstallation, at: Instant)
 
     /**
-     * Forgets an installation removed on GitHub.
+     * Forgets an installation deleted on GitHub, linked or not: its row and who installed it.
      *
-     * @param installation The installation.
+     * @param installationId GitHub's id.
      */
-    suspend fun removeInstallation(installation: GitHubInstallation)
+    suspend fun forgetInstallation(installationId: Long)
 
     /**
      * Stores the hash of an install state.
@@ -127,4 +136,41 @@ interface GitHubRepository {
      * @param check The check.
      */
     suspend fun saveCheck(orgId: Uuid, check: GateCheck)
+}
+
+/**
+ * What GitHub's webhooks tell the server before any organization is involved (AUDIT-SECU-2): who installed each
+ * installation, and the deliveries already handled. An installation deleted on GitHub is forgotten here too, by
+ * [GitHubRepository.forgetInstallation].
+ */
+interface GitHubOriginsRepository {
+    /**
+     * Records who installed the App, from a verified `installation.created` webhook (kept until it is deleted).
+     *
+     * @param origin The installation and its sender.
+     * @param at When.
+     */
+    suspend fun saveOrigin(origin: GitHubInstallationOrigin, at: Instant)
+
+    /**
+     * @param installationId GitHub's id.
+     * @return Who installed it, or null when its `installation.created` webhook has not arrived.
+     */
+    suspend fun origin(installationId: Long): GitHubInstallationOrigin?
+
+    /**
+     * Claims a webhook delivery once (`X-GitHub-Delivery`): a replay of a delivery already handled is refused.
+     *
+     * @param deliveryId GitHub's id of the delivery.
+     * @param at When it arrived; deliveries older than 30 days are forgotten.
+     * @return False when the delivery was already claimed.
+     */
+    suspend fun claimDelivery(deliveryId: String, at: Instant): Boolean
+
+    /**
+     * Releases a claimed delivery whose handling failed, so that GitHub's redelivery (same id) is handled.
+     *
+     * @param deliveryId GitHub's id of the delivery.
+     */
+    suspend fun releaseDelivery(deliveryId: String)
 }
