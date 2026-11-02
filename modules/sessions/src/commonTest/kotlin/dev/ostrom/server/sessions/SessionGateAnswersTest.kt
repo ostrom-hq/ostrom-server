@@ -55,6 +55,7 @@ class SessionGateAnswersTest {
         assertNull(answerOf(gate(5, GateStatus.SHADOW)), "Recorded without blocking")
         assertNull(answerOf(gate(6, GateStatus.UNGATED)), "No gate applies")
         assertNull(answerOf(gate(7, GateStatus.APPROVED)), "A decided gate whose answers are not read")
+        assertNull(answerOf(gate(8, GateStatus.REJECTED, yes)), "A refusal whose no is not read")
     }
 
     @Test
