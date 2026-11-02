@@ -12,7 +12,7 @@ private val ROUTER_FUNCTIONS = listOf(
 )
 
 /**
- * Version 2: `runners_session_routes` under forced row-level security like the other tables (a request reads and
+ * Version 3: `runners_session_routes` under forced row-level security like the other tables (a request reads and
  * writes only its organization's routes), and what crosses organizations moved into narrow `SECURITY DEFINER`
  * functions owned by `ostrom_router` (`NOLOGIN`, never a member of the serving role), with `pg_temp` last in their
  * `search_path`, executable by the serving role only (RLS audit R2 and R3). The claim and the release are the
@@ -82,9 +82,10 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
  * `runners_sessions` and `runners_usage` are tenant tables, confined by row-level security to the organization of the
  * transaction (S2-01). `runners_session_routes` (a session's id and organization, the hash of its runner token and
  * its reconcile schedule, no customer content) is also used across organizations, by the reconciler (due sessions of
- * every organization) and by the runner channel (a session found by its runner token): since version 2, under forced
+ * every organization) and by the runner channel (a session found by its runner token): since version 3, under forced
  * row-level security like the other tables, and across organizations only through [ROUTER_FUNCTIONS]
- * (docs/tenancy.md).
+ * (docs/tenancy.md). `runners_registered` (version 2) is a tenant table too: the machines an organization registered,
+ * with the hash of their key.
  */
 val RunnersMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -152,6 +153,26 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
     ),
     SchemaMigration(
         version = 2,
+        name = "create_registered_runners",
+        sql = """
+            CREATE TABLE runners_registered (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                name TEXT NOT NULL,
+                labels TEXT NOT NULL,
+                version TEXT,
+                key_hash TEXT NOT NULL,
+                registered_by TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                last_seen_at TIMESTAMPTZ
+            );
+            CREATE UNIQUE INDEX runners_registered_name ON runners_registered (org_id, lower(name));
+            CREATE UNIQUE INDEX runners_registered_key ON runners_registered (key_hash);
+            ${tenantTableSql("runners_registered")}
+        """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 3,
         name = "runners_session_routes_under_row_level_security",
         sql = ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL,
     ),

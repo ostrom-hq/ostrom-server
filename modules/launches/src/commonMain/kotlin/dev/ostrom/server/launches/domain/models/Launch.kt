@@ -2,6 +2,8 @@
 package dev.ostrom.server.launches.domain.models
 
 import dev.ostrom.server.kernel.auth.OrgRole
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -69,3 +71,19 @@ data class CreatedLaunch(val launch: Launch, val agentToken: String)
  * @property reason Why not, when it may not.
  */
 data class AgentVerdict(val allowed: Boolean, val reason: String? = null)
+
+/**
+ * How many launches a window takes: per person in an organization, and per organization (AUDIT-SECU-2 B9). A launch
+ * of the CLI and one a cloud session's runner opens count alike.
+ *
+ * @property window How far back launches are counted.
+ * @property perPerson The most launches of one person in one organization in a window.
+ * @property perOrg The most launches of one organization in a window.
+ */
+data class LaunchLimit(val window: Duration, val perPerson: Int, val perOrg: Int) {
+    /** The limits the server applies. */
+    companion object {
+        /** 60 launches an hour per person (one a minute, sustained), 600 per organization. */
+        val DEFAULT: LaunchLimit = LaunchLimit(window = 1.hours, perPerson = 60, perOrg = 600)
+    }
+}

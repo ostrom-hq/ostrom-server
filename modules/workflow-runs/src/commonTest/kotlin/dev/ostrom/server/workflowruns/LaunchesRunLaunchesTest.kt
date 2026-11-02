@@ -2,6 +2,7 @@
 package dev.ostrom.server.workflowruns
 
 import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.workflowruns.fakes.ORG
 import dev.ostrom.server.workflowruns.fakes.STARTED
@@ -10,6 +11,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
 
@@ -32,7 +34,7 @@ class LaunchesRunLaunchesTest {
     private val launches = object : LaunchesRepository {
         val stored = listOf(launch("lch_cloud", cloud), launch("lch_cli", null))
 
-        override suspend fun create(launch: Launch) = error("Never written from workflow-runs.")
+        override suspend fun create(launch: Launch, limit: LaunchLimit): Duration = error("Never written here.")
 
         override suspend fun find(orgId: Uuid, id: String): Launch? =
             stored.firstOrNull { it.orgId == orgId && it.id == id }

@@ -13,7 +13,8 @@ import io.github.smyrgeorge.sqlx4k.impl.migrate.MigrationFile
  */
 interface MigrationRunner {
     /**
-     * Applies the migrations a module has not applied yet, and verifies the checksums of those it has.
+     * Applies the migrations a module has not applied yet, and verifies the checksums of those it has. Then the history
+     * table is left writable by its owner alone (see [MigrationRunnerImpl]).
      *
      * @param module The module name (lower-case letters, digits and `-`).
      * @param migrations The module's migrations.
@@ -60,7 +61,7 @@ class MigrationRunnerImpl(
     override suspend fun migrate(module: String, migrations: List<SchemaMigration>) {
         val table = historyTable(module)
         if (migrations.isEmpty()) return
-        val results = driver.migrate(
+        val pass = driver.migrate(
             files = migrations.files(),
             table = table,
             afterFileMigration = { migration, duration ->
@@ -73,7 +74,11 @@ class MigrationRunnerImpl(
                     ),
                 )
             },
-        ).getOrThrow()
+        )
+        // Even after a failed pass: the history may have been created, and must not stay writable meanwhile.
+        val locked = driver.execute(ownerOnly(table))
+        val results = pass.getOrThrow()
+        locked.getOrThrow()
         logger.info(
             "migrations checked",
             mapOf("module" to module, "total" to results.total, "applied" to results.applied),
@@ -98,6 +103,43 @@ class MigrationRunnerImpl(
         val missing = migrations.files().filter { applied[it.version] != it.checksum }.map { it.version }
         if (missing.isNotEmpty()) throw MigrationsNotAppliedException(module, missing)
     }
+
+    /**
+     * Only the migrator writes a module's history. A deployment's default privileges (`ci/database-roles.sql`, the Helm
+     * chart) give the serving role SELECT, INSERT, UPDATE and DELETE on every table of the owner, the history tables
+     * included: the serving process could erase the trace of a migration, which the next `migrate` would then replay
+     * or fail on. Every role but the owner that holds more than SELECT (on the table or on a column, MAINTAIN
+     * included) loses all of it, with what it granted on (CASCADE), and gets SELECT back if it had it: [verify] reads
+     * the history at start. At every pass, after a failed one too, so a database migrated before keeps no write
+     * either. Skipped when the connected role is not (a member of) the table's owner, which alone may revoke.
+     */
+    private fun ownerOnly(table: String): String = """
+        DO $$
+        DECLARE r record;
+        BEGIN
+          FOR r IN
+            SELECT CASE WHEN g.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(g.grantee)) END AS name,
+              bool_or(g.privilege_type = 'SELECT' AND NOT g.on_column) AS reads
+            FROM pg_class c
+            CROSS JOIN LATERAL (
+              SELECT a.grantee, a.privilege_type, false AS on_column FROM aclexplode(c.relacl) a
+              UNION ALL
+              SELECT a.grantee, a.privilege_type, true FROM pg_attribute t, aclexplode(t.attacl) a
+              WHERE t.attrelid = c.oid
+            ) g
+            WHERE c.oid = to_regclass('$table') AND g.grantee <> c.relowner
+              AND pg_has_role(current_user, c.relowner, 'USAGE')
+            GROUP BY g.grantee
+            HAVING bool_or(g.privilege_type <> 'SELECT' OR g.on_column)
+          LOOP
+            EXECUTE format('REVOKE ALL ON %I FROM %s CASCADE', '$table', r.name);
+            IF r.reads THEN
+              EXECUTE format('GRANT SELECT ON %I TO %s', '$table', r.name);
+            END IF;
+          END LOOP;
+        END
+        $$
+    """.trimIndent()
 
     private fun historyTable(module: String): String {
         require(MODULE_NAME.matches(module)) { "Module name must match $MODULE_NAME." }

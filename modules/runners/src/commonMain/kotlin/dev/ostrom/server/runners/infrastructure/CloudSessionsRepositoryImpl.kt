@@ -29,7 +29,7 @@ import kotlin.uuid.Uuid
  *
  * Every read and write of a session or of the usage runs confined to the session's organization ([inTenant], S2-01).
  * Only `runners_session_routes` is used across organizations, through the `SECURITY DEFINER` functions of
- * [RunnersMigrations] (version 2): the reconciler claims and releases due sessions there, and the runner channel finds
+ * [RunnersMigrations] (version 3): the reconciler claims and releases due sessions there, and the runner channel finds
  * a session by its runner token there, before loading the session in its organization.
  *
  * The running cap is serialized per organization with a transaction-scoped advisory lock, so the count and the

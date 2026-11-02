@@ -2,6 +2,8 @@
 package dev.ostrom.runner
 
 import io.ktor.network.selector.SelectorManager
+import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -23,6 +25,7 @@ class AgentSocketTest {
     /** Echoes keystrokes as output; a stop ends it. */
     private class EchoTerminal : Terminal {
         private val output = Channel<ByteArray?>(Channel.UNLIMITED)
+        override val exitCode: Int? = 0
 
         override suspend fun read(): ByteArray? = output.receive()
 
@@ -85,6 +88,39 @@ class AgentSocketTest {
             selector.close()
             assertTrue("agent host listening" in logs)
             assertTrue("terminal connection failed: IllegalStateException" in logs)
+        }
+    }
+
+    @Test
+    fun aHookAsksTheRunnerForACheckOverItsSocket() = runBlocking {
+        withTimeout(20.seconds) {
+            val path = Files.createTempDirectory("ostrom-checks").resolve("checks.sock").toString()
+            val selector = SelectorManager(Dispatchers.IO)
+            val ready = CompletableDeferred<Unit>()
+            val logs = mutableListOf<String>()
+            val ran = CheckReply(true, 0, RunnerChecks.PASSED, "abc", "ok", reported = false)
+            val checks = launch(Dispatchers.IO) {
+                ChecksSocket.serve(selector, path, { ran }, { synchronized(logs) { logs += it } }) {
+                    ready.complete(Unit)
+                }
+            }
+            ready.await()
+            val connection = AgentSocket.connect(selector, path)
+            val request = """{"sessionId":"s","digest":"d","nodeId":"n","scriptId":"lint","script":"true",""" +
+                """"directory":"/workspace"}"""
+            connection.output.writeStringUtf8("$request\n")
+            connection.output.flush()
+            val reply = connection.input.readUTF8Line()
+            assertEquals(
+                """{"started":true,"exit":0,"outcome":"passed","scriptSha":"abc","outputTail":"ok",""" +
+                    """"reported":false}""",
+                reply,
+            )
+            connection.close()
+            checks.cancel()
+            checks.join()
+            selector.close()
+            assertTrue("checks listening" in logs)
         }
     }
 
