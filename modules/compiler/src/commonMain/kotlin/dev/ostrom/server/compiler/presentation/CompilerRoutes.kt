@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler.presentation
 
+import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
@@ -9,6 +10,8 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.NullsKept
+import dev.ostrom.server.kernel.http.OstromJson
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
@@ -17,6 +20,7 @@ import io.ktor.server.resources.post
 import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -53,7 +57,7 @@ private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = wit
     get<PackagesApi.Current> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
         val served = publish(actor.orgId, params.parent.repo, urlOf(call), actor.id)
-        call.respond(served.envelope)
+        call.respond(answerOf(served.envelope))
     }
     get<PackagesApi> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
@@ -72,7 +76,7 @@ private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = wit
     get<PackagesApi.Digest> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
         val stored = find(actor, params.digest)
-        call.respond(stored.envelope.copy(pinned = pinned(actor, stored)))
+        call.respond(answerOf(stored.envelope.copy(pinned = pinned(actor, stored))))
     }
     get<PackagesApi.Digest.Status> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
@@ -128,6 +132,11 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
 }
 
 private const val MAX_AUDIT = 200
+
+/** An envelope writes `repo` as `null` for an organization's package: required and nullable in the contract. */
+private object EnvelopeAnswer : NullsKept<PackageEnvelope>(PackageEnvelope.serializer(), "repo")
+
+private fun answerOf(envelope: PackageEnvelope): JsonElement = OstromJson.encodeToJsonElement(EnvelopeAnswer, envelope)
 
 private suspend fun CompilerRoutesDependencies.find(actor: GateActor, digest: String): StoredPackage =
     repository.findPackage(actor.orgId, digest) ?: throw OstromException(ErrorKind.NOT_FOUND, "Package not found.")

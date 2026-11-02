@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.presentation
 
+import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -180,7 +183,9 @@ data class GateRef(
  * @property selfApproved True when the only approver, who asked, said yes.
  * @property push The push.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = GateRequest.Answer::class)
 data class GateRequest(
     val id: String,
     val approvalId: String? = null,
@@ -208,7 +213,10 @@ data class GateRequest(
     val askedVia: List<String>? = null,
     val selfApproved: Boolean? = null,
     val push: GatePush? = null,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<GateRequest>(generatedSerializer(), "gate")
+}
 
 /**
  * A line shown to the approvers (contract `Evidence`).
