@@ -82,8 +82,18 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 
 The policies say which organization's rows a query reaches, not what it may do to them, and the serving role holds
 `UPDATE` and `DELETE` on every table through the default privileges. For `identity_audit_events`, the signed log, that
-is not enough: two triggers (identity migration 8) refuse `UPDATE`, `DELETE` and `TRUNCATE` with an error, for every
-role, the owner and a superuser included. Only the owner, which serves no request, can disable them.
+is not enough: one statement-level trigger (identity migration 8) refuses `UPDATE`, `DELETE` and `TRUNCATE` with an
+error, whatever rows the statement reaches, for every role that runs it. It is enabled `ALWAYS`, so
+`session_replication_role = replica` does not skip it.
+
+What it does not stop: the owner (the migrations' role, which serves no request) and a superuser can drop or disable
+the trigger, then change the table. Against them the defence is detection: `GET /api/v1/audit` checks every line it
+serves against its hash, its signature and the line before it. Erasing the newest lines of a chain is not detected
+yet (no anchor outside the table).
+
+No request erases an audit line, an organization's deletion included. Removing lines (a legal erasure request) is an
+operation by hand: the owner disables the trigger in a transaction, deletes, and enables it `ALWAYS` again; the lines
+after the erased ones then read `unlinked`.
 
 ## Known exceptions
 

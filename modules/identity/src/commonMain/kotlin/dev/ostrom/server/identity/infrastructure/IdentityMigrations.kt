@@ -320,8 +320,9 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
     ),
     // Audit of the audit log, A1: the serving role holds UPDATE and DELETE on every table (default privileges) and the
     // organization policy only reads `ostrom.org_id`, which any role sets: it could rewrite or erase any organization's
-    // log. The log is append-only for every role, the owner and a superuser included: a change or a deletion is an
-    // error, never zero rows in silence. Only the owner can disable the triggers (`ALTER TABLE`); it serves nothing.
+    // log. One statement-level trigger refuses UPDATE, DELETE and TRUNCATE with an error, whatever rows the statement
+    // reaches (none included), for every role. `ENABLE ALWAYS`: it fires in `session_replication_role = replica` too.
+    // The owner (migrations, never serving) and a superuser can still drop or disable it: reading checks the chain.
     SchemaMigration(
         version = 8,
         name = "audit_log_append_only",
@@ -333,10 +334,9 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
                     USING ERRCODE = 'insufficient_privilege';
             END
             $$;
-            CREATE TRIGGER identity_audit_events_no_change BEFORE UPDATE OR DELETE ON identity_audit_events
-                FOR EACH ROW EXECUTE FUNCTION identity_audit_events_append_only();
-            CREATE TRIGGER identity_audit_events_no_truncate BEFORE TRUNCATE ON identity_audit_events
-                FOR EACH STATEMENT EXECUTE FUNCTION identity_audit_events_append_only()
+            CREATE TRIGGER identity_audit_events_append_only BEFORE UPDATE OR DELETE OR TRUNCATE
+                ON identity_audit_events FOR EACH STATEMENT EXECUTE FUNCTION identity_audit_events_append_only();
+            ALTER TABLE identity_audit_events ENABLE ALWAYS TRIGGER identity_audit_events_append_only
         """.trimIndent(),
     ),
 )
