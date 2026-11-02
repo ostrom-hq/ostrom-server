@@ -1,7 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCase
+import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
+import dev.ostrom.server.identity.domain.ExchangeMobileCodeUseCase
+import dev.ostrom.server.identity.domain.ExchangeMobileCodeUseCaseImpl
+import dev.ostrom.server.identity.domain.GetNotificationPreferencesUseCase
+import dev.ostrom.server.identity.domain.GetNotificationPreferencesUseCaseImpl
+import dev.ostrom.server.identity.domain.MobileCodesRepository
+import dev.ostrom.server.identity.domain.MobileTokensRepository
+import dev.ostrom.server.identity.domain.NotificationPreferencesRepository
+import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCase
+import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCaseImpl
+import dev.ostrom.server.identity.domain.UnlockMobileAppUseCase
+import dev.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
+import dev.ostrom.server.identity.infrastructure.MobileCodesRepositoryImpl
+import dev.ostrom.server.identity.infrastructure.MobileTokensRepositoryImpl
+import dev.ostrom.server.identity.infrastructure.NotificationPreferencesRepositoryImpl
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.CreateSignInLinkUseCase
 import dev.ostrom.server.identity.domain.CreateSignInLinkUseCaseImpl
@@ -42,7 +58,9 @@ import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import dev.ostrom.server.identity.infrastructure.magicLinkMail
 import dev.ostrom.server.identity.presentation.SessionRoutesDependencies
 import dev.ostrom.server.identity.presentation.SignInConfig
+import dev.ostrom.server.identity.presentation.MobileRoutesDependencies
 import dev.ostrom.server.identity.presentation.SignInRoutesDependencies
+import dev.ostrom.server.identity.presentation.mobileRoutes
 import dev.ostrom.server.identity.presentation.signInRoutes
 import dev.ostrom.server.identity.presentation.sessionRoutes
 import dev.ostrom.server.identity.presentation.noStoreOnIdentityRoutes
@@ -191,7 +209,16 @@ object IdentityModule : ServerModule {
         }
         single<IssueCliTokenUseCase> { IssueCliTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<LauncherLoginUseCase> { LauncherLoginUseCaseImpl(get(), get(), get(), get()) }
-        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        single { SignInRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single<MobileCodesRepository> { MobileCodesRepositoryImpl(get()) }
+        single<MobileTokensRepository> { MobileTokensRepositoryImpl(get()) }
+        single<NotificationPreferencesRepository> { NotificationPreferencesRepositoryImpl(get()) }
+        single<CompleteMobileSignInUseCase> { CompleteMobileSignInUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<ExchangeMobileCodeUseCase> { ExchangeMobileCodeUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<UnlockMobileAppUseCase> { UnlockMobileAppUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<GetNotificationPreferencesUseCase> { GetNotificationPreferencesUseCaseImpl(get()) }
+        single<SetNotificationPreferencesUseCase> { SetNotificationPreferencesUseCaseImpl(get(), get()) }
+        single { MobileRoutesDependencies(get(), get(), get(), get()) }
         single<SignInLinksRepository> { SignInLinksRepositoryImpl(get()) }
         single<CreateSignInLinkUseCase> { CreateSignInLinkUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ExchangeSignInLinkUseCase> { ExchangeSignInLinkUseCaseImpl(get(), get(), get(), get(), get(), get()) }
@@ -211,6 +238,7 @@ object IdentityModule : ServerModule {
         route.identityRoutes(koin.get())
         route.signInRoutes(koin.get())
         route.sessionRoutes(koin.get())
+        route.mobileRoutes(koin.get())
     }
 
     private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {

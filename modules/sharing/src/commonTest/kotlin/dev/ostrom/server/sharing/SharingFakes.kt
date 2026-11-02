@@ -4,6 +4,7 @@ package dev.ostrom.server.sharing
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.SecretCipher
+import dev.ostrom.server.sharing.domain.AccountChangedException
 import dev.ostrom.server.sharing.domain.AccountCredentials
 import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.AccountSpendReader
@@ -77,10 +78,15 @@ class InMemoryAccounts :
     /** Reading tokens fails (the database is down). */
     var failing = false
 
-    override suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount {
+    override suspend fun upsert(account: SharedAccount, envelope: String, expectedVersion: Long?): SharedAccount {
         val index = accounts.indexOfFirst { it.sameProviderAccount(account) }
-        if (index >= 0) accounts[index] = account.copy(id = accounts[index].id) else accounts += account
-        val stored = accounts.first { it.sameProviderAccount(account) }
+        val current = accounts.getOrNull(index)
+        if (expectedVersion != null && (current?.version ?: 0) != expectedVersion) throw AccountChangedException()
+        val stored = if (current == null) {
+            account.copy(version = 1).also { accounts += it }
+        } else {
+            account.copy(id = current.id, version = current.version + 1).also { accounts[index] = it }
+        }
         envelopes[stored.id] = envelope
         return stored
     }
@@ -96,11 +102,12 @@ class InMemoryAccounts :
     override suspend fun ready(orgId: Uuid, provider: AccountProvider) =
         accounts.filter { it.orgId == orgId && it.provider == provider && it.status == AccountStatus.READY }
 
-    override suspend fun update(account: SharedAccount): SharedAccount? {
+    override suspend fun update(account: SharedAccount, expectedVersion: Long?): SharedAccount? {
         val index = accounts.indexOfFirst { it.orgId == account.orgId && it.id == account.id }
-        if (index < 0 || vanishing) return null
-        accounts[index] = account
-        return account
+        val current = accounts.getOrNull(index)
+        val stale = expectedVersion != null && current?.version != expectedVersion
+        if (current == null || vanishing || stale) return null
+        return account.copy(version = current.version + 1).also { accounts[index] = it }
     }
 
     override suspend fun delete(orgId: Uuid, id: Uuid) =
