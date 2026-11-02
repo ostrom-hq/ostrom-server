@@ -4,26 +4,53 @@ package dev.ostrom.server.testing
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.DatabaseConfig
 import dev.ostrom.server.kernel.config.EnvironmentConfigSource
+import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.connectPostgres
 import io.github.smyrgeorge.sqlx4k.Driver
 import kotlin.uuid.Uuid
 
 /**
- * A PostgreSQL database created for one test and dropped after it, so tests never see each other's rows.
+ * A PostgreSQL database created for one test and dropped after it, so tests never see each other's rows, with the
+ * roles of a deployment (`ci/database-roles.sql`, docs/tenancy.md): the tests and the server run exactly as in
+ * production, never as a role that bypasses row-level security.
+ *
+ * - [owner]: the owner of the database, the schema and every table, `NOSUPERUSER NOBYPASSRLS CREATEROLE`, admin of
+ *   `ostrom_tenant` and `ostrom_router`. It runs the migrations, like `ostrom-server migrate`.
+ * - [driver]: the serving role, `NOSUPERUSER NOBYPASSRLS`, owner of nothing, member of `ostrom_tenant`, with the rows
+ *   of the owner's tables by default privileges. Every test and the test server go through it.
+ * - [superuser]: the configured user (CI's PostgreSQL service user), which creates the database and the roles. Only for
+ *   what no deployment does: creating roles to test the start check, reading what a test must prove is stored.
+ *
+ * The owner and serving roles are created for this database alone (their attributes are those of
+ * `ci/database-roles.sql`, their names unique so tests in parallel never share them) and dropped with it;
+ * `ostrom_tenant` and `ostrom_router`, global to the cluster and named by the migrations, are created when missing.
  *
  * Configured by `OSTROM_TEST_DATABASE_URL`, an existing database to connect to with its credentials
  * (`postgresql://ostrom:ostrom@localhost:5432/ostrom_test`), or `OSTROM_TEST_DATABASE_USER` and
- * `OSTROM_TEST_DATABASE_PASSWORD`. When the URL is unset the database tests are skipped, unless
- * `OSTROM_TEST_DATABASE_REQUIRED=true` (set in CI), which makes them fail instead: CI never passes by skipping them.
+ * `OSTROM_TEST_DATABASE_PASSWORD`; that user must be a superuser (it hands the schema over and creates roles that a
+ * `CREATEROLE` role could not, `BYPASSRLS` ones included), like CI's PostgreSQL service user. When the URL is unset the
+ * database tests are skipped, unless `OSTROM_TEST_DATABASE_REQUIRED=true` (set in CI), which makes them fail instead:
+ * CI never passes by skipping them.
  *
- * @property driver The connection pool of the test database.
+ * @property driver The connection pool of the serving role.
+ * @property owner The connection pool of the owner, for migrations.
+ * @property superuser The connection pool of the configured user, never the path under test.
  */
 class TestDatabase private constructor(
     val driver: Driver,
+    val owner: Driver,
+    val superuser: Driver,
     private val admin: DatabaseConfig,
-    private val name: String,
+    private val id: String,
 ) {
+    private val name: String get() = databaseName(id)
     private val url: String get() = admin.url.substringBeforeLast('/') + "/" + name
+
+    /** The name of the owner role, which owns the database, its schema and its tables. */
+    val ownerRole: String get() = ownerRoleName(id)
+
+    /** The name of the serving role, the one [driver] connects as. */
+    val servingRole: String get() = servingRoleName(id)
 
     /**
      * Runs [block] connected to this database as a fresh login role, like a deployment's serving role: not a
@@ -44,11 +71,11 @@ class TestDatabase private constructor(
         val role = "ostrom_test_role_" + Uuid.random().toHexString()
         val password = Uuid.random().toHexString()
         val bypass = if (bypassRowLevelSecurity) "BYPASSRLS" else "NOBYPASSRLS"
-        driver.execute(
+        superuser.execute(
             "CREATE ROLE $role LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION $bypass PASSWORD '$password'",
         ).getOrThrow()
         try {
-            driver.execute("GRANT USAGE ON SCHEMA public TO $role").getOrThrow()
+            superuser.execute("GRANT USAGE ON SCHEMA public TO $role").getOrThrow()
             val connected = connectPostgres(DatabaseConfig(url, role, password, poolSize))
             try {
                 return block(role, connected)
@@ -56,24 +83,39 @@ class TestDatabase private constructor(
                 connected.close()
             }
         } finally {
-            driver.execute("DROP OWNED BY $role").getOrThrow()
-            driver.execute("DROP ROLE $role").getOrThrow()
+            superuser.execute("DROP OWNED BY $role").getOrThrow()
+            superuser.execute("DROP ROLE $role").getOrThrow()
         }
     }
 
-    /** Closes the pool and drops the database. */
+    /** Closes the pools, drops the database and its owner and serving roles. */
     suspend fun close() {
-        driver.close()
-        administer(admin, "DROP DATABASE IF EXISTS $name WITH (FORCE)")
+        try {
+            driver.close()
+            owner.close()
+            superuser.close()
+        } finally {
+            administer(
+                admin,
+                "DROP DATABASE IF EXISTS $name WITH (FORCE)",
+                "DROP OWNED BY $servingRole, $ownerRole",
+                "DROP ROLE $servingRole",
+                "DROP ROLE $ownerRole",
+            )
+        }
     }
 
     /** Creating test databases. */
     companion object {
         private const val POOL_SIZE = 4
+        // KernelPostgresTest runs three migration passes at once, each pinning a connection for its lock, plus the
+        // connections their migrations use: a pool of 2 deadlocked.
+        private const val OWNER_POOL_SIZE = 6
+        private const val SUPERUSER_POOL_SIZE = 2
         private const val ROLE_POOL_SIZE = 2
 
         /**
-         * Creates a fresh database.
+         * Creates a fresh database with its owner and serving roles.
          *
          * @param environment Where the `OSTROM_TEST_DATABASE_*` keys are read; the process environment by default.
          *
@@ -94,18 +136,73 @@ class TestDatabase private constructor(
                 password = environment["OSTROM_TEST_DATABASE_PASSWORD"],
                 maxConnections = 1,
             )
-            val name = "ostrom_test_" + Uuid.random().toHexString()
-            administer(config, "CREATE DATABASE $name")
+            val id = Uuid.random().toHexString()
+            val name = databaseName(id)
+            val ownerRole = ownerRoleName(id)
+            val servingRole = servingRoleName(id)
+            val ownerPassword = Uuid.random().toHexString()
+            val servingPassword = Uuid.random().toHexString()
+            // As ci/database-roles.sql, the roles first, then the database owned by the owner.
+            administer(
+                config,
+                tolerated("CREATE ROLE $TENANT NOLOGIN NOSUPERUSER NOBYPASSRLS"),
+                tolerated("CREATE ROLE $ROUTER NOLOGIN NOSUPERUSER NOBYPASSRLS"),
+                "CREATE ROLE $ownerRole LOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS " +
+                    "PASSWORD '$ownerPassword'",
+                "CREATE ROLE $servingRole LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS " +
+                    "PASSWORD '$servingPassword'",
+                "GRANT $TENANT TO $ownerRole WITH ADMIN OPTION",
+                "GRANT $TENANT TO $servingRole",
+                "GRANT $ROUTER TO $ownerRole WITH ADMIN OPTION",
+                "CREATE DATABASE $name OWNER $ownerRole",
+            )
             val testUrl = config.url.substringBeforeLast('/') + "/" + name
-            val driver = connectPostgres(config.copy(url = testUrl, maxConnections = POOL_SIZE))
-            return TestDatabase(driver, config, name)
+            val superuser = connectPostgres(config.copy(url = testUrl, maxConnections = SUPERUSER_POOL_SIZE))
+            superuser.grantAsADeployment(ownerRole, servingRole)
+            return TestDatabase(
+                driver = connectPostgres(DatabaseConfig(testUrl, servingRole, servingPassword, POOL_SIZE)),
+                owner = connectPostgres(DatabaseConfig(testUrl, ownerRole, ownerPassword, OWNER_POOL_SIZE)),
+                superuser = superuser,
+                admin = config,
+                id = id,
+            )
         }
 
-        /** Runs [sql] on a connection to the configured database opened for it alone, closed whatever happens. */
-        private suspend fun administer(config: DatabaseConfig, sql: String) {
+        private const val TENANT = TENANT_ROLE
+
+        private fun databaseName(id: String) = "ostrom_test_$id"
+
+        private fun ownerRoleName(id: String) = "ostrom_test_owner_$id"
+
+        private fun servingRoleName(id: String) = "ostrom_test_app_$id"
+
+        // The owner of the cross-organization functions (docs/tenancy.md), never granted to the serving role.
+        private const val ROUTER = "ostrom_router"
+
+        // Roles are global to the cluster: tolerate one created by another test, a migration or the roles script.
+        private fun tolerated(sql: String) =
+            "DO $$ BEGIN $sql; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+
+        /** The schema's owner and grants, as ci/database-roles.sql sets them on a deployment's database. */
+        private suspend fun Driver.grantAsADeployment(ownerRole: String, servingRole: String) {
+            listOf(
+                "ALTER SCHEMA public OWNER TO $ownerRole",
+                "REVOKE ALL ON SCHEMA public FROM PUBLIC",
+                "GRANT USAGE ON SCHEMA public TO $servingRole, $TENANT",
+                "ALTER DEFAULT PRIVILEGES FOR ROLE $ownerRole IN SCHEMA public " +
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $servingRole",
+                "ALTER DEFAULT PRIVILEGES FOR ROLE $ownerRole IN SCHEMA public " +
+                    "GRANT USAGE, SELECT ON SEQUENCES TO $servingRole",
+                "ALTER DEFAULT PRIVILEGES FOR ROLE $ownerRole IN SCHEMA public " +
+                    "GRANT EXECUTE ON FUNCTIONS TO $servingRole",
+            ).forEach { execute(it).getOrThrow() }
+        }
+
+        /** Runs [statements] on a connection to the configured database opened for them alone, always closed. */
+        private suspend fun administer(config: DatabaseConfig, vararg statements: String) {
             val admin = connectPostgres(config)
             try {
-                admin.execute(sql).getOrThrow()
+                statements.forEach { admin.execute(it).getOrThrow() }
             } finally {
                 admin.close()
             }

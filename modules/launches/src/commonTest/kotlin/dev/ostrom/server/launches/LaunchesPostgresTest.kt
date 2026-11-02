@@ -203,11 +203,9 @@ class LaunchesPostgresTest {
             val read = server.call(bob.cliToken, "/api/v1/sessions/s-1")
             assertEquals(HttpStatusCode.NotFound, read.status)
 
-            // The database itself: without its organization set, a transaction reads no launch and writes none.
-            server.driver.execute(PROBE_ROLE).getOrThrow()
-            server.driver.execute("GRANT SELECT, UPDATE ON launches_launches TO ostrom_rls_probe").getOrThrow()
+            // The database itself: without its organization set, a transaction reads no launch and writes none. The
+            // test server's driver is the serving role, as in production: row level security applies to it.
             val seen = server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
                 val none = fetchAll("SELECT COUNT(*) AS n FROM launches_launches").getOrThrow()
                     .first().get("n").asString()
                 val written = execute("UPDATE launches_launches SET dev = 'mallory'").getOrThrow()
@@ -223,7 +221,7 @@ class LaunchesPostgresTest {
         serverTest(modules) { server ->
             val ada = server.person("ada")
             repeat(LAUNCHES) { server.launch(ada) }
-            server.driver.execute("ANALYZE launches_launches").getOrThrow()
+            server.database.owner.execute("ANALYZE launches_launches").getOrThrow() // the serving role owns no table
             val plan = server.driver.withOrganization(ada.org.id) { tx ->
                 val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${PostgresLaunchesRepository.FIND}")
                     .bind("org_id", ada.org.id).bind("id", "lch_absent")
@@ -234,7 +232,7 @@ class LaunchesPostgresTest {
             assertTrue("launches_launches_pkey" in plan, plan)
         }
 
-    // The organization is also named: the tests' role may bypass Row-Level Security (the probe role proves it).
+    // Read in the organization, as the serving role: row level security keeps the other organizations out.
     private suspend fun TestServer.launchesSeenBy(orgId: Uuid): Int = driver.withOrganization(orgId) { tx ->
         val count = Statement.create("SELECT COUNT(*) AS n FROM launches_launches WHERE org_id = :org_id")
             .bind("org_id", orgId)
@@ -243,8 +241,6 @@ class LaunchesPostgresTest {
 
     private companion object {
         const val LAUNCHES = 20
-        const val PROBE_ROLE =
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$"
         const val LAUNCH = """{"repo":"acme/api","agent":"claude-code","model":"claude-opus-4-1"}"""
         const val SESSION = """{"id":"s-1","agent":"claude-code","repo":"acme/api","dev":"mallory"}"""
     }
