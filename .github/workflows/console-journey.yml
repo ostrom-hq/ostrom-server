@@ -24,7 +24,8 @@ on:
     paths: [.github/workflows/console-journey.yml]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Each dispatch is its own run (it names its own image, console and journeys); a pull request's newer push cancels.
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -32,7 +33,10 @@ permissions:
 
 jobs:
   journeys:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    # A pull request from a fork has no deploy key to read the console with.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -51,10 +55,11 @@ jobs:
         image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78
         ports: ['12111:12111']
     env:
-      # A pull request that changes this file runs the console of WEB_PR_REF; a dispatch names its own.
+      # The console of ostrom-web main, unless a dispatch names another ref.
       WEB_REF: ${{ inputs.web_ref || 'test/real-me-header' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
-      # A pull request that changes this file proves it with the /me journey; a dispatch runs what it names, or all.
+      # A pull request that changes this file proves it with the /me journey (ostrom-web#42); a dispatch runs what it
+      # names, or all of e2e-real.
       SPECS: ${{ github.event_name == 'pull_request' && 'me.spec.ts' || inputs.specs }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
@@ -82,11 +87,17 @@ jobs:
           image=$WANTED_IMAGE
           if [ -z "$image" ]; then
             # main's head is published a few minutes after its merge: the newest of its last commits that is.
+            # Only an image not published yet is skipped; any other pull error stops the job.
             for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
-              if docker pull --quiet "ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}" >/dev/null 2>&1; then
-                image=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
+              candidate=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
+              if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
+                image=$candidate
                 break
               fi
+              case "$error" in
+                *"manifest unknown"* | *"not found"*) echo "$candidate is not published yet" ;;
+                *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
+              esac
             done
             [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
           else
@@ -94,6 +105,8 @@ jobs:
           fi
           revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
           [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+          git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
+            || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
           git -C server merge-base --is-ancestor "$MIN_SERVER" "$revision" \
             || { echo "::error::$image is ostrom-server@${revision:0:7}, older than $MIN_SERVER (server#92)"; exit 1; }
           # The database roles of the image's own commit, not of a main that may have moved past it.
@@ -151,8 +164,10 @@ jobs:
           OSTROM_E2E_API_UPSTREAM: http://127.0.0.1:4600
           OSTROM_E2E_MAIL_DIR: ${{ runner.temp }}/ostrom-mail
           OSTROM_E2E_REQUIRE_ORGS: 'true'
-        # SPECS is split on spaces on purpose: each word is one Playwright file filter.
-        run: pnpm exec playwright test --config playwright.real.config.ts $SPECS
+        # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.
+        run: |
+          set -f
+          pnpm exec playwright test --config playwright.real.config.ts $SPECS
       - name: Server logs
         if: always()
         run: docker logs ostrom-server 2>&1 | tail -n 300 || true
