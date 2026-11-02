@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import dev.ostrom.server.receipts.domain.services.ReceiptBodySigner
+import dev.ostrom.server.receipts.domain.services.ReceiptRules
 import dev.ostrom.server.receipts.domain.services.TrustedReceiptKeys
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCaseImpl
@@ -18,6 +19,8 @@ import dev.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCaseImpl
 import dev.ostrom.server.receipts.infrastructure.InstanceReceiptSigner
 import dev.ostrom.server.receipts.infrastructure.InstanceTrustedReceiptKeys
+import dev.ostrom.server.receipts.infrastructure.NoReceiptRules
+
 import dev.ostrom.server.receipts.infrastructure.PostgresReceiptsRepository
 import dev.ostrom.server.receipts.infrastructure.ReceiptsMigrations
 import dev.ostrom.server.receipts.presentation.ReceiptsRoutesDependencies
@@ -48,6 +51,13 @@ object ReceiptsModule : ServerModule {
     }
 
     override val migrations: List<SchemaMigration> = ReceiptsMigrations
+
+    /** Binds [NoReceiptRules] unless a loaded module binds the rules. */
+    override suspend fun initialize(koin: Koin) {
+        if (koin.getOrNull<ReceiptRules>() == null) {
+            koin.loadModules(listOf(module { single<ReceiptRules> { NoReceiptRules() } }))
+        }
+    }
 
     override fun routes(route: Route, koin: Koin) {
         route.receiptsRoutes(koin.get())
