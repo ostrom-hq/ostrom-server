@@ -195,4 +195,40 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX identity_sign_in_links_expiry ON identity_sign_in_links (expires_at)
         """.trimIndent(),
     ),
+    // The phone app (S2-24, S2-31, S2-54): an OAuth attempt the app started keeps its deep link, PKCE challenge and
+    // state; its one-time code; the app's token keeps the hash of its unlock key and its last biometric unlock; and
+    // each person's notification preferences. None of these rows belongs to an organization: like the users, the
+    // sign-in links and the account-level tokens, they are read outside any organization, by hash or by user.
+    SchemaMigration(
+        version = 5,
+        name = "mobile_app",
+        sql = """
+            ALTER TABLE identity_oauth_attempts ADD COLUMN mobile_redirect_uri TEXT, ADD COLUMN mobile_code_challenge TEXT,
+                ADD COLUMN mobile_state TEXT;
+            ALTER TABLE identity_api_tokens ADD COLUMN unlock_key_hash TEXT, ADD COLUMN authenticated_at TIMESTAMPTZ;
+            ALTER TABLE identity_api_tokens ADD CONSTRAINT identity_api_tokens_unlock_key
+                CHECK ((kind = 'MOBILE') = (unlock_key_hash IS NOT NULL));
+            CREATE TABLE identity_mobile_codes (
+                id UUID PRIMARY KEY,
+                code_hash TEXT NOT NULL UNIQUE,
+                user_id UUID NOT NULL REFERENCES identity_users (id) ON DELETE CASCADE,
+                code_challenge TEXT NOT NULL,
+                redirect_uri TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ
+            );
+            CREATE INDEX identity_mobile_codes_expiry ON identity_mobile_codes (expires_at);
+            CREATE TABLE identity_notification_preferences (
+                user_id UUID PRIMARY KEY REFERENCES identity_users (id) ON DELETE CASCADE,
+                requests BOOLEAN NOT NULL,
+                decisions BOOLEAN NOT NULL,
+                spending BOOLEAN NOT NULL,
+                quiet_start TEXT,
+                quiet_end TEXT,
+                quiet_time_zone TEXT,
+                updated_at TIMESTAMPTZ NOT NULL
+            )
+        """.trimIndent(),
+    ),
 )

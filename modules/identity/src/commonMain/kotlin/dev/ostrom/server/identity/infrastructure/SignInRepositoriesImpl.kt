@@ -4,6 +4,7 @@ package dev.ostrom.server.identity.infrastructure
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.MagicLink
 import dev.ostrom.server.identity.domain.MagicLinksRepository
+import dev.ostrom.server.identity.domain.MobileClient
 import dev.ostrom.server.identity.domain.OAuthAttempt
 import dev.ostrom.server.identity.domain.OAuthAttemptsRepository
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -24,13 +25,16 @@ class OAuthAttemptsRepositoryImpl(private val driver: Driver) : OAuthAttemptsRep
         driver.execute(
             Statement.create(
                 "INSERT INTO identity_oauth_attempts (id, state_hash, provider, connection_id, code_verifier, " +
-                    "nonce, redirect_path, created_at, expires_at, link_user_id) VALUES (:id, :state, :provider, " +
-                    ":connection, :verifier, :nonce, :redirect, :created, :expires, :link)",
+                    "nonce, redirect_path, created_at, expires_at, link_user_id, mobile_redirect_uri, " +
+                    "mobile_code_challenge, mobile_state) VALUES (:id, :state, :provider, :connection, :verifier, " +
+                    ":nonce, :redirect, :created, :expires, :link, :mobileUri, :mobileChallenge, :mobileState)",
             ).bind("id", attempt.id).bind("state", stateHash).bind("provider", attempt.provider.key)
                 .bind("connection", attempt.connectionId).bind("verifier", attempt.codeVerifier)
                 .bind("nonce", attempt.nonce)
                 .bind("redirect", attempt.redirectPath).bind("created", attempt.createdAt)
-                .bind("expires", attempt.expiresAt).bind("link", attempt.linkUserId),
+                .bind("expires", attempt.expiresAt).bind("link", attempt.linkUserId)
+                .bind("mobileUri", attempt.mobile?.redirectUri).bind("mobileChallenge", attempt.mobile?.codeChallenge)
+                .bind("mobileState", attempt.mobile?.state),
         ).getOrThrow()
     }
 
@@ -39,7 +43,7 @@ class OAuthAttemptsRepositoryImpl(private val driver: Driver) : OAuthAttemptsRep
         Statement.create(
             "UPDATE identity_oauth_attempts SET used_at = :now WHERE state_hash = :state AND used_at IS NULL " +
                 "AND expires_at > :now RETURNING id, provider, connection_id, code_verifier, nonce, redirect_path, " +
-                "created_at, expires_at, link_user_id",
+                "created_at, expires_at, link_user_id, mobile_redirect_uri, mobile_code_challenge, mobile_state",
         ).bind("state", stateHash).bind("now", now),
     ).getOrThrow().firstOrNull()?.toAttempt()
 
@@ -53,6 +57,9 @@ class OAuthAttemptsRepositoryImpl(private val driver: Driver) : OAuthAttemptsRep
         createdAt = get("created_at").asInstant(),
         expiresAt = get("expires_at").asInstant(),
         linkUserId = get("link_user_id").asUuidOrNull(),
+        mobile = get("mobile_redirect_uri").asStringOrNull()?.let { uri ->
+            MobileClient(uri, get("mobile_code_challenge").asString(), get("mobile_state").asString())
+        },
     )
 }
 
