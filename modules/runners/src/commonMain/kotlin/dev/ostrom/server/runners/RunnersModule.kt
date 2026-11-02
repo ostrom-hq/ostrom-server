@@ -12,11 +12,14 @@ import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
+import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
 import dev.ostrom.server.runners.domain.CloudPlanProvider
 import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.CloudUsageMeter
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.MeteredCreateCloudSession
 import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCase
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
@@ -24,6 +27,8 @@ import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCase
 import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCaseImpl
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCase
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCaseImpl
+import dev.ostrom.server.runners.domain.ListRunnersUseCase
+import dev.ostrom.server.runners.domain.ListRunnersUseCaseImpl
 import dev.ostrom.server.runners.domain.OpenTerminalUseCase
 import dev.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
@@ -49,8 +54,11 @@ import dev.ostrom.server.runners.infrastructure.RunnersMigrations
 import dev.ostrom.server.runners.infrastructure.RuntimeDrivers
 import dev.ostrom.server.runners.infrastructure.TerminalRelay
 import dev.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
+import dev.ostrom.server.runners.presentation.RunnerRuntime
+import dev.ostrom.server.runners.presentation.RunnersRoutesDependencies
 import dev.ostrom.server.runners.presentation.TerminalRoutesDependencies
 import dev.ostrom.server.runners.presentation.cloudSessionsRoutes
+import dev.ostrom.server.runners.presentation.runnersRoutes
 import dev.ostrom.server.runners.presentation.terminalRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
@@ -85,17 +93,25 @@ object RunnersModule : ServerModule {
             if (read == null) RepositoryCloudUsageMeter(get()) else BillingCloudUsageMeter(read, get())
         }
         single<RuntimeDriver> { RuntimeDrivers.create(get()) }
-        single<CreateCloudSessionUseCase> { CreateCloudSessionUseCaseImpl(get(), get(), get(), get()) }
+        single<CreateCloudSessionUseCase> {
+            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get()), get())
+        }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
         single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get()) }
+        single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), get()) }
         single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
         single<ReconcileCloudSessionUseCase> {
             ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get())
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
+        single {
+            val config = get<RunnersConfig>()
+            RunnersRoutesDependencies(get(), RunnerRuntime(config.runtimeLabel, config.runnerImage), get())
+        }
         single { TerminalRelay() }
         single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
@@ -110,6 +126,7 @@ object RunnersModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.cloudSessionsRoutes(koin.get())
+        route.runnersRoutes(koin.get())
         route.terminalRoutes(koin.get())
     }
 

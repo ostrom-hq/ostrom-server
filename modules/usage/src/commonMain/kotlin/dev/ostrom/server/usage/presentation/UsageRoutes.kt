@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.usage.presentation
 
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.http.OstromJson
-import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
-import dev.ostrom.server.usage.domain.IngestUsageEventsUseCase
 import dev.ostrom.server.usage.domain.InvalidUsageEventException
-import dev.ostrom.server.usage.domain.ListUsageEventsUseCase
-import dev.ostrom.server.usage.domain.TooManyUsageEventsException
-import dev.ostrom.server.usage.domain.UsageReportUseCase
 import dev.ostrom.server.usage.domain.UsageRules
-import dev.ostrom.server.usage.domain.UsageSummaryUseCase
-import dev.ostrom.server.usage.domain.WatchUsageUseCase
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -28,35 +23,6 @@ import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.flow.map
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
-
-/** The largest ingestion body read: 500 events of a few hundred bytes each fit well under it. */
-private const val MAX_INGEST_BYTES: Long = 1_048_576
-
-/**
- * What the usage routes need.
- *
- * @property callers Resolves the member of each call.
- * @property report Spending over a period.
- * @property ingest Records client events.
- * @property summary Totals.
- * @property listEvents Pages the ledger.
- * @property watch Follows it live.
- * @property heartbeat The interval of the live stream's heartbeat comments.
- * @property liveLifetime How long one live stream lasts before the client reconnects and is checked again.
- */
-data class UsageRoutesDependencies(
-    val callers: CallerResolver,
-    val report: UsageReportUseCase,
-    val ingest: IngestUsageEventsUseCase,
-    val summary: UsageSummaryUseCase,
-    val listEvents: ListUsageEventsUseCase,
-    val watch: WatchUsageUseCase,
-    val heartbeat: Duration = 15.seconds,
-    val liveLifetime: Duration = 10.minutes,
-)
 
 /**
  * The usage routes, on the org of the caller's token: an admin reads the whole org, a member only their own usage.
@@ -74,10 +40,15 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
             call.respond(report(caller, from, to, params.member?.toMemberParameter()).toResponse())
         }
         post<UsageApi.Events> {
-            val caller = call.requireCaller(callers, UsageScopes.WRITE, RelayScopes.AGENT_SESSION)
-            // Read to one byte past the limit whatever the headers say: a chunked body declares no length.
-            val bytes = call.receiveChannel().readRemaining(MAX_INGEST_BYTES + 1).readByteArray()
-            if (bytes.size > MAX_INGEST_BYTES) throw TooManyUsageEventsException()
+            // Made for programs: the CLI's hooks (a personal token) and agents record usage (S2-52, declared).
+            val caller = call.requireCaller(
+                callers,
+                UsageScopes.WRITE,
+                RelayScopes.AGENT_SESSION,
+                writers = WriteAccess.tokens(PrincipalKind.USER, PrincipalKind.AGENT, PrincipalKind.SERVICE),
+            )
+            // The kernel caps the body at 1 MiB (S2-46), chunked or not: 500 events of a few hundred bytes fit well.
+            val bytes = call.receiveChannel().readRemaining().readByteArray()
             val request = try {
                 OstromJson.decodeFromString(UsageEventsRequest.serializer(), bytes.decodeToString())
             } catch (_: SerializationException) {

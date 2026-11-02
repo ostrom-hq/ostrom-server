@@ -24,7 +24,8 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-private const val ORG_COLUMNS = "o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at"
+private const val ORG_COLUMNS =
+    "o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at, o.time_zone"
 private const val MEMBER_COLUMNS = "m.id AS member_id, m.org_id, m.user_id, m.role, m.joined_at"
 private const val INVITATION_COLUMNS =
     "id, org_id, email, role, invited_by, created_at, expires_at, max_uses, uses, revoked_at"
@@ -127,18 +128,18 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
             .getOrThrow()
             .firstOrNull() != null
 
-    override suspend fun rename(id: Uuid, name: String) {
-        driver.inOrg(id) {
-            execute(
-                    Statement.create("UPDATE orgs_organizations SET name = :name WHERE id = :id")
-                        .bind("name", name)
-                        .bind("id", id)
-                )
-                .getOrThrow()
-        }
+    override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
+        val columns = listOfNotNull(name?.let { "name = :name" }, timeZone?.let { "time_zone = :zone" })
+        if (columns.isEmpty()) return
+        val statement =
+            Statement.create("UPDATE orgs_organizations SET ${columns.joinToString(", ")} WHERE id = :id")
+                .bind("id", id)
+        name?.let { statement.bind("name", it) }
+        timeZone?.let { statement.bind("zone", it) }
+        driver.inOrg(id) { execute(statement).getOrThrow() }
     }
 
-    override suspend fun delete(id: Uuid, at: Instant) {
+    override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
         driver.inOrg(id) {
             execute(
                     Statement.create("DELETE FROM orgs_invitations WHERE org_id = :id")
@@ -149,14 +150,17 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
                 .getOrThrow()
             execute(
                     Statement.create(
-                            "UPDATE orgs_organizations SET deleted_at = :at, free_claim = NULL WHERE id = :id"
+                            "UPDATE orgs_organizations SET deleted_at = :at, purge_after = :purge, " +
+                                "free_claim = NULL WHERE id = :id"
                         )
                         .bind("at", at)
+                        .bind("purge", purgeAfter)
                         .bind("id", id)
                 )
                 .getOrThrow()
         }
     }
+
 
     override suspend fun listOfUser(userId: Uuid): List<Membership> =
         driver
@@ -183,6 +187,20 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
                         )
                         .bind("org", orgId)
                         .bind("user", userId)
+                )
+                .getOrThrow()
+                .firstOrNull()
+                ?.toMember()
+        }
+
+    override suspend fun findById(orgId: Uuid, memberId: Uuid): Member? =
+        driver.inOrg(orgId) {
+            fetchAll(
+                    Statement.create(
+                            "SELECT $MEMBER_COLUMNS FROM orgs_members m WHERE m.org_id = :org AND m.id = :id"
+                        )
+                        .bind("org", orgId)
+                        .bind("id", memberId)
                 )
                 .getOrThrow()
                 .firstOrNull()
@@ -408,6 +426,7 @@ private fun ResultSet.Row.toOrg() =
         githubOrgId = get("github_org_id").asStringOrNull()?.toLong(),
         freeClaim = get("free_claim").asStringOrNull(),
         createdAt = get("created_at").asInstant(),
+        timeZone = get("time_zone").asString(),
     )
 
 private fun ResultSet.Row.toMember() =

@@ -13,6 +13,7 @@ import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgDeletionsRepository
 import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -33,6 +34,11 @@ class SettableClock(var now: Instant = Instant.parse("2026-10-30T10:00:00Z")) : 
 class OrgsStore {
     val orgs = mutableMapOf<Uuid, Org>()
     val deleted = mutableSetOf<Uuid>()
+
+    /** When each deleted organization may be erased. */
+    val purgeAfter = mutableMapOf<Uuid, Instant>()
+    val settled = mutableSetOf<Uuid>()
+    val erased = mutableSetOf<Uuid>()
     val members = mutableMapOf<Uuid, Member>()
     val invitations = mutableMapOf<Uuid, Pair<Invitation, String>>()
 }
@@ -62,12 +68,18 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
     override suspend fun slugTaken(slug: String): Boolean =
         store.orgs.values.any { it.slug == slug }
 
-    override suspend fun rename(id: Uuid, name: String) {
-        store.orgs[id] = store.orgs.getValue(id).copy(name = name)
+    /** How many times [update] wrote. */
+    var updates = 0
+
+    override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
+        updates++
+        val org = store.orgs.getValue(id)
+        store.orgs[id] = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
     }
 
-    override suspend fun delete(id: Uuid, at: Instant) {
+    override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
         store.deleted += id
+        store.purgeAfter[id] = purgeAfter
         store.orgs[id] = store.orgs.getValue(id).copy(freeClaim = null)
         store.members.values.removeAll { it.orgId == id }
         store.invitations.values.removeAll { it.first.orgId == id }
@@ -80,9 +92,47 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
             .sortedBy { it.org.name }
 }
 
+class FakeOrgDeletions(private val store: OrgsStore) : OrgDeletionsRepository {
+    /** When each postponed deletion may be tried again. */
+    val retryAt = mutableMapOf<Uuid, Instant>()
+
+    /** When set, [postpone] fails. */
+    var postponeFails = false
+
+    private fun ready(id: Uuid, now: Instant) = retryAt[id]?.let { it <= now } ?: true
+
+    override suspend fun deletionsToSettle(now: Instant, limit: Int): List<Uuid> =
+        store.deleted.filter { it !in store.settled && ready(it, now) }.take(limit)
+
+    override suspend fun markSettled(id: Uuid, at: Instant) {
+        store.settled += id
+        retryAt.remove(id)
+    }
+
+    override suspend fun duePurges(now: Instant, limit: Int): List<Uuid> =
+        store.purgeAfter
+            .filter { (id, after) -> id in store.settled && id !in store.erased && after <= now && ready(id, now) }
+            .keys
+            .take(limit)
+
+    override suspend fun postpone(id: Uuid, until: Instant) {
+        check(!postponeFails) { "database down" }
+        retryAt[id] = until
+    }
+
+    override suspend fun erase(id: Uuid, at: Instant) {
+        store.erased += id
+        retryAt.remove(id)
+        store.orgs[id] = store.orgs.getValue(id).copy(name = "", githubOrgId = null, timeZone = "UTC")
+    }
+}
+
 class FakeMembers(private val store: OrgsStore) : MembersRepository {
     override suspend fun findByUser(orgId: Uuid, userId: Uuid): Member? =
         store.members.values.firstOrNull { it.orgId == orgId && it.userId == userId }
+
+    override suspend fun findById(orgId: Uuid, memberId: Uuid): Member? =
+        store.members[memberId]?.takeIf { it.orgId == orgId }
 
     override suspend fun list(orgId: Uuid): List<Member> =
         store.members.values.filter { it.orgId == orgId }.sortedBy { it.joinedAt }
@@ -220,6 +270,7 @@ class OrgsWorld {
     val clock = SettableClock()
     val store = OrgsStore()
     val orgs = FakeOrgs(store)
+    val deletions = FakeOrgDeletions(store)
     val members = FakeMembers(store)
     val invitations = FakeInvitations(store)
     val people = FakePeople()
