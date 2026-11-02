@@ -141,6 +141,16 @@ interface GateNodeResolver {
      * @return The gate node, or null when no workflow gates the action.
      */
     suspend fun resolve(orgId: Uuid, repo: String?, actionClass: String): GateNode?
+
+    /**
+     * Finds the gates of several action classes of one ask on one read: a source that compiles the organization's
+     * workflows and rules for each read compiles them once. By default, [resolve] for each class.
+     *
+     * @param orgId The organization.
+     * @param repo The repository, or null outside one.
+     * @return The gate node of an action class, or null when no workflow gates it.
+     */
+    suspend fun resolver(orgId: Uuid, repo: String?): suspend (String) -> GateNode? = { resolve(orgId, repo, it) }
 }
 
 /** Reads pull requests from GitHub (integrations-github), never from a ref the agent can move. */
