@@ -3,6 +3,7 @@ package dev.ostrom.server.sessions.infrastructure
 
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
 import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.Statement
 import kotlin.time.Clock
 

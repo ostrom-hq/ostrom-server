@@ -2,6 +2,7 @@
 package dev.ostrom.server.gates.infrastructure
 
 import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 
 /**
  * The gates waiting for an answer in every organization, for the `ostrom.gates.pending` gauge: a count through
