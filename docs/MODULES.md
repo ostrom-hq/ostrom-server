@@ -249,6 +249,18 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 | `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
 | `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
 
+### Module `sharing`
+
+The shared accounts' tokens are renewed at the providers' OAuth token endpoints. An operator can point them elsewhere
+(a proxy, or the fake provider of the local demo, which renews any token). The refresh token is sent there: an endpoint
+is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`); anything else
+stops the server at start. A blank value counts as unset, so the provider's own endpoint is used.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |
+| `OSTROM_SHARING_CODEX_TOKEN_URL` | `https://auth.openai.com/oauth/token` | Token endpoint of shared ChatGPT (Codex) accounts |
+
 ## Commands
 
 | Command | What it does | Exit |

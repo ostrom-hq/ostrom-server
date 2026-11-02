@@ -18,6 +18,8 @@ import kotlin.time.Instant
  * @property authenticatedAt When the person last proved who they are, as the identity module knows it: the sign-in of
  *   a browser session (OAuth `max_age`/`prompt=login`, a fresh e-mail link), the app's biometric unlock; null when
  *   unknown. A yes to a high-risk action needs it within five minutes (S2-54).
+ * @property namedOrg The organization the request names in its [ORG_HEADER] header, as sent: only a hint, which the
+ *   [PrincipalOrgResolver] checks against the caller's membership.
  */
 data class AuthenticatedPrincipal(
     val subjectId: String,
@@ -27,6 +29,7 @@ data class AuthenticatedPrincipal(
     val orgId: String? = null,
     val channel: PrincipalChannel = PrincipalChannel.API_TOKEN,
     val authenticatedAt: Instant? = null,
+    val namedOrg: String? = null,
 ) {
     /**
      * Whether the principal may do what [scope] names: the scope is listed, or the principal is a user's browser
@@ -126,6 +129,12 @@ const val CSRF_HEADER = "X-CSRF-Token"
  * the console copies it into [CSRF_HEADER]; another site can neither read it nor set the header (double submit).
  */
 const val CSRF_COOKIE = "ostrom_csrf"
+
+/**
+ * The header that names the organization a request acts in, on routes whose path names none, when the caller belongs
+ * to several (`Ostrom-Org: <orgId>`).
+ */
+const val ORG_HEADER = "Ostrom-Org"
 
 /** Rejects every token: the default until the identity module is registered, so no route is open by mistake. */
 class RejectingTokenAuthenticator : TokenAuthenticator {
