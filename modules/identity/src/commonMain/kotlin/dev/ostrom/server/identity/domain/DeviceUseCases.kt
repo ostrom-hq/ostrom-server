@@ -40,12 +40,18 @@ interface StartDeviceAuthorizationUseCase {
      *
      * @param clientName What the CLI says it is, shown to the user before they approve (trimmed, 100 characters).
      * @param source Who asks (the client address), for the rate limit.
+     * @param scopes Null or empty for the ordinary sign-in; every one of [ADMIN_SCOPES] for `ostrom login --admin`.
      *
      * @return The authorization and its device code.
      *
      * @throws RateLimitedException After 10 starts from the same source in 10 minutes.
+     * @throws InvalidScopesException When [scopes] are neither none nor exactly [ADMIN_SCOPES].
      */
-    suspend operator fun invoke(clientName: String?, source: String): StartedDeviceAuthorization
+    suspend operator fun invoke(
+        clientName: String?,
+        source: String,
+        scopes: Collection<String>? = null,
+    ): StartedDeviceAuthorization
 }
 
 /**
@@ -64,7 +70,13 @@ class StartDeviceAuthorizationUseCaseImpl(
     private val limiter: RateLimiter,
     private val clock: Clock,
 ) : StartDeviceAuthorizationUseCase {
-    override suspend fun invoke(clientName: String?, source: String): StartedDeviceAuthorization {
+    override suspend fun invoke(
+        clientName: String?,
+        source: String,
+        scopes: Collection<String>?,
+    ): StartedDeviceAuthorization {
+        val asked = scopes.orEmpty().toSet()
+        if (asked.isNotEmpty() && asked != ADMIN_SCOPES) throw InvalidScopesException()
         val allowed = limiter.tryAcquire("device-start:$source", DEVICE_STARTS_PER_WINDOW, DEVICE_RATE_WINDOW)
         if (!allowed) throw RateLimitedException()
         val now = clock.nowMillis()
@@ -79,6 +91,7 @@ class StartDeviceAuthorizationUseCaseImpl(
             createdAt = now,
             expiresAt = now + DEVICE_CODE_LIFETIME,
             lastPolledAt = null,
+            scopes = asked,
         )
         authorizations.create(authorization, hasher.hash(deviceCode))
         return StartedDeviceAuthorization(authorization, deviceCode)
@@ -134,11 +147,19 @@ interface AnswerDeviceAuthorizationUseCase {
      * @param userId The signed-in user; an approval logs the CLI in as them.
      * @param userCode The code as typed.
      * @param approve True to approve, false to deny.
+     * @param managedOrg For `ostrom login --admin` only, and only to approve it: the organization the user owns or
+     *   administers, which the token will be bound to, or null when they are neither in the one they act in.
      *
      * @throws DeviceCodeNotFoundException When it is unknown, expired or already answered.
      * @throws RateLimitedException After 20 answers by the same user in 10 minutes.
+     * @throws AdminApprovalForbiddenException When approving `ostrom login --admin` without [managedOrg].
      */
-    suspend operator fun invoke(userId: Uuid, userCode: String, approve: Boolean)
+    suspend operator fun invoke(
+        userId: Uuid,
+        userCode: String,
+        approve: Boolean,
+        managedOrg: suspend () -> Uuid? = { null },
+    )
 }
 
 /**
@@ -155,19 +176,25 @@ class AnswerDeviceAuthorizationUseCaseImpl(
     private val audit: AuditLog,
     private val clock: Clock,
 ) : AnswerDeviceAuthorizationUseCase {
-    override suspend fun invoke(userId: Uuid, userCode: String, approve: Boolean) {
+    override suspend fun invoke(userId: Uuid, userCode: String, approve: Boolean, managedOrg: suspend () -> Uuid?) {
         val allowed = limiter.tryAcquire("device-answer:$userId", DEVICE_ANSWERS_PER_WINDOW, DEVICE_RATE_WINDOW)
         if (!allowed) throw RateLimitedException()
         val code = normalizeUserCode(userCode) ?: throw DeviceCodeNotFoundException()
         val now = clock.nowMillis()
         val pending = authorizations.findPendingByUserCode(code, now) ?: throw DeviceCodeNotFoundException()
-        if (!authorizations.answer(pending.id, userId, approve, now)) throw DeviceCodeNotFoundException()
-        audit.record(
-            AuditEntry(
-                null, userId, if (approve) "device.approved" else "device.denied", "device", pending.id.toString(),
-                mapOf("client" to pending.clientName),
-            ),
-        )
+        // `ostrom login --admin`: only an owner or an admin says yes, and the token is bound to their organization.
+        val orgId = if (approve && pending.scopes.isNotEmpty()) {
+            managedOrg() ?: throw AdminApprovalForbiddenException()
+        } else {
+            null
+        }
+        if (!authorizations.answer(pending.id, userId, approve, now, orgId)) throw DeviceCodeNotFoundException()
+        val details = buildMap {
+            put("client", pending.clientName)
+            if (pending.scopes.isNotEmpty()) put("scopes", pending.scopes.sorted().joinToString(" "))
+        }
+        val action = if (approve) "device.approved" else "device.denied"
+        audit.record(AuditEntry(orgId, userId, action, "device", pending.id.toString(), details))
     }
 }
 
@@ -242,16 +269,22 @@ class PollDeviceAuthorizationUseCaseImpl(
 
     private suspend fun approve(authorization: DeviceAuthorization, now: kotlin.time.Instant): DevicePollResult {
         val userId = checkNotNull(authorization.userId) { "An approved device authorization has no user." }
-        val issued = issue(secrets, TokenKind.CLI) { id, hint ->
-            val expiresAt = now + CLI_TOKEN_LIFETIME
-            val name = authorization.clientName
-            ApiToken(id, userId, null, name, TokenKind.CLI, CLI_SCOPES, hint, null, now, expiresAt, null, null)
+        // `ostrom login --admin`: the governance writes of the approver's organization, for a working day at most.
+        val admin = authorization.scopes.isNotEmpty()
+        val orgId = authorization.approvingOrgId.takeIf { admin }
+        check(!admin || orgId != null) { "An approved admin login has no organization." }
+        val kind = if (admin) TokenKind.ADMIN else TokenKind.CLI
+        val issued = issue(secrets, kind) { id, hint ->
+            val expiresAt = now + if (admin) ADMIN_TOKEN_LIFETIME else CLI_TOKEN_LIFETIME
+            val scopes = if (admin) ADMIN_TOKEN_SCOPES else CLI_SCOPES
+            ApiToken(id, userId, orgId, authorization.clientName, kind, scopes, hint, null, now, expiresAt, null, null)
         }
         if (!authorizations.consume(authorization.id, issued.token, hasher.hash(issued.secret))) {
             return DevicePollResult.Expired
         }
         val tokenId = issued.token.id.toString()
-        audit.record(AuditEntry(null, userId, "token.created", "token", tokenId, mapOf("kind" to "cli")))
+        val details = mapOf("kind" to kind.name.lowercase())
+        audit.record(AuditEntry(orgId, userId, "token.created", "token", tokenId, details))
         return DevicePollResult.Approved(issued)
     }
 

@@ -451,12 +451,14 @@ data class CreateTokenRequest(val name: String, val scopes: List<String>, val ex
 data class CreatedTokenResponse(val token: TokenResponse, val secret: String)
 
 /**
- * The start of an `ostrom login`.
+ * The start of an `ostrom login` (the contract's `DeviceLoginStart`).
  *
  * @property clientName What the CLI is (machine name), shown to the user.
+ * @property scopes Absent or empty for the ordinary sign-in; `policy:write`, `harness:write` and `gates:policy`, all
+ *   three, for `ostrom login --admin` (anything else: 400).
  */
 @Serializable
-data class DeviceCodeRequest(val clientName: String? = null)
+data class DeviceCodeRequest(val clientName: String? = null, val scopes: List<String>? = null)
 
 /**
  * The codes of an `ostrom login` (RFC 8628 § 3.2).
@@ -508,9 +510,16 @@ data class AuthTokenResponse(
  * @property userCode The code.
  * @property clientName What is asking.
  * @property expiresAt When the request expires (ISO 8601).
+ * @property scopes The governance write scopes `ostrom login --admin` asks for, shown before the yes, which only an
+ *   owner or an admin may approve; absent for the ordinary sign-in.
  */
 @Serializable
-data class DeviceAuthorizationResponse(val userCode: String, val clientName: String, val expiresAt: String)
+data class DeviceAuthorizationResponse(
+    val userCode: String,
+    val clientName: String,
+    val expiresAt: String,
+    val scopes: List<String>? = null,
+)
 
 /**
  * The user's answer to an `ostrom login`.
