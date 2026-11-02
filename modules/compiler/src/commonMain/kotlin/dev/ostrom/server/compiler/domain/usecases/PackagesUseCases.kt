@@ -85,6 +85,7 @@ class CompileSourcesUseCaseImpl(
             prodApprover = settings.prodApprover,
             codePublishers = settings.codePublishers,
             now = clock.now(),
+            ruleGates = sources.ruleGates(orgId),
         )
     }
 
@@ -286,17 +287,18 @@ interface GatesCatalogUseCase {
 }
 
 /**
- * [GatesCatalogUseCase] on the saved workflows: two reads, no compilation (a gate asks it on every boundary action).
+ * [GatesCatalogUseCase] on the saved workflows and the gates of the rules: three reads, no compilation (a gate asks
+ * it on every boundary action).
  *
  * @param repository The workflows.
- * @param sources The production approver.
+ * @param sources The production approver and the gates of the rules.
  */
 class GatesCatalogUseCaseImpl(
     private val repository: CompilerRepository,
     private val sources: CompilerSources,
 ) : GatesCatalogUseCase {
     override suspend fun invoke(orgId: Uuid, repo: String?): List<CatalogEntry> {
-        val workflows = repository.workflows(orgId).map { it.doc.workflow }
+        val workflows = repository.workflows(orgId).map { it.doc.workflow } + sources.ruleGates(orgId)
         return GatesCatalog(workflows, sources.settings(orgId).prodApprover).catalog(repo)
     }
 }

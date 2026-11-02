@@ -143,6 +143,18 @@ class InMemoryWebSessionsRepository : WebSessionsRepository {
         return live.size.toLong()
     }
 
+    override suspend fun listLive(userId: Uuid, now: Instant, limit: Int): List<WebSession> =
+        sessions.values.filter { it.userId == userId && it.revokedAt == null && it.expiresAt > now }
+            .sortedByDescending { it.lastSeenAt }.take(limit)
+
+    override suspend fun revokeOfUser(userId: Uuid, id: Uuid, at: Instant): Boolean {
+        val live = sessions.values.any {
+            it.id == id && it.userId == userId && it.revokedAt == null && it.expiresAt > at
+        }
+        if (live) revoke(id, at)
+        return live
+    }
+
     private fun update(id: Uuid, change: (WebSession) -> WebSession) {
         sessions.entries.firstOrNull { it.value.id == id }?.let { it.setValue(change(it.value)) }
     }

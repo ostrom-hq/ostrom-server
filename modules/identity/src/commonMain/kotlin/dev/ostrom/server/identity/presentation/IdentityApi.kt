@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
+import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -52,6 +55,25 @@ class AuthApi {
         @Serializable
         @Resource("everywhere")
         class Everywhere(val parent: Logout = Logout())
+    }
+
+    /**
+     * `GET /api/v1/auth/sessions`: the person's live browser sessions (browser session only).
+     *
+     * @property parent The auth resource.
+     */
+    @Serializable
+    @Resource("sessions")
+    class Sessions(val parent: AuthApi = AuthApi()) {
+        /**
+         * `DELETE /api/v1/auth/sessions/{id}`: ends one of them (browser session only).
+         *
+         * @property parent The sessions resource.
+         * @property id The session id.
+         */
+        @Serializable
+        @Resource("{id}")
+        class Id(val parent: Sessions = Sessions(), val id: String)
     }
 
     /**
@@ -348,7 +370,9 @@ data class MeOrganizationResponse(
  * @property expiresAt When it expires, if it does.
  * @property lastUsedAt When it was last used, if ever (precise to five minutes).
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = TokenResponse.Answer::class)
 data class TokenResponse(
     val id: String,
     val name: String,
@@ -358,7 +382,10 @@ data class TokenResponse(
     val createdAt: String,
     val expiresAt: String?,
     val lastUsedAt: String?,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<TokenResponse>(generatedSerializer(), "expiresAt", "lastUsedAt")
+}
 
 /**
  * The user's tokens.
@@ -367,6 +394,25 @@ data class TokenResponse(
  */
 @Serializable
 data class TokensResponse(val tokens: List<TokenResponse>)
+
+/**
+ * A signed-in browser session (the contract's `AuthSession`).
+ *
+ * @property id The session id.
+ * @property createdAt When it started (ISO 8601).
+ * @property lastSeenAt When it was last used (ISO 8601, precise to five minutes).
+ * @property current Whether it is the session making the request.
+ */
+@Serializable
+data class AuthSessionResponse(val id: String, val createdAt: String, val lastSeenAt: String, val current: Boolean)
+
+/**
+ * The person's live browser sessions (`GET /api/v1/auth/sessions`).
+ *
+ * @property items The sessions, the last used first.
+ */
+@Serializable
+data class AuthSessionsResponse(val items: List<AuthSessionResponse>)
 
 /**
  * A scope a personal token may be given.
@@ -501,7 +547,9 @@ data class AnswerDeviceRequest(val userCode: String, val approve: Boolean)
  * @property signature The instance's Ed25519 signature of the canonical form (base64).
  * @property keyId The instance key that signed it (`GET /v1/instance/keys`).
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = AuditEventResponse.Answer::class)
 data class AuditEventResponse(
     val id: String,
     val sequence: Long,
@@ -516,7 +564,10 @@ data class AuditEventResponse(
     val hash: String,
     val signature: String,
     val keyId: String,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<AuditEventResponse>(generatedSerializer(), "orgId", "actorId", "previousHash")
+}
 
 /**
  * A page of audit events.
@@ -524,5 +575,10 @@ data class AuditEventResponse(
  * @property events The events, newest first.
  * @property nextBefore The `before` of the next page, or null when this is the last one.
  */
-@Serializable
-data class AuditEventsResponse(val events: List<AuditEventResponse>, val nextBefore: Long?)
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = AuditEventsResponse.Answer::class)
+data class AuditEventsResponse(val events: List<AuditEventResponse>, val nextBefore: Long?) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<AuditEventsResponse>(generatedSerializer(), "nextBefore")
+}

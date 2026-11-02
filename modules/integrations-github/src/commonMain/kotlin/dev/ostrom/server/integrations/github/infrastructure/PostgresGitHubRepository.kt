@@ -36,7 +36,7 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
     }
 
     override suspend fun installationById(installationId: Long): GitHubInstallation? =
-        keyed("ostrom.github_installation", installationId.toString()) {
+        keyed(INSTALLATION_KEY, installationId.toString()) {
             fetch(
                 Statement.create("SELECT $INSTALLATION_COLUMNS FROM github_installations WHERE installation_id = :id")
                     .bind("id", installationId),
@@ -57,11 +57,16 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
         }
     }
 
-    override suspend fun removeInstallation(installation: GitHubInstallation) {
-        keyed("ostrom.github_installation", installation.installationId.toString()) {
+    // Linked or not, and who installed it (GitHubOriginsRepository's table): one transaction under the installation.
+    override suspend fun forgetInstallation(installationId: Long) {
+        keyed(INSTALLATION_KEY, installationId.toString()) {
             execute(
                 Statement.create("DELETE FROM github_installations WHERE installation_id = :id")
-                    .bind("id", installation.installationId),
+                    .bind("id", installationId),
+            )
+            execute(
+                Statement.create("DELETE FROM github_installation_origins WHERE installation_id = :id")
+                    .bind("id", installationId),
             )
         }
     }
@@ -129,6 +134,7 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
 
     private companion object {
         const val INSTALLATION_COLUMNS = "org_id, installation_id, account"
+        const val INSTALLATION_KEY = "ostrom.github_installation"
 
         fun ResultSet.Row.toInstallation() = GitHubInstallation(
             orgId = Uuid.parse(get("org_id").asString()),

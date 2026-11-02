@@ -74,7 +74,8 @@ interface WorkflowsUseCase {
      * @param raw The workflow document.
      * @param expectedVersion The version the editor read.
      * @param by Who saves.
-     * @param create True for a creation (refused when the id exists).
+     * @param create True for a creation (refused when the id exists); false for an update (an unknown id is not
+     *   found).
      * @return The saved workflow.
      */
     suspend fun save(orgId: Uuid, raw: JsonObject, expectedVersion: Int?, by: String, create: Boolean): StoredWorkflow
@@ -136,9 +137,18 @@ class WorkflowsUseCaseImpl(
     ): StoredWorkflow {
         val workflow = decode(raw)
         val before = repository.workflow(orgId, workflow.id)
-        if (create && before != null) throw OstromException(ErrorKind.CONFLICT, "A workflow with this id exists.")
+        // An update names a workflow of the caller's organization: an unknown id (another organization's included,
+        // which this one never sees) is not found, and never created. The write is conditional on what was read: an
+        // update without a version replaces the version just read, so a deletion or a save in between is a conflict,
+        // never a creation; a creation never replaces.
+        val expected = when {
+            create && before != null -> throw OstromException(ErrorKind.CONFLICT, "A workflow with this id exists.")
+            create -> null
+            before == null -> throw OstromException(ErrorKind.NOT_FOUND, "Workflow not found.")
+            else -> expectedVersion ?: before.version
+        }
         val author = Authorship(by, clock.now())
-        val saved = repository.saveWorkflow(orgId, workflow.id, raw, expectedVersion, author)
+        val saved = repository.saveWorkflow(orgId, workflow.id, raw, expected, author)
             ?: throw OstromException(ErrorKind.CONFLICT, "workflow_conflict: someone saved this workflow in between.")
         val previous = if (before == null) null else before.doc.workflow
         val change = changeOf(previous, workflow)

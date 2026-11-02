@@ -323,6 +323,52 @@ class EndWebSessionUseCaseImpl(
     }
 }
 
+/** The most browser sessions listed (a person signs in from a handful of browsers). */
+const val MAX_WEB_SESSIONS_LISTED = 100
+
+/** A person's own browser sessions, as the console's settings show them: listed, and ended one at a time. */
+interface WebSessionsOfUserUseCase {
+    /**
+     * Lists the live browser sessions of a user, the last used first.
+     *
+     * @param userId The user.
+     *
+     * @return At most [MAX_WEB_SESSIONS_LISTED] sessions.
+     */
+    suspend fun list(userId: Uuid): List<WebSession>
+
+    /**
+     * Ends one browser session of a user, which is recorded in their audit log.
+     *
+     * @param userId The user.
+     * @param sessionId The session.
+     *
+     * @throws WebSessionNotFoundException When it is not a live session of the user.
+     */
+    suspend fun revoke(userId: Uuid, sessionId: Uuid)
+}
+
+/**
+ * [WebSessionsOfUserUseCase] on the repository.
+ *
+ * @param sessions The sessions.
+ * @param audit The audit log.
+ * @param clock The clock.
+ */
+class WebSessionsOfUserUseCaseImpl(
+    private val sessions: WebSessionsRepository,
+    private val audit: AuditLog,
+    private val clock: Clock,
+) : WebSessionsOfUserUseCase {
+    override suspend fun list(userId: Uuid): List<WebSession> =
+        sessions.listLive(userId, clock.now(), MAX_WEB_SESSIONS_LISTED)
+
+    override suspend fun revoke(userId: Uuid, sessionId: Uuid) {
+        if (!sessions.revokeOfUser(userId, sessionId, clock.nowMillis())) throw WebSessionNotFoundException()
+        audit.record(AuditEntry(null, userId, "session.revoked", "session", sessionId.toString()))
+    }
+}
+
 /** The longest login (GitHub's limit). */
 const val MAX_LOGIN = 39
 

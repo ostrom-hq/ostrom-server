@@ -275,6 +275,13 @@ the host the client parses; an endpoint with credentials (`@`), a fragment (`#`)
 port above 65535 is refused too. Anything else stops the server at start. A blank value counts as unset, so the
 provider's own endpoint is used.
 
+Each renewal also checks whose tokens they are. The provider names the account in its answer: `account.uuid` for
+Claude, and for Codex the `chatgpt_account_id` of the `id_token`. When that account differs from the
+`providerAccountId` the account was shared as (by the CLI or an import), the account becomes `wrong_account`: it
+serves no call and the new pair is not stored. Pausing and resuming do not bring it back; it serves again once its
+owner shares it again. An answer that names no account is accepted, because the field is optional at the providers.
+A fake token endpoint must therefore name the account's own id, or none.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |

@@ -55,7 +55,7 @@ object WorkflowRunsModule : ServerModule {
         single<ListChecksUseCase> { ListChecksUseCaseImpl(get(), get()) }
         single<SendNotificationUseCase> { SendNotificationUseCaseImpl(get(), get(), get(), get()) }
         single<ListNotificationsUseCase> { ListNotificationsUseCaseImpl(get(), get()) }
-        single<SignWorkflowReceiptUseCase> { SignWorkflowReceiptUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<SignWorkflowReceiptUseCase> { SignWorkflowReceiptUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<GetReceiptBundleUseCase> { GetReceiptBundleUseCaseImpl(get(), get(), get(), get(), get()) }
         single<RunLaunches> { LaunchesRunLaunches(get()) }
         single<ReportRunnerCheckUseCase> { ReportRunnerCheckUseCaseImpl(get(), get(), get()) }

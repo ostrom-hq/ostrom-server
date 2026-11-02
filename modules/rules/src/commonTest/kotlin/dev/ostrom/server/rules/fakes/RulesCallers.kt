@@ -137,23 +137,28 @@ object RulesCallers {
         }
     }
 
-    /** The gates' other ports: open sessions, one sole approver (lyes) on pushes to main, receipts by id. */
-    val gates: Module = module {
+    /** Open sessions and a receipt id per gate: the gates' own ports, without their gate nodes. */
+    val gateSessions: Module = module {
         single<GateSessions> {
             object : GateSessions {
                 override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) = Unit
             }
         }
+        single<GateReceiptSigner> {
+            object : GateReceiptSigner {
+                override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
+            }
+        }
+    }
+
+    /** The gates' other ports: open sessions, one sole approver (lyes) on pushes to main, receipts by id. */
+    val gates: Module = module {
+        includes(gateSessions)
         single<GateNodeResolver> {
             object : GateNodeResolver {
                 override suspend fun resolve(orgId: Uuid, repo: String?, actionClass: String) =
                     GateNode("ship", "g-main", "Merge into main", listOf("lyes"), enforced = true)
                         .takeIf { actionClass == "push-main" }
-            }
-        }
-        single<GateReceiptSigner> {
-            object : GateReceiptSigner {
-                override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
             }
         }
     }

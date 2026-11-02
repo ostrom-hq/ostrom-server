@@ -2,12 +2,16 @@
 package dev.ostrom.server.compiler.presentation
 
 import dev.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
+import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.GovernanceConfirmer
 import dev.ostrom.server.kernel.auth.GovernancePreview
+import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.GovernanceWrite
+import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.http.OstromJson
+import io.ktor.server.application.ApplicationCall
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -110,3 +114,7 @@ object WorkflowWrites {
     /** All of them. */
     val ALL: Set<String> = setOf(CREATE, SAVE, DELETE)
 }
+
+// A token's decision on a workflow, held for the console: nothing is written.
+internal suspend fun ApplicationCall.hold(actor: GateActor, kind: String, payload: JsonObject) =
+    holdForConfirmation(actor.orgId, GovernanceScopes.HARNESS_WRITE, GovernanceWrite(kind, payload))
