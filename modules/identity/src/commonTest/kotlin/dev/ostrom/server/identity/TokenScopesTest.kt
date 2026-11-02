@@ -6,6 +6,7 @@ import dev.ostrom.server.identity.domain.CLI_SCOPES
 import dev.ostrom.server.identity.domain.InvalidScopesException
 import dev.ostrom.server.identity.domain.MAX_SCOPES
 import dev.ostrom.server.identity.domain.NEVER_ON_A_TOKEN
+import dev.ostrom.server.identity.domain.NOTIFICATIONS_WRITE_SCOPE
 import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPE_NAMES
 import dev.ostrom.server.identity.domain.validateScopes
@@ -22,6 +23,7 @@ class TokenScopesTest {
         assertTrue(PERSONAL_TOKEN_SCOPE_NAMES.none { it in NEVER_ON_A_TOKEN })
         // An agent's, and a scope that no longer allows more than billing:read (S2-52).
         assertTrue("billing:manage" !in PERSONAL_TOKEN_SCOPE_NAMES)
+        assertTrue(NOTIFICATIONS_WRITE_SCOPE !in PERSONAL_TOKEN_SCOPE_NAMES)
         assertTrue("waits:ask" in PERSONAL_TOKEN_SCOPE_NAMES, "An agent's least privilege: it asks, never answers")
     }
 
@@ -47,7 +49,8 @@ class TokenScopesTest {
 
     @Test
     fun aScopeOutsideTheCatalogueIsRefusedEvenWellFormed() {
-        listOf("deploy:write", "gates:answer", "agent:session", "user:*", "billing:manage").forEach {
+        val outside = listOf("deploy:write", "gates:answer", "agent:session", "user:*", "billing:manage", "notifications:write")
+        outside.forEach {
             assertFailsWith<InvalidScopesException>(it) { validateScopes(listOf("profile:read", it)) }
         }
     }
