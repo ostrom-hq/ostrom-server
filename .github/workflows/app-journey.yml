@@ -71,7 +71,10 @@ jobs:
           repository: ostrom-hq/ostrom-helm
           ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
           path: helm
-          sparse-checkout: compose/demo/fake-github.mjs
+          # The fake and the demo seed it reads its accounts from.
+          sparse-checkout: |
+            compose/demo/fake-github.mjs
+            compose/demo/teamcode/seed.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
       - name: Start the fake GitHub
