@@ -41,6 +41,8 @@ import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCase
 import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCaseImpl
 import dev.ostrom.server.runners.domain.RegisterRunnerUseCase
 import dev.ostrom.server.runners.domain.RegisterRunnerUseCaseImpl
+import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCase
+import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RegisteredRunnersRepository
 import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
@@ -120,10 +122,11 @@ object RunnersModule : ServerModule {
         single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
         single<RegisterRunnerUseCase> { RegisterRunnerUseCaseImpl(get(), get(), get()) }
         single<DeleteRunnerUseCase> { DeleteRunnerUseCaseImpl(get()) }
+        single<RegisteredRunnerHeartbeatUseCase> { RegisteredRunnerHeartbeatUseCaseImpl(get(), get(), get()) }
         single {
             val config = get<RunnersConfig>()
             val runtime = RunnerRuntime(config.runtimeLabel, config.runnerImage)
-            RunnersRoutesDependencies(get(), runtime, get(), get(), get(), get())
+            RunnersRoutesDependencies(get(), runtime, get(), get(), get(), get(), get())
         }
         single { TerminalRelay() }
         single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }

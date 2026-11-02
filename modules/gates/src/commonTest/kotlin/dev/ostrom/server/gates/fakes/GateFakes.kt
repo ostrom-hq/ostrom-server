@@ -158,7 +158,10 @@ class IdentityDigester : GateDigester {
 }
 
 class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT) : GatePolicies {
-    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = policy
+    /** How many times the setting was read. */
+    var reads = 0
+
+    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = policy.also { reads++ }
 }
 
 class FakeSessions : GateSessions {

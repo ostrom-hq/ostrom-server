@@ -76,6 +76,48 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
     """
         .trimIndent()
 
+/** What a registered runner's heartbeat reads across organizations: a function owned by `ostrom_router`. */
+private val REGISTERED_ROUTER_FUNCTIONS = listOf("runners_registered_key(UUID)")
+
+private val REGISTERED_ROUTER_GRANTS =
+    REGISTERED_ROUTER_FUNCTIONS.joinToString("\n") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }
+
+/**
+ * Version 4: a registered runner's heartbeat names only the runner, so its organization is read across organizations
+ * by one narrow `SECURITY DEFINER` function owned by `ostrom_router` (`NOLOGIN`, never a member of the serving role),
+ * with `pg_temp` last in its `search_path`, executable by the serving role only (docs/tenancy.md). It returns the
+ * organization and key hash of one runner id and nothing else; the sign of life is then written in that organization's
+ * transaction, only while the runner has that key.
+ */
+private val REGISTERED_RUNNER_ORG_SQL: String =
+    """
+    DO $$ BEGIN
+        CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+    END $$;
+    DO $$ BEGIN
+        GRANT ostrom_router TO CURRENT_USER;
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END $$;
+    GRANT USAGE ON SCHEMA public TO ostrom_router;
+    CREATE POLICY runners_registered_router ON runners_registered TO ostrom_router USING (true) WITH CHECK (false);
+    GRANT SELECT ON runners_registered TO ostrom_router;
+    CREATE FUNCTION runners_registered_key(p_id UUID) RETURNS TABLE (org_id UUID, key_hash TEXT)
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT r.org_id, r.key_hash FROM runners_registered r WHERE r.id = p_id;
+    $$;
+    ${REGISTERED_ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            $REGISTERED_ROUTER_GRANTS
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${REGISTERED_ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /**
  * The schema of the runners module; its tables start with `runners_`.
  *
@@ -85,7 +127,8 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
  * every organization) and by the runner channel (a session found by its runner token): since version 3, under forced
  * row-level security like the other tables, and across organizations only through [ROUTER_FUNCTIONS]
  * (docs/tenancy.md). `runners_registered` (version 2) is a tenant table too: the machines an organization registered,
- * with the hash of their key.
+ * with the hash of their key; a heartbeat reads one runner's organization and key hash across organizations only
+ * through [REGISTERED_ROUTER_FUNCTIONS] (version 4).
  */
 val RunnersMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -176,4 +219,5 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         name = "runners_session_routes_under_row_level_security",
         sql = ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL,
     ),
+    SchemaMigration(version = 4, name = "registered_runner_key", sql = REGISTERED_RUNNER_ORG_SQL),
 )

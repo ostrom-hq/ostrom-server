@@ -220,6 +220,27 @@ class WorkflowRunsPostgresTest {
         }
 
     @Test
+    fun aScriptTheAgentRewroteRunsOnTheRunnerButTheReceiptNeitherSaysOstromRanItNorThatItPassed() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (cloud, token) = server.cloudSession(ada)
+            val agent = server.runnerSession(cloud, token)
+            // The hook asked the runner to run `exit 0` for the node: the runner hashed that text, not the package's.
+            val rewritten = CHECK.replace("\"sha-1\"", "\"sha-of-exit-0\"")
+            val reported = server.runner(token, "/api/v1/cloud/runner/checks", ranByRunner(cloud, check = rewritten))
+            assertEquals(HttpStatusCode.Created, reported.status, reported.bodyAsText())
+            assertEquals(true, reported.body<CheckRun>().tampered)
+            assertEquals(emptyMap(), server.koin.get<WorkflowRunsRepository>().attestations(ada.org.id, "s-1"))
+
+            assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/sessions/s-1/end", "{}").status)
+            val signed = server.call(agent, "/api/v1/sessions/s-1/workflow-receipt", RECEIPT)
+            assertEquals(HttpStatusCode.OK, signed.status, signed.bodyAsText())
+            val check = signed.body<WorkflowReceiptResponse>().receipt.getValue("nodes").jsonArray.first().jsonObject
+            assertEquals("workstation_declared", check.getValue("attestation").jsonPrimitive.content)
+            assertEquals("failed: the script run is not the package's", check.getValue("outcome").jsonPrimitive.content)
+        }
+
+    @Test
     fun aGateReadsTheProofOfACheckInItsOwnOrganizationOnly() =
         serverTest(modules) { server ->
             val proofs = assertIs<RunsGateCheckProofs>(server.koin.get<GateCheckProofs>())

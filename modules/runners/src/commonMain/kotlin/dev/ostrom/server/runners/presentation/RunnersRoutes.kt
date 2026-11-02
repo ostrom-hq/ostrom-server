@@ -9,6 +9,7 @@ import dev.ostrom.server.runners.domain.ListedRunner
 import dev.ostrom.server.runners.domain.NewRunner
 import dev.ostrom.server.runners.domain.RunnerNotFoundException
 import dev.ostrom.server.runners.domain.RunnerRegistration
+import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.runners.domain.requireAdmin
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -29,7 +30,9 @@ import kotlin.uuid.Uuid
  *   or an admin, with the scope that writes cloud sessions: registers a runner and returns its key, this once, in an
  *   answer no cache keeps (`Cache-Control: no-store`, S2-08); the role is checked before the body is read;
  * - `DELETE /api/v1/runners/{id}`, from the same session and role: removes a registered runner and its key; a runner of
- *   another organization, or a malformed id, is not found (404).
+ *   another organization, or a malformed id, is not found (404);
+ * - `POST /api/v1/runners/{id}/heartbeat`, with the runner's key as a bearer token: marks it seen and returns its
+ *   assigned sessions.
  *
  * @param dependencies The use cases and the runtime.
  */
@@ -57,6 +60,13 @@ fun Route.runnersRoutes(dependencies: RunnersRoutesDependencies) = with(dependen
             deleteRunner(caller, Uuid.parseOrNull(params.id) ?: throw RunnerNotFoundException())
             call.respond(HttpStatusCode.NoContent)
         }
+    }
+    // Authenticated by the runner's own key, not a member's credential: no body is read, and an unknown id, a
+    // malformed one or a wrong key all answer the same 401.
+    post<RunnersApi.Id.Heartbeat> { params ->
+        val key = call.runnerToken()
+        val id = Uuid.parseOrNull(params.parent.id) ?: throw RunnerUnauthenticatedException()
+        call.respond(RegisteredRunnerHeartbeatResponse(heartbeat(id, key).map { it.toResponse() }))
     }
 }
 
