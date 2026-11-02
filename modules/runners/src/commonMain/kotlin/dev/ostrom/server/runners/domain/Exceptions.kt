@@ -72,3 +72,25 @@ class CloudSessionsClosedException : OstromException(
     ErrorKind.FORBIDDEN,
     "Cloud sessions are not open to this organization on this server.",
 )
+
+/** Registering a runner is for the organization's owners and admins. */
+class RunnerAdminRequiredException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an owner or an admin of the organization can register a runner.",
+)
+
+/** The organization already has a runner of that name. */
+class RunnerNameTakenException : OstromException(
+    ErrorKind.CONFLICT,
+    "This organization already has a runner of that name.",
+)
+
+/**
+ * The organization already has as many runners as allowed.
+ *
+ * @param max The most runners an organization may register.
+ */
+class RunnerLimitException(max: Int) : OstromException(
+    ErrorKind.CONFLICT,
+    "An organization registers at most $max runners.",
+)
