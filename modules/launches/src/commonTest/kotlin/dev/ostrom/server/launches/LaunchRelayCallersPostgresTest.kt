@@ -17,6 +17,7 @@ import dev.ostrom.server.launches.presentation.LaunchResponse
 import dev.ostrom.server.mcprelay.McpRelayModule
 import dev.ostrom.server.mcprelay.domain.AssignMcpServerUseCase
 import dev.ostrom.server.mcprelay.domain.CreateMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.McpRelayRepository
 import dev.ostrom.server.mcprelay.domain.ToolPolicy
 import dev.ostrom.server.mcprelay.presentation.McpServerDto
 import dev.ostrom.server.mcprelay.presentation.McpServersPage
@@ -138,14 +139,14 @@ class LaunchRelayCallersPostgresTest {
         }
     }
 
-    private suspend fun TestServer.agentTokenOf(owner: Owner): String {
+    private suspend fun TestServer.launch(owner: Owner): LaunchResponse {
         val created = client.post("/api/v1/launches") {
             bearerAuth(owner.cliToken)
             contentType(ContentType.Application.Json)
             setBody("""{"repo":"acme/api","agent":"claude-code","model":"claude-opus-4-1"}""")
         }
         assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
-        return created.body<LaunchResponse>().agentToken
+        return created.body<LaunchResponse>()
     }
 
     private suspend fun TestServer.rpc(token: String, body: String): HttpResponse = client.post("/api/v1/mcp/grafana") {
@@ -159,7 +160,8 @@ class LaunchRelayCallersPostgresTest {
         with(server) {
             val ada = owner("ada")
             grafana(ada, setOf("query_loki_logs"))
-            val agent = agentTokenOf(ada)
+            val launched = launch(ada)
+            val agent = launched.agentToken
 
             val listed = client.get("/api/v1/mcp/servers") { bearerAuth(agent) }
             assertEquals(HttpStatusCode.OK, listed.status, listed.bodyAsText())
@@ -175,6 +177,13 @@ class LaunchRelayCallersPostgresTest {
                 it.jsonObject["name"]!!.jsonPrimitive.content
             }
             assertEquals(listOf("query_loki_logs"), tools, "Only the person's assigned tools")
+            val journal = koin.get<McpRelayRepository>().listCalls(ada.caller.orgId, null, 10, null, null)
+            assertEquals(
+                listOf(launched.launchId),
+                journal.map { it.launchId }.distinct(),
+                "The relay's journal names the agent's launch on each of its calls",
+            )
+            assertEquals(setOf(ada.caller.memberId), journal.map { it.memberId }.toSet())
 
             val console = client.post("/api/v1/mcp/servers") {
                 bearerAuth(agent)
@@ -190,7 +199,7 @@ class LaunchRelayCallersPostgresTest {
         with(server) {
             val ada = owner("ada")
             grafana(ada, tools = null)
-            val bob = agentTokenOf(owner("bob"))
+            val bob = launch(owner("bob")).agentToken
 
             val listed = client.get("/api/v1/mcp/servers") { bearerAuth(bob) }
             assertEquals(HttpStatusCode.OK, listed.status, listed.bodyAsText())
