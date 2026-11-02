@@ -77,9 +77,10 @@ class OstromMetrics(private val meter: Meter) {
     }
 
     /**
-     * Counts a gate opened by an agent.
+     * Counts a gate that asks for a yes (an enforced gate, once, when it opens).
      *
-     * @param kind The gate kind's wire name (`push_main`, `merge`, `deploy`, `custom`, `other`).
+     * @param kind The action class's label (`push_main`, `push_tag`, `merge`, `deploy`, `migration`, `custom`,
+     *   `other`).
      */
     fun gateRequested(kind: String) {
         gatesRequested.increment(Attributes.of("kind" to kind))
@@ -89,7 +90,7 @@ class OstromMetrics(private val meter: Meter) {
      * Counts an answer and records how long it took.
      *
      * @param answer `yes` or `no`.
-     * @param channel Where the approver answered (`web`, `app`, `slack`, `cli`).
+     * @param channel Where the approver answered (`console`, `mobile`, `slack`, `email`, `unknown`).
      * @param waited The time between the gate opening and the answer.
      */
     fun gateAnswered(answer: String, channel: String, waited: Duration) {
@@ -100,7 +101,7 @@ class OstromMetrics(private val meter: Meter) {
     /**
      * Counts an agent session.
      *
-     * @param agent The agent's wire name (`claude`, `codex`, `other`).
+     * @param agent The agent's label (`claude`, `codex`, `opencode`, `gemini`, `shell`, `other`).
      * @param where `local` or `cloud`.
      */
     fun sessionStarted(agent: String, where: String) {
@@ -148,8 +149,25 @@ class OstromMetrics(private val meter: Meter) {
         }
     }
 
-    private companion object {
-        const val MICROS_PER_SECOND = 1_000_000.0
-        const val MILLIS_PER_SECOND = 1_000.0
+    /** The bounded labels the callers pass. */
+    companion object {
+        private const val MICROS_PER_SECOND = 1_000_000.0
+        private const val MILLIS_PER_SECOND = 1_000.0
+
+        /**
+         * The `agent` label of a coding agent's name, as a launcher or a cloud session gives it: a known agent, or
+         * `other`, so that a label never carries a name a client chose.
+         *
+         * @param name The agent's name (`claude-code`, `claude`, `codex`…).
+         * @return Its label.
+         */
+        fun agentOf(name: String): String = when (val agent = name.trim().lowercase()) {
+            "claude-code" -> "claude"
+            in AGENTS -> agent
+            else -> "other"
+        }
     }
 }
+
+// Top-level, not in the companion: a private companion property has a getter nothing calls.
+private val AGENTS = setOf("claude", "codex", "opencode", "gemini", "shell")
