@@ -278,6 +278,8 @@ class GatesPostgresTest {
         assertEquals("approved", server.move(agent, opened, "reserve").body<GateResponse>().gate.status)
         assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "reserve").status)
         assertEquals("approved", server.move(agent, opened, "release").body<GateResponse>().gate.status)
+        assertEquals("approved", server.move(agent, opened, "reserve").body<GateResponse>().gate.status)
+        assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "release").status, "One release per yes")
         assertEquals("consumed", server.move(agent, opened, "consume").body<GateResponse>().gate.status)
         assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "consume").status)
 
