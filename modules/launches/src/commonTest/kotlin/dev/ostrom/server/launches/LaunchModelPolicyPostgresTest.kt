@@ -4,7 +4,6 @@ package dev.ostrom.server.launches
 import dev.ostrom.server.gateway.GatewayModule
 import dev.ostrom.server.gateway.domain.GatewaySettingsRepository
 import dev.ostrom.server.gateway.domain.ModelPolicy
-import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
@@ -13,12 +12,10 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
-import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.presentation.AgentPolicyResponse
 import dev.ostrom.server.launches.presentation.LaunchResponse
-import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -54,9 +51,7 @@ import kotlin.uuid.Uuid
  * PostgreSQL.
  */
 class LaunchModelPolicyPostgresTest {
-    private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, SecretsModule, SharingModule, GatewayModule, LaunchesModule,
-    )
+    private val modules = launchModules(SecretsModule, SharingModule, GatewayModule)
     private val overrides = module { single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) } }
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
