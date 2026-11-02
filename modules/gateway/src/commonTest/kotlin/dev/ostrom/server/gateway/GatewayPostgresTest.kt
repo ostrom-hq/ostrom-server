@@ -78,8 +78,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
@@ -102,6 +104,8 @@ class GatewayPostgresTest {
         "inference-admin-a" to Gw.adminA,
         "elevated-a" to Gw.adminA,
         "elevated-member-a" to Gw.memberA,
+        // A browser session of Ada signed in more than five minutes ago (web audit n°2 M3).
+        "stale-admin-a" to Gw.adminA,
     )
 
     /** The tokens of `ostrom login --admin`: a person's API token holding the governance scopes. */
@@ -156,6 +160,7 @@ class GatewayPostgresTest {
                         PrincipalKind.USER,
                         setOf(RelayScopes.ALL_USER),
                         channel = PrincipalChannel.BROWSER,
+                        authenticatedAt = Clock.System.now() - if (token.startsWith("stale-")) 10.minutes else ZERO,
                     )
                     else -> null
                 }
@@ -359,6 +364,19 @@ class GatewayPostgresTest {
             assertEquals("upstream_broken", record.outcome)
         }
     }
+
+    @Test
+    fun changingTheModelKeysFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                val settings = InferenceSettingsDto()
+                val stale = putJson("/api/v1/inference/settings", "stale-admin-a", settings)
+                assertEquals(HttpStatusCode.Forbidden, stale.status)
+                assertTrue("step_up_required" in stale.bodyAsText(), stale.bodyAsText())
+                val fresh = putJson("/api/v1/inference/settings", "admin-a", settings)
+                assertEquals(HttpStatusCode.OK, fresh.status, fresh.bodyAsText())
+            }
+        }
 
     @Test
     fun anOrgKeyServesChatAndOpenRouter() = serverTest(modules, overrides) { server ->
