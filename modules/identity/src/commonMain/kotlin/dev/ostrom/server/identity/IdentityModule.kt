@@ -230,6 +230,7 @@ object IdentityModule : ServerModule {
             IdentityRoutesDependencies(
                 get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
                 getAll<SignOutListener>(),
+                get(),
             )
         }
     }

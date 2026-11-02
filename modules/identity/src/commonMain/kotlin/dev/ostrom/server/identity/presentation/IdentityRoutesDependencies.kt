@@ -14,6 +14,7 @@ import dev.ostrom.server.identity.domain.RotateTokenUseCase
 import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.StartDeviceAuthorizationUseCase
 import dev.ostrom.server.identity.domain.WebSessionsOfUserUseCase
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.SignOutListener
 
 /**
@@ -34,6 +35,7 @@ import dev.ostrom.server.kernel.auth.SignOutListener
  * @property answerDeviceAuthorization Approves or denies it.
  * @property webSessions Lists and ends the person's browser sessions.
  * @property signOutListeners Told after a sign-out (the phones registered with the credential are dropped).
+ * @property orgResolver The organization `/me` shows when the request names one in `Ostrom-Org`.
  */
 data class IdentityRoutesDependencies(
     val config: IdentityConfig,
@@ -51,4 +53,5 @@ data class IdentityRoutesDependencies(
     val answerDeviceAuthorization: AnswerDeviceAuthorizationUseCase,
     val webSessions: WebSessionsOfUserUseCase,
     val signOutListeners: List<SignOutListener>,
+    val orgResolver: PrincipalOrgResolver,
 )

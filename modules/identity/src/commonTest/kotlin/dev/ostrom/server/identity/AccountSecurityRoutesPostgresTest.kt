@@ -24,7 +24,7 @@ import dev.ostrom.server.identity.presentation.LauncherLoginRequest
 import dev.ostrom.server.identity.presentation.LauncherLoginResponse
 import dev.ostrom.server.identity.presentation.LinkStartedResponse
 import dev.ostrom.server.identity.presentation.OAUTH_STATE_COOKIE
-import dev.ostrom.server.identity.presentation.ProfileResponse
+import dev.ostrom.server.identity.presentation.AccountResponse
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireScope
@@ -150,7 +150,8 @@ class AccountSecurityRoutesPostgresTest {
             assertEquals(HttpStatusCode.OK, response.status)
             val signedIn = response.body<LauncherLoginResponse>()
             assertEquals(ada.login, signedIn.login)
-            val profile = server.client.get("/api/v1/auth/me") { bearerAuth(signedIn.token) }.body<ProfileResponse>()
+            val profile =
+                server.client.get("/api/v1/auth/me/account") { bearerAuth(signedIn.token) }.body<AccountResponse>()
             assertEquals(ada.id.toString(), profile.id)
             // The CLI token it gives cannot answer a gate either.
             val answer = server.client.post("/api/v1/test/gates/answer") { bearerAuth(signedIn.token) }
@@ -184,7 +185,7 @@ class AccountSecurityRoutesPostgresTest {
                 header(HttpHeaders.Cookie, "$OAUTH_STATE_COOKIE=$linkState")
             }
             assertEquals("http://localhost:5173/settings", linked.headers[HttpHeaders.Location])
-            val profile = server.client.get("/api/v1/auth/me") { session(adaSession) }.body<ProfileResponse>()
+            val profile = server.client.get("/api/v1/auth/me/account") { session(adaSession) }.body<AccountResponse>()
             assertEquals(ada.id.toString(), profile.id)
             assertEquals(listOf("github", "google"), profile.providers)
 

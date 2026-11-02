@@ -224,8 +224,8 @@ class ReconcileCloudSessionUseCaseImpl(
         /** A start must report ready within this time, image pull and repository clone included. */
         private val START_TIMEOUT: Duration = 15.minutes
 
-        /** A runner silent for this long is lost. */
-        private val HEARTBEAT_LOSS: Duration = 90.seconds
+        /** A runner silent for this long is lost; the runners list shows it offline after the same time. */
+        internal val HEARTBEAT_LOSS: Duration = 90.seconds
 
         /** What the runtime reports for an execution that is no longer there. */
         private val LOST_STATUSES = setOf(ExecutionStatus.ENDED, ExecutionStatus.FAILED, ExecutionStatus.MISSING)
