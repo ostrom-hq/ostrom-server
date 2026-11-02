@@ -48,4 +48,9 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         name = "confine_sharing_to_their_org",
         sql = TENANT_ROLE_SQL + "\n" + tenantTableSql("sharing_accounts") + "\n" + tenantTableSql("sharing_windows"),
     ),
+    SchemaMigration(
+        version = 3,
+        name = "version_sharing_accounts",
+        sql = "ALTER TABLE sharing_accounts ADD COLUMN version BIGINT NOT NULL DEFAULT 1",
+    ),
 )

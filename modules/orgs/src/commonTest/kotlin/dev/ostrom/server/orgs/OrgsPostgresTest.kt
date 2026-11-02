@@ -9,6 +9,7 @@ import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRequiredException
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -330,6 +331,52 @@ class OrgsPostgresTest {
         }
 
     @Test
+    fun withoutAnOrganizationInThePathTheHeaderOrTheOnlyMembershipDecides() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val resolver = server.koin.get<PrincipalOrgResolver>()
+            val ada = server.user("ada")
+            val mallory = server.user("mallory")
+            val loner = server.user("loner")
+            val acme = org("acme")
+            val acmeOwner = member(acme, ada, OrgRole.OWNER)
+            orgs.create(acme, acmeOwner) { false }
+            val evil = org("evil")
+            orgs.create(evil, member(evil, mallory, OrgRole.OWNER)) { false }
+            val person = AuthenticatedPrincipal(ada.id.toString(), PrincipalKind.USER, setOf("user:*"))
+            fun named(org: Org) = person.copy(namedOrg = org.id.toString())
+
+            // One membership: nothing to name.
+            assertEquals(OrgPrincipal(acme.id, acmeOwner.id, OrgRole.OWNER), resolver.resolve(person, null))
+            // No membership: nobody.
+            val alone = AuthenticatedPrincipal(loner.id.toString(), PrincipalKind.USER, emptySet())
+            assertNull(resolver.resolve(alone, null))
+
+            val globex = org("globex")
+            val globexMember = member(globex, ada, OrgRole.MEMBER)
+            orgs.create(globex, globexMember) { false }
+            // Two memberships and nothing named: the request must name one (409 org_required).
+            val unnamed = assertFailsWith<OrgRequiredException> { resolver.resolve(person, null) }
+            assertEquals("org_required", unnamed.kind.type)
+            // Two memberships and the header: the one it names, checked against the membership.
+            assertEquals(
+                OrgPrincipal(globex.id, globexMember.id, OrgRole.MEMBER),
+                resolver.resolve(named(globex), null),
+            )
+            assertEquals(acmeOwner.id, resolver.resolve(named(acme), null)?.memberId)
+            // The path wins over the header.
+            assertEquals(acmeOwner.id, resolver.resolve(named(globex), acme.id)?.memberId)
+            // A header naming an organization the caller is not in, or no id at all: nobody (404, no leak).
+            assertNull(resolver.resolve(named(evil), null))
+            assertNull(resolver.resolve(person.copy(namedOrg = "acme"), null))
+            // A bound token keeps to its organization, whatever the header says.
+            val bound = person.copy(orgId = acme.id.toString())
+            assertEquals(acmeOwner.id, resolver.resolve(bound, null)?.memberId)
+            assertEquals(acmeOwner.id, resolver.resolve(bound.copy(namedOrg = acme.id.toString()), null)?.memberId)
+            assertNull(resolver.resolve(bound.copy(namedOrg = globex.id.toString()), null))
+        }
+
+    @Test
     fun theResolverOnlyResolvesAPersonWhoIsAMember() =
         serverTest(modules) { server ->
             val orgs = server.koin.get<OrgsRepository>()
@@ -346,7 +393,7 @@ class OrgsPostgresTest {
                 resolver.resolve(person, acme.id),
             )
             assertNull(resolver.resolve(person, Uuid.random()))
-            assertNull(resolver.resolve(person, null), "No implicit current organization")
+            assertEquals(owner.id, resolver.resolve(person, null)?.memberId, "Their only organization")
             val bound = person.copy(orgId = acme.id.toString())
             assertEquals(owner.id, resolver.resolve(bound, null)?.memberId)
             assertEquals(owner.id, resolver.resolve(bound, acme.id)?.memberId)

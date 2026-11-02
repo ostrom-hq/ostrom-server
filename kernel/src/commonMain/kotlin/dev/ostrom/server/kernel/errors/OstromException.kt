@@ -14,6 +14,7 @@ enum class ErrorKind(val type: String) {
     FORBIDDEN("forbidden"),
     NOT_FOUND("not_found"),
     CONFLICT("conflict"),
+    ORG_REQUIRED("org_required"),
     PAYLOAD_TOO_LARGE("payload_too_large"),
     UNSUPPORTED_MEDIA_TYPE("unsupported_media_type"),
     RATE_LIMITED("rate_limited"),
@@ -29,7 +30,7 @@ enum class ErrorKind(val type: String) {
  * @property kind The kind of failure, which decides the HTTP status.
  * @property message The message sent to the client: never a secret, a token, a prompt or an upstream body.
  * @property type The `error.type` clients receive: the kind's, unless the contract names a finer key for this failure
- *   (`step_up_required`, a 403). Stable once published, like [ErrorKind.type].
+ *   (`step_up_required`, a 403; `installation_not_yours`, a 403). Stable once published, like [ErrorKind.type].
  */
 open class OstromException(
     val kind: ErrorKind,
