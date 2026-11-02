@@ -167,10 +167,15 @@ class CompilerIsolationPostgresTest {
         assertEquals(HttpStatusCode.NotFound, server.call("cli:b:dev", workflowPath, "PUT", proposal).status)
         val decision = SaveWorkflowRequest(release(command = "make evil"), expectedVersion = 1)
         assertEquals(
-            HttpStatusCode.Conflict,
+            HttpStatusCode.NotFound,
             server.call("user:b:lead", workflowPath, "PUT", decision).status,
-            "B's console finds no version 1 of the workflow in B to replace",
+            "B's console finds no workflow of that id in B",
         )
+        // Without a version, a PUT never creates B's own copy of the id (nor answers a key conflict that would tell
+        // A's exists): 404, and B still has no such workflow.
+        val unversioned = SaveWorkflowRequest(release(command = "make evil"))
+        assertEquals(HttpStatusCode.NotFound, server.call("user:b:lead", workflowPath, "PUT", unversioned).status)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:b:lead", workflowPath).status, "Nothing was created")
         assertEquals(HttpStatusCode.NotFound, server.call("user:b:lead", statusPath).status)
         val revokePath = "/api/v1/packages/${envelope.digest}/revoke"
         val restorePath = "/api/v1/packages/${envelope.digest}/restore"

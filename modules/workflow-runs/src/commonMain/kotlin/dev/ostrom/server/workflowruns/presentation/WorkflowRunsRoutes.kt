@@ -10,9 +10,8 @@ import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
-import dev.ostrom.server.kernel.errors.ErrorKind
-import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.withNulls
 import dev.ostrom.server.receipts.presentation.requireReceiptReader
@@ -107,7 +106,7 @@ private suspend fun WorkflowRunsRoutesDependencies.actorOf(call: ApplicationCall
 
 private suspend fun WorkflowRunsRoutesDependencies.resolve(principal: AuthenticatedPrincipal): GateActor =
     actors.resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw principal.outsideOrganization()
 
 // A person reads receipts with a receipts scope (S2-47); an agent token only its own launch's (the use case checks).
 private suspend fun WorkflowRunsRoutesDependencies.bundleReader(call: ApplicationCall): GateActor {

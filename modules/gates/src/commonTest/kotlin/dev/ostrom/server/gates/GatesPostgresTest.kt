@@ -591,7 +591,7 @@ class GatesPostgresTest {
         assertTrue(listed("pending").isEmpty() && listed("approved").isEmpty())
         val unknown = server.call("user:a:rev-b", "/api/v1/approvals?status=maybe")
         assertEquals(HttpStatusCode.BadRequest, unknown.status)
-        assertEquals(HttpStatusCode.Forbidden, server.call("user:a", "/api/v1/approvals").status, "no organization")
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a", "/api/v1/approvals").status, "no organization")
     }
 
     @Test
