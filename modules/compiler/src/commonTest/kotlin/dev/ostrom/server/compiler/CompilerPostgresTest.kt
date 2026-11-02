@@ -180,6 +180,24 @@ class CompilerPostgresTest {
     }
 
     @Test
+    fun anEndingEdgeAndAnOrganizationsPackageAnswerTheContractsRequiredNulls() = compilerTest { server ->
+        // The contract's `to` is required and nullable: a client writes it, null for an edge that ends the workflow.
+        val ending = JsonObject(mapOf("from" to JsonPrimitive("g"), "to" to JsonNull))
+        val edges = JsonArray(release().getValue("edges").jsonArray + ending)
+        val doc = JsonObject(release() + ("edges" to edges))
+        val created = server.call("user:a:lead", "/api/v1/workflows", "POST", doc).body<JsonObject>()
+        assertEquals(JsonNull, created.getValue("edges").jsonArray.last().jsonObject["to"])
+        val listed = server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>().items.single()
+        assertEquals(JsonNull, listed.getValue("edges").jsonArray.last().jsonObject["to"])
+        assertEquals("t", listed.getValue("edges").jsonArray.first().jsonObject.getValue("from").jsonPrimitive.content)
+
+        val envelope = server.call("agent:a:l1", "/api/v1/packages/current").body<JsonObject>()
+        assertEquals(JsonNull, envelope["repo"])
+        val page = server.call("user:a:lead", "/api/v1/packages").body<JsonObject>()
+        assertEquals(JsonNull, page.getValue("items").jsonArray.single().jsonObject["repo"])
+    }
+
+    @Test
     fun workflowsAreSavedWithTheirVersionAndOnlyByAPerson() = compilerTest { server ->
         assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:l1", "/api/v1/workflows", "POST", release()).status)
         assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/workflows").status)
