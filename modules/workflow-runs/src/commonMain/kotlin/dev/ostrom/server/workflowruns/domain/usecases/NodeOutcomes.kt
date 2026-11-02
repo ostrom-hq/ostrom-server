@@ -8,6 +8,7 @@ import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.core.api.models.ReceiptNode
 import dev.ostrom.server.compiler.domain.services.PackageTexts
+import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.workflowruns.domain.models.PackageNode
@@ -15,15 +16,16 @@ import dev.ostrom.server.workflowruns.domain.models.RunPackage
 
 /**
  * What each node of a session's workflows did (prototype `outcomes`): it says only what Ostrom saw, a check run, a
- * notification, a skill opened, never that an instruction was followed. A check node always carries its attestation,
- * and today it is the workstation's declaration: nothing in a receipt calls a reported check proven.
+ * notification, a skill opened, never that an instruction was followed. A check node always carries its attestation:
+ * the workstation's declaration, unless the cloud session's runner reported its last run (`isolated_runner`), or the
+ * forge's own record of the CI running that check on the same commit proves it (`ci`).
  *
  * @param pack The session's package.
  * @param session The session.
  * @param runs Its check runs, oldest first.
  * @param notifications Its notifications, oldest first.
  * @param gates Its gates.
- * @param attestations Where its runs come from, for those the server holds a proof of (by run id).
+ * @param proofs What the server holds beyond the workstation's word: the runner's runs and the CI's checks.
  */
 class NodeOutcomes(
     private val pack: RunPackage,
@@ -31,7 +33,7 @@ class NodeOutcomes(
     private val runs: List<CheckRun>,
     private val notifications: List<Notification>,
     private val gates: List<SessionGate>,
-    private val attestations: Map<String, CheckAttestation>,
+    private val proofs: NodeProofs = NodeProofs(),
 ) {
     /**
      * The nodes the receipt carries: those of the workflows the session made act, or, when none acted, those of the
@@ -64,7 +66,7 @@ class NodeOutcomes(
     // Every check node says where its runs come from (decision 13:23, core#40): the last run's, which the outcome
     // rests on. A run of POST /checks comes from the hooks on the developer's machine, which the agent can read: a
     // declaration of the workstation. Only a run the cloud session's runner reported with its own token is
-    // `isolated_runner`; nothing writes `ci` before the server reads the App's check run itself.
+    // `isolated_runner`; `ci` only when the server read the CI's own run of it on GitHub (decision of 30/10 15:14).
     private fun check(base: ReceiptNode, node: PackageNode): ReceiptNode {
         val declared = base.copy(attestation = CheckAttestation.WORKSTATION_DECLARED)
         val mine = runs.filter { it.nodeId == node.id }
@@ -72,12 +74,21 @@ class NodeOutcomes(
         return when {
             last == null -> declared
             node.mode == PackageMode.SHADOW -> declared.copy(outcome = "shadow: would have run ${mine.size}×, not run")
-            else -> ran(declared, mine, last)
+            else -> proven(ran(declared, mine, last), proofs.ci[node.id])
         }
     }
 
+    // The CI's run on that commit is the proof: its conclusion is the outcome, the workstation's runs stay as detail.
+    private fun proven(reported: ReceiptNode, check: CiCheck?): ReceiptNode {
+        if (check == null) return reported
+        val outcome = if (check.conclusion == SUCCESS) "passed in CI" else "failed in CI (${check.conclusion})"
+        val detail = "CI ${check.name} by ${check.app} on ${check.headSha.take(SHORT_SHA)}; ${reported.detail}"
+        val ref = check.url ?: reported.ref
+        return reported.copy(outcome = outcome, detail = detail, ref = ref, attestation = CheckAttestation.CI)
+    }
+
     private fun ran(declared: ReceiptNode, mine: List<CheckRun>, last: CheckRun): ReceiptNode {
-        val base = declared.copy(attestation = attestations[last.id] ?: CheckAttestation.WORKSTATION_DECLARED)
+        val base = declared.copy(attestation = proofs.runner[last.id] ?: CheckAttestation.WORKSTATION_DECLARED)
         val failed = mine.count { it.exit != 0 }
         val outcome = when {
             last.exit != 0 -> "failed: action blocked (${plural(mine.size, "run")})"
@@ -126,6 +137,7 @@ class NodeOutcomes(
 
     private companion object {
         const val NOT_TRIGGERED = "not triggered"
+        const val SUCCESS = "success"
         const val SHORT_SHA = 8
         const val DETAIL = 200
         const val HOUR = 11
@@ -135,3 +147,14 @@ class NodeOutcomes(
 
 /** The node kinds whose outcome says the session acted. */
 private val ACTING = setOf("check", "gate", "notify")
+
+/**
+ * What the server holds beyond the workstation's word for a session's check nodes.
+ *
+ * @param runner The attestation of each run the cloud session's runner reported, by run id.
+ * @param ci The CI's record of each check node, by node id, read from the forge on the commit its last run reported.
+ */
+class NodeProofs(
+    val runner: Map<String, CheckAttestation> = emptyMap(),
+    val ci: Map<String, CiCheck> = emptyMap(),
+)

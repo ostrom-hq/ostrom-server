@@ -1,0 +1,180 @@
+name: Console journeys
+
+# The console's journeys against the real server (ostrom-web e2e-real/, Playwright, desktop and mobile) against a
+# PUBLISHED image of this server: by default the newest `sha-<7>` of main's last commits, never `edge`, which a
+# slower run of an older commit may still hold. The console is built here from ostrom-web, without mocks, and served by `vite preview`, which
+# proxies /api to the server, as in ostrom-web's own CI. It runs in this repository because its token reads its own
+# GHCR packages, which ostrom-web's cannot yet (the journeys are skipped there, "package Actions access"); the same
+# reason, and the same shape, as cli-journey.yml. On demand, and, off the org's one-`ci`-job rule on purpose (as
+# demo-stack.yml), on a pull request only when the pull request changes this file.
+on:
+  workflow_dispatch:
+    inputs:
+      server_image:
+        description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
+        default: ""
+      web_ref:
+        description: ostrom-web ref whose console and journeys run
+        default: main
+      specs:
+        description: Journeys to run, as Playwright file filters (empty = all of e2e-real/)
+        default: ""
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: [.github/workflows/console-journey.yml]
+
+concurrency:
+  # Each dispatch is its own run (it names its own image, console and journeys); a pull request's newer push cancels.
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  journeys:
+    # A pull request from a fork has no deploy key to read the console with.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: read
+    # The database is `ostrom_ci`: ci/database-roles.sql creates `ostrom` itself, owned by its owner role. Stripe is
+    # stripe-mock, as in this repository's tests.
+    services:
+      postgres:
+        image: postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
+        env: { POSTGRES_USER: ostrom, POSTGRES_PASSWORD: ostrom, POSTGRES_DB: ostrom_ci }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
+      stripe-mock:
+        image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78
+        ports: ['12111:12111']
+    env:
+      # The console of ostrom-web main, unless a dispatch names another ref.
+      WEB_REF: ${{ inputs.web_ref || 'main' }}
+      WANTED_IMAGE: ${{ inputs.server_image }}
+      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch runs
+      # what it names, or all of e2e-real.
+      SPECS: ${{ github.event_name == 'pull_request' && 'me.spec.ts' || inputs.specs }}
+    steps:
+      # The whole history: main's head names the image, and the image's own commit gives its database roles.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: server
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-web
+          ref: ${{ env.WEB_REF }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_WEB }}
+          path: web
+          persist-credentials: false
+      - name: The server image (the newest sha-<7> of main published, unless named)
+        id: server
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          # The oldest server the console's journeys need: /auth/me with Ostrom-Org (server#92).
+          MIN_SERVER: 067f7b2
+        run: |
+          main=$(git -C server rev-parse origin/main)
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          image=$WANTED_IMAGE
+          if [ -z "$image" ]; then
+            # main's head is published a few minutes after its merge: the newest of its last commits that is.
+            # Only an image not published yet is skipped; any other pull error stops the job.
+            for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
+              candidate=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
+              if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
+                image=$candidate
+                break
+              fi
+              case "$error" in
+                *"manifest unknown"* | *"not found"*) echo "$candidate is not published yet" ;;
+                *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
+              esac
+            done
+            [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
+          else
+            docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
+          fi
+          revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+          [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+          git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
+            || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
+          git -C server merge-base --is-ancestor "$MIN_SERVER" "$revision" \
+            || { echo "::error::$image is ostrom-server@${revision:0:7}, older than $MIN_SERVER (server#92)"; exit 1; }
+          # The database roles of the image's own commit, not of a main that may have moved past it.
+          git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Images"
+            echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
+            echo "- console: ostrom-web $(git -C web rev-parse --short HEAD) ($WEB_REF), built here without mocks"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Start the server (roles, migrate, serve as ostrom_app)
+        env:
+          IMAGE: ${{ steps.server.outputs.image }}
+          PGPASSWORD: ostrom
+          OWNER_URL: postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom
+        run: |
+          psql -h localhost -U ostrom -d ostrom_ci -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/database-roles.sql"
+          docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
+          # The server's non-root user writes the mails (0644); the journeys, as the runner's user, read them.
+          mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
+          # Test values only: sign-in mails are written to a directory, the console is `vite preview` on
+          # localhost:4173, which proxies /api to the server, so cookies and CSRF are first-party.
+          cat > "$RUNNER_TEMP/server.env" <<'ENV'
+          OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
+          OSTROM_PORT=4600
+          OSTROM_MAIL_DIR=/var/lib/ostrom/mail
+          OSTROM_PUBLIC_URL=http://localhost:4173
+          OSTROM_CONSOLE_URL=http://localhost:4173
+          OSTROM_STRIPE_SECRET_KEY=sk_test_web_e2e
+          OSTROM_STRIPE_WEBHOOK_SECRET=whsec_web_e2e
+          OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
+          ENV
+          sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
+            --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
+          for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
+          docker logs ostrom-server; exit 1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: The console, without mocks (real API, same origin)
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec vite build --outDir dist-real
+          pnpm exec playwright install --with-deps chromium
+      - name: The console's journeys against the server (Playwright, desktop and mobile)
+        working-directory: web
+        env:
+          OSTROM_E2E_API_UPSTREAM: http://127.0.0.1:4600
+          OSTROM_E2E_MAIL_DIR: ${{ runner.temp }}/ostrom-mail
+          OSTROM_E2E_REQUIRE_ORGS: 'true'
+        # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.
+        run: |
+          set -f
+          pnpm exec playwright test --config playwright.real.config.ts $SPECS
+      - name: Server logs
+        if: always()
+        run: docker logs ostrom-server 2>&1 | tail -n 300 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: console-journeys-report
+          path: web/playwright-report-real
+          if-no-files-found: ignore
+          retention-days: 7

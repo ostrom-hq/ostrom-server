@@ -19,6 +19,7 @@ import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RoutingContext
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
@@ -35,7 +36,8 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
         }
         get<GatesApi.Id> { params ->
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingGates)
-            call.respond(gate(actor, params.id.toUuid()).toResponse(actor))
+            // A hook waits here for its answer, at most 30 s, instead of asking again every second.
+            call.respond(gate(actor, params.id.toUuid(), (params.wait ?: 0).seconds).toResponse(actor))
         }
         post<GatesApi.Id.Reserve> { params -> respondUse(dependencies, params.parent.id, GateUse.RESERVE) }
         post<GatesApi.Id.Consume> { params -> respondUse(dependencies, params.parent.id, GateUse.CONSUME) }

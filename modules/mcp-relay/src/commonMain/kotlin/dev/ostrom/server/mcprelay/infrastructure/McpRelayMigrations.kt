@@ -5,6 +5,50 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE_SQL
 import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
+/** The setting that opened the retention policies of version 2, which version 4 drops: kept for version 2's SQL. */
+private const val RETENTION_SETTING_V2: String = "ostrom.mcp_relay_retention"
+
+/** The retention purge, the one operation across organizations: a function owned by `ostrom_router`. */
+private val ROUTER_FUNCTIONS = listOf("mcp_relay_purge(TIMESTAMPTZ)")
+
+/**
+ * Version 4: the retention policies, which any transaction could open by setting the retention setting (SELECT and
+ * DELETE on every organization's calls, RLS audit R4), give way to a narrow `SECURITY DEFINER` function owned by
+ * `ostrom_router` (`NOLOGIN`, never a member of the serving role), with `pg_temp` last in its `search_path` and
+ * executable by the serving role only: it deletes the old calls, the query it replaces, unchanged.
+ */
+private val RETENTION_THROUGH_THE_ROUTER_SQL: String =
+    """
+    DO $$ BEGIN
+        CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+    END $$;
+    DO $$ BEGIN
+        GRANT ostrom_router TO CURRENT_USER;
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END $$;
+    GRANT USAGE ON SCHEMA public TO ostrom_router;
+    DROP POLICY mcp_relay_calls_retention_read ON mcp_relay_calls;
+    DROP POLICY mcp_relay_calls_retention ON mcp_relay_calls;
+    CREATE POLICY mcp_relay_calls_router_read ON mcp_relay_calls FOR SELECT TO ostrom_router USING (true);
+    CREATE POLICY mcp_relay_calls_router_purge ON mcp_relay_calls FOR DELETE TO ostrom_router USING (true);
+    GRANT SELECT, DELETE ON mcp_relay_calls TO ostrom_router;
+    CREATE FUNCTION mcp_relay_purge(p_before TIMESTAMPTZ) RETURNS BIGINT
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH gone AS (DELETE FROM mcp_relay_calls WHERE started_at < p_before RETURNING 1) SELECT COUNT(*) FROM gone;
+    $$;
+    ${ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${ROUTER_FUNCTIONS.joinToString("\n") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /** The schema of the MCP relay; its tables start with `mcp_relay_`, each confined to its org by row-level security. */
 val McpRelayMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -81,9 +125,9 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
             // Retention deletes old calls of every org, and nothing else (McpRelayRepositoryImpl.purgeCalls); a DELETE
             // with a WHERE also needs the rows to pass a SELECT policy.
             "CREATE POLICY mcp_relay_calls_retention_read ON mcp_relay_calls FOR SELECT " +
-                "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
+                "USING (current_setting('$RETENTION_SETTING_V2', true) = 'on');",
             "CREATE POLICY mcp_relay_calls_retention ON mcp_relay_calls FOR DELETE " +
-                "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
+                "USING (current_setting('$RETENTION_SETTING_V2', true) = 'on');",
         ).joinToString("\n"),
     ),
     SchemaMigration(
@@ -92,7 +136,5 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
         // The launch whose agent token made the call (server#108), null for a member's own credential.
         sql = "ALTER TABLE mcp_relay_calls ADD COLUMN launch_id TEXT",
     ),
+    SchemaMigration(version = 4, name = "retention_through_the_router", sql = RETENTION_THROUGH_THE_ROUTER_SQL),
 )
-
-/** The transaction-local setting that opens the retention policy of `mcp_relay_calls`. */
-const val RETENTION_SETTING: String = "ostrom.mcp_relay_retention"

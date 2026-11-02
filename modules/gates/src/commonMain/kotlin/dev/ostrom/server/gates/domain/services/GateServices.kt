@@ -2,6 +2,7 @@
 package dev.ostrom.server.gates.domain.services
 
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
@@ -153,6 +154,23 @@ interface PullRequestHeads {
      * @return The pull request, or null when GitHub does not answer or does not know it.
      */
     suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest?
+}
+
+/**
+ * Reads what a CI ran on a commit from the forge (integrations-github, with the organization's installation), never
+ * from the workstation: the `ci` attestation of a receipt's check node (decision of 30/10 15:14).
+ */
+interface CiChecks {
+    /**
+     * The latest completed run of a check on a commit, by another App than Ostrom's.
+     *
+     * @param orgId The organization (its GitHub installation).
+     * @param repo The repository (`owner/name`).
+     * @param sha The commit.
+     * @param name The check's name.
+     * @return The run, or null when the forge has none, does not answer, or the organization has no installation.
+     */
+    suspend fun latest(orgId: Uuid, repo: String, sha: String, name: String): CiCheck?
 }
 
 /**

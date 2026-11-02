@@ -6,8 +6,10 @@ import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.sharing.domain.AccountCredentials
 import dev.ostrom.server.sharing.domain.AccountProvider
+import dev.ostrom.server.sharing.domain.AccountStatus
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
 import dev.ostrom.server.sharing.domain.RefreshResult
+import dev.ostrom.server.sharing.infrastructure.AWAITING_SIGN_IN
 import dev.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import dev.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import io.ktor.client.HttpClient
@@ -55,6 +57,11 @@ class SharingInfrastructureTest {
         // Real time: a short timeout only where the provider hangs, a cold JVM's first call can take longer.
         timeout = if (hang) 300.milliseconds else 30.seconds,
     )
+
+    @Test
+    fun aStaleWriteKeepsExactlyTheStatusesOnlySharingAgainLeaves() {
+        assertEquals(AccountStatus.entries.filter { it.awaitsSignIn }.joinToString { "'${it.name}'" }, AWAITING_SIGN_IN)
+    }
 
     @Test
     fun aRefreshUsesThePublicClientOfEachProvider() = realTime {

@@ -57,6 +57,7 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -71,6 +72,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.time.TimeSource
 import kotlin.uuid.Uuid
@@ -404,6 +406,41 @@ class GatesPostgresTest {
     }
 
     @Test
+    fun aWaitOnAnotherOrganizationsGateIsRefusedAtOnce() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val started = TimeSource.Monotonic.markNow()
+        val other = server.call("user:b:rev-b", "/api/v1/gates/${opened.gate.id}?wait=30")
+        assertEquals(HttpStatusCode.NotFound, other.status)
+        val agentB = server.call("agent:b:$session", "/api/v1/gates/${opened.gate.id}?wait=30")
+        assertEquals(HttpStatusCode.NotFound, agentB.status)
+        assertTrue(started.elapsedNow() < 5.seconds, "a 404 never waits: ${started.elapsedNow()}")
+    }
+
+    @Test
+    fun twoHundredWaitingHooksHoldNoConnection() = gatesTest { server ->
+        // The test pool has 4 connections: a wait that held one would stall every other request for its 20 s.
+        val agent = "agent:a:$session"
+        val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        val path = "/api/v1/gates/${opened.gate.id}"
+        coroutineScope {
+            val waiting = List(WAITERS) { async { server.call(agent, "$path?wait=20") } }
+            delay(1.seconds)
+            val reads = List(10) {
+                val started = TimeSource.Monotonic.markNow()
+                assertEquals(HttpStatusCode.OK, server.call("user:a:rev-c", path).status)
+                started.elapsedNow()
+            }
+            assertTrue(reads.max() < 2.seconds, "a plain read waited behind the waiting ones: $reads")
+            assertTrue(waiting.none { it.isCompleted }, "nothing answered yet")
+            val answered = TimeSource.Monotonic.markNow()
+            assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status)
+            val answers = waiting.awaitAll()
+            assertTrue(answered.elapsedNow() < 5.seconds, "the waits end with the answer: ${answered.elapsedNow()}")
+            assertEquals(setOf("approved"), answers.map { it.body<GateResponse>().gate.status }.toSet())
+        }
+    }
+
+    @Test
     fun anotherOrganizationSeesNothing() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         val approval = server.approvalsOf(opened).first { it.requestedFrom == "rev-b" }
@@ -719,4 +756,5 @@ class GatesPostgresTest {
 // The decision benchmark: runs before the measure (JIT, connection pool, plans), then measured runs.
 private const val WARM_UP = 50
 private const val SAMPLES = 200
+private const val WAITERS = 200
 private const val ROUNDS = 3
