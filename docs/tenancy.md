@@ -59,6 +59,9 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `orgs_slug_taken(slug)` | orgs | whether a short name was ever used | `OrgsServingRolePostgresTest` |
 | `orgs_memberships_of(user)` | orgs | reads a user's memberships and their organizations | `OrgsServingRolePostgresTest` |
 | `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
+| `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
+| `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
+| `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
 
 ## The proof
 

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.usage.infrastructure
 
-import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.usage.domain.UsageCursor
@@ -91,14 +90,11 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toEvent() }
     }
 
-    override suspend fun purge(before: Instant, limit: Int): Long = driver.transaction {
-        // The one operation across orgs, opened by its own policies (UsageMigrations version 2): old events only.
-        execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-        execute("SELECT set_config('$RETENTION_SETTING', 'on', true)").getOrThrow()
-        execute(
-            Statement.create(UsageQueries.PURGE).bind("before", before).bind("limit", limit),
-        ).getOrThrow()
-    }
+    // The one operation across orgs, through the function of UsageMigrations version 3: one batch of old events.
+    override suspend fun purge(before: Instant, limit: Int): Long = driver.fetchAll(
+        Statement.create("SELECT usage_purge(CAST(:before AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) AS n")
+            .bind("before", before).bind("limit", limit),
+    ).getOrThrow().first().get("n").asLong()
 
     private fun Statement.bindEvent(prefix: String, event: UsageEvent): Statement = bind("${prefix}id", event.id)
         .bind("${prefix}org_id", event.orgId)
