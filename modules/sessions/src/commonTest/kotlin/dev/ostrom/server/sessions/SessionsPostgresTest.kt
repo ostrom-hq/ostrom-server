@@ -265,7 +265,8 @@ class SessionsPostgresTest {
             val written = execute("UPDATE sessions_sessions SET dev = 'mallory'").getOrThrow()
             listOf(none, other, swept, written.toString())
         }
-        assertEquals(listOf("0", "0", "1", "0"), seen, "The sweep reads every organization and writes none")
+        // The old sweep setting opens nothing any more (RLS audit R4): only sessions_stale reads across organizations.
+        assertEquals(listOf("0", "0", "0", "0"), seen, "No setting opens another organization, nothing is written")
         // The driver throws a refused write rather than returning it as a failure: both count as refused.
         val insert = try {
             server.driver.transaction {

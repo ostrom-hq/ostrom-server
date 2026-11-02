@@ -9,6 +9,7 @@ import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlin.uuid.Uuid
 
 /**
@@ -30,7 +31,8 @@ class PostgresLaunchesRepository(private val driver: Driver) : LaunchesRepositor
                     .bind("agent", launch.agent)
                     .nullable("model", launch.model)
                     .bind("created_at", launch.createdAt)
-                    .bind("expires_at", launch.expiresAt),
+                    .bind("expires_at", launch.expiresAt)
+                    .cloud(launch.cloudSessionId),
             ).getOrThrow()
         }
     }
@@ -43,6 +45,9 @@ class PostgresLaunchesRepository(private val driver: Driver) : LaunchesRepositor
     private fun Statement.nullable(name: String, value: String?): Statement =
         if (value == null) bindNull(name, String::class) else bind(name, value)
 
+    private fun Statement.cloud(value: Uuid?): Statement =
+        if (value == null) bindNull("cloud_session_id", Uuid::class) else bind("cloud_session_id", value)
+
     private fun ResultSet.Row.toLaunch() = Launch(
         id = get("id").asString(),
         orgId = get("org_id").asUuid(),
@@ -53,12 +58,15 @@ class PostgresLaunchesRepository(private val driver: Driver) : LaunchesRepositor
         model = get("model").asStringOrNull(),
         createdAt = get("created_at").asInstant(),
         expiresAt = get("expires_at").asInstant(),
+        cloudSessionId = get("cloud_session_id").asUuidOrNull(),
     )
 
     /** The SQL of the repository, also read by the query plans test. */
     companion object {
-        private val COLUMN_NAMES =
-            listOf("org_id", "id", "user_id", "dev", "repo", "agent", "model", "created_at", "expires_at")
+        private val COLUMN_NAMES = listOf(
+            "org_id", "id", "user_id", "dev", "repo", "agent", "model", "created_at", "expires_at",
+            "cloud_session_id",
+        )
         private val COLUMNS = COLUMN_NAMES.joinToString(", ")
         private val VALUES = COLUMN_NAMES.joinToString(", ") { ":$it" }
 

@@ -183,7 +183,6 @@ class SchemaTenancyPostgresTest {
         // with the fix that closes it.
         val UNCONFINED_TABLES = setOf(
             "artifacts_routes: row level security disabled",
-            "automations_routes: row level security disabled",
             "runners_session_routes: row level security disabled",
             "billing_customers: row level security disabled",
             "billing_outbox: row level security disabled",
@@ -193,11 +192,6 @@ class SchemaTenancyPostgresTest {
         )
 
         val UNBOUND = setOf(
-            "sessions_sessions.sessions_sessions_sweep (SELECT)",
-            "usage_events.usage_events_retention_read (SELECT)",
-            "usage_events.usage_events_retention (DELETE)",
-            "mcp_relay_calls.mcp_relay_calls_retention_read (SELECT)",
-            "mcp_relay_calls.mcp_relay_calls_retention (DELETE)",
             "github_installations.github_installations_read (SELECT)",
             "github_installations.github_installations_delete (DELETE)",
             "github_install_states.github_install_states_read (SELECT)",
@@ -207,8 +201,6 @@ class SchemaTenancyPostgresTest {
         val TOO_WIDE_GRANTS = setOf(
             "$TENANT: INSERT on artifacts_routes without RLS",
             "$TENANT: UPDATE on artifacts_routes without RLS",
-            "$TENANT: INSERT on automations_routes without RLS",
-            "$TENANT: UPDATE on automations_routes without RLS",
             "$TENANT: INSERT on runners_session_routes without RLS",
             "$TENANT: UPDATE on runners_session_routes without RLS",
             "$TENANT: UPDATE on orgs_organizations without RLS",

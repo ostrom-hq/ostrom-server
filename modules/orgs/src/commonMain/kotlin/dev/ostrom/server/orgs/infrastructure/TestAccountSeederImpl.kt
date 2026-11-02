@@ -46,13 +46,15 @@ class TestAccountSeederImpl(
 }
 
 /**
- * The scopes of the QA token: every scope a route of the server checks today, as a person would tick them on a
- * personal token. The identity module still strips what no token may hold (answering a gate, an agent's scope).
+ * The scopes of the QA token, as a person would tick them on a personal token: every read of the catalogue, and the
+ * writes the QA journey runs with a console token. The catalogue has more scopes than a token may hold
+ * ([dev.ostrom.server.identity.domain.MAX_SCOPES]), so the agents' own (`gates:ask`, `waits:ask`, `mcp:use`,
+ * `inference:use`), `import:write` and the package and automation writes are left out.
  */
 val TEST_ACCOUNT_SCOPES: Set<String> = setOf(
     "profile:read", "orgs:read", "orgs:write", "accounts:read", "accounts:write", "artifacts:read",
-    "artifacts:write", "billing:read", "budgets:read", "budgets:write", "cloud:read", "cloud:write",
-    "inference:read", "inference:admin", "mcp:read", "mcp:admin", "secrets:read", "secrets:write",
-    "sessions:write", "usage:read", "usage:write", "waits:read", "waits:write", "workflows:read",
-    "workflows:write",
+    "artifacts:write", "automations:read", "billing:read", "budgets:read", "budgets:write", "cloud:read",
+    "cloud:write", "gates:read", "inference:read", "inference:admin", "mcp:read", "mcp:admin", "packages:read",
+    "receipts:read", "secrets:read", "secrets:write", "sessions:read", "sessions:write", "usage:read",
+    "usage:write", "waits:read", "waits:write", "workflows:read", "workflows:write",
 )

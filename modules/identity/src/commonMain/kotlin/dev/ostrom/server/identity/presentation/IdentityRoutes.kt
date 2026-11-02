@@ -3,6 +3,7 @@ package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.DEVICE_POLL_INTERVAL
 import dev.ostrom.server.identity.domain.DevicePollResult
+import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import dev.ostrom.server.identity.domain.SessionRequiredException
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.TokenNotFoundException
@@ -39,6 +40,7 @@ fun Route.identityRoutes(dependencies: IdentityRoutesDependencies) {
     authenticated {
         accountRoutes(dependencies)
         tokenRoutes(dependencies)
+        webSessionRoutes(dependencies)
         deviceAnswerRoutes(dependencies)
     }
 }
@@ -120,6 +122,10 @@ private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with
 
 /** Personal and CLI tokens, managed from a browser session only. */
 private fun Route.tokenRoutes(dependencies: IdentityRoutesDependencies) = with(dependencies) {
+    get<TokensApi.Scopes> {
+        call.requireBrowserSession()
+        call.respond(TokenScopesResponse(PERSONAL_TOKEN_SCOPES.map { it.toTokenScopeResponse() }))
+    }
     get<TokensApi> {
         val principal = call.requireBrowserSession()
         call.respond(TokensResponse(listTokens(principal.userId()).map { it.toTokenResponse() }))

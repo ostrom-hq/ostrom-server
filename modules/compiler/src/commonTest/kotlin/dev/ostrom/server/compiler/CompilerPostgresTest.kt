@@ -36,7 +36,6 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -129,13 +128,6 @@ class CompilerPostgresTest {
         sources?.let { fixed -> single<CompilerSources> { fixed } }
     }
 
-    private fun roleOf(id: String): OrgRole = when (id) {
-        "member" -> OrgRole.MEMBER
-        "approver" -> OrgRole.APPROVER
-        "admin" -> OrgRole.ADMIN
-        else -> OrgRole.OWNER
-    }
-
     private fun compilerTest(
         config: Map<String, String>? = mapOf("OSTROM_PUBLIC_URL" to "https://ostrom.example/"),
         sources: CompilerSources? = null,
@@ -185,6 +177,24 @@ class CompilerPostgresTest {
             name = "Release acme-api",
         )
         return PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+    }
+
+    @Test
+    fun anEndingEdgeAndAnOrganizationsPackageAnswerTheContractsRequiredNulls() = compilerTest { server ->
+        // The contract's `to` is required and nullable: a client writes it, null for an edge that ends the workflow.
+        val ending = JsonObject(mapOf("from" to JsonPrimitive("g"), "to" to JsonNull))
+        val edges = JsonArray(release().getValue("edges").jsonArray + ending)
+        val doc = JsonObject(release() + ("edges" to edges))
+        val created = server.call("user:a:lead", "/api/v1/workflows", "POST", doc).body<JsonObject>()
+        assertEquals(JsonNull, created.getValue("edges").jsonArray.last().jsonObject["to"])
+        val listed = server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>().items.single()
+        assertEquals(JsonNull, listed.getValue("edges").jsonArray.last().jsonObject["to"])
+        assertEquals("t", listed.getValue("edges").jsonArray.first().jsonObject.getValue("from").jsonPrimitive.content)
+
+        val envelope = server.call("agent:a:l1", "/api/v1/packages/current").body<JsonObject>()
+        assertEquals(JsonNull, envelope["repo"])
+        val page = server.call("user:a:lead", "/api/v1/packages").body<JsonObject>()
+        assertEquals(JsonNull, page.getValue("items").jsonArray.single().jsonObject["repo"])
     }
 
     @Test

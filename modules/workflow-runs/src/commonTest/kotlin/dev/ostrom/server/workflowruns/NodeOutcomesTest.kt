@@ -8,11 +8,13 @@ import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.core.api.models.ReceiptNode
 import dev.ostrom.server.compiler.domain.services.PackageTexts
+import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.sessions.domain.models.SeenItem
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.workflowruns.domain.models.PackageNode
 import dev.ostrom.server.workflowruns.domain.usecases.NodeOutcomes
+import dev.ostrom.server.workflowruns.domain.usecases.NodeProofs
 import dev.ostrom.server.workflowruns.fakes.PACKAGE
 import dev.ostrom.server.workflowruns.fakes.gate
 import dev.ostrom.server.workflowruns.fakes.node
@@ -59,6 +61,12 @@ class NodeOutcomesTest {
         session: Session = session(receiptId = "rcpt_session_s-1"),
     ) = NodeOutcomes(PACKAGE.copy(nodes = nodes), session, runs, notes, gates).nodes()
 
+    /** The node of [node] once [runs] are reported, those of [attestations] by the runner. */
+    private fun attested(node: PackageNode, runs: List<CheckRun>, attestations: Map<String, CheckAttestation>) =
+        NodeOutcomes(
+            PACKAGE.copy(nodes = listOf(node)), session(), runs, emptyList(), emptyList(), NodeProofs(attestations),
+        ).nodes().single()
+
     private fun one(node: PackageNode, runs: List<CheckRun> = emptyList(), notes: List<Notification> = emptyList()) =
         outcomes(listOf(node), runs, notes).single()
 
@@ -94,6 +102,43 @@ class NodeOutcomesTest {
         assertEquals(declared, one(check).attestation)
         assertEquals(null, one(node("n-gate", "gate")).attestation)
         assertEquals(null, one(node("n-notify", "notify")).attestation)
+    }
+
+    @Test
+    fun aCheckTheCiRanOnThatCommitTakesTheCisOutcomeAndAttestation() {
+        val url = "https://github.com/r/77"
+        val proof = CiCheck(77, "unit", "abcdef0123456789", "success", "github-actions", url, null)
+        fun proven(node: PackageNode, runs: List<CheckRun>, check: CiCheck = proof): ReceiptNode {
+            val pack = PACKAGE.copy(nodes = listOf(node))
+            val ci = mapOf(node.id to check)
+            return NodeOutcomes(pack, session(), runs, emptyList(), emptyList(), NodeProofs(ci = ci)).nodes().single()
+        }
+        val check = node("n-check", "check")
+        val passed = proven(check, listOf(run("chk_1", 0)))
+        assertEquals(CheckAttestation.CI, passed.attestation)
+        assertEquals("passed in CI" to url, passed.outcome to passed.ref)
+        val detail = "CI unit by github-actions on abcdef01; 1 run, sandbox bwrap, last exit 0 on abcdef01"
+        assertEquals(detail, passed.detail)
+        val failed = proven(check, listOf(run("chk_1", 0)), proof.copy(conclusion = "failure", url = null))
+        assertEquals("failed in CI (failure)" to "chk_1", failed.outcome to failed.ref)
+        // Shadow, or never reported: nothing ran on the workstation's side to compare, the node stays declared.
+        val shadow = proven(node("n-check", "check", mode = PackageMode.SHADOW), listOf(run("chk_1", 0)))
+        assertEquals(CheckAttestation.WORKSTATION_DECLARED, shadow.attestation)
+        assertEquals(CheckAttestation.WORKSTATION_DECLARED, proven(check, emptyList()).attestation)
+    }
+
+    @Test
+    fun aCheckNodeIsTheRunnersWhenItsLastRunIs() {
+        val check = node("n-check", "check")
+        val runner = mapOf("chk_2" to CheckAttestation.ISOLATED_RUNNER)
+        val byRunner = attested(check, listOf(run("chk_1", 1), run("chk_2", 0)), runner)
+        assertEquals(CheckAttestation.ISOLATED_RUNNER, byRunner.attestation)
+        assertEquals("chk_2", byRunner.ref)
+        val afterIt = attested(check, listOf(run("chk_2", 0), run("chk_3", 0)), runner)
+        assertEquals(CheckAttestation.WORKSTATION_DECLARED, afterIt.attestation, "The last run is the workstation's")
+        val shadow = node("n-check", "check", mode = PackageMode.SHADOW)
+        val notRun = attested(shadow, listOf(run("chk_2", 0)), runner)
+        assertEquals(CheckAttestation.WORKSTATION_DECLARED, notRun.attestation, "A shadow check runs nothing")
     }
 
     @Test

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns
 
+import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
 import dev.ostrom.core.api.models.NotificationStatus
@@ -30,6 +31,14 @@ import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.runners.RunnersModule
+import dev.ostrom.server.runners.domain.AgentKind
+import dev.ostrom.server.runners.domain.CloudSession
+import dev.ostrom.server.runners.domain.CloudSessionsRepository
+import dev.ostrom.server.runners.domain.DesiredState
+import dev.ostrom.server.runners.domain.RunnerTokens
+import dev.ostrom.server.runners.domain.SessionLimits
+import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
@@ -52,11 +61,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -65,6 +69,11 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * `ostrom claude` after the launch, on the real modules and PostgreSQL: the hooks report a check and a notification
@@ -74,19 +83,20 @@ import kotlin.uuid.Uuid
 class WorkflowRunsPostgresTest {
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
-        LaunchesModule, WorkflowRunsModule,
+        RunnersModule, LaunchesModule, WorkflowRunsModule,
     )
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** A person of a new organization with its package: the CLI's token, and a personal one reading receipts. */
-    private class Person(val org: Org, val cliToken: String, val personalToken: String)
+    private class Person(val org: Org, val memberId: Uuid, val cliToken: String, val personalToken: String)
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
             VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
         )
         val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
-        koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        val member = Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)
+        koin.get<OrgsRepository>().create(org, member) { false }
         suspend fun token(kind: TokenKind, scopes: Set<String>): String {
             val secret = kind.prefix + "_" + Uuid.random().toHexString()
             val token = ApiToken(
@@ -99,7 +109,7 @@ class WorkflowRunsPostgresTest {
             "ostrom.package/1", "v1", "acme/api", DIGEST, "sha256:content", "Ed25519", "k", "sig", BODY, true, false,
         )
         koin.get<CompilerRepository>().savePackage(org.id, StoredPackage(envelope, now.toString(), emptyMap()))
-        return Person(org, token(TokenKind.CLI, CLI_SCOPES), token(TokenKind.PERSONAL, READER_SCOPES))
+        return Person(org, member.id, token(TokenKind.CLI, CLI_SCOPES), token(TokenKind.PERSONAL, READER_SCOPES))
     }
 
     private suspend fun TestServer.call(token: String?, path: String, body: String? = null): HttpResponse =
@@ -120,6 +130,108 @@ class WorkflowRunsPostgresTest {
         assertEquals(HttpStatusCode.OK, started.status, started.bodyAsText())
         return launch.agentToken
     }
+
+    /** A cloud session of [person]'s, its execution 2 running, and the runner token of that execution. */
+    private suspend fun TestServer.cloudSession(person: Person): Pair<CloudSession, String> {
+        val tokens = koin.get<RunnerTokens>()
+        val token = tokens.mint()
+        val session = CloudSession(
+            id = Uuid.random(), orgId = person.org.id, ownerId = person.memberId.toString(), name = "task",
+            agent = AgentKind.CLAUDE, repository = null, state = SessionState.CREATING,
+            desiredState = DesiredState.RUNNING, phase = null, epoch = 2, generation = 0, failure = null,
+            limits = SessionLimits(IDLE_MINUTES, RUN_MINUTES, false), createdAt = now, updatedAt = now,
+            executionStartedAt = now, runnerTokenHash = tokens.hash(token),
+        )
+        assertTrue(koin.get<CloudSessionsRepository>().createWithinCap(session, RUNNING_CAP))
+        return session to token
+    }
+
+    /** The runner of [cloud] opens its launch, whose agent token opens the session `s-1`; the agent token. */
+    private suspend fun TestServer.runnerSession(cloud: CloudSession, token: String): String {
+        val opened = runner(token, "/api/v1/cloud/runner/launch", """{"sessionId":"${cloud.id}","epoch":2}""")
+        assertEquals(HttpStatusCode.Created, opened.status, opened.bodyAsText())
+        val agent = opened.body<LaunchResponse>().agentToken
+        assertEquals(HttpStatusCode.OK, call(agent, "/api/v1/sessions", SESSION).status)
+        return agent
+    }
+
+    private suspend fun TestServer.runner(
+        token: String?,
+        path: String,
+        body: String,
+        scheme: String = "Bearer ",
+    ): HttpResponse =
+        client.post(path) {
+            token?.let { header(HttpHeaders.Authorization, scheme + it) }
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+
+    private fun ranByRunner(cloud: CloudSession, epoch: Long = 2, check: String = CHECK) =
+        """{"sessionId":"${cloud.id}","epoch":$epoch,"check":$check}"""
+
+    @Test
+    fun theCloudSessionsRunnerReportsItsChecksAndTheReceiptSaysOstromRanThem() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (cloud, token) = server.cloudSession(ada)
+            val agent = server.runnerSession(cloud, token)
+
+            val reported = server.runner(token, "/api/v1/cloud/runner/checks", ranByRunner(cloud))
+            assertEquals(HttpStatusCode.Created, reported.status, reported.bodyAsText())
+            val run = reported.body<CheckRun>()
+            assertEquals("s-1" to "ada", run.sessionId to run.dev)
+            val repository = server.koin.get<WorkflowRunsRepository>()
+            assertEquals(
+                mapOf(run.id to CheckAttestation.ISOLATED_RUNNER),
+                repository.attestations(ada.org.id, "s-1"),
+                "Recorded as run by Ostrom, which the receipt reads",
+            )
+
+            assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/sessions/s-1/end", "{}").status)
+            val signed = server.call(agent, "/api/v1/sessions/s-1/workflow-receipt", RECEIPT)
+            assertEquals(HttpStatusCode.OK, signed.status, signed.bodyAsText())
+            val receipt = signed.body<WorkflowReceiptResponse>()
+            assertTrue(receipt.verification.ok, receipt.verification.reason)
+            val check = receipt.receipt.getValue("nodes").jsonArray.first().jsonObject
+            assertEquals("isolated_runner", check.getValue("attestation").jsonPrimitive.content)
+            assertEquals(run.id, check.getValue("ref").jsonPrimitive.content)
+        }
+
+    @Test
+    fun theRunnerChannelTakesOnlyTheRunnerTokenOfTheSessionsOwnCloudSession() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val bob = server.person("bob")
+            val (cloud, token) = server.cloudSession(ada)
+            server.runnerSession(cloud, token)
+            val path = "/api/v1/cloud/runner/checks"
+            assertEquals(HttpStatusCode.Unauthorized, server.runner(null, path, ranByRunner(cloud)).status)
+            val bare = server.runner(token, path, ranByRunner(cloud), scheme = "")
+            assertEquals(HttpStatusCode.Unauthorized, bare.status, "Not Bearer")
+            assertEquals(HttpStatusCode.Unauthorized, server.runner("", path, ranByRunner(cloud)).status)
+            val member = server.runner(ada.cliToken, path, ranByRunner(cloud))
+            assertEquals(HttpStatusCode.Unauthorized, member.status, "A member's token is not a runner token")
+            // S2-46: an unknown token never makes the server read the body.
+            assertEquals(HttpStatusCode.Unauthorized, server.runner("ostrom_runner_x", path, "{not json").status)
+            assertEquals(HttpStatusCode.BadRequest, server.runner(token, path, "{not json").status)
+            val malformed = ranByRunner(cloud).replace(cloud.id.toString(), "nope")
+            assertEquals(HttpStatusCode.BadRequest, server.runner(token, path, malformed).status)
+            assertEquals(HttpStatusCode.Conflict, server.runner(token, path, ranByRunner(cloud, epoch = 1)).status)
+
+            // A session of a launch of the CLI is not the runner's, even in its own organization.
+            val cli = server.call(ada.cliToken, "/api/v1/launches", LAUNCH).body<LaunchResponse>()
+            val other = SESSION.replace("\"s-1\"", "\"s-2\"")
+            assertEquals(HttpStatusCode.OK, server.call(cli.agentToken, "/api/v1/sessions", other).status)
+            val cliCheck = CHECK.replace("\"s-1\"", "\"s-2\"")
+            val notMine = server.runner(token, path, ranByRunner(cloud, check = cliCheck))
+            assertEquals(HttpStatusCode.NotFound, notMine.status)
+
+            // Bob's runner reports in Bob's organization only: Ada's session is absent there.
+            val (bobs, bobsToken) = server.cloudSession(bob)
+            assertEquals(HttpStatusCode.NotFound, server.runner(bobsToken, path, ranByRunner(bobs)).status)
+            assertEquals(emptyMap(), server.koin.get<WorkflowRunsRepository>().attestations(ada.org.id, "s-1"))
+        }
 
     @Test
     fun theHooksReportTheLauncherSignsAndPullsTheBundleAndThePersonReadsThem() =
@@ -271,6 +383,19 @@ class WorkflowRunsPostgresTest {
         }
 
     @Test
+    fun aCheckThatDidNotRunAnswersItsExitAsNull() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val agent = server.session(ada)
+            val notRun = CHECK.replace("\"exit\":0,\"outcome\":\"passed\"", "\"outcome\":\"failed\"")
+            val reported = server.call(agent, "/api/v1/checks", notRun)
+            assertEquals(HttpStatusCode.Created, reported.status, reported.bodyAsText())
+            assertEquals(JsonNull, reported.body<JsonObject>()["exit"], "Required and nullable in the contract")
+            val page = server.call(ada.cliToken, "/api/v1/checks?sessionId=s-1").body<JsonObject>()
+            assertEquals(JsonNull, page.getValue("items").jsonArray.single().jsonObject["exit"])
+        }
+
+    @Test
     fun aPageEndsWithACursorAndTwoPassesAtOnceKeepTheFirstNotification() =
         serverTest(modules) { server ->
             val ada = server.person("ada")
@@ -323,6 +448,7 @@ class WorkflowRunsPostgresTest {
                     "workflow_runs_notifications_",
                 ),
                 Triple("an action's first notification", RunQueries.FIRST_NOTIFICATION, "once"),
+                Triple("the attested runs of a session", RunQueries.ATTESTED, "session"),
             )
             plans.forEach { (name, sql, index) ->
                 val plan = server.driver.withOrganization(ada.org.id) { tx ->
@@ -359,6 +485,9 @@ class WorkflowRunsPostgresTest {
     private companion object {
         const val PAGE = 50
         const val ROWS = 30
+        const val IDLE_MINUTES = 30
+        const val RUN_MINUTES = 120
+        const val RUNNING_CAP = 5
         const val DIGEST = "sha256:runs"
         val READER_SCOPES = setOf("receipts:read", "sessions:read")
         const val LAUNCH = """{"repo":"acme/api","agent":"claude-code"}"""

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
-import dev.ostrom.server.gates.GatesModule
-import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
@@ -11,7 +9,6 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
-import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.launches.presentation.LaunchResponse
 import dev.ostrom.server.mcprelay.McpRelayModule
@@ -22,17 +19,14 @@ import dev.ostrom.server.mcprelay.domain.ToolPolicy
 import dev.ostrom.server.mcprelay.presentation.McpServerDto
 import dev.ostrom.server.mcprelay.presentation.McpServersPage
 import dev.ostrom.server.mcprelay.presentation.toPayload
-import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
-import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import dev.ostrom.server.usage.UsageModule
@@ -75,10 +69,7 @@ import kotlin.uuid.Uuid
  * none of the servers.
  */
 class LaunchRelayCallersPostgresTest {
-    private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, LaunchesModule,
-        SecretsModule, McpRelayModule, UsageModule,
-    )
+    private val modules = launchModules(SecretsModule, McpRelayModule, UsageModule)
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** The upstream MCP server behind the relay: it answers `initialize` and lists two tools. */

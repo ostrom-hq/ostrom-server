@@ -16,6 +16,7 @@ import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
+import dev.ostrom.server.kernel.module.TestAccountSeeder
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
@@ -40,6 +41,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -47,7 +49,8 @@ import kotlin.uuid.Uuid
 
 /**
  * `ostrom login` then `ostrom receipts` and `verify`, on the real identity, orgs and receipts modules and PostgreSQL:
- * the token the device flow gives the CLI reads its organization's receipts, and another organization's are absent.
+ * the token the device flow gives the CLI reads and lists its organization's receipts, and another organization's are
+ * absent. The QA console token of `seed-test-account` lists them too (CLI journey, step 5.7).
  */
 class DeviceTokenReceiptsPostgresTest {
     private val modules = listOf(InstanceModule, IdentityModule, OrgsModule, ReceiptsModule)
@@ -103,14 +106,32 @@ class DeviceTokenReceiptsPostgresTest {
             assertEquals(adas, read.body<JsonObject>().getValue("id").jsonPrimitive.content)
             val verified = server.client.get("/api/v1/receipts/$adas/verify") { bearerAuth(adaToken) }
             assertEquals(HttpStatusCode.OK, verified.status, verified.bodyAsText())
-            val listed = server.client.get("/api/v1/receipts") { bearerAuth(adaToken) }.body<JsonObject>()
-            val ids = listed.getValue("items").jsonArray.map { it.jsonObject.getValue("id").jsonPrimitive.content }
+            val list = server.client.get("/api/v1/receipts") { bearerAuth(adaToken) }
+            assertEquals(HttpStatusCode.OK, list.status, "ostrom receipts list: ${list.bodyAsText()}")
+            val items = list.body<JsonObject>().getValue("items").jsonArray
+            val ids = items.map { it.jsonObject.getValue("id").jsonPrimitive.content }
             assertEquals(listOf(adas), ids, "Only Ada's organization's")
 
             val across = server.client.get("/api/v1/receipts/$bobs") { bearerAuth(adaToken) }
             assertEquals(HttpStatusCode.NotFound, across.status, "Bob's receipt is absent for Ada's device")
             val acrossVerify = server.client.get("/api/v1/receipts/$bobs/verify") { bearerAuth(adaToken) }
             assertEquals(HttpStatusCode.NotFound, acrossVerify.status)
+        }
+
+    @Test
+    fun theQaConsoleTokenListsItsOrganizationsReceipts() =
+        serverTest(modules) { server ->
+            val account = server.koin.get<TestAccountSeeder>().seed("qa.receipts@example.com")
+            val org = Uuid.parse(assertNotNull(account.organizationId))
+            val signed = server.sign(org, "gate-qa")
+            server.member("bob").let { (bobOrg, _) -> server.sign(bobOrg, "gate-bob") }
+
+            val list = server.client.get("/api/v1/receipts") { bearerAuth(account.token) }
+            assertEquals(HttpStatusCode.OK, list.status, "With a console token: ${list.bodyAsText()}")
+            val ids = list.body<JsonObject>().getValue("items").jsonArray.map {
+                it.jsonObject.getValue("id").jsonPrimitive.content
+            }
+            assertEquals(listOf(signed), ids, "Only the QA organization's")
         }
 
     private companion object {

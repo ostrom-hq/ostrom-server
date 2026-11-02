@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.domain.usecases
 
+import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.ReceiptDecision
 import dev.ostrom.core.api.models.ReceiptNode
 import dev.ostrom.core.receipts.Digests
+import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.receipts.domain.models.Verification
 import dev.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.isoMillis
+import dev.ostrom.server.sessions.domain.models.Session
+import dev.ostrom.server.workflowruns.domain.models.RunPackage
 import dev.ostrom.server.workflowruns.domain.repositories.RunQuery
 import dev.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import dev.ostrom.server.workflowruns.domain.services.RunSessions
@@ -65,6 +70,7 @@ interface SignWorkflowReceiptUseCase {
  * @param repository The runs and notifications.
  * @param sign Signs receipts.
  * @param verify Verifies them.
+ * @param ci The forge's record of a CI run, the proof of a `ci` check.
  */
 class SignWorkflowReceiptUseCaseImpl(
     private val access: RunAccess,
@@ -72,6 +78,7 @@ class SignWorkflowReceiptUseCaseImpl(
     private val repository: WorkflowRunsRepository,
     private val sign: SignReceiptUseCase,
     private val verify: VerifyReceiptUseCase,
+    private val ci: CiChecks,
 ) : SignWorkflowReceiptUseCase {
     override suspend fun invoke(actor: GateActor, request: WorkflowReceiptRequest): VerifiedReceipt {
         RunTexts.bounded("agent", request.agent)
@@ -82,13 +89,10 @@ class SignWorkflowReceiptUseCaseImpl(
         val orgId = actor.orgId
         val all = RunQuery(sessionId = session.id, limit = MAX_ITEMS)
         val gates = sessions.gates(orgId, session.id)
-        val nodes = NodeOutcomes(
-            pack,
-            session,
-            repository.checks(orgId, all).reversed(),
-            repository.notifications(orgId, all).reversed(),
-            gates,
-        ).nodes()
+        val runs = repository.checks(orgId, all).reversed()
+        val notifications = repository.notifications(orgId, all).reversed()
+        val proofs = NodeProofs(repository.attestations(orgId, session.id), ciChecks(session, pack, runs))
+        val nodes = NodeOutcomes(pack, session, runs, notifications, gates, proofs).nodes()
         val decisions = gates.flatMap { it.decisions }.map {
             ReceiptDecision(
                 approvalId = it.approvalId.toString(),
@@ -133,7 +137,21 @@ class SignWorkflowReceiptUseCaseImpl(
         return VerifiedReceipt(receipt, verify.verify(receipt))
     }
 
+    // The CI's run of each check node that ran, on the commit its last run reported, in the repository the session
+    // really runs in (decision of 30/10 15:14). A check node's label is the name of its CI check. The forge's port
+    // refuses a malformed repository or commit and answers nothing when GitHub fails: the node stays declared.
+    private suspend fun ciChecks(session: Session, pack: RunPackage, runs: List<CheckRun>): Map<String, CiCheck> {
+        val repo = session.realRepo ?: session.repo ?: return emptyMap()
+        return pack.nodes.filter { it.kind == CHECK }.mapNotNull { node ->
+            runs.lastOrNull { it.nodeId == node.id }?.head
+                ?.let { head -> ci.latest(session.orgId, repo, head, node.label) }
+                ?.let { node.id to it }
+        }.toMap()
+    }
+
     private companion object {
+        const val CHECK = "check"
+
         /** The most runs and notifications a receipt reads: far above what one session reports. */
         const val MAX_ITEMS = 1_000
     }

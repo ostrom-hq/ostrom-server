@@ -13,6 +13,8 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.launches.fakes.ADA
 import dev.ostrom.server.launches.fakes.ORG
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
+import dev.ostrom.server.orgs.domain.Member
+import dev.ostrom.server.orgs.domain.MembersRepository
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -35,7 +37,9 @@ class IdentityLauncherResolverTest {
             return if (member) OrgPrincipal(ORG, Uuid.random(), OrgRole.MEMBER) else null
         }
     }
-    private val resolver = IdentityLauncherResolver(orgs, OnlyAda())
+    private val adaMember = Uuid.parse("0000a0ad-0000-0000-0000-000000000000")
+    private val ghostMember = Uuid.parse("0000a0ff-0000-0000-0000-000000000000")
+    private val resolver = IdentityLauncherResolver(orgs, OnlyAda(), AdaAndTheGhost())
 
     private fun person(subject: String, kind: PrincipalKind = PrincipalKind.USER) =
         AuthenticatedPrincipal(subject, kind, setOf("sessions:write"))
@@ -63,6 +67,40 @@ class IdentityLauncherResolverTest {
         assertEquals(emptyList<Uuid?>(), asked, "Never asked for a credential that is not a person's")
         assertNull(resolver.resolve(person(outsider.toString())), "A member of no organization")
         assertNull(resolver.resolve(person(ghost.toString())), "A member whose user is gone")
+    }
+
+    @Test
+    fun aCloudSessionsOwnerIsResolvedFromTheirMemberId() = runTest {
+        assertEquals(ADA, resolver.owner(ORG, adaMember))
+        assertNull(resolver.owner(ORG, Uuid.random()), "No longer a member")
+        assertNull(resolver.owner(ORG, ghostMember), "A member whose user is gone")
+        assertEquals(emptyList<Uuid?>(), asked, "Read from the members, not from a credential")
+    }
+
+    /** Ada's member and the ghost's, in [ORG]; the launches module reads nothing else from the members. */
+    private inner class AdaAndTheGhost : MembersRepository {
+        private val at = Instant.parse("2026-10-30T10:00:00Z")
+        private val members = listOf(
+            Member(adaMember, ORG, ADA.userId, ADA.role, at),
+            Member(ghostMember, ORG, ghost, OrgRole.MEMBER, at),
+        )
+
+        override suspend fun findById(orgId: Uuid, memberId: Uuid): Member? =
+            members.firstOrNull { it.orgId == orgId && it.id == memberId }
+
+        override suspend fun findByUser(orgId: Uuid, userId: Uuid): Member? = unused()
+
+        override suspend fun list(orgId: Uuid): List<Member> = unused()
+
+        override suspend fun count(orgId: Uuid): Int = unused()
+
+        override suspend fun changeRole(orgId: Uuid, memberId: Uuid, role: OrgRole) = unused()
+
+        override suspend fun remove(orgId: Uuid, memberId: Uuid) = unused()
+
+        override suspend fun transferOwnership(orgId: Uuid, oldOwnerId: Uuid, newOwnerId: Uuid) = unused()
+
+        private fun unused(): Nothing = error("The launches module only reads a member by id.")
     }
 
     /** A users repository that knows Ada only; the launches module reads nothing else from it. */
