@@ -51,6 +51,18 @@ interface CloudSessionsRepository {
     suspend fun list(orgId: Uuid, ownerId: String, before: Uuid?, limit: Int): List<CloudSession>
 
     /**
+     * Lists the sessions of a member that hold an execution (creating, running, pausing, resuming): the runners at
+     * work for them, newest first.
+     *
+     * @param orgId The organization.
+     * @param ownerId The owner.
+     * @param limit The most to return.
+     *
+     * @return The sessions.
+     */
+    suspend fun executions(orgId: Uuid, ownerId: String, limit: Int): List<CloudSession>
+
+    /**
      * Sets the desired state and asks for a reconciliation now. A final session is left as it is.
      *
      * @param orgId The organization.
