@@ -215,7 +215,29 @@ class GateJourneyPostgresTest {
         assertNull(refused.json()["receipt"], "a refused yes has no receipt: ${refused.bodyAsText()}")
     }
 
+    // The bench's race (`load/race.js`): one approver says yes 100 times at once. One yes wins; the others are 409s
+    // that must stay cheap. Reads first, the race, then 100 late yes: each burst prints what it costs (`PEAKS`).
+    @Test
+    fun aHundredSimultaneousYesGiveOneWinnerAndCheapRefusals() = serverTest(serverModules()) { server ->
+        val devA = server.signIn("dev-a")
+        val (revB, revBSession) = server.signIn("rev-b")
+        val secret = server.setUp(devA, listOf(revB))
+        server.ask(secret, "push-main")
+        val approval = server.waiting(revBSession)
+        val id = approval.getValue("id").jsonPrimitive.content
+
+        val reads = peaks("reads") {
+            List(RACE) { async { server.client.get("/api/v1/approvals/$id/view") { session(revBSession) } } }.awaitAll()
+        }
+        assertEquals(List(RACE) { 200 }, reads.map { it.status.value })
+        val race = peaks("race") { List(RACE) { async { server.answer(revBSession, approval, "approve") } }.awaitAll() }
+        assertEquals(listOf(200) + List(RACE - 1) { 409 }, race.map { it.status.value }.sorted())
+        val late = peaks("late") { List(RACE) { async { server.answer(revBSession, approval, "approve") } }.awaitAll() }
+        assertEquals(List(RACE) { 409 }, late.map { it.status.value })
+    }
+
     private companion object {
+        const val RACE = 100
         const val CONSOLE_ORIGIN = "http://localhost:5173"
         const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
     }
