@@ -49,7 +49,8 @@ class TokenScopesTest {
 
     @Test
     fun aScopeOutsideTheCatalogueIsRefusedEvenWellFormed() {
-        val outside = listOf("deploy:write", "gates:answer", "agent:session", "user:*", "billing:manage", "notifications:write")
+        val outside =
+            listOf("deploy:write", "gates:answer", "agent:session", "user:*", "billing:manage", "notifications:write")
         outside.forEach {
             assertFailsWith<InvalidScopesException>(it) { validateScopes(listOf("profile:read", it)) }
         }
