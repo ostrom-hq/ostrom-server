@@ -191,11 +191,6 @@ class SchemaTenancyPostgresTest {
         )
 
         val UNBOUND = setOf(
-            "sessions_sessions.sessions_sessions_sweep (SELECT)",
-            "usage_events.usage_events_retention_read (SELECT)",
-            "usage_events.usage_events_retention (DELETE)",
-            "mcp_relay_calls.mcp_relay_calls_retention_read (SELECT)",
-            "mcp_relay_calls.mcp_relay_calls_retention (DELETE)",
             "github_installations.github_installations_read (SELECT)",
             "github_installations.github_installations_delete (DELETE)",
             "github_install_states.github_install_states_read (SELECT)",
