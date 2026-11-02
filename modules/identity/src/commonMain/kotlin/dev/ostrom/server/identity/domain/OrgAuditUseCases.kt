@@ -45,7 +45,7 @@ interface ListOrgAuditUseCase {
      * Reads a page.
      *
      * @param orgId The organization.
-     * @param actorLogin Only this person's events, by login; an unknown login has none.
+     * @param actorLogin Only this person's events, by login; an unknown login has none, read in the same time.
      * @param action Only the events of this name.
      * @param before The `next` of the previous page, or null for the newest.
      *
@@ -69,9 +69,10 @@ class ListOrgAuditUseCaseImpl(
     override suspend fun invoke(orgId: Uuid, actorLogin: String?, action: String?, before: String?): OrgAuditPage {
         val beforeSequence = before?.let { it.toLongOrNull()?.takeIf { sequence -> sequence > 0 } }
         if (before != null && beforeSequence == null) throw InvalidAuditCursorException()
-        val actorId = actorLogin?.let { login ->
-            (users.findByLogin(login) ?: return OrgAuditPage(emptyList(), null)).id
-        }
+        // AUDIT-SECU-LECTURES B1: the log is read whether the login exists or not, so the time of the answer does not
+        // tell a login of the instance (another organization's included) from one that does not exist. An unknown login
+        // is an actor no event names.
+        val actorId = actorLogin?.let { login -> users.findByLogin(login)?.id ?: NO_ACTOR }
         // One line more than a page: when it comes, there is a next page; never a cursor to an empty one.
         val read = events.listOrg(orgId, OrgAuditQuery(actorId, action, beforeSequence, ORG_AUDIT_PAGE + 1))
         val page = read.take(ORG_AUDIT_PAGE)
@@ -80,6 +81,9 @@ class ListOrgAuditUseCaseImpl(
         return OrgAuditPage(page.map { OrgAuditLine(it, it.entry.actorId?.let(logins::get)) }, next)
     }
 }
+
+/** The actor of an unknown login: the nil id, which no event names. */
+private val NO_ACTOR = Uuid.NIL
 
 /** `before` is not the `next` of a page of the audit log: 400. */
 class InvalidAuditCursorException :
