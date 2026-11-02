@@ -77,6 +77,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
@@ -231,6 +232,9 @@ class GitHubDirectoryPostgresTest {
         directoryApi.failure = gitHubDown()
         assertEquals(HttpStatusCode.ServiceUnavailable, server.get("user:a:owner", "/api/v1/repos").status)
         directoryApi.failure = null
+        // GitHub rests 30 s after a failed first read (AUDIT-SECU-2 B4): a console that keeps reloading waits.
+        assertEquals(HttpStatusCode.ServiceUnavailable, server.get("user:a:owner", "/api/v1/repos").status)
+        clock.now += 31.seconds
         assertEquals(2, server.get("user:a:owner", "/api/v1/repos").body<ReposResponse>().items.size)
     }
 

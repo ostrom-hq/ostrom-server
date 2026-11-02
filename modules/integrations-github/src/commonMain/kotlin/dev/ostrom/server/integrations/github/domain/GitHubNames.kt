@@ -12,5 +12,6 @@ package dev.ostrom.server.integrations.github.domain
  */
 fun isRepositoryName(repo: String): Boolean = REPOSITORY.matches(repo)
 
-// A name may start with a dot (`.github`) but is never only dots.
-private val REPOSITORY = Regex("^[A-Za-z0-9][A-Za-z0-9-]{0,38}/\\.?[A-Za-z0-9_-][A-Za-z0-9._-]{0,98}$")
+// A name is 1 to 100 characters (the lookahead); it may start with a dot (`.github`) but is never only dots.
+private val REPOSITORY =
+    Regex("^[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?=[A-Za-z0-9._-]{1,100}$)\\.?[A-Za-z0-9_-][A-Za-z0-9._-]*$")
