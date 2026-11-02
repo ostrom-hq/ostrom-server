@@ -37,6 +37,8 @@ class ReceiptBundleTest {
         json("""{"id":"rcpt_task_1","subject":{"kind":"task","id":"t"},"package":{"digest":"sha256:x"}}""")
     private val bare = json("""{"id":"rcpt_bare"}""")
     private val orphan = json("""{"id":"rcpt_session_s-7","subject":{"kind":"session","id":"s-7"}}""")
+    private val unsigned = json("""{"id":"rcpt_workflow_s-3","subject":{"kind":"workflow","id":"s-3@v3"}}""")
+    private val nameless = json("""{"id":"rcpt_workflow_x","subject":{"kind":"workflow"}}""")
     private val receipts = InMemoryReceipts(
         "rcpt_workflow_s-1" to workflow,
         "rcpt_session_s-1" to sessionReceipt,
@@ -45,12 +47,14 @@ class ReceiptBundleTest {
         "rcpt_task_1" to loose,
         "rcpt_bare" to bare,
         "rcpt_session_s-7" to orphan,
+        "rcpt_workflow_s-3" to unsigned,
+        "rcpt_workflow_x" to nameless,
     )
     private val keys = object : ListReceiptKeysUseCase {
         override suspend fun invoke(): List<ReceiptKey> = listOf(ReceiptKey("k1", "Ed25519", "PEM"))
     }
     private val sessions = FakeSessions(
-        listOf(session(receiptId = "rcpt_session_s-1")),
+        listOf(session(receiptId = "rcpt_session_s-1"), session(id = "s-3")),
         gates = listOf(gate(true, false, receiptId = "rcpt_gate_1"), gate(false, false, receiptId = null)),
     )
     private val bundle = GetReceiptBundleUseCaseImpl(receipts, keys, sessions, FakePackages(), FixedClock())
@@ -74,6 +78,8 @@ class ReceiptBundleTest {
         assertNull(task.envelope, "A package the organization does not have")
         assertNull(bundle(ADA, "rcpt_bare").envelope)
         assertEquals(emptyList(), bundle(ADA, "rcpt_session_s-7").chain, "Its session is gone")
+        assertEquals(listOf(gateReceipt), bundle(ADA, "rcpt_workflow_s-3").chain, "Unsigned session: its gates only")
+        assertEquals(emptyList(), bundle(ADA, "rcpt_workflow_x").chain, "A workflow receipt about no session")
     }
 
     @Test

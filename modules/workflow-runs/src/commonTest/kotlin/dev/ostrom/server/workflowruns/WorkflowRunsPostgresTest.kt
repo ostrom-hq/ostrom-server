@@ -293,6 +293,8 @@ class WorkflowRunsPostgresTest {
             assertEquals("ntf_d", twice.id, "Outside a session, nothing is deduplicated")
             val page = repository.notifications(ada.org.id, RunQuery(status = NotificationStatus.SENT))
             assertEquals(setOf("ntf_a", "ntf_c", "ntf_d"), page.map { it.id }.toSet())
+            val older = repository.notifications(ada.org.id, RunQuery(before = "ntf_d"))
+            assertEquals(listOf("ntf_c", "ntf_a"), older.map { it.id }, "Older than the cursor, newest first")
         }
 
     @Test

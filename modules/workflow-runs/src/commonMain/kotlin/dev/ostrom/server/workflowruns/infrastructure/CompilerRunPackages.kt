@@ -20,7 +20,8 @@ import kotlin.uuid.Uuid
  */
 class CompilerRunPackages(private val compiler: CompilerRepository) : RunPackages {
     override suspend fun find(orgId: Uuid, digest: String): RunPackage? {
-        val envelope = compiler.findPackage(orgId, digest)?.envelope ?: return null
+        val stored = compiler.findPackage(orgId, digest) ?: return null
+        val envelope = stored.envelope
         val body = OstromJson.decodeFromString(BodyView.serializer(), envelope.payload)
         return RunPackage(
             envelope = envelope,

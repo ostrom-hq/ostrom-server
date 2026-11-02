@@ -69,7 +69,7 @@ class GetReceiptBundleUseCaseImpl(
 ) : GetReceiptBundleUseCase {
     override suspend fun invoke(actor: GateActor, id: String): ReceiptBundle {
         val orgId = actor.orgId
-        val receipt = receipts.get(orgId, id)?.body ?: throw ReceiptNotFoundException()
+        val receipt = (receipts.get(orgId, id) ?: throw ReceiptNotFoundException()).body
         val subject = receipt["subject"] as? JsonObject
         val session = sessionOf(orgId, subject?.text("kind"), subject?.text("id"))
         // An agent token reads the receipts of its own launch's sessions only, answered as absent otherwise.
@@ -84,9 +84,9 @@ class GetReceiptBundleUseCaseImpl(
             sessions.gates(orgId, session.id).mapNotNullTo(cited) { it.receiptId }
         }
         cited -= id
-        val chain = cited.mapNotNull { receipts.get(orgId, it)?.body }
+        val chain = cited.mapNotNull { receipts.get(orgId, it) }.map { it.body }
         val digest = (receipt["package"] as? JsonObject)?.text("digest")
-        val envelope = digest?.let { packages.find(orgId, it)?.envelope?.copy(pinned = false) }
+        val envelope = digest?.let { packages.find(orgId, it) }?.let { it.envelope.copy(pinned = false) }
         return ReceiptBundle(receipt, chain, envelope, keys(), clock.now().isoMillis())
     }
 

@@ -74,7 +74,7 @@ class SendNotificationUseCaseImpl(
         if (pack.envelope.revoked) throw RunPackageRevokedException()
         val notify = pack.notifications.firstOrNull { it.id == request.notifyId && it.nodeId == request.nodeId }
             ?: throw NotInPackageException("Notification ${request.notifyId.take(RunTexts.ID)}")
-        val dev = session?.dev ?: SessionAccess.person(actor)
+        val dev = if (session == null) SessionAccess.person(actor) else session.dev
         val repo = session?.repo ?: pack.envelope.repo
         // The command reaches a channel and every member's list: its secrets are masked first.
         val command = RunTexts.masked(request.command.orEmpty().replace(BRANCH_NOTE, "")).take(RunTexts.COMMAND)
@@ -82,7 +82,7 @@ class SendNotificationUseCaseImpl(
             "dev" to dev,
             "repo" to repo.orEmpty(),
             "command" to command,
-            "session" to (session?.id ?: "-").take(SHORT_SESSION),
+            "session" to if (session == null) "-" else session.id.take(SHORT_SESSION),
         )
         // One pass: a `{session}` inside the command is text, never a placeholder.
         val text = PLACEHOLDER.replace(notify.message) { values.getValue(it.groupValues[1]) }
@@ -115,12 +115,6 @@ class SendNotificationUseCaseImpl(
     }
 
     private companion object {
-        /** The note the launcher appends to a command, never part of the message. */
-        val BRANCH_NOTE = Regex("\\s+#\\s*current branch:.*$")
-
-        /** The placeholders of a package's message. */
-        val PLACEHOLDER = Regex("\\{(dev|repo|command|session)\\}")
-
         /** The session in a message: its first characters. */
         const val SHORT_SESSION = 8
     }
@@ -159,3 +153,9 @@ class ListNotificationsUseCaseImpl(
         return repository.notifications(actor.orgId, query)
     }
 }
+
+/** The note the launcher appends to a command, never part of the message. */
+private val BRANCH_NOTE = Regex("\\s+#\\s*current branch:.*$")
+
+/** The placeholders of a package's message. */
+private val PLACEHOLDER = Regex("\\{(dev|repo|command|session)\\}")

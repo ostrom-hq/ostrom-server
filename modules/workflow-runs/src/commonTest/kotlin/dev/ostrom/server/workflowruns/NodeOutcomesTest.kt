@@ -81,6 +81,7 @@ class NodeOutcomesTest {
         assertEquals("failed: action blocked (2 runs)", failed.outcome)
         assertEquals("2 runs, sandbox ?, last exit 2", failed.detail)
         assertEquals("1 run, sandbox bwrap, last exit 1", one(check, listOf(run("chk_1", 1, head = null))).detail)
+        assertEquals("failed: action blocked (1 run)", one(check, listOf(run("chk_1", null))).outcome, "Not run")
     }
 
     @Test

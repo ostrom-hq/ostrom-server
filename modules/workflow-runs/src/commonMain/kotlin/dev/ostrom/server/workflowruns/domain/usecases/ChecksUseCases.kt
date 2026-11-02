@@ -75,8 +75,8 @@ class ReportCheckUseCaseImpl(
             head = report.head,
             cached = report.cached,
             sandbox = report.sandbox,
-            outputTail = report.outputTail?.let(RunTexts::masked)?.takeLast(RunTexts.OUTPUT),
-            dev = session?.dev ?: SessionAccess.person(actor),
+            outputTail = report.outputTail?.let { RunTexts.masked(it).takeLast(RunTexts.OUTPUT) },
+            dev = if (session == null) SessionAccess.person(actor) else session.dev,
             repo = session?.repo ?: pack.envelope.repo,
         )
         repository.addCheck(actor.orgId, run)

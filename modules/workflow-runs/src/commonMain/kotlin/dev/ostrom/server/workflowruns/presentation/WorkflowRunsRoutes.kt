@@ -53,7 +53,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
             val actor = actorOf(call, SessionScopes.reading)
             val query = RunQuery(sessionId = params.sessionId, nodeId = params.nodeId, before = params.before)
             val items = listChecks(actor, query)
-            call.respond(ChecksPage(items, items.takeIf { it.size == query.limit }?.last()?.id))
+            call.respond(ChecksPage(items, nextOf(items.map { it.id }, query.limit)))
         }
         post<NotificationsApi> {
             val actor = actorOf(call, SessionScopes.writing)
@@ -65,7 +65,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
             val actor = actorOf(call, SessionScopes.reading)
             val query = RunQuery(sessionId = params.sessionId, status = statusOf(params.status), before = params.before)
             val items = listNotifications(actor, query)
-            call.respond(NotificationsPage(items, items.takeIf { it.size == query.limit }?.last()?.id))
+            call.respond(NotificationsPage(items, nextOf(items.map { it.id }, query.limit)))
         }
         post<WorkflowReceiptApi> { params ->
             val actor = actorOf(call, SessionScopes.writing)
@@ -101,8 +101,11 @@ private suspend fun WorkflowRunsRoutesDependencies.bundleReader(call: Applicatio
     return resolve(principal)
 }
 
+// The next page's cursor: the last id of a full page, none after a shorter one.
+private fun nextOf(ids: List<String>, limit: Int): String? = if (ids.size == limit) ids.last() else null
+
 private fun statusOf(value: String?): NotificationStatus? = value?.let { text ->
-    NotificationStatus.entries.firstOrNull { it.value == text && it != NotificationStatus.UNKNOWN }
+    NotificationStatus.entries.filter { it != NotificationStatus.UNKNOWN }.firstOrNull { it.value == text }
         ?: throw InvalidRunException("status: queued, sent, logged-only or not-sent.")
 }
 
@@ -111,7 +114,8 @@ private fun ReceiptBundle.toJson(): JsonObject = buildJsonObject {
     put("format", BUNDLE_FORMAT)
     put("receipt", receipt)
     put("chain", JsonArray(chain))
-    put("package", envelope?.let { OstromJson.encodeToJsonElement(PackageEnvelope.serializer(), it) } ?: JsonNull)
+    val pack = envelope
+    put("package", if (pack == null) JsonNull else OstromJson.encodeToJsonElement(PackageEnvelope.serializer(), pack))
     put(
         "keys",
         JsonArray(

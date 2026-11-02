@@ -111,6 +111,13 @@ class NotificationsTest {
             FixedClock(),
         )
         assertEquals("bob ran  in  (-)", noRepo(BOB, request(sessionId = null, command = null)).text)
+        val sessionWithoutRepo = SendNotificationUseCaseImpl(
+            access(FakeSessions(listOf(session(repo = null)))),
+            runs,
+            channels,
+            FixedClock(),
+        )
+        assertEquals("ada ran ls in acme/pkg (s-1)", sessionWithoutRepo(AGENT, request(command = "ls")).text)
     }
 
     @Test

@@ -137,6 +137,9 @@ class ChecksTest {
         val run = report(BOB, request(sessionId = null))
         assertEquals("bob" to "acme/pkg", run.dev to run.repo)
         assertNull(run.sessionId)
+        val noRepo = FakeSessions(listOf(session(repo = null)))
+        val inPackage = ReportCheckUseCaseImpl(access(noRepo), runs, FixedClock())(AGENT, request())
+        assertEquals("ada" to "acme/pkg", inPackage.dev to inPackage.repo, "A session without a repository")
     }
 
     @Test

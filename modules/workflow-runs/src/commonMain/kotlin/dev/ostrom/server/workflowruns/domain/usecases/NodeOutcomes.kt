@@ -122,10 +122,12 @@ class NodeOutcomes(
 
     private companion object {
         const val NOT_TRIGGERED = "not triggered"
-        val ACTING = setOf("check", "gate", "notify")
         const val SHORT_SHA = 8
         const val DETAIL = 200
         const val HOUR = 11
         const val MINUTE = 16
     }
 }
+
+/** The node kinds whose outcome says the session acted. */
+private val ACTING = setOf("check", "gate", "notify")
