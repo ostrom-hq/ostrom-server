@@ -171,35 +171,18 @@ class KubernetesRuntimeDriver(
                 putJsonArray("imagePullSecrets") { add(buildJsonObject { put("name", secret) }) }
             }
             // The runner and the agent never share a uid (S2-49): the agent host runs the agent in its own container,
-            // which has neither the token nor a view of the runner's processes; the pod's group is only the socket's.
+            // which has neither the token nor a view of the runner's or the check host's processes; the pod's group is
+            // only the sockets'.
             put("shareProcessNamespace", false)
             putJsonObject("securityContext") {
                 put("runAsNonRoot", true)
                 put("fsGroup", SHARED_GID)
                 putJsonObject("seccompProfile") { put("type", "RuntimeDefault") }
             }
-            // A native sidecar (Kubernetes 1.29+): it starts before the runner and stops once the runner has ended.
+            // Native sidecars (Kubernetes 1.29+): they start before the runner and stop once the runner has ended.
             putJsonArray("initContainers") {
-                add(
-                    container("agent", AGENT_UID) {
-                        put("restartPolicy", "Always")
-                        putJsonArray("command") {
-                            add(JsonPrimitive(RUNNER_BINARY))
-                            add(JsonPrimitive("agent-host"))
-                        }
-                        put("workingDir", WORKSPACE)
-                        putJsonArray("env") {
-                            add(variable("OSTROM_AGENT_SOCKET", RunnerEnvironment.AGENT_SOCKET))
-                            add(variable("HOME", "$WORKSPACE/.home"))
-                        }
-                        put("resources", resources("250m", "512Mi", "2", "4Gi", "2Gi"))
-                        putJsonArray("volumeMounts") {
-                            add(mount("workspace", WORKSPACE))
-                            add(mount("tmp", "/tmp"))
-                            add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
-                        }
-                    },
-                )
+                add(agentHost())
+                add(checkHost())
             }
             putJsonArray("containers") {
                 add(
@@ -209,6 +192,7 @@ class KubernetesRuntimeDriver(
                         put("resources", resources("50m", "64Mi", "500m", "256Mi", "64Mi"))
                         putJsonArray("volumeMounts") {
                             add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
+                            add(mount("check-socket", RunnerEnvironment.CHECK_SOCKET_DIRECTORY))
                         }
                     },
                 )
@@ -222,20 +206,61 @@ class KubernetesRuntimeDriver(
                         }
                     },
                 )
-                add(
-                    buildJsonObject {
-                        put("name", "tmp")
-                        putJsonObject("emptyDir") { put("sizeLimit", "1Gi") }
-                    },
-                )
-                add(
-                    buildJsonObject {
-                        put("name", "agent-socket")
-                        putJsonObject("emptyDir") { put("sizeLimit", "1Mi") }
-                    },
-                )
+                add(emptyDir("tmp", "1Gi"))
+                add(emptyDir("agent-socket", "1Mi"))
+                add(emptyDir("check-tmp", "1Gi"))
+                add(emptyDir("check-socket", "1Mi"))
             }
         }
+    }
+
+    /** The agent host: the agent's uid, the workspace and the agent socket, no token. */
+    private fun agentHost(): JsonObject = container("agent", AGENT_UID) {
+        put("restartPolicy", "Always")
+        putJsonArray("command") {
+            add(JsonPrimitive(RUNNER_BINARY))
+            add(JsonPrimitive("agent-host"))
+        }
+        put("workingDir", WORKSPACE)
+        putJsonArray("env") {
+            add(variable("OSTROM_AGENT_SOCKET", RunnerEnvironment.AGENT_SOCKET))
+            add(variable("HOME", "$WORKSPACE/.home"))
+        }
+        put("resources", resources("250m", "512Mi", "2", "4Gi", "2Gi"))
+        putJsonArray("volumeMounts") {
+            add(mount("workspace", WORKSPACE))
+            add(mount("tmp", "/tmp"))
+            add(mount("agent-socket", RunnerEnvironment.AGENT_SOCKET_DIRECTORY))
+        }
+    }
+
+    /**
+     * The check host: runs the hooks' checks for the runner, on the workspace, without the token. Its socket is on a
+     * volume the agent's container does not mount; its processes are out of the agent's sight (no shared process
+     * namespace).
+     */
+    private fun checkHost(): JsonObject = container("checks", AGENT_UID) {
+        put("restartPolicy", "Always")
+        putJsonArray("command") {
+            add(JsonPrimitive(RUNNER_BINARY))
+            add(JsonPrimitive("check-host"))
+        }
+        put("workingDir", WORKSPACE)
+        putJsonArray("env") {
+            add(variable("OSTROM_CHECK_HOST_SOCKET", RunnerEnvironment.CHECK_HOST_SOCKET))
+            add(variable("HOME", "/tmp"))
+        }
+        put("resources", resources("50m", "128Mi", "1", "2Gi", "1Gi"))
+        putJsonArray("volumeMounts") {
+            add(mount("workspace", WORKSPACE))
+            add(mount("check-tmp", "/tmp"))
+            add(mount("check-socket", RunnerEnvironment.CHECK_SOCKET_DIRECTORY))
+        }
+    }
+
+    private fun emptyDir(name: String, size: String): JsonObject = buildJsonObject {
+        put("name", name)
+        putJsonObject("emptyDir") { put("sizeLimit", size) }
     }
 
     /** A container of the session pod: its own uid and group, no privilege, a read-only root. */
