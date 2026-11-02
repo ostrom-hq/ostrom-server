@@ -2,6 +2,7 @@
 package dev.ostrom.server.runners.presentation
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.runners.domain.Caller
@@ -45,5 +46,8 @@ fun AuthenticatedPrincipal.allowsCloud(scope: String): Boolean =
 suspend fun PrincipalOrgResolver.callerOf(principal: AuthenticatedPrincipal, scope: String): Caller {
     if (!principal.allowsCloud(scope)) throw MissingScopeException(scope)
     val member = resolve(principal, null) ?: throw NotAMemberException()
-    return Caller(member.orgId, member.memberId.toString())
+    return Caller(member.orgId, member.memberId.toString(), member.role in ADMIN_ROLES)
 }
+
+/** The roles that administer the organization's runners. */
+private val ADMIN_ROLES = setOf(OrgRole.OWNER, OrgRole.ADMIN)
