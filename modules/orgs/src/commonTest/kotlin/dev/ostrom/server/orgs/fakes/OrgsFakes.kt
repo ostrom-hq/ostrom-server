@@ -131,6 +131,9 @@ class FakeMembers(private val store: OrgsStore) : MembersRepository {
     override suspend fun findByUser(orgId: Uuid, userId: Uuid): Member? =
         store.members.values.firstOrNull { it.orgId == orgId && it.userId == userId }
 
+    override suspend fun findById(orgId: Uuid, memberId: Uuid): Member? =
+        store.members[memberId]?.takeIf { it.orgId == orgId }
+
     override suspend fun list(orgId: Uuid): List<Member> =
         store.members.values.filter { it.orgId == orgId }.sortedBy { it.joinedAt }
 
