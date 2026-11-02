@@ -8,6 +8,7 @@ import dev.ostrom.server.rules.domain.models.GateChange
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
+import dev.ostrom.server.rules.domain.models.RuleGateCheck
 import dev.ostrom.server.rules.domain.models.RuleSource
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.models.RuleStrength
@@ -31,8 +32,12 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class RulesMappersTest {
-    private val gate =
-        RuleGate(listOf(RuleGateAction("push-main", "Push", listOf("p"), listOf("r"), null)), listOf("lyes"), "x")
+    private val gate = RuleGate(
+        listOf(RuleGateAction("push-main", "Push", listOf("p"), listOf("r"), null)),
+        listOf("lyes"),
+        "x",
+        listOf(RuleGateCheck("tests", attested = true)),
+    )
 
     private fun patch(json: String) = Json.parseToJsonElement(json).jsonObject.toRulePatch()
 

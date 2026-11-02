@@ -4,6 +4,7 @@ package dev.ostrom.server.rules
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
+import dev.ostrom.server.rules.domain.models.RuleGateCheck
 import dev.ostrom.server.rules.domain.services.RuleChecks
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -76,6 +77,24 @@ class RuleChecksTest {
     }
 
     @Test
+    fun aGateNeedsEachCheckOnceAttestedWhenAnyAskSaysSo() {
+        val checked = RuleChecks.gate(
+            RuleGate(
+                actions = listOf(push),
+                approvers = emptyList(),
+                reason = null,
+                checks = listOf(
+                    RuleGateCheck(" tests ", attested = false),
+                    RuleGateCheck("lint", attested = false),
+                    RuleGateCheck("tests", attested = true),
+                ),
+            ),
+        )
+        assertEquals(listOf(RuleGateCheck("tests", true), RuleGateCheck("lint", false)), checked.checks)
+        assertEquals(emptyList<RuleGateCheck>(), RuleChecks.gate(RuleGate(listOf(push), emptyList(), null)).checks)
+    }
+
+    @Test
     fun aGateOutOfBoundsIsRefused() {
         val refused = listOf(
             RuleGate(emptyList(), emptyList(), null),
@@ -91,6 +110,9 @@ class RuleChecksTest {
             RuleGate(listOf(push.copy(repos = List(51) { "r$it" })), emptyList(), null),
             RuleGate(listOf(push.copy(tools = List(11) { "T$it" })), emptyList(), null),
             RuleGate(listOf(push.copy(tools = listOf("not a tool"))), emptyList(), null),
+            RuleGate(listOf(push), emptyList(), null, List(21) { RuleGateCheck("c$it", attested = true) }),
+            RuleGate(listOf(push), emptyList(), null, listOf(RuleGateCheck("not a check", attested = true))),
+            RuleGate(listOf(push), emptyList(), null, listOf(RuleGateCheck(" ", attested = false))),
         )
         refused.forEach { gate -> assertFailsWith<InvalidRuleException>("$gate") { RuleChecks.gate(gate) } }
     }
