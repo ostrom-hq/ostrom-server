@@ -89,6 +89,8 @@ class FakeGateHistory(private val gates: List<Gate> = emptyList()) : GateHistory
 
     override suspend fun recent(orgId: Uuid, since: Instant, limit: Int): List<Gate> {
         reads += Triple(orgId, since, limit)
-        return gates.filter { it.orgId == orgId && it.createdAt >= since }.sortedByDescending { it.createdAt }.take(limit)
+        return gates.filter { it.orgId == orgId && it.createdAt >= since }
+            .sortedByDescending { it.createdAt }
+            .take(limit)
     }
 }

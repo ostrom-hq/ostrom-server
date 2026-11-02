@@ -35,9 +35,9 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * [GatesRepository] and [GateHistory] on PostgreSQL (sqlx4k). Every call is one transaction that first sets `ostrom.org_id`, which the
- * row level security policies of the gates tables read: a query can never see or write another organization's rows,
- * even if its `WHERE` clause forgot the organization.
+ * [GatesRepository] and [GateHistory] on PostgreSQL (sqlx4k). Every call is one transaction that first sets
+ * `ostrom.org_id`, which the row level security policies of the gates tables read: a query can never see or write
+ * another organization's rows, even if its `WHERE` clause forgot the organization.
  *
  * @param driver The connection pool.
  */

@@ -80,7 +80,7 @@ class RepositoryAnalysisEngineTest {
         )
         reader.listingFailure = RepositoryReadException("GitHub did not answer.")
         assertEquals(AnalysisStart.Unavailable("github", "GitHub did not answer."), engine.start(run()))
-        val none = RepositoryAnalysisEngine(NoRepositoryReader(), analyze, logger)
+        val none = RepositoryAnalysisEngine(NoRepositoryReader(), analyze, replay, logger)
         assertEquals(AnalysisStart.Unavailable("github", NoRepositoryReader.REASON), none.start(run()))
     }
 
