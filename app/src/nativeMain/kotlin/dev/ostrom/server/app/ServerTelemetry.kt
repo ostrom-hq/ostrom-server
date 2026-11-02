@@ -6,7 +6,7 @@ import dev.ostrom.core.telemetry.otlp.Resource
 import dev.ostrom.server.kernel.config.ServerConfig
 import dev.ostrom.server.kernel.http.SERVER_VERSION
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO as CioClient
+import io.ktor.client.engine.curl.Curl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
@@ -31,8 +31,8 @@ internal fun startTelemetry(config: ServerConfig, exporters: CoroutineScope): Te
         instanceId = config.instanceId ?: Uuid.random().toString(),
     ),
     scope = exporters,
-    // CIO, pure Kotlin with its own TLS: the export does not depend on the image's libcurl.
-    httpClient = { HttpClient(CioClient) },
+    // Curl, the binary's only client engine: Ktor's CIO client has no TLS on Kotlin/Native.
+    httpClient = { HttpClient(Curl) },
 )
 
 /**
