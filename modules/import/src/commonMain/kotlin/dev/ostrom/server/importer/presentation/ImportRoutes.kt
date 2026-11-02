@@ -42,8 +42,9 @@ fun Route.importRoutes(dependencies: ImportRoutesDependencies) = with(dependenci
     }
 }
 
-/** The user id of a person's principal; refuses an agent's or a service's, as a cutover needs an owner. */
-private fun AuthenticatedPrincipal.person(): Uuid {
-    val user = if (kind == PrincipalKind.USER) Uuid.parseOrNull(subjectId) else null
-    return user ?: throw CutoverOwnerRequiredException()
-}
+/**
+ * The user id of a person's principal, as a cutover needs an owner. The route's write check (S2-52) already refused an
+ * agent's or a service's token, so the principal here is a user's; a subject that is not a user id is refused too.
+ */
+private fun AuthenticatedPrincipal.person(): Uuid =
+    Uuid.parseOrNull(subjectId) ?: throw CutoverOwnerRequiredException()
