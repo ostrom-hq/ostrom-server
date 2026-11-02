@@ -108,7 +108,17 @@ jobs:
           docker logs ostrom-server; exit 1
       - name: A person, an organization and a token on the server
         id: session
-        run: app/scripts/real-server-session.sh http://127.0.0.1:4600 "$RUNNER_TEMP/ostrom-mail" >> "$GITHUB_OUTPUT"
+        # The script masks the token and writes token= and login= to $GITHUB_OUTPUT itself.
+        run: app/scripts/real-server-session.sh http://127.0.0.1:4600 "$RUNNER_TEMP/ostrom-mail"
+      - name: The session gave a token and a login
+        env:
+          TOKEN: ${{ steps.session.outputs.token }}
+          LOGIN: ${{ steps.session.outputs.login }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$LOGIN" ]; then
+            echo "::error::The session step gave no token or no login: the app would stop at launch"
+            exit 1
+          fi
       - name: Free disk space on the runner
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift \
@@ -171,7 +181,7 @@ jobs:
           disk-size: 4096M
           script: |
             adb install android/app/build/outputs/apk/release/app-release.apk
-            maestro test --format junit --output maestro-report-real.xml --test-output-dir maestro-output-real -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN" .maestro/real/
+            scripts/run-maestro.sh .maestro/real -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN"
       - name: Server logs
         if: always()
         run: docker logs ostrom-server 2>&1 | tail -n 300 || true
@@ -180,7 +190,7 @@ jobs:
         with:
           name: app-journey-report
           path: |
-            app/maestro-report-real.xml
-            app/maestro-output-real/
+            app/maestro-report-*.xml
+            app/maestro-output/
           if-no-files-found: ignore
           retention-days: 7
