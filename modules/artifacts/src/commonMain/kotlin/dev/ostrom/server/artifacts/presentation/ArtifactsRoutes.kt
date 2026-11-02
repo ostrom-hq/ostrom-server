@@ -3,11 +3,13 @@ package dev.ostrom.server.artifacts.presentation
 
 import dev.ostrom.server.artifacts.domain.Artifact
 import dev.ostrom.server.artifacts.domain.ArtifactNotFoundException
+import dev.ostrom.server.artifacts.domain.ArtifactRules
 import dev.ostrom.server.artifacts.domain.ArtifactVersion
 import dev.ostrom.server.artifacts.domain.InvalidArtifactRequestException
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.kernel.http.bodyLimit
 import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -36,13 +38,30 @@ import kotlin.uuid.Uuid
 fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(dependencies) {
     val mcp = ArtifactsMcpServer(dependencies)
     authenticated {
-        post<ArtifactsMcpApi> {
-            val principal = call.requirePrincipal()
-            val answer = mcp.handle(call.receiveText()) { scope -> orgResolver.artifactCallerOf(principal, scope) }
-            if (answer == null) {
-                call.respond(HttpStatusCode.Accepted)
-            } else {
-                call.respondText(answer.toString(), ContentType.Application.Json)
+        // Publishing carries the files of a version, base64 in JSON: more than the 1 MiB default (S2-46).
+        bodyLimit(PUBLISH_BODY_LIMIT) {
+            post<ArtifactsMcpApi> {
+                val principal = call.requirePrincipal()
+                val answer = mcp.handle(call.receiveText()) { scope ->
+                    orgResolver.artifactCallerOf(principal, scope)
+                }
+                if (answer == null) {
+                    call.respond(HttpStatusCode.Accepted)
+                } else {
+                    call.respondText(answer.toString(), ContentType.Application.Json)
+                }
+            }
+            post<ArtifactsApi> {
+                val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
+                val request = call.receive<PublishArtifactRequest>()
+                val artifact = publish.create(caller, request.title, request.access, request.files.toUploads())
+                call.respond(HttpStatusCode.Created, toResponse(artifact))
+            }
+            post<ArtifactsApi.Id.Versions> { params ->
+                val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
+                val request = call.receive<PublishVersionRequest>()
+                val version = publish.addVersion(caller, artifactId(params.parent.id), request.files.toUploads())
+                call.respond(HttpStatusCode.Created, version.toResponse())
             }
         }
         get<ArtifactsApi> { params ->
@@ -51,12 +70,6 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
             val limit = params.limit ?: DEFAULT_LIMIT
             val next = page.lastOrNull()?.let { last -> last.id.toString().takeIf { page.size == limit } }
             call.respond(ArtifactsResponse(page.map { toResponse(it) }, next))
-        }
-        post<ArtifactsApi> {
-            val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
-            val request = call.receive<PublishArtifactRequest>()
-            val artifact = publish.create(caller, request.title, request.access, request.files.toUploads())
-            call.respond(HttpStatusCode.Created, toResponse(artifact))
         }
         get<ArtifactsApi.Id> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_READ)
@@ -76,12 +89,6 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_READ)
             val versions = read.versions(caller, artifactId(params.parent.id))
             call.respond(ArtifactVersionsResponse(versions.map { it.toResponse() }))
-        }
-        post<ArtifactsApi.Id.Versions> { params ->
-            val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_WRITE)
-            val request = call.receive<PublishVersionRequest>()
-            val version = publish.addVersion(caller, artifactId(params.parent.id), request.files.toUploads())
-            call.respond(HttpStatusCode.Created, version.toResponse())
         }
         get<ArtifactsApi.Id.Versions.File> { params ->
             val caller = orgResolver.artifactCallerOf(call.requirePrincipal(), ARTIFACTS_READ)
@@ -129,6 +136,12 @@ fun Route.artifactsRoutes(dependencies: ArtifactsRoutesDependencies) = with(depe
 }
 
 private const val DEFAULT_LIMIT = 20
+
+/**
+ * The body of a publication: a whole version ([ArtifactRules.MAX_VERSION_BYTES]) in base64 (4 bytes for 3), plus 1 MiB
+ * for the JSON around it (S2-46). The use case still checks each file and the version's total.
+ */
+private const val PUBLISH_BODY_LIMIT = ArtifactRules.MAX_VERSION_BYTES / 3 * 4 + (1L shl 20)
 
 /**
  * Reads a ticket request; an empty body asks for the latest version.
