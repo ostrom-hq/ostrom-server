@@ -43,3 +43,20 @@ fun interface OrgAuditTrail {
 class DiscardingOrgAuditTrail : OrgAuditTrail {
     override suspend fun record(record: OrgAuditRecord) = Unit
 }
+
+/** The longest value a detail keeps: a long list is cut, the log never holds a whole document. */
+const val MAX_AUDIT_DETAIL: Int = 200
+
+/**
+ * The details of an [OrgAuditRecord] from the facts of a change: an absent fact (null) is left out rather than written
+ * as `null`, a list is joined with commas, and every value is cut at [MAX_AUDIT_DETAIL] characters.
+ *
+ * @param facts The facts, by name.
+ *
+ * @return The details.
+ */
+fun auditDetails(vararg facts: Pair<String, Any?>): Map<String, String> =
+    facts.mapNotNull { (key, value) -> value?.let { key to it.auditText() } }.toMap()
+
+private fun Any.auditText(): String =
+    (if (this is Collection<*>) joinToString(",") else toString()).take(MAX_AUDIT_DETAIL)

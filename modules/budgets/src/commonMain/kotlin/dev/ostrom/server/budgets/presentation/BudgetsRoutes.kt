@@ -2,6 +2,7 @@
 package dev.ostrom.server.budgets.presentation
 
 import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.auditDetails
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -26,12 +27,14 @@ fun Route.budgetsRoutes(dependencies: BudgetsRoutesDependencies) = with(dependen
         }
         put<BudgetsApi> {
             val caller = call.requireCaller(callers, BudgetScopes.WRITE)
+            val principal = call.requirePrincipal()
             val request = call.receive<BudgetDto>()
             setBudget(caller, request.toTarget(), request.toLimitMicros())
             val saved = request.normalized()
-            val details = mapOf("member" to "${saved.subject}", "usd_per_month" to "${saved.usdPerMonth}")
-            val principal = call.requirePrincipal()
-            audit.record(OrgAuditRecord(caller.orgId, principal, "budget.changed", "budget", saved.scope, details))
+            // No amount is a removed limit: the detail is then absent, never the text "null".
+            val details = auditDetails("scope" to saved.scope, "usd_per_month" to saved.usdPerMonth)
+            val subject = saved.subject ?: saved.scope
+            audit.record(OrgAuditRecord(caller.orgId, principal, "budget.changed", "budget", subject, details))
             call.respond(saved)
         }
         get<BudgetsApi.Me> {

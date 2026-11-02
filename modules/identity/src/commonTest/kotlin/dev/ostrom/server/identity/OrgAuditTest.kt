@@ -81,6 +81,17 @@ class OrgAuditTest {
     }
 
     @Test
+    fun aLastPageThatIsExactlyFullGivesNoCursor() = runTest {
+        val world = world()
+        repeat(ORG_AUDIT_PAGE) { world.log.record(AuditEntry(orgId, ada.id, "budget.changed", "budget", "$it")) }
+
+        val only = world.list(orgId, null, null, null)
+
+        assertEquals(ORG_AUDIT_PAGE, only.lines.size)
+        assertNull(only.next, "No cursor to an empty page")
+    }
+
+    @Test
     fun aCursorThatIsNotOneIsRefused() = runTest {
         val world = world()
         for (before in listOf("abc", "0", "-4", "")) {

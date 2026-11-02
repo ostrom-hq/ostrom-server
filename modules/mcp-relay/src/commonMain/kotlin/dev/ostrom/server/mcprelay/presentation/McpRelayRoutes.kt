@@ -2,6 +2,7 @@
 package dev.ostrom.server.mcprelay.presentation
 
 import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.auditDetails
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
@@ -125,7 +126,8 @@ private fun Route.assignmentRoutes(dependencies: McpRelayRoutesDependencies) = w
         }
         val server = serverId(caller, params.parent.parent.name)
         val assignment = assign(caller, server, member, ToolPolicy(request.tools?.toSet()), credential)
-        val details = mapOf("member" to params.member, "tools" to "${request.tools}")
+        // No list is every tool: written as such, never as the text "null".
+        val details = auditDetails("member" to params.member, "tools" to (request.tools ?: ALL_TOOLS))
         recordChange(call, caller, "mcp.assignment.changed", params.parent.parent.name, details)
         call.respond(assignment.toResponse(params.parent.parent.name, request.credentialSecret))
     }
@@ -169,9 +171,9 @@ private fun Route.journalRoutes(dependencies: McpRelayRoutesDependencies) = with
     }
     put<McpApi.Settings> {
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
-        val settings = putSettings(caller, McpSettings(call.receive<McpSettingsDto>().agentPrefix))
-        val details = mapOf("agent_prefix" to settings.agentPrefix)
         val principal = call.requirePrincipal()
+        val settings = putSettings(caller, McpSettings(call.receive<McpSettingsDto>().agentPrefix))
+        val details = auditDetails("agent_prefix" to settings.agentPrefix)
         audit.record(OrgAuditRecord(caller.orgId, principal, "mcp.settings.changed", "settings", "mcp", details))
         call.respond(McpSettingsDto(settings.agentPrefix))
     }
@@ -258,3 +260,6 @@ private fun invalidCursor(): Nothing =
 private fun String.toMemberId(): Uuid? = if (this == "all") null else toIdOr(::McpServerNotFoundException)
 
 private const val SERVER_CREATED = "mcp.server.created"
+
+// What an assignment's audit line names when the member reaches every tool.
+private const val ALL_TOOLS = "*"

@@ -70,9 +70,11 @@ class ListOrgAuditUseCaseImpl(
         val beforeSequence = before?.let { it.toLongOrNull()?.takeIf { sequence -> sequence > 0 } }
         if (before != null && beforeSequence == null) throw InvalidAuditCursorException()
         val actorId = actorLogin?.let { users.findByLogin(it)?.id ?: return OrgAuditPage(emptyList(), null) }
-        val page = events.listOrg(orgId, OrgAuditQuery(actorId, action, beforeSequence))
+        // One line more than a page: when it comes, there is a next page; never a cursor to an empty one.
+        val read = events.listOrg(orgId, OrgAuditQuery(actorId, action, beforeSequence, ORG_AUDIT_PAGE + 1))
+        val page = read.take(ORG_AUDIT_PAGE)
         val logins = users.getMany(page.mapNotNull { it.entry.actorId }.toSet()).associate { it.id to it.login }
-        val next = page.takeIf { it.size == ORG_AUDIT_PAGE }?.last()?.sequence?.toString()
+        val next = if (read.size > ORG_AUDIT_PAGE) page.last().sequence.toString() else null
         return OrgAuditPage(page.map { OrgAuditLine(it, it.entry.actorId?.let(logins::get)) }, next)
     }
 }

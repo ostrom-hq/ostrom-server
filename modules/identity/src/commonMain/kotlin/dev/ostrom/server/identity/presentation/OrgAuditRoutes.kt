@@ -19,14 +19,14 @@ import kotlinx.serialization.Serializable
 /** The scope that reads an organization's audit log; a browser session holds it. */
 const val AUDIT_READ_SCOPE = "audit:read"
 
-/** What an event of the server itself names as its actor. */
-const val SERVER_ACTOR = "ostrom"
+/** What an event of the server itself names as its actor: not a login, which never holds a colon. */
+const val SERVER_ACTOR = "server:ostrom"
 
 /**
  * `GET /api/v1/audit` (`listAudit`): the audit log of the organization the request names (its only one, or the
  * `Ostrom-Org` header), newest first, 50 lines a page.
  *
- * @property actor Only this person's events, by login.
+ * @property actor Only this person's events, by login (a credential that is not a person's is not filtered on).
  * @property event Only the events of this name (`org.deleted`).
  * @property before The `next` of the previous page.
  */
@@ -40,7 +40,8 @@ class OrgAuditApi(val actor: String? = null, val event: String? = null, val befo
  * @property id The id of the signed event.
  * @property at When (ISO 8601).
  * @property event What happened.
- * @property actor Who: a login, [SERVER_ACTOR] for the server, or the id of a person who no longer exists.
+ * @property actor Who: a person's login (their id once they no longer exist), `<kind>:<id>` for a credential that is
+ *   not a person's (`service:…`, `agent:…`), [SERVER_ACTOR] for the server itself.
  * @property subject What it happened to, `type:id`.
  * @property meta Extra facts, never a secret; `credential` says how the person was signed in.
  */
@@ -94,7 +95,10 @@ private fun OrgAuditLine.toResponse() = OrgAuditEventResponse(
     event.id.toString(),
     event.occurredAt.toString(),
     event.entry.action,
-    actorLogin ?: event.entry.actorId?.toString() ?: SERVER_ACTOR,
+    actorLogin ?: event.entry.actorId?.toString() ?: event.entry.details.machineActor() ?: SERVER_ACTOR,
     "${event.entry.targetType}:${event.entry.targetId}",
     event.entry.details,
 )
+
+// A credential that is not a person's: its kind and id, as IdentityOrgAuditTrail writes them.
+private fun Map<String, String>.machineActor(): String? = get("actor_kind")?.let { "$it:${get("actor_id")}" }

@@ -122,6 +122,8 @@ class OrgAuditPostgresTest {
     fun aLongLogComesByPages() = serverTest(modules, overrides) { server ->
         val ada = server.signIn("ada")
         val acme = Uuid.parse(server.createOrg(ada, "Acme").id)
+        val agent = AuthenticatedPrincipal("agent-7", PrincipalKind.AGENT, emptySet())
+        server.koin.get<OrgAuditTrail>().record(OrgAuditRecord(acme, agent, "mcp.settings.changed", "settings", "mcp"))
         val log = server.koin.get<AuditLog>()
         repeat(PAGE) { log.record(AuditEntry(acme, null, "test.line", "test", "$it")) }
 
@@ -129,7 +131,9 @@ class OrgAuditPostgresTest {
         assertEquals(PAGE, first.items.size)
         assertEquals(SERVER_ACTOR, first.items.first().actor)
         val second = server.audit(ada, "?before=${first.next}").body<OrgAuditPageResponse>()
-        assertEquals(listOf("org.created"), second.items.map { it.event })
+        assertEquals(listOf("mcp.settings.changed", "org.created"), second.items.map { it.event })
+        // A credential that is not a person's is named by its kind and id, never as the server.
+        assertEquals(listOf("agent:agent-7", "ada"), second.items.map { it.actor })
         assertNull(second.next)
     }
 

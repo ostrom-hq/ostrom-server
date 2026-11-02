@@ -9,6 +9,7 @@ import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
 import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.auditDetails
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
@@ -90,10 +91,17 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
         }
         put<ModelPolicyApi> {
             val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
+            val principal = call.requirePrincipal()
             val request = call.receive<ModelPolicyDto>()
             val policy = putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember))
-            val principal = call.requirePrincipal()
-            audit.record(OrgAuditRecord(caller.orgId, principal, "inference.policy.changed", "policy", "models"))
+            val details = auditDetails(
+                "allowed" to policy.allowed,
+                "default_model" to policy.default,
+                "members_with_own_list" to policy.byMember.keys,
+            )
+            audit.record(
+                OrgAuditRecord(caller.orgId, principal, "inference.policy.changed", "policy", "models", details),
+            )
             call.respond(policy.toDto())
         }
         get<InferenceSettingsApi> {
@@ -101,6 +109,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
         }
         put<InferenceSettingsApi> {
             val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
+            val principal = call.requirePrincipal()
             val request = call.receive<InferenceSettingsDto>()
             val settings = GatewaySettings(
                 request.anthropicKeySecret,
@@ -109,8 +118,13 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
                 request.useSharedAccounts,
             )
             val saved = putSettings(caller, settings)
-            val details = mapOf("use_shared_accounts" to "${saved.useSharedAccounts}")
-            val principal = call.requirePrincipal()
+            // The names of the secrets the keys are read from, never a key: repointing a key is in the log.
+            val details = auditDetails(
+                "anthropic_key_secret" to saved.anthropicKeySecret,
+                "openai_key_secret" to saved.openaiKeySecret,
+                "openrouter_key_secret" to saved.openrouterKeySecret,
+                "use_shared_accounts" to saved.useSharedAccounts,
+            )
             audit.record(
                 OrgAuditRecord(caller.orgId, principal, "inference.settings.changed", "settings", "inference", details),
             )

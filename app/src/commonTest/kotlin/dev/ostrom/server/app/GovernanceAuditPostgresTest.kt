@@ -77,6 +77,9 @@ class GovernanceAuditPostgresTest {
         assertEquals(setOf("ada"), items.map { it.actor }.toSet())
         assertEquals(listOf("browser", "browser", "browser"), items.take(3).map { it.meta["credential"] })
         assertEquals(listOf("settings:mcp", "policy:models", "budget:organization"), items.take(3).map { it.subject })
+        // The org's limit: its amount, and no member written as the text "null".
+        val budgetMeta = mapOf("credential" to "browser", "scope" to "organization", "usd_per_month" to "100.0")
+        assertEquals(budgetMeta, items[2].meta)
     }
 
     private companion object {
