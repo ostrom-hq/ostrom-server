@@ -3,6 +3,7 @@ package dev.ostrom.server.rules.domain.usecases
 
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
 import dev.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.rules.domain.models.AnalysisBusyException
 import dev.ostrom.server.rules.domain.models.AnalysisFailure
@@ -15,6 +16,7 @@ import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.services.AnalysisEngine
 import dev.ostrom.server.rules.domain.services.AnalysisStart
+import dev.ostrom.server.rules.domain.services.RuleAudit
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Clock
@@ -43,12 +45,14 @@ interface StartAnalysisUseCase {
  * @param engine The analysis engine.
  * @param logger Where an engine that throws is logged.
  * @param clock The time.
+ * @param audit The organization's audit log, which gets a line per start (`rule.analysis.started`).
  */
 class StartAnalysisUseCaseImpl(
     private val repository: AnalysisRepository,
     private val engine: AnalysisEngine,
     private val logger: Logger,
     private val clock: Clock,
+    private val audit: OrgAuditTrail,
 ) : StartAnalysisUseCase {
     override suspend fun invoke(decider: Decider, kind: AnalysisKind): AnalysisRun {
         val now = clock.now()
@@ -70,6 +74,8 @@ class StartAnalysisUseCaseImpl(
                 items = current?.items.orEmpty(),
             ).also { put(it) }
         }
+        // The start is the person's act, written before the engine answers: a run that fails at once was still asked.
+        audit.record(RuleAudit.started(decider, run))
         val unavailable = when (val answer = started(run)) {
             AnalysisStart.Started -> return run
             is AnalysisStart.Unavailable -> answer

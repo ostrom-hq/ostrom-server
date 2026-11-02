@@ -211,7 +211,7 @@ class GatesPostgresTest {
         }
 
     private fun push(commit: String = sha, force: Boolean = false, diff: String = "+ok") = GateAskRequest(
-        sessionId = session.toString(),
+        sessionId = session,
         repo = "ostrom-hq/gate-demo",
         cls = "push-main",
         command = "git push origin main",
@@ -316,6 +316,20 @@ class GatesPostgresTest {
     }
 
     @Test
+    fun aYesIsReleasedOnceThenStillUsedForItsAction() = gatesTest { server ->
+        val agent = "agent:a:$session"
+        val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status)
+
+        assertEquals("approved", server.move(agent, opened, "reserve").body<GateResponse>().gate.status)
+        assertEquals("approved", server.move(agent, opened, "release").body<GateResponse>().gate.status)
+        assertEquals("approved", server.move(agent, opened, "reserve").body<GateResponse>().gate.status)
+        // A second release would let reserve, launch and release loop until the yes expires (AUDIT-GATES-2 M2).
+        assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "release").status, "One release per yes")
+        assertEquals("consumed", server.move(agent, opened, "consume").body<GateResponse>().gate.status)
+    }
+
+    @Test
     fun aForcePushOrAnotherDiffIsNotTheApprovedPush() = gatesTest { server ->
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
@@ -341,7 +355,7 @@ class GatesPostgresTest {
     @Test
     fun aMergeIsBoundToTheHeadReadFromGitHub() = gatesTest { server ->
         val merge = GateAskRequest(
-            sessionId = session.toString(),
+            sessionId = session,
             repo = "ostrom-hq/gate-demo",
             cls = "merge",
             command = "gh pr merge 6 --merge",

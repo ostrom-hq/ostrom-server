@@ -82,10 +82,10 @@ object RulesModule : ServerModule {
         single<SignDecisionsUseCase> { SignDecisionsUseCaseImpl(get(), get(), get()) }
         single<ListRulesUseCase> { ListRulesUseCaseImpl(get()) }
         single<GetRuleUseCase> { GetRuleUseCaseImpl(get()) }
-        single<CreateRuleUseCase> { CreateRuleUseCaseImpl(get(), get(), get(), get()) }
-        single<UpdateRuleUseCase> { UpdateRuleUseCaseImpl(get(), get(), get(), get()) }
-        single<BulkUpdateRulesUseCase> { BulkUpdateRulesUseCaseImpl(get(), get(), get(), get()) }
-        single<DeleteRuleUseCase> { DeleteRuleUseCaseImpl(get(), get(), get(), get()) }
+        single<CreateRuleUseCase> { CreateRuleUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<UpdateRuleUseCase> { UpdateRuleUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<BulkUpdateRulesUseCase> { BulkUpdateRulesUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<DeleteRuleUseCase> { DeleteRuleUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ListDecisionsUseCase> { ListDecisionsUseCaseImpl(get(), get()) }
         single<GetGatePolicyUseCase> { GetGatePolicyUseCaseImpl(get()) }
         single<SetGatePolicyUseCase> { SetGatePolicyUseCaseImpl(get(), get(), get()) }
@@ -95,7 +95,7 @@ object RulesModule : ServerModule {
         // settings still read from the compiler's configuration.
         single<CompilerSources> { RulesCompilerSources(get(), DefaultCompilerSources(get())) }
         single<AnalysisRepository> { PostgresAnalysisRepository(get()) }
-        single<StartAnalysisUseCase> { StartAnalysisUseCaseImpl(get(), get(), get(), get()) }
+        single<StartAnalysisUseCase> { StartAnalysisUseCaseImpl(get(), get(), get(), get(), get()) }
         single<GetAnalysisStateUseCase> { GetAnalysisStateUseCaseImpl(get(), get(), get()) }
         single<GetReplayUseCase> { GetReplayUseCaseImpl(get()) }
         single<AnalyzeOrganizationUseCase> { AnalyzeOrganizationUseCaseImpl(get(), get(), get(), get(), get()) }

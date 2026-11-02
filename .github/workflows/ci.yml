@@ -73,6 +73,20 @@ jobs:
           core="$RUNNER_TEMP/docs-truth-core"
           node "$core/tools/docs-truth/bin/docs-truth.mjs" --routes "$core/api/contract/served-routes.txt" \
             --tests --source . --source "$core/telemetry" README.md docs
+      # The contract at ostrom-core main against the routes this server mounts, read from the sources (no build): fails
+      # for a mounted route the contract lacks and for a `served` operation not mounted; warns for a mounted route
+      # still `planned` (the server may merge before core).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: contract-core
+          persist-credentials: false
+      - name: The mounted routes and the ostrom-core contract agree
+        run: |
+          mv contract-core "$RUNNER_TEMP/contract-core"
+          python3 scripts/check-contract.py --self-test
+          python3 scripts/check-contract.py "$RUNNER_TEMP/contract-core"
       - uses: ./.github/actions/build-setup
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}

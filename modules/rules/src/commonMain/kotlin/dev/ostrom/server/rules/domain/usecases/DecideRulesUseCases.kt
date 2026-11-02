@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules.domain.usecases
 
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.rules.domain.models.Decider
 import dev.ostrom.server.rules.domain.models.Decision
 import dev.ostrom.server.rules.domain.models.GateChange
@@ -13,6 +14,7 @@ import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.repositories.RulesTransaction
 import dev.ostrom.server.rules.domain.services.DecisionSigner
+import dev.ostrom.server.rules.domain.services.RuleAudit
 import dev.ostrom.server.rules.domain.services.RuleChecks
 import dev.ostrom.server.rules.domain.services.RuleDecisions
 import dev.ostrom.server.rules.domain.services.RuleDecisions.record
@@ -40,12 +42,14 @@ interface CreateRuleUseCase {
  * @param signer Gives the rule's digest.
  * @param signDecisions Signs the decision once committed.
  * @param clock The time.
+ * @param audit The organization's audit log, which gets a line per decision.
  */
 class CreateRuleUseCaseImpl(
     private val repository: RulesRepository,
     private val signer: DecisionSigner,
     private val signDecisions: SignDecisionsUseCase,
     private val clock: Clock,
+    private val audit: OrgAuditTrail,
 ) : CreateRuleUseCase {
     override suspend fun invoke(decider: Decider, rule: NewRule): Rule {
         if (rule.status != RuleStatus.ACCEPTED && rule.status != RuleStatus.PROPOSED) {
@@ -79,7 +83,7 @@ class CreateRuleUseCaseImpl(
             insertRule(stored)
             record(signer, decider, now, before = null, after = stored)
         }
-        signDecisions(listOfNotNull(decision))
+        audit.decided(signDecisions, decider, listOfNotNull(decision))
         return stored
     }
 
@@ -112,12 +116,14 @@ interface UpdateRuleUseCase {
  * @param signer Gives the rule's digest.
  * @param signDecisions Signs the decision once committed.
  * @param clock The time.
+ * @param audit The organization's audit log, which gets a line per decision.
  */
 class UpdateRuleUseCaseImpl(
     private val repository: RulesRepository,
     private val signer: DecisionSigner,
     private val signDecisions: SignDecisionsUseCase,
     private val clock: Clock,
+    private val audit: OrgAuditTrail,
 ) : UpdateRuleUseCase {
     override suspend fun invoke(decider: Decider, id: String, patch: RulePatch): Rule {
         val checked = checked(patch)
@@ -126,7 +132,7 @@ class UpdateRuleUseCaseImpl(
             val before = lockRule(id) ?: throw RuleNotFoundException()
             change(signer, decider, now, before, checked)
         }
-        signDecisions(listOfNotNull(decision))
+        audit.decided(signDecisions, decider, listOfNotNull(decision))
         return rule
     }
 
@@ -173,12 +179,14 @@ interface BulkUpdateRulesUseCase {
  * @param signer Gives the rules' digests.
  * @param signDecisions Signs each decision once committed.
  * @param clock The time.
+ * @param audit The organization's audit log, which gets a line per decision.
  */
 class BulkUpdateRulesUseCaseImpl(
     private val repository: RulesRepository,
     private val signer: DecisionSigner,
     private val signDecisions: SignDecisionsUseCase,
     private val clock: Clock,
+    private val audit: OrgAuditTrail,
 ) : BulkUpdateRulesUseCase {
     override suspend fun invoke(decider: Decider, ids: List<String>, status: RuleStatus): Int {
         if (ids.size > BulkUpdateRulesUseCase.MAX_IDS) {
@@ -191,7 +199,7 @@ class BulkUpdateRulesUseCaseImpl(
                 lockRule(id)?.let { change(signer, decider, now, it, RulePatch(status = status)) }
             }
         }
-        signDecisions(changes.mapNotNull { it.second })
+        audit.decided(signDecisions, decider, changes.mapNotNull { it.second })
         return changes.size
     }
 }
@@ -215,12 +223,14 @@ interface DeleteRuleUseCase {
  * @param signer Gives the rule's digest.
  * @param signDecisions Signs the decision once committed.
  * @param clock The time.
+ * @param audit The organization's audit log, which gets a line per decision.
  */
 class DeleteRuleUseCaseImpl(
     private val repository: RulesRepository,
     private val signer: DecisionSigner,
     private val signDecisions: SignDecisionsUseCase,
     private val clock: Clock,
+    private val audit: OrgAuditTrail,
 ) : DeleteRuleUseCase {
     override suspend fun invoke(decider: Decider, id: String) {
         val now = clock.now()
@@ -229,7 +239,7 @@ class DeleteRuleUseCaseImpl(
             deleteRule(id)
             record(signer, decider, now, before = before, after = null)
         }
-        signDecisions(listOfNotNull(decision))
+        audit.decided(signDecisions, decider, listOfNotNull(decision))
     }
 }
 
@@ -296,4 +306,13 @@ private fun decided(rule: Rule, decider: Decider, now: Instant, reviewGiven: Boo
     )
     RuleStatus.REJECTED -> rule.copy(decidedBy = decider.name, decidedAt = now, reviewBy = null)
     RuleStatus.PROPOSED -> rule.copy(decidedBy = null, decidedAt = null, reviewBy = null)
+}
+
+/**
+ * Signs the receipts of committed decisions, then writes their lines to the organization's audit log (`rule.*`), in the
+ * name of the person who decided.
+ */
+private suspend fun OrgAuditTrail.decided(sign: SignDecisionsUseCase, decider: Decider, decisions: List<Decision>) {
+    sign(decisions)
+    decisions.forEach { record(RuleAudit.of(decider, it)) }
 }
