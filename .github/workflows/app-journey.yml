@@ -78,9 +78,12 @@ jobs:
         env:
           PORT: "8080"
           FAKE_GITHUB_CLIENT_ID: Iv1.ostromappe2e
-          # Not a secret: the fake's own value, known to it and the server of this job only.
-          FAKE_GITHUB_CLIENT_SECRET: app-e2e-client-secret-of-the-fake-github
+        # The OAuth client's secret is made for this run, known to the fake and this job's server only.
         run: |
+          secret="$(openssl rand -hex 16)"
+          echo "::add-mask::$secret"
+          echo "FAKE_GITHUB_CLIENT_SECRET=$secret" >> "$GITHUB_ENV"
+          export FAKE_GITHUB_CLIENT_SECRET="$secret"
           nohup node helm/compose/demo/fake-github.mjs > "$RUNNER_TEMP/fake-github.log" 2>&1 &
           for _ in $(seq 1 30); do curl -fsS 127.0.0.1:8080/health >/dev/null 2>&1 && exit 0; sleep 1; done
           cat "$RUNNER_TEMP/fake-github.log"; exit 1
@@ -124,19 +127,22 @@ jobs:
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_app_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
           OSTROM_GITHUB_CLIENT_ID=Iv1.ostromappe2e
-          OSTROM_GITHUB_CLIENT_SECRET=app-e2e-client-secret-of-the-fake-github
           OSTROM_GITHUB_WEB_URL=http://127.0.0.1:8080
           OSTROM_GITHUB_API_URL=http://127.0.0.1:8080/api
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          echo "OSTROM_GITHUB_CLIENT_SECRET=$FAKE_GITHUB_CLIENT_SECRET" >> "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
       - name: Two requests waiting for the phone's person, and the phone's session
         id: session
+        # The fake GitHub must still answer: its start-up log, rather than an unclear sign-in failure.
         # The script masks the secrets and writes its outputs to $GITHUB_OUTPUT itself.
-        run: app/scripts/real-server-session.sh http://127.0.0.1:4600 "$RUNNER_TEMP/ostrom-mail" http://127.0.0.1:8080
+        run: |
+          curl -fsS 127.0.0.1:8080/health > /dev/null || { cat "$RUNNER_TEMP/fake-github.log"; exit 1; }
+          app/scripts/real-server-session.sh http://127.0.0.1:4600 "$RUNNER_TEMP/ostrom-mail" http://127.0.0.1:8080
       - name: The session gave all its outputs
         env:
           OUTPUTS: ${{ toJSON(steps.session.outputs) }}
