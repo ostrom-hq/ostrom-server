@@ -351,6 +351,7 @@ class LaunchesPostgresTest {
             assertNull(launches.create(stored(org, other, now), limit))
             val newcomer = launches.create(stored(org, Uuid.random(), now), limit)
             assertEquals(10.minutes, newcomer, "The organization is full")
+            assertEquals(10.minutes, launches.create(stored(org, me, now), limit), "Both windows are full")
             assertEquals(4, server.launchesSeenBy(org), "Nothing stored past the limit")
         }
 

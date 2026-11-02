@@ -32,14 +32,12 @@ class PostgresLaunchesRepository(private val driver: Driver) : LaunchesRepositor
         val since = launch.createdAt - limit.window
         val person = tx.window(Statement.create(PERSON_WINDOW).bind("user_id", launch.userId), launch.orgId, since)
         val org = tx.window(Statement.create(ORG_WINDOW), launch.orgId, since)
-        val full = listOfNotNull(
-            person.takeIf { it.count >= limit.perPerson },
-            org.takeIf { it.count >= limit.perOrg },
-        )
-        if (full.isNotEmpty()) {
-            // A place frees up when the oldest launch counted in the full window leaves it.
-            return full.maxOf { it.oldest } + limit.window - launch.createdAt
-        }
+        // A place frees up when the oldest launch counted in each full window has left it.
+        val freesAt = listOfNotNull(
+            person.oldest.takeIf { person.count >= limit.perPerson },
+            org.oldest.takeIf { org.count >= limit.perOrg },
+        ).maxOrNull()
+        if (freesAt != null) return freesAt + limit.window - launch.createdAt
         insert(tx, launch)
         return null
     }
