@@ -114,6 +114,7 @@ jobs:
         env:
           REPORT: ${{ runner.temp }}/demo-report.md
           OSTROM_DEMO_SESSION_CHECK: demo/check-session.sh
+          OSTROM_DEMO_TEAMCODE_CHECK: demo/teamcode/check.sh
         run: node demo/journey.mjs
       - name: Report
         if: always()
