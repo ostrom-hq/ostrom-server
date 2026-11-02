@@ -11,6 +11,7 @@ import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.presentation.AnswerDeviceRequest
 import dev.ostrom.server.identity.presentation.AuditEventsResponse
+import dev.ostrom.server.identity.presentation.AuthSessionsResponse
 import dev.ostrom.server.identity.presentation.AuthTokenResponse
 import dev.ostrom.server.identity.presentation.CreateTokenRequest
 import dev.ostrom.server.identity.presentation.CreatedTokenResponse
@@ -326,6 +327,49 @@ class IdentityRoutesPostgresTest {
             server.client.post("/api/v1/auth/logout/everywhere") { session(second) }.status,
         )
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { session(third) }.status)
+    }
+
+    @Test
+    fun aPersonSeesAndEndsOnlyTheirOwnBrowserSessions() = serverTest(listOf(IdentityModule)) { server ->
+        val (ada, here) = server.signIn("1")
+        val elsewhere = server.koin.get<StartWebSessionUseCase>()(ada.id)
+        val (_, bobs) = server.signIn("2")
+        val token = server.client.post("/api/v1/tokens") {
+            session(here)
+            json(CreateTokenRequest("ci", listOf("profile:read")))
+        }.body<CreatedTokenResponse>().secret
+
+        val listed = server.client.get("/api/v1/auth/sessions") { session(here, csrf = false) }
+        assertEquals(HttpStatusCode.OK, listed.status)
+        val items = listed.body<AuthSessionsResponse>().items
+        assertEquals(setOf(here.session.id.toString(), elsewhere.session.id.toString()), items.map { it.id }.toSet())
+        assertEquals(listOf(here.session.id.toString()), items.filter { it.current }.map { it.id })
+        // A token is not a browser session: it neither lists nor ends one.
+        assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/auth/sessions") { bearerAuth(token) }.status)
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.delete("/api/v1/auth/sessions/${elsewhere.session.id}") { bearerAuth(token) }.status,
+        )
+
+        // Another person's session, an unknown one and a malformed id get the same 404, and Bob stays signed in.
+        for (id in listOf(bobs.session.id.toString(), Uuid.random().toString(), "not-an-id")) {
+            val refused = server.client.delete("/api/v1/auth/sessions/$id") { session(here) }
+            assertEquals(HttpStatusCode.NotFound, refused.status, id)
+        }
+        assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/auth/me") { session(bobs) }.status)
+
+        // Ending another of one's sessions signs that browser out, not this one.
+        val other = server.client.delete("/api/v1/auth/sessions/${elsewhere.session.id}") { session(here) }
+        assertEquals(HttpStatusCode.NoContent, other.status)
+        assertTrue(other.headers.getAll(HttpHeaders.SetCookie).orEmpty().none { it.startsWith("$SESSION_COOKIE=;") })
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { session(elsewhere) }.status)
+        assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/auth/me") { session(here) }.status)
+
+        // Ending the current one is signing out here: its cookie is cleared.
+        val current = server.client.delete("/api/v1/auth/sessions/${here.session.id}") { session(here) }
+        assertEquals(HttpStatusCode.NoContent, current.status)
+        assertTrue(current.headers.getAll(HttpHeaders.SetCookie).orEmpty().any { it.startsWith("$SESSION_COOKIE=;") })
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me") { session(here) }.status)
     }
 
     @Test

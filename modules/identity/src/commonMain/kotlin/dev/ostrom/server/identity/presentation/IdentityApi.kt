@@ -47,6 +47,25 @@ class AuthApi {
     }
 
     /**
+     * `GET /api/v1/auth/sessions`: the person's live browser sessions (browser session only).
+     *
+     * @property parent The auth resource.
+     */
+    @Serializable
+    @Resource("sessions")
+    class Sessions(val parent: AuthApi = AuthApi()) {
+        /**
+         * `DELETE /api/v1/auth/sessions/{id}`: ends one of them (browser session only).
+         *
+         * @property parent The sessions resource.
+         * @property id The session id.
+         */
+        @Serializable
+        @Resource("{id}")
+        class Id(val parent: Sessions = Sessions(), val id: String)
+    }
+
+    /**
      * `POST /api/v1/auth/device`: the CLI starts a login (body optional). `GET /api/v1/auth/device?userCode=`: the
      * pending `ostrom login` the user is about to approve.
      *
@@ -287,6 +306,25 @@ data class TokenResponse(
  */
 @Serializable
 data class TokensResponse(val tokens: List<TokenResponse>)
+
+/**
+ * A signed-in browser session (the contract's `AuthSession`).
+ *
+ * @property id The session id.
+ * @property createdAt When it started (ISO 8601).
+ * @property lastSeenAt When it was last used (ISO 8601, precise to five minutes).
+ * @property current Whether it is the session making the request.
+ */
+@Serializable
+data class AuthSessionResponse(val id: String, val createdAt: String, val lastSeenAt: String, val current: Boolean)
+
+/**
+ * The person's live browser sessions (`GET /api/v1/auth/sessions`).
+ *
+ * @property items The sessions, the last used first.
+ */
+@Serializable
+data class AuthSessionsResponse(val items: List<AuthSessionResponse>)
 
 /**
  * A personal token to create.

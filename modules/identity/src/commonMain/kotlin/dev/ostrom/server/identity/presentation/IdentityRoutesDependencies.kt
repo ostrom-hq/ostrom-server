@@ -13,6 +13,7 @@ import dev.ostrom.server.identity.domain.RevokeTokenUseCase
 import dev.ostrom.server.identity.domain.RotateTokenUseCase
 import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.StartDeviceAuthorizationUseCase
+import dev.ostrom.server.identity.domain.WebSessionsOfUserUseCase
 import dev.ostrom.server.kernel.auth.SignOutListener
 
 /**
@@ -31,6 +32,7 @@ import dev.ostrom.server.kernel.auth.SignOutListener
  * @property pollDeviceAuthorization Polls it.
  * @property getDeviceAuthorization Shows it to the user.
  * @property answerDeviceAuthorization Approves or denies it.
+ * @property webSessions Lists and ends the person's browser sessions.
  * @property signOutListeners Told after a sign-out (the phones registered with the credential are dropped).
  */
 data class IdentityRoutesDependencies(
@@ -47,5 +49,6 @@ data class IdentityRoutesDependencies(
     val pollDeviceAuthorization: PollDeviceAuthorizationUseCase,
     val getDeviceAuthorization: GetDeviceAuthorizationUseCase,
     val answerDeviceAuthorization: AnswerDeviceAuthorizationUseCase,
+    val webSessions: WebSessionsOfUserUseCase,
     val signOutListeners: List<SignOutListener>,
 )

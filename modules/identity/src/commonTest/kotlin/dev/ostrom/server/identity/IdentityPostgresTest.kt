@@ -126,6 +126,29 @@ class IdentityPostgresTest {
     }
 
     @Test
+    fun aUsersLiveSessionsAreListedAndEndedOneByOneAndOnlyByThem() = serverTest(listOf(IdentityModule)) { server ->
+        val users = server.koin.get<UsersRepository>()
+        val sessions = server.koin.get<WebSessionsRepository>()
+        val ada = user().also { users.create(it, github("1"), null, now) }
+        val bob = user("Bob").also { users.create(it, github("2"), null, now) }
+        val older = WebSession(Uuid.random(), ada.id, now, now + 30.days, now, null)
+        val newer = older.copy(id = Uuid.random(), lastSeenAt = now + 1.days)
+        val short = older.copy(id = Uuid.random(), expiresAt = now + 1.days)
+        val bobs = older.copy(id = Uuid.random(), userId = bob.id)
+        listOf(older, newer, short, bobs).forEachIndexed { index, session -> sessions.create(session, "hash-$index") }
+
+        assertEquals(listOf(newer, older, short), sessions.listLive(ada.id, now, 10))
+        assertEquals(listOf(newer), sessions.listLive(ada.id, now, 1))
+        assertEquals(listOf(newer, older), sessions.listLive(ada.id, now + 1.days, 10), "The expired one is left out")
+        assertTrue(!sessions.revokeOfUser(ada.id, bobs.id, now), "Another user's session")
+        assertTrue(!sessions.revokeOfUser(ada.id, short.id, now + 2.days), "An expired session")
+        assertTrue(sessions.revokeOfUser(ada.id, older.id, now))
+        assertTrue(!sessions.revokeOfUser(ada.id, older.id, now), "Revoked once")
+        assertEquals(listOf(newer, short), sessions.listLive(ada.id, now, 10))
+        assertEquals(listOf(bobs), sessions.listLive(bob.id, now, 10))
+    }
+
+    @Test
     fun tokensAreListedRotatedAndRevoked() = serverTest(listOf(IdentityModule)) { server ->
         val users = server.koin.get<UsersRepository>()
         val tokens = server.koin.get<ApiTokensRepository>()

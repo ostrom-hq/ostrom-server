@@ -179,6 +179,9 @@ class UserNotFoundException : OstromException(ErrorKind.NOT_FOUND, "User not fou
 /** Too many attempts from the same source: wait and retry. */
 class RateLimitedException : OstromException(ErrorKind.RATE_LIMITED, "Too many attempts. Wait a moment and retry.")
 
+/** The browser session does not exist, is not the caller's, or has ended: the same answer, to reveal nothing. */
+class WebSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Session not found.")
+
 /** The device code or user code is unknown, expired or already used. */
 class DeviceCodeNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Unknown or expired code.")
 

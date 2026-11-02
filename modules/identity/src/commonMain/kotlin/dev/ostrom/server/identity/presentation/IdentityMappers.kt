@@ -6,9 +6,11 @@ import dev.ostrom.server.identity.domain.AuditEvent
 import dev.ostrom.server.identity.domain.DevicePollResult
 import dev.ostrom.server.identity.domain.IssuedToken
 import dev.ostrom.server.identity.domain.Profile
+import dev.ostrom.server.identity.domain.WebSession
 import dev.ostrom.server.kernel.http.ApiError
 import dev.ostrom.server.kernel.http.ErrorDetail
 import io.ktor.http.HttpStatusCode
+import kotlin.uuid.Uuid
 
 /** Maps the profile; [csrfToken] only for a browser session. */
 fun Profile.toProfileResponse(csrfToken: String?) = ProfileResponse(
@@ -105,3 +107,11 @@ fun List<AuditEvent>.toAuditEventsResponse(limit: Int) = AuditEventsResponse(
 
 /** The largest page of audit events, as the use case clamps it. */
 private const val MAX_AUDIT_PAGE = 200
+
+/**
+ * Maps a browser session.
+ *
+ * @param currentId The session making the request.
+ */
+fun WebSession.toAuthSessionResponse(currentId: Uuid) =
+    AuthSessionResponse(id.toString(), createdAt.toString(), lastSeenAt.toString(), current = id == currentId)
