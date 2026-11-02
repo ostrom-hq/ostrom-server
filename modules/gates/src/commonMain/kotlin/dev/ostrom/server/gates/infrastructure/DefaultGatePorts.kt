@@ -7,9 +7,14 @@ import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
+import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.GateCheckNeed
+import dev.ostrom.server.gates.domain.services.GateCheckNeeds
+import dev.ostrom.server.gates.domain.services.GateCheckProof
+import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
@@ -107,4 +112,15 @@ class ChannelsGateNotifier(channels: () -> List<GateChannel>, private val logger
 /** Without the identity module, no credential belongs to an organization. */
 class NoGateActors : GateActorResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? = null
+}
+
+/** Without the rules module, no gate needs a check. */
+class NoGateCheckNeeds : GateCheckNeeds {
+    override suspend fun of(orgId: Uuid, node: GateNode): List<GateCheckNeed> = emptyList()
+}
+
+/** Without the workflow-runs module, no run is known: a check a gate needs attested is never proven (fail closed). */
+class NoGateCheckProofs : GateCheckProofs {
+    override suspend fun of(orgId: Uuid, sessionId: String?, subject: GateSubject, check: String): GateCheckProof =
+        GateCheckProof(attestation = null, passed = false)
 }
