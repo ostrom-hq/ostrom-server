@@ -277,8 +277,12 @@ class ImportPostgresTest {
             with(server) {
                 val plan = report(Importing.team(), dryRun = true)
                 assertEquals(
-                    listOf(line("account", "claude/Lyes", PLANNED), line("account", "codex/Lyes", PLANNED)),
+                    listOf(
+                        line("account", "claude/Lyes", PLANNED),
+                        line("account", "codex/Lyes", SKIPPED, "This account is already shared."),
+                    ),
                     plan.items.takeLast(2),
+                    "A dry run makes the importer's checks",
                 )
                 assertEquals(emptyList(), accounts.imported, "A dry run imports no account")
                 val report = report(Importing.team())

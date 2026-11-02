@@ -38,6 +38,7 @@ zodable = { id = "dev.zodable", version.ref = "zodable" }
 
 [libraries]
 ostrom-receipts = { module = "dev.ostrom:ostrom-receipts", version.ref = "ostrom-core" }
+ostrom-api = { module = "dev.ostrom:ostrom-api", version.ref = "ostrom-core" }
 # Gradle plugins as libraries, for build-logic/build.gradle.kts
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 kotlin-serialization-plugin = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }

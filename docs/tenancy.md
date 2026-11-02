@@ -45,11 +45,20 @@ rolls back on any failure.
 ## Cross-organization operations
 
 What must run before or across organizations (resolving a token, sign-in, creating an organization, invitations,
-billing webhooks…) goes through narrow `SECURITY DEFINER` functions, each listed here with its test. None exists yet:
-the module that adds the first one lists it below, with its owner role and grants.
+billing webhooks…) goes through narrow `SECURITY DEFINER` functions, each listed here with its test. They are owned
+by **`ostrom_router`** (`NOLOGIN`, owner of no table, never a member of the serving role), reach the rows through a
+policy `TO ostrom_router` of their tables, and set `search_path = pg_catalog, public, pg_temp` (`pg_temp` last, so
+a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLIC` and granted to `ostrom_app` only
+(audit S2-60).
 
 | Function | Module | What it touches | Test |
 |---|---|---|---|
+| `orgs_create_organization(…)` | orgs | inserts an organization and its owner | `OrgsServingRolePostgresTest` |
+| `orgs_claim_holders(claim)` | orgs | reads the live organizations holding a free-plan claim | `OrgsServingRolePostgresTest` |
+| `orgs_find_by_slug(slug)` | orgs | reads a live organization by short name | `OrgsServingRolePostgresTest` |
+| `orgs_slug_taken(slug)` | orgs | whether a short name was ever used | `OrgsServingRolePostgresTest` |
+| `orgs_memberships_of(user)` | orgs | reads a user's memberships and their organizations | `OrgsServingRolePostgresTest` |
+| `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
 
 ## The proof
 
@@ -58,3 +67,10 @@ an organization reads and writes only its rows, that no row is visible without a
 not outlive the transaction, that the serving role cannot disable row-level security, drop a policy or create a
 function or a table, and that the start check refuses a superuser, a `BYPASSRLS` role and a role that owns a table. Each module adds the same
 test for each of its tenant tables.
+
+Every PostgreSQL test runs as a deployment does (`testing/…/TestDatabase.kt`): each test database has its own owner
+role, which applies the migrations, and its own serving role, owner of nothing and member of `ostrom_tenant`, with the
+attributes and grants of `ci/database-roles.sql`. The test server and the tests' queries go through the serving role,
+which must pass the start check, so a query that forgets its organization fails in CI as it would in production. The
+configured user, a superuser, creates the database and the roles; tests use it only for what no request does
+(fixtures across organizations, statistics, the roles the start check must refuse, a count across organizations).
