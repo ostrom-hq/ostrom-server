@@ -40,6 +40,7 @@ import dev.ostrom.server.orgs.domain.ListMembersUseCaseImpl
 import dev.ostrom.server.orgs.domain.ListMyOrgsUseCase
 import dev.ostrom.server.orgs.domain.ListMyOrgsUseCaseImpl
 import dev.ostrom.server.orgs.domain.MembersRepository
+import dev.ostrom.server.orgs.domain.OrgDeletionsRepository
 import dev.ostrom.server.orgs.domain.OrgAudit
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -66,6 +67,7 @@ import dev.ostrom.server.orgs.infrastructure.MailInvitationMailer
 import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembershipOrgResolver
 import dev.ostrom.server.orgs.infrastructure.OrgDeletionWorker
+import dev.ostrom.server.orgs.infrastructure.OrgDeletionsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.OrgsMigrations
 import dev.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.TestAccountSeederImpl
@@ -120,6 +122,7 @@ object OrgsModule : ServerModule {
         single<UpdateOrgUseCase> { UpdateOrgUseCaseImpl(get(), get(), get()) }
         single<DeleteOrgUseCase> { DeleteOrgUseCaseImpl(get(), get(), get(), get()) }
         // Every module that keeps or bills something of an organization binds a listener (billing).
+        single<OrgDeletionsRepository> { OrgDeletionsRepositoryImpl(get()) }
         single<SettleOrgDeletionsUseCase> {
             SettleOrgDeletionsUseCaseImpl(get(), getAll<OrgDeletionListener>(), get())
         }

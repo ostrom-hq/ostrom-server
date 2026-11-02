@@ -15,6 +15,7 @@ import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.SlugTakenException
 import dev.ostrom.server.orgs.infrastructure.InvitationsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
+import dev.ostrom.server.orgs.infrastructure.OrgDeletionsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
@@ -108,6 +109,7 @@ class OrgsServingRolePostgresTest {
                 server.driver.execute("GRANT ostrom_tenant TO $role").getOrThrow()
                 server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
                 val orgs = OrgsRepositoryImpl(serving)
+                val deletions = OrgDeletionsRepositoryImpl(serving)
                 val acme = org("acme")
                 assertNull(orgs.create(acme, owner(acme, ada)) { false })
 
@@ -119,13 +121,13 @@ class OrgsServingRolePostgresTest {
 
                 orgs.delete(acme.id, now, now + 30.days)
                 // Found with no organization set: only through the functions, which list ids and nothing else.
-                assertEquals(listOf(acme.id), orgs.deletionsToSettle(10))
-                orgs.markSettled(acme.id, now)
-                assertEquals(emptyList(), orgs.deletionsToSettle(10))
-                assertEquals(emptyList(), orgs.duePurges(now, 10))
-                assertEquals(listOf(acme.id), orgs.duePurges(now + 30.days, 10))
-                orgs.erase(acme.id, now + 30.days)
-                assertEquals(emptyList(), orgs.duePurges(now + 31.days, 10))
+                assertEquals(listOf(acme.id), deletions.deletionsToSettle(10))
+                deletions.markSettled(acme.id, now)
+                assertEquals(emptyList(), deletions.deletionsToSettle(10))
+                assertEquals(emptyList(), deletions.duePurges(now, 10))
+                assertEquals(listOf(acme.id), deletions.duePurges(now + 30.days, 10))
+                deletions.erase(acme.id, now + 30.days)
+                assertEquals(emptyList(), deletions.duePurges(now + 31.days, 10))
                 assertTrue(orgs.slugTaken("acme"))
             }
         }

@@ -24,6 +24,7 @@ enum class Proration(val stripe: String) {
 }
 
 /** The Stripe calls of billing. Implemented over Stripe's HTTP API in the infrastructure; faked in tests. */
+@Suppress("TooManyFunctions") // Stripe's one port: each call billing makes to it.
 interface StripeGateway {
     /**
      * Creates the customer of an organization, once: a second call within 24 hours returns the same customer. Call

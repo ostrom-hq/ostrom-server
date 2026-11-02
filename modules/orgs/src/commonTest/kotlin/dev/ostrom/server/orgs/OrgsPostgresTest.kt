@@ -22,6 +22,7 @@ import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgDeletionsRepository
 import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -93,6 +94,7 @@ class OrgsPostgresTest {
             val orgs = server.koin.get<OrgsRepository>()
             val members = server.koin.get<MembersRepository>()
             val invitations = server.koin.get<InvitationsRepository>()
+            val deletions = server.koin.get<OrgDeletionsRepository>()
             val ada = server.user("ada")
             val acme = org("acme", "domain:acme.com")
             val owner = member(acme, ada, OrgRole.OWNER)
@@ -111,7 +113,7 @@ class OrgsPostgresTest {
             assertEquals(acme.copy(name = "Acme Labs", timeZone = "Europe/Paris"), orgs.get(acme.id))
             assertEquals("Europe/Paris", orgs.listOfUser(ada.id).single().org.timeZone)
             assertEquals("Europe/Paris", orgs.findBySlug("acme")?.timeZone)
-            assertTrue(acme.id !in orgs.deletionsToSettle(10), "A live organization is not being deleted")
+            assertTrue(acme.id !in deletions.deletionsToSettle(10), "A live organization is not being deleted")
 
             invitations.create(link(acme, owner), "hash-1")
             orgs.delete(acme.id, now, now + 30.days)
@@ -126,15 +128,15 @@ class OrgsPostgresTest {
             assertNull(orgs.create(acme2, member(acme2, ada, OrgRole.OWNER)) { false })
 
             // The worker's steps, across organizations: told, then erased after 30 days.
-            assertTrue(acme.id in orgs.deletionsToSettle(10))
-            assertTrue(acme.id !in orgs.duePurges(now + 31.days, 10), "Never erased before every module was told")
-            orgs.markSettled(acme.id, now)
-            assertTrue(acme.id !in orgs.deletionsToSettle(10))
-            assertTrue(acme.id !in orgs.duePurges(now + 30.days - 1.minutes, 10), "Kept for 30 days")
-            assertTrue(acme.id in orgs.duePurges(now + 30.days, 10))
-            orgs.erase(acme.id, now + 30.days)
-            assertTrue(acme.id !in orgs.duePurges(now + 31.days, 10))
-            orgs.erase(acme2.id, now)
+            assertTrue(acme.id in deletions.deletionsToSettle(10))
+            assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10), "Never erased before every module was told")
+            deletions.markSettled(acme.id, now)
+            assertTrue(acme.id !in deletions.deletionsToSettle(10))
+            assertTrue(acme.id !in deletions.duePurges(now + 30.days - 1.minutes, 10), "Kept for 30 days")
+            assertTrue(acme.id in deletions.duePurges(now + 30.days, 10))
+            deletions.erase(acme.id, now + 30.days)
+            assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10))
+            deletions.erase(acme2.id, now)
             assertEquals(acme2, orgs.get(acme2.id), "A live organization is never erased")
             val tombstone =
                 server.driver

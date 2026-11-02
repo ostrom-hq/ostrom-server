@@ -13,6 +13,7 @@ import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgDeletionsRepository
 import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -83,6 +84,14 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
         store.invitations.values.removeAll { it.first.orgId == id }
     }
 
+    override suspend fun listOfUser(userId: Uuid): List<Membership> =
+        store.members.values
+            .filter { it.userId == userId }
+            .mapNotNull { member -> get(member.orgId)?.let { Membership(it, member) } }
+            .sortedBy { it.org.name }
+}
+
+class FakeOrgDeletions(private val store: OrgsStore) : OrgDeletionsRepository {
     override suspend fun deletionsToSettle(limit: Int): List<Uuid> =
         store.deleted.filter { it !in store.settled }.take(limit)
 
@@ -100,12 +109,6 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
         store.erased += id
         store.orgs[id] = store.orgs.getValue(id).copy(name = "", githubOrgId = null, timeZone = "UTC")
     }
-
-    override suspend fun listOfUser(userId: Uuid): List<Membership> =
-        store.members.values
-            .filter { it.userId == userId }
-            .mapNotNull { member -> get(member.orgId)?.let { Membership(it, member) } }
-            .sortedBy { it.org.name }
 }
 
 class FakeMembers(private val store: OrgsStore) : MembersRepository {
@@ -248,6 +251,7 @@ class OrgsWorld {
     val clock = SettableClock()
     val store = OrgsStore()
     val orgs = FakeOrgs(store)
+    val deletions = FakeOrgDeletions(store)
     val members = FakeMembers(store)
     val invitations = FakeInvitations(store)
     val people = FakePeople()

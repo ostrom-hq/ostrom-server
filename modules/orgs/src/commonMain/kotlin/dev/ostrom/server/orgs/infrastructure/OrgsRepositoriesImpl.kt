@@ -164,54 +164,6 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
         }
     }
 
-    // Across organizations: the serving role reaches the deleted ones only through these functions.
-    override suspend fun deletionsToSettle(limit: Int): List<Uuid> =
-        driver
-            .fetchAll(
-                Statement.create("SELECT id FROM orgs_deletions_to_settle(CAST(:limit AS INTEGER)) id")
-                    .bind("limit", limit)
-            )
-            .getOrThrow()
-            .map { it.get("id").asUuid() }
-
-    override suspend fun markSettled(id: Uuid, at: Instant) {
-        driver.inOrg(id) {
-            execute(
-                    Statement.create(
-                            "UPDATE orgs_organizations SET deletion_settled_at = :at WHERE id = :id"
-                        )
-                        .bind("at", at)
-                        .bind("id", id)
-                )
-                .getOrThrow()
-        }
-    }
-
-    override suspend fun duePurges(now: Instant, limit: Int): List<Uuid> =
-        driver
-            .fetchAll(
-                Statement.create(
-                        "SELECT id FROM orgs_due_purges(CAST(:now AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) id"
-                    )
-                    .bind("now", now)
-                    .bind("limit", limit)
-            )
-            .getOrThrow()
-            .map { it.get("id").asUuid() }
-
-    override suspend fun erase(id: Uuid, at: Instant) {
-        driver.inOrg(id) {
-            execute(
-                    Statement.create(
-                            "UPDATE orgs_organizations SET name = '', github_org_id = NULL, time_zone = 'UTC', " +
-                                "purged_at = :at WHERE id = :id AND deleted_at IS NOT NULL"
-                        )
-                        .bind("at", at)
-                        .bind("id", id)
-                )
-                .getOrThrow()
-        }
-    }
 
     override suspend fun listOfUser(userId: Uuid): List<Membership> =
         driver

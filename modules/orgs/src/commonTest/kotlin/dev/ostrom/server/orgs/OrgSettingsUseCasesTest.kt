@@ -22,6 +22,7 @@ import dev.ostrom.server.orgs.domain.validTimeZone
 import dev.ostrom.server.orgs.fakes.OrgsWorld
 import dev.ostrom.server.orgs.infrastructure.OrgDeletionWorker
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -65,7 +66,7 @@ class OrgSettingsUseCasesTest {
     private val update = UpdateOrgUseCaseImpl(world.orgs, world.members, world.audit)
     private val delete = DeleteOrgUseCaseImpl(world.orgs, world.members, world.audit, world.clock)
     private val listener = RecordingListener()
-    private val settle = SettleOrgDeletionsUseCaseImpl(world.orgs, listOf(listener), world.clock)
+    private val settle = SettleOrgDeletionsUseCaseImpl(world.deletions, listOf(listener), world.clock)
 
     private fun join(membership: Membership, personId: Uuid, role: OrgRole) {
         val member = Member(Uuid.random(), membership.org.id, personId, role, world.clock.now)
@@ -234,6 +235,7 @@ class OrgSettingsUseCasesTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class) // The test scheduler's clock proves the pauses.
     fun theWorkerLogsOnlyWhatIsLeftAndGoesOnAfterAFailedPass() = runTest {
         val logger = RecordingLogger()
         val results =

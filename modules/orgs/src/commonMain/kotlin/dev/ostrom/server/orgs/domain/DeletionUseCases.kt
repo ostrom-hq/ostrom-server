@@ -27,30 +27,30 @@ interface SettleOrgDeletionsUseCase {
  * [SettleOrgDeletionsUseCase]. An organization a module fails on is left as it is and tried again
  * at the next pass; the others go on.
  *
- * @param orgs The organizations.
+ * @param deletions The deleted organizations.
  * @param listeners The modules told of a deletion.
  * @param clock The clock.
  * @param batch How many organizations of each kind one pass takes.
  */
 class SettleOrgDeletionsUseCaseImpl(
-    private val orgs: OrgsRepository,
+    private val deletions: OrgDeletionsRepository,
     private val listeners: List<OrgDeletionListener>,
     private val clock: Clock,
     private val batch: Int = DELETION_BATCH,
 ) : SettleOrgDeletionsUseCase {
     override suspend fun invoke(): DeletionPass {
-        val toSettle = orgs.deletionsToSettle(batch)
+        val toSettle = deletions.deletionsToSettle(batch)
         val settled = toSettle.count { id ->
             succeeds {
                 listeners.forEach { it.deleted(id) }
-                orgs.markSettled(id, clock.nowMillis())
+                deletions.markSettled(id, clock.nowMillis())
             }
         }
-        val toPurge = orgs.duePurges(clock.nowMillis(), batch)
+        val toPurge = deletions.duePurges(clock.nowMillis(), batch)
         val purged = toPurge.count { id ->
             succeeds {
                 listeners.forEach { it.purge(id) }
-                orgs.erase(id, clock.nowMillis())
+                deletions.erase(id, clock.nowMillis())
             }
         }
         return DeletionPass(settled, purged, toSettle.size - settled + toPurge.size - purged)

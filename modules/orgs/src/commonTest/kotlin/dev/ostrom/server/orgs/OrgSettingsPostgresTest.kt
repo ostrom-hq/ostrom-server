@@ -83,10 +83,11 @@ class OrgSettingsPostgresTest {
     }
     private val modules = listOf(IdentityModule, OrgsModule)
 
+    // Each person under a domain of their own: two free teams on one e-mail domain are refused (402).
     private suspend fun TestServer.signIn(login: String): StartedSession {
         val user =
             koin.get<ResolveUserUseCase>()(
-                VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login)
+                VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@$login.test", true, login, login = login)
             )
         return koin.get<StartWebSessionUseCase>()(user.id)
     }
