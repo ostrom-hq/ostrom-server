@@ -674,7 +674,10 @@ class GatesPostgresTest {
     fun withoutATokenEveryRouteAnswers401() = gatesTest { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/approvals").status)
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/gates", push()).status)
-        assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/approvals").status)
+        val nobody = server.call("nobody", "/api/v1/approvals")
+        assertEquals(HttpStatusCode.Forbidden, nobody.status)
+        // LOGIN-009: the refusal names the scope that reads, never gates:answer, which no token holds.
+        assertTrue(nobody.bodyAsText().contains("does not allow gates:read"), nobody.bodyAsText())
         // Audit S2-03, S2-04: approvals are read and answered by a signed-in person, never by an agent or device token.
         assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:$session", "/api/v1/approvals").status)
         assertEquals(HttpStatusCode.Forbidden, server.call("device:a:lyes", "/api/v1/approvals?mine=true").status)
