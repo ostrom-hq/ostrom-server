@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs.presentation
 
+import dev.ostrom.server.orgs.domain.DEFAULT_TIME_ZONE
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
@@ -121,11 +122,18 @@ class InvitationLinksApi {
 @Serializable data class CreateOrgRequest(val name: String, val slug: String? = null)
 
 /**
- * Renames an organization.
+ * Changes an organization's settings; a field left out stays as it is.
  *
  * @property name The new name.
+ * @property timeZone The new IANA time zone, such as `Europe/Paris`.
+ * @property slug The short name: accepted only unchanged, it never changes.
  */
-@Serializable data class UpdateOrgRequest(val name: String)
+@Serializable
+data class UpdateOrgRequest(
+    val name: String? = null,
+    val timeZone: String? = null,
+    val slug: String? = null,
+)
 
 /**
  * Confirms a deletion.
@@ -189,6 +197,8 @@ const val DEFAULT_LINK_USES = 10
  * @property name The name.
  * @property role The caller's role.
  * @property createdAt When it was created.
+ * @property timeZone Its IANA time zone, `UTC` until set (optional in the contract's sense: a
+ *   default, so a client built before it still reads the others).
  */
 @Serializable
 data class OrgResponse(
@@ -197,6 +207,7 @@ data class OrgResponse(
     val name: String,
     val role: String,
     val createdAt: String,
+    val timeZone: String = DEFAULT_TIME_ZONE,
 )
 
 /**

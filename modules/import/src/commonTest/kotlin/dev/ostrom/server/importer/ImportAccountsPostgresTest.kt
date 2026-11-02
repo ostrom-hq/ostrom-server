@@ -53,6 +53,8 @@ class ImportAccountsPostgresTest {
             "TeamCode's tokens would disconnect TeamCode): the cutover run revives it."
         const val REFUSED = "TeamCode's tokens for this account are refused too: it keeps waiting for its owner to " +
             "sign in again."
+        const val NOT_THIS_ACCOUNT = "The provider does not confirm that TeamCode's tokens are this account's: it " +
+            "keeps waiting for its owner to sign in again."
         const val UNTESTED = "The provider could not be reached to test TeamCode's tokens: the account keeps " +
             "waiting. Run the import again."
     }
@@ -367,6 +369,36 @@ class ImportAccountsPostgresTest {
                 assertEquals("renewed-access-claude-1-token-2", accessToken("claude-1"), "The renewed pair is kept")
                 assertEquals("access-owner-claude-2-token", accessToken("claude-2"), "The owner's reconnection stays")
                 assertEquals(setOf("claude-1", "claude-2"), now.keys, "A removed account is never shared again")
+            }
+        }
+
+    @Test
+    fun theCutoverRevivesAnAccountOnlyWithTokensTheProviderSaysAreItsOwn() =
+        serverTest(modules, withAudit(RecordingAuditLog())) { server ->
+            with(server) {
+                accountLines(*(1..3).map { account("claude", "claude-$it") }.toTypedArray())
+                reconnectRequired("claude-1", "claude-2", "claude-3")
+                // An export edited by hand: claude-1's line carries another subscription's tokens, claude-2's tokens
+                // renew but the provider does not say whose they are. Neither may stand behind the org's account.
+                assertEquals(
+                    listOf(
+                        line("account", "claude/Lyes claude-1", SKIPPED, NOT_THIS_ACCOUNT),
+                        line("account", "claude/Lyes claude-2", SKIPPED, NOT_THIS_ACCOUNT),
+                        line("account", "claude/Lyes claude-3", UPDATED),
+                    ),
+                    accountLines(
+                        account("claude", "claude-1", run = 2).copy(refreshToken = "refresh-claude-9-token-2"),
+                        account("claude", "claude-2", run = 2).copy(refreshToken = "anonymous-claude-2-token-2"),
+                        account("claude", "claude-3", run = 2),
+                        cutover = true,
+                    ),
+                )
+                val waiting = AccountStatus.RECONNECT_REQUIRED
+                val all = arrayOf("claude-1", "claude-2", "claude-3")
+                assertEquals(listOf(waiting, waiting, AccountStatus.READY), statuses(*all))
+                assertEquals("access-claude-1-token-1", accessToken("claude-1"), "Another account's pair: not stored")
+                assertEquals("access-claude-2-token-1", accessToken("claude-2"), "An unconfirmed pair: not stored")
+                assertEquals("renewed-access-claude-3-token-2", accessToken("claude-3"))
             }
         }
 
