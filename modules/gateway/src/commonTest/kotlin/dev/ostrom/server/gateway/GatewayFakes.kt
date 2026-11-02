@@ -108,7 +108,7 @@ class InMemoryAccounts :
     val envelopes = mutableMapOf<Uuid, String>()
     val windows = mutableMapOf<Uuid, List<QuotaWindow>>()
 
-    override suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount {
+    override suspend fun upsert(account: SharedAccount, envelope: String, expectedVersion: Long?): SharedAccount {
         accounts += account
         envelopes[account.id] = envelope
         return account
@@ -121,7 +121,7 @@ class InMemoryAccounts :
     override suspend fun ready(orgId: Uuid, provider: AccountProvider) =
         accounts.filter { it.orgId == orgId && it.provider == provider && it.status == AccountStatus.READY }
 
-    override suspend fun update(account: SharedAccount): SharedAccount? {
+    override suspend fun update(account: SharedAccount, expectedVersion: Long?): SharedAccount? {
         val index = accounts.indexOfFirst { it.id == account.id }
         if (index < 0) return null
         accounts[index] = account
