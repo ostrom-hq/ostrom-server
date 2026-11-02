@@ -82,6 +82,8 @@ class UsagePresentationTest {
         assertEquals(account.toString(), response.accountId)
         assertEquals(TestCallers.adminA.memberId.toString(), response.memberId)
         assertEquals("s-9", response.sessionId)
+        assertEquals(null, response.launchId)
+        assertEquals("lch_1", modelEvent(42).copy(launchId = "lch_1").toResponse().launchId)
         assertEquals(42L, response.costMicros)
         assertEquals("2026-10-30T12:00:00Z", response.at)
         val orgLevel = modelEvent(1, memberId = null).toResponse()

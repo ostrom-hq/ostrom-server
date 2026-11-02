@@ -102,5 +102,7 @@ class McpRelayMappersTest {
         )
         assertEquals(policy.toString(), call.toDto().policyId)
         assertNull(call.copy(policyId = null).toDto().policyId)
+        assertNull(call.toDto().launchId)
+        assertEquals("lch_1", call.copy(launchId = "lch_1").toDto().launchId)
     }
 }

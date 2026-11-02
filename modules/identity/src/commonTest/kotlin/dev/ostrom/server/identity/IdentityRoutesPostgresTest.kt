@@ -18,9 +18,12 @@ import dev.ostrom.server.identity.presentation.DeviceAuthorizationResponse
 import dev.ostrom.server.identity.presentation.DeviceCodeRequest
 import dev.ostrom.server.identity.presentation.DeviceCodeResponse
 import dev.ostrom.server.identity.presentation.DeviceTokenRequest
-import dev.ostrom.server.identity.presentation.ProfileResponse
+import dev.ostrom.server.identity.presentation.AccountResponse
+import dev.ostrom.server.identity.presentation.MeDevResponse
+import dev.ostrom.server.identity.presentation.MeResponse
 import dev.ostrom.server.identity.presentation.TokensResponse
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
+import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.http.ApiError
 import dev.ostrom.server.testing.TestServer
@@ -90,11 +93,26 @@ class IdentityRoutesPostgresTest {
 
         val response = server.client.get("/api/v1/auth/me") { session(started, csrf = false) }
         assertEquals(HttpStatusCode.OK, response.status)
-        val profile = response.body<ProfileResponse>()
+        // The contract's `Me`: the person, what the session may do, and its CSRF token.
+        val me = response.body<MeResponse>()
+        assertEquals(MeDevResponse(user.login, verified = true, via = "github"), me.dev)
+        assertEquals(listOf("user:*"), me.capabilities)
+        assertEquals(started.csrfToken, me.csrfToken)
+        assertNull(me.member)
+        // The account settings read the e-mails and ways in on their own route.
+        val account = server.client.get("/api/v1/auth/me/account") { session(started, csrf = false) }
+        assertEquals(HttpStatusCode.OK, account.status)
+        val profile = account.body<AccountResponse>()
         assertEquals(user.id.toString(), profile.id)
         assertEquals("user1@example.com", profile.primaryEmail)
         assertEquals(listOf("github"), profile.providers)
-        assertEquals(started.csrfToken, profile.csrfToken)
+        // Without the orgs module no organization is a membership: the header is ignored, never an error.
+        val named = server.client.get("/api/v1/auth/me") {
+            session(started, csrf = false)
+            header(ORG_HEADER, Uuid.random().toString())
+        }
+        assertEquals(HttpStatusCode.OK, named.status)
+        assertNull(named.body<MeResponse>().organization)
     }
 
     @Test
@@ -130,15 +148,17 @@ class IdentityRoutesPostgresTest {
         // The token reads what its scopes allow, never the token management.
         assertEquals(
             user.id.toString(),
-            server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.body<ProfileResponse>().id,
+            server.client.get("/api/v1/auth/me/account") { bearerAuth(token.secret) }.body<AccountResponse>().id,
         )
-        assertNull(server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.body<ProfileResponse>().csrfToken)
+        val byToken = server.client.get("/api/v1/auth/me") { bearerAuth(token.secret) }.body<MeResponse>()
+        assertNull(byToken.csrfToken)
+        assertEquals(listOf("profile:read"), byToken.capabilities, "What the token may do")
         // A token wins over a cookie sent along: the answer carries no CSRF token, the request is not a session.
         val both = server.client.get("/api/v1/auth/me") {
             bearerAuth(token.secret)
             session(started, csrf = false)
         }
-        assertNull(both.body<ProfileResponse>().csrfToken)
+        assertNull(both.body<MeResponse>().csrfToken)
         assertEquals(HttpStatusCode.Forbidden, server.client.get("/api/v1/tokens") { bearerAuth(token.secret) }.status)
 
         val listed = server.client.get("/api/v1/tokens") { session(started) }.body<TokensResponse>()
@@ -277,7 +297,7 @@ class IdentityRoutesPostgresTest {
         assertTrue(secret.startsWith("osc_"))
         assertEquals(
             user.id.toString(),
-            server.client.get("/api/v1/auth/me") { bearerAuth(secret) }.body<ProfileResponse>().id,
+            server.client.get("/api/v1/auth/me/account") { bearerAuth(secret) }.body<AccountResponse>().id,
         )
         assertEquals(400 to "expired_token", server.pollDevice(codes.deviceCode).refusal())
         assertEquals(

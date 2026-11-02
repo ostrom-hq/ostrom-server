@@ -86,6 +86,12 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
                 "USING (current_setting('$RETENTION_SETTING', true) = 'on');",
         ).joinToString("\n"),
     ),
+    SchemaMigration(
+        version = 3,
+        name = "mcp_relay_calls_name_the_agent_launch",
+        // The launch whose agent token made the call (server#108), null for a member's own credential.
+        sql = "ALTER TABLE mcp_relay_calls ADD COLUMN launch_id TEXT",
+    ),
 )
 
 /** The transaction-local setting that opens the retention policy of `mcp_relay_calls`. */

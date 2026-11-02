@@ -13,6 +13,8 @@ import dev.ostrom.server.automations.presentation.allowsAutomations
 import dev.ostrom.server.automations.presentation.automationCallerOf
 import dev.ostrom.server.automations.presentation.automationId
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.BrowserSessionRequiredException
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -25,6 +27,9 @@ import kotlin.uuid.Uuid
 class AutomationCallersTest {
     private fun principal(kind: PrincipalKind, vararg scopes: String, subject: String = "alice") =
         AuthenticatedPrincipal(subject, kind, scopes.toSet())
+
+    private fun session(channel: PrincipalChannel) =
+        AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("user:*"), channel = channel)
 
     @Test
     fun aLoginOrTheScopeOrWriteAllows() {
@@ -44,7 +49,7 @@ class AutomationCallersTest {
 
     @Test
     fun theCallerIsTheMemberTheCredentialActsFor() = runTest {
-        val login = TestOrgResolver.automationCallerOf(principal(PrincipalKind.USER, "user:*"), AUTOMATIONS_WRITE)
+        val login = TestOrgResolver.automationCallerOf(session(PrincipalChannel.BROWSER), AUTOMATIONS_WRITE)
         assertEquals(ORG_A, login.orgId)
         assertEquals(ALICE.toString(), login.memberId)
         assertFalse(login.admin)
@@ -61,6 +66,19 @@ class AutomationCallersTest {
         assertFailsWith<NoOrganizationException> {
             val nobody = principal(PrincipalKind.USER, "user:*", subject = "nobody")
             TestOrgResolver.automationCallerOf(nobody, AUTOMATIONS_READ)
+        }
+    }
+
+    @Test
+    fun onlyABrowserSessionOrAServiceKeyWritesAutomations() = runTest {
+        // S2-52: a personal token, a device or the mobile app reads at most.
+        val service = principal(PrincipalKind.SERVICE, AUTOMATIONS_WRITE)
+        assertEquals(ORG_A, TestOrgResolver.automationCallerOf(service, AUTOMATIONS_WRITE).orgId)
+        for (refused in listOf(principal(PrincipalKind.USER, "user:*"), session(PrincipalChannel.MOBILE_APP))) {
+            assertFailsWith<BrowserSessionRequiredException> {
+                TestOrgResolver.automationCallerOf(refused, AUTOMATIONS_WRITE)
+            }
+            assertEquals(ORG_A, TestOrgResolver.automationCallerOf(refused, AUTOMATIONS_READ).orgId)
         }
     }
 

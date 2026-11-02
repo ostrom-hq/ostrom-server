@@ -3,6 +3,8 @@ package dev.ostrom.server.integrations.github
 
 import dev.ostrom.server.integrations.github.infrastructure.AppJwt
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
+import dev.ostrom.server.integrations.github.infrastructure.credentials
+import dev.ostrom.server.integrations.github.infrastructure.oauthClient
 import dev.ostrom.server.integrations.github.infrastructure.WebhookSignature
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.whyoleg.cryptography.BinarySize.Companion.bits
@@ -54,16 +56,16 @@ class GitHubCryptoTest {
             .decodeFromByteArray(HMAC.Key.Format.RAW, "s3cret".encodeToByteArray())
         val mac = key.signatureGenerator().generateSignature(body)
         val good = "sha256=" + mac.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
-        val signature = WebhookSignature("s3cret")
+        val signature = WebhookSignature { "s3cret" }
 
         assertTrue(signature.verify(body, good))
         assertFalse(signature.verify("""{"action":"closed"}""".encodeToByteArray(), good), "Another body")
-        assertFalse(WebhookSignature("other").verify(body, good), "Another secret")
+        assertFalse(WebhookSignature { "other" }.verify(body, good), "Another secret")
         assertFalse(signature.verify(body, good.dropLast(1)), "Shorter")
         assertFalse(signature.verify(body, good + "0"), "Longer")
         assertFalse(signature.verify(body, good.replaceFirst("sha256=", "sha1=")), "Another algorithm")
         assertFalse(signature.verify(body, null), "Unsigned")
-        assertFalse(WebhookSignature(null).verify(body, good), "No secret: nothing passes")
+        assertFalse(WebhookSignature { null }.verify(body, good), "No secret: nothing passes")
     }
 
     @Test
@@ -89,12 +91,17 @@ class GitHubCryptoTest {
         assertTrue(settings.configured)
         assertEquals("Iv1.abc", settings.clientId)
         assertEquals("client-s3cret", settings.clientSecret)
-        assertEquals("ostrom-dev", settings.installSlug)
+        val app = settings.credentials()
+        assertEquals("ostrom-dev", app.installSlug)
+        assertEquals("Iv1.abc", app.oauthClient()?.id)
+        assertEquals("client-s3cret", app.oauthClient()?.secret)
         assertFalse("abc" in settings.toString() || "s3cret" in settings.toString())
         // Without its OAuth client, the App is not installed: nothing would prove the installation is the person's.
-        assertNull(settings.copy(clientId = null).installSlug)
-        assertNull(settings.copy(clientSecret = null).installSlug)
-        assertNull(settings.copy(slug = null).installSlug)
+        for (partial in listOf(app.copy(clientId = null), app.copy(clientSecret = null))) {
+            assertNull(partial.installSlug)
+            assertNull(partial.oauthClient())
+        }
+        assertNull(app.copy(slug = null).installSlug)
 
         val empty = GitHubSettings.from(source(mapOf("OSTROM_GITHUB_APP_ID" to " ")))
         assertEquals(GitHubSettings(null, null, null, null), empty)

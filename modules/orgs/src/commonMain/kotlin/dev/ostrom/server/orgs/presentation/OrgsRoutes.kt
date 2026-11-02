@@ -234,6 +234,7 @@ private fun Membership.toOrgResponse() =
 
 private fun MemberProfile.toMemberResponse() =
     MemberResponse(
+        member.id.toString(),
         login,
         displayName,
         avatarUrl.orEmpty(),
