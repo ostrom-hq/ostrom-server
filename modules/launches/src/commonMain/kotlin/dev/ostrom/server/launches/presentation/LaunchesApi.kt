@@ -50,3 +50,20 @@ data class LaunchResponse(val launchId: String, val agentToken: String, val expi
  */
 @Serializable
 data class AgentPolicyResponse(val allowed: Boolean, val reason: String? = null)
+
+/**
+ * `POST /api/v1/cloud/runner/launch`: the launch of a cloud session, asked by its runner with the execution's runner
+ * token. Not in the contract yet.
+ */
+@Serializable
+@Resource("/api/v1/cloud/runner/launch")
+class RunnerLaunchApi
+
+/**
+ * The runner's claim.
+ *
+ * @property sessionId The cloud session the runner was started for.
+ * @property epoch The execution it was started for.
+ */
+@Serializable
+data class RunnerLaunchRequest(val sessionId: String, val epoch: Long)
