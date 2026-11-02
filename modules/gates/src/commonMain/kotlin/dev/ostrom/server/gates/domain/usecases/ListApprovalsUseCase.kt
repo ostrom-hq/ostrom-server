@@ -38,7 +38,9 @@ class ListApprovalsUseCaseImpl(
         limit: Int,
     ): List<ApprovalView> {
         if (actor.kind != ActorKind.USER) throw OnlyPeopleAnswerException()
-        return repository.approvals(actor.orgId, actor.id.takeIf { mine }, status, limit.coerceIn(1, MAX_LIMIT))
+        // Second audit L4: requests name people, so "mine" is the caller's person, not its credential.
+        val person = actor.personId ?: actor.id
+        return repository.approvals(actor.orgId, person.takeIf { mine }, status, limit.coerceIn(1, MAX_LIMIT))
     }
 
     private companion object {
