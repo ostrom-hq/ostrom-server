@@ -62,7 +62,7 @@ class ReceiptsGateSigner(
                 "subject",
                 buildJsonObject {
                     put("kind", "gate")
-                    put("id", gate.id.toString())
+                    put("id", subjectIdOf(gate))
                     put("digest", Digests.digestOf(preimage(gate)))
                 },
             )
@@ -77,6 +77,11 @@ class ReceiptsGateSigner(
 
     override suspend fun read(orgId: Uuid, receiptId: String?): JsonObject? =
         receiptId?.let { getReceipt(orgId, it) }
+
+    // A gate on a commit names it in clear, the pull request's head or the pushed commit (decided 02/11/2026): the
+    // receipt says at a glance which commit was approved, and a SHA is no secret. The digest stays the request's hash.
+    private fun subjectIdOf(gate: Gate): String =
+        gate.subject.pullRequest?.headSha ?: gate.subject.push?.refs?.firstOrNull()?.sha ?: gate.id.toString()
 
     private suspend fun agentOf(gate: Gate): String = when {
         AskedVia.CI in gate.askedVia -> "ci"

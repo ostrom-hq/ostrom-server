@@ -98,7 +98,7 @@ class GateJourneyPostgresTest {
 
     private fun push(cls: String) = """
         {"repo": "acme/api", "class": "$cls", "tool": "Bash", "command": "git push origin main",
-         "push": {"remote": "origin", "refs": [{"ref": "refs/heads/main", "sha": "${"a".repeat(SHA_LENGTH)}"}]}}
+         "push": {"remote": "origin", "refs": [{"ref": "refs/heads/main", "sha": "$COMMIT"}]}}
     """.trimIndent()
 
     /** The benches' setup: the team, dev-a's personal token, the accepted workflow. Returns the token's secret. */
@@ -155,8 +155,11 @@ class GateJourneyPostgresTest {
         }
     }
 
-    /** The receipt of an answer: signed by the instance, verified as `ostrom verify` does, with its result. */
-    private suspend fun TestServer.assertSignedReceipt(answered: HttpResponse, result: String) {
+    /**
+     * The receipt of an answer: signed by the instance, verified as `ostrom verify` does, with its result, naming the
+     * pushed commit in clear. Returns it.
+     */
+    private suspend fun TestServer.assertSignedReceipt(answered: HttpResponse, result: String): JsonObject {
         assertEquals(200, answered.status.value, answered.bodyAsText())
         val receipt = assertNotNull(answered.json()["receipt"]?.jsonObject, answered.bodyAsText())
         assertTrue(receipt["signature"]?.jsonPrimitive?.content.orEmpty().isNotEmpty(), answered.bodyAsText())
@@ -164,6 +167,8 @@ class GateJourneyPostgresTest {
         assertTrue(verification.ok, "verification: $verification")
         val decision = receipt.getValue("decisions").jsonArray.single().jsonObject
         assertEquals(result, decision.getValue("result").jsonPrimitive.content)
+        assertEquals(COMMIT, receipt.getValue("subject").jsonObject.getValue("id").jsonPrimitive.content)
+        return receipt
     }
 
     @Test
@@ -182,8 +187,13 @@ class GateJourneyPostgresTest {
         val items = inbox.json().getValue("items").jsonArray
         assertEquals(1, items.size, "rev-b's inbox: ${inbox.bodyAsText()}")
 
-        // A no is a decision too: its answer carries its signed receipt.
-        server.assertSignedReceipt(server.answer(revBSession, items.single().jsonObject, "reject"), "rejected")
+        // A no is a decision too: its answer carries its signed receipt, and the server keeps it (E2E-GATE-001).
+        val answered = server.answer(revBSession, items.single().jsonObject, "reject")
+        val receipt = server.assertSignedReceipt(answered, "rejected")
+        val id = receipt.getValue("id").jsonPrimitive.content
+        val kept = server.client.get("/api/v1/receipts/$id") { session(devA.second) }
+        assertEquals(200, kept.status.value, kept.bodyAsText())
+        assertTrue(COMMIT in kept.bodyAsText() && "rev-b" in kept.bodyAsText(), kept.bodyAsText())
     }
 
     @Test
@@ -207,6 +217,6 @@ class GateJourneyPostgresTest {
 
     private companion object {
         const val CONSOLE_ORIGIN = "http://localhost:5173"
-        const val SHA_LENGTH = 40
+        const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
     }
 }

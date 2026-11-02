@@ -12,6 +12,7 @@ import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.OTHER_SESSION
+import dev.ostrom.server.gates.fakes.SHA_A
 import dev.ostrom.server.gates.infrastructure.ReceiptsGateSigner
 import dev.ostrom.server.receipts.domain.services.ReceiptRule
 import dev.ostrom.server.receipts.domain.services.ReceiptRules
@@ -99,7 +100,8 @@ class ReceiptsGateSignerTest {
         assertEquals("rcpt_gate_${view.gate.id}", id)
         assertEquals(
             Json.parseToJsonElement(
-                """{"kind":"gate","id":"${view.gate.id}","digest":"${draft.digest()}"}""",
+                // The pushed commit names the subject, in clear; the digest is the request's.
+                """{"kind":"gate","id":"$SHA_A","digest":"${draft.digest()}"}""",
             ),
             draft["subject"],
         )
@@ -147,6 +149,8 @@ class ReceiptsGateSignerTest {
         )
         signer(bench, sign).sign(merge)
         assertEquals("ci", sign.drafts.single().first.text("agent"))
+        // The pull request's head names the subject.
+        assertEquals("a".repeat(40), sign.drafts.single().first.getValue("subject").jsonObject.text("id"))
         val preimage = signer(bench, sign).preimage(merge)
         assertEquals("""{"sha":"${"a".repeat(40)}","pr":"6"}""", preimage.getValue("ci").toString())
         assertEquals("""{"number":"6","sha":"${"a".repeat(40)}","owner":"main"}""", preimage.getValue("pr").toString())
@@ -156,6 +160,19 @@ class ReceiptsGateSignerTest {
 
         val viaHook = signer(bench, sign).preimage(merge.copy(askedVia = setOf(AskedVia.HOOK)))
         assertEquals("null", viaHook.getValue("ci").toString(), "Only the check gives a CI context")
+    }
+
+    @Test
+    fun aGateOnNoCommitIsNamedByItsId() = runTest {
+        val bench = GateBench()
+        val sign = RecordingSign()
+        val decided = bench.answer(bench.open(bench.pushRequest()), "rev-b").gate
+        val noPush = decided.copy(subject = decided.subject.copy(push = null, pullRequest = null))
+        val noRef = decided.copy(subject = decided.subject.copy(push = decided.subject.push?.copy(refs = emptyList())))
+        signer(bench, sign).sign(noPush)
+        signer(bench, sign).sign(noRef)
+        val ids = sign.drafts.map { (draft, _) -> draft.getValue("subject").jsonObject.text("id") }
+        assertEquals(listOf(decided.id.toString(), decided.id.toString()), ids)
     }
 
     @Test
