@@ -52,6 +52,10 @@ class FakeLaunchers(
         }
         return role?.let { OrgPrincipal(orgId, memberOf(userId), it) }
     }
+
+    /** The members of [launchers], by member id: their key. */
+    override suspend fun owner(orgId: Uuid, memberId: Uuid): Launcher? =
+        launchers[memberId.toString()]?.takeIf { it.orgId == orgId }
 }
 
 /** Records each token issued and answers `osa_<launch>`. */
@@ -68,8 +72,8 @@ class RecordingTokens : AgentTokenService {
 class FakeModelRules(private val refused: Map<String, String> = emptyMap()) : LaunchModelRules {
     val asked = mutableListOf<Triple<Uuid, String, String>>()
 
-    override suspend fun refusal(orgId: Uuid, login: String, model: String): String? {
-        asked += Triple(orgId, login, model)
+    override suspend fun refusal(launcher: Launcher, model: String): String? {
+        asked += Triple(launcher.orgId, launcher.login, model)
         return refused[model]
     }
 }

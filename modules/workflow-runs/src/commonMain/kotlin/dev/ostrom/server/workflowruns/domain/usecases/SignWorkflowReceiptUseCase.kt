@@ -91,7 +91,8 @@ class SignWorkflowReceiptUseCaseImpl(
         val gates = sessions.gates(orgId, session.id)
         val runs = repository.checks(orgId, all).reversed()
         val notifications = repository.notifications(orgId, all).reversed()
-        val nodes = NodeOutcomes(pack, session, runs, notifications, gates, proofs(session, pack, runs)).nodes()
+        val proofs = NodeProofs(repository.attestations(orgId, session.id), ciChecks(session, pack, runs))
+        val nodes = NodeOutcomes(pack, session, runs, notifications, gates, proofs).nodes()
         val decisions = gates.flatMap { it.decisions }.map {
             ReceiptDecision(
                 approvalId = it.approvalId.toString(),
@@ -139,7 +140,7 @@ class SignWorkflowReceiptUseCaseImpl(
     // The CI's run of each check node that ran, on the commit its last run reported, in the repository the session
     // really runs in (decision of 30/10 15:14). A check node's label is the name of its CI check. The forge's port
     // refuses a malformed repository or commit and answers nothing when GitHub fails: the node stays declared.
-    private suspend fun proofs(session: Session, pack: RunPackage, runs: List<CheckRun>): Map<String, CiCheck> {
+    private suspend fun ciChecks(session: Session, pack: RunPackage, runs: List<CheckRun>): Map<String, CiCheck> {
         val repo = session.realRepo ?: session.repo ?: return emptyMap()
         return pack.nodes.filter { it.kind == CHECK }.mapNotNull { node ->
             runs.lastOrNull { it.nodeId == node.id }?.head
