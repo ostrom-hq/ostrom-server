@@ -59,12 +59,14 @@ jobs:
       - name: Image
         run: docker build --progress=plain -t ostrom-runner:ci image
 
-      - name: Smoke test (the runner refuses a missing configuration, the agents are installed)
+      - name: Smoke test (the runner and the machine mode refuse a missing configuration, the agents are installed)
         run: |
           set +e
           docker run --rm ostrom-runner:ci; code=$?
+          docker run --rm ostrom-runner:ci machine; machine=$?
           set -e
           test "$code" = 2
+          test "$machine" = 2
           docker run --rm --entrypoint sh ostrom-runner:ci -c 'claude --version && codex --version && git --version && id -u | grep -x 1000'
 
       - name: Push to GHCR
