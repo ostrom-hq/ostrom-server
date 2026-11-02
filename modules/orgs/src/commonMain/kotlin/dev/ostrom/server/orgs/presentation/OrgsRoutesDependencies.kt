@@ -17,9 +17,9 @@ import dev.ostrom.server.orgs.domain.ListMembersUseCase
 import dev.ostrom.server.orgs.domain.ListMyOrgsUseCase
 import dev.ostrom.server.orgs.domain.PreviewInvitationUseCase
 import dev.ostrom.server.orgs.domain.RemoveMemberUseCase
-import dev.ostrom.server.orgs.domain.RenameOrgUseCase
 import dev.ostrom.server.orgs.domain.RevokeInvitationUseCase
 import dev.ostrom.server.orgs.domain.TransferOwnershipUseCase
+import dev.ostrom.server.orgs.domain.UpdateOrgUseCase
 
 /**
  * What the organization routes need.
@@ -43,7 +43,7 @@ data class OrgsRoutesDependencies(
  * @property listMine The caller's organizations.
  * @property create Creates one.
  * @property get Reads one.
- * @property rename Renames one.
+ * @property update Changes its settings (name, time zone).
  * @property delete Deletes one.
  * @property transfer Transfers its ownership.
  */
@@ -52,7 +52,7 @@ data class OrgCommands(
     val listMine: ListMyOrgsUseCase,
     val create: CreateOrgUseCase,
     val get: GetOrgUseCase,
-    val rename: RenameOrgUseCase,
+    val update: UpdateOrgUseCase,
     val delete: DeleteOrgUseCase,
     val transfer: TransferOwnershipUseCase,
 )
