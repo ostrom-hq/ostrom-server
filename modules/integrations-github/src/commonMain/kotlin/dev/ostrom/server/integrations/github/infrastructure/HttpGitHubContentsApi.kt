@@ -3,6 +3,12 @@ package dev.ostrom.server.integrations.github.infrastructure
 
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.integrations.github.domain.GitHubContentsApi
+import dev.ostrom.server.integrations.github.infrastructure.GitHubContentsJson.Branch
+import dev.ostrom.server.integrations.github.infrastructure.GitHubContentsJson.BranchRule
+import dev.ostrom.server.integrations.github.infrastructure.GitHubContentsJson.Content
+import dev.ostrom.server.integrations.github.infrastructure.GitHubContentsJson.Tree
+import dev.ostrom.server.integrations.github.infrastructure.GitHubContentsJson.protectionOf
+import dev.ostrom.server.integrations.github.infrastructure.GitHubContentsJson.text
 import dev.ostrom.server.rules.domain.models.BranchProtection
 import dev.ostrom.server.rules.domain.models.RepositoryTree
 import io.ktor.client.HttpClient
@@ -13,16 +19,8 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.delay
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlin.io.encoding.Base64
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -127,44 +125,6 @@ class HttpGitHubContentsApi(
             RepositoryTree(tree.tree.filter { it.type == "blob" }.map { it.path }, tree.truncated)
         }
 
-    // The text of a small file; a directory, a large file (GitHub sends no content past 1 MB) or a binary is null.
-    private fun text(file: Content): String? {
-        val readable = file.type == "file" && file.encoding == "base64" && file.size <= MAX_FILE_BYTES
-        val bytes = if (readable) decoded(file.content) else null
-        return bytes?.decodeToString()?.takeUnless { '\u0000' in it }
-    }
-
-    private fun decoded(content: String): ByteArray? = try {
-        Base64.Mime.decode(content)
-    } catch (_: IllegalArgumentException) {
-        null
-    }
-
-    private fun protectionOf(classic: Branch, rules: List<BranchRule>): BranchProtection {
-        val reviews = rules.filter { it.type == "pull_request" }.map { it.parameters }
-        val approvals = reviews.maxOfOrNull { it.int("required_approving_review_count") } ?: 0
-        val checks = classic.protection?.requiredStatusChecks?.contexts.orEmpty() +
-            rules.filter { it.type == "required_status_checks" }.flatMap { contexts(it.parameters) }
-        return BranchProtection(
-            protected = classic.protected || rules.isNotEmpty(),
-            requiredApprovals = approvals,
-            codeOwnerReviews = reviews.any { it.flag("require_code_owner_review") },
-            requiredChecks = checks.distinct(),
-            // A classic protection refuses force-pushes unless an administrator allowed them, which only
-            // `administration: read` would show.
-            blocksForcePush = classic.protected || rules.any { it.type == "non_fast_forward" },
-        )
-    }
-
-    // Read leniently: a ruleset's parameters are GitHub's to extend, and an unknown shape reads as nothing.
-    private fun contexts(parameters: JsonObject): List<String> =
-        (parameters["required_status_checks"] as? JsonArray).orEmpty()
-            .mapNotNull { ((it as? JsonObject)?.get("context") as? JsonPrimitive)?.content }
-
-    private fun JsonObject.int(key: String): Int = (this[key] as? JsonPrimitive)?.intOrNull ?: 0
-
-    private fun JsonObject.flag(key: String): Boolean = (this[key] as? JsonPrimitive)?.booleanOrNull == true
-
     private fun branchPath(repo: String, branch: String) = "${repoPath(repo)}/branches/${branch.encodeURLParameter()}"
 
     private suspend inline fun <reified T> read(response: HttpResponse, what: String): T {
@@ -178,52 +138,8 @@ class HttpGitHubContentsApi(
         }
     }
 
-    @Serializable
-    private data class Sha(val sha: String)
-
-    @Serializable
-    private data class Commit(val tree: Sha)
-
-    @Serializable
-    private data class BranchCommit(val commit: Commit)
-
-    @Serializable
-    private data class RequiredChecks(val contexts: List<String> = emptyList())
-
-    @Serializable
-    private data class Protection(
-        @SerialName("required_status_checks") val requiredStatusChecks: RequiredChecks? = null,
-    )
-
-    @Serializable
-    private data class Branch(
-        val commit: BranchCommit,
-        val protected: Boolean = false,
-        val protection: Protection? = null,
-    )
-
-    @Serializable
-    private data class TreeEntry(val path: String, val type: String)
-
-    @Serializable
-    private data class Tree(val tree: List<TreeEntry>, val truncated: Boolean = false)
-
-    @Serializable
-    private data class Content(
-        val type: String,
-        val size: Long = 0,
-        val encoding: String? = null,
-        val content: String = "",
-    )
-
-    @Serializable
-    private data class BranchRule(val type: String, val parameters: JsonObject = JsonObject(emptyMap()))
-
     private companion object {
         const val RETRIES = 3
-
-        // The analysis reads CODEOWNERS and a package.json: 512 KB is far beyond either.
-        const val MAX_FILE_BYTES = 512 * 1024
     }
 }
 

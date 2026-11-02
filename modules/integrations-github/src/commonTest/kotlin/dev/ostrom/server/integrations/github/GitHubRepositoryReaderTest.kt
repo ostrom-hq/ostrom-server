@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.integrations.github
 
+import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
 import dev.ostrom.server.integrations.github.domain.GitHubRepositoryReader
 import dev.ostrom.server.rules.domain.models.BranchProtection
@@ -68,7 +69,7 @@ class GitHubRepositoryReaderTest {
         assertEquals("* @acme/platform", reader.file(ORG, api, ".github/CODEOWNERS")?.lines()?.first())
         assertNull(reader.file(ORG, api, "package.json"))
         assertEquals(BranchProtection(true, 1, true, listOf("build"), true), reader.protection(ORG, api))
-        assertEquals(setOf(Triple(42L, "ACME/api", "main")), contents.reads.toSet())
+        assertEquals(setOf(Triple(42L, "acme/api", "main")), contents.reads.toSet(), "As the installation names it")
     }
 
     @Test
@@ -94,6 +95,7 @@ class GitHubRepositoryReaderTest {
         directory.failure = gitHubDown()
         val listing = assertFailsWith<RepositoryReadException> { reader.repositories(ORG) }
         assertEquals("GitHub did not answer GET /repos/acme/api/pulls/6.", listing.message)
+        assertIs<GitHubCallException>(listing.cause, "The cause is kept")
         contents.failure = gitHubDown()
         val api = ref("acme", "api")
         assertFailsWith<RepositoryReadException> { reader.tree(ORG, api) }

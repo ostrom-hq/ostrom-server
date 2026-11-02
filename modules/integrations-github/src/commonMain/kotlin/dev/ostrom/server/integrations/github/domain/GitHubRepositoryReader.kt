@@ -32,26 +32,32 @@ class GitHubRepositoryReader(
     }
 
     override suspend fun tree(orgId: Uuid, repo: RepositoryRef): RepositoryTree {
-        val installationId = installed(orgId, repo)
-        return github { contents.tree(installationId, repo.fullName(), repo.defaultBranch) }
+        val installation = installed(orgId, repo)
+        return github { contents.tree(installation.installationId, installation.path(repo), repo.defaultBranch) }
     }
 
     override suspend fun file(orgId: Uuid, repo: RepositoryRef, path: String): String? {
-        val installationId = installed(orgId, repo)
-        return github { contents.file(installationId, repo.fullName(), repo.defaultBranch, path) }
+        val installation = installed(orgId, repo)
+        return github { contents.file(installation.installationId, installation.path(repo), repo.defaultBranch, path) }
     }
 
     override suspend fun protection(orgId: Uuid, repo: RepositoryRef): BranchProtection? {
-        val installationId = installed(orgId, repo)
-        return github { contents.protection(installationId, repo.fullName(), repo.defaultBranch) }
+        val installation = installed(orgId, repo)
+        return github {
+            contents.protection(installation.installationId, installation.path(repo), repo.defaultBranch)
+        }
     }
 
     // The organization's own installation, and only for a repository of the account it is installed on.
-    private suspend fun installed(orgId: Uuid, repo: RepositoryRef): Long {
-        val installation = installations.installation(orgId)
-            ?.takeIf { it.account.equals(repo.owner, ignoreCase = true) && isRepositoryName(repo.fullName()) }
-        return installation?.installationId ?: throw RepositoryReadException(NOT_ITS_OWN)
-    }
+    private suspend fun installed(orgId: Uuid, repo: RepositoryRef): GitHubInstallation =
+        installations.installation(orgId)
+            ?.takeIf { it.account.equals(repo.owner, ignoreCase = true) && isRepositoryName(path(it.account, repo)) }
+            ?: throw RepositoryReadException(NOT_ITS_OWN)
+
+    // The repository as the installation's account names it, whatever the case the analysis was given.
+    private fun GitHubInstallation.path(repo: RepositoryRef) = path(account, repo)
+
+    private fun path(account: String, repo: RepositoryRef) = "$account/${repo.name}"
 
     private fun ref(account: String, repo: GitHubRepo) = RepositoryRef(
         owner = account,
@@ -63,13 +69,11 @@ class GitHubRepositoryReader(
         webUrl = "$webUrl/$account/${repo.name}",
     )
 
-    private fun RepositoryRef.fullName() = "$owner/$name"
-
     // GitHub's sentence becomes the analysis's: it names the call, never a token.
     private inline fun <T> github(read: () -> T): T = try {
         read()
     } catch (error: GitHubCallException) {
-        throw RepositoryReadException("${error.message}")
+        throw RepositoryReadException("${error.message}", error)
     }
 
     private companion object {
