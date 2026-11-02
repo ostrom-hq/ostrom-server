@@ -232,6 +232,33 @@ class KernelPostgresTest {
     }
 
     @Test
+    fun aColumnGrantAndAHyphenatedModuleAreCoveredAndAFailedPassStillRevokes() = databaseTest { database, runner ->
+        val history = "_migrations_other_probe"
+        val broken = listOf(SchemaMigration(1, "broken", "CREATE TABLE ;"))
+        assertFails { runner.migrate("other-probe", broken) }
+        if (database.owner.exists(history)) {
+            assertFalse(database.canWrite(database.servingRole, history), "Writable after a failed pass")
+        }
+        val fine = listOf(SchemaMigration(1, "create_other", "CREATE TABLE other_items (id BIGINT);"))
+        database.superuser.execute("DROP TABLE IF EXISTS $history").getOrThrow()
+        runner.migrate("other-probe", fine)
+        database.superuser.execute("GRANT UPDATE (checksum) ON $history TO ${database.servingRole}").getOrThrow()
+        runner.migrate("other-probe", fine)
+        assertFalse(database.columnWrite(database.servingRole, history), "Column UPDATE not revoked")
+        assertFalse(database.canWrite(database.servingRole, history))
+        MigrationRunnerImpl(database.driver, JsonLogger(LogLevel.INFO, sink = {})).verify("other-probe", fine)
+    }
+
+    private suspend fun Driver.exists(table: String): Boolean = fetchAll(
+        Statement.create("SELECT to_regclass(:table) IS NOT NULL AS e").bind("table", table),
+    ).getOrThrow().single().get("e").asBoolean()
+
+    private suspend fun TestDatabase.columnWrite(role: String, table: String): Boolean = owner.fetchAll(
+        Statement.create("SELECT has_any_column_privilege(:role, :table, 'INSERT, UPDATE, REFERENCES') AS w")
+            .bind("role", role).bind("table", table),
+    ).getOrThrow().single().get("w").asBoolean()
+
+    @Test
     fun concurrentMigrationPassesWaitForEachOther() = databaseTest { database, runner ->
         val modules = listOf(
             Probe("probe", first + SchemaMigration(2, "add_name", "ALTER TABLE probe_items ADD COLUMN name TEXT;")),

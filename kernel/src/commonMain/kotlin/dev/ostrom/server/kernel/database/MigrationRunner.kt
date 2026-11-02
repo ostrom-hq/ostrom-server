@@ -61,7 +61,7 @@ class MigrationRunnerImpl(
     override suspend fun migrate(module: String, migrations: List<SchemaMigration>) {
         val table = historyTable(module)
         if (migrations.isEmpty()) return
-        val results = driver.migrate(
+        val pass = driver.migrate(
             files = migrations.files(),
             table = table,
             afterFileMigration = { migration, duration ->
@@ -74,8 +74,11 @@ class MigrationRunnerImpl(
                     ),
                 )
             },
-        ).getOrThrow()
-        driver.execute(ownerOnly(table)).getOrThrow()
+        )
+        // Even after a failed pass: the history may have been created, and must not stay writable meanwhile.
+        val locked = driver.execute(ownerOnly(table))
+        val results = pass.getOrThrow()
+        locked.getOrThrow()
         logger.info(
             "migrations checked",
             mapOf("module" to module, "total" to results.total, "applied" to results.applied),
@@ -105,22 +108,34 @@ class MigrationRunnerImpl(
      * Only the migrator writes a module's history. A deployment's default privileges (`ci/database-roles.sql`, the Helm
      * chart) give the serving role SELECT, INSERT, UPDATE and DELETE on every table of the owner, the history tables
      * included: the serving process could erase the trace of a migration, which the next `migrate` would then replay
-     * or fail on. Every privilege but SELECT is revoked from every role but the owner, at every pass, so a database
-     * migrated before this keeps no write either. The serving role keeps SELECT: [verify] reads the history at start.
-     * Grants made through another role are recorded as the owner's, which may therefore revoke them all.
+     * or fail on. Every role but the owner that holds more than SELECT (on the table or on a column, MAINTAIN
+     * included) loses all of it, with what it granted on (CASCADE), and gets SELECT back if it had it: [verify] reads
+     * the history at start. At every pass, after a failed one too, so a database migrated before keeps no write
+     * either. Skipped when the connected role is not (a member of) the table's owner, which alone may revoke.
      */
     private fun ownerOnly(table: String): String = """
         DO $$
-        DECLARE grantee text;
+        DECLARE r record;
         BEGIN
-          FOR grantee IN
-            SELECT DISTINCT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(a.grantee)) END
-            FROM pg_class c, aclexplode(c.relacl) a
-            WHERE c.oid = to_regclass('$table') AND a.grantee <> c.relowner AND a.privilege_type <> 'SELECT'
+          FOR r IN
+            SELECT CASE WHEN g.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(g.grantee)) END AS name,
+              bool_or(g.privilege_type = 'SELECT' AND NOT g.on_column) AS reads
+            FROM pg_class c
+            CROSS JOIN LATERAL (
+              SELECT a.grantee, a.privilege_type, false AS on_column FROM aclexplode(c.relacl) a
+              UNION ALL
+              SELECT a.grantee, a.privilege_type, true FROM pg_attribute t, aclexplode(t.attacl) a
+              WHERE t.attrelid = c.oid
+            ) g
+            WHERE c.oid = to_regclass('$table') AND g.grantee <> c.relowner
+              AND pg_has_role(current_user, c.relowner, 'USAGE')
+            GROUP BY g.grantee
+            HAVING bool_or(g.privilege_type <> 'SELECT' OR g.on_column)
           LOOP
-            EXECUTE format(
-              'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON %I FROM %s', '$table', grantee
-            );
+            EXECUTE format('REVOKE ALL ON %I FROM %s CASCADE', '$table', r.name);
+            IF r.reads THEN
+              EXECUTE format('GRANT SELECT ON %I TO %s', '$table', r.name);
+            END IF;
           END LOOP;
         END
         $$
