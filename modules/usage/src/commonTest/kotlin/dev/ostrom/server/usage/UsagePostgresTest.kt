@@ -83,7 +83,10 @@ class UsagePostgresTest {
         assertEquals(HttpStatusCode.Accepted, declared.status, declared.bodyAsText())
         assertEquals(3, declared.body<UsageAcceptedResponse>().accepted)
 
-        val stored = server.driver.fetchAll("SELECT org_id, member_id, cost_micros FROM usage_events").getOrThrow()
+        val stored = server.driver.fetchInOrg(
+            TestCallers.orgA,
+            Statement.create("SELECT org_id, member_id, cost_micros FROM usage_events"),
+        ).getOrThrow()
         assertEquals(3, stored.size)
         assertTrue(stored.all { it.get("org_id").asUuid() == TestCallers.orgA }, "The org comes from the token")
         assertTrue(stored.all { it.get("member_id").asUuid() == TestCallers.memberA.memberId }, "The member too")
@@ -169,7 +172,8 @@ class UsagePostgresTest {
             setBody("not json")
         }
         assertEquals(HttpStatusCode.BadRequest, notJson.status)
-        assertEquals(0, server.driver.fetchAll("SELECT id FROM usage_events").getOrThrow().size)
+        val stored = server.driver.fetchInOrg(TestCallers.orgA, Statement.create("SELECT id FROM usage_events"))
+        assertEquals(0, stored.getOrThrow().size)
     }
 
     @Test
