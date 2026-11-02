@@ -3,8 +3,11 @@ package dev.ostrom.server.sessions.domain.usecases
 
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
+import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
+import dev.ostrom.server.sessions.domain.models.GateAnswer
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.SessionAccess
 import dev.ostrom.server.sessions.domain.models.SessionNotFoundException
@@ -50,11 +53,34 @@ class GetSessionUseCaseImpl(
         return view(session)
     }
 
-    override suspend fun view(session: Session): SessionView = SessionView(
-        session = session,
-        gates = sessionGates(session.orgId, session.id).map { it.id.toString() },
-        receipt = session.receiptId?.let { receipts(session.orgId, it) },
-    )
+    override suspend fun view(session: Session): SessionView {
+        val gates = sessionGates(session.orgId, session.id)
+        return SessionView(
+            session = session,
+            gates = gates.map { it.id.toString() },
+            receipt = session.receiptId?.let { receipts(session.orgId, it) },
+            answers = gates.mapNotNull(::answerOf),
+        )
+    }
+}
+
+/** A yes stays a yes once the session reserved it or ran the action. */
+private val SAID_YES = setOf(GateStatus.APPROVED, GateStatus.RESERVED, GateStatus.CONSUMED)
+
+/**
+ * The answer to [gate], or null while nobody answered it (pending, shadow, ungated): who said the yes or the no that
+ * decided it, never another approver's.
+ *
+ * @param gate A gate of the session.
+ * @return Its answer.
+ */
+internal fun answerOf(gate: SessionGate): GateAnswer? {
+    val approved = gate.status in SAID_YES
+    val answered = approved || gate.status == GateStatus.REJECTED
+    val decision = gate.decisions.lastOrNull { it.approved == approved }?.takeIf { answered }
+    return decision?.let {
+        GateAnswer(gate.id.toString(), gate.actionClass, approved, it.by, it.at, gate.receiptId)
+    }
 }
 
 /** Lists the sessions of the organization. */

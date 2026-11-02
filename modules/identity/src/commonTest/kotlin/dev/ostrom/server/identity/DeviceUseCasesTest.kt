@@ -2,6 +2,8 @@
 
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.ADMIN_SCOPES
+import dev.ostrom.server.identity.domain.AdminApprovalForbiddenException
 import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
 import dev.ostrom.server.identity.domain.CLI_SCOPES
 import dev.ostrom.server.identity.domain.CLI_TOKEN_LIFETIME
@@ -10,6 +12,7 @@ import dev.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import dev.ostrom.server.identity.domain.DeviceCodeNotFoundException
 import dev.ostrom.server.identity.domain.DevicePollResult
 import dev.ostrom.server.identity.domain.GetDeviceAuthorizationUseCaseImpl
+import dev.ostrom.server.identity.domain.InvalidScopesException
 import dev.ostrom.server.identity.domain.PollDeviceAuthorizationUseCaseImpl
 import dev.ostrom.server.identity.domain.RateLimitedException
 import dev.ostrom.server.identity.domain.StartDeviceAuthorizationUseCaseImpl
@@ -28,6 +31,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -144,6 +149,64 @@ class DeviceUseCasesTest {
         assertFailsWith<RateLimitedException> { start("cli", "ip") }
         assertFailsWith<RateLimitedException> { get(userId, "BCDF-GHJK") }
         assertFailsWith<RateLimitedException> { answer(userId, "BCDF-GHJK", true) }
+    }
+
+    @Test
+    fun anAdminLoginAsksForTheThreeGovernanceScopesOrNone() = runTest {
+        assertTrue(start("cli", "ip", emptyList()).authorization.scopes.isEmpty(), "Empty: the ordinary sign-in")
+        val admin = start("cli", "ip", listOf("gates:policy", "policy:write", "harness:write", "policy:write"))
+        assertEquals(ADMIN_SCOPES, admin.authorization.scopes)
+        for (wrong in listOf(listOf("policy:write"), ADMIN_SCOPES.toList() + "orgs:write", listOf("user:*"))) {
+            assertFailsWith<InvalidScopesException>("$wrong") { start("cli", "ip", wrong) }
+        }
+    }
+
+    @Test
+    fun onlyAnOwnerOrAdminApprovesAnAdminLoginAndItsTokenIsBoundToTheirOrganizationForEightHours() = runTest {
+        val orgId = Uuid.random()
+        start("laptop", "ip", ADMIN_SCOPES.toList())
+        assertEquals(ADMIN_SCOPES, get(userId, "BCDF-GHJK").scopes, "Shown before the yes")
+        // Without the approver's organization (not an owner or admin of it), no yes.
+        assertFailsWith<AdminApprovalForbiddenException> { answer(userId, "BCDF-GHJK", true) }
+        assertFailsWith<AdminApprovalForbiddenException> { answer(userId, "BCDF-GHJK", true) { null } }
+        assertTrue(audit.entries.isEmpty(), "A refused yes records nothing")
+        answer(userId, "BCDF-GHJK", true) { orgId }
+        val approvedEntry = audit.entries.single()
+        assertEquals(orgId, approvedEntry.orgId, "In the organization's audit chain")
+        assertEquals("gates:policy harness:write policy:write", approvedEntry.details["scopes"])
+        clock.now += 6.seconds
+
+        val approved = assertIs<DevicePollResult.Approved>(poll("secret1"))
+        val token = approved.token.token
+        assertEquals(TokenKind.ADMIN, token.kind)
+        assertEquals("osg_secret2", approved.token.secret)
+        assertEquals(orgId, token.orgId)
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES, token.scopes)
+        assertEquals(clock.now + 8.hours, token.expiresAt)
+        val created = audit.entries.last()
+        assertEquals(orgId, created.orgId)
+        assertEquals("token.created", created.action)
+        assertEquals("admin", created.details["kind"])
+    }
+
+    @Test
+    fun denyingAnAdminLoginNeedsNoRoleAndAnOrdinaryYesNeverAsksForOne() = runTest {
+        start("cli", "ip", ADMIN_SCOPES.toList())
+        answer(userId, "BCDF-GHJK", false) { error("Not asked when denying") }
+        assertNull(audit.entries.single().orgId)
+        start("cli", "ip")
+        answer(userId, "MNPQ-RSTV", true) { error("Not asked for the ordinary sign-in") }
+        assertEquals(TokenKind.CLI, assertIs<DevicePollResult.Approved>(poll("secret2")).token.token.kind)
+    }
+
+    @Test
+    fun anApprovedAdminLoginWithoutOrganizationIsADefect() = runTest {
+        val started = start("cli", "ip", ADMIN_SCOPES.toList())
+        authorizations.update(started.authorization.id) {
+            it.copy(status = DeviceAuthorizationStatus.APPROVED, userId = userId)
+        }
+
+        assertFailsWith<IllegalStateException> { poll("secret1") }
     }
 
     @Test
