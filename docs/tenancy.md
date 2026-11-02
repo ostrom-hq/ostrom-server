@@ -71,6 +71,8 @@ audit, each to be closed by moving the cross-organization path into a function o
 - `orgs_organizations`, `orgs_members`, `orgs_invitations`: row-level security enabled, not forced;
 - policies a setting opens to every organization: `sessions_sessions_sweep` (`ostrom.sweep`), the retention
   policies of `usage_events` and `mcp_relay_calls`, and `identity_api_tokens_account` (no organization set).
+- policies a setting opens to one row of any organization: the read and delete policies of
+  `github_installations` (`ostrom.github_installation`) and `github_install_states` (`ostrom.github_state`).
 
 ## The proof
 

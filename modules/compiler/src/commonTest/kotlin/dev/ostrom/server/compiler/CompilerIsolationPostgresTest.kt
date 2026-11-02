@@ -40,8 +40,10 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -106,9 +108,14 @@ class CompilerIsolationPostgresTest {
 
     private fun io.ktor.client.request.HttpRequestBuilder.send(token: String, body: Any?) {
         header(HttpHeaders.Authorization, "Bearer $token")
-        if (body != null) {
-            contentType(ContentType.Application.Json)
-            setBody(body)
+        when (body) {
+            null -> Unit
+            // A JSON tree has no serializer of its own once typed as Any: sent as its text.
+            is JsonElement -> setBody(TextContent(body.toString(), ContentType.Application.Json))
+            else -> {
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
         }
     }
 

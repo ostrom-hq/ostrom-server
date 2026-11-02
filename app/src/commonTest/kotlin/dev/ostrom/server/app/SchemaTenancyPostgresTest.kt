@@ -101,17 +101,23 @@ class SchemaTenancyPostgresTest {
 
         /**
          * A policy that a request's role meets (any role but `ostrom_router`, whose functions are listed in
-         * `docs/tenancy.md`) and that does not compare the row's organization column with `ostrom.org_id`.
+         * `docs/tenancy.md`) and that does not compare the row's organization column with `ostrom.org_id`, or that
+         * another setting opens: an INSERT policy is read from its WITH CHECK, the only rule it has.
          */
         const val UNBOUND_POLICIES = """
             SELECT p.tablename, p.policyname, p.cmd
             FROM pg_policies p JOIN pg_class c ON c.relname = p.tablename
             JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = p.schemaname
+            CROSS JOIN LATERAL (
+                SELECT CASE WHEN p.cmd = 'INSERT' THEN COALESCE(p.with_check, '') ELSE COALESCE(p.qual, '') END AS rule,
+                    COALESCE(p.qual, '') || ' ' || COALESCE(p.with_check, '') AS rules
+            ) AS r
             WHERE $ORG_TABLE_FILTER AND NOT ('ostrom_router' = ALL (p.roles)) AND NOT (
-                COALESCE(p.qual, '') LIKE '%current_setting(''ostrom.org_id''%'
-                AND replace(COALESCE(p.qual, ''), 'ostrom.org_id', '')
+                r.rule LIKE '%current_setting(''ostrom.org_id''%'
+                AND replace(r.rule, 'ostrom.org_id', '')
                     ~ ('\m' || CASE WHEN c.relname = 'orgs_organizations' THEN 'id' ELSE 'org_id' END || '\M')
                 AND (p.with_check IS NULL OR p.with_check LIKE '%current_setting(''ostrom.org_id''%')
+                AND replace(r.rules, 'current_setting(''ostrom.org_id''', '') NOT LIKE '%current_setting(%'
             )
             ORDER BY 1, 2
         """
@@ -193,6 +199,10 @@ class SchemaTenancyPostgresTest {
             "usage_events.usage_events_retention (DELETE)",
             "mcp_relay_calls.mcp_relay_calls_retention_read (SELECT)",
             "mcp_relay_calls.mcp_relay_calls_retention (DELETE)",
+            "github_installations.github_installations_read (SELECT)",
+            "github_installations.github_installations_delete (DELETE)",
+            "github_install_states.github_install_states_read (SELECT)",
+            "github_install_states.github_install_states_delete (DELETE)",
         )
 
         val TOO_WIDE_GRANTS = setOf(
