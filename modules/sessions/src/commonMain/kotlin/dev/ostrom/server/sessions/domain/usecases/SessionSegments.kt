@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions.domain.usecases
 
+import dev.ostrom.server.kernel.observability.OstromMetrics
 import dev.ostrom.server.sessions.domain.models.EndSession
 import dev.ostrom.server.sessions.domain.models.InvalidSessionRequestException
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
@@ -9,6 +10,8 @@ import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.StartSession
 import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
 import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -19,8 +22,13 @@ import kotlin.uuid.Uuid
  *
  * @param close Closes a superseded segment, its receipt signed.
  * @param clock The time.
+ * @param metrics Counts the sessions that start (a first segment), `where = local`: written by a launcher.
  */
-class SessionSegments(private val close: CloseSessionUseCase, private val clock: Clock) {
+class SessionSegments(
+    private val close: CloseSessionUseCase,
+    private val clock: Clock,
+    private val metrics: OstromMetrics,
+) {
     /**
      * Opens or finds the segment of a launch. Call it under [SessionsTransaction.lockRoot].
      *
@@ -41,7 +49,9 @@ class SessionSegments(private val close: CloseSessionUseCase, private val clock:
         val last = tx.segments(start.id).lastOrNull()
         if (last != null && last.dev != dev) throw NotYourSessionException()
         val open = last?.takeIf { it.endedAt == null }
-        if (open != null && sameLaunch(open.launchId, start.launchId)) return found(tx, open, start)
+        if (open != null && sameLaunch(open.launchId, start.launchId) && !lateAdoption(open, start)) {
+            return found(tx, open, start)
+        }
         // S2-48: an agent token never closes a live launch's segment (nor its yes); a silent one, as the sweep would.
         if (open != null && !opening.mayReplace && !silent(open)) throw NotYourSessionException()
         val previous = if (open != null) close.closeLocked(tx, open, EndSession(source = Session.SUPERSEDED)) else last
@@ -68,6 +78,8 @@ class SessionSegments(private val close: CloseSessionUseCase, private val clock:
             lastSeenAt = if (source != null) now() else null,
         )
         tx.insert(session)
+        // Counted once written: only a commit that fails after it would leave one too many.
+        if (segment == 1) metrics.sessionStarted(OstromMetrics.agentOf(start.agent), "local")
         return session
     }
 
@@ -77,6 +89,11 @@ class SessionSegments(private val close: CloseSessionUseCase, private val clock:
         tx.update(named)
         return named
     }
+
+    // Second audit L3: a launch names the segment its own hook opened a moment before, never an older unnamed one (a
+    // session run without the launcher): another agent of the same person would take it over.
+    private fun lateAdoption(open: Session, start: StartSession): Boolean =
+        open.launchId == null && start.launchId != null && now() - open.startedAt > ADOPT_WITHIN
 
     private fun silent(session: Session): Boolean =
         now() - (session.lastSeenAt ?: session.startedAt) >= SweepStaleSessionsUseCaseImpl.STALE_AFTER
@@ -125,6 +142,9 @@ class SessionSegments(private val close: CloseSessionUseCase, private val clock:
          * @return The text, or null when blank.
          */
         fun String.clip(max: Int): String? = take(max).takeIf { it.isNotBlank() }
+
+        /** How long after its hook opened a segment the launcher may still name it. */
+        val ADOPT_WITHIN: Duration = 2.minutes
 
         /** Stored size of a launch id. */
         const val LAUNCH: Int = 64

@@ -111,7 +111,7 @@ object RuleChecks {
         ensure(gate.approvers.size <= MAX_APPROVERS) { "A gate has at most $MAX_APPROVERS approvers." }
         val approvers = gate.approvers.map { it.trim() }
         ensure(approvers.all(login::matches)) { "An approver is a GitHub login." }
-        val reason = gate.reason?.trim()?.takeIf { it.isNotEmpty() }
+        val reason = gate.reason?.trim().orEmpty().ifEmpty { null }
         ensure(reason == null || reason.length <= MAX_REASON) { "A reason has at most $MAX_REASON characters." }
         return RuleGate(
             actions = gate.actions.map(::action),

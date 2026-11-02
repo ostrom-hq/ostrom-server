@@ -2,12 +2,13 @@
 package dev.ostrom.server.identity.presentation
 
 import io.ktor.resources.Resource
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // The identity API. These classes move to ostrom-core (the API contract) once it is published (docs/MODULES.md);
 // the routes are described in ostrom-core/api/openapi.yaml.
 
-/** `GET /api/v1/auth/me`: the signed-in user. */
+/** `GET /api/v1/auth/me`: the caller, in the contract's `Me` shape. */
 @Serializable
 @Resource("/api/v1/auth/me")
 class MeApi {
@@ -21,6 +22,14 @@ class MeApi {
     @Serializable
     @Resource("audit")
     class Audit(val parent: MeApi = MeApi(), val before: Long? = null, val limit: Int = 50)
+    /**
+     * `GET /api/v1/auth/me/account`: the signed-in user's account (e-mails, ways in), for the account settings.
+     *
+     * @property parent The user resource.
+     */
+    @Serializable
+    @Resource("account")
+    class Account(val parent: MeApi = MeApi())
 }
 
 /** Sign-in, sign-out and the CLI's device login. */
@@ -98,15 +107,30 @@ class SignInApi {
     @Resource("{provider}")
     class Provider(val parent: SignInApi = SignInApi(), val provider: String) {
         /**
-         * `GET /api/v1/auth/{provider}/start?redirect=`: sends the browser to the provider's consent page.
+         * `GET /api/v1/auth/{provider}/start?redirect=`: sends the browser to the provider's consent page. The phone
+         * app adds `redirect_uri` (its deep link), `state` and a PKCE `code_challenge` with
+         * `code_challenge_method=S256`: the callback then returns a one-time code to the app (S2-24).
          *
          * @property parent The provider resource.
          * @property redirect The console path to return to.
          * @property reauth Whether the person signs in again before a yes (S2-54): the provider must ask again.
+         * @property redirectUri The app's deep link (`ostrom://auth/callback`).
+         * @property state The app's state, returned with the code.
+         * @property codeChallenge The app's PKCE challenge.
+         * @property codeChallengeMethod `S256`.
          */
+        @Suppress("LongParameterList") // One property per query parameter of the contract's two sign-in starts.
         @Serializable
         @Resource("start")
-        class Start(val parent: Provider, val redirect: String? = null, val reauth: Boolean = false)
+        class Start(
+            val parent: Provider,
+            val redirect: String? = null,
+            val reauth: Boolean = false,
+            @SerialName("redirect_uri") val redirectUri: String? = null,
+            val state: String? = null,
+            @SerialName("code_challenge") val codeChallenge: String? = null,
+            @SerialName("code_challenge_method") val codeChallengeMethod: String? = null,
+        )
 
         /**
          * `GET /api/v1/auth/{provider}/callback`: where the provider sends the browser back.
@@ -215,7 +239,7 @@ class TokensApi {
 data class EmailResponse(val email: String, val verified: Boolean)
 
 /**
- * The signed-in user.
+ * The signed-in user's account (`GET /api/v1/auth/me/account`).
  *
  * @property id The user id.
  * @property login The handle, unique on the instance.
@@ -225,10 +249,9 @@ data class EmailResponse(val email: String, val verified: Boolean)
  * @property createdAt When the account was created (ISO 8601).
  * @property emails Every e-mail of the user.
  * @property providers How the user signs in (`github`, `google`, `email`, `oidc:<connection>`).
- * @property csrfToken For a browser session, the token to send in `X-CSRF-Token` on state-changing requests.
  */
 @Serializable
-data class ProfileResponse(
+data class AccountResponse(
     val id: String,
     val login: String,
     val displayName: String,
@@ -237,7 +260,71 @@ data class ProfileResponse(
     val createdAt: String,
     val emails: List<EmailResponse>,
     val providers: List<String>,
+)
+
+/**
+ * The caller (`GET /api/v1/auth/me`, the contract's `Me`), what the console and the app read first.
+ *
+ * @property dev The person behind the request.
+ * @property member With `Ostrom-Org` naming one of the caller's organizations, their membership there.
+ * @property organization With `Ostrom-Org` naming one of the caller's organizations, that organization.
+ * @property capabilities What the credential may do: its scopes, sorted (`user:*` for a browser session).
+ * @property csrfToken For a browser session, the token to send in `X-CSRF-Token` on state-changing requests.
+ */
+@Serializable
+data class MeResponse(
+    val dev: MeDevResponse,
+    val member: MeMemberResponse? = null,
+    val organization: MeOrganizationResponse? = null,
+    val capabilities: List<String>,
     val csrfToken: String? = null,
+)
+
+/**
+ * The person behind the request (the contract's `Dev`).
+ *
+ * @property login Their handle.
+ * @property verified Always true: the server only knows people a provider or an e-mail link verified.
+ * @property via How the server knows them: `github` when linked, otherwise their first way in.
+ * @property organizationId The organization `Ostrom-Org` resolved to, if any.
+ */
+@Serializable
+data class MeDevResponse(val login: String, val verified: Boolean, val via: String, val organizationId: String? = null)
+
+/**
+ * The caller's membership in the organization `Ostrom-Org` names (the contract's `Member`).
+ *
+ * @property id The member id (`OrgPrincipal.memberId`).
+ * @property login The member's handle.
+ * @property name The member's name.
+ * @property avatarUrl The member's picture, or empty.
+ * @property email The member's main e-mail, if any.
+ * @property role `owner`, `admin`, `member`, `approver` or `billing`.
+ */
+@Serializable
+data class MeMemberResponse(
+    val id: String,
+    val login: String,
+    val name: String,
+    val avatarUrl: String,
+    val email: String?,
+    val role: String,
+)
+
+/**
+ * The organization `Ostrom-Org` names (the contract's `Organization`).
+ *
+ * @property id The id.
+ * @property name The name.
+ * @property avatarUrl Its picture (the linked GitHub organization's), or empty.
+ * @property connectedVia `github-app` when it is linked to a GitHub organization; absent when it is linked to none.
+ */
+@Serializable
+data class MeOrganizationResponse(
+    val id: String,
+    val name: String,
+    val avatarUrl: String,
+    val connectedVia: String? = null,
 )
 
 /**
@@ -245,7 +332,7 @@ data class ProfileResponse(
  *
  * @property id The token id.
  * @property name Its label.
- * @property kind `personal` or `cli`.
+ * @property kind `personal`, `cli` or `mobile` (the phone app's).
  * @property scopes What it allows.
  * @property hint The first characters of its secret.
  * @property createdAt When it was issued (ISO 8601).
@@ -328,21 +415,19 @@ data class DeviceCodeResponse(
 data class DeviceTokenRequest(val deviceCode: String)
 
 /**
- * Where an `ostrom login` stands.
+ * The CLI token of an approved `ostrom login` (the contract's `AuthToken`).
  *
- * @property status `pending`, `slow_down`, `denied`, `expired` or `approved`.
- * @property accessToken With `approved`, the CLI token (once).
- * @property expiresAt With `approved`, when the token expires (ISO 8601).
- * @property scopes With `approved`, what the token allows.
- * @property interval Seconds to wait before the next poll.
+ * @property token The CLI token, given once.
+ * @property login The login of the user who approved.
+ * @property expiresAt When the token expires (ISO 8601).
+ * @property scopes What the token allows.
  */
 @Serializable
-data class DeviceTokenResponse(
-    val status: String,
-    val accessToken: String? = null,
-    val expiresAt: String? = null,
-    val scopes: List<String>? = null,
-    val interval: Long,
+data class AuthTokenResponse(
+    val token: String,
+    val login: String,
+    val expiresAt: String?,
+    val scopes: List<String>,
 )
 
 /**

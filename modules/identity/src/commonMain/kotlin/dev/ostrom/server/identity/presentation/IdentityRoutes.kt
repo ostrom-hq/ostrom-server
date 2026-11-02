@@ -2,6 +2,7 @@
 package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.DEVICE_POLL_INTERVAL
+import dev.ostrom.server.identity.domain.DevicePollResult
 import dev.ostrom.server.identity.domain.SessionRequiredException
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.TokenNotFoundException
@@ -63,7 +64,13 @@ private fun Route.deviceLoginRoutes(dependencies: IdentityRoutesDependencies) = 
         )
     }
     post<AuthApi.Device.Token, DeviceTokenRequest> { _, request ->
-        call.respond(pollDeviceAuthorization(request.deviceCode).toDeviceTokenResponse())
+        val result = pollDeviceAuthorization(request.deviceCode)
+        if (result is DevicePollResult.Approved) {
+            call.respond(result.toAuthTokenResponse(getProfile(result.token.token.userId).user.login))
+        } else {
+            val (status, error) = devicePollRefusal(result)
+            call.respond(status, error)
+        }
     }
 }
 
@@ -74,7 +81,14 @@ private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with
         val cookie = call.request.cookies[config.sessionCookiePrefix + SESSION_COOKIE]
         val session = cookie?.takeIf { principal.isBrowserSession }
         val csrf = session?.let { hasher.csrfToken(it) }
-        call.respond(getProfile(principal.userId()).toProfileResponse(csrf))
+        // With `Ostrom-Org`, the member and organization of that organization; an id that is not a membership is
+        // ignored, never a 404 or a 409 (`/me` is how the console learns the caller's organizations).
+        val current = principal.namedOrg?.let { orgResolver.currentOrganization(principal) }
+        call.respond(getProfile(principal.userId()).toMeResponse(principal.scopes, csrf, current))
+    }
+    get<MeApi.Account> {
+        val principal = call.requireScope("profile:read")
+        call.respond(getProfile(principal.userId()).toAccountResponse())
     }
     get<MeApi.Audit> { params ->
         val principal = call.requireScope("profile:read")

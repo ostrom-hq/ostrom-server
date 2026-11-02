@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.importer.domain
 
+import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.secrets.domain.Caller
+import dev.ostrom.server.secrets.domain.MemberRole
 import kotlin.uuid.Uuid
 
 /** Imports a TeamCode team into the caller's org, once or again: a second run changes nothing. */
@@ -14,18 +17,45 @@ interface ImportTeamCodeUseCase {
      * @param memberMap TeamCode member id to Ostrom member id; unmapped members' assignments are skipped. The ids are
      *   not checked against the org's members: this server has no members port yet.
      * @param dryRun Reports what the import would do without writing anything.
+     * @param cutoverBy For the final run, once TeamCode is stopped, the user who runs it (null for a normal run): an
+     *   owner only, recorded in the audit log in that user's name; it also revives the shared accounts waiting for a
+     *   reconnection with TeamCode's tokens ([AccountImporter.begin]).
      *
      * @return One line per item.
      *
      * @throws dev.ostrom.server.secrets.domain.AdminRequiredException When the caller does not administer the org.
+     * @throws CutoverOwnerRequiredException When [cutoverBy] is given and the caller is an admin, not an owner.
+     * @throws CutoverAuditUnavailableException When [cutoverBy] is given and no audit log is installed.
+     * @throws CutoverSharingUnavailableException When [cutoverBy] is given and this server does not import shared
+     *   accounts.
      */
     suspend operator fun invoke(
         caller: Caller,
         export: TeamCodeExport,
         memberMap: Map<String, Uuid>,
         dryRun: Boolean,
+        cutoverBy: Uuid?,
     ): ImportReport
 }
+
+/** Only an owner runs the cutover import. */
+class CutoverOwnerRequiredException :
+    OstromException(ErrorKind.FORBIDDEN, "Only an owner of the organization runs the cutover import.")
+
+/** The cutover import is recorded in the audit log, and this server has none. */
+class CutoverAuditUnavailableException :
+    OstromException(ErrorKind.UNAVAILABLE, "This server keeps no audit log, so it cannot record a cutover import.")
+
+/** The cutover run revives shared accounts, and this server does not import them. */
+class CutoverSharingUnavailableException :
+    OstromException(ErrorKind.UNAVAILABLE, "This server does not import shared accounts, so it has no cutover to run.")
+
+/** This server does not import shared accounts. */
+private class NoSharingException :
+    OstromException(
+        ErrorKind.UNAVAILABLE,
+        "This server does not import shared accounts: share them again from the console.",
+    )
 
 /**
  * [ImportTeamCodeUseCase] through the use cases of the secrets, MCP relay and sharing modules. An item the owning
@@ -36,26 +66,32 @@ interface ImportTeamCodeUseCase {
  * the same lines: unchanged and skipped where the reads already tell (an identical server, secret, denial or
  * assignment; a name collision; a server or secret it did not create; a prefix it keeps), planned for what it would
  * write. A write the owning module could still refuse (a stdio server without an MCP host, an invalid name or value)
- * stays planned: the dry run never runs the owning module's checks.
+ * stays planned: the dry run never runs the owning module's checks. Shared accounts are the exception: their dry run
+ * runs the sharing module's checks and counts the run's earlier accounts ([AccountImporter]).
  *
  * @param secrets The secrets use cases.
  * @param mcp The MCP relay use cases.
  * @param provenance What the import created, per org.
  * @param accounts The sharing module's account import, or null when it is not installed.
+ * @param audit The audit log of a cutover run, or null when none is installed (a cutover is then refused, as it is
+ *   without [accounts]).
  */
 class ImportTeamCodeUseCaseImpl(
     private val secrets: SecretPorts,
     private val mcp: McpPorts,
     private val provenance: ImportProvenanceRepository,
     private val accounts: AccountImporter?,
+    private val audit: ImportAudit?,
 ) : ImportTeamCodeUseCase {
     override suspend fun invoke(
         caller: Caller,
         export: TeamCodeExport,
         memberMap: Map<String, Uuid>,
         dryRun: Boolean,
+        cutoverBy: Uuid?,
     ): ImportReport {
         caller.requireAdmin()
+        cutoverBy?.let { startCutover(caller, it, export.accounts.size, dryRun) }
         val records = provenance.list(caller.orgId)
         val serverRecords = records.filter { it.kind == ImportRecordKind.SERVER }
         val recorded = serverRecords.associate { it.sourceKey to it.ostromName }
@@ -68,23 +104,50 @@ class ImportTeamCodeUseCaseImpl(
             McpImporter(mcp, dryRun, mcp.listServers(caller), servers, record),
         )
         val items = run.import(plan)
-        for (account in export.accounts) importAccount(caller, account, dryRun, items)
+        importAccounts(caller, export.accounts, dryRun, cutoverBy != null, items)
         return ImportReport(items)
     }
 
-    private suspend fun importAccount(
+    /**
+     * Refuses a cutover but by an owner, on a server that imports shared accounts and keeps an audit log, and records
+     * it in the name of [user] unless it is a dry run.
+     */
+    private suspend fun startCutover(caller: Caller, user: Uuid, accounts: Int, dryRun: Boolean) {
+        val refusal = when {
+            caller.role != MemberRole.OWNER -> CutoverOwnerRequiredException()
+            this.accounts == null -> CutoverSharingUnavailableException()
+            else -> null
+        }
+        refusal?.let { throw it }
+        val log = audit ?: throw CutoverAuditUnavailableException()
+        if (!dryRun) log.cutover(caller, user, accounts)
+    }
+
+    /**
+     * One account run for all of TeamCode's accounts, so it reads the org's accounts once. When it cannot begin (no
+     * sharing module, the org's accounts unreadable), each account is skipped with the reason, and what the import
+     * already wrote stays reported.
+     */
+    private suspend fun importAccounts(
         caller: Caller,
-        account: TeamCodeAccount,
+        accounts: List<TeamCodeAccount>,
         dryRun: Boolean,
+        cutover: Boolean,
         items: MutableList<ImportItem>,
     ) {
-        val name = "${account.provider}/${account.label}"
-        val importer = accounts
-        when {
-            importer == null -> items += ImportItem(ImportKind.ACCOUNT, name, ImportAction.SKIPPED, NO_SHARING)
-            dryRun -> items += ImportItem(ImportKind.ACCOUNT, name, ImportAction.PLANNED)
-            else -> guarded(items, ImportKind.ACCOUNT, name) {
-                items += ImportItem(ImportKind.ACCOUNT, name, importer.import(caller, account))
+        if (accounts.isEmpty()) return
+        val run = try {
+            (this.accounts ?: throw NoSharingException()).begin(caller, dryRun, cutover)
+        } catch (refused: OstromException) {
+            // A refusal only, as for an item: a cancellation or an unforeseen error still stops the import.
+            AccountImportRun { throw refused }
+        }
+        for (account in accounts) {
+            val name = "${account.provider.trim().lowercase()}/${account.label}"
+            guarded(items, ImportKind.ACCOUNT, name) {
+                val action = run.import(account)
+                val reason = WAITS_FOR_CUTOVER.takeIf { action == ImportAction.REVIVE_AT_CUTOVER }
+                items += ImportItem(ImportKind.ACCOUNT, name, action, reason)
             }
         }
     }
@@ -93,6 +156,7 @@ class ImportTeamCodeUseCaseImpl(
         filter { it.kind == kind }.map { it.ostromId }.toSet()
 
     private companion object {
-        const val NO_SHARING = "This server does not import shared accounts: share them again from the console."
+        const val WAITS_FOR_CUTOVER = "This account waits for a reconnection. It is left so while TeamCode runs " +
+            "(testing TeamCode's tokens would disconnect TeamCode): the cutover run revives it."
     }
 }

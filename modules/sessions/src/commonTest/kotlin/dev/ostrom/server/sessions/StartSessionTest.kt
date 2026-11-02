@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions
 
+import dev.ostrom.core.telemetry.Attributes
+import dev.ostrom.core.telemetry.metrics.MetricData
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.sessions.domain.models.EndSession
@@ -101,6 +103,21 @@ class StartSessionTest {
     }
 
     @Test
+    fun aLaunchNeverAdoptsAnOlderSessionRunWithoutTheLauncher() = runTest {
+        val bench = SessionBench()
+        val manual = bench.start(user(), start.copy(launchId = null))
+        bench.clock.now += SessionSegments.ADOPT_WITHIN + 1.minutes
+        bench.alive(user(), manual.id)
+        // Second audit L3: another agent of the same person does not take over a live session it did not launch.
+        assertFailsWith<NotYourSessionException> { bench.start(agent("launch-9"), start) }
+        assertNull(bench.repository.get(ORG, manual.id)?.launchId)
+        // Its person may still start a launch there: the old segment is superseded, not renamed.
+        val launched = bench.start(user(), start.copy(launchId = "launch-9"))
+        assertEquals("s-1~r2", launched.id)
+        assertEquals("launch-9", launched.launchId)
+    }
+
+    @Test
     fun s248AnAgentNeverClosesALiveLaunchsSegment() = runTest {
         val bench = SessionBench()
         val first = bench.start(agent("launch-1"), start)
@@ -163,5 +180,20 @@ class StartSessionTest {
         assertEquals("codex", bounded.agent)
         assertTrue(SessionSegments.sameLaunch(null, "x") && SessionSegments.sameLaunch("x", null))
         assertTrue(SessionSegments.sameLaunch("x", "x") && !SessionSegments.sameLaunch("x", "y"))
+    }
+
+    @Test
+    fun aSessionIsCountedOnceWhenItsFirstSegmentOpens() = runTest {
+        val bench = SessionBench()
+        bench.start(agent(), start)
+        bench.start(agent(), start)
+        bench.start(user(), start)
+        bench.start(user(), start.copy(id = "s-2", agent = "codex"))
+
+        val started = (bench.meter.collect().single { it.name == "ostrom.sessions.started" } as MetricData.Sum).points
+        val counts = started.associate { it.attributes to it.value }
+        val local = { agent: String -> Attributes.of("agent" to agent, "where" to "local") }
+        val expected = mapOf(local("claude") to 1.0, local("codex") to 1.0)
+        assertEquals(expected, counts, "A found or a next segment is not a new session")
     }
 }

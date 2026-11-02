@@ -218,7 +218,8 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
 
         // Whole names or a path under them, case ignored, as GitHub names repositories.
         fun covers(rule: Rule, repo: String?): Boolean {
-            val name = repo?.lowercase() ?: return true
+            if (repo == null) return true
+            val name = repo.lowercase()
             return rule.scope.isEmpty() || rule.scope.any { entry ->
                 val scoped = entry.lowercase()
                 scoped == name || scoped.startsWith("$name/")

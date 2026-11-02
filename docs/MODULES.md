@@ -1,11 +1,11 @@
 # Adding a functional module
 
-Every functional domain of the server (`identity`, `orgs`, `sessions`, `gates`, `receipts`, `compiler`,
-`mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`, `integrations-github`,
-`integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already exists as an empty
-skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its single line in
-`app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference example: copy
-its shape.
+Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches`, `gates`, `receipts`, `compiler`,
+`workflow-runs`, `mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`,
+`integrations-github`, `integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already
+exists as an empty skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its
+single line in `app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference
+example: copy its shape.
 
 Read [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md)
 first: it wins over this page wherever they differ.
@@ -249,6 +249,18 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 | `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
 | `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
 
+### Module `sharing`
+
+The shared accounts' tokens are renewed at the providers' OAuth token endpoints. An operator can point them elsewhere
+(a proxy, or the fake provider of the local demo, which renews any token). The refresh token is sent there: an endpoint
+is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`); anything else
+stops the server at start. A blank value counts as unset, so the provider's own endpoint is used.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `OSTROM_SHARING_CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | Token endpoint of shared Claude accounts |
+| `OSTROM_SHARING_CODEX_TOKEN_URL` | `https://auth.openai.com/oauth/token` | Token endpoint of shared ChatGPT (Codex) accounts |
+
 ## Commands
 
 | Command | What it does | Exit |
@@ -296,3 +308,13 @@ A model call (gateway, extraction) runs in
 `metrics.modelCalled(call, duration)`: the span alone goes to Langfuse, prompts only when the org turned capture on.
 Metric attributes are bounded values, never ids; a new metric is added to `OstromMetrics` and to
 `ostrom-infra/observability/catalog.py` together. Event taxonomy and privacy rules: ostrom-core `docs/telemetry.md`.
+
+Where the product metrics are emitted, each next to the code that decides, never inside it:
+
+| Metric | Emitted by |
+|---|---|
+| `ostrom.gates.requested{kind}` | `gates` `MetricsGateChannel`, when an enforced gate opens (the notifier, after the commit) |
+| `ostrom.gates.answered{answer,channel}`, `ostrom.gates.time_to_answer{answer}` | `gates` `MetricsGateChannel`, when a gate is decided |
+| `ostrom.sessions.started{agent,where="local"}` | `sessions` `SessionSegments`, at a session's first segment |
+| `ostrom.sessions.started{agent,where="cloud"}` | `runners` `MeteredCreateCloudSession`, once a cloud session is created |
+| `ostrom.inference.cost_usd`, `.tokens`, `.duration` `{source,provider}` | `gateway` `MeteredModelCallObserver`, per relayed call that reached a provider |

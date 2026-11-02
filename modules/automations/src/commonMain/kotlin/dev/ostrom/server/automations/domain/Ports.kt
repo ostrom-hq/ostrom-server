@@ -57,12 +57,6 @@ interface WaitsRepository {
     suspend fun cancel(orgId: Uuid, id: Uuid, now: Instant): Wait?
 }
 
-/** Who is an active member of an organization; bound by the module that owns the members. */
-interface MemberDirectory {
-    /** Whether [memberId] is an active member of [orgId]. */
-    suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean
-}
-
 /** Told when a wait is created, answered or cancelled: notifications and the waking of sessions hook here. */
 interface WaitEvents {
     /** A wait was created. */

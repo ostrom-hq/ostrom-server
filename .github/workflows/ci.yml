@@ -56,6 +56,21 @@ jobs:
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # docs-truth (ostrom-core's tools/docs-truth) at a pinned commit, whose api/contract/served-routes.txt says what
+      # ostrom-server main serves; moved out of the workspace, so that no check of this repository scans it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: 0ce4b9e9115fc13b838e055e96b5017bd7d583dd # docs-truth and served-routes.txt; move it forward by pull request
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: docs-truth-core
+          persist-credentials: false
+      - name: The README and docs/ cite only routes main serves and variables the server reads (docs-truth)
+        run: |
+          mv docs-truth-core "$RUNNER_TEMP/docs-truth-core"
+          core="$RUNNER_TEMP/docs-truth-core"
+          node "$core/tools/docs-truth/bin/docs-truth.mjs" --routes "$core/api/contract/served-routes.txt" \
+            --tests --source . --source "$core/telemetry" README.md docs
       # ostrom-core at the pinned commit, read with its read-only deploy key: the GITHUB_TOKEN of this repository can
       # never read the Maven packages of another one (JOURNAL 05:50). Moved next to the workspace, where
       # settings.gradle.kts includes it (ostrom.core.local), so that no check of this repository scans it.
@@ -108,6 +123,23 @@ jobs:
           kotlin.daemon.jvmargs=-Xmx2g
           PROPS
       - run: python3 scripts/check-conventions.py
+      # Ktor's CIO client has no TLS on Kotlin/Native, and with two engines linked Ktor gives CIO to every engine-less
+      # HttpClient { }: one CIO in a shipped source set of the server and every https call fails (ostrom-server#89).
+      # The runner binary (runner/) talks plain http to the in-cluster Service; tests and the JVM target never ship.
+      - name: The server binary links no CIO HTTP client (no TLS on Kotlin/Native)
+        shell: python3 {0}
+        run: |
+          import pathlib, re, sys
+          found = []
+          for build in sorted(pathlib.Path(".").glob("**/build.gradle.kts")):
+              if build.parts[0] in ("runner", "build-logic") or "build" in build.parts[:-1]:
+                  continue
+              for block in re.finditer(r"(\w+)\.dependencies\s*\{(.*?)\n\s*\}", build.read_text(), re.S):
+                  shipped = not re.search(r"Test$|^jvm", block.group(1))
+                  if shipped and "libs.ktor.client.cio" in block.group(2):
+                      found.append(f"{build}: {block.group(1)} links ktor-client-cio")
+          print("\n".join(found) or "no CIO client in the server's shipped source sets")
+          sys.exit(1 if found else 0)
       - name: License signing tool (ee/tools/license, 100 % lines and branches)
         working-directory: ee/tools/license
         run: |
@@ -153,13 +185,6 @@ jobs:
           done
           free -h
       # S2-49: one session of the real image, run as the Docker driver runs it; the agent must not reach the token.
-      - name: Session image, the agent cannot read the runner token (S2-49)
-        if: ${{ !cancelled() }}
-        run: |
-          ./gradlew :runner:linkDebugExecutableLinuxX64
-          ci/runner-isolation.sh runner/build/bin/linuxX64/debugExecutable/ostrom-runner.kexe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Server binary (linuxX64 in dist/)
         run: |
           ci/build-linux.sh
@@ -179,6 +204,22 @@ jobs:
           sudo swapoff /native-link.swap || true
           sudo rm -f /native-link.swap
           df -h /
+      # After the swap is given back: the agents' CLIs take the disk the swap held (runs 41045488208, three tries).
+      - name: Cache the npm tarballs of the session image's agents
+        if: ${{ !cancelled() }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ostrom-agents-npm
+          key: agents-npm-${{ hashFiles('runner/agents/package-lock.json') }}
+      - name: Session image, the agent cannot read the runner token (S2-49)
+        if: ${{ !cancelled() }}
+        run: |
+          export SESSION_IMAGE_NPM_CACHE="$HOME/.cache/ostrom-agents-npm"
+          ci/warm-agents-npm-cache.sh "$SESSION_IMAGE_NPM_CACHE"
+          ./gradlew :runner:linkDebugExecutableLinuxX64
+          ci/runner-isolation.sh runner/build/bin/linuxX64/debugExecutable/ostrom-runner.kexe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Docker image
         run: |
           docker build -t ostrom-server:ci .

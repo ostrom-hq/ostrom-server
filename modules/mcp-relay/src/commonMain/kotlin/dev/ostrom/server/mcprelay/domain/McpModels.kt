@@ -155,6 +155,7 @@ enum class McpOutcome {
  * @property durationMillis How long it took.
  * @property responseBytes The size of the upstream answer.
  * @property policyId The argument policy that refused it, if any.
+ * @property launchId The launch whose agent token made it, or null for the member's own credential.
  */
 data class McpCall(
     val id: Uuid,
@@ -169,6 +170,7 @@ data class McpCall(
     val durationMillis: Long,
     val responseBytes: Long,
     val policyId: Uuid? = null,
+    val launchId: String? = null,
 )
 
 /**
