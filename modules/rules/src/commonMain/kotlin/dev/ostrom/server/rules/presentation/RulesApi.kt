@@ -119,13 +119,24 @@ data class RuleSourceDto(val kind: String, val ref: String, val url: String? = n
  * @property actions The actions it covers.
  * @property approvers Who may say yes.
  * @property reason Why them.
+ * @property checks The checks its actions need; empty, a declared run will do.
  */
 @Serializable
 data class RuleGateDto(
     val actions: List<GateActionDto>,
     val approvers: List<String> = emptyList(),
     val reason: String? = null,
+    val checks: List<RuleGateCheckDto> = emptyList(),
 )
+
+/**
+ * A check a gate needs (contract `RuleGateCheck`).
+ *
+ * @property check The id of the check node.
+ * @property attested Whether only an attested run (Ostrom runner, CI) satisfies it.
+ */
+@Serializable
+data class RuleGateCheckDto(val check: String, val attested: Boolean = false)
 
 /**
  * An action a gate covers (contract `GateAction`).

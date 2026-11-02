@@ -25,10 +25,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  # One job, `ci`, the required check of main. A draft pull request runs no CI: mark it ready when you want it.
-  ci:
+  # The build in three jobs side by side (the single 40-minute job timed out on #135, with every test green), and
+  # `ci`, the required check of main, green only when all three are. A draft pull request runs no CI: mark it ready.
+  ci-jvm:
+    name: JVM tests, Kover 100 %, detekt, docs and conventions
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    timeout-minutes: 40
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -71,57 +73,10 @@ jobs:
           core="$RUNNER_TEMP/docs-truth-core"
           node "$core/tools/docs-truth/bin/docs-truth.mjs" --routes "$core/api/contract/served-routes.txt" \
             --tests --source . --source "$core/telemetry" README.md docs
-      # ostrom-core at the pinned commit, read with its read-only deploy key: the GITHUB_TOKEN of this repository can
-      # never read the Maven packages of another one (JOURNAL 05:50). Moved next to the workspace, where
-      # settings.gradle.kts includes it (ostrom.core.local), so that no check of this repository scans it.
-      - name: ostrom-core version
-        id: core
-        run: echo "ref=$(tr -d '[:space:]' < gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/build-setup
         with:
-          repository: ostrom-hq/ostrom-core
-          ref: ${{ steps.core.outputs.ref }}
-          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
-          path: ostrom-core
-          persist-credentials: false
-      - name: Build ostrom-core from that checkout
-        run: |
-          mv ostrom-core ../ostrom-core
-          mkdir -p ~/.gradle
-          echo "ostrom.core.local=true" >> ~/.gradle/gradle.properties
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-        with:
-          cache-provider: basic
-      # The Kotlin/Native toolchain and its dependencies (~1 GB) are not in the Gradle cache.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.konan
-          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ env.KOTLIN_VERSION }}-${{ hashFiles('gradle/libs.versions.toml') }}
-          restore-keys: konan-${{ runner.os }}-${{ runner.arch }}-${{ env.KOTLIN_VERSION }}-
-      - name: Never serve a test task from the cache (ENG-032)
-        run: |
-          mkdir -p ~/.gradle/init.d
-          cat > ~/.gradle/init.d/always-run-tests.init.gradle.kts <<'KTS'
-          allprojects {
-              tasks.withType<AbstractTestTask>().configureEach {
-                  outputs.cacheIf { false }
-                  outputs.upToDateWhen { false }
-              }
-          }
-          KTS
-      # One Gradle daemon (4 GB) and one Kotlin daemon (2 GB) fit the runner with PostgreSQL and stripe-mock; the 6 GB of
-      # gradle.properties, meant for a workstation, plus the Kotlin daemon got runners killed (exit 143) while linking.
-      - name: Gradle memory for this runner
-        run: |
-          mkdir -p ~/.gradle
-          cat >> ~/.gradle/gradle.properties <<'PROPS'
-          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
-          kotlin.daemon.jvmargs=-Xmx2g
-          PROPS
+          core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          kotlin-version: ${{ env.KOTLIN_VERSION }}
       - run: python3 scripts/check-conventions.py
       # Ktor's CIO client has no TLS on Kotlin/Native, and with two engines linked Ktor gives CIO to every engine-less
       # HttpClient { }: one CIO in a shipped source set of the server and every https call fails (ostrom-server#89).
@@ -156,6 +111,48 @@ jobs:
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports
+          path: '**/build/reports/**'
+          retention-days: 7
+
+  ci-native:
+    name: Native tests (linuxX64)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ostrom
+          POSTGRES_PASSWORD: ostrom
+          POSTGRES_DB: ostrom_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
+      # Stripe's official mock, for the billing gateway's integration test.
+      stripe-mock:
+        image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78 # latest, 2026-10-01
+        ports: ['12111:12111']
+    env:
+      OSTROM_TEST_DATABASE_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom_test
+      # Database tests fail instead of being skipped when the service is missing: CI never passes by skipping them.
+      OSTROM_TEST_DATABASE_REQUIRED: 'true'
+      # Billing: the stripe-mock integration test, and the end-to-end test against the real Stripe test mode (its key
+      # is the repository secret STRIPE_TEST_KEY); both fail instead of being skipped here.
+      OSTROM_STRIPE_MOCK_URL: http://localhost:12111
+      OSTROM_STRIPE_MOCK_REQUIRED: 'true'
+      OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+      OSTROM_STRIPE_E2E_REQUIRED: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/build-setup
+        with:
+          core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          kotlin-version: ${{ env.KOTLIN_VERSION }}
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
@@ -166,6 +163,40 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports-native
+          path: '**/build/reports/**'
+          retention-days: 7
+
+  # The release binary, the session image, the server image and its smoke tests against PostgreSQL, then the AGPL build.
+  ci-image:
+    name: Binary, images and smoke tests
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ostrom
+          POSTGRES_PASSWORD: ostrom
+          POSTGRES_DB: ostrom_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/build-setup
+        with:
+          core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          kotlin-version: ${{ env.KOTLIN_VERSION }}
+      # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
+      # runner's memory (#13, exit 143 while linking linuxArm64).
+      - name: Two Gradle workers for the native builds
+        if: ${{ !cancelled() }}
+        run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
       # A private repository's runner has 7 GB: after the tests, the Gradle and Kotlin daemons still hold much of it,
       # and the release links were killed (exit 143) even with #52's lighter daemons. Stop them, and add swap where the
       # disk has room, before the native links.
@@ -243,6 +274,16 @@ jobs:
           expect 1 MigrationsNotAppliedException -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci
           expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
           expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
+          # AUDIT-RLS R8: the migrations' history is read, never written, by any role but its owner.
+          read -r histories writable < <(psql "$OWNER_URL" -At -F ' ' -v ON_ERROR_STOP=1 -c "SELECT count(*),
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM unnest(ARRAY['ostrom_app', 'ostrom_tenant', 'public']) r
+              WHERE has_table_privilege(r, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                 OR has_any_column_privilege(r, c.oid, 'INSERT, UPDATE, REFERENCES')))
+            FROM pg_class c WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+              AND c.relname LIKE '\_migrations\_%'")
+          echo "migration histories: $histories, writable by another role: $writable"
+          [ "$histories" -gt 0 ] || { echo "no migrations' history"; exit 1; }
+          [ "$writable" -eq 0 ] || { echo "a migrations' history is writable by another role"; exit 1; }
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom \
             ostrom-server:ci
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL="$OWNER_URL" ostrom-server:ci
@@ -295,7 +336,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: reports
+          name: reports-image
           path: '**/build/reports/**'
           retention-days: 7
       # Last, because it deletes ee/ from the checkout: the AGPL build must compile without the enterprise code, and
@@ -315,3 +356,19 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The required check of main, still named `ci` (branch protection, .coord/squash.sh).
+  ci:
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    needs: [ci-jvm, ci-native, ci-image]
+    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every part of the build passed
+        env:
+          JVM: ${{ needs.ci-jvm.result }}
+          NATIVE: ${{ needs.ci-native.result }}
+          IMAGE: ${{ needs.ci-image.result }}
+        run: |
+          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE"
+          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success

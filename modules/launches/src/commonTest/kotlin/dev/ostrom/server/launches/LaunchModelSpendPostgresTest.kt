@@ -5,9 +5,7 @@ import dev.ostrom.server.budgets.BudgetsModule
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.budgets.presentation.MyBudgetResponse
-import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gateway.GatewayModule
-import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
@@ -16,22 +14,18 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
-import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.launches.presentation.LaunchResponse
-import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
-import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.reports.ReportsModule
 import dev.ostrom.server.reports.presentation.SpendingDto
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.sharing.SharingModule
 import dev.ostrom.server.testing.TestServer
@@ -74,8 +68,7 @@ import kotlin.uuid.Uuid
  * session's signed receipt carries it, on the real modules and PostgreSQL with a fake Anthropic behind the gateway.
  */
 class LaunchModelSpendPostgresTest {
-    private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, LaunchesModule,
+    private val modules = launchModules(
         SecretsModule, UsageModule, GatewayModule, BudgetsModule, SharingModule, ReportsModule,
     )
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())

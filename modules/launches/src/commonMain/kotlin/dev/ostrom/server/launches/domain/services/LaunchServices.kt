@@ -27,6 +27,26 @@ interface LauncherResolver {
      * @return Their membership (member id and role), or null when they are no longer a member.
      */
     suspend fun member(orgId: Uuid, userId: Uuid): OrgPrincipal?
+
+    /**
+     * Resolves a member as the person who launches: the owner of a cloud session, whose runner opens the launch.
+     *
+     * @param orgId The organization.
+     * @param memberId The member.
+     *
+     * @return The launcher, or null when the member is no longer one.
+     */
+    suspend fun owner(orgId: Uuid, memberId: Uuid): Launcher?
+
+    /**
+     * Resolves another developer of an organization by their login, as the person they would launch as.
+     *
+     * @param orgId The organization.
+     * @param login Their login.
+     *
+     * @return The launcher, or null when nobody of that login is a member of [orgId].
+     */
+    suspend fun colleague(orgId: Uuid, login: String): Launcher?
 }
 
 /** Issues the agent token of a launch (the identity module's agent tokens). */
@@ -44,19 +64,19 @@ interface AgentTokenService {
 }
 
 /**
- * The organization's rules on models, which the inference gateway owns. Until a module binds them, every model is
- * allowed at launch ([dev.ostrom.server.launches.infrastructure.NoLaunchModelRules]): the gateway still checks each
- * model call.
+ * The organization's rules on models, which the inference gateway owns. With the gateway loaded, they are its model
+ * policy ([dev.ostrom.server.launches.infrastructure.ModelAccessLaunchRules]): a launch is refused what the gateway
+ * would refuse. Without it, every model is allowed at launch
+ * ([dev.ostrom.server.launches.infrastructure.NoLaunchModelRules]).
  */
 interface LaunchModelRules {
     /**
      * Says why a person may not launch with a model.
      *
-     * @param orgId The organization.
-     * @param login The person.
+     * @param launcher The person and their organization.
      * @param model The model the launch names.
      *
      * @return The refusal, or null when the model is allowed.
      */
-    suspend fun refusal(orgId: Uuid, login: String, model: String): String?
+    suspend fun refusal(launcher: Launcher, model: String): String?
 }

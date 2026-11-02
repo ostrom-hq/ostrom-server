@@ -169,14 +169,14 @@ class KubernetesRuntimeDriverTest {
     }
 
     @Test
-    fun theAgentRunsInItsOwnContainerUnderItsOwnUidWithoutTheToken() = runTest {
+    fun theAgentAndTheCheckHostRunInTheirOwnContainersWithoutTheToken() = runTest {
         driver.startExecution(spec())
         val spec = body(3)["spec"]!!.jsonObject
         assertEquals("false", spec["shareProcessNamespace"]!!.jsonPrimitive.content)
         val pod = spec["securityContext"]!!.jsonObject
         assertNull(pod["runAsUser"])
         assertEquals("2000", pod["fsGroup"]!!.jsonPrimitive.content)
-        val agent = spec["initContainers"]!!.jsonArray.single().jsonObject
+        val (agent, checks) = spec["initContainers"]!!.jsonArray.map { it.jsonObject }
         val runner = spec["containers"]!!.jsonArray.single().jsonObject
         assertEquals("agent", agent["name"]!!.jsonPrimitive.content)
         assertEquals("Always", agent["restartPolicy"]!!.jsonPrimitive.content)
@@ -187,14 +187,29 @@ class KubernetesRuntimeDriverTest {
         fun uid(container: JsonObject) = container["securityContext"]!!.jsonObject["runAsUser"]!!.jsonPrimitive.content
         assertEquals("1000", uid(agent))
         assertEquals("1001", uid(runner))
+        assertEquals("checks", checks["name"]!!.jsonPrimitive.content)
+        assertEquals("Always", checks["restartPolicy"]!!.jsonPrimitive.content)
+        assertEquals(
+            listOf("/usr/local/bin/ostrom-runner", "check-host"),
+            checks["command"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertEquals("1000", uid(checks))
+        assertFalse("secretKeyRef" in checks.toString())
+        assertTrue("/run/ostrom-check/check.sock" in checks.toString())
         // The agent's container has no variable from the Secret, and only the runner's has the server's address.
         assertFalse("secretKeyRef" in agent.toString())
         assertFalse("OSTROM_SERVER_URL" in agent.toString())
         assertTrue("secretKeyRef" in runner.toString())
         fun mounts(container: JsonObject) =
             container["volumeMounts"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
+        // The agent never mounts the check socket, the check host never the agent socket.
         assertEquals(listOf("workspace", "tmp", "agent-socket"), mounts(agent))
-        assertEquals(listOf("agent-socket"), mounts(runner))
+        assertEquals(listOf("workspace", "check-tmp", "check-socket"), mounts(checks))
+        assertEquals(listOf("agent-socket", "check-socket"), mounts(runner))
+        assertEquals(
+            listOf("workspace", "tmp", "agent-socket", "check-tmp", "check-socket"),
+            spec["volumes"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content },
+        )
     }
 
     @Test

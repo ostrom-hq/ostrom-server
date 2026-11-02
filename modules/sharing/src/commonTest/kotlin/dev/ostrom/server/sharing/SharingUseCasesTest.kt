@@ -219,6 +219,13 @@ class SharingUseCasesTest {
             AccountStatus.RECONNECT_REQUIRED,
             update(Sharing.memberA, account.id, UpdateAccountPayload(disabled = false)).status,
         )
+        repository.setStatus(Sharing.orgA, account.id, AccountStatus.WRONG_ACCOUNT)
+        assertEquals(
+            AccountStatus.WRONG_ACCOUNT,
+            update(Sharing.memberA, account.id, UpdateAccountPayload(disabled = false)).status,
+            "Resuming never serves another account's tokens",
+        )
+        assertEquals(AccountStatus.READY, share(Sharing.memberA, payload()).status, "Sharing it again does")
         remove(Sharing.memberA, account.id)
         assertEquals(emptyList(), repository.accounts)
     }

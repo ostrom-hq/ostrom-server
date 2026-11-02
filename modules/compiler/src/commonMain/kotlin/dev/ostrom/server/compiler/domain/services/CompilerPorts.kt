@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler.domain.services
 
+import dev.ostrom.core.api.models.Workflow
 import dev.ostrom.server.compiler.domain.models.CompilerSettings
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.RuleDoc
@@ -43,6 +44,15 @@ interface CompilerSources {
      * @return Its settings.
      */
     suspend fun settings(orgId: Uuid): CompilerSettings
+
+    /**
+     * The gates the organization's rules put on boundary actions, as one-gate workflows that the gates catalogue reads
+     * after the saved ones (a saved workflow's gate wins a tie).
+     *
+     * @param orgId The organization.
+     * @return The workflows; none until the module that owns rules binds its sources.
+     */
+    suspend fun ruleGates(orgId: Uuid): List<Workflow> = emptyList()
 }
 
 /**

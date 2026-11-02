@@ -25,6 +25,7 @@ import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgDeletionsRepository
 import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -34,6 +35,7 @@ import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -90,11 +92,13 @@ class OrgsPostgresTest {
         )
 
     @Test
+    @Suppress("LongMethod") // One organization's life through the repositories, read top to bottom.
     fun organizationsAreCreatedReadRenamedAndDeleted() =
         serverTest(modules) { server ->
             val orgs = server.koin.get<OrgsRepository>()
             val members = server.koin.get<MembersRepository>()
             val invitations = server.koin.get<InvitationsRepository>()
+            val deletions = server.koin.get<OrgDeletionsRepository>()
             val ada = server.user("ada")
             val acme = org("acme", "domain:acme.com")
             val owner = member(acme, ada, OrgRole.OWNER)
@@ -109,11 +113,19 @@ class OrgsPostgresTest {
             assertFailsWith<SlugTakenException> {
                 orgs.create(org("acme"), member(acme, ada, OrgRole.OWNER)) { false }
             }
-            orgs.rename(acme.id, "Acme Labs")
-            assertEquals("Acme Labs", orgs.get(acme.id)?.name)
+            orgs.update(acme.id, null, "Asia/Tokyo")
+            assertEquals(acme.copy(timeZone = "Asia/Tokyo"), orgs.get(acme.id), "Only the time zone")
+            orgs.update(acme.id, "Acme Labs", null)
+            assertEquals(acme.copy(name = "Acme Labs", timeZone = "Asia/Tokyo"), orgs.get(acme.id), "Only the name")
+            orgs.update(acme.id, null, null)
+            orgs.update(acme.id, "Acme Labs", "Europe/Paris")
+            assertEquals(acme.copy(name = "Acme Labs", timeZone = "Europe/Paris"), orgs.get(acme.id))
+            assertEquals("Europe/Paris", orgs.listOfUser(ada.id).single().org.timeZone)
+            assertEquals("Europe/Paris", orgs.findBySlug("acme")?.timeZone)
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10), "A live organization is not being deleted")
 
             invitations.create(link(acme, owner), "hash-1")
-            orgs.delete(acme.id, now)
+            orgs.delete(acme.id, now, now + 30.days)
             assertNull(orgs.get(acme.id))
             assertNull(orgs.findBySlug("acme"))
             assertTrue(orgs.slugTaken("acme"), "A deleted organization keeps its short name")
@@ -123,6 +135,34 @@ class OrgsPostgresTest {
             // Its free claim is released.
             val acme2 = org("acme-2", "domain:acme.com")
             assertNull(orgs.create(acme2, member(acme2, ada, OrgRole.OWNER)) { false })
+
+            // The worker's steps, across organizations: told, then erased after 30 days.
+            assertTrue(acme.id in deletions.deletionsToSettle(now, 10))
+            deletions.postpone(acme.id, now + 10.minutes)
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10), "Put off")
+            assertTrue(acme.id in deletions.deletionsToSettle(now + 10.minutes, 10))
+            assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10), "Never erased before every module was told")
+            deletions.markSettled(acme.id, now)
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10))
+            assertTrue(acme.id !in deletions.duePurges(now + 30.days - 1.minutes, 10), "Kept for 30 days")
+            assertTrue(acme.id in deletions.duePurges(now + 30.days, 10))
+            deletions.erase(acme.id, now + 30.days)
+            assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10))
+            deletions.erase(acme2.id, now)
+            assertEquals(acme2, orgs.get(acme2.id), "A live organization is never erased")
+            // Read across organizations, as no request does.
+            val tombstone =
+                server.database.superuser
+                    .fetchAll(
+                        "SELECT name, github_org_id, time_zone, purged_at FROM orgs_organizations " +
+                            "WHERE id = '${acme.id}'"
+                    ).getOrThrow()
+                    .single()
+            assertEquals("", tombstone.get("name").asString())
+            assertNull(tombstone.get("github_org_id").asStringOrNull())
+            assertEquals("UTC", tombstone.get("time_zone").asString())
+            assertEquals(now + 30.days, tombstone.get("purged_at").asInstant())
+            assertTrue(orgs.slugTaken("acme"), "An erased organization still keeps its short name")
         }
 
     @Test

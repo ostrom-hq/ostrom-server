@@ -31,6 +31,17 @@ class TeamCodeTokensRefusedException :
         "TeamCode's tokens for this account are refused too: it keeps waiting for its owner to sign in again.",
     )
 
+/**
+ * TeamCode's tokens for an account waiting for a reconnection are another provider account's, or the provider did not
+ * say whose they are: an export edited by hand must never put someone else's subscription behind the org's account.
+ */
+class TeamCodeTokensOfAnotherAccountException :
+    OstromException(
+        ErrorKind.CONFLICT,
+        "The provider does not confirm that TeamCode's tokens are this account's: it keeps waiting for its owner to " +
+            "sign in again.",
+    )
+
 /** The provider could not be reached to test TeamCode's tokens. */
 class TeamCodeTokensUntestedException :
     OstromException(
@@ -49,8 +60,9 @@ class TeamCodeTokensUntestedException :
  *   disabled.
  * - An account waiting for a reconnection is left so while TeamCode runs ([ImportAction.REVIVE_AT_CUTOVER]): testing
  *   TeamCode's tokens rotates them, which would disconnect TeamCode. The cutover run revives it, only if TeamCode's
- *   tokens still renew: they are renewed first (a dry run cannot: renewing rotates them), then stored, turned off in
- *   the same write when TeamCode had it disabled; its label and email stay the org's.
+ *   tokens still renew and the provider's answer names that same provider account: they are renewed first (a dry run
+ *   cannot: renewing rotates them), then stored, turned off in the same write when TeamCode had it disabled; its label
+ *   and email stay the org's.
  * - A serving account TeamCode has disabled is turned off, its tokens kept: it is never left serving.
  * - Any other account is left alone: its tokens may have been refreshed since TeamCode last stored them, and the
  *   provider rotates refresh tokens, so TeamCode's older pair could disconnect it. An account turned off in Ostrom
@@ -122,7 +134,7 @@ class SharedAccountImporter(
             val key = keyOf(provider, account.providerAccountId)
             val existing = known[key]
             return when {
-                existing?.status == AccountStatus.RECONNECT_REQUIRED && !cutover -> ImportAction.REVIVE_AT_CUTOVER
+                existing != null && existing.status.awaitsSignIn && !cutover -> ImportAction.REVIVE_AT_CUTOVER
                 else -> {
                     val change = change(provider, account, existing)
                     if (change == null) ImportAction.UNCHANGED else carryOut(key, change)
@@ -143,7 +155,7 @@ class SharedAccountImporter(
 
         private fun change(provider: AccountProvider, account: TeamCodeAccount, existing: Known?): Change? = when {
             existing == null -> Change.Create(payload(provider, account, account.providerAccountId.trim(), 0))
-            existing.status == AccountStatus.RECONNECT_REQUIRED -> {
+            existing.status.awaitsSignIn -> {
                 val payload = payload(provider, account, existing.providerAccountId, existing.version)
                 Change.Revive(existing, payload.copy(label = existing.label, email = existing.email))
             }
@@ -195,7 +207,7 @@ class SharedAccountImporter(
                 share(caller, renewed)
             } catch (changed: AccountChangedException) {
                 val waiting = list(caller).firstOrNull {
-                    it.account.id == change.known.id && it.account.status == AccountStatus.RECONNECT_REQUIRED
+                    it.account.id == change.known.id && it.account.status.awaitsSignIn
                 } ?: throw changed
                 val now = waiting.account
                 share(caller, renewed.copy(label = now.label, email = now.email, ifVersion = now.version))
@@ -203,11 +215,15 @@ class SharedAccountImporter(
         }
     }
 
-    /** [payload] with TeamCode's tokens renewed, so a pair the provider already refused is never stored. */
+    /**
+     * [payload] with TeamCode's tokens renewed, so a pair the provider already refused, or one the provider does not
+     * say is this account's, is never stored. A refused pair is lost (renewing rotated it): only someone who already
+     * holds that refresh token can send it, and the account keeps waiting for its owner, as it did.
+     */
     private suspend fun renewed(payload: ShareAccountPayload): ShareAccountPayload {
         val credentials = AccountCredentials(payload.accessToken, payload.refreshToken, payload.expiresAt)
         val renewed = when (val result = refresher.refresh(payload.provider, credentials)) {
-            is RefreshResult.Renewed -> result.credentials
+            is RefreshResult.Renewed -> result.ofAccount(payload).credentials
             RefreshResult.Revoked -> throw TeamCodeTokensRefusedException()
             RefreshResult.Unavailable -> throw TeamCodeTokensUntestedException()
         }
@@ -216,6 +232,17 @@ class SharedAccountImporter(
             refreshToken = renewed.refreshToken,
             expiresAt = renewed.expiresAt,
         )
+    }
+
+    /** This renewal, when the provider says the tokens are [payload]'s account's. */
+    private fun RefreshResult.Renewed.ofAccount(payload: ShareAccountPayload): RefreshResult.Renewed {
+        // Unlike the pool's refresh, a revival needs the provider to name the account: it brings back an account on
+        // tokens nobody checked yet.
+        val owner = accountId ?: throw TeamCodeTokensOfAnotherAccountException()
+        if (!SharingRules.sameProviderAccount(payload.providerAccountId, owner)) {
+            throw TeamCodeTokensOfAnotherAccountException()
+        }
+        return this
     }
 
     private companion object {

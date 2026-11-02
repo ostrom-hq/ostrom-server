@@ -29,10 +29,11 @@ import kotlinx.serialization.json.putJsonObject
 import kotlin.uuid.Uuid
 
 /**
- * [RuntimeDriver] on a local Docker Engine, through its HTTP API, for tests and self-hosting: two named volumes per
- * session (the workspace and the agent socket) and two containers per execution, with the same labels, names and
- * runner environment as on Kubernetes. As in the pod, the agent host runs the agent in its own container under its
- * own uid, and only the runner's container has the token (S2-49).
+ * [RuntimeDriver] on a local Docker Engine, through its HTTP API, for tests and self-hosting: three named volumes per
+ * session (the workspace, the agent socket and the check socket) and three containers per execution, with the same
+ * labels, names and runner environment as on Kubernetes. As in the pod, the agent host runs the agent in its own
+ * container under its own uid, the check host runs the hooks' checks in another, and only the runner's container has
+ * the token (S2-49).
  *
  * The engine is reached over TCP ([DockerSettings.apiUrl]; for the local socket, expose it on the loopback, for
  * example with a socket proxy). The free plan's egress restriction is not enforced here: it is a Kubernetes
@@ -55,7 +56,7 @@ class DockerRuntimeDriver(
     override suspend fun ensureWorkspace(session: CloudSession) {
         // Creating a volume that exists answers 201 with the existing volume. The socket's volume takes the owner and
         // mode of the image's /run/ostrom when the agent's container first mounts it.
-        for (name in listOf(RuntimeNames.workspace(session.id), socketVolume(session.id))) {
+        for (name in listOf(RuntimeNames.workspace(session.id), socketVolume(session.id), checkVolume(session.id))) {
             val volume = buildJsonObject {
                 put("Name", name)
                 put("Labels", labels(session.id.toHexString(), null))
@@ -66,8 +67,9 @@ class DockerRuntimeDriver(
 
     override suspend fun startExecution(spec: ExecutionSpec) {
         val name = RuntimeNames.execution(spec.sessionId, spec.epoch)
-        // The agent host first: the runner connects to its socket.
+        // The hosts first: the runner connects to their sockets.
         createAndStart(agentContainer(name), agentManifest(spec))
+        createAndStart(checkContainer(name), checkManifest(spec))
         createAndStart(name, runnerManifest(spec))
     }
 
@@ -112,8 +114,9 @@ class DockerRuntimeDriver(
 
     override suspend fun deleteWorkspace(session: CloudSession): Boolean {
         val socketGone = removeVolume(socketVolume(session.id))
+        val checkGone = removeVolume(checkVolume(session.id))
         val workspaceGone = removeVolume(RuntimeNames.workspace(session.id))
-        return socketGone && workspaceGone
+        return socketGone && checkGone && workspaceGone
     }
 
     /** Removes a volume; true once it is gone. */
@@ -133,7 +136,7 @@ class DockerRuntimeDriver(
     }
 
     /** The agent host's container: the agent's uid, the workspace and the socket, no token. */
-    private fun agentManifest(spec: ExecutionSpec): JsonObject = container(spec, AGENT_USER, MEMORY_BYTES) {
+    private fun agentManifest(spec: ExecutionSpec): JsonObject = container(spec, Role.AGENT, MEMORY_BYTES) {
         // The whole command as the entrypoint: the image's own is the runner, which would take these as arguments.
         putJsonArray("Entrypoint") {
             add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY))
@@ -146,8 +149,21 @@ class DockerRuntimeDriver(
         }
     }
 
-    /** The runner's container: its own uid, the shared group for the socket, the token, and nothing else mounted. */
-    private fun runnerManifest(spec: ExecutionSpec): JsonObject = container(spec, RUNNER_USER, RUNNER_MEMORY_BYTES) {
+    /** The check host's container: the agent's uid, the workspace and the check socket, no token. */
+    private fun checkManifest(spec: ExecutionSpec): JsonObject = container(spec, Role.CHECKS, CHECK_MEMORY_BYTES) {
+        putJsonArray("Entrypoint") {
+            add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY))
+            add(JsonPrimitive("check-host"))
+        }
+        put("WorkingDir", KubernetesRuntimeDriver.WORKSPACE)
+        putJsonArray("Env") {
+            add(JsonPrimitive("OSTROM_CHECK_HOST_SOCKET=${RunnerEnvironment.CHECK_HOST_SOCKET}"))
+            add(JsonPrimitive("HOME=/tmp"))
+        }
+    }
+
+    /** The runner's container: its own uid, the shared group for the sockets, the token, and no workspace. */
+    private fun runnerManifest(spec: ExecutionSpec): JsonObject = container(spec, Role.RUNNER, RUNNER_MEMORY_BYTES) {
         putJsonArray("Entrypoint") { add(JsonPrimitive(KubernetesRuntimeDriver.RUNNER_BINARY)) }
         putJsonArray("Env") {
             (RunnerEnvironment.of(spec, serverUrl) + RunnerEnvironment.secrets(spec))
@@ -157,13 +173,12 @@ class DockerRuntimeDriver(
 
     private fun container(
         spec: ExecutionSpec,
-        user: String,
+        role: Role,
         memory: Long,
         body: JsonObjectBuilder.() -> Unit,
     ): JsonObject = buildJsonObject {
-        val agent = user == AGENT_USER
         put("Image", runnerImage)
-        put("User", user)
+        put("User", if (role == Role.RUNNER) RUNNER_USER else AGENT_USER)
         body()
         put(
             "Labels",
@@ -174,12 +189,17 @@ class DockerRuntimeDriver(
         )
         putJsonObject("HostConfig") {
             val socket = "${socketVolume(spec.sessionId)}:${RunnerEnvironment.AGENT_SOCKET_DIRECTORY}"
+            val check = "${checkVolume(spec.sessionId)}:${RunnerEnvironment.CHECK_SOCKET_DIRECTORY}"
             val workspace = "${RuntimeNames.workspace(spec.sessionId)}:${KubernetesRuntimeDriver.WORKSPACE}"
+            // The agent never mounts the check socket, the check host never the agent socket.
             putJsonArray("Binds") {
-                if (agent) add(JsonPrimitive(workspace))
-                add(JsonPrimitive(socket))
+                if (role != Role.RUNNER) add(JsonPrimitive(workspace))
+                if (role != Role.CHECKS) add(JsonPrimitive(socket))
+                if (role != Role.AGENT) add(JsonPrimitive(check))
             }
-            if (!agent) putJsonArray("GroupAdd") { add(JsonPrimitive(KubernetesRuntimeDriver.SHARED_GID.toString())) }
+            if (role == Role.RUNNER) {
+                putJsonArray("GroupAdd") { add(JsonPrimitive(KubernetesRuntimeDriver.SHARED_GID.toString())) }
+            }
             settings.network?.let { put("NetworkMode", it) }
             putJsonArray("ExtraHosts") { add(JsonPrimitive("host.docker.internal:host-gateway")) }
             putJsonObject("RestartPolicy") { put("Name", "no") }
@@ -218,11 +238,18 @@ class DockerRuntimeDriver(
         private val GONE_OR_DONE = setOf(HttpStatusCode.NotModified, HttpStatusCode.NotFound)
         private const val MEMORY_BYTES = 4L * 1024 * 1024 * 1024
         private const val RUNNER_MEMORY_BYTES = 256L * 1024 * 1024
+        private const val CHECK_MEMORY_BYTES = 2L * 1024 * 1024 * 1024
         private const val AGENT_USER = "${KubernetesRuntimeDriver.AGENT_UID}:${KubernetesRuntimeDriver.AGENT_UID}"
         private const val RUNNER_USER = "${KubernetesRuntimeDriver.RUNNER_UID}:${KubernetesRuntimeDriver.RUNNER_UID}"
 
         /** The agent host's container of an execution. */
         fun agentContainer(execution: String): String = "$execution-agent"
+
+        /** The check host's container of an execution. */
+        fun checkContainer(execution: String): String = "$execution-checks"
+
+        /** The volume of a session's check socket. */
+        fun checkVolume(sessionId: Uuid): String = "${RuntimeNames.workspace(sessionId)}-checks"
 
         /** The volume of a session's agent socket. */
         fun socketVolume(sessionId: Uuid): String = "${RuntimeNames.workspace(sessionId)}-socket"
@@ -248,6 +275,9 @@ class DockerRuntimeDriver(
         }
     }
 }
+
+/** Which of an execution's containers. */
+private enum class Role { AGENT, CHECKS, RUNNER }
 
 /**
  * A call to the Docker Engine API failed. The message names the step and the status only.

@@ -20,7 +20,6 @@ import dev.ostrom.server.mcprelay.domain.PolicyEffect
 import dev.ostrom.server.mcprelay.domain.StdioLauncher
 import dev.ostrom.server.mcprelay.domain.StdioSpec
 import dev.ostrom.server.mcprelay.domain.ToolPolicy
-import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -317,14 +316,10 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         }
     }
 
-    override suspend fun purgeCalls(before: Instant): Long = driver.transaction {
-        // The one operation across orgs, named by its own policy (McpRelayMigrations version 2): old calls only.
-        execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-        execute("SELECT set_config('$RETENTION_SETTING', 'on', true)").getOrThrow()
-        execute(
-            Statement.create("DELETE FROM mcp_relay_calls WHERE started_at < :before").bind("before", before),
-        ).getOrThrow()
-    }
+    // The one operation across orgs, through the function of McpRelayMigrations version 4: old calls only.
+    override suspend fun purgeCalls(before: Instant): Long = driver.fetchAll(
+        Statement.create("SELECT mcp_relay_purge(CAST(:before AS TIMESTAMPTZ)) AS n").bind("before", before),
+    ).getOrThrow().first().get("n").asLong()
 
     // Every column but created_at, which only INSERT names: sqlx4k refuses a value for a parameter its SQL lacks.
     private fun Statement.bindServer(server: McpServer): Statement = bind("id", server.id)

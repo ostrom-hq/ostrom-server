@@ -3,6 +3,8 @@ package dev.ostrom.server.workflowruns.presentation
 
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
+import dev.ostrom.core.api.models.ReportCheckRequest
+import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -85,7 +87,10 @@ data class WorkflowReceiptRequestBody(val digest: String, val agent: String? = n
  * @property next The id to ask the next page before, or null on the last page.
  */
 @Serializable
-data class ChecksPage(val items: List<CheckRun>, val next: String? = null)
+data class ChecksPage(val items: List<@Serializable(with = CheckRunAnswer::class) CheckRun>, val next: String? = null)
+
+/** A check run writes `exit` as `null` for a run that did not end: required and nullable in the contract. */
+object CheckRunAnswer : NullsKept<CheckRun>(CheckRun.serializer(), "exit")
 
 /**
  * A page of notifications.
@@ -120,3 +125,21 @@ data class VerificationDto(
  */
 @Serializable
 data class WorkflowReceiptResponse(val receipt: JsonObject, val verification: VerificationDto)
+
+/**
+ * `POST /api/v1/cloud/runner/checks`: a check run the runner of a cloud session ran itself, authenticated by the
+ * execution's runner token, which the agent cannot read (S2-49). Not in the contract yet.
+ */
+@Serializable
+@Resource("/api/v1/cloud/runner/checks")
+class RunnerChecksApi
+
+/**
+ * A check run the runner reports.
+ *
+ * @property sessionId The cloud session the runner was started for.
+ * @property epoch The execution it was started for.
+ * @property check The run, as the hooks report one: its `sessionId` is the workflow session it ran for.
+ */
+@Serializable
+data class RunnerCheckRequest(val sessionId: String, val epoch: Long, val check: ReportCheckRequest)

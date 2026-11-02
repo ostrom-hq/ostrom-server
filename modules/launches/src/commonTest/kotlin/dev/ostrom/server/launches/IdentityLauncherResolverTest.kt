@@ -12,7 +12,10 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.launches.fakes.ADA
 import dev.ostrom.server.launches.fakes.ORG
+import dev.ostrom.server.launches.fakes.OTHER_ORG
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
+import dev.ostrom.server.orgs.domain.Member
+import dev.ostrom.server.orgs.domain.MembersRepository
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -35,7 +38,9 @@ class IdentityLauncherResolverTest {
             return if (member) OrgPrincipal(ORG, Uuid.random(), OrgRole.MEMBER) else null
         }
     }
-    private val resolver = IdentityLauncherResolver(orgs, OnlyAda())
+    private val adaMember = Uuid.parse("0000a0ad-0000-0000-0000-000000000000")
+    private val ghostMember = Uuid.parse("0000a0ff-0000-0000-0000-000000000000")
+    private val resolver = IdentityLauncherResolver(orgs, OnlyAda(), AdaAndTheGhost())
 
     private fun person(subject: String, kind: PrincipalKind = PrincipalKind.USER) =
         AuthenticatedPrincipal(subject, kind, setOf("sessions:write"))
@@ -65,6 +70,50 @@ class IdentityLauncherResolverTest {
         assertNull(resolver.resolve(person(ghost.toString())), "A member whose user is gone")
     }
 
+    @Test
+    fun aCloudSessionsOwnerIsResolvedFromTheirMemberId() = runTest {
+        assertEquals(ADA, resolver.owner(ORG, adaMember))
+        assertNull(resolver.owner(ORG, Uuid.random()), "No longer a member")
+        assertNull(resolver.owner(ORG, ghostMember), "A member whose user is gone")
+        assertEquals(emptyList<Uuid?>(), asked, "Read from the members, not from a credential")
+    }
+
+    @Test
+    fun anotherDeveloperIsReadByLoginInTheOrganizationOnly() = runTest {
+        assertEquals(ADA, resolver.colleague(ORG, "ada"))
+        assertEquals(ADA, resolver.colleague(ORG, "Ada"), "A login is matched as the users repository matches it")
+        assertNull(resolver.colleague(OTHER_ORG, "ada"), "Not a member of that organization")
+        assertNull(resolver.colleague(ORG, "nobody"), "No such login")
+        assertEquals(emptyList<Uuid?>(), asked, "Read from the members, not from a credential")
+    }
+
+    /** Ada's member and the ghost's, in [ORG]; the launches module reads nothing else from the members. */
+    private inner class AdaAndTheGhost : MembersRepository {
+        private val at = Instant.parse("2026-10-30T10:00:00Z")
+        private val members = listOf(
+            Member(adaMember, ORG, ADA.userId, ADA.role, at),
+            Member(ghostMember, ORG, ghost, OrgRole.MEMBER, at),
+        )
+
+        override suspend fun findById(orgId: Uuid, memberId: Uuid): Member? =
+            members.firstOrNull { it.orgId == orgId && it.id == memberId }
+
+        override suspend fun findByUser(orgId: Uuid, userId: Uuid): Member? =
+            members.firstOrNull { it.orgId == orgId && it.userId == userId }
+
+        override suspend fun list(orgId: Uuid): List<Member> = unused()
+
+        override suspend fun count(orgId: Uuid): Int = unused()
+
+        override suspend fun changeRole(orgId: Uuid, memberId: Uuid, role: OrgRole) = unused()
+
+        override suspend fun remove(orgId: Uuid, memberId: Uuid) = unused()
+
+        override suspend fun transferOwnership(orgId: Uuid, oldOwnerId: Uuid, newOwnerId: Uuid) = unused()
+
+        private fun unused(): Nothing = error("The launches module only reads a member by id or by user.")
+    }
+
     /** A users repository that knows Ada only; the launches module reads nothing else from it. */
     private class OnlyAda : UsersRepository {
         private val ada = User(ADA.userId, "ada", "Ada", null, null, Instant.parse("2026-10-01T00:00:00Z"))
@@ -77,7 +126,7 @@ class IdentityLauncherResolverTest {
 
         override suspend fun loginTaken(login: String): Boolean = unused()
 
-        override suspend fun findByLogin(login: String): User? = unused()
+        override suspend fun findByLogin(login: String): User? = ada.takeIf { login.lowercase() == it.login }
 
         override suspend fun getMany(ids: Collection<Uuid>): List<User> = unused()
 
@@ -89,6 +138,6 @@ class IdentityLauncherResolverTest {
 
         override suspend fun listIssuers(userId: Uuid): List<String> = unused()
 
-        private fun unused(): Nothing = error("The launches module only reads a user by id.")
+        private fun unused(): Nothing = error("The launches module only reads a user by id or by login.")
     }
 }

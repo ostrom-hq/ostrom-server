@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.presentation
 
+import dev.ostrom.server.gates.domain.models.StepUpRequiredException
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -39,8 +40,8 @@ object GateScopes {
     /** Who reads a gate. */
     val readingGates: Set<String> = setOf(ALL_USER, AGENT_SESSION, ASK, READ)
 
-    /** Who reads approvals. */
-    val readingApprovals: Set<String> = setOf(ALL_USER, READ, ANSWER)
+    /** Who reads approvals. [READ] last: a refusal names the reading scope, never [ANSWER] (LOGIN-009). */
+    val readingApprovals: Set<String> = setOf(ALL_USER, ANSWER, READ)
 
     /** Who answers. */
     val answering: Set<String> = setOf(ALL_USER, ANSWER)
@@ -49,8 +50,8 @@ object GateScopes {
 /**
  * Refuses a credential that holds none of the accepted scopes.
  *
- * @param accepted The scopes that open the route.
- * @throws OstromException A 403 that names the first accepted scope.
+ * @param accepted The scopes that open the route, the one a refused credential should ask for last.
+ * @throws OstromException A 403 that names the last accepted scope.
  */
 fun AuthenticatedPrincipal.requireAnyScope(accepted: Set<String>) {
     if (scopes.none { it in accepted }) {
@@ -66,9 +67,15 @@ fun AuthenticatedPrincipal.requireAnyScope(accepted: Set<String>) {
  * @throws OstromException A 403.
  */
 fun AuthenticatedPrincipal.requireAnswering() {
-    if (kind != PrincipalKind.USER) throw OstromException(ErrorKind.FORBIDDEN, "Only a person answers a gate.")
-    if (channel != PrincipalChannel.BROWSER && channel != PrincipalChannel.MOBILE_APP) {
-        throw OstromException(ErrorKind.FORBIDDEN, "A yes is given in the browser or in the app.")
+    val refused = when {
+        kind != PrincipalKind.USER -> OstromException(ErrorKind.FORBIDDEN, "Only a person answers a gate.")
+        channel != PrincipalChannel.BROWSER && channel != PrincipalChannel.MOBILE_APP ->
+            OstromException(ErrorKind.FORBIDDEN, "A yes is given in the browser or in the app.")
+        // The app answers within minutes of the phone's biometric unlock: a locked app is told to unlock, then answer.
+        channel == PrincipalChannel.MOBILE_APP && scopes.none { it in GateScopes.answering } ->
+            StepUpRequiredException()
+        else -> null
     }
+    if (refused != null) throw refused
     requireAnyScope(GateScopes.answering)
 }

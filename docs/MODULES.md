@@ -253,8 +253,17 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 
 The shared accounts' tokens are renewed at the providers' OAuth token endpoints. An operator can point them elsewhere
 (a proxy, or the fake provider of the local demo, which renews any token). The refresh token is sent there: an endpoint
-is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`); anything else
-stops the server at start. A blank value counts as unset, so the provider's own endpoint is used.
+is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`), judged on
+the host the client parses; an endpoint with credentials (`@`), a fragment (`#`), a backslash, an IPv6 literal or a
+port above 65535 is refused too. Anything else stops the server at start. A blank value counts as unset, so the
+provider's own endpoint is used.
+
+Each renewal also checks whose tokens they are. The provider names the account in its answer: `account.uuid` for
+Claude, and for Codex the `chatgpt_account_id` of the `id_token`. When that account differs from the
+`providerAccountId` the account was shared as (by the CLI or an import), the account becomes `wrong_account`: it
+serves no call and the new pair is not stored. Pausing and resuming do not bring it back; it serves again once its
+owner shares it again. An answer that names no account is accepted, because the field is optional at the providers.
+A fake token endpoint must therefore name the account's own id, or none.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -275,7 +284,9 @@ The probes: `GET /health` (liveness: 200 while the dependencies answer, also whi
 The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
 `migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
 through `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, `SELECT, INSERT, UPDATE, DELETE` on its tables and `USAGE, SELECT`
-on its sequences. CI's smoke test sets them up the same way.
+on its sequences. CI's smoke test sets them up the same way. The migrations' history tables (`_migrations_<name>`)
+are the exception: after each pass, `migrate` revokes every privilege but `SELECT` on them from every role but the
+owner, so the serving role reads the history (the start-up check) and never rewrites it.
 
 ## Known limits of the foundation
 

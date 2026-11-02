@@ -10,17 +10,19 @@ import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
-import dev.ostrom.server.kernel.errors.ErrorKind
-import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.kernel.http.withNulls
 import dev.ostrom.server.receipts.presentation.requireReceiptReader
+import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.sessions.presentation.SessionScopes
 import dev.ostrom.server.workflowruns.domain.models.InvalidRunException
 import dev.ostrom.server.workflowruns.domain.repositories.RunQuery
 import dev.ostrom.server.workflowruns.domain.usecases.NotificationRequest
 import dev.ostrom.server.workflowruns.domain.usecases.ReceiptBundle
 import dev.ostrom.server.workflowruns.domain.usecases.WorkflowReceiptRequest
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
@@ -33,12 +35,14 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlin.uuid.Uuid
 
 /**
  * The workflow-runs routes of the contract. Reports (checks, notifications, the workflow receipt) come from the
  * launcher's hooks with the launch's agent token, or from the session's person; the lists are any member's, an agent
  * token's for its own session; a bundle is read by a person who reads receipts, or by the agent token of the
- * receipt's session's launch (`ostrom <agent>` keeps it at the end).
+ * receipt's session's launch (`ostrom <agent>` keeps it at the end). Outside the contract, the runner of a cloud
+ * session reports the checks it ran itself on `/api/v1/cloud/runner/checks`, with its runner token.
  *
  * @param dependencies The use cases.
  */
@@ -47,7 +51,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
         post<ChecksApi> {
             val actor = actorOf(call, SessionScopes.writing)
             val run = reportCheck(actor, call.receive<ReportCheckRequest>())
-            call.respond(HttpStatusCode.Created, run)
+            call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
         }
         get<ChecksApi> { params ->
             val actor = actorOf(call, SessionScopes.reading)
@@ -80,6 +84,17 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
             call.respond(bundle(bundleReader(call), params.id).toJson())
         }
     }
+    // The runner channel: the execution's runner token, checked before the body is read (S2-46), never a member's.
+    post<RunnerChecksApi> {
+        val token = call.runnerToken()
+        checkRunnerToken(token)
+        val body = call.receive<RunnerCheckRequest>()
+        val cloudSession = Uuid.parseOrNull(body.sessionId)
+            ?: throw InvalidRunException("sessionId: the cloud session's id.")
+        val execution = authenticateRunner(token, cloudSession, body.epoch)
+        val run = reportRunnerCheck(execution.orgId, execution.id, body.check)
+        call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
+    }
 }
 
 // The scope first (SECURITY-AUDIT S2-03): a credential that may not use the route learns nothing about its org.
@@ -91,7 +106,7 @@ private suspend fun WorkflowRunsRoutesDependencies.actorOf(call: ApplicationCall
 
 private suspend fun WorkflowRunsRoutesDependencies.resolve(principal: AuthenticatedPrincipal): GateActor =
     actors.resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw principal.outsideOrganization()
 
 // A person reads receipts with a receipts scope (S2-47); an agent token only its own launch's (the use case checks).
 private suspend fun WorkflowRunsRoutesDependencies.bundleReader(call: ApplicationCall): GateActor {
@@ -109,13 +124,14 @@ private fun statusOf(value: String?): NotificationStatus? = value?.let { text ->
         ?: throw InvalidRunException("status: queued, sent, logged-only or not-sent.")
 }
 
-// `package` is always written, null when the receipt cites none (the contract requires the key).
+// `package` is always written, null when the receipt cites none, and so is its `repo`, null for an organization's
+// package (the contract requires both keys).
 private fun ReceiptBundle.toJson(): JsonObject = buildJsonObject {
     put("format", BUNDLE_FORMAT)
     put("receipt", receipt)
     put("chain", JsonArray(chain))
-    val pack = envelope
-    put("package", if (pack == null) JsonNull else OstromJson.encodeToJsonElement(PackageEnvelope.serializer(), pack))
+    val pack = envelope?.let { OstromJson.encodeToJsonElement(PackageEnvelope.serializer(), it).withNulls("repo") }
+    put("package", pack ?: JsonNull)
     put(
         "keys",
         JsonArray(
@@ -133,3 +149,16 @@ private fun ReceiptBundle.toJson(): JsonObject = buildJsonObject {
 
 /** The format of a receipt bundle, which `ostrom verify` reads. */
 const val BUNDLE_FORMAT: String = "ostrom.receipt-bundle/1"
+
+/**
+ * The runner token of a runner call, `Authorization: Bearer ostrom_runner_…`, read as the runners module reads it
+ * (a module never imports another one's presentation).
+ *
+ * @throws RunnerUnauthenticatedException When absent.
+ */
+private fun ApplicationCall.runnerToken(): String {
+    val header = request.headers[HttpHeaders.Authorization] ?: throw RunnerUnauthenticatedException()
+    val token = header.removePrefix("Bearer ").trim()
+    if (token == header || token.isEmpty()) throw RunnerUnauthenticatedException()
+    return token
+}

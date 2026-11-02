@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.presentation
 
+import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -14,10 +17,15 @@ import kotlinx.serialization.json.JsonElement
 @Serializable
 @Resource("/api/v1/gates")
 class GatesApi {
-    /** One gate. */
+    /**
+     * One gate.
+     *
+     * @property wait Seconds to wait on a pending gate for its answer (contract `getGate`), 0 to 30; outside, the
+     *   nearest bound.
+     */
     @Serializable
     @Resource("{id}")
-    class Id(val parent: GatesApi = GatesApi(), val id: String) {
+    class Id(val parent: GatesApi = GatesApi(), val id: String, val wait: Int? = null) {
         /** Uses the yes once, after the action (contract `consumeGate`). */
         @Serializable
         @Resource("consume")
@@ -190,7 +198,9 @@ data class GateRef(
  * @property selfApproved True when the only approver, who asked, said yes.
  * @property push The push.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = GateRequest.Answer::class)
 data class GateRequest(
     val id: String,
     val approvalId: String? = null,
@@ -218,7 +228,10 @@ data class GateRequest(
     val askedVia: List<String>? = null,
     val selfApproved: Boolean? = null,
     val push: GatePush? = null,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<GateRequest>(generatedSerializer(), "gate")
+}
 
 /**
  * A line shown to the approvers (contract `Evidence`).
@@ -308,14 +321,6 @@ data class GateResponse(
     val waitingFor: List<String>? = null,
 )
 
-/**
- * The answer to an answer (contract `answerApproval`).
- *
- * @property approval The approval, answered.
- * @property receipt The signed receipt (filled by the receipts module).
- */
-@Serializable
-data class AnswerApprovalResponse(val approval: Approval, val receipt: JsonElement? = null)
 
 /**
  * A page of approvals (contract `listApprovals`).

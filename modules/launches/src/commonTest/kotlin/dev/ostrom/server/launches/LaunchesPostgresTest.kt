@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
-import dev.ostrom.server.gates.GatesModule
-import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
@@ -12,19 +10,28 @@ import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
-import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.withOrganization
+import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
+import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.AgentPolicyResponse
 import dev.ostrom.server.launches.presentation.LaunchResponse
-import dev.ostrom.server.orgs.OrgsModule
+import dev.ostrom.server.orgs.domain.Invitation
+import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
-import dev.ostrom.server.receipts.ReceiptsModule
-import dev.ostrom.server.sessions.SessionsModule
+import dev.ostrom.server.runners.domain.AgentKind
+import dev.ostrom.server.runners.domain.CloudSession
+import dev.ostrom.server.runners.domain.CloudSessionsRepository
+import dev.ostrom.server.runners.domain.DesiredState
+import dev.ostrom.server.runners.domain.RepositorySpec
+import dev.ostrom.server.runners.domain.RunnerTokens
+import dev.ostrom.server.runners.domain.SessionLimits
+import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.testing.TestServer
@@ -48,8 +55,12 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 /**
  * `ostrom claude` up to its first session, on the real identity, orgs, gates and sessions modules and PostgreSQL: the
@@ -57,20 +68,19 @@ import kotlin.uuid.Uuid
  * and nothing crosses a launch or an organization.
  */
 class LaunchesPostgresTest {
-    private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, LaunchesModule,
-    )
+    private val modules = launchModules()
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** A person, a member of a new organization, and a CLI token of theirs bound to it. */
-    private class Person(val user: User, val org: Org, val cliToken: String)
+    private class Person(val user: User, val org: Org, val memberId: Uuid, val cliToken: String)
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
             VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
         )
         val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
-        koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        val member = Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)
+        koin.get<OrgsRepository>().create(org, member) { false }
         // The CLI's own token, bound to the organization: a CLI token names none, and resolving the person's only
         // organization comes with the `Ostrom-Org` resolution (#64); the launch reads whichever the orgs module gives.
         val secret = "osc_" + Uuid.random().toHexString()
@@ -79,7 +89,26 @@ class LaunchesPostgresTest {
             null,
         )
         koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
-        return Person(user, org, secret)
+        return Person(user, org, member.id, secret)
+    }
+
+    /** A person who joins [org] with [role] by an invitation, and a CLI token of theirs bound to it. */
+    private suspend fun TestServer.joins(login: String, org: Org, role: OrgRole, invitedBy: Uuid): Person {
+        val user = koin.get<ResolveUserUseCase>()(
+            VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
+        )
+        val invitation = Invitation(Uuid.random(), org.id, null, role, invitedBy, now, now + 1.hours, null, 0, null)
+        val invitations = koin.get<InvitationsRepository>()
+        invitations.create(invitation, "hash-" + Uuid.random().toHexString())
+        val member = Member(Uuid.random(), org.id, user.id, role, now)
+        assertTrue(invitations.accept(invitation, member, now))
+        val secret = "osc_" + Uuid.random().toHexString()
+        val token = ApiToken(
+            Uuid.random(), user.id, org.id, "cli", TokenKind.CLI, CLI_SCOPES, "hint", null, now, now + 1.hours, null,
+            null,
+        )
+        koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
+        return Person(user, org, member.id, secret)
     }
 
     private suspend fun TestServer.call(token: String?, path: String, body: String? = null): HttpResponse =
@@ -103,7 +132,7 @@ class LaunchesPostgresTest {
     fun theCliReadsThePolicyLaunchesAndItsAgentTokenRunsTheLaunchsSession() =
         serverTest(modules) { server ->
             val ada = server.person("ada")
-            val policy = server.call(ada.cliToken, "/api/v1/policy/agents?agent=claude-code&dev=mallory&model=opus")
+            val policy = server.call(ada.cliToken, "/api/v1/policy/agents?agent=claude-code&dev=ada&model=opus")
             assertEquals(AgentPolicyResponse(allowed = true), policy.body<AgentPolicyResponse>())
 
             val launch = server.launch(ada)
@@ -117,6 +146,7 @@ class LaunchesPostgresTest {
                 listOf(stored?.dev, stored?.repo, stored?.agent, stored?.model),
             )
             assertEquals(ada.user.id, stored?.userId)
+            assertNull(stored?.cloudSessionId, "A launch of the CLI is no cloud session's")
 
             val started = server.call(launch.agentToken, "/api/v1/sessions", SESSION)
             assertEquals(HttpStatusCode.OK, started.status, started.bodyAsText())
@@ -127,6 +157,36 @@ class LaunchesPostgresTest {
             assertEquals(false, alive.body<SessionDto>().ended)
             val read = server.call(ada.cliToken, "/api/v1/sessions/s-1")
             assertEquals(HttpStatusCode.OK, read.status, "The person reads the session of their launch")
+        }
+
+    @Test
+    fun anAdminReadsAMembersVerdictAndAMemberOnlyTheirOwn() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val bob = server.joins("bob", ada.org, OrgRole.BILLING, ada.memberId)
+            val cy = server.joins("cy", ada.org, OrgRole.ADMIN, ada.memberId)
+            val billing = AgentPolicyResponse(false, LaunchPolicy.BILLING_ONLY)
+            for (admin in listOf(ada, cy)) {
+                val verdict = server.call(admin.cliToken, "/api/v1/policy/agents?agent=codex&dev=bob")
+                assertEquals(billing, verdict.body<AgentPolicyResponse>(), admin.user.login)
+            }
+            assertEquals(billing, server.call(bob.cliToken, "/api/v1/policy/agents?agent=codex&dev=bob").body())
+            // A member who is not an admin: refused before any lookup, a login of the organization or not.
+            for (dev in listOf("ada", "cy", "nobody")) {
+                val refused = server.call(bob.cliToken, "/api/v1/policy/agents?agent=codex&dev=$dev")
+                assertEquals(HttpStatusCode.Forbidden, refused.status, dev)
+            }
+        }
+
+    @Test
+    fun anAdminLearnsNothingOfAnotherOrganizationsDevelopers() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            server.person("mallory")
+            val elsewhere = server.call(ada.cliToken, "/api/v1/policy/agents?agent=codex&dev=mallory")
+            val nobody = server.call(ada.cliToken, "/api/v1/policy/agents?agent=codex&dev=nobody")
+            assertEquals(HttpStatusCode.NotFound, elsewhere.status, elsewhere.bodyAsText())
+            assertEquals(nobody.status to nobody.bodyAsText(), elsewhere.status to elsewhere.bodyAsText())
         }
 
     @Test
@@ -221,6 +281,15 @@ class LaunchesPostgresTest {
         serverTest(modules) { server ->
             val ada = server.person("ada")
             repeat(LAUNCHES) { server.launch(ada) }
+            // Other people of the organization, in the window and before it: each index then has a query it wins.
+            val launches = server.koin.get<LaunchesRepository>()
+            val roomy = LaunchLimit(window = 1.hours, perPerson = 1000, perOrg = 1000)
+            repeat(OTHERS_IN_WINDOW) {
+                assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 10.minutes), roomy))
+            }
+            repeat(OTHERS_BEFORE) {
+                assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 3.hours), roomy))
+            }
             server.database.owner.execute("ANALYZE launches_launches").getOrThrow() // the serving role owns no table
             val plan = server.driver.withOrganization(ada.org.id) { tx ->
                 val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${PostgresLaunchesRepository.FIND}")
@@ -232,6 +301,175 @@ class LaunchesPostgresTest {
             assertTrue("launches_launches_pkey" in plan, plan)
         }
 
+    /** A cloud session of [owner]'s, its execution 2 running, and the runner token of that execution. */
+    private suspend fun TestServer.cloudSession(
+        owner: Person,
+        agent: AgentKind = AgentKind.CLAUDE,
+        ownerId: String = owner.memberId.toString(),
+    ): Pair<CloudSession, String> {
+        val tokens = koin.get<RunnerTokens>()
+        val token = tokens.mint()
+        val session = CloudSession(
+            id = Uuid.random(), orgId = owner.org.id, ownerId = ownerId, name = "task", agent = agent,
+            repository = RepositorySpec("https://github.com/acme/api", null), state = SessionState.CREATING,
+            desiredState = DesiredState.RUNNING, phase = null, epoch = 2, generation = 0, failure = null,
+            limits = SessionLimits(IDLE_MINUTES, RUN_MINUTES, false), createdAt = now, updatedAt = now,
+            executionStartedAt = now, runnerTokenHash = tokens.hash(token), model = "claude-opus-4-1",
+        )
+        assertTrue(koin.get<CloudSessionsRepository>().createWithinCap(session, RUNNING_CAP))
+        return session to token
+    }
+
+    private suspend fun TestServer.runnerLaunch(token: String?, body: String): HttpResponse =
+        client.post("/api/v1/cloud/runner/launch") {
+            token?.let { header(HttpHeaders.Authorization, it) }
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+
+    private fun claim(session: CloudSession, epoch: Long = session.epoch) =
+        """{"sessionId":"${session.id}","epoch":$epoch}"""
+
+    @Test
+    fun aCloudSessionsRunnerOpensItsLaunchForItsOwnerWithItsOwnToken() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (session, token) = server.cloudSession(ada)
+            val opened = server.runnerLaunch("Bearer $token", claim(session))
+            assertEquals(HttpStatusCode.Created, opened.status, opened.bodyAsText())
+            val launch = opened.body<LaunchResponse>()
+            val stored = server.koin.get<LaunchesRepository>().find(ada.org.id, launch.launchId)
+            assertEquals(
+                listOf("ada", "https://github.com/acme/api", "claude-code", "claude-opus-4-1"),
+                listOf(stored?.dev, stored?.repo, stored?.agent, stored?.model),
+            )
+            assertEquals(session.id, stored?.cloudSessionId)
+            val started = server.call(launch.agentToken, "/api/v1/sessions", SESSION)
+            assertEquals(HttpStatusCode.OK, started.status, "The agent in the pod runs the launch's session")
+            assertEquals(launch.launchId, started.body<SessionResponse>().session.launchId)
+        }
+
+    @Test
+    fun theRunnerChannelRefusesAnyOtherCredentialOrClaim() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (session, token) = server.cloudSession(ada)
+            assertEquals(HttpStatusCode.Unauthorized, server.runnerLaunch(null, claim(session)).status)
+            assertEquals(HttpStatusCode.Unauthorized, server.runnerLaunch(token, claim(session)).status, "Not Bearer")
+            assertEquals(HttpStatusCode.Unauthorized, server.runnerLaunch("Bearer ", claim(session)).status)
+            val member = server.runnerLaunch("Bearer ${ada.cliToken}", claim(session))
+            assertEquals(HttpStatusCode.Unauthorized, member.status, "A member's token is not a runner token")
+            // S2-46: an unknown token never makes the server read the body.
+            assertEquals(HttpStatusCode.Unauthorized, server.runnerLaunch("Bearer ostrom_runner_x", "{not json").status)
+            assertEquals(HttpStatusCode.BadRequest, server.runnerLaunch("Bearer $token", "{not json").status)
+            val malformed = server.runnerLaunch("Bearer $token", """{"sessionId":"nope","epoch":2}""")
+            assertEquals(HttpStatusCode.BadRequest, malformed.status)
+            assertEquals(HttpStatusCode.Conflict, server.runnerLaunch("Bearer $token", claim(session, 1)).status)
+            val (shell, shellToken) = server.cloudSession(ada, AgentKind.SHELL)
+            assertEquals(HttpStatusCode.BadRequest, server.runnerLaunch("Bearer $shellToken", claim(shell)).status)
+            assertEquals(0, server.launchesSeenBy(ada.org.id), "Nothing opened")
+        }
+
+    @Test
+    fun aRunnerOpensNoLaunchForAnotherOrganizationsMember() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val bob = server.person("bob")
+            // A session of Bob's organization naming Ada's member: the owner is read in Bob's organization only.
+            val (session, token) = server.cloudSession(bob, ownerId = ada.memberId.toString())
+            assertEquals(HttpStatusCode.NotFound, server.runnerLaunch("Bearer $token", claim(session)).status)
+            assertEquals(0 to 0, server.launchesSeenBy(ada.org.id) to server.launchesSeenBy(bob.org.id))
+        }
+
+    private fun stored(orgId: Uuid, userId: Uuid, createdAt: Instant) = Launch(
+        id = "lch_" + Uuid.random().toHexString(), orgId = orgId, userId = userId, dev = "ada", repo = null,
+        agent = "codex", model = null, createdAt = createdAt, expiresAt = createdAt + 24.hours,
+    )
+
+    @Test
+    fun theLimitCountsAPersonsThenTheOrganizationsLaunchesOfTheWindow() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val org = ada.org.id
+            val launches = server.koin.get<LaunchesRepository>()
+            val limit = LaunchLimit(window = 1.hours, perPerson = 2, perOrg = 3)
+            val me = ada.user.id
+            assertNull(launches.create(stored(org, me, now - 2.hours), limit), "Out of the window from the next one")
+            assertNull(launches.create(stored(org, me, now - 50.minutes), limit))
+            assertNull(launches.create(stored(org, me, now - 10.minutes), limit))
+            assertEquals(10.minutes, launches.create(stored(org, me, now), limit), "When the oldest leaves the window")
+            // Another person still launches until the organization is full.
+            val other = Uuid.random()
+            assertNull(launches.create(stored(org, other, now), limit))
+            val newcomer = launches.create(stored(org, Uuid.random(), now), limit)
+            assertEquals(10.minutes, newcomer, "The organization is full")
+            assertEquals(10.minutes, launches.create(stored(org, me, now), limit), "Both windows are full")
+            assertEquals(4, server.launchesSeenBy(org), "Nothing stored past the limit")
+        }
+
+    @Test
+    fun launchesAtOnceNeverTakeTheSamePlace() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val launches = server.koin.get<LaunchesRepository>()
+            val limit = LaunchLimit(window = 1.hours, perPerson = 2, perOrg = 100)
+            val results = coroutineScope {
+                List(CONCURRENT) {
+                    async { launches.create(stored(ada.org.id, ada.user.id, now), limit) }
+                }.awaitAll()
+            }
+            assertEquals(2, results.count { it == null }, "Exactly the limit is stored")
+            assertEquals(2, server.launchesSeenBy(ada.org.id))
+        }
+
+    @Test
+    fun aLaunchOverTheLimitIsA429WithRetryAfter() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val launches = server.koin.get<LaunchesRepository>()
+            val roomy = LaunchLimit(window = 1.hours, perPerson = 1000, perOrg = 1000)
+            repeat(LaunchLimit.DEFAULT.perPerson) {
+                assertNull(launches.create(stored(ada.org.id, ada.user.id, now - 30.minutes), roomy))
+            }
+            val refused = server.call(ada.cliToken, "/api/v1/launches", LAUNCH)
+            assertEquals(HttpStatusCode.TooManyRequests, refused.status, refused.bodyAsText())
+            val wait = refused.headers[HttpHeaders.RetryAfter]?.toLong()
+            assertTrue(wait != null && wait in 1L..(30 * 60 + 1), "Retry-After: $wait")
+            assertTrue("rate_limited" in refused.bodyAsText(), refused.bodyAsText())
+            assertEquals(LaunchLimit.DEFAULT.perPerson, server.launchesSeenBy(ada.org.id))
+        }
+
+    @Test
+    fun theLimitsCountsUseTheirIndexes() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            repeat(LAUNCHES) { server.launch(ada) }
+            // Other people of the organization, in the window and before it: each index then has a query it wins.
+            val launches = server.koin.get<LaunchesRepository>()
+            val roomy = LaunchLimit(window = 1.hours, perPerson = 1000, perOrg = 1000)
+            repeat(OTHERS_IN_WINDOW) {
+                assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 10.minutes), roomy))
+            }
+            repeat(OTHERS_BEFORE) {
+                assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 3.hours), roomy))
+            }
+            server.database.owner.execute("ANALYZE launches_launches").getOrThrow()
+            listOf(
+                PostgresLaunchesRepository.PERSON_WINDOW to "launches_launches_person",
+                PostgresLaunchesRepository.ORG_WINDOW to "launches_launches_created",
+            ).forEach { (sql, index) ->
+                val plan = server.driver.withOrganization(ada.org.id) { tx ->
+                    tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
+                    var explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ada.org.id)
+                        .bind("since", now - 1.hours)
+                    if (":user_id" in sql) explain = explain.bind("user_id", ada.user.id)
+                    tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+                }
+                println("-- the launches of a window (each launch)\n$plan")
+                assertTrue(index in plan, plan)
+            }
+        }
+
     // Read in the organization, as the serving role: row level security keeps the other organizations out.
     private suspend fun TestServer.launchesSeenBy(orgId: Uuid): Int = driver.withOrganization(orgId) { tx ->
         val count = Statement.create("SELECT COUNT(*) AS n FROM launches_launches WHERE org_id = :org_id")
@@ -241,6 +479,12 @@ class LaunchesPostgresTest {
 
     private companion object {
         const val LAUNCHES = 20
+        const val OTHERS_IN_WINDOW = 100
+        const val OTHERS_BEFORE = 200
+        const val CONCURRENT = 8
+        const val IDLE_MINUTES = 30
+        const val RUN_MINUTES = 120
+        const val RUNNING_CAP = 5
         const val LAUNCH = """{"repo":"acme/api","agent":"claude-code","model":"claude-opus-4-1"}"""
         const val SESSION = """{"id":"s-1","agent":"claude-code","repo":"acme/api","dev":"mallory"}"""
     }

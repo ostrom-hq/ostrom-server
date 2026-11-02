@@ -7,8 +7,11 @@ import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.OrganizationNotFoundException
 import dev.ostrom.server.kernel.auth.TOKEN_AUTH
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
+import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -93,7 +96,7 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
         if (!signature.verify(body, call.request.header(SIGNATURE_HEADER))) {
             throw OstromException(ErrorKind.UNAUTHORIZED, "This webhook is not signed by the GitHub App.")
         }
-        webhooks(call.request.header(EVENT_HEADER), body.decodeToString())
+        webhooks(call.request.header(EVENT_HEADER), call.request.header(DELIVERY_HEADER), body.decodeToString())
         call.respond(HttpStatusCode.NoContent)
     }
     // GitHub sends the browser back with its session cookie (SameSite=Lax): the session is read when there is one.
@@ -127,12 +130,14 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
             )
         }
         get<GitHubAppPath.Start> { params ->
+            call.requireStartedHere(settings.webOrigin)
             val actor = actorOf(call, setOf(GateScopes.ALL_USER))
             val principal = call.requirePrincipal()
-            // A named organization the caller is not in, or does not exist, answers like a role too low: 403.
+            // A named organization the caller is not in, or that does not exist, is not found (404, as the contract
+            // says); a member whose role is too low is refused (403).
             val orgId = if (params.org == null) actor.orgId else orgs.orgId(params.org)
-            val member = if (orgId == null) null else members.resolve(principal, orgId)
-            if (member == null || member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) {
+            val member = call.requireOrgPrincipal(members, orgId ?: throw OrganizationNotFoundException())
+            if (member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) {
                 throw OstromException(ErrorKind.FORBIDDEN, "Only an owner or an admin installs the GitHub App.")
             }
             call.respondRedirect(installs.start(member.orgId, actor.id, sessionOf(principal)))
@@ -144,12 +149,10 @@ private suspend fun GitHubRoutesDependencies.actorOf(call: ApplicationCall, acce
     val principal = call.requirePrincipal()
     principal.requireAnyScope(accepted)
     return actors.resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw principal.outsideOrganization()
 }
-
-// The session of a browser, or the credential of a token: what finishes an install must be what started it.
-private fun sessionOf(principal: AuthenticatedPrincipal): String = principal.credentialId ?: principal.subjectId
 
 private const val SIGNATURE_HEADER = "X-Hub-Signature-256"
 private const val EVENT_HEADER = "X-GitHub-Event"
+private const val DELIVERY_HEADER = "X-GitHub-Delivery"
 private const val ORGS_READ = "orgs:read"

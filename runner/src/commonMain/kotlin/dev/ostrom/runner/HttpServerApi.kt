@@ -11,6 +11,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
@@ -24,8 +25,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * [ServerApi] over HTTP: `POST /api/v1/cloud/runner/heartbeat` and `WS /api/v1/cloud/runner/terminal`, with the
- * runner token.
+ * [ServerApi] over HTTP, with the runner token: `POST /api/v1/cloud/runner/heartbeat`, `WS
+ * /api/v1/cloud/runner/terminal`, `POST /api/v1/cloud/runner/launch` and `POST /api/v1/cloud/runner/checks`.
  *
  * @param client An HTTP client with WebSockets installed.
  * @param config The runner's configuration.
@@ -47,6 +48,21 @@ class HttpServerApi(
 
     @Serializable
     private data class HeartbeatResponse(val instruction: String, val state: String)
+
+    @Serializable
+    private data class ExecutionRequest(val sessionId: String, val epoch: Long)
+
+    @Serializable
+    private data class LaunchResponse(val launchId: String, val agentToken: String)
+
+    @Serializable
+    private data class ErrorBody(val error: ErrorDetail)
+
+    @Serializable
+    private data class ErrorDetail(val message: String)
+
+    @Serializable
+    private data class CheckRequest(val sessionId: String, val epoch: Long, val check: RunnerCheck)
 
     @Serializable
     private sealed interface Control {
@@ -76,6 +92,34 @@ class HttpServerApi(
         }
         val answer = JSON.decodeFromString(HeartbeatResponse.serializer(), response.bodyAsText())
         return if (answer.instruction == "stop") Instruction.STOP else Instruction.RUN
+    }
+
+    override suspend fun openLaunch(): RunnerLaunch {
+        val response = client.post("${config.serverUrl}/api/v1/cloud/runner/launch") {
+            bearerAuth(config.token)
+            contentType(ContentType.Application.Json)
+            val request = ExecutionRequest(config.sessionId.toString(), config.epoch)
+            setBody(JSON.encodeToString(ExecutionRequest.serializer(), request))
+        }
+        val status = response.status
+        return when {
+            status.isSuccess() -> JSON.decodeFromString(LaunchResponse.serializer(), response.bodyAsText())
+                .let { RunnerLaunch.Opened(it.launchId, it.agentToken) }
+            status == HttpStatusCode.Unauthorized || status == HttpStatusCode.Conflict ->
+                throw ExecutionEndedException("The server ended this execution (${status.value}).")
+            status.value < SERVER_ERRORS -> RunnerLaunch.Refused(reason(response.bodyAsText(), status))
+            else -> error("The launch answered ${status.value}.")
+        }
+    }
+
+    override suspend fun reportCheck(check: RunnerCheck): Boolean {
+        val response = client.post("${config.serverUrl}/api/v1/cloud/runner/checks") {
+            bearerAuth(config.token)
+            contentType(ContentType.Application.Json)
+            val request = CheckRequest(config.sessionId.toString(), config.epoch, check)
+            setBody(JSON.encodeToString(CheckRequest.serializer(), request))
+        }
+        return response.status.isSuccess()
     }
 
     override suspend fun openTerminal(): TerminalLink {
@@ -112,6 +156,21 @@ class HttpServerApi(
         private const val TOKEN_REFUSED: Short = 4401
         private const val ANOTHER_EXECUTION: Short = 4409
         private val ENDED_CODES = setOf(TOKEN_REFUSED, ANOTHER_EXECUTION)
+        private const val SERVER_ERRORS = 500
+
+        /**
+         * Why the server refused: the message of its error body, or the status when the body is not one.
+         *
+         * @param body The answer's body.
+         * @param status The answer's status.
+         *
+         * @return The reason.
+         */
+        private fun reason(body: String, status: HttpStatusCode): String = try {
+            JSON.decodeFromString(ErrorBody.serializer(), body).error.message
+        } catch (_: IllegalArgumentException) {
+            "The server answered ${status.value}."
+        }
 
         /**
          * Reads a frame from the server: binary frames are keystrokes, text frames controls.

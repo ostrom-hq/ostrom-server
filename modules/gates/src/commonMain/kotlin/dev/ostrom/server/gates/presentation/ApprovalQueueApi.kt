@@ -2,10 +2,11 @@
 package dev.ostrom.server.gates.presentation
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 // The bodies of `getApprovalQueue` and `getApprovalView` (`ostrom-core/api/openapi.yaml`, tag `approvals`). Only the
 // fields the server knows are declared: the contract's optional `rules`, `diff`, `note`, `receipt`, `verification`,
-// `who.agent`, `who.model` and `you.name` are left absent rather than invented.
+// `who.agent`, `who.model` and `you.name` are left absent rather than invented. `receipt` is filled in the answer.
 
 /**
  * The yes queue of the caller (contract `ApprovalQueue`).
@@ -43,6 +44,7 @@ data class ApprovalViewer(val login: String, val via: String)
  * @property pr The pull request of a merge, head and base read from GitHub.
  * @property askedVia The paths that asked (`hook`, `ci`, `mcp`).
  * @property you What the caller may do with it.
+ * @property receipt The signed receipt of the decision, in the answer to a yes or a no.
  */
 @Serializable
 data class ApprovalViewResponse(
@@ -53,6 +55,7 @@ data class ApprovalViewResponse(
     val pr: GatePullRequest? = null,
     val askedVia: List<String>,
     val you: ApprovalCallerView,
+    val receipt: JsonElement? = null,
 )
 
 /**

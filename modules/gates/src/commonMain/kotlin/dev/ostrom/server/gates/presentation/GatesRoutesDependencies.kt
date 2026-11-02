@@ -2,6 +2,7 @@
 package dev.ostrom.server.gates.presentation
 
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.usecases.AnswerGateUseCase
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
 import dev.ostrom.server.gates.domain.usecases.GetApprovalQueueUseCase
@@ -23,6 +24,7 @@ import dev.ostrom.server.gates.domain.usecases.UseGateUseCase
  * @property approval Reads an approval.
  * @property queue Reads the caller's yes queue.
  * @property view Reads an approval as the console and the app show it.
+ * @property receipts Reads the signed receipt an answer returns.
  */
 data class GatesRoutesDependencies(
     val actors: GateActorResolver,
@@ -34,4 +36,5 @@ data class GatesRoutesDependencies(
     val approval: GetApprovalUseCase,
     val queue: GetApprovalQueueUseCase,
     val view: GetApprovalViewUseCase,
+    val receipts: GateReceiptSigner,
 )

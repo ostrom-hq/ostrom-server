@@ -7,6 +7,7 @@ import dev.ostrom.server.identity.domain.DevicePollResult
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.IssuedToken
 import dev.ostrom.server.identity.domain.Profile
+import dev.ostrom.server.identity.domain.TokenScope
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgProfile
 import dev.ostrom.server.kernel.http.ApiError
@@ -81,6 +82,9 @@ fun ApiToken.toTokenResponse() = TokenResponse(
     expiresAt = expiresAt?.toString(),
     lastUsedAt = lastUsedAt?.toString(),
 )
+
+/** Maps a scope of the personal token catalogue. */
+fun TokenScope.toTokenScopeResponse() = TokenScopeResponse(scope, description)
 
 /** Maps an issued token, with its secret. */
 fun IssuedToken.toCreatedTokenResponse() = CreatedTokenResponse(token.toTokenResponse(), secret)
