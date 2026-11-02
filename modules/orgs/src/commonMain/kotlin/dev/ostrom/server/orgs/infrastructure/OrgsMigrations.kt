@@ -155,7 +155,20 @@ private val SETTINGS_AND_DELETION_SQL: String =
         .trimIndent()
 
 /**
- * The schema of the orgs module; its tables start with `orgs_`. Every table has row-level security
+ * Version 4: row-level security forced on the three tables (RLS audit R5), as on every other tenant table. The serving
+ * role owns nothing and was already bound by the policies; forcing them binds the tables' owner too, the role that
+ * migrates, so a later data migration of these tables sees only the organization its transaction names. What crosses
+ * organizations already goes through the `ostrom_router` functions of versions 2 and 3.
+ */
+private const val FORCED_SQL: String =
+    """
+    ALTER TABLE orgs_organizations FORCE ROW LEVEL SECURITY;
+    ALTER TABLE orgs_members FORCE ROW LEVEL SECURITY;
+    ALTER TABLE orgs_invitations FORCE ROW LEVEL SECURITY
+    """
+
+/**
+ * The schema of the orgs module; its tables start with `orgs_`. Every table has forced row-level security
  * on the organization (`ostrom.org_id`, `dev.ostrom.server.kernel.database.inOrg`): the
  * organization's own row, its members and its invitations are only visible to a query confined to
  * it. The cross-organization paths (creating an organization, the free-plan claim, a short name, a
@@ -231,5 +244,10 @@ val OrgsMigrations: List<SchemaMigration> =
             version = 3,
             name = "orgs_time_zone_and_deletion",
             sql = SETTINGS_AND_DELETION_SQL,
+        ),
+        SchemaMigration(
+            version = 4,
+            name = "orgs_row_level_security_forced",
+            sql = FORCED_SQL.trimIndent(),
         ),
     )
