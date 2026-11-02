@@ -85,6 +85,11 @@ object SharingModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = SharingMigrations
 
+    /** Reads the token endpoints at start, so a malformed one stops the server instead of failing a refresh. */
+    override suspend fun initialize(koin: Koin) {
+        SharingConfig.tokenEndpoints(koin.get<ConfigSource>())
+    }
+
     override fun routes(route: Route, koin: Koin) {
         route.sharingRoutes(koin.get())
     }

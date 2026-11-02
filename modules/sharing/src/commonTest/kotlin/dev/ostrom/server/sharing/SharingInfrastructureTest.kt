@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing
 
+import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.sharing.domain.AccountCredentials
@@ -22,6 +23,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.koin.dsl.koinApplication
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -87,25 +90,42 @@ class SharingInfrastructureTest {
     @Test
     fun theInstanceConfigurationPointsTheTokenEndpointsElsewhere() {
         assertEquals(HttpOAuthRefresher.ENDPOINTS, SharingConfig.tokenEndpoints(MapConfigSource(emptyMap())))
-        val custom = SharingConfig.tokenEndpoints(
-            MapConfigSource(
-                mapOf(
-                    "OSTROM_SHARING_CLAUDE_TOKEN_URL" to "http://provider.localtest.me:8080/v1/oauth/token",
-                    "OSTROM_SHARING_CODEX_TOKEN_URL" to "https://proxy.local/oauth/token",
-                ),
-            ),
+        val claude = "OSTROM_SHARING_CLAUDE_TOKEN_URL"
+        fun claudeAt(url: String) =
+            SharingConfig.tokenEndpoints(MapConfigSource(mapOf(claude to url))).getValue(AccountProvider.CLAUDE)
+        val accepted = listOf(
+            "https://proxy.example/oauth/token",
+            "HTTPS://Proxy.Example/oauth/token",
+            "http://localhost:8080/oauth/token",
+            "http://127.0.0.1/oauth/token",
+            "http://provider.localhost/oauth/token",
+            "http://provider.localtest.me:8080/v1/oauth/token",
         )
-        assertEquals(
-            mapOf(
-                AccountProvider.CLAUDE to "http://provider.localtest.me:8080/v1/oauth/token",
-                AccountProvider.CODEX to "https://proxy.local/oauth/token",
-            ),
-            custom,
+        for (url in accepted) assertEquals(url, claudeAt(" $url "), "Accepted, trimmed: $url")
+        val refused = listOf(
+            "https://",
+            "https://host with space/oauth/token",
+            "http://proxy.internal/oauth/token",
+            "http://localhost@evil.example/oauth/token",
+            "ftp://x",
         )
-        val error = assertFailsWith<InvalidConfigException> {
-            SharingConfig.tokenEndpoints(MapConfigSource(mapOf("OSTROM_SHARING_CODEX_TOKEN_URL" to "ftp://x")))
+        for (url in refused) {
+            val error = assertFailsWith<InvalidConfigException>(url) { claudeAt(url) }
+            assertEquals(
+                "$claude must be an https URL, or http to a local host (localhost, 127.0.0.1, *.localhost, " +
+                    "*.localtest.me).",
+                error.message,
+            )
         }
-        assertEquals("OSTROM_SHARING_CODEX_TOKEN_URL must be an http(s) URL.", error.message)
+    }
+
+    @Test
+    fun aMalformedTokenEndpointStopsTheServerAtStart() = runTest {
+        fun koin(url: String) = koinApplication {
+            modules(module { single<ConfigSource> { MapConfigSource(mapOf("OSTROM_SHARING_CODEX_TOKEN_URL" to url)) } })
+        }.koin
+        SharingModule.initialize(koin("https://proxy.example/oauth/token"))
+        assertFailsWith<InvalidConfigException> { SharingModule.initialize(koin("http://proxy.internal/token")) }
     }
 
     @Test
