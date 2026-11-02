@@ -182,7 +182,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                         "VALUES (:id, :org_id, :gate_key, :subject, :node, " +
                         ":label, :mode, :status, :asked_by, :asked_via, :session_ids, :launch_ids, :shown_digest, " +
                         ":evidence, :decided_by, :decided_at, :self_approved, :receipt_id, :reserved_by, " +
-                        ":reserved_at, :consumed_at, :created_at)",
+                        ":reserved_at, :consumed_at, :released_at, :created_at)",
                 ).bindGate(gate),
             ).getOrThrow()
             executor.linkSessions(gate)
@@ -214,7 +214,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                         "evidence = :evidence, " +
                         "decided_by = :decided_by, decided_at = :decided_at, self_approved = :self_approved, " +
                         "receipt_id = :receipt_id, reserved_by = :reserved_by, reserved_at = :reserved_at, " +
-                        "consumed_at = :consumed_at, created_at = :created_at WHERE org_id = :org_id AND id = :id",
+                        "consumed_at = :consumed_at, released_at = :released_at, created_at = :created_at " +
+                        "WHERE org_id = :org_id AND id = :id",
                 ).bindGate(gate),
             ).getOrThrow()
         }
@@ -294,6 +295,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             .bindOrNull("reserved_by", gate.reservedBy, String::class)
             .bindOrNull("reserved_at", gate.reservedAt, Instant::class)
             .bindOrNull("consumed_at", gate.consumedAt, Instant::class)
+            .bindOrNull("released_at", gate.releasedAt, Instant::class)
             .bind("created_at", gate.createdAt)
 
         fun Statement.bindRequest(request: ApprovalRequest): Statement = bind("id", request.id)
@@ -328,6 +330,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
             reservedBy = get("reserved_by").asStringOrNull(),
             reservedAt = get("reserved_at").asInstantOrNull(),
             consumedAt = get("consumed_at").asInstantOrNull(),
+            releasedAt = get("released_at").asInstantOrNull(),
             createdAt = get("created_at").asInstant(),
         )
 
