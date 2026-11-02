@@ -109,7 +109,7 @@ class OpenGateUseCaseImpl(
             joined(request, same, mode) ?: created(newGate(request, key, mode), approvers)
         }
         if (opened.created && opened.gate.mode == GateMode.ENFORCED) notifier.requested(opened.gate, opened.requests)
-        return viewOf(opened.gate, opened.requests, policies.selfApproval(orgId))
+        return viewOf(opened.gate, opened.requests) { policies.selfApproval(orgId) }
     }
 
     // The live gate of the same action takes the new asker; a refused one answers again. An expired yes is not
@@ -250,15 +250,21 @@ private const val SHA256_LENGTH = 64
  *
  * @param gate The gate.
  * @param requests Its requests.
- * @param policy The organization's self-approval setting.
+ * @param policy Reads the organization's self-approval setting, a database read: only when it decides who the gate
+ *   waits for, that is when every approver still to answer asked for the action.
  * @return The view, with who the gate still waits for.
  */
-internal fun viewOf(gate: Gate, requests: List<ApprovalRequest>, policy: SelfApprovalPolicy): GateView {
-    val waiting = if (gate.status == GateStatus.PENDING) {
-        val pending = requests.filter { it.status == RequestStatus.PENDING }.map { it.approverId }
-        SelfApproval.waitingFor(gate.askedBy, pending, policy)
-    } else {
-        emptyList()
+internal suspend fun viewOf(
+    gate: Gate,
+    requests: List<ApprovalRequest>,
+    policy: suspend () -> SelfApprovalPolicy,
+): GateView {
+    val pending = requests.filter { it.status == RequestStatus.PENDING }.map { it.approverId }
+    val waiting = when {
+        gate.status != GateStatus.PENDING -> emptyList()
+        pending.any { approver -> gate.askedBy.none { SelfApproval.same(it, approver) } } ->
+            SelfApproval.waitingFor(gate.askedBy, pending, SelfApprovalPolicy.SOLE_APPROVER)
+        else -> SelfApproval.waitingFor(gate.askedBy, pending, policy())
     }
     return GateView(gate, requests, waiting)
 }
