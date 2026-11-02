@@ -6,10 +6,12 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.STEP_UP_REQUIRED
+import dev.ostrom.server.kernel.auth.STEP_UP_WITHIN
 import dev.ostrom.server.kernel.auth.StepUpRequiredException
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
+import dev.ostrom.server.kernel.auth.token
 import dev.ostrom.server.kernel.http.configureHttp
 import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -19,9 +21,12 @@ import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.install
+import io.ktor.server.auth.Authentication
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.post
+import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -53,7 +58,8 @@ class StepUpTest {
                     person(channel, signedIn).requireRecentSignIn("create a token", now)
                 }
                 assertEquals(STEP_UP_REQUIRED, refused.type)
-                val message = "Sign in again to create a token: it needs a sign-in of less than 5 minutes."
+                val minutes = STEP_UP_WITHIN.inWholeMinutes
+                val message = "Sign in again to create a token: it needs a sign-in of less than $minutes minutes."
                 assertEquals(message, refused.message)
             }
         }
@@ -103,5 +109,19 @@ class StepUpTest {
         val stale = client.post("/sensitive") { bearerAuth("stale") }
         assertEquals(HttpStatusCode.Forbidden, stale.status)
         assertTrue(STEP_UP_REQUIRED in stale.bodyAsText(), stale.bodyAsText())
+    }
+
+    // An application mounted without the kernel's HTTP setup has no server clock: the machine's one decides.
+    @Test
+    fun withoutTheKernelsHttpSetupTheMachinesClockDecides() = testApplication {
+        val authenticator = object : TokenAuthenticator {
+            override suspend fun authenticate(token: String) =
+                person(PrincipalChannel.BROWSER, Clock.System.now() - 1.minutes)
+        }
+        application {
+            install(Authentication) { token(authenticator) }
+            routing { WritesModule.routes(this, koinApplication { }.koin) }
+        }
+        assertEquals("done", client.post("/sensitive") { bearerAuth("fresh") }.bodyAsText())
     }
 }

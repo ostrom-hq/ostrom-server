@@ -24,7 +24,7 @@ const val STEP_UP_REQUIRED: String = "step_up_required"
  */
 class StepUpRequiredException(action: String) : OstromException(
     ErrorKind.FORBIDDEN,
-    "Sign in again to $action: it needs a sign-in of less than 5 minutes.",
+    "Sign in again to $action: it needs a sign-in of less than ${STEP_UP_WITHIN.inWholeMinutes} minutes.",
     STEP_UP_REQUIRED,
 )
 
@@ -53,5 +53,7 @@ internal val stepUpClockKey: AttributeKey<Clock> = AttributeKey("ostrom.stepUpCl
  * @param action What the person is doing, for the message.
  * @throws StepUpRequiredException A 403 `step_up_required`.
  */
-fun ApplicationCall.requireRecentSignIn(action: String) =
-    requirePrincipal().requireRecentSignIn(action, application.attributes[stepUpClockKey].now())
+fun ApplicationCall.requireRecentSignIn(action: String) {
+    val clock = application.attributes.getOrNull(stepUpClockKey) ?: Clock.System
+    requirePrincipal().requireRecentSignIn(action, clock.now())
+}

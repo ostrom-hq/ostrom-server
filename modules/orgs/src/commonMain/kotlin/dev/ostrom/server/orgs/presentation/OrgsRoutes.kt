@@ -137,6 +137,8 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
     with(dependencies) {
         post<OrgsApi.Org.Members.Invites, InviteRequestBody> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
+            // An invitation adds a member, with any role: the same fresh sign-in as changing one.
+            call.requireRecentSignIn("invite a member")
             val invites =
                 request.invites.map { invite ->
                     val email =
@@ -156,6 +158,7 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
         }
         post<OrgsApi.Org.Invitations.Links, CreateLinkRequest> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
+            call.requireRecentSignIn("invite a member")
             val issued = invitations.link(orgId, userId, roleOf(request.role), request.maxUses)
             call.respond(
                 HttpStatusCode.Created,

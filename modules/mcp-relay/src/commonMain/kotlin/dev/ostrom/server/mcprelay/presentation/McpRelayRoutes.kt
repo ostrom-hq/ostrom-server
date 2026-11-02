@@ -112,6 +112,7 @@ private fun Route.assignmentRoutes(dependencies: McpRelayRoutesDependencies) = w
     }
     put<McpApi.Servers.Name.Assignments.Member> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val request = call.receive<McpAssignmentRequest>()
         val member = params.member.toMemberId()
         val credential = request.credentialSecret?.let { name ->
@@ -125,6 +126,7 @@ private fun Route.assignmentRoutes(dependencies: McpRelayRoutesDependencies) = w
     }
     delete<McpApi.Servers.Name.Assignments.Member> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         unassign(caller, serverId(caller, params.parent.parent.name), params.member.toMemberId())
         call.respond(HttpStatusCode.NoContent)
     }
@@ -138,12 +140,14 @@ private fun Route.policyRoutes(dependencies: McpRelayRoutesDependencies) = with(
     }
     post<McpApi.Servers.Name.Policies> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val request = call.receive<ArgumentPolicyRequest>()
         val policy = createPolicy(caller, serverId(caller, params.parent.name), request.toPayload())
         call.respond(HttpStatusCode.Created, policy.toResponse())
     }
     delete<McpApi.Servers.Name.Policies.PolicyId> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val server = serverId(caller, params.parent.parent.name)
         deletePolicy(caller, server, params.policyId.toIdOr(::McpServerNotFoundException))
         call.respond(HttpStatusCode.NoContent)
@@ -157,6 +161,7 @@ private fun Route.journalRoutes(dependencies: McpRelayRoutesDependencies) = with
     }
     put<McpApi.Settings> {
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val settings = putSettings(caller, McpSettings(call.receive<McpSettingsDto>().agentPrefix))
         call.respond(McpSettingsDto(settings.agentPrefix))
     }

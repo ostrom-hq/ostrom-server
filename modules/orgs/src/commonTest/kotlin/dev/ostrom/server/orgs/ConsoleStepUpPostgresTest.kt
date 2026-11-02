@@ -3,6 +3,8 @@ package dev.ostrom.server.orgs
 
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.Mail
+import dev.ostrom.server.identity.domain.MailSender
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
@@ -18,6 +20,7 @@ import dev.ostrom.server.orgs.presentation.CreateLinkRequest
 import dev.ostrom.server.orgs.presentation.CreateOrgRequest
 import dev.ostrom.server.orgs.presentation.InvitationLinkResponse
 import dev.ostrom.server.orgs.presentation.InvitationTokenRequest
+import dev.ostrom.server.orgs.presentation.InviteRequestBody
 import dev.ostrom.server.orgs.presentation.TransferRequest
 import dev.ostrom.server.orgs.presentation.UpdateMemberRequest
 import dev.ostrom.server.testing.TestServer
@@ -54,7 +57,14 @@ import kotlin.time.Instant
  */
 class ConsoleStepUpPostgresTest {
     private val clock = SettableClock(Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds()))
-    private val overrides = module { single<Clock> { clock } }
+    private val overrides = module {
+        single<Clock> { clock }
+        single<MailSender> {
+            object : MailSender {
+                override suspend fun send(mail: Mail) = Unit
+            }
+        }
+    }
     private val modules = listOf(IdentityModule, OrgsModule)
 
     /** Ada owns Acme, Bob is a member, Ada has a personal token. */
@@ -149,5 +159,29 @@ class ConsoleStepUpPostgresTest {
             session(ada)
             json(TransferRequest("bob"))
         }
+    }
+
+    // An invitation adds a member with any role: an old session would otherwise invite, as an admin, an account it
+    // holds, and get the role it cannot give by a PATCH.
+    @Test
+    fun invitingByEMailNeedsAFreshSignIn() = stepUp(HttpStatusCode.OK) { ada, _ ->
+        client.post("/api/v1/orgs/acme/members/invites") {
+            session(ada)
+            json(InviteRequestBody(listOf(mapOf("email" to "eve@eve.test", "role" to "admin"))))
+        }
+    }
+
+    @Test
+    fun anInvitationLinkNeedsAFreshSignIn() = stepUp(HttpStatusCode.Created) { ada, _ ->
+        client.post("/api/v1/orgs/acme/invitations/links") {
+            session(ada)
+            json(CreateLinkRequest(role = "admin"))
+        }
+    }
+
+    // A sign-in link starts a new session, signed in now: made from an old session, it would pass every step-up.
+    @Test
+    fun aSignInLinkNeedsAFreshSignIn() = stepUp(HttpStatusCode.Created) { ada, _ ->
+        client.post("/api/v1/auth/links") { session(ada) }
     }
 }
