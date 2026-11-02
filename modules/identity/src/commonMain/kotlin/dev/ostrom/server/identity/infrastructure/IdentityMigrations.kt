@@ -17,7 +17,9 @@ private val ROUTER_FUNCTIONS =
  * tokens) are written inside their organization, and the three things done to them from outside it go through narrow
  * `SECURITY DEFINER` functions owned by `ostrom_router` (`NOLOGIN`, never a member of the serving role): authenticating
  * a token by its hash, noting its last use, and revoking the tokens of an agent session. `pg_temp` comes last in
- * their `search_path`, and only the serving role may run them (S2-60), as for the orgs module's functions.
+ * their `search_path`, and only the serving role may run them (S2-60), as for the orgs module's functions. The
+ * router's policy holds only inside those functions (`current_user = 'ostrom_router'`): the owner, a member of
+ * `ostrom_router` to hand the functions over, stays bound to the organization policies like everyone else.
  */
 private val TOKENS_OF_ORGANIZATIONS_SQL: String =
     """
@@ -36,7 +38,8 @@ private val TOKENS_OF_ORGANIZATIONS_SQL: String =
     EXCEPTION WHEN unique_violation THEN NULL;
     END $$;
     GRANT USAGE ON SCHEMA public TO ostrom_router;
-    CREATE POLICY identity_api_tokens_router ON identity_api_tokens TO ostrom_router USING (true) WITH CHECK (true);
+    CREATE POLICY identity_api_tokens_router ON identity_api_tokens TO ostrom_router
+        USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
     GRANT SELECT, UPDATE (last_used_at, revoked_at) ON identity_api_tokens TO ostrom_router;
     CREATE FUNCTION identity_token_by_hash(p_hash TEXT) RETURNS TABLE (
         id UUID, user_id UUID, org_id UUID, name TEXT, kind TEXT, scopes TEXT, hint TEXT, agent_session_id TEXT,
