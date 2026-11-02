@@ -131,7 +131,7 @@ jobs:
           # localhost:4173, which proxies /api to the server, so cookies and CSRF are first-party. That proxy, on this
           # runner's loopback, is trusted for X-Forwarded-For: each person of the journeys signs in from an address of
           # their own (ostrom-web e2e-real/real.ts, since ostrom-web#54), so sixty sign-ins from one machine do not trip the
-          # per-source limit. A console from before it fails its first limited sign-in with a message naming this setting.
+          # per-source limit. A console from before it sends no address of its own, and its sign-ins are limited again.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
