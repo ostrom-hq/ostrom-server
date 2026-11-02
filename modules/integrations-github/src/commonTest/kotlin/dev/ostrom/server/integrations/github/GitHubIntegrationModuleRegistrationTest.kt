@@ -17,6 +17,9 @@ import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.logging.Logger
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
@@ -112,11 +115,14 @@ class GitHubIntegrationModuleRegistrationTest {
         }
         val sync = app.koin.get<GitHubDirectorySync>()
         directory.states[ORG] = DirectoryState(NOW - 1.hours, NOW - 1.hours)
-        GitHubIntegrationModule.start(backgroundScope, app.koin)
+        // A scope of its own on the test's dispatcher: advanceUntilIdle runs it, which it never does for backgroundScope.
+        val worker = CoroutineScope(coroutineContext + Job())
+        GitHubIntegrationModule.start(worker, app.koin)
         assertTrue(sync.ensure(ORG))
         testScheduler.advanceUntilIdle()
         assertEquals(1, api.reads, "Read by the worker the module started; logged: ${logger.lines}")
         sync.stop()
+        worker.cancel()
         app.close()
     }
 }
