@@ -38,7 +38,7 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
                 Statement.create(
                     """
                     INSERT INTO runners_registered ($COLUMNS) VALUES (:id, :org_id, :name, :labels, :version,
-                    :key_hash, :registered_by, :created_at, :last_seen_at) ON CONFLICT (org_id, name) DO NOTHING
+                    :key_hash, :registered_by, :created_at, :last_seen_at) ON CONFLICT (org_id, lower(name)) DO NOTHING
                     """,
                 ).bind("id", runner.id).bind("org_id", runner.orgId).bind("name", runner.name)
                     .bind("labels", Json.encodeToString(LABELS, runner.labels)).bind("version", runner.version)
@@ -51,6 +51,13 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
     override suspend fun list(orgId: Uuid, limit: Int): List<RegisteredRunner> = driver.inTenant(orgId) {
         fetchAll(Statement.create(LIST_SQL).bind("org_id", orgId).bind("limit", limit)).getOrThrow()
             .map { it.toRunner() }
+    }
+
+    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean = driver.inTenant(orgId) {
+        execute(
+            Statement.create("DELETE FROM runners_registered WHERE org_id = :org_id AND id = :id")
+                .bind("org_id", orgId).bind("id", id),
+        ).getOrThrow() > 0
     }
 
     private fun ResultSet.Row.toRunner() = RegisteredRunner(
@@ -70,9 +77,9 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
         const val COLUMNS: String =
             "id, org_id, name, labels, version, key_hash, registered_by, created_at, last_seen_at"
 
-        /** An organization's runners by name, through `runners_registered_name`. */
+        /** An organization's runners by name whatever its case, through `runners_registered_name`. */
         const val LIST_SQL: String =
-            "SELECT $COLUMNS FROM runners_registered WHERE org_id = :org_id ORDER BY name LIMIT :limit"
+            "SELECT $COLUMNS FROM runners_registered WHERE org_id = :org_id ORDER BY lower(name) LIMIT :limit"
 
         /** How many runners an organization has, through `runners_registered_name`. */
         const val COUNT_SQL: String = "SELECT COUNT(*) AS n FROM runners_registered WHERE org_id = :org_id"

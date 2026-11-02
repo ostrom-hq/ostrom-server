@@ -2,6 +2,7 @@
 package dev.ostrom.server.runners.presentation
 
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.runners.domain.DeleteRunnerUseCase
 import dev.ostrom.server.runners.domain.ListRegisteredRunnersUseCase
 import dev.ostrom.server.runners.domain.ListRunnersUseCase
 import dev.ostrom.server.runners.domain.RegisterRunnerUseCase
@@ -26,6 +27,7 @@ data class RunnerRuntime(val driver: String?, val image: String) {
  * @property orgResolver The member a request acts for.
  * @property listRegisteredRunners Lists the organization's registered runners.
  * @property registerRunner Registers one.
+ * @property deleteRunner Removes one.
  */
 data class RunnersRoutesDependencies(
     val listRunners: ListRunnersUseCase,
@@ -33,4 +35,5 @@ data class RunnersRoutesDependencies(
     val orgResolver: PrincipalOrgResolver,
     val listRegisteredRunners: ListRegisteredRunnersUseCase,
     val registerRunner: RegisterRunnerUseCase,
+    val deleteRunner: DeleteRunnerUseCase,
 )

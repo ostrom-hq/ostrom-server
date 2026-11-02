@@ -25,4 +25,14 @@ interface RegisteredRunnersRepository {
      * @return The runners.
      */
     suspend fun list(orgId: Uuid, limit: Int): List<RegisteredRunner>
+
+    /**
+     * Removes a runner of an organization; its key no longer exists with it.
+     *
+     * @param orgId The organization.
+     * @param id The runner.
+     *
+     * @return True when it existed in that organization.
+     */
+    suspend fun delete(orgId: Uuid, id: Uuid): Boolean
 }

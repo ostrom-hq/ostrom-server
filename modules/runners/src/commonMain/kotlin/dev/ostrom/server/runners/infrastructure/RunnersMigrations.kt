@@ -78,7 +78,7 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     // Version 2 belongs to server#104 (runners_session_routes under row-level security), open when this one was
-    // written: each keeps its number whichever lands first.
+    // written: this one lands after it, so the versions never skip (it would take 2 if it had to land first).
     SchemaMigration(
         version = 3,
         name = "create_registered_runners",
@@ -94,7 +94,7 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
                 created_at TIMESTAMPTZ NOT NULL,
                 last_seen_at TIMESTAMPTZ
             );
-            CREATE UNIQUE INDEX runners_registered_name ON runners_registered (org_id, name);
+            CREATE UNIQUE INDEX runners_registered_name ON runners_registered (org_id, lower(name));
             CREATE UNIQUE INDEX runners_registered_key ON runners_registered (key_hash);
             ${tenantTableSql("runners_registered")}
         """.trimIndent(),

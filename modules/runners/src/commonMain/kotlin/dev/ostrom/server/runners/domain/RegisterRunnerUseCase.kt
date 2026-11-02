@@ -35,7 +35,7 @@ interface RegisterRunnerUseCase {
      *
      * @throws RunnerAdminRequiredException When the caller is neither an owner nor an admin.
      * @throws InvalidCloudSessionRequestException When the name, a label or the version is malformed.
-     * @throws RunnerNameTakenException When the organization already has a runner of that name.
+     * @throws RunnerNameTakenException When the organization already has a runner of that name, whatever its case.
      * @throws RunnerLimitException When the organization already has [MAX_RUNNERS] runners.
      */
     suspend operator fun invoke(caller: Caller, registration: RunnerRegistration): NewRunner
@@ -54,10 +54,11 @@ class RegisterRunnerUseCaseImpl(
     private val clock: Clock,
 ) : RegisterRunnerUseCase {
     override suspend fun invoke(caller: Caller, registration: RunnerRegistration): NewRunner {
-        if (!caller.admin) throw RunnerAdminRequiredException()
+        caller.requireAdmin()
         val name = registration.name.trim()
-        ensureValid(name.length in 1..MAX_NAME && name.none { it.isISOControl() }) {
-            "name is 1 to $MAX_NAME characters, without control characters."
+        val visible = name.none { it.isISOControl() || it.category == CharCategory.FORMAT }
+        ensureValid(name.length in 1..MAX_NAME && visible) {
+            "name is 1 to $MAX_NAME characters, without control or invisible formatting characters."
         }
         val labels = registration.labels.distinct()
         ensureValid(labels.size <= MAX_LABELS) { "A runner has at most $MAX_LABELS labels." }
@@ -113,4 +114,13 @@ class RegisterRunnerUseCaseImpl(
         private val LABEL = Regex("[A-Za-z0-9][A-Za-z0-9._:-]{0,63}")
         private val VERSION = Regex("[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}")
     }
+}
+
+/**
+ * Refuses a caller who is neither an owner nor an admin of the organization.
+ *
+ * @throws RunnerAdminRequiredException When the caller is not.
+ */
+fun Caller.requireAdmin() {
+    if (!admin) throw RunnerAdminRequiredException()
 }

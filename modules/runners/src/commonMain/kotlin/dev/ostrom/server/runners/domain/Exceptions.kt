@@ -79,7 +79,10 @@ class RunnerAdminRequiredException : OstromException(
     "Only an owner or an admin of the organization can register a runner.",
 )
 
-/** The organization already has a runner of that name. */
+/** The runner does not exist, or belongs to another organization. */
+class RunnerNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Runner not found.")
+
+/** The organization already has a runner of that name, whatever its case. */
 class RunnerNameTakenException : OstromException(
     ErrorKind.CONFLICT,
     "This organization already has a runner of that name.",

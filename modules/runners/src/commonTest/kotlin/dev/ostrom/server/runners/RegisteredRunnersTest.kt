@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.runners.domain.Caller
+import dev.ostrom.server.runners.domain.DeleteRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import dev.ostrom.server.runners.domain.ListRegisteredRunnersUseCaseImpl
 import dev.ostrom.server.runners.domain.ListedRunner
@@ -17,6 +18,7 @@ import dev.ostrom.server.runners.domain.RegisteredRunnersRepository
 import dev.ostrom.server.runners.domain.RunnerAdminRequiredException
 import dev.ostrom.server.runners.domain.RunnerLimitException
 import dev.ostrom.server.runners.domain.RunnerNameTakenException
+import dev.ostrom.server.runners.domain.RunnerNotFoundException
 import dev.ostrom.server.runners.domain.RunnerRegistration
 import dev.ostrom.server.runners.domain.RunnerRegistrationOutcome
 import dev.ostrom.server.runners.fakes.FakeRunnerTokens
@@ -82,6 +84,8 @@ class RegisteredRunnersTest {
             RunnerRegistration("   ", emptyList(), null),
             RunnerRegistration("x".repeat(65), emptyList(), null),
             RunnerRegistration("bad\u0007name", emptyList(), null),
+            RunnerRegistration("build\u200B", emptyList(), null),
+            RunnerRegistration("\u202Ebuild", emptyList(), null),
             RunnerRegistration("build", (1..17).map { "l$it" }, null),
             RunnerRegistration("build", listOf("ok", "-dash"), null),
             RunnerRegistration("build", listOf("x".repeat(65)), null),
@@ -112,6 +116,22 @@ class RegisteredRunnersTest {
             register(admin, RunnerRegistration("b", emptyList(), null))
         }
         assertEquals("An organization registers at most 100 runners.", full.message)
+    }
+
+    @Test
+    fun anAdminRemovesARunnerOfTheOrganizationOnly() = runTest {
+        val delete = DeleteRunnerUseCaseImpl(repository)
+        val mine = runner("a", lastSeenAt = null)
+        val theirs = runner("b", orgId = ORG_B, lastSeenAt = null)
+        repository.runners += listOf(mine, theirs)
+
+        assertFailsWith<RunnerAdminRequiredException> { delete(Caller(ORG_A, "alice"), mine.id) }
+        assertFailsWith<RunnerNotFoundException> { delete(admin, theirs.id) }
+        assertFailsWith<RunnerNotFoundException> { delete(admin, Uuid.random()) }
+        assertEquals(listOf(mine, theirs), repository.runners)
+
+        delete(admin, mine.id)
+        assertEquals(listOf(theirs), repository.runners)
     }
 
     @Test
@@ -194,6 +214,9 @@ private class InMemoryRegisteredRunners : RegisteredRunnersRepository {
 
     override suspend fun list(orgId: Uuid, limit: Int): List<RegisteredRunner> {
         lastLimit = limit
-        return runners.filter { it.orgId == orgId }.sortedBy { it.name }.take(limit)
+        return runners.filter { it.orgId == orgId }.sortedBy { it.name.lowercase() }.take(limit)
     }
+
+    override suspend fun delete(orgId: Uuid, id: Uuid): Boolean =
+        runners.removeAll { it.orgId == orgId && it.id == id }
 }

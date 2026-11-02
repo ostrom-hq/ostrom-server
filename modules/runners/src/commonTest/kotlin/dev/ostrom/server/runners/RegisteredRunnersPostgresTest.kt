@@ -21,6 +21,7 @@ import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -28,6 +29,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.coroutines.async
@@ -77,6 +79,8 @@ class RegisteredRunnersPostgresTest {
         assertEquals(RunnerRegistrationOutcome.REGISTERED, repository.register(b, 3))
         assertEquals(RunnerRegistrationOutcome.REGISTERED, repository.register(a, 3))
         assertEquals(RunnerRegistrationOutcome.NAME_TAKEN, repository.register(runner(ORG_A, "a"), 3))
+        // Whatever its case.
+        assertEquals(RunnerRegistrationOutcome.NAME_TAKEN, repository.register(runner(ORG_A, "A"), 3))
         // The name is unique per organization only.
         assertEquals(RunnerRegistrationOutcome.REGISTERED, repository.register(runner(ORG_B, "a"), 3))
 
@@ -84,6 +88,17 @@ class RegisteredRunnersPostgresTest {
         assertEquals(listOf(a), repository.list(ORG_A, 1))
         assertEquals(RunnerRegistrationOutcome.LIMIT_REACHED, repository.register(runner(ORG_A, "c"), 2))
         assertEquals(listOf("a"), repository.list(ORG_B, 10).map { it.name })
+        // Ordered whatever the case.
+        assertEquals(RunnerRegistrationOutcome.REGISTERED, repository.register(runner(ORG_A, "B2"), 3))
+        assertEquals(listOf("a", "b", "B2"), repository.list(ORG_A, 10).map { it.name })
+
+        // A runner is removed in its organization only.
+        val theirs = repository.list(ORG_B, 10).single()
+        assertFalse(repository.delete(ORG_A, theirs.id))
+        assertTrue(repository.delete(ORG_A, a.id))
+        assertFalse(repository.delete(ORG_A, a.id))
+        assertEquals(listOf("b", "B2"), repository.list(ORG_A, 10).map { it.name })
+        assertEquals(listOf(theirs), repository.list(ORG_B, 10))
     }
 
     @Test
@@ -126,6 +141,7 @@ class RegisteredRunnersPostgresTest {
         serverTest(listOf(RunnersModule), testIdentities) { server ->
             val response = server.register("dana", RegisterRunnerRequest("build-1", listOf("linux", "gpu"), "1.2.0"))
             assertEquals(HttpStatusCode.Created, response.status)
+            assertEquals("no-store", response.headers[HttpHeaders.CacheControl])
             val created = response.body<RegisteredRunnerDto>()
             assertTrue(created.token.matches(Regex("ostrom_runner_[0-9a-f]{64}")))
             assertEquals("build-1", created.name)
@@ -149,15 +165,23 @@ class RegisteredRunnersPostgresTest {
                 assertEquals(listOf(expected), page.body<RunnersPage>().items, token)
             }
 
-            // The name is taken in organization A.
-            val again = server.register("dana", RegisterRunnerRequest("build-1", emptyList()))
+            // The name is taken in organization A, whatever its case.
+            val again = server.register("dana", RegisterRunnerRequest("BUILD-1", emptyList()))
             assertEquals(HttpStatusCode.Conflict, again.status)
             assertTrue("already has a runner of that name" in again.bodyAsText())
+
+            // Removed by an admin, its key with it; a member cannot.
+            assertEquals(HttpStatusCode.Forbidden, server.deleteRunner("alice", created.id).status)
+            assertEquals(HttpStatusCode.NoContent, server.deleteRunner("dana", created.id).status)
+            assertEquals(HttpStatusCode.NotFound, server.deleteRunner("dana", created.id).status)
+            assertEquals(0L, server.count(ORG_A))
         }
 
     @Test
     fun anotherOrganizationNeitherSeesNorRegistersInIt() = serverTest(listOf(RunnersModule), testIdentities) { server ->
-        assertEquals(HttpStatusCode.Created, server.register("dana", RegisterRunnerRequest("a-1", emptyList())).status)
+        val registered = server.register("dana", RegisterRunnerRequest("a-1", emptyList()))
+        assertEquals(HttpStatusCode.Created, registered.status)
+        val danasId = registered.body<RegisteredRunnerDto>().id
         // Carol, owner of organization B, registers hers under the same name: each organization has its own.
         assertEquals(HttpStatusCode.Created, server.register("carol", RegisterRunnerRequest("a-1", listOf("b"))).status)
 
@@ -174,6 +198,9 @@ class RegisteredRunnersPostgresTest {
         assertEquals(HttpStatusCode.NotFound, read.status)
         val write = server.register("carol", RegisterRunnerRequest("intruder", emptyList()), org = ORG_A)
         assertEquals(HttpStatusCode.NotFound, write.status)
+        // Carol cannot remove organization A's runner: not found, and it is still there.
+        assertEquals(HttpStatusCode.NotFound, server.deleteRunner("carol", danasId).status)
+        assertEquals(HttpStatusCode.NotFound, server.deleteRunner("carol", danasId, org = ORG_A).status)
         assertEquals(1L, server.count(ORG_A))
         assertEquals(1L, server.count(ORG_B))
     }
@@ -184,10 +211,12 @@ class RegisteredRunnersPostgresTest {
             val valid = """{"name":"b","labels":[]}"""
             assertEquals(HttpStatusCode.Unauthorized, server.registerRaw(null, valid).status)
             assertEquals(HttpStatusCode.NotFound, server.registerRaw("nobody", valid).status)
-            // A member who is neither owner nor admin.
-            val member = server.registerRaw("alice", valid)
-            assertEquals(HttpStatusCode.Forbidden, member.status)
-            assertTrue("Only an owner or an admin" in member.bodyAsText())
+            // A member who is neither owner nor admin, before the body is even read.
+            for (body in listOf(valid, "{}")) {
+                val member = server.registerRaw("alice", body)
+                assertEquals(HttpStatusCode.Forbidden, member.status, body)
+                assertTrue("Only an owner or an admin" in member.bodyAsText(), body)
+            }
             // An admin's personal API token: minting a long-lived key needs the console (CONVENTIONS 16.2).
             assertEquals(HttpStatusCode.Forbidden, server.registerRaw("dana-cli", valid).status)
             // A service token.
@@ -204,6 +233,11 @@ class RegisteredRunnersPostgresTest {
             assertEquals(0L, server.count(ORG_A))
 
             assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/runners").status)
+            val id = Uuid.random().toString()
+            assertEquals(HttpStatusCode.Unauthorized, server.client.delete("/api/v1/runners/$id").status)
+            assertEquals(HttpStatusCode.NotFound, server.deleteRunner("nobody", id).status)
+            assertEquals(HttpStatusCode.NotFound, server.deleteRunner("dana", "not-a-uuid").status)
+            assertEquals(HttpStatusCode.Forbidden, server.deleteRunner("dana-cli", id).status)
             assertEquals(
                 HttpStatusCode.NotFound,
                 server.client.get("/api/v1/runners") { bearerAuth("nobody") }.status,
@@ -254,6 +288,12 @@ class RegisteredRunnersPostgresTest {
             if (org != null) header("Ostrom-Org", org.toString())
             contentType(ContentType.Application.Json)
             setBody(request)
+        }
+
+    private suspend fun TestServer.deleteRunner(token: String, id: String, org: Uuid? = null) =
+        client.delete("/api/v1/runners/$id") {
+            bearerAuth(token)
+            if (org != null) header("Ostrom-Org", org.toString())
         }
 
     private suspend fun TestServer.registerRaw(token: String?, body: String): HttpResponse =

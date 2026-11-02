@@ -2,6 +2,7 @@
 package dev.ostrom.server.runners.domain
 
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * A registered runner as listed.
@@ -37,8 +38,20 @@ class ListRegisteredRunnersUseCaseImpl(
     override suspend fun invoke(caller: Caller): List<ListedRunner> {
         val now = clock.now()
         return repository.list(caller.orgId, RegisterRunnerUseCaseImpl.MAX_RUNNERS).map { runner ->
-            val seen = runner.lastSeenAt
-            ListedRunner(runner, seen != null && now - seen <= ReconcileCloudSessionUseCaseImpl.HEARTBEAT_LOSS)
+            ListedRunner(runner, isOnline(runner.lastSeenAt, now))
         }
     }
 }
+
+/**
+ * Whether a runner that last gave a sign of life at [lastSeenAt] is online at [now]: within
+ * [ReconcileCloudSessionUseCaseImpl.HEARTBEAT_LOSS], the window after which the reconciler counts a runner lost. Every
+ * runners list judges by it.
+ *
+ * @param lastSeenAt Its last sign of life, null before the first one.
+ * @param now The time.
+ *
+ * @return True when online.
+ */
+fun isOnline(lastSeenAt: Instant?, now: Instant): Boolean =
+    lastSeenAt != null && now - lastSeenAt <= ReconcileCloudSessionUseCaseImpl.HEARTBEAT_LOSS

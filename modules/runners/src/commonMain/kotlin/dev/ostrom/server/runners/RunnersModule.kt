@@ -19,6 +19,8 @@ import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.CloudUsageMeter
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.DeleteRunnerUseCase
+import dev.ostrom.server.runners.domain.DeleteRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCase
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
@@ -114,10 +116,11 @@ object RunnersModule : ServerModule {
         single<RegisteredRunnersRepository> { RegisteredRunnersRepositoryImpl(get()) }
         single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
         single<RegisterRunnerUseCase> { RegisterRunnerUseCaseImpl(get(), get(), get()) }
+        single<DeleteRunnerUseCase> { DeleteRunnerUseCaseImpl(get()) }
         single {
             val config = get<RunnersConfig>()
             val runtime = RunnerRuntime(config.runtimeLabel, config.runnerImage)
-            RunnersRoutesDependencies(get(), runtime, get(), get(), get())
+            RunnersRoutesDependencies(get(), runtime, get(), get(), get(), get())
         }
         single { TerminalRelay() }
         single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }

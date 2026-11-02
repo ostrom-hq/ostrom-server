@@ -10,7 +10,7 @@ import kotlin.uuid.Uuid
  *
  * @property id The runner.
  * @property orgId Its organization; another organization never sees it.
- * @property name Its name, unique in the organization.
+ * @property name Its name, unique in the organization whatever its case.
  * @property labels What it offers (`linux`, `gpu`), in the order given, without duplicates.
  * @property version The version it declared, if any.
  * @property keyHash The SHA-256 of its key, in lower-case hex.

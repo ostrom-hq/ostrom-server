@@ -4,10 +4,23 @@ package dev.ostrom.server.runners.presentation
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
-/** `GET /api/v1/runners`: the runners at work for the caller (ostrom-core's operation `listRunners`). */
+/**
+ * `GET /api/v1/runners` (ostrom-core's operation `listRunners`): the organization's registered runners, then the
+ * runners at work for the caller; `POST` registers one (`registerRunner`).
+ */
 @Serializable
 @Resource("/api/v1/runners")
-class RunnersApi
+class RunnersApi {
+    /**
+     * `DELETE /api/v1/runners/{id}` (`deleteRunner`): removes a registered runner.
+     *
+     * @property parent The collection.
+     * @property id The runner.
+     */
+    @Serializable
+    @Resource("{id}")
+    class Id(val parent: RunnersApi = RunnersApi(), val id: String)
+}
 
 /**
  * A runner, as the contract's `Runner`.
