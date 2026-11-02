@@ -21,6 +21,7 @@ import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCase
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.Driver
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -255,6 +256,20 @@ class GateJourneyPostgresTest {
         assertEquals(List(RACE) { 409 }, oneByOne)
     }
 
+    // What stays alive after a burst, by layer: HTTP alone (a 401, no database), the database alone, then both.
+    @Test
+    fun whatABurstLeavesAlive() = serverTest(serverModules()) { server ->
+        val driver = server.koin.get<Driver>()
+        peaks("http") { List(BURST) { async { server.client.get("/api/v1/approvals").status.value } }.awaitAll() }
+        peaks("selects") {
+            List(BURST) { async { driver.fetchAll("SELECT repeat('x', 20000)").getOrThrow().rows.size } }.awaitAll()
+        }
+        peaks("health") { List(BURST) { async { server.client.get("/api/v1/health").status.value } }.awaitAll() }
+        peaks("http-again") {
+            List(BURST) { async { server.client.get("/api/v1/approvals").status.value } }.awaitAll()
+        }
+    }
+
     // What `POST /gates` spends its time on, step by step (`TIMING`): the bench's gate p95 went from 10 to 19 ms.
     @Test
     fun whatAnAskSpendsItsTimeOn() = serverTest(serverModules()) { server ->
@@ -289,6 +304,7 @@ class GateJourneyPostgresTest {
         const val HEX = 16
         const val SHA_LENGTH = 40
         const val RACE = 100
+        const val BURST = 300
         const val CONSOLE_ORIGIN = "http://localhost:5173"
         const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
     }
