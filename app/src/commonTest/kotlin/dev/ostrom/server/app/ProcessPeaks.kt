@@ -12,6 +12,17 @@ import kotlinx.coroutines.launch
 /** The text of `/proc/self/status` (Linux), empty where there is none. */
 internal expect fun processStatus(): String
 
+/** The names of this process's threads (`/proc/self/task/<tid>/comm`), empty where there are none. */
+internal expect fun threadNames(): List<String>
+
+// Thread names without their numbers, counted: `tokio-runtime-w ×8`.
+private fun threadKinds(): String = threadNames()
+    .groupingBy { it.trim().trimEnd { c -> c.isDigit() || c == '-' || c == '#' } }
+    .eachCount()
+    .entries
+    .sortedByDescending { it.value }
+    .joinToString(",") { "${it.key.replace(' ', '_')}x${it.value}" }
+
 /** A number of [status]: `VmRSS` in kB, `Threads` as a count; 0 when absent. */
 internal fun statusField(status: String, name: String): Long = status.lineSequence()
     .firstOrNull { it.startsWith("$name:") }
@@ -44,7 +55,7 @@ internal suspend fun <T> peaks(stage: String, block: suspend CoroutineScope.() -
         sampler.cancelAndJoin()
         println(
             "PEAKS stage=$stage rss_kb=$rss peak_rss_kb=$peakRss delta_rss_kb=${peakRss - rss} " +
-                "threads=$threads peak_threads=$peakThreads",
+                "threads=$threads peak_threads=$peakThreads kinds=${threadKinds()}",
         )
     }
 }
