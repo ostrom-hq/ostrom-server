@@ -41,11 +41,11 @@ import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
-import kotlin.time.Duration.Companion.milliseconds
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The gateway module: agents send their model calls to Ostrom; the gateway serves them with the org's shared

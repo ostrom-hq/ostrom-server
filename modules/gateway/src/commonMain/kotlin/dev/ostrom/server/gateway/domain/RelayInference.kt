@@ -91,14 +91,33 @@ class RelayInferenceUseCaseImpl(
     private val tracer: ModelCallTracer = NoModelCallTracer,
 ) : RelayInferenceUseCase {
     override suspend fun invoke(caller: Caller, call: InferenceCall, responder: InferenceResponder) {
-        val exchange = Exchange(caller, call, responder, planner.configOf(caller), Uuid.random(), tracer.start())
-        var tries = 1
-        var done = exchange.attempt(tries)
-        while (done == null) {
-            tries++
-            done = exchange.attempt(tries)
+        val started = clock.now()
+        val exchange = Exchange(caller, call, responder, started, planner.configOf(caller), trace())
+        // Every exit records the call once: its record settles its budget hold and ends its trace.
+        try {
+            var tries = 1
+            var done = exchange.attempt(tries)
+            while (done == null) {
+                tries++
+                done = exchange.attempt(tries)
+            }
+            record(done)
+        } catch (cancelled: CancellationException) {
+            exchange.abandon(CANCELLED_STATUS, "cancelled")
+            throw cancelled
+        } catch (error: Exception) {
+            exchange.abandon(FAILED_STATUS, "gateway_error")
+            throw error
         }
-        record(done)
+    }
+
+    /** The trace of a new call; tracing that fails leaves the call untraced, never failed. */
+    private suspend fun trace(): ModelCallTrace = try {
+        tracer.start()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        UNTRACED
     }
 
     /**
@@ -109,31 +128,19 @@ class RelayInferenceUseCaseImpl(
         val caller: Caller,
         val call: InferenceCall,
         val responder: InferenceResponder,
+        val started: Instant,
         val org: GatewayOrgConfig,
-        val id: Uuid,
         val trace: ModelCallTrace,
     ) {
-        val started: Instant = clock.now()
+        val id: Uuid = Uuid.random()
+
+        /** Whether the call is recorded: a failure after its record must not record it again. */
+        var recorded: Boolean = false
 
         /** One try: the finished call, or null to try again on another account. */
-        suspend fun attempt(tries: Int): CallState? = when (val plan = plan()) {
+        suspend fun attempt(tries: Int): CallState? = when (val plan = planner.plan(caller, call, org, id)) {
             is InferencePlan.Refused -> refuse(plan)
             is InferencePlan.Ready -> send(plan, tries)
-        }
-
-        /**
-         * Plans a try. Planning may fail after the budgets held the call's reserve (a lease that fails, the agent
-         * leaving): the call is then recorded before the failure goes on, so that its record settles the hold rather
-         * than leaving it to expire.
-         */
-        private suspend fun plan(): InferencePlan = try {
-            planner.plan(caller, call, org, id)
-        } catch (cancelled: CancellationException) {
-            record(abandoned(CANCELLED_STATUS, "cancelled"))
-            throw cancelled
-        } catch (error: Exception) {
-            record(abandoned(FAILED_STATUS, "gateway_error"))
-            throw error
         }
 
         private suspend fun refuse(plan: InferencePlan.Refused): CallState {
@@ -260,13 +267,22 @@ class RelayInferenceUseCaseImpl(
         var usage: TokenUsage? = null
     }
 
-    /** The state of a call whose planning failed, recorded so that its record settles its hold. */
-    private fun Exchange.abandoned(status: Int, outcome: String) = CallState(this, "", null, null).apply {
-        this.status = status
-        this.outcome = outcome
+    /**
+     * Records a call that failed before it was recorded (planning that threw after its budget hold, the agent leaving
+     * while the gateway answered it), so that its record settles its hold and ends its trace rather than leaving them.
+     */
+    private suspend fun Exchange.abandon(status: Int, outcome: String) {
+        if (recorded) return
+        record(
+            CallState(this, "", null, null).apply {
+                this.status = status
+                this.outcome = outcome
+            },
+        )
     }
 
     private suspend fun record(state: CallState) {
+        state.exchange.recorded = true
         val started = state.exchange.started
         val tokens = state.usage
         val cost = state.provider?.let { provider -> tokens?.let { prices.costMicros(provider, state.model, it) } }
@@ -291,9 +307,10 @@ class RelayInferenceUseCaseImpl(
         )
         // Never cancelled halfway: the ledger keeps a call the agent abandoned.
         withContext(NonCancellable) {
+            // The trace first: its end is the call's, not the ledger's write.
+            deliver { state.exchange.trace.end(record) }
             deliver { usage.record(record) }
             deliver { observer.observe(record) }
-            deliver { state.exchange.trace.end(record) }
         }
     }
 
@@ -333,10 +350,13 @@ class RelayInferenceUseCaseImpl(
         /** A non-streamed answer larger than this is relayed but not metered. */
         const val MAX_BODY = 8 * 1024 * 1024
 
-        /** Recorded for a call the agent left while it was planned (as proxies record a client gone). */
+        /** The trace of a call whose tracing failed to start. */
+        private val UNTRACED = ModelCallTrace { }
+
+        /** Recorded for a call the agent left before it was recorded (as proxies record a client gone). */
         private const val CANCELLED_STATUS = 499
 
-        /** Recorded for a call whose planning failed: the agent gets the server's 500. */
+        /** Recorded for a call that failed before it was recorded: the agent gets the server's 500. */
         private const val FAILED_STATUS = 500
 
         private const val CHUNK = 16 * 1024

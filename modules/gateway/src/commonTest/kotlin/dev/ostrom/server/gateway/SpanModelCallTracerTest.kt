@@ -18,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.time.Instant
 
@@ -28,6 +29,7 @@ class SpanModelCallTracerTest {
         val name: String,
         val kind: SpanKind,
         val parent: SpanContext?,
+        val broken: Boolean,
     ) : Span {
         override val context: SpanContext = SpanContext(1, 2, 3, true)
         val attributes = mutableMapOf<String, AttributeValue>()
@@ -35,6 +37,7 @@ class SpanModelCallTracerTest {
         var ends = 0
 
         override fun setAttribute(key: String, value: AttributeValue) {
+            check(!broken) { "exporter down" }
             attributes[key] = value
         }
 
@@ -50,9 +53,10 @@ class SpanModelCallTracerTest {
     }
 
     private val spans = mutableListOf<RecordedSpan>()
+    private var broken = false
     private val tracer = object : Tracer {
         override fun startSpan(name: String, kind: SpanKind, parent: SpanContext?, attributes: Attributes): Span =
-            RecordedSpan(name, kind, parent).also { spans += it }
+            RecordedSpan(name, kind, parent, broken).also { spans += it }
     }
     private val traces = SpanModelCallTracer(tracer)
     private val request = SpanContext(7, 8, 9, true)
@@ -63,8 +67,9 @@ class SpanModelCallTracerTest {
         status: Int = 200,
         outcome: String = "ok",
         sessionId: String? = "s-1",
+        model: String = "claude-opus-5",
     ) = ModelCallRecord(
-        Gw.orgB, Gw.orgA, Gw.memberA.memberId, sessionId, WireProtocol.MESSAGES, provider, null, "claude-opus-5",
+        Gw.orgB, Gw.orgA, Gw.memberA.memberId, sessionId, WireProtocol.MESSAGES, provider, null, model,
         usage, 250_000, usage != null, status, outcome, Instant.parse("2026-11-02T10:00:00Z"), 100, 2_500,
     )
 
@@ -110,5 +115,28 @@ class SpanModelCallTracerTest {
         assertEquals(StatusCode.ERROR to "upstream_error", span.status)
         assertNull(span.attributes["gen_ai.usage.cost"], "Not priced")
         assertEquals(0L, span.number("gen_ai.usage.input_tokens"))
+    }
+
+    @Test
+    fun aStreamCutAfterItsFirstBytesIsAnErrorThoughTheAgentSawA200() = runTest {
+        val cut = traced(record(InferenceProvider.ANTHROPIC, status = 200, outcome = "upstream_broken"))
+        assertEquals(StatusCode.ERROR to "upstream_broken", cut.status)
+        val gone = traced(record(InferenceProvider.ANTHROPIC, status = 200, outcome = "agent_gone"))
+        assertEquals(StatusCode.UNSET to "", gone.status, "The agent left: not the gateway's error")
+    }
+
+    @Test
+    fun aCallAbandonedBeforeAnyAnswerHasNeitherAStatusNorABlankModel() = runTest {
+        val span = traced(record(null, status = 0, outcome = "cancelled", model = ""))
+        assertEquals(setOf("ostrom.model_call.outcome"), span.attributes.keys)
+        assertEquals(StatusCode.UNSET to "", span.status)
+    }
+
+    @Test
+    fun aSpanIsEndedEvenWhenDescribingTheCallFails() = runTest {
+        broken = true
+        val trace = traces.start()
+        assertFailsWith<IllegalStateException> { trace.end(record(InferenceProvider.ANTHROPIC)) }
+        assertEquals(1, spans.single().ends, "Never left open")
     }
 }
