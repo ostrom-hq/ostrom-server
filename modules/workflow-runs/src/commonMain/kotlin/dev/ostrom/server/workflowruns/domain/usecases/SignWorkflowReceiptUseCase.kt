@@ -90,14 +90,8 @@ class SignWorkflowReceiptUseCaseImpl(
         val all = RunQuery(sessionId = session.id, limit = MAX_ITEMS)
         val gates = sessions.gates(orgId, session.id)
         val runs = repository.checks(orgId, all).reversed()
-        val nodes = NodeOutcomes(
-            pack,
-            session,
-            runs,
-            repository.notifications(orgId, all).reversed(),
-            gates,
-            proofs(session, pack, runs),
-        ).nodes()
+        val notifications = repository.notifications(orgId, all).reversed()
+        val nodes = NodeOutcomes(pack, session, runs, notifications, gates, proofs(session, pack, runs)).nodes()
         val decisions = gates.flatMap { it.decisions }.map {
             ReceiptDecision(
                 approvalId = it.approvalId.toString(),

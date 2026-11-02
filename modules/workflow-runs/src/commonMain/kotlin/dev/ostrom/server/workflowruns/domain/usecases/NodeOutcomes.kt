@@ -74,12 +74,13 @@ class NodeOutcomes(
         return when {
             last == null -> declared
             node.mode == PackageMode.SHADOW -> declared.copy(outcome = "shadow: would have run ${mine.size}×, not run")
-            else -> ran(declared, mine, last).let { reported -> ci[node.id]?.let { proven(reported, it) } ?: reported }
+            else -> proven(ran(declared, mine, last), ci[node.id])
         }
     }
 
     // The CI's run on that commit is the proof: its conclusion is the outcome, the workstation's runs stay as detail.
-    private fun proven(reported: ReceiptNode, check: CiCheck): ReceiptNode {
+    private fun proven(reported: ReceiptNode, check: CiCheck?): ReceiptNode {
+        if (check == null) return reported
         val outcome = if (check.conclusion == SUCCESS) "passed in CI" else "failed in CI (${check.conclusion})"
         val detail = "CI ${check.name} by ${check.app} on ${check.headSha.take(SHORT_SHA)}; ${reported.detail}"
         val ref = check.url ?: reported.ref
