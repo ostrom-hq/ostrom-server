@@ -24,6 +24,7 @@ val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
     TokenScope("profile:read", "Read your profile."),
     TokenScope("orgs:read", "Read your organizations, their members and invitations."),
     TokenScope("orgs:write", "Create and change organizations, invite and manage their members."),
+    TokenScope("audit:read", "Read the organization's audit log (owners and admins)."),
     TokenScope("workflows:read", "Read the workflows."),
     TokenScope("workflows:write", "Propose workflows; accepting one stays in the console."),
     TokenScope("packages:read", "Read the session packages and the gates catalogue."),
