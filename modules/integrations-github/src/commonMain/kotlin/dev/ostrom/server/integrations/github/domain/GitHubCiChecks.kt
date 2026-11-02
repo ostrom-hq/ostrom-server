@@ -30,7 +30,7 @@ class GitHubCiChecks(
 ) : CiChecks {
     override suspend fun latest(orgId: Uuid, repo: String, sha: String, name: String): CiCheck? {
         // Both go into GitHub's path: anything else than a repository's full name and a commit's hex is not asked.
-        val asked = REPO.matches(repo) && SHA.matches(sha) && name.isNotBlank()
+        val asked = isRepositoryName(repo) && SHA.matches(sha) && name.isNotBlank()
         val installation = if (asked) repository.installation(orgId) else null
         val runs = installation?.let { read(it.installationId, repo, sha, name) }.orEmpty()
         val own = ownApp()
@@ -55,5 +55,4 @@ class GitHubCiChecks(
 }
 
 private const val COMPLETED = "completed"
-private val REPO = Regex("^[A-Za-z0-9][A-Za-z0-9-]{0,38}/\\.?[A-Za-z0-9_-][A-Za-z0-9._-]{0,98}$")
 private val SHA = Regex("^[0-9a-f]{40}([0-9a-f]{24})?$")

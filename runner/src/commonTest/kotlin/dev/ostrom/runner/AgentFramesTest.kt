@@ -32,7 +32,10 @@ class AgentFramesTest {
         assertEquals(AgentFrame.Terminate, roundTrip(AgentFrame.Terminate))
         val output = assertIs<AgentFrame.Output>(roundTrip(AgentFrame.Output(byteArrayOf(-1))))
         assertContentEquals(byteArrayOf(-1), output.bytes)
-        assertEquals(AgentFrame.Exit, roundTrip(AgentFrame.Exit))
+        assertEquals(AgentFrame.Exit(3), roundTrip(AgentFrame.Exit(3)))
+        assertEquals(AgentFrame.Exit(-1), roundTrip(AgentFrame.Exit(-1)))
+        // A code the host could not read crosses as an empty payload.
+        assertEquals(AgentFrame.Exit(null), roundTrip(AgentFrame.Exit(null)))
     }
 
     @Test

@@ -10,6 +10,8 @@ import dev.ostrom.server.kernel.database.SchemaMigration
  * transaction (S2-01). `runners_session_routes` is the one table read across organizations, by the reconciler (due
  * sessions of every organization) and by the runner channel (a session found by its runner token): it holds no
  * customer content, only a session's id and organization, the hash of its runner token and its reconcile schedule.
+ * `runners_registered` (version 2) is a tenant table too: the machines an organization registered, with the hash of
+ * their key.
  */
 val RunnersMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -73,6 +75,28 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("runners_sessions")}
             ${tenantTableSql("runners_usage")}
             GRANT SELECT, INSERT, UPDATE ON runners_session_routes TO $TENANT_ROLE;
+        """.trimIndent(),
+    ),
+    // The migrator refuses a gap between versions: server#104 (runners_session_routes under row-level security), open
+    // when this one was written, takes the next number after it.
+    SchemaMigration(
+        version = 2,
+        name = "create_registered_runners",
+        sql = """
+            CREATE TABLE runners_registered (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                name TEXT NOT NULL,
+                labels TEXT NOT NULL,
+                version TEXT,
+                key_hash TEXT NOT NULL,
+                registered_by TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                last_seen_at TIMESTAMPTZ
+            );
+            CREATE UNIQUE INDEX runners_registered_name ON runners_registered (org_id, lower(name));
+            CREATE UNIQUE INDEX runners_registered_key ON runners_registered (key_hash);
+            ${tenantTableSql("runners_registered")}
         """.trimIndent(),
     ),
 )

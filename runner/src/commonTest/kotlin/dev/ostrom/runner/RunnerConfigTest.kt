@@ -15,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
@@ -47,6 +48,20 @@ class RunnerConfigTest {
         assertEquals("ostrom_runner_secret", config.token)
         assertEquals("/workspace", config.workspace)
         assertFalse("secret" in config.toString())
+        // No agent kind said: no launch is opened. The sockets have their defaults.
+        assertNull(config.agent)
+        assertFalse(config.governed)
+        assertEquals("/run/ostrom/checks.sock", config.checksSocket)
+        assertEquals("/run/ostrom-check/check.sock", config.checkHostSocket)
+        val sockets = RunnerConfig.from(
+            base + ("OSTROM_AGENT" to "claude-code") + ("OSTROM_RUNNER_CHECKS" to "/s/c.sock") +
+                ("OSTROM_CHECK_HOST_SOCKET" to "/s/h.sock"),
+        ) { "t" }
+        assertEquals("claude-code", sockets.agent)
+        assertTrue(sockets.governed)
+        assertEquals("/s/c.sock", sockets.checksSocket)
+        assertEquals("/s/h.sock", sockets.checkHostSocket)
+        assertFalse(RunnerConfig.from(base + ("OSTROM_AGENT" to "shell")) { "t" }.governed)
 
         val inline = RunnerConfig.from(
             base - "OSTROM_RUNNER_TOKEN_FILE" + ("OSTROM_RUNNER_TOKEN" to "t") + ("OSTROM_WORKSPACE" to "/w"),
@@ -115,6 +130,7 @@ class RunnerConfigTest {
         )
         assertEquals("/workspace/.home", SessionScript.environment(base + ("HOME" to " "), config)["HOME"])
         assertTrue("git clone" in SessionScript.FIRST && "exec bash -l" in SessionScript.AGAIN)
+        assertTrue("OSTROM_LAUNCH_REFUSED" in SessionScript.FIRST)
     }
 
     @Test
@@ -153,6 +169,60 @@ class RunnerConfigTest {
         assertFailsWith<ExecutionEndedException> { api.heartbeat(true, false, null) }
         status = HttpStatusCode.BadGateway
         assertFailsWith<IllegalStateException> { api.heartbeat(true, false, null) }
+    }
+
+    @Test
+    fun theLaunchIsOpenedWithTheRunnerTokenOrRefused() = runTest {
+        val bodies = mutableListOf<String>()
+        var status = HttpStatusCode.Created
+        var answer = """{"launchId":"L-1","agentToken":"ostrom_agent_x","expiresAt":"2026-11-02T20:00:00Z"}"""
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("/api/v1/cloud/runner/launch", request.url.encodedPath)
+            assertEquals("Bearer t", request.headers[HttpHeaders.Authorization])
+            bodies += request.body.toByteArray().decodeToString()
+            respond(answer, status, headersOf(HttpHeaders.ContentType, "application/json"))
+        }) { expectSuccess = false }
+        val api = HttpServerApi(client, RunnerConfig.from(base) { "t" }, this)
+
+        val opened = assertIs<RunnerLaunch.Opened>(api.openLaunch())
+        assertEquals("L-1", opened.launchId)
+        assertEquals("ostrom_agent_x", opened.agentToken)
+        assertFalse("ostrom_agent_x" in opened.toString())
+        assertEquals("""{"sessionId":"$id","epoch":3}""", bodies.single())
+        status = HttpStatusCode.Forbidden
+        answer = """{"error":{"type":"agent_not_allowed","message":"Claude Code is not allowed here."}}"""
+        assertEquals(RunnerLaunch.Refused("Claude Code is not allowed here."), api.openLaunch())
+        status = HttpStatusCode.TooManyRequests
+        answer = "slow down"
+        assertEquals(RunnerLaunch.Refused("The server answered 429."), api.openLaunch())
+        status = HttpStatusCode.Conflict
+        assertFailsWith<ExecutionEndedException> { api.openLaunch() }
+        status = HttpStatusCode.Unauthorized
+        assertFailsWith<ExecutionEndedException> { api.openLaunch() }
+        status = HttpStatusCode.ServiceUnavailable
+        assertFailsWith<IllegalStateException> { api.openLaunch() }
+    }
+
+    @Test
+    fun aCheckIsReportedWithTheRunnerToken() = runTest {
+        val bodies = mutableListOf<String>()
+        var status = HttpStatusCode.Created
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("/api/v1/cloud/runner/checks", request.url.encodedPath)
+            assertEquals("Bearer t", request.headers[HttpHeaders.Authorization])
+            bodies += request.body.toByteArray().decodeToString()
+            respond("{}", status, headersOf(HttpHeaders.ContentType, "application/json"))
+        }) { expectSuccess = false }
+        val api = HttpServerApi(client, RunnerConfig.from(base) { "t" }, this)
+        val check = RunnerCheck("s-1", "sha256:pkg", "n-1", "lint", "abc", 0, "passed", 12, "h1", "box", "ok")
+
+        assertTrue(api.reportCheck(check))
+        val report = """{"sessionId":"$id","epoch":3,"check":{"sessionId":"s-1","digest":"sha256:pkg",""" +
+            """"nodeId":"n-1","scriptId":"lint","scriptSha":"abc","exit":0,"outcome":"passed","durationMs":12,""" +
+            """"head":"h1","sandbox":"box","outputTail":"ok"}}"""
+        assertEquals(report, bodies.single())
+        status = HttpStatusCode.NotFound
+        assertFalse(api.reportCheck(check))
     }
 
     @Test

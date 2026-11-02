@@ -256,6 +256,35 @@ class HttpGitHubApiTest {
         handler = { json("""{}""") }
         assertEquals(emptySet(), api().userInstallations("gho_nobody"))
     }
+
+    @Test
+    fun thePersonsLoginIsReadWithTheirToken() = runTest {
+        handler = { request ->
+            if (request.headers[HttpHeaders.Authorization] == "Bearer gho_person") {
+                json("""{"login":"acme-admin","id":7}""")
+            } else {
+                json("""{"message":"Bad credentials"}""", HttpStatusCode.Unauthorized)
+            }
+        }
+        assertEquals("acme-admin", api().userLogin("gho_person"))
+        assertEquals(HttpMethod.Get to "/user", calls.last().method to calls.last().url.encodedPath)
+        val refused = assertFailsWith<GitHubCallException> { api().userLogin("gho_revoked") }
+        assertEquals("GitHub refused the person (401).", refused.message)
+    }
+
+    @Test
+    fun onlyARepositorysFullNameReachesGitHubsPath() = runTest {
+        handler = { json("""{"id":77}""", HttpStatusCode.Created) }
+        val github = api()
+        val check = CheckRun(SHA, "in_progress", null, "Waiting", "Gate", "https://c/yes/1", "1")
+        for (repo in listOf("x/../../orgs/acme/members", "acme/api?per_page=1", "acme", "acme/..", "acme/api/pulls")) {
+            val refused = assertFailsWith<GitHubCallException>(repo) { github.pullRequest(42, repo, 6) }
+            assertEquals("This is not a repository's full name.", refused.message)
+            assertFailsWith<GitHubCallException>(repo) { github.publishCheck(42, repo, check, null) }
+        }
+        assertTrue(calls.none { "/repos/" in it.url.encodedPath }, "Nothing sent to GitHub")
+        assertEquals(77, github.publishCheck(42, "acme/.github", check, null), "A dotted name is a repository")
+    }
 }
 
 private val OAUTH = AppOAuthClient("Iv1.test", "client-secret")

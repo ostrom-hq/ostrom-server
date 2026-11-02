@@ -254,8 +254,8 @@ class CompilerPostgresTest {
         val machine = server.call("bot:a:ci", "/api/v1/packages/x/revoke", "POST", RevokeRequest("x"))
         assertTrue(machine.bodyAsText().contains("Only a person changes workflows and packages."))
         val orgless = server.call("user:nobody", "/api/v1/workflows")
-        assertEquals(HttpStatusCode.Forbidden, orgless.status)
-        assertTrue(orgless.bodyAsText().contains("This credential belongs to no organization."))
+        assertEquals(HttpStatusCode.NotFound, orgless.status, "Answered like an unknown organization")
+        assertTrue(orgless.bodyAsText().contains("Organization not found."))
 
         val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
         assertEquals(HttpStatusCode.Forbidden, accepted.status)
@@ -464,6 +464,11 @@ class CompilerPostgresTest {
         assertNull(repository.pin(orgA, "acme-api"))
         assertNull(repository.saveWorkflow(orgA, "w", release(), 3, Authorship("lead", NOW)), "no such version")
         assertFalse(repository.deleteWorkflow(orgA, "w"))
+        // A creation never replaces: the second one of an id finds it taken.
+        assertEquals(1, repository.saveWorkflow(orgA, "w", release(), null, Authorship("lead", NOW))?.version)
+        assertNull(repository.saveWorkflow(orgA, "w", release(), null, Authorship("ops", NOW)), "the id is taken")
+        assertEquals("lead", repository.workflow(orgA, "w")?.updatedBy)
+        assertTrue(repository.deleteWorkflow(orgA, "w"))
     }
 
     @Test
