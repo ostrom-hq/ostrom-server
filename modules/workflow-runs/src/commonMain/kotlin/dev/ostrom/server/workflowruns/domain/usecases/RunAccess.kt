@@ -12,16 +12,23 @@ import dev.ostrom.server.workflowruns.domain.models.RunPackageMismatchException
 import dev.ostrom.server.workflowruns.domain.models.RunPackageNotFoundException
 import dev.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
 import dev.ostrom.server.workflowruns.domain.models.SessionStillOpenException
+import dev.ostrom.server.workflowruns.domain.services.RunLaunches
 import dev.ostrom.server.workflowruns.domain.services.RunPackages
 import dev.ostrom.server.workflowruns.domain.services.RunSessions
+import kotlin.uuid.Uuid
 
 /**
  * Who may act on the runs of a session: the sessions module's rules (audit A12), read once here.
  *
  * @param sessions The sessions.
  * @param packages The packages.
+ * @param launches The repository each launch names.
  */
-class RunAccess(private val sessions: RunSessions, private val packages: RunPackages) {
+class RunAccess(
+    private val sessions: RunSessions,
+    private val packages: RunPackages,
+    private val launches: RunLaunches,
+) {
     /**
      * The session a report is written for: only its person, and an agent token of its own launch, write there.
      *
@@ -90,7 +97,8 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
             ?: throw RunSessionNotFoundException()
 
     /**
-     * The package a report names, which must be its session's: an agent never reports under another package.
+     * The package a report names, which must be its session's: an agent never reports under another package, nor
+     * under the package of another repository than its launch's (AUDIT-SECU-RUNNER-2 R3).
      *
      * @param actor The caller.
      * @param digest The package's digest.
@@ -99,11 +107,22 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
      * @return The package.
      *
      * @throws RunPackageNotFoundException When the organization has none with that digest.
-     * @throws RunPackageMismatchException When the session started with another package.
+     * @throws RunPackageMismatchException When the session started with another package, or the package is not its
+     *   repository's.
      */
     suspend fun pack(actor: GateActor, digest: String, session: Session?): RunPackage {
         val started = session?.packageDigest
         if (started != null && started != digest) throw RunPackageMismatchException()
-        return packages.find(actor.orgId, digest) ?: throw RunPackageNotFoundException()
+        val pack = packages.find(actor.orgId, digest) ?: throw RunPackageNotFoundException()
+        if (session != null) requireRepository(actor.orgId, session, pack)
+        return pack
+    }
+
+    // The repository the launch names wins over the one the session declares: the hooks write the session's, the
+    // launch's comes from the CLI's own call or the cloud session. A session that names none binds no package.
+    private suspend fun requireRepository(orgId: Uuid, session: Session, pack: RunPackage) {
+        val expected = (session.launchId?.let { launches.repo(orgId, it) } ?: session.repo)?.takeIf { it.isNotEmpty() }
+        val repo = pack.envelope.repo
+        if (expected != null && (repo == null || !RepoNames.same(expected, repo))) throw RunPackageMismatchException()
     }
 }

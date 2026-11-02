@@ -248,6 +248,24 @@ class WorkflowRunsPostgresTest {
         }
 
     @Test
+    fun anAgentNeverReportsUnderThePackageOfAnotherRepository() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val agent = server.session(ada)
+            // A package of the same organization, for another repository, whose node `n-check` is easier to pass.
+            val docs = PackageEnvelope(
+                "ostrom.package/1", "v1", "acme/docs", "sha256:docs", "sha256:content-docs", "Ed25519", "k", "sig",
+                BODY, true, false,
+            )
+            val stored = StoredPackage(docs, now.toString(), emptyMap())
+            server.koin.get<CompilerRepository>().savePackage(ada.org.id, stored)
+            val other = server.call(agent, "/api/v1/checks", CHECK.replace(DIGEST, "sha256:docs"))
+            assertEquals(HttpStatusCode.Conflict, other.status, other.bodyAsText())
+            val own = server.call(agent, "/api/v1/checks", CHECK)
+            assertEquals(HttpStatusCode.Created, own.status, "Its own repository: ${own.bodyAsText()}")
+        }
+
+    @Test
     fun theRunnerChannelTakesOnlyTheRunnerTokenOfTheSessionsOwnCloudSession() =
         serverTest(modules) { server ->
             val ada = server.person("ada")
