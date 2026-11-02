@@ -59,6 +59,10 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `orgs_slug_taken(slug)` | orgs | whether a short name was ever used | `OrgsServingRolePostgresTest` |
 | `orgs_memberships_of(user)` | orgs | reads a user's memberships and their organizations | `OrgsServingRolePostgresTest` |
 | `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
+| `runners_session_org(id)` | runners | a session's organization | `RunnersRoutesTenancyPostgresTest` |
+| `runners_session_by_token(hash)` | runners | the session a runner token belongs to, for the runner channel | `RunnersRoutesTenancyPostgresTest` |
+| `runners_claim_due(owner, until, now, limit)` | runners | leases the due sessions of every organization to one reconciler (`FOR UPDATE SKIP LOCKED`) | `CloudSessionsPostgresTest` |
+| `runners_release(id, owner, has_next, next_at)` | runners | ends a reconciler's lease, keeping a look asked for meanwhile | `CloudSessionsPostgresTest` |
 
 ## The proof
 
