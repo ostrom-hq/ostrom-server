@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.models.Launcher
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.domain.services.AgentTokenService
@@ -29,8 +30,19 @@ class FixedClock(var now: Instant = Instant.parse("2026-10-30T10:00:00.123456Z")
 class InMemoryLaunches : LaunchesRepository {
     val launches = mutableListOf<Launch>()
 
-    override suspend fun create(launch: Launch) {
+    val limits = mutableListOf<LaunchLimit>()
+
+    /** When set, the limit refuses every launch with this wait. */
+    var refusal: Duration? = null
+
+    /** Stores a launch, as the tests of the readers set them up. */
+    fun create(launch: Launch) {
         launches += launch
+    }
+
+    override suspend fun create(launch: Launch, limit: LaunchLimit): Duration? {
+        limits += limit
+        return refusal ?: null.also { launches += launch }
     }
 
     override suspend fun find(orgId: Uuid, id: String): Launch? =

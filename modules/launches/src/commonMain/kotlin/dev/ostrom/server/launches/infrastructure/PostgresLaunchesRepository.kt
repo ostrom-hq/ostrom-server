@@ -3,13 +3,17 @@ package dev.ostrom.server.launches.infrastructure
 
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import kotlin.time.Duration
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -19,22 +23,50 @@ import kotlin.uuid.Uuid
  * @param driver The connection pool.
  */
 class PostgresLaunchesRepository(private val driver: Driver) : LaunchesRepository {
-    override suspend fun create(launch: Launch) {
-        driver.withOrganization(launch.orgId) { tx ->
-            tx.execute(
-                Statement.create("INSERT INTO launches_launches ($COLUMNS) VALUES ($VALUES)")
-                    .bind("org_id", launch.orgId)
-                    .bind("id", launch.id)
-                    .bind("user_id", launch.userId)
-                    .bind("dev", launch.dev)
-                    .nullable("repo", launch.repo)
-                    .bind("agent", launch.agent)
-                    .nullable("model", launch.model)
-                    .bind("created_at", launch.createdAt)
-                    .bind("expires_at", launch.expiresAt)
-                    .cloud(launch.cloudSessionId),
-            ).getOrThrow()
+    override suspend fun create(launch: Launch, limit: LaunchLimit): Duration? =
+        driver.withOrganization(launch.orgId) { tx -> limited(tx, launch, limit) }
+
+    private suspend fun limited(tx: Transaction, launch: Launch, limit: LaunchLimit): Duration? {
+        // One launch of the organization at a time: the count below then holds until the insert commits.
+        tx.fetchAll(Statement.create(LOCK).bind("org_id", launch.orgId)).getOrThrow()
+        val since = launch.createdAt - limit.window
+        val person = tx.window(Statement.create(PERSON_WINDOW).bind("user_id", launch.userId), launch.orgId, since)
+        val org = tx.window(Statement.create(ORG_WINDOW), launch.orgId, since)
+        val full = listOfNotNull(
+            person.takeIf { it.count >= limit.perPerson },
+            org.takeIf { it.count >= limit.perOrg },
+        )
+        if (full.isNotEmpty()) {
+            // A place frees up when the oldest launch counted in the full window leaves it.
+            return full.maxOf { it.oldest } + limit.window - launch.createdAt
         }
+        insert(tx, launch)
+        return null
+    }
+
+    private suspend fun insert(tx: Transaction, launch: Launch) {
+        tx.execute(
+            Statement.create("INSERT INTO launches_launches ($COLUMNS) VALUES ($VALUES)")
+                .bind("org_id", launch.orgId)
+                .bind("id", launch.id)
+                .bind("user_id", launch.userId)
+                .bind("dev", launch.dev)
+                .nullable("repo", launch.repo)
+                .bind("agent", launch.agent)
+                .nullable("model", launch.model)
+                .bind("created_at", launch.createdAt)
+                .bind("expires_at", launch.expiresAt)
+                .cloud(launch.cloudSessionId),
+        ).getOrThrow()
+    }
+
+    /** The launches counted in a window, and the oldest of them (the window's start when none). */
+    private class Window(val count: Int, val oldest: Instant)
+
+    private suspend fun Transaction.window(statement: Statement, orgId: Uuid, since: Instant): Window {
+        val row = fetchAll(statement.bind("org_id", orgId).bind("since", since)).getOrThrow().first()
+        val count = row.get("n").asString().toInt()
+        return Window(count, if (count == 0) since else row.get("oldest").asInstant())
     }
 
     override suspend fun find(orgId: Uuid, id: String): Launch? = driver.withOrganization(orgId) { tx ->
@@ -69,6 +101,18 @@ class PostgresLaunchesRepository(private val driver: Driver) : LaunchesRepositor
         )
         private val COLUMNS = COLUMN_NAMES.joinToString(", ")
         private val VALUES = COLUMN_NAMES.joinToString(", ") { ":$it" }
+
+        /** Serializes the launches of one organization within a transaction (released at its end). */
+        const val LOCK: String =
+            "SELECT pg_advisory_xact_lock(hashtextextended('launches:' || CAST(:org_id AS TEXT), 0))"
+
+        /** The launches of one person in one organization since an instant: the index on its creations. */
+        const val PERSON_WINDOW: String = "SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM launches_launches " +
+            "WHERE org_id = :org_id AND user_id = :user_id AND created_at > :since"
+
+        /** The launches of one organization since an instant. */
+        const val ORG_WINDOW: String = "SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM launches_launches " +
+            "WHERE org_id = :org_id AND created_at > :since"
 
         /** A launch by its primary key. */
         val FIND: String = "SELECT $COLUMNS FROM launches_launches WHERE org_id = :org_id AND id = :id"

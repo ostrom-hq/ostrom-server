@@ -15,6 +15,8 @@ import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.withOrganization
+import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.AgentPolicyResponse
@@ -50,6 +52,9 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -57,6 +62,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -324,6 +330,85 @@ class LaunchesPostgresTest {
             assertEquals(0 to 0, server.launchesSeenBy(ada.org.id) to server.launchesSeenBy(bob.org.id))
         }
 
+    private fun stored(orgId: Uuid, userId: Uuid, createdAt: Instant) = Launch(
+        id = "lch_" + Uuid.random().toHexString(), orgId = orgId, userId = userId, dev = "ada", repo = null,
+        agent = "codex", model = null, createdAt = createdAt, expiresAt = createdAt + 24.hours,
+    )
+
+    @Test
+    fun theLimitCountsAPersonsThenTheOrganizationsLaunchesOfTheWindow() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val org = ada.org.id
+            val launches = server.koin.get<LaunchesRepository>()
+            val limit = LaunchLimit(window = 1.hours, perPerson = 2, perOrg = 3)
+            val me = ada.user.id
+            assertNull(launches.create(stored(org, me, now - 2.hours), limit), "Out of the window from the next one")
+            assertNull(launches.create(stored(org, me, now - 50.minutes), limit))
+            assertNull(launches.create(stored(org, me, now - 10.minutes), limit))
+            assertEquals(10.minutes, launches.create(stored(org, me, now), limit), "When the oldest leaves the window")
+            // Another person still launches until the organization is full.
+            val other = Uuid.random()
+            assertNull(launches.create(stored(org, other, now), limit))
+            val newcomer = launches.create(stored(org, Uuid.random(), now), limit)
+            assertEquals(10.minutes, newcomer, "The organization is full")
+            assertEquals(4, server.launchesSeenBy(org), "Nothing stored past the limit")
+        }
+
+    @Test
+    fun launchesAtOnceNeverTakeTheSamePlace() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val launches = server.koin.get<LaunchesRepository>()
+            val limit = LaunchLimit(window = 1.hours, perPerson = 2, perOrg = 100)
+            val results = coroutineScope {
+                List(CONCURRENT) {
+                    async { launches.create(stored(ada.org.id, ada.user.id, now), limit) }
+                }.awaitAll()
+            }
+            assertEquals(2, results.count { it == null }, "Exactly the limit is stored")
+            assertEquals(2, server.launchesSeenBy(ada.org.id))
+        }
+
+    @Test
+    fun aLaunchOverTheLimitIsA429WithRetryAfter() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val launches = server.koin.get<LaunchesRepository>()
+            val roomy = LaunchLimit(window = 1.hours, perPerson = 1000, perOrg = 1000)
+            repeat(LaunchLimit.DEFAULT.perPerson) {
+                assertNull(launches.create(stored(ada.org.id, ada.user.id, now - 30.minutes), roomy))
+            }
+            val refused = server.call(ada.cliToken, "/api/v1/launches", LAUNCH)
+            assertEquals(HttpStatusCode.TooManyRequests, refused.status, refused.bodyAsText())
+            val wait = refused.headers[HttpHeaders.RetryAfter]?.toLong()
+            assertTrue(wait != null && wait in 1L..(30 * 60 + 1), "Retry-After: $wait")
+            assertTrue("rate_limited" in refused.bodyAsText(), refused.bodyAsText())
+            assertEquals(LaunchLimit.DEFAULT.perPerson, server.launchesSeenBy(ada.org.id))
+        }
+
+    @Test
+    fun theLimitsCountsUseTheirIndexes() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            repeat(LAUNCHES) { server.launch(ada) }
+            server.database.owner.execute("ANALYZE launches_launches").getOrThrow()
+            listOf(
+                PostgresLaunchesRepository.PERSON_WINDOW to "launches_launches_person",
+                PostgresLaunchesRepository.ORG_WINDOW to "launches_launches_created",
+            ).forEach { (sql, index) ->
+                val plan = server.driver.withOrganization(ada.org.id) { tx ->
+                    tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
+                    var explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", ada.org.id)
+                        .bind("since", now - 1.hours)
+                    if (":user_id" in sql) explain = explain.bind("user_id", ada.user.id)
+                    tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+                }
+                println("-- the launches of a window (each launch)\n$plan")
+                assertTrue(index in plan, plan)
+            }
+        }
+
     // Read in the organization, as the serving role: row level security keeps the other organizations out.
     private suspend fun TestServer.launchesSeenBy(orgId: Uuid): Int = driver.withOrganization(orgId) { tx ->
         val count = Statement.create("SELECT COUNT(*) AS n FROM launches_launches WHERE org_id = :org_id")
@@ -333,6 +418,7 @@ class LaunchesPostgresTest {
 
     private companion object {
         const val LAUNCHES = 20
+        const val CONCURRENT = 8
         const val IDLE_MINUTES = 30
         const val RUN_MINUTES = 120
         const val RUNNING_CAP = 5
