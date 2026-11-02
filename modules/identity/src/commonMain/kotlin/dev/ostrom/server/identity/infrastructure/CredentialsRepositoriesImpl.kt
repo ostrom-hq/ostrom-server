@@ -7,6 +7,7 @@ import dev.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.WebSession
 import dev.ostrom.server.identity.domain.WebSessionsRepository
+import dev.ostrom.server.kernel.database.withOrganization
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
@@ -14,6 +15,7 @@ import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlin.time.Instant
@@ -76,14 +78,25 @@ class WebSessionsRepositoryImpl(private val driver: Driver) : WebSessionsReposit
 /**
  * [ApiTokensRepository] on PostgreSQL. Scopes are stored space-separated (a scope never contains a space).
  *
+ * Outside any organization the serving role only sees the account-level tokens (personal and CLI, `org_id IS NULL`),
+ * which a user lists, rotates and revokes. An organization's token (an agent token) is written inside its
+ * organization; it is found by its hash, marked as used and revoked with its agent session through the
+ * `identity_*` functions of `ostrom_router` (RLS audit R1, docs/tenancy.md).
+ *
  * @param driver The database.
  */
 class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository {
-    override suspend fun create(token: ApiToken, secretHash: String) = insert(driver, token, secretHash)
+    override suspend fun create(token: ApiToken, secretHash: String) {
+        val orgId = token.orgId
+        if (orgId == null) {
+            insert(driver, token, secretHash)
+        } else {
+            driver.withOrganization(orgId) { insert(it, token, secretHash) }
+        }
+    }
 
     override suspend fun findBySecretHash(secretHash: String): ApiToken? = driver.fetchAll(
-        Statement.create("SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE secret_hash = :hash")
-            .bind("hash", secretHash),
+        Statement.create("SELECT $TOKEN_COLUMNS FROM identity_token_by_hash(:hash)").bind("hash", secretHash),
     ).getOrThrow().firstOrNull()?.toApiToken()
 
     override suspend fun get(userId: Uuid, id: Uuid): ApiToken? = driver.fetchAll(
@@ -109,8 +122,8 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
 
     override suspend fun touch(id: Uuid, at: Instant) {
         driver.execute(
-            Statement.create("UPDATE identity_api_tokens SET last_used_at = :at WHERE id = :id")
-                .bind("at", at).bind("id", id),
+            Statement.create("SELECT identity_token_touch(CAST(:id AS UUID), CAST(:at AS TIMESTAMPTZ))")
+                .bind("id", id).bind("at", at),
         ).getOrThrow()
     }
 
@@ -140,11 +153,11 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
             revoked == 1L
         }
 
-    override suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long = driver.execute(
+    override suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long = driver.fetchAll(
         Statement.create(
-            "UPDATE identity_api_tokens SET revoked_at = :at WHERE agent_session_id = :session AND revoked_at IS NULL",
-        ).bind("at", at).bind("session", agentSessionId),
-    ).getOrThrow()
+            "SELECT identity_revoke_agent_session_tokens(:session, CAST(:at AS TIMESTAMPTZ)) AS revoked",
+        ).bind("session", agentSessionId).bind("at", at),
+    ).getOrThrow().first().get("revoked").asLong()
 
     private companion object {
         const val TOKEN_COLUMNS = "id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, " +

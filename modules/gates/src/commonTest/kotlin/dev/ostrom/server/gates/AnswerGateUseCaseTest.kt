@@ -269,6 +269,12 @@ class AnswerGateUseCaseTest {
         assertEquals(listOf(second.gate), bench.approvals(user("rev-b"), true, pending, 500).map { it.gate })
         assertEquals(1, bench.approvals(user("rev-b"), true, pending, 0).size, "The limit is at least one")
         assertEquals(1, bench.approvals(user("lyes"), true, pending, 10).size, "The closed request is not pending")
+        // Second audit L4: "mine" is the caller's person, whatever its credential's id.
+        val byPerson = GateActor("cred-7", ORG, ActorKind.USER, personId = "rev-b")
+        assertEquals(listOf(second.gate), bench.approvals(byPerson, true, pending, 10).map { it.gate })
+        // A person's own credential names no other person: its id is the person.
+        val itself = GateActor("rev-b", ORG, ActorKind.USER)
+        assertEquals(listOf(second.gate), bench.approvals(itself, true, pending, 10).map { it.gate })
         assertEquals(4, bench.approvals(user("lyes"), false, null, 10).size, "Without `mine`: the organization's")
         assertEquals(
             listOf(RequestStatus.CLOSED),

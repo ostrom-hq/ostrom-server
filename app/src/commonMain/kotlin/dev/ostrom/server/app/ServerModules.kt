@@ -14,6 +14,7 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.integrations.github.GitHubIntegrationModule
 import dev.ostrom.server.integrations.slack.SlackIntegrationModule
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.launches.LaunchesModule
 import dev.ostrom.server.mcprelay.McpRelayModule
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
@@ -22,6 +23,7 @@ import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.sharing.SharingModule
 import dev.ostrom.server.usage.UsageModule
+import dev.ostrom.server.workflowruns.WorkflowRunsModule
 
 /**
  * Every functional module, in dependency order: migrations and initialization run in this order, so a module comes
@@ -37,7 +39,9 @@ fun serverModules(): List<ServerModule> = listOf(
     ReceiptsModule,
     GatesModule,
     SessionsModule,
+    LaunchesModule,
     CompilerModule,
+    WorkflowRunsModule,
     McpRelayModule,
     SecretsModule,
     UsageModule,

@@ -78,6 +78,15 @@ class InMemoryGatesRepository : GatesRepository {
                 (status == null || it.status == status)
         }.reversed().take(limit).mapNotNull { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
 
+    /** The gates `approversOf` was asked for, one list per call. */
+    val approverReads = mutableListOf<List<Uuid>>()
+
+    override suspend fun approversOf(orgId: Uuid, gateIds: List<Uuid>): Map<Uuid, List<String>> {
+        approverReads += gateIds
+        return requests.values.filter { it.orgId == orgId && it.gateId in gateIds }
+            .groupBy({ it.gateId }, { it.approverId })
+    }
+
     private inner class Tx : GatesTransaction {
         override suspend fun lockKey(orgId: Uuid, key: String) {
             lockedKeys += key

@@ -4,9 +4,9 @@ package dev.ostrom.server.automations.infrastructure
 import dev.ostrom.server.automations.domain.AutomationLauncher
 import dev.ostrom.server.automations.domain.LaunchRequest
 import dev.ostrom.server.automations.domain.LaunchResult
-import dev.ostrom.server.automations.domain.MemberDirectory
 import dev.ostrom.server.automations.domain.Wait
 import dev.ostrom.server.automations.domain.WaitEvents
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import kotlin.uuid.Uuid
 
 /**
