@@ -122,7 +122,8 @@ class OrgAuditTest {
         val service = AuthenticatedPrincipal("$key", PrincipalKind.SERVICE, emptySet())
         trail.record(OrgAuditRecord(orgId, service, "budget.changed", "budget", "organization"))
 
-        val (person, machine, odd, byKey) = log.entries
+        val (person, machine, odd) = log.entries
+        val byKey = log.entries.last()
         val details = mapOf("a" to "1", "credential" to "browser")
         assertEquals(AuditEntry(orgId, ada.id, "budget.changed", "budget", "organization", details), person)
         assertNull(machine.actorId)
