@@ -21,6 +21,7 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -85,7 +86,9 @@ class CompilerIsolationPostgresTest {
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lead")
-                        else -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        // Each organization's people decide its workflows (second compiler audit, H4: an owner or an
+                        // admin): the test is about the isolation of organizations, not about roles.
+                        else -> GateActor(id, orgId, ActorKind.USER, personId = id, role = OrgRole.OWNER)
                     }
                 }
             }
