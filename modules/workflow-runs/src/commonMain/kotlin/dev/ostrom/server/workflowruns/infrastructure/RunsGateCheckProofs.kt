@@ -29,9 +29,11 @@ class RunsGateCheckProofs(
 
     override suspend fun of(orgId: Uuid, sessionId: String?, subject: GateSubject, check: String): GateCheckProof {
         val run = if (sessionId == null) null else lastRun(orgId, sessionId, check)
-        if (run != null && run.passed && run.attestation == CheckAttestation.ISOLATED_RUNNER) return run
-        if (passedInCi(orgId, subject, check)) return GateCheckProof(CheckAttestation.CI, passed = true)
-        return run ?: GateCheckProof(attestation = null, passed = false)
+        return when {
+            run != null && run.passed && run.attestation == CheckAttestation.ISOLATED_RUNNER -> run
+            passedInCi(orgId, subject, check) -> GateCheckProof(CheckAttestation.CI, passed = true)
+            else -> run ?: GateCheckProof(attestation = null, passed = false)
+        }
     }
 
     private suspend fun lastRun(orgId: Uuid, sessionId: String, check: String): GateCheckProof? {

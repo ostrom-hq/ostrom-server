@@ -2,6 +2,7 @@
 package dev.ostrom.server.rules
 
 import dev.ostrom.core.api.models.CheckAttestation
+import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GateSubject
@@ -50,7 +51,7 @@ import kotlin.uuid.Uuid
 class RuleGateChecksGovernGatesPostgresTest {
     private var ruleId = ""
     private var proof = GateCheckProof(attestation = null, passed = false)
-    private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, RulesModule)
+    private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, CompilerModule, RulesModule)
     private val overrides = module {
         includes(RulesCallers.overrides(), RulesCallers.gateSessions)
         // The catalogue's node of the rule's gate, as the compiler names it.
