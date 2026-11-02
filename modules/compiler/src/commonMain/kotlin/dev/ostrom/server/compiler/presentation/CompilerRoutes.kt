@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler.presentation
 
+import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
@@ -10,6 +11,9 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.NullsKept
+import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.kernel.http.withNulls
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
@@ -18,8 +22,10 @@ import io.ktor.server.resources.post
 import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 /**
  * The packages, workflows and gates catalogue routes of the contract. Every route is authenticated and scoped to the
@@ -55,7 +61,7 @@ private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = wit
         val actor = actorOf(call, CompilerScopes.readingPackages)
         val byAgent = actor.kind == ActorKind.AGENT_SESSION
         val served = publish(actor.orgId, params.parent.repo, urlOf(call), actor.id, byAgent)
-        call.respond(served.envelope)
+        call.respond(answerOf(served.envelope))
     }
     get<PackagesApi> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
@@ -74,7 +80,7 @@ private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = wit
     get<PackagesApi.Digest> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
         val stored = find(actor, params.digest)
-        call.respond(stored.envelope.copy(pinned = pinned(actor, stored)))
+        call.respond(answerOf(stored.envelope.copy(pinned = pinned(actor, stored))))
     }
     get<PackagesApi.Digest.Status> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
@@ -134,6 +140,11 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
 
 private const val MAX_AUDIT = 200
 
+/** An envelope writes `repo` as `null` for an organization's package: required and nullable in the contract. */
+private object EnvelopeAnswer : NullsKept<PackageEnvelope>(PackageEnvelope.serializer(), "repo")
+
+private fun answerOf(envelope: PackageEnvelope): JsonElement = OstromJson.encodeToJsonElement(EnvelopeAnswer, envelope)
+
 private suspend fun CompilerRoutesDependencies.find(actor: GateActor, digest: String): StoredPackage =
     repository.findPackage(actor.orgId, digest) ?: throw OstromException(ErrorKind.NOT_FOUND, "Package not found.")
 
@@ -158,8 +169,9 @@ private fun statusOf(value: String): WorkflowStatus =
         ?: throw OstromException(ErrorKind.INVALID_REQUEST, "Unknown workflow status.")
 
 // The document as saved, with its version, author and date: `version` is what a save sends back as `expectedVersion`.
+// An edge's `to` is written `null` when the document left it out (an edge that ends the run): the contract requires it.
 private fun documentOf(stored: StoredWorkflow): JsonObject = JsonObject(
-    stored.doc.raw + mapOf(
+    stored.doc.raw.withNulls("edges.*.to").jsonObject + mapOf(
         "version" to JsonPrimitive(stored.version),
         "updatedBy" to JsonPrimitive(stored.updatedBy),
         "updatedAt" to JsonPrimitive(stored.updatedAt.toString()),

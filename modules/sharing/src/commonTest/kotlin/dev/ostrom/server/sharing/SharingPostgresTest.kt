@@ -310,6 +310,12 @@ class SharingPostgresTest {
             assertEquals("reconnect_required", resumed.status, "Pausing and resuming never revives dead tokens")
             val stale = repository.get(Sharing.orgA, id)!!.copy(status = AccountStatus.READY)
             assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.update(stale)!!.status, "Nor does a stale write")
+            repository.setStatus(Sharing.orgA, id, AccountStatus.WRONG_ACCOUNT)
+            val foreign = patchAs("member-a", path, UpdateAccountRequest(paused = false)).body<SharedAccountResponse>()
+            assertEquals("wrong_account", foreign.status, "Nor tokens of another account")
+            val staleForeign = repository.get(Sharing.orgA, id)!!.copy(status = AccountStatus.READY)
+            assertEquals(AccountStatus.WRONG_ACCOUNT, repository.update(staleForeign)!!.status)
+            repository.setStatus(Sharing.orgA, id, AccountStatus.RECONNECT_REQUIRED)
 
             // Two first shares of one provider account: the second keeps the first row, and its envelope still opens.
             val first = repository.get(Sharing.orgA, id)!!

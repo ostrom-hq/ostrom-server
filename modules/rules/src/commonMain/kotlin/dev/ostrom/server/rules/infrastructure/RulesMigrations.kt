@@ -71,6 +71,12 @@ val RulesMigrations: List<SchemaMigration> = listOf(
             tenant("rules_gate_policy"),
         ).joinToString(";\n"),
     ),
+    // The gates catalogue reads the gated rules on every boundary action.
+    SchemaMigration(
+        2,
+        "index_gated_rules",
+        "CREATE INDEX rules_rules_gated ON rules_rules (org_id, id) WHERE gate IS NOT NULL",
+    ),
 )
 
 private fun tenant(table: String): String = """

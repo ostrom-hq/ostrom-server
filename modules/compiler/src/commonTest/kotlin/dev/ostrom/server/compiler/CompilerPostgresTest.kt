@@ -201,6 +201,24 @@ class CompilerPostgresTest {
     }
 
     @Test
+    fun anEndingEdgeAndAnOrganizationsPackageAnswerTheContractsRequiredNulls() = compilerTest { server ->
+        // The contract's `to` is required and nullable: a client writes it, null for an edge that ends the workflow.
+        val ending = JsonObject(mapOf("from" to JsonPrimitive("g"), "to" to JsonNull))
+        val edges = JsonArray(release().getValue("edges").jsonArray + ending)
+        val doc = JsonObject(release() + ("edges" to edges))
+        val created = server.call("user:a:lead", "/api/v1/workflows", "POST", doc).body<JsonObject>()
+        assertEquals(JsonNull, created.getValue("edges").jsonArray.last().jsonObject["to"])
+        val listed = server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>().items.single()
+        assertEquals(JsonNull, listed.getValue("edges").jsonArray.last().jsonObject["to"])
+        assertEquals("t", listed.getValue("edges").jsonArray.first().jsonObject.getValue("from").jsonPrimitive.content)
+
+        val envelope = server.call("agent:a:l1", "/api/v1/packages/current").body<JsonObject>()
+        assertEquals(JsonNull, envelope["repo"])
+        val page = server.call("user:a:lead", "/api/v1/packages").body<JsonObject>()
+        assertEquals(JsonNull, page.getValue("items").jsonArray.single().jsonObject["repo"])
+    }
+
+    @Test
     fun workflowsAreSavedWithTheirVersionAndOnlyByAPerson() = compilerTest { server ->
         assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:l1", "/api/v1/workflows", "POST", release()).status)
         assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/workflows").status)
@@ -257,8 +275,8 @@ class CompilerPostgresTest {
         val machine = server.call("bot:a:ci", "/api/v1/packages/x/revoke", "POST", RevokeRequest("x"))
         assertTrue(machine.bodyAsText().contains("Only a person changes workflows and packages."))
         val orgless = server.call("user:nobody", "/api/v1/workflows")
-        assertEquals(HttpStatusCode.Forbidden, orgless.status)
-        assertTrue(orgless.bodyAsText().contains("This credential belongs to no organization."))
+        assertEquals(HttpStatusCode.NotFound, orgless.status, "Answered like an unknown organization")
+        assertTrue(orgless.bodyAsText().contains("Organization not found."))
 
         val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
         assertEquals(HttpStatusCode.Forbidden, accepted.status)
@@ -486,6 +504,11 @@ class CompilerPostgresTest {
         assertNull(repository.pin(orgA, "acme-api"))
         assertNull(repository.saveWorkflow(orgA, "w", release(), 3, Authorship("lead", NOW)), "no such version")
         assertFalse(repository.deleteWorkflow(orgA, "w"))
+        // A creation never replaces: the second one of an id finds it taken.
+        assertEquals(1, repository.saveWorkflow(orgA, "w", release(), null, Authorship("lead", NOW))?.version)
+        assertNull(repository.saveWorkflow(orgA, "w", release(), null, Authorship("ops", NOW)), "the id is taken")
+        assertEquals("lead", repository.workflow(orgA, "w")?.updatedBy)
+        assertTrue(repository.deleteWorkflow(orgA, "w"))
     }
 
     @Test

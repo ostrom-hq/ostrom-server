@@ -52,11 +52,12 @@ val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, ALL_USER_SC
 
 /**
  * The scopes the CLI token gets: what `ostrom` does for its user (`ostrom receipts` and `verify` read the receipts of
- * their organization), nothing of the console's administration, and neither [ANSWER_SCOPE] nor
+ * their organization, `ostrom inbox` and `ostrom logs` read the approvals and gates, `ostrom claude` lists the
+ * organization's MCP servers), nothing of the console's administration, and neither [ANSWER_SCOPE] nor
  * [WORKFLOWS_WRITE_SCOPE] (S2-04): `ostrom approve` opens the console's page instead.
  */
 val CLI_SCOPES: Set<String> =
-    setOf("profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read")
+    setOf("profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read")
 
 /**
  * The governance write scopes ([GovernanceScopes]) only the token of `ostrom login --admin` holds: approved in the
@@ -208,6 +209,9 @@ class AdminApprovalForbiddenException : OstromException(
     ErrorKind.FORBIDDEN,
     "Only an owner or an admin of the organization approves ostrom login --admin.",
 )
+
+/** The browser session does not exist, is not the caller's, or has ended: the same answer, to reveal nothing. */
+class WebSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Session not found.")
 
 /** The device code or user code is unknown, expired or already used. */
 class DeviceCodeNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Unknown or expired code.")

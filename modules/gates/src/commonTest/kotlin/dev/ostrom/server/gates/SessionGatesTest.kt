@@ -44,6 +44,8 @@ class SessionGatesTest {
         )
         assertEquals(listOf(false), gates[1].decisions.map { it.approved })
         assertEquals(emptyList(), gates[2].decisions)
+        // The answers of every decided gate come in one read, never one per gate.
+        assertEquals(1, bench.repository.batchedRequestReads)
         assertEquals(emptyList(), ListSessionGatesUseCaseImpl(bench.repository)(Uuid.random(), SESSION))
     }
 }

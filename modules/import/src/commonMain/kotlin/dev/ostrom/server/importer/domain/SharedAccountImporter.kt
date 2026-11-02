@@ -134,7 +134,7 @@ class SharedAccountImporter(
             val key = keyOf(provider, account.providerAccountId)
             val existing = known[key]
             return when {
-                existing?.status == AccountStatus.RECONNECT_REQUIRED && !cutover -> ImportAction.REVIVE_AT_CUTOVER
+                existing != null && existing.status.awaitsSignIn && !cutover -> ImportAction.REVIVE_AT_CUTOVER
                 else -> {
                     val change = change(provider, account, existing)
                     if (change == null) ImportAction.UNCHANGED else carryOut(key, change)
@@ -155,7 +155,7 @@ class SharedAccountImporter(
 
         private fun change(provider: AccountProvider, account: TeamCodeAccount, existing: Known?): Change? = when {
             existing == null -> Change.Create(payload(provider, account, account.providerAccountId.trim(), 0))
-            existing.status == AccountStatus.RECONNECT_REQUIRED -> {
+            existing.status.awaitsSignIn -> {
                 val payload = payload(provider, account, existing.providerAccountId, existing.version)
                 Change.Revive(existing, payload.copy(label = existing.label, email = existing.email))
             }
@@ -207,7 +207,7 @@ class SharedAccountImporter(
                 share(caller, renewed)
             } catch (changed: AccountChangedException) {
                 val waiting = list(caller).firstOrNull {
-                    it.account.id == change.known.id && it.account.status == AccountStatus.RECONNECT_REQUIRED
+                    it.account.id == change.known.id && it.account.status.awaitsSignIn
                 } ?: throw changed
                 val now = waiting.account
                 share(caller, renewed.copy(label = now.label, email = now.email, ifVersion = now.version))
@@ -236,8 +236,12 @@ class SharedAccountImporter(
 
     /** This renewal, when the provider says the tokens are [payload]'s account's. */
     private fun RefreshResult.Renewed.ofAccount(payload: ShareAccountPayload): RefreshResult.Renewed {
-        val owner = accountId?.let { keyOf(payload.provider, it) }
-        if (owner != keyOf(payload.provider, payload.providerAccountId)) throw TeamCodeTokensOfAnotherAccountException()
+        // Unlike the pool's refresh, a revival needs the provider to name the account: it brings back an account on
+        // tokens nobody checked yet.
+        val owner = accountId ?: throw TeamCodeTokensOfAnotherAccountException()
+        if (!SharingRules.sameProviderAccount(payload.providerAccountId, owner)) {
+            throw TeamCodeTokensOfAnotherAccountException()
+        }
         return this
     }
 

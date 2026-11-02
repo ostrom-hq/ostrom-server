@@ -15,6 +15,8 @@ import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCase
 import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCaseImpl
 import dev.ostrom.server.identity.domain.UnlockMobileAppUseCase
 import dev.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
+import dev.ostrom.server.identity.domain.WebSessionsOfUserUseCase
+import dev.ostrom.server.identity.domain.WebSessionsOfUserUseCaseImpl
 import dev.ostrom.server.identity.infrastructure.MobileCodesRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.MobileTokensRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.NotificationPreferencesRepositoryImpl
@@ -171,6 +173,7 @@ object IdentityModule : ServerModule {
         single<GetProfileUseCase> { GetProfileUseCaseImpl(get()) }
         single<StartWebSessionUseCase> { StartWebSessionUseCaseImpl(get(), get(), get(), get()) }
         single<EndWebSessionUseCase> { EndWebSessionUseCaseImpl(get(), get(), get()) }
+        single<WebSessionsOfUserUseCase> { WebSessionsOfUserUseCaseImpl(get(), get(), get()) }
         single<ListAuditEventsUseCase> { ListAuditEventsUseCaseImpl(get()) }
         single<CreatePersonalTokenUseCase> { CreatePersonalTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<ListTokensUseCase> { ListTokensUseCaseImpl(get(), get()) }
@@ -228,7 +231,7 @@ object IdentityModule : ServerModule {
         single { SessionRoutesDependencies(get(), get(), get()) }
         single {
             IdentityRoutesDependencies(
-                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
                 getAll<SignOutListener>(),
                 get(),
             )

@@ -13,6 +13,8 @@ import dev.ostrom.server.integrations.github.domain.GateCheck
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
+import dev.ostrom.server.integrations.github.domain.GitHubInstallationOrigin
+import dev.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import dev.ostrom.server.integrations.github.domain.GitHubPull
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -24,6 +26,7 @@ import kotlin.uuid.Uuid
 val ORG: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
 val OTHER_ORG: Uuid = Uuid.parse("0000000b-0000-0000-0000-000000000000")
 const val SHA = "0123456789abcdef0123456789abcdef01234567"
+const val GITHUB = "https://github.com"
 val NOW: Instant = Instant.parse("2026-10-30T04:00:00Z")
 
 class SettableClock(var now: Instant = NOW) : Clock {
@@ -39,6 +42,10 @@ class RecordingLogger : Logger {
 
     override fun with(fields: Map<String, Any?>): Logger = this
 }
+
+/** Who installed 42 (acme) and 43 (globex), as their `installation.created` webhooks say. */
+val ACME_ORIGIN = GitHubInstallationOrigin(42, "acme-admin", "acme", "Organization")
+val GLOBEX_ORIGIN = GitHubInstallationOrigin(43, "globex-admin", "globex", "Organization")
 
 /**
  * GitHub as a map of pull requests and installations, recording every check it is sent. The person `acme-admin`
@@ -76,10 +83,37 @@ class FakeGitHubApi : GitHubApi {
         if (down) throw GitHubCallException("GitHub did not answer POST /login/oauth/access_token.") else codes[code]
 
     override suspend fun userInstallations(userToken: String): Set<Long> = reachable[userToken].orEmpty()
+
+    /** The login behind each person's token. */
+    val logins = mutableMapOf("gho_acme" to "acme-admin", "gho_globex" to "globex-admin")
+
+    override suspend fun userLogin(userToken: String): String = logins.getValue(userToken)
 }
 
-/** The repository in memory, with the same rules (one installation per organization, single-use states). */
-class MemoryGitHubRepository : GitHubRepository {
+/** Who installed each installation and the deliveries handled, in memory. */
+class MemoryGitHubOrigins : GitHubOriginsRepository {
+    val byId = mutableMapOf<Long, GitHubInstallationOrigin>()
+    val deliveries = mutableSetOf<String>()
+
+    override suspend fun saveOrigin(origin: GitHubInstallationOrigin, at: Instant) {
+        byId[origin.installationId] = origin
+    }
+
+    override suspend fun origin(installationId: Long): GitHubInstallationOrigin? = byId[installationId]
+
+    override suspend fun claimDelivery(deliveryId: String, at: Instant): Boolean = deliveries.add(deliveryId)
+
+    override suspend fun releaseDelivery(deliveryId: String) {
+        deliveries.remove(deliveryId)
+    }
+}
+
+/**
+ * The repository in memory, with the same rules (one installation per organization, single-use states).
+ *
+ * @property origins Who installed each installation: forgotten with it.
+ */
+class MemoryGitHubRepository(val origins: MemoryGitHubOrigins = MemoryGitHubOrigins()) : GitHubRepository {
     val installations = mutableListOf<GitHubInstallation>()
     val states = mutableMapOf<String, Pair<Uuid, Instant>>()
     val checks = mutableMapOf<Pair<Uuid, Uuid>, GateCheck>()
@@ -94,8 +128,9 @@ class MemoryGitHubRepository : GitHubRepository {
         installations += installation
     }
 
-    override suspend fun removeInstallation(installation: GitHubInstallation) {
-        installations.removeAll { it.installationId == installation.installationId }
+    override suspend fun forgetInstallation(installationId: Long) {
+        installations.removeAll { it.installationId == installationId }
+        origins.byId.remove(installationId)
     }
 
     override suspend fun saveState(orgId: Uuid, stateHash: String, by: String, expiresAt: Instant) {
