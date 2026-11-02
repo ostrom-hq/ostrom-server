@@ -68,6 +68,33 @@ data class GateCheck(
 data class GitHubInstallation(val orgId: Uuid, val installationId: Long, val account: String)
 
 /**
+ * Who installed the App, as GitHub's signed `installation.created` webhook says (AUDIT-SECU-2 M1): only an owner or
+ * an admin of a GitHub organization can install an App on it, so the installation is linked only for that person.
+ *
+ * @property installationId GitHub's id of the installation.
+ * @property sender The login of the person who installed it.
+ * @property account The account it is installed on.
+ * @property accountType `Organization` or `User`.
+ */
+data class GitHubInstallationOrigin(
+    val installationId: Long,
+    val sender: String,
+    val account: String,
+    val accountType: String,
+) {
+    /**
+     * @param login The GitHub login of the person who came back from the install.
+     * @return Whether they installed it: the sender, and on a personal account its owner too (logins ignore case).
+     */
+    fun installedBy(login: String): Boolean =
+        sender.equals(login, ignoreCase = true) && (accountType != USER || account.equals(login, ignoreCase = true))
+
+    private companion object {
+        const val USER = "User"
+    }
+}
+
+/**
  * GitHub refused or failed a call: the message names the call, never a token or a body.
  *
  * @param message What failed.
