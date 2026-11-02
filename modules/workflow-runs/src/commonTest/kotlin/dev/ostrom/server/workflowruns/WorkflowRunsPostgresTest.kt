@@ -21,6 +21,7 @@ import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.instance.InstanceModule
+import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.kernel.http.OstromJson
@@ -61,6 +62,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -69,11 +75,6 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * `ostrom claude` after the launch, on the real modules and PostgreSQL: the hooks report a check and a notification
@@ -87,8 +88,17 @@ class WorkflowRunsPostgresTest {
     )
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
-    /** A person of a new organization with its package: the CLI's token, and a personal one reading receipts. */
-    private class Person(val org: Org, val memberId: Uuid, val cliToken: String, val personalToken: String)
+    /**
+     * A person of a new organization with its package: the CLI's token, a personal one reading receipts, and a
+     * personal one reading every list these modules serve.
+     */
+    private class Person(
+        val org: Org,
+        val memberId: Uuid,
+        val cliToken: String,
+        val personalToken: String,
+        val listReader: String,
+    )
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
@@ -109,7 +119,13 @@ class WorkflowRunsPostgresTest {
             "ostrom.package/1", "v1", "acme/api", DIGEST, "sha256:content", "Ed25519", "k", "sig", BODY, true, false,
         )
         koin.get<CompilerRepository>().savePackage(org.id, StoredPackage(envelope, now.toString(), emptyMap()))
-        return Person(org, member.id, token(TokenKind.CLI, CLI_SCOPES), token(TokenKind.PERSONAL, READER_SCOPES))
+        return Person(
+            org,
+            member.id,
+            token(TokenKind.CLI, CLI_SCOPES),
+            token(TokenKind.PERSONAL, READER_SCOPES),
+            token(TokenKind.PERSONAL, LIST_SCOPES),
+        )
     }
 
     private suspend fun TestServer.call(token: String?, path: String, body: String? = null): HttpResponse =
@@ -337,11 +353,39 @@ class WorkflowRunsPostgresTest {
             assertEquals(HttpStatusCode.NotFound, cliBundle.status, cliBundle.bodyAsText())
             // A credential of no organization: its person left it.
             server.koin.get<OrgsRepository>().delete(ada.org.id, now)
-            assertEquals(HttpStatusCode.Forbidden, server.call(ada.cliToken, "/api/v1/checks").status)
+            assertEquals(HttpStatusCode.NotFound, server.call(ada.cliToken, "/api/v1/checks").status)
             assertEquals(
-                HttpStatusCode.Forbidden,
+                HttpStatusCode.NotFound,
                 server.call(ada.personalToken, "/api/v1/receipts/rcpt_session_s-1/bundle").status,
             )
+        }
+
+    @Test
+    fun aRouteNamingAnOrganizationTheCallerIsNotInAnswersNotFound() =
+        serverTest(modules) { server ->
+            // The contract's 404, never a 403 that would tell the organization exists: gates, sessions, the compiler
+            // and the workflow runs, on the real resolver, with Ada's token naming Bob's organization.
+            val ada = server.person("ada")
+            val bob = server.person("bob")
+            val paths = listOf(
+                "/api/v1/approvals", "/api/v1/sessions", "/api/v1/workflows", "/api/v1/checks",
+                "/api/v1/receipts/rcpt_session_s-1/bundle",
+            )
+            for (path in paths) {
+                val foreign = server.client.get(path) {
+                    header(HttpHeaders.Authorization, "Bearer ${ada.listReader}")
+                    header(ORG_HEADER, bob.org.id.toString())
+                }
+                assertEquals(HttpStatusCode.NotFound, foreign.status, path)
+                assertTrue("Organization not found." in foreign.bodyAsText(), path)
+            }
+            for (path in paths.dropLast(1)) {
+                val own = server.client.get(path) {
+                    header(HttpHeaders.Authorization, "Bearer ${ada.listReader}")
+                    header(ORG_HEADER, ada.org.id.toString())
+                }
+                assertEquals(HttpStatusCode.OK, own.status, "$path ${own.bodyAsText()}")
+            }
         }
 
     @Test
@@ -477,6 +521,7 @@ class WorkflowRunsPostgresTest {
         const val RUNNING_CAP = 5
         const val DIGEST = "sha256:runs"
         val READER_SCOPES = setOf("receipts:read", "sessions:read")
+        val LIST_SCOPES = READER_SCOPES + setOf("gates:read", "workflows:read")
         const val LAUNCH = """{"repo":"acme/api","agent":"claude-code"}"""
         const val SESSION = """{"id":"s-1","agent":"claude-code","repo":"acme/api"}"""
         const val CHECK = """{"sessionId":"s-1","digest":"sha256:runs","nodeId":"n-check","scriptId":"sc-1",""" +

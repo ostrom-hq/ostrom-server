@@ -7,6 +7,7 @@ import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.integrations.github.domain.GitHubRepo
 import dev.ostrom.server.integrations.github.domain.GitHubTeam
 import dev.ostrom.server.integrations.github.domain.NamePage
+import dev.ostrom.server.kernel.auth.OrganizationNotFoundException
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
@@ -128,7 +129,7 @@ private suspend fun GitHubDirectoryRoutesDependencies.actorOf(call: ApplicationC
     val principal = call.requirePrincipal()
     principal.requireAnyScope(accepted)
     return actors.resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw OrganizationNotFoundException()
 }
 
 private const val ORGS_READ = "orgs:read"

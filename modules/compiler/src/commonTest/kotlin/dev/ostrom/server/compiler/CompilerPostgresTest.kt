@@ -244,8 +244,8 @@ class CompilerPostgresTest {
         val machine = server.call("bot:a:ci", "/api/v1/packages/x/revoke", "POST", RevokeRequest("x"))
         assertTrue(machine.bodyAsText().contains("Only a person changes workflows and packages."))
         val orgless = server.call("user:nobody", "/api/v1/workflows")
-        assertEquals(HttpStatusCode.Forbidden, orgless.status)
-        assertTrue(orgless.bodyAsText().contains("This credential belongs to no organization."))
+        assertEquals(HttpStatusCode.NotFound, orgless.status, "Answered like an unknown organization")
+        assertTrue(orgless.bodyAsText().contains("Organization not found."))
 
         val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
         assertEquals(HttpStatusCode.Forbidden, accepted.status)

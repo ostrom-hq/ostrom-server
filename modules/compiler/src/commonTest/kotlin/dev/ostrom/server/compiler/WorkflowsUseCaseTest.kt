@@ -107,6 +107,16 @@ class WorkflowsUseCaseTest {
     }
 
     @Test
+    fun anUpdateOfAnUnknownWorkflowIsNotFoundAndCreatesNothing() = runTest {
+        workflows.save(org, raw(release()), null, "dev-a", create = true)
+        val elsewhere = Uuid.parse("0000000e-0000-0000-0000-000000000000")
+        expectFailure(ErrorKind.NOT_FOUND) { workflows.save(elsewhere, raw(release()), null, "dev-e", create = false) }
+        expectFailure(ErrorKind.NOT_FOUND) { workflows.save(elsewhere, raw(release()), 1, "dev-e", create = false) }
+        expectFailure(ErrorKind.NOT_FOUND) { workflows.get(elsewhere, "release") }
+        assertEquals(1, workflows.get(org, "release").version, "The other organization's workflow is untouched")
+    }
+
+    @Test
     fun theListFiltersByRepositoryAndStatus() = runTest {
         workflows.save(org, raw(release()), null, "dev-a", create = true)
         val other = workflow("web", listOf(node("s", STEP, label = "Ship the site")), name = "Website")

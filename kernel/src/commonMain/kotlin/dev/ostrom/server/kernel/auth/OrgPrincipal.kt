@@ -84,7 +84,14 @@ class RejectingPrincipalOrgResolver : PrincipalOrgResolver {
  *   unknown organization so that its existence does not leak.
  */
 suspend fun ApplicationCall.requireOrgPrincipal(resolver: PrincipalOrgResolver, orgId: Uuid?): OrgPrincipal =
-    resolver.resolve(requirePrincipal(), orgId) ?: throw OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
+    resolver.resolve(requirePrincipal(), orgId) ?: throw OrganizationNotFoundException()
+
+/**
+ * The request names an organization the caller is not a member of (by its path, the [ORG_HEADER] header or a
+ * parameter), or the credential acts in none: 404, answered like an unknown organization so that its existence does
+ * not leak. Never a 403, which would tell that it exists.
+ */
+class OrganizationNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
 
 /** Nothing names the organization (path, [ORG_HEADER], bound credential) and the caller belongs to several: 409. */
 class OrgRequiredException :

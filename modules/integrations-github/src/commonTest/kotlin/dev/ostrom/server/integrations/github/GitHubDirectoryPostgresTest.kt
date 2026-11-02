@@ -219,7 +219,7 @@ class GitHubDirectoryPostgresTest {
         // `{org}` reads a short name too, through the orgs module: acme is A's, globex is B's.
         assertEquals(HttpStatusCode.OK, server.get("user:a:owner", "/api/v1/orgs/acme/teams").status)
         assertEquals(HttpStatusCode.NotFound, server.get("user:a:owner", "/api/v1/orgs/globex/teams").status)
-        assertEquals(HttpStatusCode.Forbidden, server.get("user:a", "/api/v1/repos").status, "No organization")
+        assertEquals(HttpStatusCode.NotFound, server.get("user:a", "/api/v1/repos").status, "No organization")
         assertEquals(HttpStatusCode.BadRequest, server.get("user:a:owner", "/api/v1/repos?limit=0").status)
         assertEquals(HttpStatusCode.BadRequest, server.get("user:a:owner", "/api/v1/orgs/$ORG/teams?limit=101").status)
     }

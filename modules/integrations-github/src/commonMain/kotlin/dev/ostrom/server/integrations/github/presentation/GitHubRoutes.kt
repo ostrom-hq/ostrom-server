@@ -7,6 +7,7 @@ import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.OrganizationNotFoundException
 import dev.ostrom.server.kernel.auth.TOKEN_AUTH
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
@@ -129,10 +130,11 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
         get<GitHubAppPath.Start> { params ->
             val actor = actorOf(call, setOf(GateScopes.ALL_USER))
             val principal = call.requirePrincipal()
-            // A named organization the caller is not in, or does not exist, answers like a role too low: 403.
+            // A named organization the caller is not in, or that does not exist, is not found (404, as the contract
+            // says); a member whose role is too low is refused (403).
             val orgId = if (params.org == null) actor.orgId else orgs.orgId(params.org)
-            val member = if (orgId == null) null else members.resolve(principal, orgId)
-            if (member == null || member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) {
+            val member = orgId?.let { members.resolve(principal, it) } ?: throw OrganizationNotFoundException()
+            if (member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) {
                 throw OstromException(ErrorKind.FORBIDDEN, "Only an owner or an admin installs the GitHub App.")
             }
             call.respondRedirect(installs.start(member.orgId, actor.id, sessionOf(principal)))
@@ -144,7 +146,7 @@ private suspend fun GitHubRoutesDependencies.actorOf(call: ApplicationCall, acce
     val principal = call.requirePrincipal()
     principal.requireAnyScope(accepted)
     return actors.resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw OrganizationNotFoundException()
 }
 
 // The session of a browser, or the credential of a token: what finishes an install must be what started it.

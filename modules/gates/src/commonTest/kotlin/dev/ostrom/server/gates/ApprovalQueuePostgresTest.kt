@@ -243,7 +243,7 @@ class ApprovalQueuePostgresTest {
             assertEquals(HttpStatusCode.Forbidden, server.read("agent:a:$session", path).status, "$path: an agent")
             assertEquals(HttpStatusCode.Forbidden, server.read("device:a:rev-b", path).status, "$path: a device")
             assertEquals(HttpStatusCode.Forbidden, server.read("nobody", path).status, "$path: no scope")
-            assertEquals(HttpStatusCode.Forbidden, server.read("user:a", path).status, "$path: no organization")
+            assertEquals(HttpStatusCode.NotFound, server.read("user:a", path).status, "$path: no organization")
         }
     }
 }
