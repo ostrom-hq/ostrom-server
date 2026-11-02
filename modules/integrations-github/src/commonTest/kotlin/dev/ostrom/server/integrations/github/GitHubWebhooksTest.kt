@@ -14,6 +14,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubInstalls
 import dev.ostrom.server.integrations.github.domain.InstallationNotYoursException
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
 import dev.ostrom.server.integrations.github.domain.WebhookOutcome
+import dev.ostrom.server.integrations.github.domain.installPage
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -41,6 +42,7 @@ class GitHubWebhooksTest {
     }
     private val handler = HandleWebhookUseCaseImpl(
         repository,
+        repository.origins,
         ask,
         GitHubGateChecks(repository, api, "https://console.example", clock),
         logger,
@@ -110,13 +112,13 @@ class GitHubWebhooksTest {
 
     @Test
     fun anInstallLinksTheInstallationToTheOrganizationThatStartedItOnce() = runTest {
-        val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
+        val installs = GitHubInstalls(repository, repository.origins, api, { installPage(GITHUB, "ostrom-dev") }, clock)
         val link = installs.start(ORG, "owner", SESSION)
         assertTrue(link.startsWith("https://github.com/apps/ostrom-dev/installations/new?state="))
         val state = link.substringAfter("state=")
         assertEquals(64, state.length)
         api.accounts[42] = "acme"
-        repository.saveOrigin(ACME_ORIGIN, NOW)
+        repository.origins.saveOrigin(ACME_ORIGIN, NOW)
 
         assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", state, SESSION))
         assertEquals(GitHubInstallation(ORG, 42, "acme"), repository.installation(ORG))
@@ -140,7 +142,7 @@ class GitHubWebhooksTest {
         }
         // Installation 7 is reachable but not one of this App's installations GitHub knows.
         api.reachable["gho_acme"] = setOf(42L, 7L)
-        repository.saveOrigin(ACME_ORIGIN.copy(installationId = 7), NOW)
+        repository.origins.saveOrigin(ACME_ORIGIN.copy(installationId = 7), NOW)
         val unknown = installs.start(ORG, "owner", SESSION).substringAfter("state=")
         val notTheApp = assertFailsWith<OstromException> { installs.finish("7", "code-acme", unknown, SESSION) }
         assertEquals(ErrorKind.INVALID_REQUEST, notTheApp.kind)
@@ -154,17 +156,17 @@ class GitHubWebhooksTest {
         val reinstalled = installs.finish("42", "code-acme", again, SESSION)
         assertEquals(GitHubInstallation(ORG, 42, "acme"), reinstalled, "Installed again")
 
-        val unconfigured = GitHubInstalls(repository, api, { null }, "https://github.com", clock)
+        val unconfigured = GitHubInstalls(repository, repository.origins, api, { null }, clock)
         assertFailsWith<GitHubAppNotConfiguredException> { unconfigured.start(ORG, "owner", SESSION) }
     }
 
     @Test
     fun anInstallationIsLinkedOnlyIfThePersonWhoCameBackReachesIt() = runTest {
-        val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
+        val installs = GitHubInstalls(repository, repository.origins, api, { installPage(GITHUB, "ostrom-dev") }, clock)
         api.accounts[42] = "acme"
         api.accounts[43] = "globex"
-        repository.saveOrigin(ACME_ORIGIN, NOW)
-        repository.saveOrigin(GLOBEX_ORIGIN, NOW)
+        repository.origins.saveOrigin(ACME_ORIGIN, NOW)
+        repository.origins.saveOrigin(GLOBEX_ORIGIN, NOW)
         // The owner of org B, who reaches only 43, comes back with the id of acme's installation.
         val stolen = installs.start(OTHER_ORG, "owner-b", SESSION).substringAfter("state=")
         val refused = assertFailsWith<InstallationNotYoursException> {
@@ -188,9 +190,9 @@ class GitHubWebhooksTest {
 
     @Test
     fun onlyTheSessionThatStartedAnInstallFinishesIt() = runTest {
-        val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
+        val installs = GitHubInstalls(repository, repository.origins, api, { installPage(GITHUB, "ostrom-dev") }, clock)
         api.accounts[42] = "acme"
-        repository.saveOrigin(ACME_ORIGIN, NOW)
+        repository.origins.saveOrigin(ACME_ORIGIN, NOW)
         val state = installs.start(ORG, "owner", SESSION).substringAfter("state=")
         // The state brought back by another session (a link sent to someone else) matches nothing.
         val elsewhere = assertFailsWith<OstromException> { installs.finish("42", "code-acme", state, "another") }

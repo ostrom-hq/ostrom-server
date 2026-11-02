@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.integrations.github
 
+import dev.ostrom.server.integrations.github.domain.installPage
 import dev.ostrom.server.integrations.github.domain.isRepositoryName
 import dev.ostrom.server.integrations.github.presentation.startedElsewhere
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** AUDIT-SECU-2 B1 (a start a third-party site triggers) and B5 (only a repository's full name in GitHub's path). */
@@ -19,6 +22,12 @@ class GitHubStartsAndNamesTest {
         for (site in listOf("same-origin", "same-site", "none", null)) {
             assertFalse(startedElsewhere(site, null, CONSOLE), "$site")
         }
+    }
+
+    @Test
+    fun theInstallPageNamesTheAppOrThereIsNone() {
+        assertEquals("$GITHUB/apps/ostrom-dev/installations/new", installPage(GITHUB, "ostrom-dev"))
+        assertNull(installPage(GITHUB, null))
     }
 
     @Test

@@ -3,14 +3,12 @@ package dev.ostrom.server.integrations.github.infrastructure
 
 import dev.ostrom.server.integrations.github.domain.GateCheck
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
-import dev.ostrom.server.integrations.github.domain.GitHubInstallationOrigin
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
-import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -37,11 +35,8 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
         ).firstOrNull()?.toInstallation()
     }
 
-    private suspend fun <T> installationKeyed(installationId: Long, block: suspend Tx.() -> T): T =
-        keyed("ostrom.github_installation", installationId.toString(), block)
-
     override suspend fun installationById(installationId: Long): GitHubInstallation? =
-        installationKeyed(installationId) {
+        keyed(INSTALLATION_KEY, installationId.toString()) {
             fetch(
                 Statement.create("SELECT $INSTALLATION_COLUMNS FROM github_installations WHERE installation_id = :id")
                     .bind("id", installationId),
@@ -62,8 +57,9 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
         }
     }
 
+    // Linked or not, and who installed it (GitHubOriginsRepository's table): one transaction under the installation.
     override suspend fun forgetInstallation(installationId: Long) {
-        installationKeyed(installationId) {
+        keyed(INSTALLATION_KEY, installationId.toString()) {
             execute(
                 Statement.create("DELETE FROM github_installations WHERE installation_id = :id")
                     .bind("id", installationId),
@@ -71,56 +67,6 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
             execute(
                 Statement.create("DELETE FROM github_installation_origins WHERE installation_id = :id")
                     .bind("id", installationId),
-            )
-        }
-    }
-
-    override suspend fun saveOrigin(origin: GitHubInstallationOrigin, at: Instant) {
-        installationKeyed(origin.installationId) {
-            execute(
-                Statement.create(
-                    "INSERT INTO github_installation_origins (installation_id, sender, account, account_type, " +
-                        "created_at) VALUES (:id, :sender, :account, :type, :at) ON CONFLICT (installation_id) DO " +
-                        "UPDATE SET sender = EXCLUDED.sender, account = EXCLUDED.account, " +
-                        "account_type = EXCLUDED.account_type, created_at = EXCLUDED.created_at",
-                ).bind("id", origin.installationId).bind("sender", origin.sender).bind("account", origin.account)
-                    .bind("type", origin.accountType).bind("at", at),
-            )
-        }
-    }
-
-    override suspend fun origin(installationId: Long): GitHubInstallationOrigin? = installationKeyed(installationId) {
-        fetch(
-            Statement.create(GitHubWebhookQueries.ORIGIN).bind("id", installationId),
-        ).firstOrNull()?.let {
-            GitHubInstallationOrigin(
-                installationId = installationId,
-                sender = it.get("sender").asString(),
-                account = it.get("account").asString(),
-                accountType = it.get("account_type").asString(),
-            )
-        }
-    }
-
-    // Deliveries are the instance's, not an organization's (an id and a time, nothing else): no row level security.
-    override suspend fun claimDelivery(deliveryId: String, at: Instant): Boolean = driver.transaction {
-        val tx = Tx(this)
-        val claimed = tx.execute(
-            Statement.create(
-                "INSERT INTO github_webhook_deliveries (delivery_id, received_at) VALUES (:id, :at) " +
-                    "ON CONFLICT (delivery_id) DO NOTHING",
-            ).bind("id", deliveryId).bind("at", at),
-        ) == 1L
-        // A bounded purge on each claim: the table keeps 30 days of deliveries, whatever the traffic.
-        tx.execute(Statement.create(GitHubWebhookQueries.PURGE).bind("cutoff", at - DELIVERY_RETENTION))
-        claimed
-    }
-
-    override suspend fun releaseDelivery(deliveryId: String) {
-        driver.transaction {
-            Tx(this).execute(
-                Statement.create("DELETE FROM github_webhook_deliveries WHERE delivery_id = :id")
-                    .bind("id", deliveryId),
             )
         }
     }
@@ -188,6 +134,7 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
 
     private companion object {
         const val INSTALLATION_COLUMNS = "org_id, installation_id, account"
+        const val INSTALLATION_KEY = "ostrom.github_installation"
 
         fun ResultSet.Row.toInstallation() = GitHubInstallation(
             orgId = Uuid.parse(get("org_id").asString()),
@@ -195,17 +142,4 @@ class PostgresGitHubRepository(private val driver: Driver) : GitHubRepository {
             account = get("account").asString(),
         )
     }
-}
-
-// Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
-private val DELIVERY_RETENTION = 30.days
-
-/** The queries a webhook or an install callback adds, shared with the test that keeps their plans. */
-internal object GitHubWebhookQueries {
-    const val ORIGIN =
-        "SELECT sender, account, account_type FROM github_installation_origins WHERE installation_id = :id"
-
-    // At most 100 deliveries older than 30 days go at each claim, oldest first by the index on `received_at`.
-    const val PURGE = "DELETE FROM github_webhook_deliveries WHERE delivery_id IN (SELECT delivery_id FROM " +
-        "github_webhook_deliveries WHERE received_at < :cutoff ORDER BY received_at LIMIT 100)"
 }

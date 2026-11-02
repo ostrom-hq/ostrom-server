@@ -18,6 +18,7 @@ import dev.ostrom.server.integrations.github.domain.GateCheck
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
 import dev.ostrom.server.integrations.github.domain.GitHubInstallationOrigin
+import dev.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import dev.ostrom.server.integrations.github.domain.GitHubPull
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
@@ -474,20 +475,21 @@ class GitHubPostgresTest {
         repository.forgetInstallation(44)
         assertNull(repository.installation(ORG))
 
+        val origins = server.koin.get<GitHubOriginsRepository>()
         val origin = GitHubInstallationOrigin(44, "carol", "carol", "User")
-        repository.saveOrigin(origin, at)
-        assertEquals(origin, repository.origin(44))
-        repository.saveOrigin(origin.copy(sender = "Carol"), at)
-        assertEquals("Carol", repository.origin(44)?.sender, "A created webhook again replaces it")
+        origins.saveOrigin(origin, at)
+        assertEquals(origin, origins.origin(44))
+        origins.saveOrigin(origin.copy(sender = "Carol"), at)
+        assertEquals("Carol", origins.origin(44)?.sender, "A created webhook again replaces it")
         repository.forgetInstallation(44)
-        assertNull(repository.origin(44), "Deleted on GitHub, linked or not")
+        assertNull(origins.origin(44), "Deleted on GitHub, linked or not")
 
-        assertTrue(repository.claimDelivery("d-1", at))
-        assertFalse(repository.claimDelivery("d-1", at), "A replay")
-        repository.releaseDelivery("d-1")
-        assertTrue(repository.claimDelivery("d-1", at), "Released for GitHub's redelivery")
-        assertTrue(repository.claimDelivery("d-2", at + 31.days), "And d-1, 31 days old, is forgotten")
-        assertTrue(repository.claimDelivery("d-1", at + 31.days))
+        assertTrue(origins.claimDelivery("d-1", at))
+        assertFalse(origins.claimDelivery("d-1", at), "A replay")
+        origins.releaseDelivery("d-1")
+        assertTrue(origins.claimDelivery("d-1", at), "Released for GitHub's redelivery")
+        assertTrue(origins.claimDelivery("d-2", at + 31.days), "And d-1, 31 days old, is forgotten")
+        assertTrue(origins.claimDelivery("d-1", at + 31.days))
 
         repository.saveState(ORG, "h1", "owner", at)
         assertNull(repository.takeState("h1", at), "Expired at that instant")

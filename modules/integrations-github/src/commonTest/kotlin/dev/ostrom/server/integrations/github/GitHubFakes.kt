@@ -14,6 +14,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
 import dev.ostrom.server.integrations.github.domain.GitHubInstallationOrigin
+import dev.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import dev.ostrom.server.integrations.github.domain.GitHubPull
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -25,6 +26,7 @@ import kotlin.uuid.Uuid
 val ORG: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
 val OTHER_ORG: Uuid = Uuid.parse("0000000b-0000-0000-0000-000000000000")
 const val SHA = "0123456789abcdef0123456789abcdef01234567"
+const val GITHUB = "https://github.com"
 val NOW: Instant = Instant.parse("2026-10-30T04:00:00Z")
 
 class SettableClock(var now: Instant = NOW) : Clock {
@@ -88,13 +90,33 @@ class FakeGitHubApi : GitHubApi {
     override suspend fun userLogin(userToken: String): String = logins.getValue(userToken)
 }
 
-/** The repository in memory, with the same rules (one installation per organization, single-use states). */
-class MemoryGitHubRepository : GitHubRepository {
+/** Who installed each installation and the deliveries handled, in memory. */
+class MemoryGitHubOrigins : GitHubOriginsRepository {
+    val byId = mutableMapOf<Long, GitHubInstallationOrigin>()
+    val deliveries = mutableSetOf<String>()
+
+    override suspend fun saveOrigin(origin: GitHubInstallationOrigin, at: Instant) {
+        byId[origin.installationId] = origin
+    }
+
+    override suspend fun origin(installationId: Long): GitHubInstallationOrigin? = byId[installationId]
+
+    override suspend fun claimDelivery(deliveryId: String, at: Instant): Boolean = deliveries.add(deliveryId)
+
+    override suspend fun releaseDelivery(deliveryId: String) {
+        deliveries.remove(deliveryId)
+    }
+}
+
+/**
+ * The repository in memory, with the same rules (one installation per organization, single-use states).
+ *
+ * @property origins Who installed each installation: forgotten with it.
+ */
+class MemoryGitHubRepository(val origins: MemoryGitHubOrigins = MemoryGitHubOrigins()) : GitHubRepository {
     val installations = mutableListOf<GitHubInstallation>()
     val states = mutableMapOf<String, Pair<Uuid, Instant>>()
     val checks = mutableMapOf<Pair<Uuid, Uuid>, GateCheck>()
-    val origins = mutableMapOf<Long, GitHubInstallationOrigin>()
-    val deliveries = mutableSetOf<String>()
 
     override suspend fun installation(orgId: Uuid) = installations.firstOrNull { it.orgId == orgId }
 
@@ -108,19 +130,7 @@ class MemoryGitHubRepository : GitHubRepository {
 
     override suspend fun forgetInstallation(installationId: Long) {
         installations.removeAll { it.installationId == installationId }
-        origins.remove(installationId)
-    }
-
-    override suspend fun saveOrigin(origin: GitHubInstallationOrigin, at: Instant) {
-        origins[origin.installationId] = origin
-    }
-
-    override suspend fun origin(installationId: Long): GitHubInstallationOrigin? = origins[installationId]
-
-    override suspend fun claimDelivery(deliveryId: String, at: Instant): Boolean = deliveries.add(deliveryId)
-
-    override suspend fun releaseDelivery(deliveryId: String) {
-        deliveries.remove(deliveryId)
+        origins.byId.remove(installationId)
     }
 
     override suspend fun saveState(orgId: Uuid, stateHash: String, by: String, expiresAt: Instant) {

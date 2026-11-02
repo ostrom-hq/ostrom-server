@@ -70,21 +70,23 @@ class GitHubDirectorySync(
             if (directory.state(orgId)?.syncedAt != null) return
             val failed = guard.withLock { failedAt[orgId] }
             if (failed != null && clock.now() < failed + RETRY_AFTER) throw GitHubUnavailableException()
-            val read = try {
-                read(installation)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: GitHubCallException) {
-                logger.warn("github directory not read", mapOf("installation" to installation.installationId), error)
-                guard.withLock { failedAt[orgId] = clock.now() }
-                throw GitHubUnavailableException()
-            }
-            directory.replace(orgId, read, clock.now())
+            directory.replace(orgId, readOrRest(installation), clock.now())
             guard.withLock {
                 failedAt.remove(orgId)
                 firstReads.remove(orgId)
             }
         }
+    }
+
+    // GitHub failing on a first read: logged, an unavailable answer, and the organization rests [RETRY_AFTER].
+    private suspend fun readOrRest(installation: GitHubInstallation): GitHubDirectory = try {
+        read(installation)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: GitHubCallException) {
+        logger.warn("github directory not read", mapOf("installation" to installation.installationId), error)
+        guard.withLock { failedAt[installation.orgId] = clock.now() }
+        throw GitHubUnavailableException()
     }
 
     /**

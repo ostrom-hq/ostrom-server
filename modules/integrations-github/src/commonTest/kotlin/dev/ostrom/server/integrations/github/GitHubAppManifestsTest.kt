@@ -89,7 +89,8 @@ class GitHubAppManifestsTest {
             clock,
         )
         assertFailsWith<NotAnInstanceAdminException> { nobody.start(admin, null, SESSION) }
-        assertFailsWith<GitHubAppExistsException> { manifests(GitHubAppCredentials(slug = "env")).start(admin, null, SESSION) }
+        val named = manifests(GitHubAppCredentials(slug = "env"))
+        assertFailsWith<GitHubAppExistsException> { named.start(admin, null, SESSION) }
         for (owner in listOf("-acme", "acme/x", "a".repeat(40), "")) {
             assertEquals(ErrorKind.INVALID_REQUEST, kindOf { manifests().start(admin, owner, SESSION) })
         }

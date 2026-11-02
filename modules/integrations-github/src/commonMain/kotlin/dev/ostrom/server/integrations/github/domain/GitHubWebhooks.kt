@@ -57,6 +57,7 @@ interface HandleWebhookUseCase {
  * delivery is ignored, and a delivery whose handling failed is released, so that GitHub's redelivery is handled.
  *
  * @param repository Installations.
+ * @param origins Who installed each installation, and the deliveries handled.
  * @param ask Asks gates.
  * @param checks Publishes the check.
  * @param logger Logs a refused gate.
@@ -64,6 +65,7 @@ interface HandleWebhookUseCase {
  */
 class HandleWebhookUseCaseImpl(
     private val repository: GitHubRepository,
+    private val origins: GitHubOriginsRepository,
     private val ask: AskGateUseCase,
     private val checks: GitHubGateChecks,
     private val logger: Logger,
@@ -72,7 +74,7 @@ class HandleWebhookUseCaseImpl(
     override suspend fun invoke(event: String?, delivery: String?, body: String): WebhookOutcome {
         val id = delivery?.takeIf { DELIVERY.matches(it) }
             ?: throw OstromException(ErrorKind.INVALID_REQUEST, "This webhook has no X-GitHub-Delivery id.")
-        if (!repository.claimDelivery(id, clock.now())) return WebhookOutcome.REPLAYED
+        if (!origins.claimDelivery(id, clock.now())) return WebhookOutcome.REPLAYED
         var handled = false
         try {
             val outcome = handle(event, body)
@@ -80,7 +82,7 @@ class HandleWebhookUseCaseImpl(
             return outcome
         } finally {
             // A failure (GitHub down while the check is published) leaves the delivery to GitHub's redelivery.
-            if (!handled) withContext(NonCancellable) { repository.releaseDelivery(id) }
+            if (!handled) withContext(NonCancellable) { origins.releaseDelivery(id) }
         }
     }
 
@@ -105,7 +107,7 @@ class HandleWebhookUseCaseImpl(
         val account = payload.installation?.account
         if (sender == null || account == null) return WebhookOutcome.IGNORED
         val origin = GitHubInstallationOrigin(installationId, sender, account.login, account.type)
-        repository.saveOrigin(origin, clock.now())
+        origins.saveOrigin(origin, clock.now())
         return WebhookOutcome.RECORDED
     }
 

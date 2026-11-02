@@ -18,6 +18,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
 import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
+import dev.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import dev.ostrom.server.integrations.github.domain.GitHubRepo
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.integrations.github.domain.GitHubTeam
@@ -236,7 +237,7 @@ class GitHubDirectoryPostgresTest {
     @Test
     fun anInstallReadsTheDirectoryAgainAtTheNextList() = gitHubTest { server ->
         server.koin.get<GitHubRepository>().saveInstallation(GitHubInstallation(ORG, 42, "acme"), NOW)
-        server.koin.get<GitHubRepository>().saveOrigin(ACME_ORIGIN, NOW)
+        server.koin.get<GitHubOriginsRepository>().saveOrigin(ACME_ORIGIN, NOW)
         server.get("user:a:owner", "/api/v1/repos")
         val apps = server.koin.get<GitHubAppStore>()
         apps.saveApp(createdApp(), "user:a:owner", NOW)

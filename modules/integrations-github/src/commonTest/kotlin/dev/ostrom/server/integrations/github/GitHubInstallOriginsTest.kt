@@ -13,6 +13,7 @@ import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
 import dev.ostrom.server.integrations.github.domain.InstallationNotYoursException
 import dev.ostrom.server.integrations.github.domain.InstallationPendingException
 import dev.ostrom.server.integrations.github.domain.WebhookOutcome
+import dev.ostrom.server.integrations.github.domain.installPage
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlinx.coroutines.delay
@@ -47,12 +48,14 @@ class GitHubInstallOriginsTest {
     }
     private val webhooks = HandleWebhookUseCaseImpl(
         repository,
+        repository.origins,
         ask,
         GitHubGateChecks(repository, api, "https://console.example", clock),
         logger,
         clock,
     )
-    private val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
+    private val page = installPage(GITHUB, "ostrom-dev")
+    private val installs = GitHubInstalls(repository, repository.origins, api, { page }, clock)
 
     private suspend fun state(org: Uuid = ORG) = installs.start(org, "owner", SESSION).substringAfter("state=")
 
@@ -65,19 +68,19 @@ class GitHubInstallOriginsTest {
     @Test
     fun theWebhookOfAnInstallRecordsWhoInstalledIt() = runTest {
         assertEquals(WebhookOutcome.RECORDED, webhooks("installation", "a-1", created(42, "acme-admin", "acme")))
-        assertEquals(ACME_ORIGIN, repository.origin(42))
+        assertEquals(ACME_ORIGIN, repository.origins.origin(42))
         assertEquals(WebhookOutcome.IGNORED, webhooks("installation", "a-2", created(46, null, "acme")), "No sender")
         assertEquals(WebhookOutcome.IGNORED, webhooks("installation", "a-3", created(46, "x", null)), "No account")
-        assertNull(repository.origin(46))
+        assertNull(repository.origins.origin(46))
         // An installation deleted before any organization linked it is forgotten too.
         val deleted = """{"action":"deleted","installation":{"id":42}}"""
         assertEquals(WebhookOutcome.UNINSTALLED, webhooks("installation", "a-4", deleted))
-        assertNull(repository.origin(42))
+        assertNull(repository.origins.origin(42))
     }
 
     @Test
     fun aMemberWithReadAccessWhoReplaysTheCallbackIsRefused() = runTest {
-        repository.saveOrigin(ACME_ORIGIN, NOW)
+        repository.origins.saveOrigin(ACME_ORIGIN, NOW)
         // globex-admin can read acme on GitHub: GitHub lists acme's installation among theirs.
         api.reachable["gho_globex"] = setOf(42L, 43L)
         val replayed = assertFailsWith<InstallationNotYoursException> {
@@ -91,7 +94,7 @@ class GitHubInstallOriginsTest {
 
     @Test
     fun theAdminWhoInstalledItIsAcceptedWhateverTheCaseOfTheirLogin() = runTest {
-        repository.saveOrigin(ACME_ORIGIN.copy(sender = "Acme-Admin"), NOW)
+        repository.origins.saveOrigin(ACME_ORIGIN.copy(sender = "Acme-Admin"), NOW)
         assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", state(), SESSION))
     }
 
@@ -100,8 +103,8 @@ class GitHubInstallOriginsTest {
         api.codes["code-carol"] = "gho_carol"
         api.reachable["gho_carol"] = setOf(44L, 45L)
         api.logins["gho_carol"] = "carol"
-        repository.saveOrigin(GitHubInstallationOrigin(44, "carol", "carol", "User"), NOW)
-        repository.saveOrigin(GitHubInstallationOrigin(45, "carol", "dave", "User"), NOW)
+        repository.origins.saveOrigin(GitHubInstallationOrigin(44, "carol", "carol", "User"), NOW)
+        repository.origins.saveOrigin(GitHubInstallationOrigin(45, "carol", "dave", "User"), NOW)
         assertFailsWith<InstallationNotYoursException> { installs.finish("45", "code-carol", state(), SESSION) }
         assertEquals(GitHubInstallation(ORG, 44, "carol"), installs.finish("44", "code-carol", state(), SESSION))
     }
@@ -117,7 +120,7 @@ class GitHubInstallOriginsTest {
         // The webhook a moment after the browser: the callback waits for it.
         launch {
             delay(1_500.milliseconds)
-            repository.saveOrigin(ACME_ORIGIN, NOW)
+            repository.origins.saveOrigin(ACME_ORIGIN, NOW)
         }
         assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", state(), SESSION))
     }
@@ -132,7 +135,7 @@ class GitHubInstallOriginsTest {
 
         val failing = pull(13)
         assertFailsWith<IllegalStateException> { webhooks("pull_request", "b-2", failing) }
-        assertFalse("b-2" in repository.deliveries, "Released for the redelivery")
+        assertFalse("b-2" in repository.origins.deliveries, "Released for the redelivery")
         assertFailsWith<IllegalStateException> { webhooks("pull_request", "b-2", failing) }
         assertEquals(3, asked.size, "GitHub's redelivery, same id, is handled")
     }
@@ -143,7 +146,7 @@ class GitHubInstallOriginsTest {
             val refused = assertFailsWith<OstromException> { webhooks("pull_request", delivery, pull(6)) }
             assertEquals(ErrorKind.INVALID_REQUEST, refused.kind, "$delivery")
         }
-        assertTrue(repository.deliveries.isEmpty())
+        assertTrue(repository.origins.deliveries.isEmpty())
     }
 
     private fun pull(number: Int) =

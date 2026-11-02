@@ -53,21 +53,20 @@ class InstallationPendingException :
  * must be the person too. The installation is then read with the App's own JWT before it is linked.
  *
  * @param repository Installations and states.
+ * @param origins Who installed each installation, awaited up to 5 seconds, checked once a second.
  * @param api GitHub.
- * @param slug The App's slug, or null when not configured (read at each start: the App can be created later).
- * @param webUrl GitHub's web address.
+ * @param page GitHub's page that installs the App ([installPage]), or null when the App is not configured (read at
+ *   each start: the App can be created later).
  * @param clock The clock.
  * @param installed Told of each installation linked (the directory is read again).
- * @param originWait How long the callback waits for the `installation.created` webhook, checked once a second.
  */
 class GitHubInstalls(
     private val repository: GitHubRepository,
+    private val origins: GitHubOriginsRepository,
     private val api: GitHubApi,
-    private val slug: suspend () -> String?,
-    private val webUrl: String,
+    private val page: suspend () -> String?,
     private val clock: Clock,
     private val installed: suspend (GitHubInstallation) -> Unit = {},
-    private val originWait: Duration = ORIGIN_WAIT,
 ) {
     /**
      * Starts an install.
@@ -79,10 +78,10 @@ class GitHubInstalls(
      * @throws GitHubAppNotConfiguredException Without an App.
      */
     suspend fun start(orgId: Uuid, by: String, session: String): String {
-        val app = slug() ?: throw GitHubAppNotConfiguredException()
+        val install = page() ?: throw GitHubAppNotConfiguredException()
         val state = Uuid.random().toHexString() + Uuid.random().toHexString()
         repository.saveState(orgId, hash(state, session), by, clock.now() + STATE_LIFETIME)
-        return "$webUrl/apps/$app/installations/new?state=$state"
+        return "$install?state=$state"
     }
 
     /**
@@ -110,10 +109,7 @@ class GitHubInstalls(
         // The state is used before GitHub is asked anything: a refused callback never serves twice.
         val orgId = repository.takeState(hash(proof, session), clock.now())
             ?: refuse(ErrorKind.FORBIDDEN, "This install link expired, was already used or belongs to another session.")
-        val person = api.userToken(authorization) ?: throw InstallationNotYoursException()
-        if (id !in api.userInstallations(person)) throw InstallationNotYoursException()
-        val origin = awaitOrigin(id) ?: throw InstallationPendingException()
-        if (!origin.installedBy(api.userLogin(person))) throw InstallationNotYoursException()
+        requireInstaller(id, authorization)
         val account = api.installationAccount(id)
             ?: refuse(ErrorKind.INVALID_REQUEST, "GitHub does not know this installation of the App.")
         if (repository.installationById(id)?.let { it.orgId != orgId } == true) {
@@ -125,14 +121,24 @@ class GitHubInstalls(
         return installation
     }
 
+    // Who comes back must reach the installation on GitHub, and be who installed it (AUDIT-SECU-2 M1).
+    private suspend fun requireInstaller(installationId: Long, authorization: String) {
+        val person = api.userToken(authorization)?.takeIf { installationId in api.userInstallations(it) }
+            ?: notYours()
+        val origin = awaitOrigin(installationId) ?: throw InstallationPendingException()
+        if (!origin.installedBy(api.userLogin(person))) notYours()
+    }
+
+    private fun notYours(): Nothing = throw InstallationNotYoursException()
+
     // GitHub sends the webhook as the install ends, and the browser back at the same time: either can come first.
     private suspend fun awaitOrigin(installationId: Long): GitHubInstallationOrigin? {
-        var origin = repository.origin(installationId)
+        var origin = origins.origin(installationId)
         var waited = Duration.ZERO
-        while (origin == null && waited < originWait) {
+        while (origin == null && waited < ORIGIN_WAIT) {
             delay(ORIGIN_POLL)
             waited += ORIGIN_POLL
-            origin = repository.origin(installationId)
+            origin = origins.origin(installationId)
         }
         return origin
     }
@@ -156,3 +162,12 @@ class GitHubInstalls(
 private val STATE_LIFETIME = 10.minutes
 private val ORIGIN_WAIT = 5.seconds
 private val ORIGIN_POLL = 1.seconds
+
+/**
+ * GitHub's page that installs an App.
+ *
+ * @param webUrl GitHub's web address.
+ * @param slug The App's slug, or null when no App is configured.
+ * @return The page, or null without an App.
+ */
+fun installPage(webUrl: String, slug: String?): String? = slug?.let { "$webUrl/apps/$it/installations/new" }
