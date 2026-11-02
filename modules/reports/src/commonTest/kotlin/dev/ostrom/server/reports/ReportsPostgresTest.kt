@@ -66,7 +66,10 @@ class ReportsPostgresTest {
         gate(SeedGate(
             ORG_A, approved, "Merge PR #6", "APPROVED", NOW - 40.minutes, OLGA.userId.toString(), NOW - 15.minutes,
         ))
-        gate(SeedGate(ORG_A, rejected, "Deploy", "REJECTED", NOW - 20.minutes, "rev-b", NOW - 3.minutes))
+        // Decided under the id of org B's person: org A never learns her login.
+        gate(SeedGate(
+            ORG_A, rejected, "Deploy", "REJECTED", NOW - 20.minutes, CAROL.userId.toString(), NOW - 3.minutes,
+        ))
         gate(SeedGate(ORG_A, pending, "Publish", "PENDING", NOW - 1.minutes))
         // A gate that only watched shows nothing.
         gate(SeedGate(ORG_A, Uuid.random(), "Shadow", "SHADOW", NOW - 2.minutes))
@@ -176,7 +179,7 @@ class ReportsPostgresTest {
         assertEquals("person", decided.actor.kind)
         assertEquals("olga said yes to: Merge PR #6", decided.summary)
         assertEquals(approved.toString(), decided.gateId)
-        assertEquals("rev-b said no to: Deploy", byId.getValue("gate.decided:$rejected").summary)
+        assertEquals("${CAROL.userId} said no to: Deploy", byId.getValue("gate.decided:$rejected").summary)
         assertEquals("claude asked for a yes: Publish", byId.getValue("gate.requested:$pending").summary)
         assertEquals("olga changed the workflow release", byId.getValue("workflow.changed:d1").summary)
         val ended = byId.getValue("session.ended:s1")

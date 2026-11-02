@@ -51,7 +51,9 @@ internal object ReportsQueries {
      * @return The statement.
      */
     fun activity(cursor: Boolean, repo: Boolean): String {
-        fun before(at: String, id: String) = if (cursor) " AND ($at, $id) < (:before_at, :before_id)" else ""
+        // The plain bound on the time lets the index start at the cursor; the row comparison breaks the ties.
+        fun before(at: String, id: String) =
+            if (cursor) " AND $at <= :before_at AND ($at, $id) < (:before_at, :before_id)" else ""
         val ofRepo = if (repo) " AND s.repo = :repo" else ""
         val started = "CONCAT('session.started:', s.id)"
         val ended = "CONCAT('session.ended:', s.id)"
@@ -97,12 +99,14 @@ internal object ReportsQueries {
             SELECT feed.item_id, feed.at, feed.kind, COALESCE(u.login, feed.actor) AS actor, feed.subject,
                 feed.outcome, feed.repo, feed.cost_usd, feed.session_id, feed.gate_id
             FROM ($sources) feed
-            LEFT JOIN identity_users u ON u.id = CASE WHEN feed.actor ~ '$UUID_PATTERN'
-                THEN CAST(feed.actor AS UUID) END
+            LEFT JOIN (orgs_members m JOIN identity_users u ON u.id = m.user_id)
+                ON m.org_id = :org_id AND feed.kind IN ('gate.decided', 'workflow.changed')
+                AND m.user_id = CASE WHEN feed.actor ~ '$UUID_PATTERN' THEN CAST(feed.actor AS UUID) END
             ORDER BY feed.at DESC, feed.item_id DESC LIMIT :limit
         """.trimIndent()
     }
 
-    // An actor kept as a user's id is shown by its login; any other value as it is.
+    // A person who decided, kept as a user's id, is shown by their login, and only if they are a member of the
+    // organization: an id written anywhere else, or of a stranger, is shown as it is (never another org's login).
     private const val UUID_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 }
