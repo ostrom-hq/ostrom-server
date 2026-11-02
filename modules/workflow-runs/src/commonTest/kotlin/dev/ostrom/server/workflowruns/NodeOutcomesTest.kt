@@ -57,8 +57,12 @@ class NodeOutcomesTest {
         notes: List<Notification> = emptyList(),
         gates: List<SessionGate> = emptyList(),
         session: Session = session(receiptId = "rcpt_session_s-1"),
-        attestations: Map<String, CheckAttestation> = emptyMap(),
-    ) = NodeOutcomes(PACKAGE.copy(nodes = nodes), session, runs, notes, gates, attestations).nodes()
+    ) = NodeOutcomes(PACKAGE.copy(nodes = nodes), session, runs, notes, gates, emptyMap()).nodes()
+
+    /** The node of [node] once [runs] are reported, those of [attestations] by the runner. */
+    private fun attested(node: PackageNode, runs: List<CheckRun>, attestations: Map<String, CheckAttestation>) =
+        NodeOutcomes(PACKAGE.copy(nodes = listOf(node)), session(), runs, emptyList(), emptyList(), attestations)
+            .nodes().single()
 
     private fun one(node: PackageNode, runs: List<CheckRun> = emptyList(), notes: List<Notification> = emptyList()) =
         outcomes(listOf(node), runs, notes).single()
@@ -101,13 +105,13 @@ class NodeOutcomesTest {
     fun aCheckNodeIsTheRunnersWhenItsLastRunIs() {
         val check = node("n-check", "check")
         val runner = mapOf("chk_2" to CheckAttestation.ISOLATED_RUNNER)
-        val byRunner = outcomes(listOf(check), listOf(run("chk_1", 1), run("chk_2", 0)), attestations = runner).single()
+        val byRunner = attested(check, listOf(run("chk_1", 1), run("chk_2", 0)), runner)
         assertEquals(CheckAttestation.ISOLATED_RUNNER, byRunner.attestation)
         assertEquals("chk_2", byRunner.ref)
-        val afterIt = outcomes(listOf(check), listOf(run("chk_2", 0), run("chk_3", 0)), attestations = runner).single()
+        val afterIt = attested(check, listOf(run("chk_2", 0), run("chk_3", 0)), runner)
         assertEquals(CheckAttestation.WORKSTATION_DECLARED, afterIt.attestation, "The last run is the workstation's")
         val shadow = node("n-check", "check", mode = PackageMode.SHADOW)
-        val notRun = outcomes(listOf(shadow), listOf(run("chk_2", 0)), attestations = runner).single()
+        val notRun = attested(shadow, listOf(run("chk_2", 0)), runner)
         assertEquals(CheckAttestation.WORKSTATION_DECLARED, notRun.attestation, "A shadow check runs nothing")
     }
 
