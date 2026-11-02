@@ -49,7 +49,7 @@ class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsR
                     .bind("body", OstromJson.encodeToString(Notification.serializer(), notification)),
             ).getOrThrow()
             // Two passes of a hook at once: the first one stored stands.
-            if (inserted.isNotEmpty()) notification else first(tx, orgId, notification, actionKey)
+            if (inserted.any()) notification else first(tx, orgId, notification, actionKey)
         }
 
     override suspend fun updateNotification(orgId: Uuid, notification: Notification) {

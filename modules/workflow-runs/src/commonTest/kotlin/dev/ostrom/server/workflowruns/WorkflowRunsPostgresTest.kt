@@ -127,7 +127,9 @@ class WorkflowRunsPostgresTest {
             val ada = server.person("ada")
             val agent = server.session(ada)
 
-            val reported = server.call(agent, "/api/v1/checks", CHECK)
+            // The workstation cannot attest its own run: an `attestation` it sends is not read (E2E-ATT-002).
+            val claimed = CHECK.replace("\"sandbox\"", "\"attestation\":\"ci\",\"sandbox\"")
+            val reported = server.call(agent, "/api/v1/checks", claimed)
             assertEquals(HttpStatusCode.Created, reported.status, reported.bodyAsText())
             val run = reported.body<CheckRun>()
             assertEquals(listOf("ada", "v1", "acme/api"), listOf(run.dev, run.version, run.repo))
@@ -256,13 +258,9 @@ class WorkflowRunsPostgresTest {
             val adasBundle = server.call(bob.personalToken, "/api/v1/receipts/rcpt_session_s-1/bundle")
             assertEquals(HttpStatusCode.NotFound, adasBundle.status, "Ada's session receipt is not in Bob's org")
 
-            // The database itself: without its organization set, a transaction reads no run and changes none.
-            server.driver.execute(PROBE_ROLE).getOrThrow()
-            server.driver.execute(
-                "GRANT SELECT, UPDATE ON workflow_runs_checks, workflow_runs_notifications TO ostrom_rls_probe",
-            ).getOrThrow()
+            // The database itself: without its organization set, a transaction reads no run and changes none. The test
+            // server's driver is the serving role, as in production: row level security applies to it.
             val seen = server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
                 listOf("workflow_runs_checks", "workflow_runs_notifications").map { table ->
                     val count = fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow().first().get("n").asString()
                     count to execute("UPDATE $table SET session_id = 'x'").getOrThrow()
@@ -306,8 +304,9 @@ class WorkflowRunsPostgresTest {
                 server.call(agent, "/api/v1/checks", CHECK)
                 server.call(agent, "/api/v1/notifications", NOTIFY.replace("git push", "git push $it"))
             }
-            server.driver.execute("ANALYZE workflow_runs_checks").getOrThrow()
-            server.driver.execute("ANALYZE workflow_runs_notifications").getOrThrow()
+            // Statistics only: the serving role owns no table, the owner analyzes them.
+            server.database.owner.execute("ANALYZE workflow_runs_checks").getOrThrow()
+            server.database.owner.execute("ANALYZE workflow_runs_notifications").getOrThrow()
             val plans = listOf(
                 Triple("checks of a session", RunQueries.checks(RunQuery(sessionId = "s-1")), "session"),
                 Triple("checks of a node", RunQueries.checks(RunQuery(nodeId = "n-check")), "workflow_runs_checks_"),
@@ -359,8 +358,6 @@ class WorkflowRunsPostgresTest {
         const val ROWS = 30
         const val DIGEST = "sha256:runs"
         val READER_SCOPES = setOf("receipts:read", "sessions:read")
-        const val PROBE_ROLE =
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$"
         const val LAUNCH = """{"repo":"acme/api","agent":"claude-code"}"""
         const val SESSION = """{"id":"s-1","agent":"claude-code","repo":"acme/api"}"""
         const val CHECK = """{"sessionId":"s-1","digest":"sha256:runs","nodeId":"n-check","scriptId":"sc-1",""" +
