@@ -238,6 +238,12 @@ class SharedAccountPoolTest {
             clock.now() + SharedAccountPool.DEFAULT_COOLDOWN,
             repository.get(Sharing.orgA, account.id)!!.cooldownUntil,
         )
+        leased.stalled()
+        assertEquals(
+            clock.now() + SharedAccountPool.STALL_COOLDOWN,
+            repository.get(Sharing.orgA, account.id)!!.cooldownUntil,
+            "A provider that stalled rests the account",
+        )
         leased.observe(401, emptyMap())
         assertEquals(
             Instant.fromEpochMilliseconds(0),
