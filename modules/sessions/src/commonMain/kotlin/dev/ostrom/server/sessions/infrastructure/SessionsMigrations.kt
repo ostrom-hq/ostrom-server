@@ -7,7 +7,8 @@ import dev.ostrom.server.kernel.database.SchemaMigration
  * The sessions schema. Rows are isolated by organization in the database itself: row level security is forced (the
  * owner included) and every query runs in a transaction that first sets `ostrom.org_id`. One read crosses
  * organizations: the sweep of lost sessions, which sets `ostrom.sweep` in its own read-only transaction; that policy
- * is for `SELECT` only, so nothing can be written that way.
+ * is for `SELECT` only, so nothing can be written that way. The count of running sessions crosses them through a
+ * function of `ostrom_router` (migration 2, docs/tenancy.md).
  */
 val SessionsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -52,6 +53,38 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
             WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID));
         CREATE POLICY sessions_sessions_sweep ON sessions_sessions FOR SELECT
             USING (current_setting('ostrom.sweep', TRUE) = 'lost-sessions')
+        """.trimIndent(),
+    ),
+    // The count of the `ostrom.sessions.active{where="local"}` gauge, across organizations (docs/tenancy.md): a
+    // function of `ostrom_router`, which sees two time columns alone, through a read-only policy of its own.
+    SchemaMigration(
+        2,
+        "sessions_active_count",
+        """
+        DO $$ BEGIN
+            CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+        END $$;
+        DO $$ BEGIN
+            GRANT ostrom_router TO CURRENT_USER;
+        EXCEPTION WHEN unique_violation THEN NULL;
+        END $$;
+        GRANT USAGE ON SCHEMA public TO ostrom_router;
+        CREATE POLICY sessions_sessions_router ON sessions_sessions FOR SELECT TO ostrom_router USING (true);
+        GRANT SELECT (ended_at, last_seen_at) ON sessions_sessions TO ostrom_router;
+        CREATE FUNCTION sessions_active_count(p_seen_since TIMESTAMPTZ) RETURNS BIGINT
+            LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+            SELECT count(*) FROM sessions_sessions WHERE ended_at IS NULL AND last_seen_at >= p_seen_since;
+        $$;
+        REVOKE EXECUTE ON FUNCTION sessions_active_count(TIMESTAMPTZ) FROM PUBLIC;
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+                GRANT EXECUTE ON FUNCTION sessions_active_count(TIMESTAMPTZ) TO ostrom_app;
+            END IF;
+        END $$;
+        GRANT CREATE ON SCHEMA public TO ostrom_router;
+        ALTER FUNCTION sessions_active_count(TIMESTAMPTZ) OWNER TO ostrom_router;
+        REVOKE CREATE ON SCHEMA public FROM ostrom_router
         """.trimIndent(),
     ),
 )

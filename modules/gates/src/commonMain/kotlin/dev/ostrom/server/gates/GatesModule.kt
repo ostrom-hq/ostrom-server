@@ -35,6 +35,7 @@ import dev.ostrom.server.gates.infrastructure.GatesMigrations
 import dev.ostrom.server.gates.infrastructure.MetricsGateChannel
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
+import dev.ostrom.server.gates.infrastructure.PendingGatesCount
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import dev.ostrom.server.gates.infrastructure.ReceiptsGateSigner
 import dev.ostrom.server.gates.infrastructure.Sha256GateDigester
@@ -44,7 +45,10 @@ import dev.ostrom.server.gates.presentation.GatesRoutesDependencies
 import dev.ostrom.server.gates.presentation.gatesRoutes
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.observability.CachedCount
+import dev.ostrom.server.kernel.observability.OstromMetrics
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.CoroutineScope
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -101,5 +105,12 @@ object GatesModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.gatesRoutes(koin.get())
+    }
+
+    /** Keeps the `ostrom.gates.pending` gauge's count, read every 30 s across organizations. */
+    override fun start(scope: CoroutineScope, koin: Koin) {
+        val pending = CachedCount(PendingGatesCount(koin.get())::read)
+        koin.get<OstromMetrics>().observeGatesPending(pending::value)
+        pending.refreshEvery(scope)
     }
 }
