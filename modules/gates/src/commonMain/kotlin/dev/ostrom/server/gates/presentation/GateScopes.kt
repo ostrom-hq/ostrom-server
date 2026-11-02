@@ -67,13 +67,15 @@ fun AuthenticatedPrincipal.requireAnyScope(accepted: Set<String>) {
  * @throws OstromException A 403.
  */
 fun AuthenticatedPrincipal.requireAnswering() {
-    if (kind != PrincipalKind.USER) throw OstromException(ErrorKind.FORBIDDEN, "Only a person answers a gate.")
-    if (channel != PrincipalChannel.BROWSER && channel != PrincipalChannel.MOBILE_APP) {
-        throw OstromException(ErrorKind.FORBIDDEN, "A yes is given in the browser or in the app.")
+    val refused = when {
+        kind != PrincipalKind.USER -> OstromException(ErrorKind.FORBIDDEN, "Only a person answers a gate.")
+        channel != PrincipalChannel.BROWSER && channel != PrincipalChannel.MOBILE_APP ->
+            OstromException(ErrorKind.FORBIDDEN, "A yes is given in the browser or in the app.")
+        // The app answers within minutes of the phone's biometric unlock: a locked app is told to unlock, then answer.
+        channel == PrincipalChannel.MOBILE_APP && scopes.none { it in GateScopes.answering } ->
+            StepUpRequiredException()
+        else -> null
     }
-    // The app answers within minutes of the phone's biometric unlock: a locked app is told to unlock, then answer.
-    if (channel == PrincipalChannel.MOBILE_APP && scopes.none { it in GateScopes.answering }) {
-        throw StepUpRequiredException()
-    }
+    if (refused != null) throw refused
     requireAnyScope(GateScopes.answering)
 }

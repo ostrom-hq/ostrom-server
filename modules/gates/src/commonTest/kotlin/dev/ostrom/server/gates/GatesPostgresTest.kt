@@ -138,7 +138,8 @@ class GatesPostgresTest {
                     val (kind, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
-                        "user", "reader", "app", "cli", "stale" -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        "user", "reader", "app", "locked", "cli", "stale" ->
+                            GateActor(id, orgId, ActorKind.USER, personId = id)
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
                         "runner" -> GateActor(id, orgId, ActorKind.SERVICE, personId = "lyes")
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
@@ -641,7 +642,8 @@ class GatesPostgresTest {
         assertEquals(true, read.body<ApprovalViewResponse>().you.canApprove, read.bodyAsText())
         // The yes asks for the unlock, with the contract's code.
         server.answer("locked:a:rev-b", opened, "rev-b").assertRefused(HttpStatusCode.Forbidden, "step_up_required")
-        assertEquals("pending", server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>().gate.status)
+        val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
+        assertEquals("pending", still.gate.status)
         // Unlocked, the same person's yes passes.
         assertEquals(HttpStatusCode.OK, server.answer("app:a:rev-b", opened, "rev-b").status, "the app, unlocked")
     }
