@@ -177,6 +177,11 @@ class LaunchModelSpendPostgresTest {
             val report = spending.body<SpendingDto>()
             assertEquals(usd, report.totalUsd, "The organization's spending counts the call")
             assertEquals(listOf(ada.memberId.toString() to usd), report.byPerson.map { it.key to it.usd })
+            // The gateway names the launch, not the session: found by the launch's session all the same (server#138).
+            val byAgent = report.byAgent.map { Triple(it.key, it.usd, it.sessions) }
+            assertEquals(listOf(Triple("claude-code", usd, 1L)), byAgent, "Spent by the launch's agent")
+            val byRepo = report.byRepo.map { Triple(it.key, it.usd, it.sessions) }
+            assertEquals(listOf(Triple("acme/api", usd, 1L)), byRepo, "Spent in the launch's repository")
 
             val budget = client.get("/api/v1/budgets/me") { bearerAuth(ada.readerToken) }
             assertEquals(HttpStatusCode.OK, budget.status, budget.bodyAsText())

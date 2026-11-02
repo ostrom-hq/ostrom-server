@@ -312,6 +312,7 @@ class ImportPostgresTest {
         with(server) {
             val response = import(Importing.team(), "owner-a", cutover = true)
             assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+            assertEquals("cutover_sharing_unavailable", response.errorType())
             assertEquals(emptyMap(), servers(), "Nothing imported")
         }
     }

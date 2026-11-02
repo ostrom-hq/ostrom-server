@@ -182,9 +182,6 @@ class SchemaTenancyPostgresTest {
         // The known exceptions, each a finding of the RLS audit (docs/tenancy.md, "Known exceptions"): remove a line
         // with the fix that closes it.
         val UNCONFINED_TABLES = setOf(
-            "runners_session_routes: row level security disabled",
-            "billing_customers: row level security disabled",
-            "billing_outbox: row level security disabled",
             "orgs_organizations: row level security not forced",
             "orgs_members: row level security not forced",
             "orgs_invitations: row level security not forced",
@@ -198,8 +195,6 @@ class SchemaTenancyPostgresTest {
         )
 
         val TOO_WIDE_GRANTS = setOf(
-            "$TENANT: INSERT on runners_session_routes without RLS",
-            "$TENANT: UPDATE on runners_session_routes without RLS",
             "$TENANT: UPDATE on orgs_organizations without RLS",
             "$TENANT: INSERT on orgs_members without RLS",
             "$TENANT: UPDATE on orgs_members without RLS",

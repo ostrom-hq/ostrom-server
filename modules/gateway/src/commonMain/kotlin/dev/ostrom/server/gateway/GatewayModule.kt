@@ -114,6 +114,7 @@ object GatewayModule : ServerModule {
                 getPolicy = get(),
                 putPolicy = get(),
                 clock = get(),
+                audit = get(),
             )
         }
     }
