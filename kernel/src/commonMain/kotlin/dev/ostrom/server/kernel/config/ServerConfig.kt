@@ -2,6 +2,7 @@
 package dev.ostrom.server.kernel.config
 
 import dev.ostrom.core.telemetry.TelemetrySettings
+import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.network.TrustedProxies
 import kotlin.time.Duration
@@ -26,6 +27,8 @@ import kotlin.time.Duration.Companion.seconds
  *   (`OSTROM_SHUTDOWN_DELAY_SECONDS`, 0 to 10), so the load balancer stops sending it requests first. With the 15 s
  *   the engine then gives requests in flight, a stop takes at most 25 s, leaving 5 s of the Helm chart's 30 s grace
  *   period to close the pool and the workers.
+ * @property readLimits How much one subject may read of the costly routes (`OSTROM_READS_PER_MINUTE`,
+ *   `OSTROM_READS_IN_FLIGHT`).
  */
 data class ServerConfig(
     val host: String,
@@ -37,6 +40,7 @@ data class ServerConfig(
     val instanceId: String? = null,
     val trustedProxies: TrustedProxies = TrustedProxies.NONE,
     val drainDelay: Duration = DEFAULT_DRAIN_DELAY_SECONDS.seconds,
+    val readLimits: ReadLimits = ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT),
 ) {
     /** Reading the configuration. */
     companion object {
@@ -47,6 +51,8 @@ data class ServerConfig(
         private const val DEFAULT_DRAIN_DELAY_SECONDS = 5
         private const val MAX_DRAIN_DELAY_SECONDS = 10
         private const val MIGRATION_CONNECTIONS = 2
+        private const val MAX_READS_PER_MINUTE = 100_000
+        private const val MAX_READS_IN_FLIGHT = 1000
 
         /**
          * Reads the configuration from a source.
@@ -88,6 +94,22 @@ data class ServerConfig(
                 DEFAULT_DRAIN_DELAY_SECONDS,
                 0..MAX_DRAIN_DELAY_SECONDS,
             ).seconds,
+            readLimits = readLimits(source),
+        )
+
+        /**
+         * The read limits of the costly routes (AUDIT-SECU-LECTURES M1): `OSTROM_READS_PER_MINUTE` (1 to 100 000,
+         * 600 by default) and `OSTROM_READS_IN_FLIGHT` (1 to 1 000, 16 by default), per subject and per replica.
+         *
+         * @param source Where values are read from.
+         *
+         * @return The limits.
+         *
+         * @throws InvalidConfigException When a value is not an integer in its range.
+         */
+        fun readLimits(source: ConfigSource): ReadLimits = ReadLimits(
+            perMinute = source.int("OSTROM_READS_PER_MINUTE", ReadLimits.DEFAULT_PER_MINUTE, 1..MAX_READS_PER_MINUTE),
+            inFlight = source.int("OSTROM_READS_IN_FLIGHT", ReadLimits.DEFAULT_IN_FLIGHT, 1..MAX_READS_IN_FLIGHT),
         )
 
         /**

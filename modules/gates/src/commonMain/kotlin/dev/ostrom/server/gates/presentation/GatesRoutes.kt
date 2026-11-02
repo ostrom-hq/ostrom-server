@@ -12,6 +12,8 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.http.ReadThrottle
+import dev.ostrom.server.kernel.http.throttledReads
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -26,27 +28,31 @@ import kotlin.uuid.Uuid
  * always come from the credential, never from the body.
  *
  * @param dependencies The use cases.
+ * @param throttle Bounds the reads that cost the most per caller: a gate's wait, the approvals.
  */
-fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies) {
+fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
     authenticated {
         post<GatesApi> {
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.asking)
             call.respond(ask(actor, call.receive<GateAskRequest>().toAskGate()).toResponse(actor))
         }
-        get<GatesApi.Id> { params ->
-            val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingGates)
-            // A hook waits here for its answer, at most 30 s, instead of asking again every second.
-            call.respond(gate(actor, params.id.toUuid(), (params.wait ?: 0).seconds).toResponse(actor))
+        throttledReads(throttle) {
+            get<GatesApi.Id> { params ->
+                val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingGates)
+                // A hook waits here for its answer, at most 30 s, instead of asking again every second; the wait holds
+                // one of the caller's calls at once (AUDIT-SECU-LECTURES M1).
+                call.respond(gate(actor, params.id.toUuid(), (params.wait ?: 0).seconds).toResponse(actor))
+            }
+            get<ApprovalsApi> { params ->
+                val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingApprovals)
+                val status = params.status?.let { statusOf(it) }
+                val items = approvals(actor, params.mine == true, status, params.limit ?: DEFAULT_PAGE)
+                call.respond(ApprovalsPage(items.map { it.toApproval() }))
+            }
         }
         post<GatesApi.Id.Reserve> { params -> respondUse(dependencies, params.parent.id, GateUse.RESERVE) }
         post<GatesApi.Id.Consume> { params -> respondUse(dependencies, params.parent.id, GateUse.CONSUME) }
         post<GatesApi.Id.Release> { params -> respondUse(dependencies, params.parent.id, GateUse.RELEASE) }
-        get<ApprovalsApi> { params ->
-            val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingApprovals)
-            val status = params.status?.let { statusOf(it) }
-            val items = approvals(actor, params.mine == true, status, params.limit ?: DEFAULT_PAGE)
-            call.respond(ApprovalsPage(items.map { it.toApproval() }))
-        }
         get<ApprovalsApi.Id> { params ->
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingApprovals)
             call.respond(approval(actor, params.id.toUuid()).toApproval())

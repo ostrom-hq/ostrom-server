@@ -51,6 +51,8 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.http.ReadLimits
+import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -191,6 +193,12 @@ class GatesPostgresTest {
 
     private fun gatesTest(block: suspend (TestServer) -> Unit) =
         serverTest(listOf(GatesModule), overrides) { server -> block(server) }
+
+    // Two hundred waits of one agent at once: past the default read limits, on purpose.
+    private val manyWaits = module {
+        includes(overrides)
+        single { ReadThrottle(Clock.System, ReadLimits(perMinute = 10_000, inFlight = WAITERS * 2), WAITERS) }
+    }
 
     private suspend fun TestServer.call(
         token: String?,
@@ -429,8 +437,9 @@ class GatesPostgresTest {
     }
 
     @Test
-    fun twoHundredWaitingHooksHoldNoConnection() = gatesTest { server ->
-        // The test pool has 4 connections: a wait that held one would stall every other request for its 20 s.
+    fun twoHundredWaitingHooksHoldNoConnection() = serverTest(listOf(GatesModule), manyWaits) { server ->
+        // The test pool has 4 connections: a wait that held one would stall every other request for its 20 s. The
+        // read limits are raised here: by default one agent holds at most 16 waits (the next test).
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         val path = "/api/v1/gates/${opened.gate.id}"
@@ -450,6 +459,29 @@ class GatesPostgresTest {
             assertTrue(answered.elapsedNow() < 5.seconds, "the waits end with the answer: ${answered.elapsedNow()}")
             assertEquals(setOf("approved"), answers.map { it.body<GateResponse>().gate.status }.toSet())
         }
+    }
+
+    @Test
+    fun anAgentPastItsWaitsAtOnceIsToldToRetryAndOthersAreNot() = gatesTest { server ->
+        // AUDIT-SECU-LECTURES M1: a wait holds one of its caller's calls at once; past them, a 429 with Retry-After.
+        val agent = "agent:a:$session"
+        val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        val path = "/api/v1/gates/${opened.gate.id}"
+        coroutineScope {
+            val waiting = List(ReadLimits.DEFAULT_IN_FLIGHT) { async { server.call(agent, "$path?wait=20") } }
+            delay(1.seconds)
+            val refused = server.call(agent, path)
+            assertEquals(HttpStatusCode.TooManyRequests, refused.status)
+            assertEquals("2", refused.headers[HttpHeaders.RetryAfter])
+            assertTrue("rate_limited" in refused.bodyAsText(), refused.bodyAsText())
+            // Another caller has its own count, and the agent's waits end with the answer.
+            assertEquals(HttpStatusCode.OK, server.call("user:a:rev-c", path).status)
+            assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status)
+            assertEquals(setOf(HttpStatusCode.OK), waiting.awaitAll().map { it.status }.toSet())
+        }
+        // A slot is given back once its answer is sent: a moment after the client has it.
+        delay(1.seconds)
+        assertEquals(HttpStatusCode.OK, server.call(agent, path).status, "the slots are given back")
     }
 
     @Test
