@@ -12,9 +12,11 @@ import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.OTHER_SESSION
+import dev.ostrom.server.gates.fakes.SHA_A
 import dev.ostrom.server.gates.infrastructure.ReceiptsGateSigner
 import dev.ostrom.server.receipts.domain.services.ReceiptRule
 import dev.ostrom.server.receipts.domain.services.ReceiptRules
+import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -45,8 +47,26 @@ class ReceiptsGateSignerTest {
             listOf(ReceiptRule("r-commit-style", "79b6ac48e5225be9037493c1e8a8fc9e5fbc42e2893b0c15b8846bd39d310cd7"))
     }
 
+    // The stored receipts, by organization and id.
+    private val stored = mutableMapOf<Pair<Uuid, String>, JsonObject>()
+    private val getReceipt = object : GetReceiptUseCase {
+        override suspend fun invoke(orgId: Uuid, id: String): JsonObject = stored.getValue(orgId to id)
+    }
+
     private fun signer(bench: GateBench, sign: RecordingSign) =
-        ReceiptsGateSigner(sign, bench.repository, bench.sessions, rules)
+        ReceiptsGateSigner(sign, bench.repository, bench.sessions, rules, getReceipt)
+
+    @Test
+    fun theAnswerReadsTheStoredReceiptOnceSigned() = runTest {
+        val bench = GateBench()
+        val signer = signer(bench, RecordingSign())
+        val org = Uuid.parse("0000000a-0000-0000-0000-000000000000")
+        val receipt = JsonObject(mapOf("id" to JsonPrimitive("rcpt_gate_1"), "signature" to JsonPrimitive("sig")))
+        stored[org to "rcpt_gate_1"] = receipt
+        assertEquals(receipt, signer.read(org, "rcpt_gate_1"))
+        // Signing failed: the gate has no receipt yet, and there is nothing to read.
+        assertNull(signer.read(org, null))
+    }
 
     @Test
     fun theGatePreimageIsThePrototypes() = runTest {
@@ -80,7 +100,8 @@ class ReceiptsGateSignerTest {
         assertEquals("rcpt_gate_${view.gate.id}", id)
         assertEquals(
             Json.parseToJsonElement(
-                """{"kind":"gate","id":"${view.gate.id}","digest":"${draft.digest()}"}""",
+                // The pushed commit names the subject, in clear; the digest is the request's.
+                """{"kind":"gate","id":"$SHA_A","digest":"${draft.digest()}"}""",
             ),
             draft["subject"],
         )
@@ -128,6 +149,8 @@ class ReceiptsGateSignerTest {
         )
         signer(bench, sign).sign(merge)
         assertEquals("ci", sign.drafts.single().first.text("agent"))
+        // The pull request's head names the subject.
+        assertEquals("a".repeat(40), sign.drafts.single().first.getValue("subject").jsonObject.text("id"))
         val preimage = signer(bench, sign).preimage(merge)
         assertEquals("""{"sha":"${"a".repeat(40)}","pr":"6"}""", preimage.getValue("ci").toString())
         assertEquals("""{"number":"6","sha":"${"a".repeat(40)}","owner":"main"}""", preimage.getValue("pr").toString())
@@ -137,6 +160,19 @@ class ReceiptsGateSignerTest {
 
         val viaHook = signer(bench, sign).preimage(merge.copy(askedVia = setOf(AskedVia.HOOK)))
         assertEquals("null", viaHook.getValue("ci").toString(), "Only the check gives a CI context")
+    }
+
+    @Test
+    fun aGateOnNoCommitIsNamedByItsId() = runTest {
+        val bench = GateBench()
+        val sign = RecordingSign()
+        val decided = bench.answer(bench.open(bench.pushRequest()), "rev-b").gate
+        val noPush = decided.copy(subject = decided.subject.copy(push = null, pullRequest = null))
+        val noRef = decided.copy(subject = decided.subject.copy(push = decided.subject.push?.copy(refs = emptyList())))
+        signer(bench, sign).sign(noPush)
+        signer(bench, sign).sign(noRef)
+        val ids = sign.drafts.map { (draft, _) -> draft.getValue("subject").jsonObject.text("id") }
+        assertEquals(listOf(decided.id.toString(), decided.id.toString()), ids)
     }
 
     @Test

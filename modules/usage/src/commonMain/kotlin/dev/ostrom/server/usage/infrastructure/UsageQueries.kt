@@ -33,10 +33,6 @@ internal object UsageQueries {
         "SELECT CAST(SUM(cost_micros) AS BIGINT) AS spent FROM usage_events " +
             "WHERE org_id = :org_id AND at >= :from AND at < :to AND launch_id = :launch_id AND cost_micros > 0"
 
-    /** One batch of the retention purge: `:before`, `:limit`. */
-    const val PURGE: String =
-        "DELETE FROM usage_events WHERE id IN (SELECT id FROM usage_events WHERE at < :before LIMIT :limit)"
-
     /**
      * The org's or a member's spend since `:since`: `:org_id`, `:since`, and `:member_id` if [member].
      *
