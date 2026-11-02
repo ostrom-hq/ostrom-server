@@ -271,6 +271,15 @@ class ImportPostgresTest {
         }
 
     @Test
+    fun aCutoverIsRefusedWhereNoSharedAccountIsImported() = serverTest(modules, importOverrides()) { server ->
+        with(server) {
+            val response = import(Importing.team(), "owner-a", cutover = true)
+            assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+            assertEquals(emptyMap(), servers(), "Nothing imported")
+        }
+    }
+
+    @Test
     fun sharedAccountsGoThroughTheSharingModuleWhenItIsInstalled() {
         val accounts = FakeAccountImporter()
         serverTest(modules, importOverrides(accounts)) { server ->
