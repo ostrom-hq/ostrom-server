@@ -4,6 +4,7 @@ package dev.ostrom.server.governance.infrastructure
 import dev.ostrom.server.governance.domain.Confirmation
 import dev.ostrom.server.governance.domain.ConfirmationCredential
 import dev.ostrom.server.governance.domain.ConfirmationError
+import dev.ostrom.server.governance.domain.ConfirmationOutcome
 import dev.ostrom.server.governance.domain.ConfirmationPerson
 import dev.ostrom.server.governance.domain.ConfirmationStatus
 import dev.ostrom.server.governance.domain.ConfirmationsRepository
@@ -73,26 +74,20 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
             .map { it.toConfirmation() }
     }
 
-    override suspend fun answer(
-        orgId: Uuid,
-        id: String,
-        status: ConfirmationStatus,
-        by: ConfirmationPerson,
-        at: Instant,
-        error: ConfirmationError?,
-    ): Boolean = driver.withOrganization(orgId) { tx ->
-        tx.execute(
-            Statement.create(ANSWER)
-                .bind("org_id", orgId)
-                .bind("id", id)
-                .bind("status", status.wire)
-                .bind("by_user", by.userId)
-                .bind("by_member", by.memberId)
-                .bind("at", at)
-                .nullable("error_type", error?.type)
-                .nullable("error_message", error?.message),
-        ).getOrThrow() == 1L
-    }
+    override suspend fun answer(orgId: Uuid, id: String, outcome: ConfirmationOutcome): Boolean =
+        driver.withOrganization(orgId) { tx ->
+            tx.execute(
+                Statement.create(ANSWER)
+                    .bind("org_id", orgId)
+                    .bind("id", id)
+                    .bind("status", outcome.status.wire)
+                    .bind("by_user", outcome.by.userId)
+                    .bind("by_member", outcome.by.memberId)
+                    .bind("at", outcome.at)
+                    .nullable("error_type", outcome.error?.type)
+                    .nullable("error_message", outcome.error?.message),
+            ).getOrThrow() == 1L
+        }
 
     override suspend fun settle(orgId: Uuid, id: String, result: JsonElement?, error: ConfirmationError?) {
         driver.withOrganization(orgId) { tx ->
@@ -108,11 +103,6 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
     override suspend fun organizationsWithExpired(now: Instant, limit: Int): List<Uuid> = driver.fetchAll(
         Statement.create(EXPIRED_ORGANIZATIONS).bind("now", now).bind("limit", limit),
     ).getOrThrow().map { it.get("org_id").asUuid() }
-
-    private fun Statement.nullable(name: String, value: String?): Statement =
-        if (value == null) bindNull(name, String::class) else bind(name, value)
-
-    private fun JsonElement?.encoded(): String = Json.encodeToString(JsonElement.serializer(), this ?: JsonNull)
 
     private fun ResultSet.Row.json(column: String): JsonElement? =
         get(column).asStringOrNull()?.let { Json.parseToJsonElement(it) }?.takeUnless { it is JsonNull }
@@ -175,7 +165,8 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
             "AND status = 'pending' AND expires_at <= :now RETURNING $READ_COLUMNS"
 
         /** Answers a pending, unexpired confirmation: of two answers, the second changes nothing. */
-        val ANSWER = "UPDATE governance_confirmations SET status = :status, answered_by_user = :by_user, " +
+        const val ANSWER: String =
+            "UPDATE governance_confirmations SET status = :status, answered_by_user = :by_user, " +
             "answered_by_member = :by_member, answered_at = :at, error_type = :error_type, " +
             "error_message = :error_message WHERE org_id = :org_id AND id = :id AND status = 'pending' " +
             "AND expires_at > :at"
@@ -187,7 +178,13 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
             "error_type = :error_type, error_message = :error_message WHERE org_id = :org_id AND id = :id"
 
         /** The sweep's read across organizations. */
-        val EXPIRED_ORGANIZATIONS = "SELECT org_id FROM governance_expired_organizations(CAST(:now AS TIMESTAMPTZ), " +
+        const val EXPIRED_ORGANIZATIONS: String =
+            "SELECT org_id FROM governance_expired_organizations(CAST(:now AS TIMESTAMPTZ), " +
             "CAST(:limit AS INTEGER)) AS o (org_id)"
     }
 }
+
+private fun Statement.nullable(name: String, value: String?): Statement =
+    if (value == null) bindNull(name, String::class) else bind(name, value)
+
+private fun JsonElement?.encoded(): String = Json.encodeToString(JsonElement.serializer(), this ?: JsonNull)

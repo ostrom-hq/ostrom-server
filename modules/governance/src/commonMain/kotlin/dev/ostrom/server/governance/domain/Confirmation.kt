@@ -90,6 +90,21 @@ data class ConfirmationPerson(val userId: String, val memberId: Uuid)
  */
 data class ConfirmationError(val type: String, val message: String)
 
+/**
+ * An answer to a pending confirmation, as it is written.
+ *
+ * @property status [ConfirmationStatus.CONFIRMED], [ConfirmationStatus.REFUSED] or [ConfirmationStatus.FAILED].
+ * @property by Who answers.
+ * @property at When; the confirmation must still be pending then.
+ * @property error Why it failed, for [ConfirmationStatus.FAILED].
+ */
+data class ConfirmationOutcome(
+    val status: ConfirmationStatus,
+    val by: ConfirmationPerson,
+    val at: Instant,
+    val error: ConfirmationError? = null,
+)
+
 /** Where a confirmation stands; [wire] is the contract's value. */
 enum class ConfirmationStatus(val wire: String) {
     PENDING("pending"),

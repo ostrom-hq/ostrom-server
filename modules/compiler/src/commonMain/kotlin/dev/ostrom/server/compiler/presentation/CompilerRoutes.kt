@@ -25,6 +25,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.encodeToJsonElement
 
 /**
  * The packages, workflows and gates catalogue routes of the contract. Every route is authenticated and scoped to the

@@ -253,7 +253,7 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 
 A governance write (the rules, the gate policy, the model policy, a workflow's decision) made with a person's API
 token, the CLI's (elevated by `ostrom login --admin` or not) or a personal one, is not applied: the route answers 202
-with a confirmation (`/api/v1/confirmations/{id}`) that an owner or an admin answers on the console, at
+with a confirmation that an owner or an admin answers on the console, at
 `OSTROM_CONSOLE_URL/confirm/<id>` (audit CLI H1: an agent on the developer's machine can present the developer's
 tokens). A confirmation shows what the write replaces and what it writes, lives 15 minutes, is answered once, and
 each step (created, confirmed, refused, expired, failed) is an event of the organization's signed audit log. A token

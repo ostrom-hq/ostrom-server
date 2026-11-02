@@ -46,25 +46,15 @@ interface ConfirmationsRepository {
     suspend fun expire(orgId: Uuid, now: Instant): List<Confirmation>
 
     /**
-     * Answers a confirmation still pending at [at], once: of two answers, only one changes it.
+     * Answers a confirmation still pending at the outcome's time, once: of two answers, only one changes it.
      *
      * @param orgId The organization.
      * @param id The id.
-     * @param status [ConfirmationStatus.CONFIRMED], [ConfirmationStatus.REFUSED] or [ConfirmationStatus.FAILED].
-     * @param by Who answers.
-     * @param at When.
-     * @param error Why it failed, for [ConfirmationStatus.FAILED].
+     * @param outcome The answer.
      *
      * @return True when this answer changed it.
      */
-    suspend fun answer(
-        orgId: Uuid,
-        id: String,
-        status: ConfirmationStatus,
-        by: ConfirmationPerson,
-        at: Instant,
-        error: ConfirmationError? = null,
-    ): Boolean
+    suspend fun answer(orgId: Uuid, id: String, outcome: ConfirmationOutcome): Boolean
 
     /**
      * Records the outcome of a confirmed write: its result, or why it failed.

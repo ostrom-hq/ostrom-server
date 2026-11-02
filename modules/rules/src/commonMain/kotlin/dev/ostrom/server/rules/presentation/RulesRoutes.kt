@@ -27,6 +27,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlin.uuid.Uuid
 
 /**
@@ -79,10 +80,8 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
         }
         get<DecisionsApi> { filters ->
             val caller = call.requireCaller(callers, RuleScopes.READ)
-            val (items, next) = listDecisions(
-                caller.orgId,
-                DecisionQuery(filters.subjectKind, filters.subjectId, filters.before),
-            )
+            val query = DecisionQuery(filters.subjectKind, filters.subjectId, filters.before)
+            val (items, next) = listDecisions(caller.orgId, query)
             call.respond(DecisionsPage(items.map { it.toDto() }, next))
         }
         get<GatePolicyApi> {

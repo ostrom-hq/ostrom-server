@@ -4,7 +4,7 @@ package dev.ostrom.server.governance.fakes
 import dev.ostrom.server.governance.domain.Confirmation
 import dev.ostrom.server.governance.domain.ConfirmationAudit
 import dev.ostrom.server.governance.domain.ConfirmationError
-import dev.ostrom.server.governance.domain.ConfirmationPerson
+import dev.ostrom.server.governance.domain.ConfirmationOutcome
 import dev.ostrom.server.governance.domain.ConfirmationStatus
 import dev.ostrom.server.governance.domain.ConfirmationStep
 import dev.ostrom.server.governance.domain.ConfirmationWaits
@@ -55,23 +55,24 @@ class InMemoryConfirmations : ConfirmationsRepository {
         .filter { it.orgId == orgId && it.status == ConfirmationStatus.PENDING && it.expiresAt <= now }
         .map { it.copy(status = ConfirmationStatus.EXPIRED).also { expired -> rows[it.id] = expired } }
 
-    override suspend fun answer(
-        orgId: Uuid,
-        id: String,
-        status: ConfirmationStatus,
-        by: ConfirmationPerson,
-        at: Instant,
-        error: ConfirmationError?,
-    ): Boolean {
-        if (loseNextAnswer) {
+    override suspend fun answer(orgId: Uuid, id: String, outcome: ConfirmationOutcome): Boolean {
+        val lost = loseNextAnswer
+        if (lost) {
             loseNextAnswer = false
             whileLosing()
-            return false
         }
-        val row = get(orgId, id)?.takeIf { it.status == ConfirmationStatus.PENDING && it.expiresAt > at }
-            ?: return false
-        rows[id] = row.copy(status = status, answeredBy = by, answeredAt = at, error = error)
-        return true
+        val row = get(orgId, id)?.takeIf {
+            !lost && it.status == ConfirmationStatus.PENDING && it.expiresAt > outcome.at
+        }
+        row?.let {
+            rows[id] = it.copy(
+                status = outcome.status,
+                answeredBy = outcome.by,
+                answeredAt = outcome.at,
+                error = outcome.error,
+            )
+        }
+        return row != null
     }
 
     override suspend fun settle(orgId: Uuid, id: String, result: JsonElement?, error: ConfirmationError?) {

@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import dev.ostrom.server.kernel.auth.GovernanceConfirmations
 import dev.ostrom.server.kernel.auth.GovernanceConfirmer
+import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
@@ -44,6 +45,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import org.koin.core.qualifier.named
 import kotlin.test.Test
@@ -309,17 +311,13 @@ class RulesPostgresTest {
         assertEquals(4 * writes(id).size, held.held.size)
     }
 
-    @Test
-    fun aHeldRulesWriteShowsWhatItChangesThenIsMadeAsTheConfirmersSignedDecision() = rulesTest { server ->
-        val id = server.write().body<RuleDto>().id
-        val policy = server.call("GET", "/api/v1/gates/policy", "admin-a").body<GatePolicyDto>()
-        val held = server.koin.get<GovernanceConfirmations>() as HeldConfirmations
-        val change = server.koin.get<GovernanceChange>(named("rules"))
-        assertEquals(setOf("rules.create", "rules.update", "rules.delete", "rules.bulk", "gates.policy"), change.kinds)
-        val gated = buildJsonObject {
-            put("status", "rejected")
-            put("gate", JsonNull)
-        }
+    private val gated = buildJsonObject {
+        put("status", "rejected")
+        put("gate", JsonNull)
+    }
+
+    // Each rules write asked with an admin's elevated token, held: create, edit, bulk, gate policy, delete.
+    private suspend fun TestServer.heldWrites(id: String): List<GovernanceWrite> {
         val asks = listOf(
             Route("POST", "/api/v1/rules", NewRuleRequest("Ship", "Releases")),
             Route("PATCH", "/api/v1/rules/$id", gated),
@@ -327,33 +325,37 @@ class RulesPostgresTest {
             Route("PUT", "/api/v1/gates/policy", GatePolicyDto("never")),
             Route("DELETE", "/api/v1/rules/$id"),
         )
-        asks.forEach { (method, path, body) -> server.call(method, path, "elevated-a", body) }
-        val writes = held.held.map { it.write }
+        asks.forEach { (method, path, body) -> call(method, path, "elevated-a", body) }
+        return (koin.get<GovernanceConfirmations>() as HeldConfirmations).held.map { it.write }
+    }
+
+    @Test
+    fun aHeldRulesWriteShowsWhatItReplacesAndWhatItWrites() = rulesTest { server ->
+        val id = server.write().body<RuleDto>().id
+        val policy = server.call("GET", "/api/v1/gates/policy", "admin-a").body<GatePolicyDto>()
+        val change = server.koin.get<GovernanceChange>(named("rules"))
+        assertEquals(setOf("rules.create", "rules.update", "rules.delete", "rules.bulk", "gates.policy"), change.kinds)
+        val writes = server.heldWrites(id)
         val previews = writes.map { change.preview(orgA, it) }
         assertEquals("Create the rule \"Ship\"", previews[0].summary)
         assertNull(previews[0].before)
-        assertEquals(
-            buildJsonObject {
-                put("status", "accepted")
-                put("gate", JsonNull)
-            },
-            previews[1].before,
-            "Only what the patch changes",
-        )
-        assertEquals(gated, previews[1].after)
-        val brief = { status: String ->
-            buildJsonArray {
-                add(
-                    buildJsonObject {
-                        put("id", id)
-                        put("statement", "Ship")
-                        put("status", status)
-                    },
-                )
-            }
+        val before = buildJsonObject {
+            put("status", "accepted")
+            put("gate", JsonNull)
         }
-        assertEquals(brief("accepted"), previews[2].before, "An unknown rule is left out")
-        assertEquals(brief("accepted"), previews[2].after)
+        assertEquals(before, previews[1].before, "Only what the patch changes")
+        assertEquals(gated, previews[1].after)
+        val brief = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("id", id)
+                    put("statement", "Ship")
+                    put("status", "accepted")
+                },
+            )
+        }
+        assertEquals(brief, previews[2].before, "An unknown rule is left out")
+        assertEquals(brief, previews[2].after)
         assertEquals("Set 1 rules to accepted", previews[2].summary)
         assertEquals(OstromJson.encodeToJsonElement(policy), previews[3].before)
         assertEquals(buildJsonObject { put("selfApproval", "never") }, previews[3].after)
@@ -365,8 +367,13 @@ class RulesPostgresTest {
             },
         )
         assertFailsWith<OstromException> { change.preview(orgA, tooMany) }
+    }
 
-        // Confirmed in the console: each write is made as the confirmer's signed decision.
+    @Test
+    fun aConfirmedRulesWriteIsMadeAsTheConfirmersSignedDecision() = rulesTest { server ->
+        val id = server.write().body<RuleDto>().id
+        val change = server.koin.get<GovernanceChange>(named("rules"))
+        val writes = server.heldWrites(id)
         val confirmer = GovernanceConfirmer(
             AuthenticatedPrincipal("admin-a", PrincipalKind.USER, setOf("user:*"), channel = PrincipalChannel.BROWSER),
             OrgPrincipal(orgA, Uuid.random(), OrgRole.ADMIN),

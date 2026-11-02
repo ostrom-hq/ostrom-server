@@ -12,6 +12,7 @@ import dev.ostrom.server.governance.domain.ConfirmationManagersOnlyException
 import dev.ostrom.server.governance.domain.ConfirmationNotFoundException
 import dev.ostrom.server.governance.domain.ConfirmationRules
 import dev.ostrom.server.governance.domain.ConfirmationStaleException
+import dev.ostrom.server.governance.domain.ConfirmationRecords
 import dev.ostrom.server.governance.domain.ConfirmationStatus
 import dev.ostrom.server.governance.domain.ConfirmationStepUpRequiredException
 import dev.ostrom.server.governance.domain.ExpireConfirmationsUseCase
@@ -71,7 +72,13 @@ class ConfirmationUseCasesTest {
     private val expire = ExpireConfirmationsUseCaseImpl(repository, audit, waits, clock)
     private val open = OpenConfirmationUseCaseImpl(repository, members, changes, audit, expire, clock)
     private val get = GetConfirmationUseCaseImpl(repository, members, expire, waits, clock)
-    private val answer = AnswerConfirmationUseCaseImpl(repository, members, changes, audit, expire, waits, clock)
+    private val answer = AnswerConfirmationUseCaseImpl(
+        ConfirmationRecords(repository, audit, waits),
+        members,
+        changes,
+        expire,
+        clock,
+    )
 
     private fun token(who: String, scopes: Set<String> = GovernanceScopes.ALL) =
         AuthenticatedPrincipal(who, PrincipalKind.USER, scopes, credentialId = "tok_$who")
@@ -194,7 +201,7 @@ class ConfirmationUseCasesTest {
         assertEquals(orgA.toString(), confirmer.principal.namedOrg)
         assertEquals(OrgRole.OWNER, confirmer.member.role)
         assertEquals(listOf("CREATED", "CONFIRMED"), audit.steps.map { it.substringBefore(' ') })
-        assertEquals(listOf("ada", "olga"), audit.actors)
+        assertEquals(listOf<String?>("ada", "olga"), audit.actors)
         assertTrue(opened.id in waits.changed)
         assertFailsWith<ConfirmationClosedException> { confirm(browser("olga"), opened.id) }
         assertFailsWith<ConfirmationClosedException> { refuse(browser("ada"), opened.id) }

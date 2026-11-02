@@ -11,6 +11,7 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** An owner or an admin confirms or refuses a governance change on the console. */
@@ -44,23 +45,23 @@ interface AnswerConfirmationUseCase {
  * [AnswerConfirmationUseCase]: one answer only (the repository changes a pending confirmation once), each step in the
  * audit log before what it allows, and the reads waiting on it woken.
  *
- * @param repository The confirmations.
+ * @param records The confirmations, the audit log and the waiting reads.
  * @param members Resolves the confirmer's membership.
  * @param changes The modules' governance writes.
- * @param audit The audit log.
  * @param expire Writes the expiry of the overdue ones first.
- * @param waits Wakes the reads waiting on it.
  * @param clock The time.
  */
 class AnswerConfirmationUseCaseImpl(
-    private val repository: ConfirmationsRepository,
+    records: ConfirmationRecords,
     private val members: PrincipalOrgResolver,
     private val changes: GovernanceChanges,
-    private val audit: ConfirmationAudit,
     private val expire: ExpireConfirmationsUseCase,
-    private val waits: ConfirmationWaits,
     private val clock: Clock,
 ) : AnswerConfirmationUseCase {
+    private val repository = records.repository
+    private val audit = records.audit
+    private val waits = records.waits
+
     override suspend fun invoke(
         confirmer: AuthenticatedPrincipal,
         id: String,
@@ -91,10 +92,7 @@ class AnswerConfirmationUseCaseImpl(
         by: ConfirmationPerson,
         confirmer: GovernanceConfirmer,
     ): Confirmation {
-        val authenticatedAt = confirmer.principal.authenticatedAt
-        if (authenticatedAt == null || clock.now() - authenticatedAt > ConfirmationRules.STEP_UP_WITHIN) {
-            throw ConfirmationStepUpRequiredException()
-        }
+        confirmer.requireFreshSignIn(clock.now())
         val change = changes.of(confirmation.write.kind)
         val orgId = confirmation.orgId
         // What it replaces is read again: a change confirmed on what it showed, never on what it shows now.
@@ -140,7 +138,8 @@ class AnswerConfirmationUseCaseImpl(
         by: ConfirmationPerson,
         error: ConfirmationError? = null,
     ) {
-        if (!repository.answer(confirmation.orgId, confirmation.id, status, by, clock.now(), error)) {
+        val outcome = ConfirmationOutcome(status, by, clock.now(), error)
+        if (!repository.answer(confirmation.orgId, confirmation.id, outcome)) {
             requirePending(read(confirmation))
             throw ConfirmationClosedException()
         }
@@ -168,14 +167,23 @@ class AnswerConfirmationUseCaseImpl(
         }
     }
 
-    private fun GovernanceConfirmer.inOrganization(orgId: Uuid) =
-        GovernanceConfirmer(
-            principal.copy(namedOrg = orgId.toString()),
-            OrgPrincipal(orgId, member.memberId, member.role),
-        )
-
     private companion object {
         // What is kept when the write failed for a reason the server does not show (a 500 to the confirmer).
         val UNMADE = ConfirmationError("internal_error", "The change failed on the server.")
     }
 }
+
+// The step-up of a gate's yes (S2-54): a console sign-in less than 5 minutes old; WebAuthn comes after the go.
+private fun GovernanceConfirmer.requireFreshSignIn(now: Instant) {
+    val authenticatedAt = principal.authenticatedAt
+    if (authenticatedAt == null || now - authenticatedAt > ConfirmationRules.STEP_UP_WITHIN) {
+        throw ConfirmationStepUpRequiredException()
+    }
+}
+
+// The confirmer as the owning module sees them: their session named on the confirmation's organization.
+private fun GovernanceConfirmer.inOrganization(orgId: Uuid) =
+    GovernanceConfirmer(
+        principal.copy(namedOrg = orgId.toString()),
+        OrgPrincipal(orgId, member.memberId, member.role),
+    )
