@@ -4,9 +4,11 @@ package dev.ostrom.server.gates.domain.usecases
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.ApprovalRights
 import dev.ostrom.server.gates.domain.models.ApprovalScreen
+import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNotFoundException
 import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
+import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.Viewer
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GatePolicies
@@ -19,7 +21,8 @@ interface GetApprovalViewUseCase {
      *
      * @param actor A signed-in person of the organization.
      * @param viewer Where they read it from.
-     * @param approvalId The approval.
+     * @param approvalId The approval, or its gate: a session links each of its gates by the gate's id, and the reader
+     *   then sees their own request on that gate, else its first.
      * @return The approval, its gate and the reader's rights.
      * @throws OnlyPeopleAnswerException When the caller is not a person.
      * @throws GateNotFoundException When absent or another organization's.
@@ -41,10 +44,19 @@ class GetApprovalViewUseCaseImpl(
         // S2-15: a yes is signed as the credential's person, never as its id.
         val person = actor.personId
         if (actor.kind != ActorKind.USER || person == null) throw OnlyPeopleAnswerException()
-        val view = repository.approval(actor.orgId, approvalId) ?: throw GateNotFoundException()
+        val view = repository.approval(actor.orgId, approvalId)
+            ?: ofGate(actor.orgId, approvalId, person)
+            ?: throw GateNotFoundException()
         // The approval is one of its gate's requests: the gate always has approvers.
         val approvers = repository.approversOf(actor.orgId, listOf(view.gate.id)).getValue(view.gate.id)
         val policy = policies.selfApproval(actor.orgId)
         return ApprovalScreen(view, ApprovalRights.of(person, viewer, view, approvers, policy))
+    }
+
+    // PARCOURS 3.3: the reader's own request on the gate, else its first.
+    private suspend fun ofGate(orgId: Uuid, gateId: Uuid, person: String): ApprovalView? {
+        val requests = repository.requestsOf(orgId, gateId)
+        val request = requests.firstOrNull { SelfApproval.same(it.approverId, person) } ?: requests.firstOrNull()
+        return request?.let { repository.approval(orgId, it.id) }
     }
 }
