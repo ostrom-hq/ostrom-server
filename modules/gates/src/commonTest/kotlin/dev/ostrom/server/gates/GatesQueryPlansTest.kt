@@ -54,6 +54,9 @@ class GatesQueryPlansTest {
         for ((index, org) in others.withIndex()) {
             seed(repository, org, (GATES_OF_A + index until TOTAL_GATES step others.size).toList())
         }
+        // A gate the GitHub check opened has no session: nothing to link.
+        val unlinked = gateOf(others.first(), TOTAL_GATES).copy(sessionIds = emptyList())
+        repository.transaction { insertGate(unlinked) }
         server.driver.execute("VACUUM ANALYZE gates_gates").getOrThrow()
         server.driver.execute("VACUUM ANALYZE gates_requests").getOrThrow()
 
