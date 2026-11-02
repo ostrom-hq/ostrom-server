@@ -12,6 +12,7 @@ import dev.ostrom.server.identity.domain.DeviceAuthorization
 import dev.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import dev.ostrom.server.identity.domain.DeviceAuthorizationsRepository
 import dev.ostrom.server.identity.domain.DuplicateIdentityException
+import dev.ostrom.server.identity.domain.OrgAuditQuery
 import dev.ostrom.server.identity.domain.RateLimiter
 import dev.ostrom.server.identity.domain.SecretGenerator
 import dev.ostrom.server.identity.domain.SecretHasher
@@ -291,4 +292,10 @@ class InMemoryAuditRepository : AuditRepository {
     override suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent> =
         events.filter { it.entry.orgId == orgId && it.sequence < (beforeSequence ?: Long.MAX_VALUE) }
             .reversed().take(limit)
+
+    override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent> =
+        list(orgId, null, query.beforeSequence, Int.MAX_VALUE)
+            .filter { query.actorId == null || it.entry.actorId == query.actorId }
+            .filter { query.action == null || it.entry.action == query.action }
+            .take(query.limit)
 }
