@@ -2,6 +2,7 @@
 package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateDigester
@@ -37,6 +38,7 @@ import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.GatesMigrations
 import dev.ostrom.server.gates.infrastructure.MetricsGateChannel
+import dev.ostrom.server.gates.infrastructure.NoCiChecks
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
@@ -99,6 +101,7 @@ object GatesModule : ServerModule {
         if (koin.getOrNull<GateSessions>() == null) single<GateSessions> { UnavailableGateSessions() }
         if (koin.getOrNull<GateNodeResolver>() == null) single<GateNodeResolver> { NoGateNodes() }
         if (koin.getOrNull<PullRequestHeads>() == null) single<PullRequestHeads> { UnknownPullRequestHeads() }
+        if (koin.getOrNull<CiChecks>() == null) single<CiChecks> { NoCiChecks() }
         if (koin.getOrNull<GateNotifier>() == null) {
             single<GateNotifier> { ChannelsGateNotifier({ koin.getAll<GateChannel>() }, get()) }
         }
