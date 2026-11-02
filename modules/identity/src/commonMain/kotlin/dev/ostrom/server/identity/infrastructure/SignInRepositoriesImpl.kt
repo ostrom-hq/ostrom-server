@@ -92,7 +92,7 @@ class MagicLinksRepositoryImpl(private val driver: Driver) : MagicLinksRepositor
         Statement.create(
             "SELECT 1 FROM identity_magic_links WHERE token_hash = :token AND used_at IS NULL AND expires_at > :now",
         ).bind("token", tokenHash).bind("now", now),
-    ).getOrThrow().isNotEmpty()
+    ).getOrThrow().firstOrNull() != null
 
     private fun ResultSet.Row.toLink() = MagicLink(
         id = get("id").asUuid(),
