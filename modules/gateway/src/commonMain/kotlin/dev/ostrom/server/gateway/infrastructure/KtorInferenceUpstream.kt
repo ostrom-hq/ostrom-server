@@ -5,6 +5,7 @@ import dev.ostrom.server.gateway.domain.ByteSource
 import dev.ostrom.server.gateway.domain.InferenceUpstream
 import dev.ostrom.server.gateway.domain.UpstreamAnswer
 import dev.ostrom.server.gateway.domain.UpstreamRequest
+import dev.ostrom.server.gateway.domain.UpstreamStalledException
 import io.ktor.client.HttpClient
 import io.ktor.client.request.headers
 import io.ktor.client.request.preparePost
@@ -18,12 +19,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration
-
-/**
- * The provider sent nothing for longer than the gateway waits: the call fails as the provider's failure, never as
- * cancelled.
- */
-class UpstreamStalledException : Exception("The provider stopped answering.")
 
 /**
  * [InferenceUpstream] on a Ktor client. The answer is never buffered: it is read chunk by chunk as the agent receives

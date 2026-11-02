@@ -34,6 +34,12 @@ class AccountLease internal constructor(
      */
     suspend fun observe(status: Int, headers: Map<String, String>) = pool.observe(account, status, headers)
 
+    /**
+     * Reports that the provider stopped answering on this account and the call was cut: the account rests
+     * [SharedAccountPool.STALL_COOLDOWN], like a 429 that names no reset, so the next calls go to another account.
+     */
+    suspend fun stalled() = pool.observe(account, NO_ANSWER, emptyMap())
+
     /** Gives the slot back; idempotent, and done even when the request is being cancelled. */
     suspend fun release() {
         if (released) return
@@ -207,6 +213,7 @@ class SharedAccountPool(
         if (observed.isNotEmpty()) windows.put(account.orgId, account.id, observed)
         when (status) {
             TOO_MANY_REQUESTS -> accounts.setCooldown(account.orgId, account.id, cooldownEnd(observed, headers, now))
+            NO_ANSWER -> accounts.rest(account, now + STALL_COOLDOWN)
             UNAUTHORIZED -> tokens.expire(account)
         }
     }
@@ -229,6 +236,9 @@ class SharedAccountPool(
         /** Cool-down after a 429 that names no reset. */
         val DEFAULT_COOLDOWN: Duration = 60.seconds
 
+        /** Rest after the provider stalled on an account and the gateway cut the call. */
+        val STALL_COOLDOWN: Duration = 60.seconds
+
         /** When to try again while every open account is busy. */
         val BUSY_RETRY: Duration = 5.seconds
 
@@ -244,6 +254,21 @@ class SharedAccountPool(
         /** The first instant of the UTC calendar month of [now]. */
         fun monthStart(now: Instant): Instant = CivilCalendar.monthStart(now)
     }
+}
+
+/**
+ * The status [AccountLease.stalled] reports: no HTTP answer, the gateway cut the call. It goes through
+ * [SharedAccountPool.observe] like a provider's status, so that the pool has one place that cools an account down.
+ */
+private const val NO_ANSWER = 0
+
+/**
+ * Cools an account down until [until], unless a longer cool-down (a 429's reset, set by another call meanwhile) is
+ * already stored: a short rest never reopens an account early.
+ */
+private suspend fun SharedAccountRepository.rest(account: SharedAccount, until: Instant) {
+    val stored = get(account.orgId, account.id)?.cooldownUntil
+    setCooldown(account.orgId, account.id, stored?.takeIf { it > until } ?: until)
 }
 
 /** The longest `retry-after` believed: a day. */
