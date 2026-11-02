@@ -103,6 +103,21 @@ class StartSessionTest {
     }
 
     @Test
+    fun aLaunchNeverAdoptsAnOlderSessionRunWithoutTheLauncher() = runTest {
+        val bench = SessionBench()
+        val manual = bench.start(user(), start.copy(launchId = null))
+        bench.clock.now += SessionSegments.ADOPT_WITHIN + 1.minutes
+        bench.alive(user(), manual.id)
+        // Second audit L3: another agent of the same person does not take over a live session it did not launch.
+        assertFailsWith<NotYourSessionException> { bench.start(agent("launch-9"), start) }
+        assertNull(bench.repository.get(ORG, manual.id)?.launchId)
+        // Its person may still start a launch there: the old segment is superseded, not renamed.
+        val launched = bench.start(user(), start.copy(launchId = "launch-9"))
+        assertEquals("s-1~r2", launched.id)
+        assertEquals("launch-9", launched.launchId)
+    }
+
+    @Test
     fun s248AnAgentNeverClosesALiveLaunchsSegment() = runTest {
         val bench = SessionBench()
         val first = bench.start(agent("launch-1"), start)

@@ -201,7 +201,9 @@ class BudgetsPostgresTest {
         for (token in listOf("device-a", "cli-write", "cli-other")) {
             assertEquals(HttpStatusCode.Forbidden, server.client.get("$base/me") { bearerAuth(token) }.status, token)
         }
-        assertEquals(HttpStatusCode.OK, server.putBudget("cli-write", budget).status)
+        // S2-52: a personal token holding budgets:write is still not a console session.
+        assertEquals(HttpStatusCode.Forbidden, server.putBudget("cli-write", budget).status)
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", budget).status)
         assertEquals(listOf(budget), server.budgets("cli-read").items)
         assertEquals(HttpStatusCode.OK, server.client.get("$base/me") { bearerAuth("agent-a") }.status)
         assertEquals(HttpStatusCode.OK, server.client.get("$base/me") { bearerAuth("cli-read") }.status)

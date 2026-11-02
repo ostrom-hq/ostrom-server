@@ -13,6 +13,7 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asDouble
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLongOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
@@ -25,15 +26,25 @@ import kotlin.uuid.Uuid
 /** The columns of an account row, tokens excluded: the envelope is only read by its own query. */
 internal const val ACCOUNT_COLUMNS: String =
     "id, org_id, provider, label, email, provider_account_id, owner_member_id, priority, status, max_concurrent, " +
-        "utilization_ceiling, monthly_budget_micros, allowed_members, cooldown_until, created_at"
+        "utilization_ceiling, monthly_budget_micros, allowed_members, cooldown_until, created_at, version"
 
 private val MEMBERS = SetSerializer(String.serializer())
 
-/** Sets one column of one account, confined to [orgId]; [value] binds `:value`. */
-internal suspend fun Driver.setColumn(orgId: Uuid, id: Uuid, assignment: String, value: Statement.() -> Statement) {
+/**
+ * Sets one column of one account, confined to [orgId]; [value] binds `:value`. [bump] bumps its version: a status
+ * change does, the pool's routine writes (a refresh, a cool-down) do not, so they never fail a conditional write.
+ */
+internal suspend fun Driver.setColumn(
+    orgId: Uuid,
+    id: Uuid,
+    assignment: String,
+    bump: Boolean,
+    value: Statement.() -> Statement,
+) {
+    val version = if (bump) ", version = version + 1" else ""
     executeInOrg(
         orgId,
-        Statement.create("UPDATE sharing_accounts SET $assignment WHERE org_id = :org_id AND id = :id")
+        Statement.create("UPDATE sharing_accounts SET $assignment$version WHERE org_id = :org_id AND id = :id")
             .bind("org_id", orgId)
             .bind("id", id)
             .value(),
@@ -75,4 +86,5 @@ internal fun ResultSet.Row.toAccount() = SharedAccount(
     ),
     cooldownUntil = get("cooldown_until").asInstantOrNull(),
     createdAt = get("created_at").asInstant(),
+    version = get("version").asLong(),
 )

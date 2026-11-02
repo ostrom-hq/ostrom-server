@@ -40,6 +40,7 @@ import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The gateway module: agents send their model calls to Ostrom; the gateway serves them with the org's shared
@@ -54,7 +55,9 @@ object GatewayModule : ServerModule {
     val HTTP_CLIENT = named("gatewayHttpClient")
 
     private const val CONNECT_TIMEOUT_MS = 10_000L
-    private const val SOCKET_TIMEOUT_MS = 300_000L
+
+    /** How long a provider may stay silent: the socket timeout of engines that apply it, and the gateway's own cut. */
+    private const val SILENCE_MS = 300_000L
 
     override val koinModule: Module = module {
         single { GatewayConfig.from(get<ConfigSource>()) }
@@ -64,12 +67,12 @@ object GatewayModule : ServerModule {
                 expectSuccess = false
                 install(HttpTimeout) {
                     connectTimeoutMillis = CONNECT_TIMEOUT_MS
-                    socketTimeoutMillis = SOCKET_TIMEOUT_MS
+                    socketTimeoutMillis = SILENCE_MS
                 }
             }
         }
         single<GatewaySettingsRepository> { GatewaySettingsRepositoryImpl(get()) }
-        single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT)) }
+        single<InferenceUpstream> { KtorInferenceUpstream(get(HTTP_CLIENT), SILENCE_MS.milliseconds) }
         single {
             val config = get<GatewayConfig>()
             InferencePlanner(

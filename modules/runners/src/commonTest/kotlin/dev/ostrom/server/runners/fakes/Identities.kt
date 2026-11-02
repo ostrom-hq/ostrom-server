@@ -4,6 +4,7 @@ package dev.ostrom.server.runners.fakes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -25,7 +26,10 @@ val testIdentities = module {
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
-                "alice", "bob", "carol", "nobody" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"))
+                "alice", "bob", "carol", "nobody" -> {
+                    val scopes = setOf("user:*")
+                    AuthenticatedPrincipal(token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER)
+                }
                 "reader" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("cloud:read"))
                 else -> null
             }
