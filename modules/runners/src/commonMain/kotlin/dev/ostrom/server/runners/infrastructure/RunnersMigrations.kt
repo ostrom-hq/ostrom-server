@@ -4,7 +4,7 @@ package dev.ostrom.server.runners.infrastructure
 import dev.ostrom.server.kernel.database.SchemaMigration
 
 /** What a registered runner's heartbeat reads across organizations: a function owned by `ostrom_router`. */
-private val REGISTERED_ROUTER_FUNCTIONS = listOf("runners_registered_org(UUID)")
+private val REGISTERED_ROUTER_FUNCTIONS = listOf("runners_registered_key(UUID)")
 
 private val REGISTERED_ROUTER_GRANTS =
     REGISTERED_ROUTER_FUNCTIONS.joinToString("\n") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }
@@ -13,7 +13,8 @@ private val REGISTERED_ROUTER_GRANTS =
  * Version 3: a registered runner's heartbeat names only the runner, so its organization is read across organizations
  * by one narrow `SECURITY DEFINER` function owned by `ostrom_router` (`NOLOGIN`, never a member of the serving role),
  * with `pg_temp` last in its `search_path`, executable by the serving role only (docs/tenancy.md). It returns the
- * organization of one runner id and nothing else; the key is then checked in that organization's transaction.
+ * organization and key hash of one runner id and nothing else; the sign of life is then written in that organization's
+ * transaction, only while the runner has that key.
  */
 private val REGISTERED_RUNNER_ORG_SQL: String =
     """
@@ -28,9 +29,9 @@ private val REGISTERED_RUNNER_ORG_SQL: String =
     GRANT USAGE ON SCHEMA public TO ostrom_router;
     CREATE POLICY runners_registered_router ON runners_registered TO ostrom_router USING (true) WITH CHECK (false);
     GRANT SELECT ON runners_registered TO ostrom_router;
-    CREATE FUNCTION runners_registered_org(p_id UUID) RETURNS UUID
+    CREATE FUNCTION runners_registered_key(p_id UUID) RETURNS TABLE (org_id UUID, key_hash TEXT)
         LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
-        SELECT r.org_id FROM runners_registered r WHERE r.id = p_id;
+        SELECT r.org_id, r.key_hash FROM runners_registered r WHERE r.id = p_id;
     $$;
     ${REGISTERED_ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
     DO $$ BEGIN
@@ -140,5 +141,5 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("runners_registered")}
         """.trimIndent(),
     ),
-    SchemaMigration(version = 3, name = "registered_runner_org", sql = REGISTERED_RUNNER_ORG_SQL),
+    SchemaMigration(version = 3, name = "registered_runner_key", sql = REGISTERED_RUNNER_ORG_SQL),
 )

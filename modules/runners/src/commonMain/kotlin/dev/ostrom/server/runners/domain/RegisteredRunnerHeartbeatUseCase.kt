@@ -25,8 +25,9 @@ interface RegisteredRunnerHeartbeatUseCase {
 }
 
 /**
- * [RegisteredRunnerHeartbeatUseCase] on the repository: the runner's organization is read by id, then its key's hash
- * is compared in constant time inside that organization's transaction.
+ * [RegisteredRunnerHeartbeatUseCase] on the repository. The key is hashed and compared in constant time whether the
+ * runner exists or not (against a hash no key has when it does not), so an unknown runner and a wrong key cost the same
+ * single read; the sign of life is then written only if the runner still has that key in its organization.
  *
  * @param repository The runners.
  * @param tokens Hashes the key.
@@ -38,11 +39,18 @@ class RegisteredRunnerHeartbeatUseCaseImpl(
     private val clock: Clock,
 ) : RegisteredRunnerHeartbeatUseCase {
     override suspend fun invoke(id: Uuid, key: String): List<CloudSession> {
-        val orgId = repository.organizationOf(id) ?: throw RunnerUnauthenticatedException()
-        val runner = repository.get(orgId, id) ?: throw RunnerUnauthenticatedException()
-        if (!constantTimeEquals(tokens.hash(key), runner.keyHash)) throw RunnerUnauthenticatedException()
-        repository.touch(orgId, id, clock.now())
+        val hash = tokens.hash(key)
+        val stored = repository.keyOf(id)
+        val matches = constantTimeEquals(hash, stored?.keyHash ?: NO_KEY_HASH)
+        if (stored == null || !matches || !repository.touch(stored.orgId, id, hash, clock.now())) {
+            throw RunnerUnauthenticatedException()
+        }
         return emptyList()
+    }
+
+    private companion object {
+        /** Compared with when no runner has the id: a SHA-256 hex digest no key hashes to in practice. */
+        val NO_KEY_HASH = "0".repeat(64)
     }
 }
 

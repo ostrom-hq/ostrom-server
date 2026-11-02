@@ -2,6 +2,7 @@
 package dev.ostrom.server.runners.infrastructure
 
 import dev.ostrom.server.runners.domain.RegisteredRunner
+import dev.ostrom.server.runners.domain.RegisteredRunnerKey
 import dev.ostrom.server.runners.domain.RegisteredRunnersRepository
 import dev.ostrom.server.runners.domain.RunnerRegistrationOutcome
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -11,7 +12,6 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -20,7 +20,7 @@ import kotlin.uuid.Uuid
 
 /**
  * [RegisteredRunnersRepository] on PostgreSQL (`runners_registered`, migrations 2 and 3 of [RunnersMigrations]):
- * every read and write runs confined to the runner's organization ([inTenant], S2-01), except [organizationOf]. The
+ * every read and write runs confined to the runner's organization ([inTenant], S2-01), except [keyOf]. The
  * labels are a JSON array of strings.
  *
  * @param driver The database.
@@ -63,30 +63,16 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
         ).getOrThrow() > 0
     }
 
-    // The one read across organizations, through `runners_registered_org` (owned by `ostrom_router`, migration 3): the
+    // The one read across organizations, through `runners_registered_key` (owned by `ostrom_router`, migration 3): the
     // serving role itself, never inside an organization's transaction.
-    override suspend fun organizationOf(id: Uuid): Uuid? = driver.fetchAll(
-        Statement.create("SELECT runners_registered_org(CAST(:id AS UUID)) AS org_id").bind("id", id),
-    ).getOrThrow().first().get("org_id").asUuidOrNull()
+    override suspend fun keyOf(id: Uuid): RegisteredRunnerKey? = driver.fetchAll(
+        Statement.create(KEY_SQL).bind("id", id),
+    ).getOrThrow().firstOrNull()?.let { RegisteredRunnerKey(it.get("org_id").asUuid(), it.get("key_hash").asString()) }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): RegisteredRunner? = driver.inTenant(orgId) {
-        fetchAll(
-            Statement.create("SELECT $COLUMNS FROM runners_registered WHERE org_id = :org_id AND id = :id")
-                .bind("org_id", orgId).bind("id", id),
-        ).getOrThrow().firstOrNull()?.toRunner()
-    }
-
-    override suspend fun touch(orgId: Uuid, id: Uuid, at: Instant) {
-        driver.inTenant(orgId) {
-            execute(
-                Statement.create(
-                    """
-                    UPDATE runners_registered SET last_seen_at = :at WHERE org_id = :org_id AND id = :id AND
-                    (last_seen_at IS NULL OR last_seen_at < :at)
-                    """,
-                ).bind("at", at).bind("org_id", orgId).bind("id", id),
-            ).getOrThrow()
-        }
+    override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant): Boolean = driver.inTenant(orgId) {
+        execute(
+            Statement.create(TOUCH_SQL).bind("at", at).bind("org_id", orgId).bind("id", id).bind("key_hash", keyHash),
+        ).getOrThrow() > 0
     }
 
     private fun ResultSet.Row.toRunner() = RegisteredRunner(
@@ -112,6 +98,14 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
 
         /** How many runners an organization has, through `runners_registered_name`. */
         const val COUNT_SQL: String = "SELECT COUNT(*) AS n FROM runners_registered WHERE org_id = :org_id"
+
+        /** A runner's organization and key hash by its id, through `runners_registered_key` (its primary key). */
+        const val KEY_SQL: String = "SELECT org_id, key_hash FROM runners_registered_key(CAST(:id AS UUID))"
+
+        /** A sign of life, written only while the runner has that key; GREATEST keeps the newest (it skips NULL). */
+        const val TOUCH_SQL: String =
+            "UPDATE runners_registered SET last_seen_at = GREATEST(last_seen_at, :at) " +
+                "WHERE org_id = :org_id AND id = :id AND key_hash = :key_hash"
 
         private val LABELS = ListSerializer(String.serializer())
     }

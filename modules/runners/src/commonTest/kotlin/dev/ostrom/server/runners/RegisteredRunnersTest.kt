@@ -14,6 +14,7 @@ import dev.ostrom.server.runners.domain.ListedRunner
 import dev.ostrom.server.runners.domain.NewRunner
 import dev.ostrom.server.runners.domain.RegisterRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCaseImpl
+import dev.ostrom.server.runners.domain.RegisteredRunnerKey
 import dev.ostrom.server.runners.domain.RegisteredRunner
 import dev.ostrom.server.runners.domain.RegisteredRunnersRepository
 import dev.ostrom.server.runners.domain.RunnerAdminRequiredException
@@ -218,7 +219,7 @@ class RegisteredRunnersTest {
     }
 
     @Test
-    fun aHeartbeatIsRefusedTheSameForAnUnknownRunnerAWrongKeyOrAVanishedOne() = runTest {
+    fun aHeartbeatIsRefusedTheSameForAnUnknownRunnerAWrongKeyOrARemovedOne() = runTest {
         val heartbeat = RegisteredRunnerHeartbeatUseCaseImpl(repository, tokens, clock)
         val created = register(admin, RunnerRegistration("build-1", emptyList(), null))
         val other = register(admin, RunnerRegistration("build-2", emptyList(), null))
@@ -226,9 +227,18 @@ class RegisteredRunnersTest {
         assertFailsWith<RunnerUnauthenticatedException> { heartbeat(Uuid.random(), created.key) }
         assertFailsWith<RunnerUnauthenticatedException> { heartbeat(created.runner.id, other.key) }
         assertFailsWith<RunnerUnauthenticatedException> { heartbeat(created.runner.id, "") }
-        repository.orgOverride = ORG_B
-        assertFailsWith<RunnerUnauthenticatedException> { heartbeat(created.runner.id, created.key) }
         assertTrue(repository.runners.all { it.lastSeenAt == null }, "A refused heartbeat marks nothing")
+
+        // Removed by an admin while its heartbeat is between the read and the write: refused, not answered 200.
+        repository.beforeTouch = { repository.runners.removeAll { it.id == created.runner.id } }
+        assertFailsWith<RunnerUnauthenticatedException> { heartbeat(created.runner.id, created.key) }
+    }
+
+    @Test
+    fun aRunnersKeyIsNeverPrinted() {
+        val key = RegisteredRunnerKey(ORG_A, "secret-hash")
+        assertFalse("secret-hash" in key.toString())
+        assertEquals(ORG_A, key.orgId)
     }
 
     @Test
@@ -261,16 +271,16 @@ private class InMemoryRegisteredRunners : RegisteredRunnersRepository {
     override suspend fun delete(orgId: Uuid, id: Uuid): Boolean =
         runners.removeAll { it.orgId == orgId && it.id == id }
 
-    /** The organization [organizationOf] answers, when a test makes the runner vanish between the two reads. */
-    var orgOverride: Uuid? = null
+    /** Runs between [keyOf] and [touch], as a removal racing a heartbeat would. */
+    var beforeTouch: () -> Unit = {}
 
-    override suspend fun organizationOf(id: Uuid): Uuid? = orgOverride ?: runners.firstOrNull { it.id == id }?.orgId
+    override suspend fun keyOf(id: Uuid): RegisteredRunnerKey? =
+        runners.firstOrNull { it.id == id }?.let { RegisteredRunnerKey(it.orgId, it.keyHash) }
 
-    override suspend fun get(orgId: Uuid, id: Uuid): RegisteredRunner? =
-        runners.firstOrNull { it.orgId == orgId && it.id == id }
-
-    override suspend fun touch(orgId: Uuid, id: Uuid, at: Instant) {
-        val i = runners.indexOfFirst { it.orgId == orgId && it.id == id }
-        runners[i] = runners[i].copy(lastSeenAt = at)
+    override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant): Boolean {
+        beforeTouch()
+        val i = runners.indexOfFirst { it.orgId == orgId && it.id == id && it.keyHash == keyHash }
+        if (i >= 0) runners[i] = runners[i].copy(lastSeenAt = maxOf(runners[i].lastSeenAt ?: at, at))
+        return i >= 0
     }
 }

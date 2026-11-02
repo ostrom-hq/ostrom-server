@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
+import dev.ostrom.server.runners.domain.RegisteredRunnerKey
 import dev.ostrom.server.runners.domain.RegisteredRunnersRepository
+import dev.ostrom.server.runners.domain.RunnerTokens
 import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.SettableClock
 import dev.ostrom.server.runners.fakes.testIdentities
+import dev.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
+import dev.ostrom.server.runners.infrastructure.inTenant
 import dev.ostrom.server.runners.presentation.RegisterRunnerRequest
 import dev.ostrom.server.runners.presentation.RegisteredRunnerDto
 import dev.ostrom.server.runners.presentation.RegisteredRunnerHeartbeatResponse
@@ -13,7 +17,8 @@ import dev.ostrom.server.runners.presentation.RunnersPage
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -25,10 +30,16 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.writeString
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -94,30 +105,83 @@ class RegisteredRunnersHeartbeatPostgresTest {
     }
 
     @Test
-    fun theRunnersOrganizationIsReadAcrossOrganizationsOnlyThroughItsFunction() =
+    fun theRunnersKeyIsReadAcrossOrganizationsOnlyThroughItsFunction() =
         serverTest(listOf(RunnersModule), overrides) { server ->
             val runner = server.register("dana", "build-1")
             val id = Uuid.parse(runner.id)
+            val hash = server.koin.get<RunnerTokens>().hash(runner.token)
             val repository = server.koin.get<RegisteredRunnersRepository>()
 
-            // As the serving role, without an organization: the table shows nothing, the function one organization.
+            // As the serving role, without an organization: the table shows nothing, the function one runner's key.
             val direct = server.driver.fetchAll(Statement.create("SELECT org_id FROM runners_registered")).getOrThrow()
             assertEquals(0, direct.size)
-            val routed = server.driver.fetchAll(
-                Statement.create("SELECT runners_registered_org(CAST(:id AS UUID)) AS org_id").bind("id", id),
-            ).getOrThrow().single().get("org_id").asUuidOrNull()
-            assertEquals(ORG_A, routed)
-            assertEquals(ORG_A, repository.organizationOf(id))
-            assertNull(repository.organizationOf(Uuid.random()))
+            assertEquals(RegisteredRunnerKey(ORG_A, hash), repository.keyOf(id))
+            assertNull(repository.keyOf(Uuid.random()))
 
-            // Read in its organization only; an older sign of life never replaces a newer one.
-            assertNull(repository.get(ORG_B, id))
+            // Written in its organization, with its key, only; an older sign of life never replaces a newer one.
             val later = clock.now + 30.seconds
-            repository.touch(ORG_A, id, later)
-            repository.touch(ORG_A, id, clock.now)
-            repository.touch(ORG_B, id, later + 30.seconds)
-            assertEquals(later, repository.get(ORG_A, id)?.lastSeenAt)
+            assertTrue(repository.touch(ORG_A, id, hash, later))
+            assertTrue(repository.touch(ORG_A, id, hash, clock.now))
+            assertFalse(repository.touch(ORG_B, id, hash, later + 30.seconds))
+            assertFalse(repository.touch(ORG_A, id, "another-hash", later + 30.seconds))
+            val seen = server.driver.inTenant(ORG_A) {
+                fetchAll(Statement.create("SELECT last_seen_at FROM runners_registered")).getOrThrow()
+            }.single().get("last_seen_at").asInstant()
+            assertEquals(later, seen)
         }
+
+    @Test
+    fun theHeartbeatsQueriesUseTheirIndexes() = serverTest(listOf(RunnersModule)) { server ->
+        for ((org, rows) in listOf(ORG_B to 4_000, ORG_A to 100)) {
+            server.driver.inTenant(org) {
+                execute(
+                    Statement.create(
+                        """
+                        INSERT INTO runners_registered (id, org_id, name, labels, key_hash, registered_by, created_at)
+                        SELECT gen_random_uuid(), CAST(:org AS UUID), 'r' || i, '[]', md5(:org || i), 'dana', now()
+                        FROM generate_series(1, $rows) AS i
+                        """,
+                    ).bind("org", org.toString()),
+                ).getOrThrow()
+            }
+        }
+        // Statistics only, which no request writes: the serving role may not vacuum (#68).
+        server.database.superuser.execute("VACUUM ANALYZE runners_registered").getOrThrow()
+        val one = server.driver.inTenant(ORG_A) {
+            fetchAll(Statement.create("SELECT id, key_hash FROM runners_registered LIMIT 1")).getOrThrow()
+        }.single()
+        val id = one.get("id").asUuid()
+        val hash = one.get("key_hash").asString()
+        // The function's own query, as `ostrom_router` reads it (its policy opens every row), then the write.
+        val plans = linkedMapOf(
+            "key of a runner (body of runners_registered_key)" to server.plan(
+                null,
+                "SELECT r.org_id, r.key_hash FROM runners_registered r WHERE r.id = :id",
+            ) { bind("id", id) },
+            "sign of life" to server.plan(ORG_A, RegisteredRunnersRepositoryImpl.TOUCH_SQL) {
+                bind("at", clock.now).bind("org_id", ORG_A).bind("id", id).bind("key_hash", hash)
+            },
+        )
+        val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
+        SystemFileSystem.createDirectories(Path("build/reports/explain"))
+        SystemFileSystem.sink(Path("build/reports/explain/runners-heartbeat.txt")).buffered()
+            .use { it.writeString(report) }
+        for ((name, plan) in plans) {
+            assertFalse("Seq Scan on runners_registered" in plan, "$name scans the table:\n$plan")
+            assertTrue("runners_registered_pkey" in plan, "$name does not use the primary key:\n$plan")
+        }
+    }
+
+    /** The plan of [sql]: in [org]'s transaction, or as the test's superuser for a router function's body. */
+    private suspend fun TestServer.plan(org: Uuid?, sql: String, bind: Statement.() -> Statement): String {
+        val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind()
+        val rows = if (org == null) {
+            database.superuser.fetchAll(explain).getOrThrow()
+        } else {
+            driver.inTenant(org) { fetchAll(explain).getOrThrow() }
+        }
+        return rows.joinToString("\n") { it.get("QUERY PLAN").asString() }
+    }
 
     private suspend fun TestServer.register(token: String, name: String): RegisteredRunnerDto {
         val response = client.post("/api/v1/runners") {
