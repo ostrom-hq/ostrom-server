@@ -72,7 +72,9 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
             val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO
             val view = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
             val request = view.requests.first { it.id == id }
-            call.respond(AnswerApprovalResponse(ApprovalView(request, view.gate).toApproval()))
+            // The contract's 200 is the answered approval and its signed receipt, a no's included.
+            val receipt = receipts.read(view.gate.orgId, view.gate.receiptId)
+            call.respond(AnswerApprovalResponse(ApprovalView(request, view.gate).toApproval(), receipt))
         }
     }
 }

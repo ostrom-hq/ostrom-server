@@ -67,7 +67,7 @@ object GatesModule : ServerModule {
     override val koinModule: Module = module {
         single<GatesRepository> { PostgresGatesRepository(get()) }
         single<GateDigester> { Sha256GateDigester() }
-        single<GateReceiptSigner> { ReceiptsGateSigner(get(), get(), get(), get()) }
+        single<GateReceiptSigner> { ReceiptsGateSigner(get(), get(), get(), get(), get()) }
         single<EnsureGateReceiptUseCase> { EnsureGateReceiptUseCaseImpl(get(), get(), get()) }
         single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<AskGateUseCase> { AskGateUseCaseImpl(get(), get(), get(), get()) }
@@ -82,7 +82,7 @@ object GatesModule : ServerModule {
         // Named: the channels of other modules (notifications, Slack, GitHub) bind theirs next to it.
         single<GateChannel>(named("metrics")) { MetricsGateChannel(get()) }
 
-        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = GatesMigrations
