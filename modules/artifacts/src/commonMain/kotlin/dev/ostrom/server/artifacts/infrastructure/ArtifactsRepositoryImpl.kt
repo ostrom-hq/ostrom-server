@@ -27,8 +27,8 @@ import kotlin.uuid.Uuid
  * unchanged file stores nothing.
  *
  * Every read and write runs confined to the artifact's organization ([inTenant], S2-01). Only `artifacts_routes` is
- * read across organizations: the content origin finds an artifact's organization there by its id or its link slug,
- * then reads the artifact in its organization.
+ * read across organizations, only through its `SECURITY DEFINER` functions: the content origin finds an artifact's
+ * organization there by its id or its link slug, then reads the artifact in its organization.
  *
  * @param driver The database.
  */
@@ -112,9 +112,9 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
             .bind("id", id).bind("org_id", orgId),
     ).getOrThrow().firstOrNull()?.toArtifact()
 
-    override suspend fun getById(id: Uuid): Artifact? = route("artifact_id = :key", id)
+    override suspend fun getById(id: Uuid): Artifact? = route("artifacts_route_by_id", id)
 
-    override suspend fun getByLinkSlug(slug: String): Artifact? = route("link_slug = :key", slug)
+    override suspend fun getByLinkSlug(slug: String): Artifact? = route("artifacts_route_by_slug", slug)
 
     override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> {
         val cursor = if (before == null) {
@@ -200,10 +200,13 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
         ).getOrThrow() > 0
     }
 
-    /** The artifact a route matches ([condition] on `:key`), read in its organization. */
-    private suspend fun route(condition: String, key: Any): Artifact? {
+    /**
+     * The artifact a route matches, found across organizations by the `SECURITY DEFINER` [function] of
+     * [ArtifactsMigrations] (version 2) on `:key`, then read in its organization.
+     */
+    private suspend fun route(function: String, key: Any): Artifact? {
         val row = driver.fetchAll(
-            Statement.create("""SELECT artifact_id, org_id FROM artifacts_routes WHERE $condition""").bind("key", key),
+            Statement.create("""SELECT artifact_id, org_id FROM $function(:key)""").bind("key", key),
         ).getOrThrow().firstOrNull() ?: return null
         return get(row.get("org_id").asUuid(), row.get("artifact_id").asUuid())
     }
