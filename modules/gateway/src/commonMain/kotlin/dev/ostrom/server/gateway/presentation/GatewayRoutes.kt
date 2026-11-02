@@ -15,6 +15,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -109,6 +110,7 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
         }
         put<InferenceSettingsApi> {
             val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
+            call.requireRecentSignIn("change the model keys")
             val principal = call.requirePrincipal()
             val request = call.receive<InferenceSettingsDto>()
             val settings = GatewaySettings(

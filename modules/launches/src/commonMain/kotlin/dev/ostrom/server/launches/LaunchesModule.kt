@@ -52,7 +52,7 @@ object LaunchesModule : ServerModule {
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
         single<CallerResolver> { LaunchRelayCallers(get(), get()) }
         single { LaunchPolicy(get()) }
-        single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get()) }
+        single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get(), get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }
         single<OpenRunnerLaunchUseCase> { OpenRunnerLaunchUseCaseImpl(get(), get()) }
         single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get()) }
