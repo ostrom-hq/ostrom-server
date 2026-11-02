@@ -51,6 +51,15 @@ jobs:
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
+      # 6.6: the fake TeamCode team of ostrom-helm (compose/demo/teamcode), the demo's MySQL 8.4, as ostrom-e2e's
+      # TC-003/004.
+      teamcode-db:
+        image: mysql:8.4
+        env: { MYSQL_ROOT_PASSWORD: teamcode-root, MYSQL_DATABASE: teamcode }
+        ports: ['3307:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pteamcode-root" --health-interval 5s --health-timeout 5s
+          --health-retries 30
     env:
       CLI_REF: ${{ inputs.cli_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
@@ -68,6 +77,32 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_CLI }}
           path: cli
           persist-credentials: false
+      # 6.6: the fake TeamCode team (helm#25), pinned: the journey names its accounts and refresh tokens.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ref: 28a0591cf0739573f5e7b6960535840ebd720806
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          sparse-checkout: compose/demo/teamcode
+          persist-credentials: false
+      - name: The fake TeamCode team in MySQL, and the read-only user ostrom import teamcode reads with
+        env:
+          TEAMCODE: helm/compose/demo/teamcode
+        run: |
+          sql() {
+            docker run --rm -i --network host -e MYSQL_PWD=teamcode-root mysql:8.4 mysql -h127.0.0.1 -P3307 -uroot "$@"
+          }
+          sql teamcode < "$TEAMCODE/01-schema.sql"
+          sql teamcode < "$TEAMCODE/02-seed.sql"
+          docker run --rm --network host -v "$PWD/$TEAMCODE:/teamcode:ro" \
+            -e MYSQL_HOST=127.0.0.1 -e MYSQL_TCP_PORT=3307 \
+            -e MYSQL_ROOT_PASSWORD=teamcode-root -e MYSQL_DATABASE=teamcode -e TEAMCODE_RO_PASSWORD=teamcode-ro \
+            mysql:8.4 sh /teamcode/03-readonly.sh
+          # ostrom import teamcode reads TeamCode with the mysql client on the PATH
+          command -v mysql || { sudo apt-get update -q && sudo apt-get install -yq mysql-client; }
+          MYSQL_PWD=teamcode-ro mysql -h127.0.0.1 -P3307 -uteamcode_ro teamcode -N \
+            -e "SELECT COUNT(*) FROM accounts WHERE team_id = 'default'"
       - name: ostrom-core version the CLI pins
         id: core
         run: echo "ref=$(tr -d '[:space:]' < cli/gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
@@ -155,13 +190,15 @@ jobs:
           OSTROM_STRIPE_SECRET_KEY=sk_test_cli_e2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_cli_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
+          OSTROM_SHARING_CLAUDE_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
+          OSTROM_SHARING_CODEX_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
-      - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt)
+      - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt, the TeamCode import)
         working-directory: cli
         env:
           IMAGE: ${{ steps.server.outputs.image }}
@@ -170,6 +207,9 @@ jobs:
           --server http://127.0.0.1:4600 --mail-dir "$RUNNER_TEMP/ostrom-mail" --report "$RUNNER_TEMP/journey.json"
           --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
           $IMAGE seed-test-account"
+          --teamcode-db mysql://teamcode_ro@127.0.0.1:3307/teamcode --teamcode-password teamcode-ro
+          --teamcode-key-file "$GITHUB_WORKSPACE/helm/compose/demo/teamcode/key.txt" --fake-tokens-port 4620
+          --database-admin-url postgresql://ostrom:ostrom@localhost:5432/ostrom
       - name: Server logs
         if: always()
         run: docker logs ostrom-server 2>&1 | tail -n 300 || true
