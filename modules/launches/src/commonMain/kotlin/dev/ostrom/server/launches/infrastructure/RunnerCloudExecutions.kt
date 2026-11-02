@@ -16,7 +16,7 @@ import kotlin.uuid.Uuid
 class RunnerCloudExecutions(private val sessions: CloudSessionsRepository) : CloudExecutions {
     override suspend fun current(orgId: Uuid, cloudSessionId: Uuid, openedAt: Instant): Boolean {
         val session = sessions.get(orgId, cloudSessionId) ?: return false
-        val started = session.executionStartedAt ?: return false
-        return session.state.holdsExecution && started <= openedAt
+        val started = session.executionStartedAt
+        return started != null && session.state.holdsExecution && started <= openedAt
     }
 }
