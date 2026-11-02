@@ -66,10 +66,8 @@ class SpanModelCallTracerTest {
         usage: TokenUsage? = null,
         status: Int = 200,
         outcome: String = "ok",
-        sessionId: String? = "s-1",
-        model: String = "claude-opus-5",
     ) = ModelCallRecord(
-        Gw.orgB, Gw.orgA, Gw.memberA.memberId, sessionId, WireProtocol.MESSAGES, provider, null, model,
+        Gw.orgB, Gw.orgA, Gw.memberA.memberId, "s-1", WireProtocol.MESSAGES, provider, null, "claude-opus-5",
         usage, 250_000, usage != null, status, outcome, Instant.parse("2026-11-02T10:00:00Z"), 100, 2_500,
     )
 
@@ -100,7 +98,7 @@ class SpanModelCallTracerTest {
 
     @Test
     fun aCallRefusedBeforeAnyProviderKeepsItsModelAndOutcome() = runTest {
-        val span = traced(record(null, status = 429, outcome = "budget_exhausted", sessionId = null))
+        val span = traced(record(null, status = 429, outcome = "budget_exhausted").copy(sessionId = null))
         assertEquals(
             setOf("gen_ai.request.model", "ostrom.model_call.outcome", "http.response.status_code"),
             span.attributes.keys,
@@ -127,7 +125,7 @@ class SpanModelCallTracerTest {
 
     @Test
     fun aCallAbandonedBeforeAnyAnswerHasNeitherAStatusNorABlankModel() = runTest {
-        val span = traced(record(null, status = 0, outcome = "cancelled", model = ""))
+        val span = traced(record(null, status = 0, outcome = "cancelled").copy(model = ""))
         assertEquals(setOf("ostrom.model_call.outcome"), span.attributes.keys)
         assertEquals(StatusCode.UNSET to "", span.status)
     }
