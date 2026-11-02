@@ -253,8 +253,10 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 
 The shared accounts' tokens are renewed at the providers' OAuth token endpoints. An operator can point them elsewhere
 (a proxy, or the fake provider of the local demo, which renews any token). The refresh token is sent there: an endpoint
-is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`); anything else
-stops the server at start. A blank value counts as unset, so the provider's own endpoint is used.
+is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`), judged on
+the host the client parses; an endpoint with credentials (`@`), a fragment (`#`), a backslash, an IPv6 literal or a
+port above 65535 is refused too. Anything else stops the server at start. A blank value counts as unset, so the
+provider's own endpoint is used.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -308,3 +310,13 @@ A model call (gateway, extraction) runs in
 `metrics.modelCalled(call, duration)`: the span alone goes to Langfuse, prompts only when the org turned capture on.
 Metric attributes are bounded values, never ids; a new metric is added to `OstromMetrics` and to
 `ostrom-infra/observability/catalog.py` together. Event taxonomy and privacy rules: ostrom-core `docs/telemetry.md`.
+
+Where the product metrics are emitted, each next to the code that decides, never inside it:
+
+| Metric | Emitted by |
+|---|---|
+| `ostrom.gates.requested{kind}` | `gates` `MetricsGateChannel`, when an enforced gate opens (the notifier, after the commit) |
+| `ostrom.gates.answered{answer,channel}`, `ostrom.gates.time_to_answer{answer}` | `gates` `MetricsGateChannel`, when a gate is decided |
+| `ostrom.sessions.started{agent,where="local"}` | `sessions` `SessionSegments`, at a session's first segment |
+| `ostrom.sessions.started{agent,where="cloud"}` | `runners` `MeteredCreateCloudSession`, once a cloud session is created |
+| `ostrom.inference.cost_usd`, `.tokens`, `.duration` `{source,provider}` | `gateway` `MeteredModelCallObserver`, per relayed call that reached a provider |

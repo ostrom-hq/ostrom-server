@@ -27,6 +27,7 @@ import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.runners.RunnersModule
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.MemberRole
@@ -76,8 +77,8 @@ import kotlin.uuid.Uuid
  */
 class LaunchRelayCallersPostgresTest {
     private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, LaunchesModule,
-        SecretsModule, McpRelayModule, UsageModule,
+        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, RunnersModule,
+        LaunchesModule, SecretsModule, McpRelayModule, UsageModule,
     )
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 

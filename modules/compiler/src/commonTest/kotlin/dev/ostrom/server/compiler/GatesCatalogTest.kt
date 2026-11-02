@@ -98,6 +98,63 @@ class GatesCatalogTest {
     }
 
     @Test
+    fun theBuiltInPatternsCatchTheCommonFormsOfEachAction() {
+        fun classesOf(command: String) = ActionClasses.builtIn.filter { action ->
+            action.patterns.any { Regex(it, RegexOption.IGNORE_CASE).containsMatchIn(command) }
+        }.map { it.cls }
+        // Second audit H3: options before the verb, a push that names no branch, the MCP server and the APIs.
+        val gated = mapOf(
+            "git push" to "push-main",
+            "git -C api push origin main" to "push-main",
+            "git --no-pager -c core.x=y push" to "push-main",
+            "gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=abc" to "push-main",
+            "git push origin 1.4.0" to "push-tag",
+            "git push --follow-tags" to "push-tag",
+            "gh pr merge 7 --squash" to "merge",
+            "mcp__github__merge_pull_request" to "merge",
+            "gh api -X PUT repos/o/r/pulls/7/merge" to "merge",
+            "gh api repos/o/r/merges -f base=main -f head=x" to "merge",
+            "kubectl -n prod apply -f x.yaml" to "deploy",
+            "helm --kube-context prod upgrade api ./chart" to "deploy",
+            "terraform -chdir=infra apply" to "deploy",
+            "docker image push ghcr.io/o/api" to "deploy",
+            "docker buildx build --push ." to "deploy",
+            "pnpm publish" to "deploy",
+            "yarn npm publish" to "deploy",
+            "gh workflow run 1234" to "deploy",
+            "gh api repos/o/r/actions/workflows/1/dispatches" to "deploy",
+        )
+        for ((command, cls) in gated) assertTrue(cls in classesOf(command), "$command is $cls")
+        assertEquals(emptyList(), classesOf("git stash push"))
+        assertEquals(emptyList(), classesOf("kubectl -n prod get pods"))
+        assertEquals(emptyList(), classesOf("git log --oneline"))
+    }
+
+    @Test
+    fun aProposedWorkflowNeverWeakensADecidedGate() {
+        val pushMain = ActionClasses.builtIn.first { it.cls == "push-main" }
+        val decided = workflow("w1", listOf(node("g1", GATE, label = "Push to main", approvers = listOf("rev-b"))))
+        val narrowing = workflow(
+            "w0",
+            listOf(node("g0", GATE, actions = listOf(GateAction("push-main", "Push", listOf("a^"), emptyList())))),
+            status = WorkflowStatus.PROPOSED,
+        )
+        val entry = GatesCatalog(listOf(narrowing, decided), null).catalog("acme-api")
+            .first { it.action.cls == "push-main" }
+        assertEquals(pushMain.patterns + "a^", entry.action.patterns, "second audit H2: a proposal only adds patterns")
+        assertEquals("g1", entry.gate?.nodeId, "the decided gate, guessed from its words, stays")
+        assertEquals(true, entry.gate?.enforce)
+        assertEquals("guessed", entry.gate?.basis)
+        // Without a decided gate, the proposed ones are what there is: shadows.
+        assertEquals("g0", GatesCatalog(listOf(narrowing), null).gateFor(pushMain, null)?.nodeId)
+        val guessedProposal =
+            workflow("w2", listOf(node("g2", GATE, label = "Push to main")), status = WorkflowStatus.PROPOSED)
+        val shadow = GatesCatalog(listOf(guessedProposal), null).gateFor(pushMain, null)
+        assertEquals("g2", shadow?.nodeId)
+        assertEquals(false, shadow?.enforce)
+    }
+
+    @Test
     fun theCatalogAddsTheCustomActionsAndTheDeclaredPatterns() {
         val custom = GateAction("db-drop", "", listOf("\\bdrop\\b"), emptyList())
         val tooled = GateAction("ship", "Ship", listOf("ship"), emptyList(), tools = listOf("mcp"))
