@@ -68,7 +68,8 @@ class ReportsQueryPlansTest {
         server.seed(ORG_B, 8_000)
         server.seed(ORG_A, 800)
         for (table in listOf("usage_events", "sessions_sessions", "gates_gates")) {
-            server.driver.execute("VACUUM ANALYZE $table").getOrThrow()
+            // Statistics only, which no request writes: the serving role may not vacuum (#68).
+            server.database.superuser.execute("VACUUM ANALYZE $table").getOrThrow()
         }
         val month = NOW - 30.days
         val cursorAt = NOW - 10.days
