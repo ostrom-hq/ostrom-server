@@ -92,14 +92,15 @@ private val CROSS_ORGANIZATION_SQL: String =
 private val DELETION_FUNCTIONS =
     listOf(
         "orgs_memberships_of(UUID)",
-        "orgs_deletions_to_settle(INTEGER)",
+        "orgs_deletions_to_settle(TIMESTAMPTZ, INTEGER)",
         "orgs_due_purges(TIMESTAMPTZ, INTEGER)",
     )
 
 /**
  * Version 3: the time zone of an organization, and the end of a deletion. A deleted organization
- * keeps its row and its data for 30 days (`purge_after`); the worker tells every module of the
- * deletion (`deletion_settled_at`), then erases it (`purged_at`). Finding them crosses
+ * keeps its row and its data for 30 days (`purge_after`, set too for the organizations deleted
+ * before this version); the worker tells every module of the deletion (`deletion_settled_at`),
+ * then erases it (`purged_at`); a step a module failed on waits until `deletion_retry_at`. Finding them crosses
  * organizations, so two `SECURITY DEFINER` functions owned by `ostrom_router` list their ids, and
  * nothing else; `orgs_memberships_of` is made again to return the time zone.
  */
@@ -109,7 +110,9 @@ private val SETTINGS_AND_DELETION_SQL: String =
         ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC',
         ADD COLUMN purge_after TIMESTAMPTZ,
         ADD COLUMN deletion_settled_at TIMESTAMPTZ,
-        ADD COLUMN purged_at TIMESTAMPTZ;
+        ADD COLUMN purged_at TIMESTAMPTZ,
+        ADD COLUMN deletion_retry_at TIMESTAMPTZ;
+    UPDATE orgs_organizations SET purge_after = deleted_at + INTERVAL '30 days' WHERE deleted_at IS NOT NULL;
     CREATE INDEX orgs_organizations_to_settle ON orgs_organizations (deleted_at, id)
         WHERE deleted_at IS NOT NULL AND deletion_settled_at IS NULL;
     CREATE INDEX orgs_organizations_to_purge ON orgs_organizations (purge_after, id)
@@ -124,10 +127,11 @@ private val SETTINGS_AND_DELETION_SQL: String =
         FROM orgs_members m JOIN orgs_organizations o ON o.id = m.org_id
         WHERE m.user_id = p_user AND o.deleted_at IS NULL;
     $$;
-    CREATE FUNCTION orgs_deletions_to_settle(p_limit INTEGER) RETURNS SETOF UUID
+    CREATE FUNCTION orgs_deletions_to_settle(p_now TIMESTAMPTZ, p_limit INTEGER) RETURNS SETOF UUID
         LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
         SELECT id FROM orgs_organizations
         WHERE deleted_at IS NOT NULL AND deletion_settled_at IS NULL
+          AND (deletion_retry_at IS NULL OR deletion_retry_at <= p_now)
         ORDER BY deleted_at, id LIMIT p_limit;
     $$;
     CREATE FUNCTION orgs_due_purges(p_now TIMESTAMPTZ, p_limit INTEGER) RETURNS SETOF UUID
@@ -135,6 +139,7 @@ private val SETTINGS_AND_DELETION_SQL: String =
         SELECT id FROM orgs_organizations
         WHERE purge_after IS NOT NULL AND purged_at IS NULL AND purge_after <= p_now
           AND deletion_settled_at IS NOT NULL
+          AND (deletion_retry_at IS NULL OR deletion_retry_at <= p_now)
         ORDER BY purge_after, id LIMIT p_limit;
     $$;
     ${DELETION_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}

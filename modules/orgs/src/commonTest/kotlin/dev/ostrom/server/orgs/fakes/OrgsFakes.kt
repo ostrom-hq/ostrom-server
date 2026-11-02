@@ -71,9 +71,10 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
     /** How many times [update] wrote. */
     var updates = 0
 
-    override suspend fun update(id: Uuid, name: String, timeZone: String) {
+    override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
         updates++
-        store.orgs[id] = store.orgs.getValue(id).copy(name = name, timeZone = timeZone)
+        val org = store.orgs.getValue(id)
+        store.orgs[id] = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
     }
 
     override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
@@ -92,21 +93,36 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
 }
 
 class FakeOrgDeletions(private val store: OrgsStore) : OrgDeletionsRepository {
-    override suspend fun deletionsToSettle(limit: Int): List<Uuid> =
-        store.deleted.filter { it !in store.settled }.take(limit)
+    /** When each postponed deletion may be tried again. */
+    val retryAt = mutableMapOf<Uuid, Instant>()
+
+    /** When set, [postpone] fails. */
+    var postponeFails = false
+
+    private fun ready(id: Uuid, now: Instant) = retryAt[id]?.let { it <= now } ?: true
+
+    override suspend fun deletionsToSettle(now: Instant, limit: Int): List<Uuid> =
+        store.deleted.filter { it !in store.settled && ready(it, now) }.take(limit)
 
     override suspend fun markSettled(id: Uuid, at: Instant) {
         store.settled += id
+        retryAt.remove(id)
     }
 
     override suspend fun duePurges(now: Instant, limit: Int): List<Uuid> =
         store.purgeAfter
-            .filter { (id, after) -> id in store.settled && id !in store.erased && after <= now }
+            .filter { (id, after) -> id in store.settled && id !in store.erased && after <= now && ready(id, now) }
             .keys
             .take(limit)
 
+    override suspend fun postpone(id: Uuid, until: Instant) {
+        check(!postponeFails) { "database down" }
+        retryAt[id] = until
+    }
+
     override suspend fun erase(id: Uuid, at: Instant) {
         store.erased += id
+        retryAt.remove(id)
         store.orgs[id] = store.orgs.getValue(id).copy(name = "", githubOrgId = null, timeZone = "UTC")
     }
 }

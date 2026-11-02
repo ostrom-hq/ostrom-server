@@ -6,8 +6,9 @@ import dev.ostrom.server.kernel.module.OrgDeletionListener
 import kotlin.uuid.Uuid
 
 /**
- * Billing's part of an organization's deletion: the subscription ends at once. Nothing is erased at the purge: the
- * billing row and the invoices are accounting records, kept as the law asks.
+ * Billing's part of an organization's deletion: the subscription ends at once, and once more at the purge in case one
+ * started in between (a checkout paid after the deletion). Nothing is erased: the billing row and the invoices are
+ * accounting records, kept as the law asks.
  *
  * @param endSubscription Ends the subscription.
  */
@@ -17,6 +18,6 @@ class BillingOrgDeletionListener(private val endSubscription: EndDeletedOrgSubsc
     }
 
     override suspend fun purge(orgId: Uuid) {
-        // Kept: accounting records outlive the organization.
+        endSubscription(orgId)
     }
 }

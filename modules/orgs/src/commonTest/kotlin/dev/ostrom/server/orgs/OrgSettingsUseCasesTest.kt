@@ -66,7 +66,8 @@ class OrgSettingsUseCasesTest {
     private val update = UpdateOrgUseCaseImpl(world.orgs, world.members, world.audit)
     private val delete = DeleteOrgUseCaseImpl(world.orgs, world.members, world.audit, world.clock)
     private val listener = RecordingListener()
-    private val settle = SettleOrgDeletionsUseCaseImpl(world.deletions, listOf(listener), world.clock)
+    private val logs = RecordingLogger()
+    private val settle = SettleOrgDeletionsUseCaseImpl(world.deletions, listOf(listener), world.clock, logs)
 
     private fun join(membership: Membership, personId: Uuid, role: OrgRole) {
         val member = Member(Uuid.random(), membership.org.id, personId, role, world.clock.now)
@@ -203,9 +204,17 @@ class OrgSettingsUseCasesTest {
         listener.failOn = acme.org.id
 
         assertEquals(DeletionPass(settled = 1, purged = 0, failed = 1), settle())
+        assertEquals(
+            "WARN organization deletion step failed {org_id=${acme.org.id}, step=settle, error=IllegalStateException}",
+            logs.lines.single(),
+            "Its id and the error's class, never the message",
+        )
+        assertEquals(DeletionPass(0, 0, 0), settle(), "Put off: it does not hold the batch")
         world.clock.now += 31.days
         assertEquals(DeletionPass(settled = 0, purged = 1, failed = 1), settle(), "Not erased before it is settled")
         listener.failOn = null
+        assertEquals(DeletionPass(0, 0, 0), settle(), "Ten minutes after its last failure")
+        world.clock.now += 10.minutes
         assertEquals(DeletionPass(settled = 1, purged = 1, failed = 0), settle())
         listener.failOn = globex.org.id
         assertEquals(DeletionPass(0, 0, 0), settle())
@@ -218,6 +227,21 @@ class OrgSettingsUseCasesTest {
             ),
             listener.calls,
         )
+    }
+
+    @Test
+    fun aDeletionThatCannotBePutOffIsTriedAgainAtTheNextPass() = runTest {
+        val ada = world.people.add("ada", null)
+        val acme = create(ada.id, "Acme", null)
+        delete(acme.org.id, ada.id, "acme", world.clock.now)
+        listener.failOn = acme.org.id
+        world.deletions.postponeFails = true
+
+        assertEquals(DeletionPass(0, 0, 1), settle())
+        assertEquals(DeletionPass(0, 0, 1), settle(), "Not put off")
+        assertEquals("WARN organization deletion not postponed {error=IllegalStateException}", logs.lines.last())
+        listener.failOn = null
+        assertEquals(DeletionPass(1, 0, 0), settle())
     }
 
     @Test

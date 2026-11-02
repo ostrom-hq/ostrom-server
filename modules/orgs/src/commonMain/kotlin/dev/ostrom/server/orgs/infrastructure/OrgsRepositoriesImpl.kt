@@ -128,18 +128,15 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
             .getOrThrow()
             .firstOrNull() != null
 
-    override suspend fun update(id: Uuid, name: String, timeZone: String) {
-        driver.inOrg(id) {
-            execute(
-                    Statement.create(
-                            "UPDATE orgs_organizations SET name = :name, time_zone = :zone WHERE id = :id"
-                        )
-                        .bind("name", name)
-                        .bind("zone", timeZone)
-                        .bind("id", id)
-                )
-                .getOrThrow()
-        }
+    override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
+        val columns = listOfNotNull(name?.let { "name = :name" }, timeZone?.let { "time_zone = :zone" })
+        if (columns.isEmpty()) return
+        val statement =
+            Statement.create("UPDATE orgs_organizations SET ${columns.joinToString(", ")} WHERE id = :id")
+                .bind("id", id)
+        name?.let { statement.bind("name", it) }
+        timeZone?.let { statement.bind("zone", it) }
+        driver.inOrg(id) { execute(statement).getOrThrow() }
     }
 
     override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {

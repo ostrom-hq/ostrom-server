@@ -11,12 +11,13 @@ import kotlin.uuid.Uuid
 interface OrgDeletionsRepository {
     /**
      * The deleted organizations the modules were not told of yet, oldest deletion first, across
-     * organizations.
+     * organizations; not those postponed past [now].
      *
+     * @param now The time.
      * @param limit At most this many.
      * @return Their ids.
      */
-    suspend fun deletionsToSettle(limit: Int): List<Uuid>
+    suspend fun deletionsToSettle(now: Instant, limit: Int): List<Uuid>
 
     /**
      * Records that every module was told of a deletion.
@@ -28,7 +29,7 @@ interface OrgDeletionsRepository {
 
     /**
      * The deleted organizations whose 30 days are over and that are not erased yet, across
-     * organizations; only those every module was told of.
+     * organizations; only those every module was told of, and not those postponed past [now].
      *
      * @param now The time.
      * @param limit At most this many.
@@ -45,4 +46,13 @@ interface OrgDeletionsRepository {
      * @param at When.
      */
     suspend fun erase(id: Uuid, at: Instant)
+
+    /**
+     * Puts off the next step of a deletion a module failed on, so that it does not hold the
+     * others back.
+     *
+     * @param id The organization.
+     * @param until When to try again.
+     */
+    suspend fun postpone(id: Uuid, until: Instant)
 }

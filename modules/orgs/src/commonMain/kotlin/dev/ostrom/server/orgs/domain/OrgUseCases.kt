@@ -229,7 +229,13 @@ class UpdateOrgUseCaseImpl(
             )
         }
         val updated = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
-        if (updated != org) orgs.update(orgId, updated.name, updated.timeZone)
+        if (updated != org) {
+            orgs.update(
+                orgId,
+                updated.name.takeIf { it != org.name },
+                updated.timeZone.takeIf { it != org.timeZone },
+            )
+        }
         if (updated.name != org.name) {
             val details = mapOf("from" to org.name, "to" to updated.name)
             audit.record(OrgEvent(orgId, userId, "org.renamed", "org", orgId.toString(), details))

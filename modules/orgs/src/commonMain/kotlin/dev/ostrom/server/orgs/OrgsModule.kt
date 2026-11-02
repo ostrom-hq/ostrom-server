@@ -124,7 +124,7 @@ object OrgsModule : ServerModule {
         // Every module that keeps or bills something of an organization binds a listener (billing).
         single<OrgDeletionsRepository> { OrgDeletionsRepositoryImpl(get()) }
         single<SettleOrgDeletionsUseCase> {
-            SettleOrgDeletionsUseCaseImpl(get(), getAll<OrgDeletionListener>(), get())
+            SettleOrgDeletionsUseCaseImpl(get(), getAll<OrgDeletionListener>(), get(), get())
         }
         single<TransferOwnershipUseCase> {
             TransferOwnershipUseCaseImpl(get(), get(), get(), get())

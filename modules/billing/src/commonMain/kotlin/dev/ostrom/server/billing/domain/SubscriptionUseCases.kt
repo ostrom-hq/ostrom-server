@@ -201,9 +201,10 @@ class SetCancellationUseCaseImpl(
 }
 
 /**
- * Ends the subscription of a deleted organization now (the orgs module tells billing of the deletion): a deleted
- * organization is never billed again. Idempotent: the subscription is read from Stripe first, and one that already
- * ended is left alone.
+ * Ends the subscription of a deleted organization now (the orgs module tells billing of the deletion, and again at
+ * the purge): a deleted organization is never billed again. Every subscription that has not ended is ended, whatever
+ * its status (a checkout paid after the deletion, a paused or unpaid one would otherwise resume). Idempotent: the
+ * subscription is read from Stripe first, and one that already ended is left alone.
  */
 interface EndDeletedOrgSubscriptionUseCase {
     /**
@@ -230,14 +231,19 @@ class EndDeletedOrgSubscriptionUseCaseImpl(
     private val settings: BillingSettings,
 ) : EndDeletedOrgSubscriptionUseCase {
     override suspend fun invoke(orgId: Uuid) {
-        val live = repository.get(orgId).live()
-        if (!settings.stripeEnabled || live == null) return
+        val billing = repository.get(orgId)?.takeUnless { it.ended() }
+        val subscriptionId = billing?.stripeSubscriptionId
+        if (!settings.stripeEnabled || subscriptionId == null) return
         // Read first: a retry after a cancellation whose sync failed must not cancel twice.
-        val current = sync(live.billing, live.subscriptionId)
-        if (current.live() != null) {
-            stripe.cancelNow(live.subscriptionId)
-            sync(current, live.subscriptionId)
+        val current = sync(billing, subscriptionId)
+        if (!current.ended()) {
+            stripe.cancelNow(subscriptionId)
+            sync(current, subscriptionId)
         }
+    }
+
+    private fun OrgBilling.ended(): Boolean =
+        status == SubscriptionStatus.CANCELED || status == SubscriptionStatus.INCOMPLETE_EXPIRED
     }
 }
 

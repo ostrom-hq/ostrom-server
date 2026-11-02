@@ -22,6 +22,12 @@ const val DEFAULT_TIME_ZONE = "UTC"
  */
 val DELETION_GRACE: Duration = 30.days
 
+/** How long a deletion step a module failed on waits before it is tried again; the others go first. */
+val DELETION_RETRY: Duration = 10.minutes
+
+/** The zones of the server's time zone database, read once. */
+private val KNOWN_ZONES: Set<String> by lazy { TimeZone.availableZoneIds }
+
 /** How old the owner's sign-in may be to delete the organization: the same proof as a yes (S2-54). */
 val DELETION_STEP_UP: Duration = 5.minutes
 
@@ -125,7 +131,7 @@ fun validSlug(slug: String): String {
  * @throws InvalidOrgRequestException For any other value.
  */
 fun validTimeZone(id: String): String {
-    ensure(id == DEFAULT_TIME_ZONE || id in TimeZone.availableZoneIds) {
+    ensure(id == DEFAULT_TIME_ZONE || id in KNOWN_ZONES) {
         InvalidOrgRequestException("The time zone must be a known IANA zone, such as Europe/Paris.")
     }
     return id

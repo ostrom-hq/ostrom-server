@@ -109,11 +109,16 @@ class OrgsPostgresTest {
             assertFailsWith<SlugTakenException> {
                 orgs.create(org("acme"), member(acme, ada, OrgRole.OWNER)) { false }
             }
+            orgs.update(acme.id, null, "Asia/Tokyo")
+            assertEquals(acme.copy(timeZone = "Asia/Tokyo"), orgs.get(acme.id), "Only the time zone")
+            orgs.update(acme.id, "Acme Labs", null)
+            assertEquals(acme.copy(name = "Acme Labs", timeZone = "Asia/Tokyo"), orgs.get(acme.id), "Only the name")
+            orgs.update(acme.id, null, null)
             orgs.update(acme.id, "Acme Labs", "Europe/Paris")
             assertEquals(acme.copy(name = "Acme Labs", timeZone = "Europe/Paris"), orgs.get(acme.id))
             assertEquals("Europe/Paris", orgs.listOfUser(ada.id).single().org.timeZone)
             assertEquals("Europe/Paris", orgs.findBySlug("acme")?.timeZone)
-            assertTrue(acme.id !in deletions.deletionsToSettle(10), "A live organization is not being deleted")
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10), "A live organization is not being deleted")
 
             invitations.create(link(acme, owner), "hash-1")
             orgs.delete(acme.id, now, now + 30.days)
@@ -128,10 +133,13 @@ class OrgsPostgresTest {
             assertNull(orgs.create(acme2, member(acme2, ada, OrgRole.OWNER)) { false })
 
             // The worker's steps, across organizations: told, then erased after 30 days.
-            assertTrue(acme.id in deletions.deletionsToSettle(10))
+            assertTrue(acme.id in deletions.deletionsToSettle(now, 10))
+            deletions.postpone(acme.id, now + 10.minutes)
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10), "Put off")
+            assertTrue(acme.id in deletions.deletionsToSettle(now + 10.minutes, 10))
             assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10), "Never erased before every module was told")
             deletions.markSettled(acme.id, now)
-            assertTrue(acme.id !in deletions.deletionsToSettle(10))
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10))
             assertTrue(acme.id !in deletions.duePurges(now + 30.days - 1.minutes, 10), "Kept for 30 days")
             assertTrue(acme.id in deletions.duePurges(now + 30.days, 10))
             deletions.erase(acme.id, now + 30.days)

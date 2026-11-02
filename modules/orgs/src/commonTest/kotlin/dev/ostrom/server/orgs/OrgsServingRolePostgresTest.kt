@@ -125,13 +125,15 @@ class OrgsServingRolePostgresTest {
 
                 orgs.delete(acme.id, now, now + 30.days)
                 // Found with no organization set: only through the functions, which list ids and nothing else.
-                assertEquals(listOf(acme.id), deletions.deletionsToSettle(10))
+                assertEquals(listOf(acme.id), deletions.deletionsToSettle(now, 10))
                 deletions.markSettled(acme.id, now)
-                assertEquals(emptyList(), deletions.deletionsToSettle(10))
+                assertEquals(emptyList(), deletions.deletionsToSettle(now, 10))
                 assertEquals(emptyList(), deletions.duePurges(now, 10))
-                assertEquals(listOf(acme.id), deletions.duePurges(now + 30.days, 10))
-                deletions.erase(acme.id, now + 30.days)
-                assertEquals(emptyList(), deletions.duePurges(now + 31.days, 10))
+                deletions.postpone(acme.id, now + 31.days)
+                assertEquals(emptyList(), deletions.duePurges(now + 30.days, 10), "Put off")
+                assertEquals(listOf(acme.id), deletions.duePurges(now + 31.days, 10))
+                deletions.erase(acme.id, now + 31.days)
+                assertEquals(emptyList(), deletions.duePurges(now + 32.days, 10))
                 assertTrue(orgs.slugTaken("acme"))
             }
         }

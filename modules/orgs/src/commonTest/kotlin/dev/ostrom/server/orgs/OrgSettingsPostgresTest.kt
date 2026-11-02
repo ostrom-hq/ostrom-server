@@ -241,7 +241,9 @@ class OrgSettingsPostgresTest {
                 // Until the deletion is marked settled: the worker tells the modules, then marks it.
                 val deletions = server.koin.get<OrgDeletionsRepository>()
                 withContext(Dispatchers.Default) {
-                    withTimeout(30.seconds) { while (acme.uuid() in deletions.deletionsToSettle(10)) delay(20) }
+                    withTimeout(30.seconds) {
+                        while (acme.uuid() in deletions.deletionsToSettle(clock.now, 10)) delay(20)
+                    }
                 }
             } finally {
                 worker.cancel()

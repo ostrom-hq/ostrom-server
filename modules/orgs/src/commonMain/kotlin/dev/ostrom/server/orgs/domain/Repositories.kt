@@ -48,13 +48,14 @@ interface OrgsRepository {
     suspend fun slugTaken(slug: String): Boolean
 
     /**
-     * Changes an organization's settings.
+     * Changes an organization's settings, only the columns given: two people changing two
+     * different settings at once never undo each other.
      *
      * @param id The organization.
-     * @param name The name.
-     * @param timeZone The time zone.
+     * @param name The new name, null to keep it.
+     * @param timeZone The new time zone, null to keep it.
      */
-    suspend fun update(id: Uuid, name: String, timeZone: String)
+    suspend fun update(id: Uuid, name: String?, timeZone: String?)
 
     /**
      * Deletes an organization logically: marks it deleted, releases its free claim, removes its
