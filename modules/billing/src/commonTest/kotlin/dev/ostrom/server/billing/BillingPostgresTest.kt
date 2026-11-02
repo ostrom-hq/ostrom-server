@@ -142,17 +142,8 @@ class BillingPostgresTest {
             assertEquals(0, repository.usage(ORG_A, NOW).agentSeconds)
             repository.addUsage(ORG_A, NOW, 90, 1)
             assertEquals(90, repository.usage(ORG_A, NOW).agentSeconds)
-            // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
-            server.driver.execute(
-                "DO \$\$ BEGIN CREATE ROLE ostrom_billing_rls_probe NOLOGIN; " +
-                    "EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-            ).getOrThrow()
-            server.driver.execute(
-                "GRANT SELECT, INSERT ON billing_accounts, billing_active_people, billing_usage, billing_alerts " +
-                    "TO ostrom_billing_rls_probe",
-            ).getOrThrow()
+            // The test server's driver is the serving role, as in production: row level security applies to it.
             val counts = server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
                 val seen = mutableListOf<String>()
                 for (org in listOf(null, ORG_B, ORG_A)) {
                     org?.let {
@@ -167,7 +158,6 @@ class BillingPostgresTest {
             }
             assertEquals(listOf("0/0", "0/0", "1/1"), counts, "No org set: nothing; org B: nothing; org A: its rows")
             val forged = server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_billing_rls_probe").getOrThrow()
                 fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$ORG_B"))
                     .getOrThrow()
                 execute(
