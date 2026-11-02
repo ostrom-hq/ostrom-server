@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules
 
+import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.instance.InstanceModule
@@ -12,6 +14,7 @@ import dev.ostrom.server.kernel.auth.ServiceKeyCall
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
+import dev.ostrom.server.rules.fakes.RulesCallers
 import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.fakes.RulesFixtures.orgA
 import dev.ostrom.server.rules.fakes.RulesFixtures.orgB
@@ -57,6 +60,8 @@ class RulesServiceKeyPostgresTest {
     )
 
     private val overrides = module {
+        // The gates' open sessions and receipts, as the other rules tests load them with the compiler.
+        includes(RulesCallers.gateSessions)
         single<Clock> { clock }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
@@ -84,8 +89,10 @@ class RulesServiceKeyPostgresTest {
         }
     }
 
+    private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, CompilerModule, RulesModule)
+
     private fun keysTest(block: suspend (TestServer) -> Unit) =
-        serverTest(listOf(InstanceModule, ReceiptsModule, RulesModule), overrides) { server -> block(server) }
+        serverTest(modules, overrides) { server -> block(server) }
 
     private suspend fun TestServer.rules() {
         val repository = koin.get<RulesRepository>()

@@ -32,8 +32,8 @@ import kotlin.uuid.Uuid
 fun Route.launchesRoutes(dependencies: LaunchesRoutesDependencies) = with(dependencies) {
     authenticated {
         get<AgentPolicyApi> { params ->
-            val verdict = checkPolicy(call.launcher(launchers), params.agent, params.model)
-            call.respond(AgentPolicyResponse(verdict.allowed, verdict.reason))
+            val verdict = checkPolicy(call.launcher(launchers), params.agent, params.model, params.dev)
+            call.respond(AgentPolicyResponse(verdict.allowed, verdict.reason, verdict.note))
         }
         post<LaunchesApi> {
             val launcher = call.launcher(launchers)

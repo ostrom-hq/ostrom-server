@@ -117,7 +117,8 @@ class CliTokenReadsPostgresTest {
                     bearerAuth(ada.cliToken)
                     header(ORG_HEADER, bob.orgId.toString())
                 }
-                assertEquals(HttpStatusCode.Forbidden, across.status, "Ada is not in Bob's organization")
+                // Not found, as an organization that does not exist: the answer never tells it does (#143).
+                assertEquals(HttpStatusCode.NotFound, across.status, "Ada is not in Bob's organization")
                 val acrossServers = client.get("/api/v1/mcp/servers") {
                     bearerAuth(ada.cliToken)
                     header(ORG_HEADER, bob.orgId.toString())

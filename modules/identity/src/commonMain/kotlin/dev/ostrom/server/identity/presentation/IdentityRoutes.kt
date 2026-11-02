@@ -13,6 +13,7 @@ import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.auth.requireScope
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -132,6 +133,7 @@ private fun Route.tokenRoutes(dependencies: IdentityRoutesDependencies) = with(d
     }
     post<TokensApi, CreateTokenRequest> { _, request ->
         val principal = call.requireBrowserSession()
+        call.requireRecentSignIn("create a token")
         val lifetime = request.expiresInDays?.days
         val issued = createPersonalToken(principal.userId(), request.name, request.scopes, lifetime)
         call.respond(HttpStatusCode.Created, issued.toCreatedTokenResponse())
@@ -143,6 +145,7 @@ private fun Route.tokenRoutes(dependencies: IdentityRoutesDependencies) = with(d
     }
     post<TokensApi.Id.Rotate> { params ->
         val principal = call.requireBrowserSession()
+        call.requireRecentSignIn("replace a token's secret")
         val parent = Uuid.parseOrNull(params.parent.id) ?: throw TokenNotFoundException()
         val issued = rotateToken(principal.userId(), parent)
         call.respond(HttpStatusCode.Created, issued.toCreatedTokenResponse())

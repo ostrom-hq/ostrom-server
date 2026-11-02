@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules
 
+import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.repositories.ReceiptsRepository
@@ -32,6 +34,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -42,11 +45,13 @@ import kotlin.time.Duration.Companion.minutes
 /** The rules, decisions and policy routes on a real PostgreSQL and real HTTP: who may call them, and org isolation. */
 class RulesPostgresTest {
     private val clock = TestClock()
-    private val modules = listOf(InstanceModule, ReceiptsModule, RulesModule)
+    private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, CompilerModule, RulesModule)
     private val gate = RuleGateDto(listOf(GateActionDto("push-main", "Push to main")), listOf("lyes", "rev-b"))
 
     private fun rulesTest(block: suspend (TestServer) -> Unit) =
-        serverTest(modules, RulesCallers.overrides(clock)) { server -> block(server) }
+        serverTest(modules, module { includes(RulesCallers.overrides(clock), RulesCallers.gateSessions) }) { server ->
+            block(server)
+        }
 
     private suspend fun TestServer.write(
         token: String = "admin-a",
@@ -184,13 +189,14 @@ class RulesPostgresTest {
     @Test
     fun thePolicyIsReadByMembersAndSetByAdminsAsASignedDecision() = rulesTest { server ->
         val path = "/api/v1/gates/policy"
-        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "gates-reader-a").body<GatePolicyDto>())
-        val set = server.call("PUT", path, "admin-a", GatePolicyDto("never"))
+        val byDefault = server.call("GET", path, "gates-reader-a").body<GatePolicyDto>()
+        assertEquals(GatePolicyDto("never"), byDefault, "An organization that never chose")
+        val set = server.call("PUT", path, "admin-a", GatePolicyDto("sole-approver"))
         assertEquals(HttpStatusCode.OK, set.status, set.bodyAsText())
-        assertEquals(GatePolicyDto("never"), set.body<GatePolicyDto>())
-        assertEquals(GatePolicyDto("never"), server.call("GET", path, "member-a").body<GatePolicyDto>())
-        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "owner-b").body<GatePolicyDto>())
-        server.call("PUT", path, "admin-a", GatePolicyDto("never"))
+        assertEquals(GatePolicyDto("sole-approver"), set.body<GatePolicyDto>())
+        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "member-a").body<GatePolicyDto>())
+        assertEquals(GatePolicyDto("never"), server.call("GET", path, "owner-b").body<GatePolicyDto>())
+        server.call("PUT", path, "admin-a", GatePolicyDto("sole-approver"))
         val decision = server.decisions(query = "?subjectKind=policy").items.single()
         assertEquals("self-approval", decision.subject.id)
         assertEquals("policy", server.koin.get<ReceiptsRepository>().get(orgA, decision.receiptId)?.subjectKind)
@@ -270,6 +276,8 @@ class RulesPostgresTest {
         Route("GET", "/api/v1/rules/$id"),
         Route("GET", "/api/v1/decisions"),
         Route("GET", "/api/v1/gates/policy"),
+        Route("GET", "/api/v1/analysis/state"),
+        Route("GET", "/api/v1/analysis/replay"),
     )
 
     private fun writes(id: String) = listOf(
@@ -278,6 +286,9 @@ class RulesPostgresTest {
         Route("DELETE", "/api/v1/rules/$id"),
         Route("POST", "/api/v1/rules/bulk", BulkRulesRequest(listOf(id), "rejected")),
         Route("PUT", "/api/v1/gates/policy", GatePolicyDto("never")),
+        Route("POST", "/api/v1/analysis/start"),
+        Route("POST", "/api/v1/analysis/restart"),
+        Route("POST", "/api/v1/analysis/replay"),
     )
 
     private val routes = reads("rule_1") + writes("rule_1")

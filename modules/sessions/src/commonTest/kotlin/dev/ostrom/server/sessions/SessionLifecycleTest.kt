@@ -62,7 +62,7 @@ class SessionLifecycleTest {
 
     @Test
     fun withoutTheUsageModuleNoCostIsKnown() = runTest {
-        assertNull(NoSessionCosts().costOf(ORG, "s-1"))
+        assertNull(NoSessionCosts().costOf(ORG, "lch_1", Instant.DISTANT_PAST, Instant.DISTANT_FUTURE))
         val bench = SessionBench()
         val session = bench.start(agent(), start)
         assertNull(bench.end(agent(), session.id, EndSession(costUsd = 99.0)).costUsd, "never the agent's figure")
