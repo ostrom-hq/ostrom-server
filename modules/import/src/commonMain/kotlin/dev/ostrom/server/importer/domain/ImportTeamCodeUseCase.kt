@@ -104,7 +104,9 @@ class ImportTeamCodeUseCaseImpl(
         cutoverBy: Uuid?,
     ): ImportReport {
         caller.requireAdmin()
-        val strangers = memberMap.filterValues { !members.isActiveMember(caller.orgId, it.toString()) }.keys
+        // One lookup per Ostrom id, however many TeamCode members map to it.
+        val outside = memberMap.values.toSet().filterNot { members.isActiveMember(caller.orgId, it.toString()) }
+        val strangers = memberMap.filterValues { it in outside }.keys
         if (strangers.isNotEmpty()) throw UnknownImportMembersException(strangers.sorted())
         cutoverBy?.let { startCutover(caller, it, export.accounts.size, dryRun) }
         val records = provenance.list(caller.orgId)

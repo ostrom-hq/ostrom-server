@@ -167,13 +167,18 @@ class SharingInfrastructureTest {
             "http://localhost:99999/oauth/token",
             "http://localhost:80x/oauth/token",
             "https:///oauth/token",
+            "https://./oauth/token",
+            "https://proxy..example/oauth/token",
+            "https://proxy.example./oauth/token",
+            "https://token_proxy/oauth/token",
             "//localhost/oauth/token",
         )
         for (url in refused) {
             val error = assertFailsWith<InvalidConfigException>(url) { claudeAt(url) }
             assertEquals(
                 "$claude must be an https URL, or http to a local host (localhost, 127.0.0.1, *.localhost, " +
-                    "*.localtest.me), without credentials or a fragment.",
+                    "*.localtest.me), with a plain host name or IPv4 address, a port up to 65535, and no " +
+                    "credentials (@), fragment (#) or backslash.",
                 error.message,
             )
         }

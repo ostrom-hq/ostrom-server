@@ -28,9 +28,14 @@ object SharingConfig {
     private val LOCAL_HOSTS = setOf("localhost", "127.0.0.1")
     private val LOCAL_SUFFIXES = listOf(".localhost", ".localtest.me")
 
-    /** Scheme, host, optional port, then nothing or a path or query. Hosts by name or IPv4 only. */
-    private val ENDPOINT =
-        Regex("""(https?)://([a-z0-9.-]+)(?::([0-9]{1,5}))?(?:[/?].*)?""", RegexOption.IGNORE_CASE)
+    /**
+     * Scheme, host, optional port, then nothing or a path or query. A host is dot-separated labels of letters, digits
+     * and hyphens (a name or an IPv4 address), so the HTTP client parses every endpoint the grammar accepts.
+     */
+    private val ENDPOINT = Regex(
+        """(https?)://([a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::([0-9]{1,5}))?(?:[/?].*)?""",
+        RegexOption.IGNORE_CASE,
+    )
     private const val PORT_GROUP = 3
 
     /** Characters that move the authority (`#`, `@`) or that the parsers read differently (`\\`). */
@@ -58,7 +63,8 @@ object SharingConfig {
         if (value.any { it.isWhitespace() } || !allowed(value)) {
             throw InvalidConfigException(
                 "$key must be an https URL, or http to a local host (localhost, 127.0.0.1, *.localhost, " +
-                    "*.localtest.me), without credentials or a fragment.",
+                    "*.localtest.me), with a plain host name or IPv4 address, a port up to 65535, and no " +
+                    "credentials (@), fragment (#) or backslash.",
             )
         }
         return value

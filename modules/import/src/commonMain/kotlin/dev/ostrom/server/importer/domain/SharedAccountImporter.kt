@@ -217,7 +217,8 @@ class SharedAccountImporter(
 
     /**
      * [payload] with TeamCode's tokens renewed, so a pair the provider already refused, or one the provider does not
-     * say is this account's, is never stored.
+     * say is this account's, is never stored. A refused pair is lost (renewing rotated it): only someone who already
+     * holds that refresh token can send it, and the account keeps waiting for its owner, as it did.
      */
     private suspend fun renewed(payload: ShareAccountPayload): ShareAccountPayload {
         val credentials = AccountCredentials(payload.accessToken, payload.refreshToken, payload.expiresAt)
