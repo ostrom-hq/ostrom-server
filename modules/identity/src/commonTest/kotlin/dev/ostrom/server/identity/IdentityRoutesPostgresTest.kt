@@ -4,11 +4,13 @@ package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.IssueAgentTokenUseCase
+import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.identity.presentation.AccountResponse
 import dev.ostrom.server.identity.presentation.AnswerDeviceRequest
 import dev.ostrom.server.identity.presentation.AuditEventsResponse
 import dev.ostrom.server.identity.presentation.AuthTokenResponse
@@ -18,9 +20,9 @@ import dev.ostrom.server.identity.presentation.DeviceAuthorizationResponse
 import dev.ostrom.server.identity.presentation.DeviceCodeRequest
 import dev.ostrom.server.identity.presentation.DeviceCodeResponse
 import dev.ostrom.server.identity.presentation.DeviceTokenRequest
-import dev.ostrom.server.identity.presentation.AccountResponse
 import dev.ostrom.server.identity.presentation.MeDevResponse
 import dev.ostrom.server.identity.presentation.MeResponse
+import dev.ostrom.server.identity.presentation.TokenScopesResponse
 import dev.ostrom.server.identity.presentation.TokensResponse
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.ORG_HEADER
@@ -76,6 +78,7 @@ class IdentityRoutesPostgresTest {
     fun withoutCredentialsEveryAccountRouteIs401() = serverTest(listOf(IdentityModule)) { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/auth/me").status)
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/tokens").status)
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/tokens/scopes").status)
         assertEquals(HttpStatusCode.Unauthorized, server.client.post("/api/v1/auth/logout").status)
         assertEquals(
             HttpStatusCode.Unauthorized,
@@ -198,6 +201,49 @@ class IdentityRoutesPostgresTest {
             server.client.get("/api/v1/auth/me/audit?limit=2") { session(started) }.body<AuditEventsResponse>()
         assertEquals(listOf("token.revoked", "token.rotated"), actions.events.map { it.action })
         assertNotNull(actions.nextBefore)
+    }
+
+    @Test
+    fun theScopeCatalogueIsServedToASessionAndEnforced() = serverTest(listOf(IdentityModule)) { server ->
+        val (_, started) = server.signIn()
+
+        val response = server.client.get("/api/v1/tokens/scopes") { session(started, csrf = false) }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val catalogue = response.body<TokenScopesResponse>().scopes
+        assertEquals(
+            PERSONAL_TOKEN_SCOPES.map { it.scope to it.description },
+            catalogue.map { it.scope to it.description },
+        )
+        assertTrue(catalogue.none { it.scope in setOf("gates:answer", "agent:session", "user:*") })
+
+        // A token reads its own profile, never the catalogue: tokens are managed from the console.
+        val token = server.client.post("/api/v1/tokens") {
+            session(started)
+            json(CreateTokenRequest("t", listOf("profile:read")))
+        }.body<CreatedTokenResponse>()
+        assertEquals(
+            HttpStatusCode.Forbidden,
+            server.client.get("/api/v1/tokens/scopes") { bearerAuth(token.secret) }.status,
+        )
+
+        // Every scope of the catalogue can be given (32 at most per token); one outside it is a 400 that names it.
+        catalogue.map { it.scope }.chunked(32).forEachIndexed { index, scopes ->
+            val created = server.client.post("/api/v1/tokens") {
+                session(started)
+                json(CreateTokenRequest("all-$index", scopes))
+            }
+            assertEquals(HttpStatusCode.Created, created.status, scopes.toString())
+        }
+        for (retired in listOf("deploy:write", "billing:manage", "gates:answer")) {
+            val outside = server.client.post("/api/v1/tokens") {
+                session(started)
+                json(CreateTokenRequest("t", listOf("profile:read", retired)))
+            }
+            assertEquals(HttpStatusCode.BadRequest, outside.status)
+            val error = outside.body<ApiError>().error
+            assertEquals("invalid_request", error.type)
+            assertTrue(error.message.endsWith("Not in it: $retired."), error.message)
+        }
     }
 
     @Test
