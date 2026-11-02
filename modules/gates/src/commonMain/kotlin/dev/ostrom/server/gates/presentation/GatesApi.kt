@@ -42,6 +42,11 @@ class GatesApi {
 @Serializable
 @Resource("/api/v1/approvals")
 class ApprovalsApi(val status: String? = null, val mine: Boolean? = null, val limit: Int? = null) {
+    /** The caller's yes queue (contract `getApprovalQueue`); a constant segment, matched before `{id}`. */
+    @Serializable
+    @Resource("queue")
+    class Queue(val parent: ApprovalsApi = ApprovalsApi())
+
     /** One approval. */
     @Serializable
     @Resource("{id}")
@@ -50,6 +55,11 @@ class ApprovalsApi(val status: String? = null, val mine: Boolean? = null, val li
         @Serializable
         @Resource("answer")
         class Answer(val parent: Id)
+
+        /** The approval as the console and the app show it (contract `getApprovalView`). */
+        @Serializable
+        @Resource("view")
+        class View(val parent: Id)
     }
 }
 

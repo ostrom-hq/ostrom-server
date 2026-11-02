@@ -20,6 +20,7 @@ import dev.ostrom.server.runners.presentation.CloudSessionsResponse
 import dev.ostrom.server.runners.presentation.CreateCloudSessionRequest
 import dev.ostrom.server.runners.presentation.RunnerHeartbeatRequest
 import dev.ostrom.server.runners.presentation.RunnerHeartbeatResponse
+import dev.ostrom.server.runners.presentation.RunnersPage
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
@@ -280,6 +281,51 @@ class CloudSessionsPostgresTest {
     }
 
     @Test
+    fun executionsAreTheOwnersSessionsHoldingOne() = serverTest(listOf(RunnersModule)) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        val holding = SessionState.entries.filter { it.holdsExecution }
+        val sessions = SessionState.entries.mapIndexed { index, state ->
+            session(state, createdAt = t0 + index.seconds).also { repository.createWithinCap(it, 100) }
+        }
+        repository.createWithinCap(session(SessionState.RUNNING, ownerId = "bob", createdAt = t0), 100)
+
+        val expected = sessions.filter { it.state in holding }.reversed().map { it.id }
+        assertEquals(expected, repository.executions(ORG_A, "alice", 10).map { it.id })
+        assertEquals(expected.take(1), repository.executions(ORG_A, "alice", 1).map { it.id })
+        assertEquals(emptyList(), repository.executions(ORG_B, "alice", 10))
+    }
+
+    @Test
+    fun runnersRouteListsTheCallersRunnersOnly() = serverTest(listOf(RunnersModule), identities) { server ->
+        val repository = server.koin.get<CloudSessionsRepository>()
+        val now = kotlin.time.Clock.System.now()
+        val mine = session(SessionState.RUNNING, ownerId = ALICE.toString(), createdAt = now)
+            .copy(epoch = 1, lastHeartbeatAt = now)
+        repository.createWithinCap(mine, 10)
+        repository.createWithinCap(session(SessionState.CREATING, ownerId = ALICE.toString(), orgId = ORG_B), 10)
+
+        for (token in listOf("alice", "reader")) {
+            val page = server.client.get("/api/v1/runners") { bearerAuth(token) }
+            assertEquals(HttpStatusCode.OK, page.status)
+            val runner = page.body<RunnersPage>().items.single()
+            assertEquals(mine.id.toString(), runner.id)
+            assertEquals("online", runner.status)
+            assertEquals(listOf("claude"), runner.labels)
+            assertEquals("latest", runner.version)
+        }
+        // Another member of the organization and another organization see none of alice's runners.
+        for (stranger in listOf("bob", "carol")) {
+            val page = server.client.get("/api/v1/runners") { bearerAuth(stranger) }.body<RunnersPage>()
+            assertEquals(emptyList(), page.items, stranger)
+        }
+        assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/runners").status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.client.get("/api/v1/runners") { bearerAuth("nobody") }.status,
+        )
+    }
+
+    @Test
     fun routesRefuseWithoutTokenOrganizationOrScope() = serverTest(listOf(RunnersModule), identities) { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("/api/v1/cloud/sessions").status)
         assertEquals(
@@ -431,6 +477,17 @@ class CloudSessionsPostgresTest {
                 "Bearer $token",
             ).status,
         )
+
+        // S2-46: the token is checked before the body is read, and the body is capped.
+        suspend fun raw(text: String, auth: String) = server.client.post("/api/v1/cloud/runner/heartbeat") {
+            header(HttpHeaders.Authorization, auth)
+            contentType(ContentType.Application.Json)
+            setBody(text)
+        }
+        assertEquals(HttpStatusCode.Unauthorized, raw("{not json", "Bearer x").status, "Unknown token: body unread")
+        assertEquals(HttpStatusCode.BadRequest, raw("{not json", "Bearer $token").status)
+        val padded = """{"sessionId":"${starting.id}","epoch":2,"pad":"${"x".repeat(5000)}"}"""
+        assertEquals(HttpStatusCode.PayloadTooLarge, raw(padded, "Bearer $token").status)
     }
 
     @Test

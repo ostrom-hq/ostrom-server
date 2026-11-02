@@ -77,6 +77,14 @@ class UsageUseCasesTest {
         assertEquals("error", event.outcome)
         assertEquals(0L, event.costMicros, "Clients never declare a cost")
         assertEquals(TestCallers.epoch, event.at, "No time: now")
+        assertEquals(null, event.launchId, "A person's own credential names no launch")
+    }
+
+    @Test
+    fun anAgentTokensEventsNameItsLaunchFromTheTokenNotTheBody() = runTest {
+        ingest(TestCallers.memberA.copy(launchId = "lch_1"), listOf(ClientUsageEvent(UsageKind.SKILL, "deploy")))
+
+        assertEquals("lch_1", repository.events.single().launchId)
     }
 
     @Test

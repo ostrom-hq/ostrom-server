@@ -12,7 +12,6 @@ import dev.ostrom.server.automations.domain.WebhookSecrets
 import dev.ostrom.server.automations.domain.AnswerWaitUseCaseImpl
 import dev.ostrom.server.automations.domain.AskWaitUseCase
 import dev.ostrom.server.automations.domain.AskWaitUseCaseImpl
-import dev.ostrom.server.automations.domain.MemberDirectory
 import dev.ostrom.server.automations.domain.ReadWaitsUseCase
 import dev.ostrom.server.automations.domain.ReadWaitsUseCaseImpl
 import dev.ostrom.server.automations.domain.WaitEvents
@@ -29,6 +28,7 @@ import dev.ostrom.server.automations.presentation.AutomationsRoutesDependencies
 import dev.ostrom.server.automations.presentation.automationsRoutes
 import dev.ostrom.server.automations.presentation.WaitsRoutesDependencies
 import dev.ostrom.server.automations.presentation.waitsRoutes
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule

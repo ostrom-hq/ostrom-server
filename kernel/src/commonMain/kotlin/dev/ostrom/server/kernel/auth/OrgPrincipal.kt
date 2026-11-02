@@ -26,16 +26,46 @@ data class OrgPrincipal(val orgId: Uuid, val memberId: Uuid, val role: OrgRole)
  */
 interface PrincipalOrgResolver {
     /**
-     * Resolves the member a principal acts for.
+     * Resolves the member a principal acts for: in the organization the path names ([orgId]), else the one the
+     * [ORG_HEADER] header names ([AuthenticatedPrincipal.namedOrg]), else the one the credential is bound to, else the
+     * caller's only organization.
      *
      * @param principal The authenticated principal.
-     * @param orgId The organization named by the request, or null when the credential is bound to one organization
-     *   (an agent token).
+     * @param orgId The organization named by the request's path, or null when the path names none.
      *
      * @return The member, or null when the principal is not a member of that organization (or of any).
+     *
+     * @throws OrgRequiredException When nothing names the organization and the caller belongs to several.
      */
     suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal?
+
+    /**
+     * Reads what a caller is shown of an organization they were resolved in (`GET /api/v1/auth/me`).
+     *
+     * @param orgId The organization.
+     *
+     * @return Its short name, name and picture, or null when it is unknown (always, until the orgs module binds its
+     *   resolver).
+     */
+    suspend fun profile(orgId: Uuid): OrgProfile? = null
 }
+
+/**
+ * An organization as its member is shown it.
+ *
+ * @property id The id.
+ * @property slug The short name.
+ * @property name The name.
+ * @property avatarUrl Its picture (the linked GitHub organization's), or empty.
+ * @property linkedToGitHub Whether it is linked to a GitHub organization.
+ */
+data class OrgProfile(
+    val id: Uuid,
+    val slug: String,
+    val name: String,
+    val avatarUrl: String,
+    val linkedToGitHub: Boolean,
+)
 
 /** Resolves no one: the default until the identity and orgs modules bind theirs. */
 class RejectingPrincipalOrgResolver : PrincipalOrgResolver {
@@ -55,3 +85,7 @@ class RejectingPrincipalOrgResolver : PrincipalOrgResolver {
  */
 suspend fun ApplicationCall.requireOrgPrincipal(resolver: PrincipalOrgResolver, orgId: Uuid?): OrgPrincipal =
     resolver.resolve(requirePrincipal(), orgId) ?: throw OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
+
+/** Nothing names the organization (path, [ORG_HEADER], bound credential) and the caller belongs to several: 409. */
+class OrgRequiredException :
+    OstromException(ErrorKind.ORG_REQUIRED, "You belong to several organizations: name one in the $ORG_HEADER header.")

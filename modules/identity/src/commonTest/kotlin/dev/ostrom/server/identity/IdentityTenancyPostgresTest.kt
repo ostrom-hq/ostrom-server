@@ -17,10 +17,11 @@ import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
@@ -46,6 +47,11 @@ class IdentityTenancyPostgresTest {
         )
         tokens.create(agent("a", orgA), "hash-a")
         tokens.create(agent("b", orgB), "hash-b")
+        val personal = ApiToken(
+            Uuid.random(), user.id, null, "personal", TokenKind.PERSONAL, setOf("receipts:read"), "osp_x", null, now,
+            null, null, null,
+        )
+        tokens.create(personal, "hash-personal")
         val audit = koin.get<AuditLog>()
         audit.record(AuditEntry(orgA, null, "a", "t", "1"))
         audit.record(AuditEntry(orgB, null, "b", "t", "2"))
@@ -119,38 +125,82 @@ class IdentityTenancyPostgresTest {
         assertEquals(emptyList(), s.asRole(TENANT_ROLE, null) { actions() })
     }
 
+    /** Runs [block] as the tables' owner (the migrations' role), confined to [org] when there is one. */
+    private suspend fun <T> TestServer.asOwner(org: Uuid?, block: suspend Transaction.() -> T): T =
+        database.owner.transaction {
+            if (org != null) {
+                execute(Statement.create("SELECT set_config('ostrom.org_id', :org, true)").bind("org", org.toString()))
+                    .getOrThrow()
+            }
+            block()
+        }
+
     @Test
     fun theTablesOwnerIsBoundByThePoliciesToo() = serverTest(listOf(IdentityModule)) { s ->
         s.seed()
-        // CI connects as a superuser, which no policy binds: the check runs as a plain role that owns the tables, the
-        // way the server's own role does in production.
-        val owner = "s2_owner_" + Random.nextLong().toULong().toString(16)
-        s.driver.execute("CREATE ROLE $owner NOLOGIN").getOrThrow()
-        try {
-            s.driver.execute("GRANT $owner TO CURRENT_USER").getOrThrow()
-            s.driver.execute("ALTER TABLE identity_api_tokens OWNER TO $owner").getOrThrow()
-            s.driver.execute("ALTER TABLE identity_audit_events OWNER TO $owner").getOrThrow()
+        // Account-level work (no organization set): the account's own tokens and events only (the seeded user's own
+        // creation among them), never an organization's agent token (RLS audit R1). The serving role is held the same.
+        assertEquals(listOf("personal"), s.asOwner(null) { tokenNames() })
+        assertEquals(listOf("account", "user.created"), s.asOwner(null) { actions() })
+        assertEquals(listOf("personal"), s.driver.transaction { tokenNames() })
+        // Confined to B, the owner is held to B like the tenant role: it reads, changes and deletes B's rows only.
+        assertEquals(listOf("b"), s.asOwner(orgB) { tokenNames() })
+        assertEquals(listOf("b"), s.asOwner(orgB) { actions() })
+        s.asOwner(orgB) { execute("UPDATE identity_api_tokens SET name = 'renamed'").getOrThrow() }
+        s.asOwner(orgB) { execute("DELETE FROM identity_audit_events").getOrThrow() }
+        assertEquals(listOf("renamed"), s.asOwner(orgB) { tokenNames() })
+        assertEquals(listOf("a"), s.asOwner(orgA) { tokenNames() })
+        assertEquals(listOf("a"), s.driver.inOrg(orgA) { actions() })
+        assertEquals(emptyList(), s.driver.inOrg(orgB) { actions() })
+        assertFailsWith<Exception> { s.asOwner(orgB) { insertAuditRowOf(orgA) } }
+        assertFailsWith<Exception> { s.asOwner(orgB) { insertTokenRowOf(orgA) } }
+    }
 
-            // Account-level work (no organization set): every token, to authenticate one by its hash; account events
-            // (the seeded user's own creation among them).
-            assertEquals(listOf("a", "b"), s.asRole(owner, null) { tokenNames() })
-            assertEquals(listOf("account", "user.created"), s.asRole(owner, null) { actions() })
-            // Confined to B, the owner is held to B like the tenant role: it reads, changes and deletes B's rows only.
-            assertEquals(listOf("b"), s.asRole(owner, orgB) { tokenNames() })
-            assertEquals(listOf("b"), s.asRole(owner, orgB) { actions() })
-            s.asRole(owner, orgB) { execute("UPDATE identity_api_tokens SET name = 'renamed'").getOrThrow() }
-            s.asRole(owner, orgB) { execute("DELETE FROM identity_audit_events").getOrThrow() }
-            assertEquals(listOf("a", "renamed"), s.asRole(owner, null) { tokenNames() })
-            assertEquals(listOf("a"), s.driver.inOrg(orgA) { actions() })
-            assertEquals(emptyList(), s.driver.inOrg(orgB) { actions() })
-            assertFailsWith<Exception> { s.asRole(owner, orgB) { insertAuditRowOf(orgA) } }
-            assertFailsWith<Exception> { s.asRole(owner, orgB) { insertTokenRowOf(orgA) } }
-        } finally {
-            s.driver.execute("ALTER TABLE identity_api_tokens OWNER TO CURRENT_USER").getOrThrow()
-            s.driver.execute("ALTER TABLE identity_audit_events OWNER TO CURRENT_USER").getOrThrow()
-            // Roles outlive the test database: the one made here leaves nothing behind.
-            s.driver.execute("DROP OWNED BY $owner").getOrThrow()
-            s.driver.execute("DROP ROLE $owner").getOrThrow()
+    @Test
+    fun withoutAnOrganizationTheServingRoleReachesAnOrganizationsTokensOnlyThroughTheRouter() =
+        serverTest(listOf(IdentityModule)) { s ->
+            s.seed()
+            val tokens = s.koin.get<ApiTokensRepository>()
+            val at = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
+
+            // No organization set (RLS audit R1): an agent token is neither read, changed nor written by a plain query.
+            assertEquals(listOf("personal"), s.driver.transaction { tokenNames() })
+            assertEquals(0L, s.driver.execute("UPDATE identity_api_tokens SET name = 'stolen' WHERE kind = 'AGENT'")
+                .getOrThrow())
+            assertFailsWith<Exception>("No organization writes no organization's token") {
+                s.driver.transaction { insertTokenRowOf(orgA) }
+            }
+            // The three account-level paths go through ostrom_router's functions, and only to the token they name.
+            val agentA = assertNotNull(tokens.findBySecretHash("hash-a"))
+            assertEquals(orgA to "run-a", agentA.orgId to agentA.agentSessionId)
+            assertNull(tokens.findBySecretHash("hash-unknown"))
+            tokens.touch(agentA.id, at)
+            assertEquals(1L, tokens.revokeOfAgentSession("run-a", at))
+            assertEquals(0L, tokens.revokeOfAgentSession("run-a", at), "Revoked once")
+            val seenInA = s.driver.inOrg(orgA) {
+                fetchAll("SELECT name AS v, last_used_at IS NOT NULL AS used, revoked_at IS NOT NULL AS revoked " +
+                    "FROM identity_api_tokens").getOrThrow().single()
+            }
+            assertTrue(seenInA.get("used").asBoolean() && seenInA.get("revoked").asBoolean())
+            val seenInB = s.driver.inOrg(orgB) {
+                fetchAll("SELECT last_used_at IS NULL AND revoked_at IS NULL AS untouched FROM identity_api_tokens")
+                    .getOrThrow().single()
+            }
+            assertTrue(seenInB.get("untouched").asBoolean(), "B's token is left alone")
         }
+
+    @Test
+    fun theTokenFunctionsBelongToTheRouterAndPutTheTemporarySchemaLast() = serverTest(listOf(IdentityModule)) { s ->
+        val functions = s.driver.fetchAll(
+            "SELECT p.proname AS v FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.proname LIKE " +
+                "'identity\\_%' AND p.prosecdef AND r.rolname = 'ostrom_router' " +
+                "AND p.proconfig = ARRAY['search_path=pg_catalog, public, pg_temp'] " +
+                "AND NOT has_function_privilege('public', p.oid, 'EXECUTE')",
+        ).getOrThrow().map { it.get("v").asString() }.sorted()
+
+        assertEquals(
+            listOf("identity_revoke_agent_session_tokens", "identity_token_by_hash", "identity_token_touch"),
+            functions,
+        )
     }
 }

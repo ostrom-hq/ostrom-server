@@ -37,6 +37,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -56,8 +57,9 @@ class SecretsPostgresTest {
             assertFalse("glsa_very_secret_value" in created.bodyAsText(), "The value never comes back")
             val secret = created.body<SecretResponse>()
 
-            val stored = server.driver.fetchAll(
-                "SELECT envelope FROM secrets_entries",
+            val stored = server.driver.fetchInOrg(
+                TestCallers.orgA,
+                Statement.create("SELECT envelope FROM secrets_entries"),
             ).getOrThrow().single().get("envelope").asString()
             assertFalse("glsa_very_secret_value" in stored, "Encrypted at rest")
             assertEquals("org", secret.scope)
@@ -259,6 +261,25 @@ class SecretsPostgresTest {
                 setBody(write)
             }
             assertEquals(HttpStatusCode.Forbidden, byCli.status, "secrets:read does not write")
+            // S2-52: a personal token holding secrets:write reads, but never makes a console change.
+            assertEquals(HttpStatusCode.OK, server.client.get(base) { bearerAuth("cli-write-a") }.status)
+            val writes = listOf(
+                server.client.post(base) {
+                    bearerAuth("cli-write-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(write)
+                },
+                server.client.put("$base/MINE") {
+                    bearerAuth("cli-write-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(write)
+                },
+                server.client.delete("$base/MINE") { bearerAuth("cli-write-a") },
+            )
+            for (refused in writes) {
+                assertEquals(HttpStatusCode.Forbidden, refused.status)
+                assertTrue("session in the console" in refused.bodyAsText())
+            }
         }
 
     @Test
