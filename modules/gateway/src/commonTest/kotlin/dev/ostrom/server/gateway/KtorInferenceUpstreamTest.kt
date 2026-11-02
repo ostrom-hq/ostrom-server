@@ -14,20 +14,29 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 class KtorInferenceUpstreamTest {
     private val request = UpstreamRequest("https://provider.test/v1/messages", listOf("x-api-key" to "k"), "{}")
 
-    private fun upstream(provider: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) =
-        KtorInferenceUpstream(HttpClient(MockEngine { provider(this, it) }), idle = 200.milliseconds)
+    private fun upstream(
+        idle: Duration = 200.milliseconds,
+        provider: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
+    ) = KtorInferenceUpstream(HttpClient(MockEngine { provider(this, it) }), idle)
 
     /** Reads the whole body as text. */
     private suspend fun KtorInferenceUpstream.read(): String = exchange(request) { answer ->
@@ -48,6 +57,27 @@ class KtorInferenceUpstreamTest {
                 .read()
         }
         assertEquals("data: done\n\n", body)
+    }
+
+    @Test
+    fun aStreamLongerThanTheSilenceIsReadToTheEndAndTheCallEndsWithIt() = runTest {
+        val start = TimeSource.Monotonic.markNow()
+        val body = withContext(Dispatchers.Default) {
+            upstream(idle = 1.seconds) {
+                val stream = ByteChannel(autoFlush = true)
+                // Six chunks 300 ms apart: 1.8 s in all, longer than the 1 s silence, never 1 s without one.
+                CoroutineScope(Dispatchers.Default).launch {
+                    repeat(6) {
+                        delay(300.milliseconds)
+                        stream.writeStringUtf8("data: $it\n\n")
+                    }
+                    stream.flushAndClose()
+                }
+                respond(stream, HttpStatusCode.OK, headersOf("Content-Type", "text/event-stream"))
+            }.read()
+        }
+        assertEquals((0..5).joinToString("") { "data: $it\n\n" }, body)
+        assertTrue(start.elapsedNow() < 5.seconds, "The guard of the headers does not hold the call after it")
     }
 
     @Test

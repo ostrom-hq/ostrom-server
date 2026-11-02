@@ -18,7 +18,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * The provider sent nothing for longer than the gateway waits: the call fails as the provider's failure, never as
@@ -29,13 +28,14 @@ class UpstreamStalledException : Exception("The provider stopped answering.")
 /**
  * [InferenceUpstream] on a Ktor client. The answer is never buffered: it is read chunk by chunk as the agent receives
  * it. No timeout on the whole call (a long generation streams for minutes), but a provider silent for [idle] is cut:
- * before its headers and between two chunks. The gateway counts it itself, because the client's socket timeout depends
+ * before its headers (the clock starts with the call, so the connection and the request count too) and between two
+ * chunks (each chunk restarts it). The gateway counts it itself, because the client's socket timeout depends
  * on the engine (Curl, the binary's only one, does not apply it).
  *
  * @param client Without redirects (a redirect would carry the credential elsewhere).
  * @param idle How long the provider may stay silent.
  */
-class KtorInferenceUpstream(private val client: HttpClient, private val idle: Duration = IDLE) : InferenceUpstream {
+class KtorInferenceUpstream(private val client: HttpClient, private val idle: Duration) : InferenceUpstream {
     override suspend fun <T> exchange(request: UpstreamRequest, handle: suspend (UpstreamAnswer) -> T): T =
         coroutineScope {
             val answered = CompletableDeferred<Unit>()
@@ -61,10 +61,4 @@ class KtorInferenceUpstream(private val client: HttpClient, private val idle: Du
                 handle(UpstreamAnswer(response.status.value, headers, body))
             }
         }
-
-    /** The default silence. */
-    companion object {
-        /** As long as the client's former socket timeout. */
-        val IDLE: Duration = 300.seconds
-    }
 }
