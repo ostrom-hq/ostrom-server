@@ -11,6 +11,9 @@ import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.gates.GatesModule
+import dev.ostrom.server.gates.domain.models.GateSubject
+import dev.ostrom.server.gates.domain.services.GateCheckProof
+import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
@@ -46,6 +49,7 @@ import dev.ostrom.server.testing.serverTest
 import dev.ostrom.server.workflowruns.domain.repositories.RunQuery
 import dev.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import dev.ostrom.server.workflowruns.infrastructure.RunQueries
+import dev.ostrom.server.workflowruns.infrastructure.RunsGateCheckProofs
 import dev.ostrom.server.workflowruns.presentation.BUNDLE_FORMAT
 import dev.ostrom.server.workflowruns.presentation.ChecksPage
 import dev.ostrom.server.workflowruns.presentation.NotificationsPage
@@ -64,6 +68,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -212,6 +217,55 @@ class WorkflowRunsPostgresTest {
             val check = receipt.receipt.getValue("nodes").jsonArray.first().jsonObject
             assertEquals("isolated_runner", check.getValue("attestation").jsonPrimitive.content)
             assertEquals(run.id, check.getValue("ref").jsonPrimitive.content)
+        }
+
+    @Test
+    fun aScriptTheAgentRewroteRunsOnTheRunnerButTheReceiptNeitherSaysOstromRanItNorThatItPassed() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (cloud, token) = server.cloudSession(ada)
+            val agent = server.runnerSession(cloud, token)
+            // The hook asked the runner to run `exit 0` for the node: the runner hashed that text, not the package's.
+            val rewritten = CHECK.replace("\"sha-1\"", "\"sha-of-exit-0\"")
+            val reported = server.runner(token, "/api/v1/cloud/runner/checks", ranByRunner(cloud, check = rewritten))
+            assertEquals(HttpStatusCode.Created, reported.status, reported.bodyAsText())
+            assertEquals(true, reported.body<CheckRun>().tampered)
+            assertEquals(emptyMap(), server.koin.get<WorkflowRunsRepository>().attestations(ada.org.id, "s-1"))
+
+            assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/sessions/s-1/end", "{}").status)
+            val signed = server.call(agent, "/api/v1/sessions/s-1/workflow-receipt", RECEIPT)
+            assertEquals(HttpStatusCode.OK, signed.status, signed.bodyAsText())
+            val check = signed.body<WorkflowReceiptResponse>().receipt.getValue("nodes").jsonArray.first().jsonObject
+            assertEquals("workstation_declared", check.getValue("attestation").jsonPrimitive.content)
+            assertEquals("failed: the script run is not the package's", check.getValue("outcome").jsonPrimitive.content)
+        }
+
+    @Test
+    fun aGateReadsTheProofOfACheckInItsOwnOrganizationOnly() =
+        serverTest(modules) { server ->
+            val proofs = assertIs<RunsGateCheckProofs>(server.koin.get<GateCheckProofs>())
+            val subject = GateSubject(
+                repo = "ostrom-hq/gate-demo",
+                actionClass = "push-main",
+                command = "git push origin main",
+                scope = "session:s-1",
+            )
+            val ada = server.person("ada")
+            val (cloud, token) = server.cloudSession(ada)
+            server.runnerSession(cloud, token)
+            val ran = server.runner(token, "/api/v1/cloud/runner/checks", ranByRunner(cloud))
+            assertEquals(HttpStatusCode.Created, ran.status, ran.bodyAsText())
+            val attested = GateCheckProof(CheckAttestation.ISOLATED_RUNNER, passed = true)
+            assertEquals(attested, proofs.of(ada.org.id, "s-1", subject, "n-check"))
+
+            // Bob's own session s-1 only declared its run: Ada's runner run is not in Bob's organization.
+            val bob = server.person("bob")
+            assertEquals(HttpStatusCode.Created, server.call(server.session(bob), "/api/v1/checks", CHECK).status)
+            val declared = GateCheckProof(CheckAttestation.WORKSTATION_DECLARED, passed = true)
+            assertEquals(declared, proofs.of(bob.org.id, "s-1", subject, "n-check"))
+            val none = GateCheckProof(attestation = null, passed = false)
+            assertEquals(none, proofs.of(Uuid.random(), "s-1", subject, "n-check"), "An organization with no run")
+            assertEquals(none, proofs.of(ada.org.id, "s-1", subject, "n-other"), "A check that never ran")
         }
 
     @Test

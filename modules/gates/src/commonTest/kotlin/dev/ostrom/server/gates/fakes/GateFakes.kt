@@ -6,10 +6,16 @@ import dev.ostrom.server.gates.domain.models.ApprovalRequest
 import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.gates.domain.models.GateNode
+import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.repositories.GatesTransaction
+import dev.ostrom.server.gates.domain.services.GateCheckNeed
+import dev.ostrom.server.gates.domain.services.GateCheckNeeds
+import dev.ostrom.server.gates.domain.services.GateCheckProof
+import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.gates.domain.services.GateDigester
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
@@ -152,7 +158,10 @@ class IdentityDigester : GateDigester {
 }
 
 class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT) : GatePolicies {
-    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = policy
+    /** How many times the setting was read. */
+    var reads = 0
+
+    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = policy.also { reads++ }
 }
 
 class FakeSessions : GateSessions {
@@ -226,3 +235,21 @@ fun ciService() = GateActor("github-app", ORG, ActorKind.SERVICE)
 
 const val SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const val SHA_B = "0123456789abcdef0123456789abcdef01234567"
+
+/** The checks each gate node needs, by node id. */
+class FakeCheckNeeds : GateCheckNeeds {
+    val byNode = mutableMapOf<String, List<GateCheckNeed>>()
+
+    override suspend fun of(orgId: Uuid, node: GateNode): List<GateCheckNeed> = byNode[node.nodeId].orEmpty()
+}
+
+/** The proof of each check, by check id; a check never run has none. Records what was asked. */
+class FakeCheckProofs : GateCheckProofs {
+    val byCheck = mutableMapOf<String, GateCheckProof>()
+    val asked = mutableListOf<Pair<String?, String>>()
+
+    override suspend fun of(orgId: Uuid, sessionId: String?, subject: GateSubject, check: String): GateCheckProof {
+        asked += sessionId to check
+        return byCheck[check] ?: GateCheckProof(attestation = null, passed = false)
+    }
+}

@@ -9,6 +9,7 @@ import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.sessions.domain.models.EndSession
+import dev.ostrom.server.sessions.domain.models.GateAnswer
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.SessionQuery
 import dev.ostrom.server.sessions.domain.models.SessionView
@@ -94,15 +95,19 @@ private fun StartSessionRequest.toStart() =
     StartSession(id, launchId, repo, realRepo, cwd, agent, harnessVersion, packageDigest, model)
 
 private fun SessionView.toResponse(reopened: Boolean? = null) =
-    SessionResponse(session.toDto(gates), receipt, reopened)
+    SessionResponse(session.toDto(gates, answers.map { it.toDto() }), receipt, reopened)
+
+private fun GateAnswer.toDto() =
+    SessionGateAnswerDto(gateId, actionClass, if (approved) "approved" else "refused", by, at.toString(), receiptId)
 
 /**
  * Maps a segment for the contract.
  *
  * @param gates Its gates, on single reads.
+ * @param gateAnswers The answers to its gates, on single reads.
  * @return The DTO.
  */
-internal fun Session.toDto(gates: List<String>? = null) = SessionDto(
+internal fun Session.toDto(gates: List<String>? = null, gateAnswers: List<SessionGateAnswerDto>? = null) = SessionDto(
     id = id,
     agentSessionId = rootId.takeIf { segment > 1 },
     segment = segment.takeIf { it > 1 },
@@ -122,6 +127,7 @@ internal fun Session.toDto(gates: List<String>? = null) = SessionDto(
     endedBy = source.takeIf { endedAt != null },
     lastSeenAt = lastSeenAt?.toString(),
     gates = gates,
+    gateAnswers = gateAnswers,
     receiptId = receiptId,
     tools = tools,
     costUsd = costUsd,

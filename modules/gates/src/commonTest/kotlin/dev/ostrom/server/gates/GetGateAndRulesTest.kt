@@ -18,6 +18,7 @@ import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.OTHER_ORG
 import dev.ostrom.server.gates.fakes.OTHER_SESSION
 import dev.ostrom.server.gates.fakes.SHA_A
+import dev.ostrom.server.gates.fakes.SHA_B
 import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.user
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
@@ -40,6 +41,22 @@ class GetGateAndRulesTest {
         assertFailsWith<NotYourGateException> { bench.get(agent(OTHER_SESSION), view.gate.id) }
         assertFailsWith<GateNotFoundException> { bench.get(user("rev-b", OTHER_ORG), view.gate.id) }
         assertFailsWith<GateNotFoundException> { bench.get(user("rev-b"), Uuid.random()) }
+    }
+
+    // The self-approval setting is a database read: a view reads it only when it decides who the gate waits for, that
+    // is when every approver still to answer asked for the action.
+    @Test
+    fun theSelfApprovalSettingIsReadOnlyWhenItDecides() = runTest {
+        val bench = GateBench()
+        val view = bench.open(bench.pushRequest())
+        bench.get(user("anyone"), view.gate.id)
+        assertEquals(0, bench.policies.reads, "rev-b answers: the setting changes nothing")
+
+        val alone = bench.open(bench.pushRequest(sha = SHA_B, node = bench.node("lyes")))
+        assertEquals(listOf("lyes"), alone.waitingFor)
+        assertEquals(1, bench.policies.reads, "lyes asked and is the only approver: the setting decides")
+        assertEquals(listOf("lyes"), bench.get(user("lyes"), alone.gate.id).waitingFor)
+        assertEquals(2, bench.policies.reads, "A read of that gate reads the setting again")
     }
 
     @Test

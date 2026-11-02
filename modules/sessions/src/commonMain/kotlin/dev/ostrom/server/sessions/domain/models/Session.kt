@@ -90,8 +90,34 @@ data class SeenItem(val kind: String, val name: String, val via: String, val at:
  * @property session The segment.
  * @property gates The gates it asked or joined.
  * @property receipt Its signed receipt, once ended.
+ * @property answers The answers to those of its gates someone answered, oldest gate first.
  */
-data class SessionView(val session: Session, val gates: List<String>, val receipt: JsonObject?)
+data class SessionView(
+    val session: Session,
+    val gates: List<String>,
+    val receipt: JsonObject?,
+    val answers: List<GateAnswer>,
+)
+
+/**
+ * The answer to a gate a session asked or joined: what the session's thread (`ostrom logs`) shows of it, to a token
+ * that reads the session without reading the gates.
+ *
+ * @property gateId The gate.
+ * @property actionClass Its action class.
+ * @property approved Yes (the yes may since have been reserved or used) or no.
+ * @property by Who answered.
+ * @property at When.
+ * @property receiptId The gate's signed receipt, once signed.
+ */
+data class GateAnswer(
+    val gateId: String,
+    val actionClass: String,
+    val approved: Boolean,
+    val by: String,
+    val at: Instant,
+    val receiptId: String?,
+)
 
 /**
  * Which sessions to list, newest first.

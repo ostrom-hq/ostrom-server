@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.usecases
 
+import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
 import dev.ostrom.server.gates.domain.models.AskedVia
+import dev.ostrom.server.gates.domain.models.CheckNotAttestedException
 import dev.ostrom.server.gates.domain.models.Evidence
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -23,6 +25,8 @@ import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.repositories.GatesTransaction
+import dev.ostrom.server.gates.domain.services.GateCheckNeeds
+import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.gates.domain.services.GateDigester
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
@@ -66,6 +70,7 @@ interface OpenGateUseCase {
      * @param request What is asked.
      * @return The gate and who it waits for.
      * @throws RedirectedPushException When a gated push redirects git.
+     * @throws CheckNotAttestedException When the enforced gate needs a check attested and its last run is not.
      * @throws GateWithoutApproverException When the enforced gate has nobody to say yes.
      * @throws NotYourGateException When an agent token asks for another session.
      * @throws InvalidGateRequestException When a field is out of bounds.
@@ -82,7 +87,10 @@ interface OpenGateUseCase {
  * @param notifier Tells the approvers; it never throws.
  * @param digester Hashes keys.
  * @param clock The clock.
+ * @param needs The checks a gate needs (a rule's `gate.checks`).
+ * @param proofs Where the last run of a check comes from.
  */
+@Suppress("LongParameterList") // One port per owner: the rules say which checks, the runs say how they ran.
 class OpenGateUseCaseImpl(
     private val repository: GatesRepository,
     private val sessions: GateSessions,
@@ -90,6 +98,8 @@ class OpenGateUseCaseImpl(
     private val notifier: GateNotifier,
     private val digester: GateDigester,
     private val clock: Clock,
+    private val needs: GateCheckNeeds,
+    private val proofs: GateCheckProofs,
 ) : OpenGateUseCase {
     override suspend fun invoke(request: OpenGate): GateView {
         validate(request)
@@ -99,6 +109,7 @@ class OpenGateUseCaseImpl(
         if (request.subject.push != null && node?.enforced == true && request.redirected) {
             throw RedirectedPushException()
         }
+        if (node != null && node.enforced) attested(request, node)
         val (mode, approvers) = modeOf(node)
         if (mode == GateMode.ENFORCED && approvers.isEmpty()) throw GateWithoutApproverException()
         val key = digester.digest(GateKeys.keyPreimage(orgId.toString(), request.subject, node))
@@ -109,7 +120,18 @@ class OpenGateUseCaseImpl(
             joined(request, same, mode) ?: created(newGate(request, key, mode), approvers)
         }
         if (opened.created && opened.gate.mode == GateMode.ENFORCED) notifier.requested(opened.gate, opened.requests)
-        return viewOf(opened.gate, opened.requests, policies.selfApproval(orgId))
+        return viewOf(opened.gate, opened.requests) { policies.selfApproval(orgId) }
+    }
+
+    // Decision 13:23 (core#40): a check the gate needs attested passes only on a run the workstation could not make
+    // up, the session's runner or the CI on the commit the gate covers. A shadow gate records, so it never refuses.
+    private suspend fun attested(request: OpenGate, node: GateNode) {
+        val orgId = request.actor.orgId
+        val unproven = needs.of(orgId, node).filter { it.attested }.mapNotNull { need ->
+            val proof = proofs.of(orgId, request.sessionId, request.subject, need.check)
+            if (proof.passed && proof.attestation in ATTESTED) null else need.check to proof
+        }
+        if (unproven.isNotEmpty()) throw CheckNotAttestedException(unproven)
     }
 
     // The live gate of the same action takes the new asker; a refused one answers again. An expired yes is not
@@ -233,6 +255,9 @@ class OpenGateUseCaseImpl(
 // Top-level, not in the companion: a private companion property has a getter nothing calls.
 private val LIVE = setOf(GateStatus.PENDING, GateStatus.APPROVED, GateStatus.RESERVED)
 
+// The attestations a workstation cannot make up.
+private val ATTESTED = setOf(CheckAttestation.ISOLATED_RUNNER, CheckAttestation.CI)
+
 /**
  * True for a full commit id (SHA-1 or SHA-256, lower-case hex).
  *
@@ -250,15 +275,21 @@ private const val SHA256_LENGTH = 64
  *
  * @param gate The gate.
  * @param requests Its requests.
- * @param policy The organization's self-approval setting.
+ * @param policy Reads the organization's self-approval setting, a database read: only when it decides who the gate
+ *   waits for, that is when every approver still to answer asked for the action.
  * @return The view, with who the gate still waits for.
  */
-internal fun viewOf(gate: Gate, requests: List<ApprovalRequest>, policy: SelfApprovalPolicy): GateView {
-    val waiting = if (gate.status == GateStatus.PENDING) {
-        val pending = requests.filter { it.status == RequestStatus.PENDING }.map { it.approverId }
-        SelfApproval.waitingFor(gate.askedBy, pending, policy)
-    } else {
-        emptyList()
+internal suspend fun viewOf(
+    gate: Gate,
+    requests: List<ApprovalRequest>,
+    policy: suspend () -> SelfApprovalPolicy,
+): GateView {
+    val pending = requests.filter { it.status == RequestStatus.PENDING }.map { it.approverId }
+    val waiting = when {
+        gate.status != GateStatus.PENDING -> emptyList()
+        pending.any { approver -> gate.askedBy.none { SelfApproval.same(it, approver) } } ->
+            SelfApproval.waitingFor(gate.askedBy, pending, SelfApprovalPolicy.SOLE_APPROVER)
+        else -> SelfApproval.waitingFor(gate.askedBy, pending, policy())
     }
     return GateView(gate, requests, waiting)
 }
