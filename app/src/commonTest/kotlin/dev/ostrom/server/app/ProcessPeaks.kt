@@ -23,6 +23,12 @@ private fun threadKinds(): String = threadNames()
     .sortedByDescending { it.value }
     .joinToString(",") { "${it.key.replace(' ', '_')}x${it.value}" }
 
+/** The Kotlin objects alive at the start of the last collection, in kB (native); the used heap on the JVM. */
+internal expect fun kotlinHeapKb(): Long
+
+/** Collects the Kotlin heap, then says what was alive before and after, and the resident memory left. */
+internal expect fun afterCollection(): String
+
 /** A number of [status]: `VmRSS` in kB, `Threads` as a count; 0 when absent. */
 internal fun statusField(status: String, name: String): Long = status.lineSequence()
     .firstOrNull { it.startsWith("$name:") }
@@ -41,11 +47,14 @@ internal suspend fun <T> peaks(stage: String, block: suspend CoroutineScope.() -
     val threads = statusField(start, "Threads")
     var peakRss = rss
     var peakThreads = threads
+    val heap = kotlinHeapKb()
+    var peakHeap = heap
     val sampler = launch(Dispatchers.Default) {
         while (isActive) {
             val now = processStatus()
             peakRss = maxOf(peakRss, statusField(now, "VmRSS"))
             peakThreads = maxOf(peakThreads, statusField(now, "Threads"))
+            peakHeap = maxOf(peakHeap, kotlinHeapKb())
             delay(1)
         }
     }
@@ -55,7 +64,8 @@ internal suspend fun <T> peaks(stage: String, block: suspend CoroutineScope.() -
         sampler.cancelAndJoin()
         println(
             "PEAKS stage=$stage rss_kb=$rss peak_rss_kb=$peakRss delta_rss_kb=${peakRss - rss} " +
-                "threads=$threads peak_threads=$peakThreads kinds=${threadKinds()}",
+                "threads=$threads peak_threads=$peakThreads kinds=${threadKinds()} " +
+                "heap_kb=$heap peak_heap_kb=$peakHeap ${afterCollection()}",
         )
     }
 }
