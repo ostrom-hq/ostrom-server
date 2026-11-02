@@ -24,28 +24,27 @@ class GitHubCiChecksTest {
 
     private fun checks(own: String? = "ostrom") = GitHubCiChecks(repository, api, { own }, logger)
 
-    private fun run(
-        id: Long,
-        app: String = "github-actions",
-        status: String = "completed",
-        conclusion: String? = "success",
-        sha: String = SHA,
-        name: String = "test",
-        completed: Int? = 0,
-    ): GitHubCiRun {
-        val at = completed?.let { NOW + it.minutes }
-        return GitHubCiRun(id, name, sha, status, conclusion, app, "https://github.test/runs/$id", at)
-    }
+    // GitHub Actions' run of `test` on the commit, completed with success at NOW + [completed] minutes.
+    private fun run(id: Long, completed: Int? = 0) = GitHubCiRun(
+        id = id,
+        name = "test",
+        headSha = SHA,
+        status = "completed",
+        conclusion = "success",
+        app = "github-actions",
+        url = "https://github.test/runs/$id",
+        completedAt = completed?.let { NOW + it.minutes },
+    )
 
     @Test
     fun theLatestCompletedRunOfAnotherAppOnThatCommitAndNameIsTheProof() = runTest {
         api.runs = listOf(
             run(1, completed = 1),
-            run(2, conclusion = "failure", completed = 5),
-            run(3, app = "ostrom", completed = 9),
-            run(4, status = "in_progress", conclusion = null, completed = null),
-            run(5, sha = "f".repeat(40), completed = 9),
-            run(6, name = "lint", completed = 9),
+            run(2, completed = 5).copy(conclusion = "failure"),
+            run(3, completed = 9).copy(app = "ostrom"),
+            run(4, completed = null).copy(status = "in_progress", conclusion = null),
+            run(5, completed = 9).copy(headSha = "f".repeat(40)),
+            run(6, completed = 9).copy(name = "lint"),
             run(7, completed = null),
         )
         val proof = checks().latest(ORG, "acme/api", SHA, "test")
@@ -58,7 +57,7 @@ class GitHubCiChecksTest {
 
     @Test
     fun withoutOstromsAppEveryAppCounts() = runTest {
-        api.runs = listOf(run(3, app = "ostrom"))
+        api.runs = listOf(run(3).copy(app = "ostrom"))
         assertEquals(3L, checks(own = null).latest(ORG, "acme/api", SHA, "test")?.id)
     }
 
@@ -70,9 +69,9 @@ class GitHubCiChecksTest {
 
     @Test
     fun noMatchingRunOrNoConclusionIsNoProof() = runTest {
-        api.runs = listOf(run(3, app = "ostrom"), run(4, status = "queued", conclusion = null))
+        api.runs = listOf(run(3).copy(app = "ostrom"), run(4).copy(status = "queued", conclusion = null))
         assertNull(checks().latest(ORG, "acme/api", SHA, "test"))
-        api.runs = listOf(run(8, conclusion = null))
+        api.runs = listOf(run(8).copy(conclusion = null))
         assertNull(checks().latest(ORG, "acme/api", SHA, "test"), "Completed without a conclusion proves nothing")
     }
 
@@ -94,10 +93,10 @@ class GitHubCiChecksTest {
         )
         for ((repo, sha, name) in refused) assertNull(checks().latest(ORG, repo, sha, name), "$repo $sha '$name'")
         assertTrue(api.asked.isEmpty())
-        api.runs = listOf(run(1, name = "test"))
+        api.runs = listOf(run(1))
         assertEquals(1L, checks().latest(ORG, "acme/.github", SHA, "test")?.id, "A dotted repository name is one")
         val sha256 = "a".repeat(64)
-        api.runs = listOf(run(2, sha = sha256))
+        api.runs = listOf(run(2).copy(headSha = sha256))
         assertEquals(2L, checks().latest(ORG, "acme/api", sha256, "test")?.id, "A SHA-256 repository's commit")
     }
 

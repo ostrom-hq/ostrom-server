@@ -32,20 +32,25 @@ class GitHubCiChecks(
         // Both go into GitHub's path: anything else than a repository's full name and a commit's hex is not asked.
         val asked = REPO.matches(repo) && SHA.matches(sha) && name.isNotBlank()
         val installation = if (asked) repository.installation(orgId) else null
-        if (installation == null) return null
-        val runs = try {
-            api.checkRuns(installation.installationId, repo, sha, name)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: GitHubCallException) {
-            logger.warn("check runs not read from github", mapOf("repo" to repo), error)
-            return null
-        }
+        val runs = installation?.let { read(it.installationId, repo, sha, name) }.orEmpty()
         val own = ownApp()
         val run = runs.filter { it.status == COMPLETED && it.headSha == sha && it.name == name && it.app != own }
-            .maxByOrNull { it.completedAt ?: Instant.DISTANT_PAST } ?: return null
-        val conclusion = run.conclusion ?: return null
-        return CiCheck(run.id, run.name, run.headSha, conclusion, run.app, run.url, run.completedAt)
+            .maxByOrNull { it.completedAt ?: Instant.DISTANT_PAST }
+        val conclusion = run?.conclusion
+        return if (run == null || conclusion == null) {
+            null
+        } else {
+            CiCheck(run.id, run.name, run.headSha, conclusion, run.app, run.url, run.completedAt)
+        }
+    }
+
+    private suspend fun read(installationId: Long, repo: String, sha: String, name: String): List<GitHubCiRun> = try {
+        api.checkRuns(installationId, repo, sha, name)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: GitHubCallException) {
+        logger.warn("check runs not read from github", mapOf("repo" to repo), error)
+        emptyList()
     }
 }
 
