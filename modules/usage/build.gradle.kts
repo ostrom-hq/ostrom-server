@@ -10,6 +10,9 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":kernel"))
             api(project(":modules:secrets"))
+            // The ledger takes the gateway's model calls and measures a session's cost (their ports, bound here).
+            implementation(project(":modules:gateway"))
+            implementation(project(":modules:sessions"))
         }
         commonTest.dependencies {
             implementation(project(":testing"))

@@ -84,7 +84,7 @@ class CloseSessionUseCaseImpl(
             session.copy(model = session.model ?: end.model, exitCode = session.exitCode ?: end.exitCode)
         } else {
             val endedAt = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
-            val measured = end.copy(costUsd = costs.costOf(orgId, id))
+            val measured = end.copy(costUsd = costs.costOf(orgId, session.launchId, session.startedAt, endedAt))
             val draft = draft(session, endedAt, measured, sessionGates(orgId, id), rules.rulesFor(orgId, session.repo))
             val receipt = sign(orgId, draft, "rcpt_session_$id")
             session.copy(
