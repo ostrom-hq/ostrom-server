@@ -308,14 +308,6 @@ data class GateResponse(
     val waitingFor: List<String>? = null,
 )
 
-/**
- * The answer to an answer (contract `answerApproval`).
- *
- * @property approval The approval, answered.
- * @property receipt The signed receipt (filled by the receipts module).
- */
-@Serializable
-data class AnswerApprovalResponse(val approval: Approval, val receipt: JsonElement? = null)
 
 /**
  * A page of approvals (contract `listApprovals`).

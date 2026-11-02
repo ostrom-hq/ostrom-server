@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.presentation
 
+import dev.ostrom.server.gates.domain.models.StepUpRequiredException
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -69,6 +70,10 @@ fun AuthenticatedPrincipal.requireAnswering() {
     if (kind != PrincipalKind.USER) throw OstromException(ErrorKind.FORBIDDEN, "Only a person answers a gate.")
     if (channel != PrincipalChannel.BROWSER && channel != PrincipalChannel.MOBILE_APP) {
         throw OstromException(ErrorKind.FORBIDDEN, "A yes is given in the browser or in the app.")
+    }
+    // The app answers within minutes of the phone's biometric unlock: a locked app is told to unlock, then answer.
+    if (channel == PrincipalChannel.MOBILE_APP && scopes.none { it in GateScopes.answering }) {
+        throw StepUpRequiredException()
     }
     requireAnyScope(GateScopes.answering)
 }
