@@ -5,11 +5,17 @@ import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
+import io.ktor.http.Url
 
 /**
  * The sharing module's configuration, from the instance (Docker environment, Helm values): the providers' OAuth token
  * endpoints, for a proxy or the local demo's fake provider. The refresh tokens are sent there, so an endpoint is https,
  * or http to a local host only. The variables are listed in docs/MODULES.md.
+ *
+ * An endpoint is read by a strict grammar (scheme, host of letters, digits, dots and hyphens, an optional port, then a
+ * path or a query), and the decision is taken on the host the HTTP client parses, never on the raw string: a `#`, an
+ * `@` (credentials), a backslash or a host the grammar does not know is refused, so `http://evil.example#@localhost/`
+ * can never pass for a local host.
  */
 object SharingConfig {
     /** The variable that sets each provider's token endpoint. */
@@ -21,6 +27,16 @@ object SharingConfig {
     /** The hosts reached in clear: this machine, and the names that resolve to it. */
     private val LOCAL_HOSTS = setOf("localhost", "127.0.0.1")
     private val LOCAL_SUFFIXES = listOf(".localhost", ".localtest.me")
+
+    /** Scheme, host, optional port, then nothing or a path or query. Hosts by name or IPv4 only. */
+    private val ENDPOINT =
+        Regex("""(https?)://([a-z0-9.-]+)(?::([0-9]{1,5}))?(?:[/?].*)?""", RegexOption.IGNORE_CASE)
+    private const val PORT_GROUP = 3
+
+    /** Characters that move the authority (`#`, `@`) or that the parsers read differently (`\\`). */
+    private val FORBIDDEN = setOf('#', '@', '\\')
+
+    private const val MAX_PORT = 65_535
 
     /**
      * Reads the token endpoints, the providers' own by default.
@@ -42,18 +58,22 @@ object SharingConfig {
         if (value.any { it.isWhitespace() } || !allowed(value)) {
             throw InvalidConfigException(
                 "$key must be an https URL, or http to a local host (localhost, 127.0.0.1, *.localhost, " +
-                    "*.localtest.me).",
+                    "*.localtest.me), without credentials or a fragment.",
             )
         }
         return value
     }
 
-    private fun allowed(url: String): Boolean {
-        val scheme = url.substringBefore("://").lowercase()
-        val host = url.substringAfter("://", "").substringBefore('/').substringAfterLast('@').substringBefore(':')
-            .lowercase()
-        return if (scheme == "https") host.isNotEmpty() else scheme == "http" && local(host)
+    private fun allowed(value: String): Boolean {
+        val match = ENDPOINT.matchEntire(value)
+        if (match == null || value.any { it in FORBIDDEN } || port(match) > MAX_PORT) return false
+        // The host the client will call, as Ktor parses it: the grammar above guarantees it parses.
+        val url = Url(value)
+        return url.protocol.name.lowercase() == "https" || local(url.host.lowercase())
     }
+
+    /** The endpoint's port, 0 when it has none (an unmatched group is empty). */
+    private fun port(match: MatchResult): Int = match.groupValues[PORT_GROUP].toIntOrNull() ?: 0
 
     private fun local(host: String): Boolean = host in LOCAL_HOSTS || LOCAL_SUFFIXES.any { host.endsWith(it) }
 }
