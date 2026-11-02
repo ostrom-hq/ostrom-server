@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.services.CloudExecutions
 import dev.ostrom.server.launches.fakes.ADA
 import dev.ostrom.server.launches.fakes.FakeLaunchers
 import dev.ostrom.server.launches.fakes.FixedClock
@@ -20,6 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.test.runTest
 
 class LaunchGateActorsTest {
@@ -27,7 +29,9 @@ class LaunchGateActorsTest {
     private val launches = InMemoryLaunches()
     private val launchers = FakeLaunchers(mapOf(ADA.userId.toString() to ADA))
     private val clock = FixedClock(signedIn)
-    private val actors = LaunchGateActors(launchers, LaunchAgents(launchers, launches, clock))
+    private val current = mutableSetOf<Uuid>()
+    private val executions = CloudExecutions { _, cloud, _ -> cloud in current }
+    private val actors = LaunchGateActors(launchers, LaunchAgents(launchers, launches, clock, executions))
     private val launch = Launch(
         "lch_1", ORG, ADA.userId, "ada", "acme/api", "claude-code", null, signedIn, signedIn + 24.hours,
     )
@@ -65,6 +69,16 @@ class LaunchGateActorsTest {
         launchers.roles.clear()
         clock.now = launch.expiresAt
         assertNull(actors.resolve(agent), "Expired")
+    }
+
+    @Test
+    fun aCloudSessionsLaunchActsOnlyWhileItsExecutionIsCurrent() = runTest {
+        val cloud = Uuid.random()
+        launches.create(launch.copy(cloudSessionId = cloud))
+        val agent = principal("lch_1", PrincipalKind.AGENT, ORG.toString())
+        assertNull(actors.resolve(agent), "Its execution ended, its token still unexpired")
+        current += cloud
+        assertEquals("agent-lch_1", actors.resolve(agent)?.id)
     }
 
     @Test
