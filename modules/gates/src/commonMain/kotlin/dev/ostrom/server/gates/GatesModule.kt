@@ -3,6 +3,7 @@ package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.GateChanges
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateDigester
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -32,6 +33,7 @@ import dev.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
 import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.GatesMigrations
+import dev.ostrom.server.gates.infrastructure.InProcessGateChanges
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
@@ -63,9 +65,10 @@ object GatesModule : ServerModule {
         single<EnsureGateReceiptUseCase> { EnsureGateReceiptUseCaseImpl(get(), get(), get()) }
         single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<AskGateUseCase> { AskGateUseCaseImpl(get(), get(), get(), get()) }
-        single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<GateChanges> { InProcessGateChanges() }
+        single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<UseGateUseCase> { UseGateUseCaseImpl(get(), get(), get()) }
-        single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get()) }
+        single<GetGateUseCase> { GetGateUseCaseImpl(get(), get(), get(), get()) }
         single<ListApprovalsUseCase> { ListApprovalsUseCaseImpl(get()) }
         single<GetApprovalUseCase> { GetApprovalUseCaseImpl(get()) }
         single<ListSessionGatesUseCase> { ListSessionGatesUseCaseImpl(get()) }

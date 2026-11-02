@@ -14,10 +14,15 @@ import kotlinx.serialization.json.JsonElement
 @Serializable
 @Resource("/api/v1/gates")
 class GatesApi {
-    /** One gate. */
+    /**
+     * One gate.
+     *
+     * @property wait Seconds to wait on a pending gate for its answer (contract `getGate`), 0 to 30; outside, the
+     *   nearest bound.
+     */
     @Serializable
     @Resource("{id}")
-    class Id(val parent: GatesApi = GatesApi(), val id: String) {
+    class Id(val parent: GatesApi = GatesApi(), val id: String, val wait: Int? = null) {
         /** Uses the yes once, after the action (contract `consumeGate`). */
         @Serializable
         @Resource("consume")
