@@ -57,7 +57,7 @@ class InferencePlanner(
         if (!policy.allows(caller.memberId, body.model)) {
             return refused(
                 RefusalKind.MODEL_NOT_ALLOWED,
-                "Your organization does not allow the model ${body.model}.",
+                modelNotAllowed(body.model),
                 body.model,
             )
         }

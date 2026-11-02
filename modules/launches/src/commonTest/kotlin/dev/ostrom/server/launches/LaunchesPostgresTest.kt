@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
-import dev.ostrom.server.gates.GatesModule
-import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
@@ -12,19 +10,23 @@ import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
-import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.AgentPolicyResponse
 import dev.ostrom.server.launches.presentation.LaunchResponse
-import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
-import dev.ostrom.server.receipts.ReceiptsModule
-import dev.ostrom.server.sessions.SessionsModule
+import dev.ostrom.server.runners.domain.AgentKind
+import dev.ostrom.server.runners.domain.CloudSession
+import dev.ostrom.server.runners.domain.CloudSessionsRepository
+import dev.ostrom.server.runners.domain.DesiredState
+import dev.ostrom.server.runners.domain.RepositorySpec
+import dev.ostrom.server.runners.domain.RunnerTokens
+import dev.ostrom.server.runners.domain.SessionLimits
+import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.testing.TestServer
@@ -57,20 +59,19 @@ import kotlin.uuid.Uuid
  * and nothing crosses a launch or an organization.
  */
 class LaunchesPostgresTest {
-    private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, LaunchesModule,
-    )
+    private val modules = launchModules()
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** A person, a member of a new organization, and a CLI token of theirs bound to it. */
-    private class Person(val user: User, val org: Org, val cliToken: String)
+    private class Person(val user: User, val org: Org, val memberId: Uuid, val cliToken: String)
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
             VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
         )
         val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
-        koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        val member = Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)
+        koin.get<OrgsRepository>().create(org, member) { false }
         // The CLI's own token, bound to the organization: a CLI token names none, and resolving the person's only
         // organization comes with the `Ostrom-Org` resolution (#64); the launch reads whichever the orgs module gives.
         val secret = "osc_" + Uuid.random().toHexString()
@@ -79,7 +80,7 @@ class LaunchesPostgresTest {
             null,
         )
         koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
-        return Person(user, org, secret)
+        return Person(user, org, member.id, secret)
     }
 
     private suspend fun TestServer.call(token: String?, path: String, body: String? = null): HttpResponse =
@@ -117,6 +118,7 @@ class LaunchesPostgresTest {
                 listOf(stored?.dev, stored?.repo, stored?.agent, stored?.model),
             )
             assertEquals(ada.user.id, stored?.userId)
+            assertNull(stored?.cloudSessionId, "A launch of the CLI is no cloud session's")
 
             val started = server.call(launch.agentToken, "/api/v1/sessions", SESSION)
             assertEquals(HttpStatusCode.OK, started.status, started.bodyAsText())
@@ -232,6 +234,86 @@ class LaunchesPostgresTest {
             assertTrue("launches_launches_pkey" in plan, plan)
         }
 
+    /** A cloud session of [owner]'s, its execution 2 running, and the runner token of that execution. */
+    private suspend fun TestServer.cloudSession(
+        owner: Person,
+        agent: AgentKind = AgentKind.CLAUDE,
+        ownerId: String = owner.memberId.toString(),
+    ): Pair<CloudSession, String> {
+        val tokens = koin.get<RunnerTokens>()
+        val token = tokens.mint()
+        val session = CloudSession(
+            id = Uuid.random(), orgId = owner.org.id, ownerId = ownerId, name = "task", agent = agent,
+            repository = RepositorySpec("https://github.com/acme/api", null), state = SessionState.CREATING,
+            desiredState = DesiredState.RUNNING, phase = null, epoch = 2, generation = 0, failure = null,
+            limits = SessionLimits(IDLE_MINUTES, RUN_MINUTES, false), createdAt = now, updatedAt = now,
+            executionStartedAt = now, runnerTokenHash = tokens.hash(token), model = "claude-opus-4-1",
+        )
+        assertTrue(koin.get<CloudSessionsRepository>().createWithinCap(session, RUNNING_CAP))
+        return session to token
+    }
+
+    private suspend fun TestServer.runnerLaunch(token: String?, body: String): HttpResponse =
+        client.post("/api/v1/cloud/runner/launch") {
+            token?.let { header(HttpHeaders.Authorization, it) }
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+
+    private fun claim(session: CloudSession, epoch: Long = session.epoch) =
+        """{"sessionId":"${session.id}","epoch":$epoch}"""
+
+    @Test
+    fun aCloudSessionsRunnerOpensItsLaunchForItsOwnerWithItsOwnToken() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (session, token) = server.cloudSession(ada)
+            val opened = server.runnerLaunch("Bearer $token", claim(session))
+            assertEquals(HttpStatusCode.Created, opened.status, opened.bodyAsText())
+            val launch = opened.body<LaunchResponse>()
+            val stored = server.koin.get<LaunchesRepository>().find(ada.org.id, launch.launchId)
+            assertEquals(
+                listOf("ada", "https://github.com/acme/api", "claude-code", "claude-opus-4-1"),
+                listOf(stored?.dev, stored?.repo, stored?.agent, stored?.model),
+            )
+            assertEquals(session.id, stored?.cloudSessionId)
+            val started = server.call(launch.agentToken, "/api/v1/sessions", SESSION)
+            assertEquals(HttpStatusCode.OK, started.status, "The agent in the pod runs the launch's session")
+            assertEquals(launch.launchId, started.body<SessionResponse>().session.launchId)
+        }
+
+    @Test
+    fun theRunnerChannelRefusesAnyOtherCredentialOrClaim() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (session, token) = server.cloudSession(ada)
+            assertEquals(HttpStatusCode.Unauthorized, server.runnerLaunch(null, claim(session)).status)
+            assertEquals(HttpStatusCode.Unauthorized, server.runnerLaunch(token, claim(session)).status, "Not Bearer")
+            assertEquals(HttpStatusCode.Unauthorized, server.runnerLaunch("Bearer ", claim(session)).status)
+            val member = server.runnerLaunch("Bearer ${ada.cliToken}", claim(session))
+            assertEquals(HttpStatusCode.Unauthorized, member.status, "A member's token is not a runner token")
+            // S2-46: an unknown token never makes the server read the body.
+            assertEquals(HttpStatusCode.Unauthorized, server.runnerLaunch("Bearer ostrom_runner_x", "{not json").status)
+            assertEquals(HttpStatusCode.BadRequest, server.runnerLaunch("Bearer $token", "{not json").status)
+            val malformed = server.runnerLaunch("Bearer $token", """{"sessionId":"nope","epoch":2}""")
+            assertEquals(HttpStatusCode.BadRequest, malformed.status)
+            assertEquals(HttpStatusCode.Conflict, server.runnerLaunch("Bearer $token", claim(session, 1)).status)
+            val (shell, shellToken) = server.cloudSession(ada, AgentKind.SHELL)
+            assertEquals(HttpStatusCode.BadRequest, server.runnerLaunch("Bearer $shellToken", claim(shell)).status)
+            assertEquals(0, server.launchesSeenBy(ada.org.id), "Nothing opened")
+        }
+
+    @Test
+    fun aRunnerOpensNoLaunchForAnotherOrganizationsMember() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val bob = server.person("bob")
+            // A session of Bob's organization naming Ada's member: the owner is read in Bob's organization only.
+            val (session, token) = server.cloudSession(bob, ownerId = ada.memberId.toString())
+            assertEquals(HttpStatusCode.NotFound, server.runnerLaunch("Bearer $token", claim(session)).status)
+            assertEquals(0 to 0, server.launchesSeenBy(ada.org.id) to server.launchesSeenBy(bob.org.id))
+        }
+
     // Read in the organization, as the serving role: row level security keeps the other organizations out.
     private suspend fun TestServer.launchesSeenBy(orgId: Uuid): Int = driver.withOrganization(orgId) { tx ->
         val count = Statement.create("SELECT COUNT(*) AS n FROM launches_launches WHERE org_id = :org_id")
@@ -241,6 +323,9 @@ class LaunchesPostgresTest {
 
     private companion object {
         const val LAUNCHES = 20
+        const val IDLE_MINUTES = 30
+        const val RUN_MINUTES = 120
+        const val RUNNING_CAP = 5
         const val LAUNCH = """{"repo":"acme/api","agent":"claude-code","model":"claude-opus-4-1"}"""
         const val SESSION = """{"id":"s-1","agent":"claude-code","repo":"acme/api","dev":"mallory"}"""
     }
