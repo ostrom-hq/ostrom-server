@@ -7,10 +7,10 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.presentation.AnswerDeviceRequest
+import dev.ostrom.server.identity.presentation.AuthTokenResponse
 import dev.ostrom.server.identity.presentation.DeviceCodeRequest
 import dev.ostrom.server.identity.presentation.DeviceCodeResponse
 import dev.ostrom.server.identity.presentation.DeviceTokenRequest
-import dev.ostrom.server.identity.presentation.DeviceTokenResponse
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
@@ -40,7 +40,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -78,11 +77,13 @@ class DeviceTokenReceiptsPostgresTest {
             setBody(AnswerDeviceRequest(codes.userCode, true))
         }
         assertEquals(HttpStatusCode.NoContent, answered.status, answered.bodyAsText())
+        // An approved poll answers the contract's AuthToken (#62).
         val polled = client.post("/api/v1/auth/device/token") {
             contentType(ContentType.Application.Json)
             setBody(DeviceTokenRequest(codes.deviceCode))
-        }.body<DeviceTokenResponse>()
-        return assertNotNull(polled.accessToken, polled.status)
+        }
+        assertEquals(HttpStatusCode.OK, polled.status, polled.bodyAsText())
+        return polled.body<AuthTokenResponse>().token
     }
 
     private suspend fun TestServer.sign(org: Uuid, subjectId: String): String =
