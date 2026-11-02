@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.AnswerChannel
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
 import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Gate
+import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
@@ -22,6 +24,7 @@ import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.user
 import dev.ostrom.server.gates.presentation.GateAskRequest
 import dev.ostrom.server.gates.presentation.GateCi
+import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
 import dev.ostrom.server.gates.presentation.GatePush
 import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.toApproval
@@ -35,7 +38,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
-import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
 
 /** The contract's view of a gate and of an approval, for every shape a gate can take. */
 class GatesMappersTest {
@@ -155,6 +157,11 @@ class GatesMappersTest {
         assertEquals("w1", approval.workflowId)
         val other = GateView(merged, listOf(answered), emptyList()).toResponse(user("rev-c"))
         assertNull(other.approval, "a person who is not an approver has none")
+        // Second audit L4: a credential whose id is not the person's still finds the person's approval.
+        val byPerson = GateActor("cred-7", ORG, ActorKind.USER, personId = "rev-b")
+        assertEquals(response.approval, GateView(merged, listOf(answered), emptyList()).toResponse(byPerson).approval)
+        val noPerson = GateActor("rev-b", ORG, ActorKind.USER)
+        assertEquals(response.approval, GateView(merged, listOf(answered), emptyList()).toResponse(noPerson).approval)
         val closed = ApprovalView(request(merged, "rev-c", RequestStatus.CLOSED), merged).toApproval()
         assertEquals("expired", closed.status)
         val local = merged.copy(subject = merged.subject.copy(realRepo = null, pullRequest = null), askedVia = setOf())
