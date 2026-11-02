@@ -58,6 +58,39 @@ class ApproversGraphUseCaseTest {
         assertEquals(listOf<String?>("acme/api"), asked)
     }
 
+    // PARCOURS 3.3: the organization's graph reads every catalogue, its own and those of the repositories a gate
+    // is limited to; an action is ungated only when none of them has a gate for it.
+    @Test
+    fun theOrganizationsGraphHasTheGatesOfEveryRepository() = runTest {
+        val main = gate("main", listOf("lead"))
+        val api = gate("api", listOf("rev-b"))
+        val catalog = object : GatesCatalogUseCase {
+            override suspend fun invoke(orgId: Uuid, repo: String?): List<CatalogEntry> = error("one catalogue")
+
+            override suspend fun everywhere(orgId: Uuid): Map<String?, List<CatalogEntry>> = mapOf(
+                null to listOf(
+                    CatalogEntry(action("push-main"), main),
+                    CatalogEntry(action("deploy"), null),
+                    CatalogEntry(action("commit"), null),
+                ),
+                "acme/api" to listOf(
+                    CatalogEntry(action("push-main"), main),
+                    CatalogEntry(action("deploy"), api.copy(basis = "guessed")),
+                    CatalogEntry(action("commit"), null),
+                ),
+            )
+        }
+        val graph = ApproversGraphUseCaseImpl(catalog)(org, null)
+        val mainGate = ApproverGate("w-main", "Workflow main", "main", "Gate main", true, listOf("push-main"))
+        val apiGate = ApproverGate("w-api", "Workflow api", "api", "Gate api", true, listOf("deploy"))
+        assertEquals(
+            listOf(ApproverLine("lead", listOf(mainGate)), ApproverLine("rev-b", listOf(apiGate))),
+            graph.approvers,
+            "each approver with their own gates only, the repository's included",
+        )
+        assertEquals(listOf("commit"), graph.ungated)
+    }
+
     @Test
     fun anEmptyCatalogueHasNobody() = runTest {
         val catalog = object : GatesCatalogUseCase {
