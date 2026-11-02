@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing
 
+import dev.ostrom.server.kernel.config.InvalidConfigException
+import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.sharing.domain.AccountCredentials
 import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
@@ -22,6 +24,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -79,6 +82,30 @@ class SharingInfrastructureTest {
         assertEquals("https://auth.openai.com/oauth/token", seen.single().first)
         assertEquals(AccountProvider.entries.toSet(), HttpOAuthRefresher.ENDPOINTS.keys)
         assertTrue("app_EMoamEEZ73f0CkXaXp7hrann" in seen.single().second)
+    }
+
+    @Test
+    fun theInstanceConfigurationPointsTheTokenEndpointsElsewhere() {
+        assertEquals(HttpOAuthRefresher.ENDPOINTS, SharingConfig.tokenEndpoints(MapConfigSource(emptyMap())))
+        val custom = SharingConfig.tokenEndpoints(
+            MapConfigSource(
+                mapOf(
+                    "OSTROM_SHARING_CLAUDE_TOKEN_URL" to "http://provider.localtest.me:8080/v1/oauth/token",
+                    "OSTROM_SHARING_CODEX_TOKEN_URL" to "https://proxy.local/oauth/token",
+                ),
+            ),
+        )
+        assertEquals(
+            mapOf(
+                AccountProvider.CLAUDE to "http://provider.localtest.me:8080/v1/oauth/token",
+                AccountProvider.CODEX to "https://proxy.local/oauth/token",
+            ),
+            custom,
+        )
+        val error = assertFailsWith<InvalidConfigException> {
+            SharingConfig.tokenEndpoints(MapConfigSource(mapOf("OSTROM_SHARING_CODEX_TOKEN_URL" to "ftp://x")))
+        }
+        assertEquals("OSTROM_SHARING_CODEX_TOKEN_URL must be an http(s) URL.", error.message)
     }
 
     @Test
