@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
-import dev.ostrom.server.gates.GatesModule
-import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
@@ -12,7 +10,6 @@ import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
-import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.launches.domain.models.Launch
@@ -21,12 +18,9 @@ import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.AgentPolicyResponse
 import dev.ostrom.server.launches.presentation.LaunchResponse
-import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
-import dev.ostrom.server.receipts.ReceiptsModule
-import dev.ostrom.server.runners.RunnersModule
 import dev.ostrom.server.runners.domain.AgentKind
 import dev.ostrom.server.runners.domain.CloudSession
 import dev.ostrom.server.runners.domain.CloudSessionsRepository
@@ -35,7 +29,6 @@ import dev.ostrom.server.runners.domain.RepositorySpec
 import dev.ostrom.server.runners.domain.RunnerTokens
 import dev.ostrom.server.runners.domain.SessionLimits
 import dev.ostrom.server.runners.domain.SessionState
-import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.testing.TestServer
@@ -72,10 +65,7 @@ import kotlin.uuid.Uuid
  * and nothing crosses a launch or an organization.
  */
 class LaunchesPostgresTest {
-    private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, RunnersModule,
-        LaunchesModule,
-    )
+    private val modules = launchModules()
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** A person, a member of a new organization, and a CLI token of theirs bound to it. */

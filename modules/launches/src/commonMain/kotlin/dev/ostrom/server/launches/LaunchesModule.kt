@@ -2,6 +2,7 @@
 package dev.ostrom.server.launches
 
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.kernel.auth.ModelAccess
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
@@ -21,6 +22,7 @@ import dev.ostrom.server.launches.infrastructure.LaunchAgents
 import dev.ostrom.server.launches.infrastructure.LaunchGateActors
 import dev.ostrom.server.launches.infrastructure.LaunchRelayCallers
 import dev.ostrom.server.launches.infrastructure.LaunchesMigrations
+import dev.ostrom.server.launches.infrastructure.ModelAccessLaunchRules
 import dev.ostrom.server.launches.infrastructure.NoLaunchModelRules
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.LaunchesRoutesDependencies
@@ -58,10 +60,19 @@ object LaunchesModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = LaunchesMigrations
 
-    /** Binds [NoLaunchModelRules] unless a loaded module (the inference gateway) binds the organization's rules. */
+    /**
+     * Binds the organization's rules on models unless a loaded module binds its own: the inference gateway's model
+     * policy when it is loaded ([ModelAccessLaunchRules] on its [ModelAccess]), every model otherwise
+     * ([NoLaunchModelRules]).
+     */
     override suspend fun initialize(koin: Koin) {
         if (koin.getOrNull<LaunchModelRules>() == null) {
-            koin.loadModules(listOf(module { single<LaunchModelRules> { NoLaunchModelRules() } }))
+            val rules = module {
+                single<LaunchModelRules> {
+                    getOrNull<ModelAccess>()?.let { ModelAccessLaunchRules(it, get()) } ?: NoLaunchModelRules()
+                }
+            }
+            koin.loadModules(listOf(rules))
         }
     }
 
