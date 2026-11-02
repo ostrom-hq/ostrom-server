@@ -74,8 +74,8 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  * Chat Completions), take the member's Ostrom token as `Authorization: Bearer` or `x-api-key`, and answer errors in
  * the provider's shape. An agent session reads the model policy; only `inference:admin` (or a browser session)
  * changes it and reads or changes the settings (SECURITY-AUDIT S2-03), and a token that changes them is a service key
- * (S2-52), or, for the model policy, the token of `ostrom login --admin`: an owner or admin, audited before the
- * write.
+ * (S2-52). A person's token that sets the model policy writes nothing: an owner's or an admin's opens a confirmation
+ * on the console (audit CLI H1).
  *
  * @param dependencies The use cases.
  */

@@ -132,6 +132,10 @@ class CompilerPostgresTest {
                     // A person's own token, outside the browser.
                     "pat" -> AuthenticatedPrincipal(token, PrincipalKind.USER, personalScopes)
                     "elevated" -> AuthenticatedPrincipal(token, PrincipalKind.USER, elevatedScopes)
+                    // A person signed in to the console: the session cookie, not a token.
+                    "console" -> AuthenticatedPrincipal(
+                        token, PrincipalKind.USER, setOf(GateScopes.ALL_USER), channel = PrincipalChannel.BROWSER,
+                    )
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                 }
             }
@@ -162,13 +166,6 @@ class CompilerPostgresTest {
             single<ConfigSource> { LayeredConfigSource(listOf(MapConfigSource(values), EnvironmentConfigSource())) }
         }
         sources?.let { fixed -> single<CompilerSources> { fixed } }
-    }
-
-    private fun roleOf(id: String): OrgRole = when (id) {
-        "member" -> OrgRole.MEMBER
-        "approver" -> OrgRole.APPROVER
-        "admin" -> OrgRole.ADMIN
-        else -> OrgRole.OWNER
     }
 
     private fun compilerTest(
