@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.BudgetDecisionCache
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.LedgerSpendGuard
 import dev.ostrom.server.budgets.domain.SharedLimit
@@ -64,6 +65,8 @@ class SpendGuardPostgresTest {
         assertIs<LedgerSpendGuard>(server.koin.get<SpendGuard>())
         assertEquals(SpendDecision.Allowed, server.koin.get<SpendGuard>().check(request(1_000_000)), "No limit yet")
         server.koin.get<BudgetsRepository>().putSharedLimit(TestCallers.orgA, SharedLimit.ORG, 10_000, clock.now())
+        // As the limit's use cases do: the cached "no limit" is forgotten at once on this replica.
+        server.koin.get<BudgetDecisionCache>().invalidate(TestCallers.orgA)
 
         val calls = List(20) { request(3_000) }
         val decisions = server.atOnce(calls)

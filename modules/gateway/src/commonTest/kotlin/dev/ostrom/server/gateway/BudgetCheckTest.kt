@@ -18,9 +18,11 @@ import dev.ostrom.server.gateway.domain.SpendRequest
 import dev.ostrom.server.gateway.domain.UpstreamAnswer
 import dev.ostrom.server.gateway.domain.WireProtocol
 import dev.ostrom.server.sharing.domain.AccountProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -149,5 +151,31 @@ class BudgetCheckTest {
         assertEquals(asked[0].callId, asked[1].callId, "The retry asks again for the same call")
         assertEquals(listOf(asked[0].callId, asked[2].callId), records.map { it.id }, "The record settles its hold")
         assertEquals(2, records.map { it.id }.toSet().size)
+    }
+
+    @Test
+    fun aCallWhosePlanningFailsIsRecordedSoThatItsHoldIsSettled() = runTest {
+        val records = mutableListOf<ModelCallRecord>()
+        var failure: Exception = IllegalStateException("ledger down")
+        val asked = mutableListOf<SpendRequest>()
+        val spend = SpendGuard {
+            asked += it
+            throw failure
+        }
+        val relay = RelayInferenceUseCaseImpl(
+            planner(settings, pool(accounts, clock), keys = InstanceProviderKeys(anthropic = "sk-an"), spend = spend),
+            FakeUpstream(),
+            PriceTable(),
+            { records += it },
+            { },
+            clock,
+        )
+        val call = InferenceCall(WireProtocol.MESSAGES, """{"model":"claude-opus-5"}""", emptyMap(), null)
+        assertFailsWith<IllegalStateException> { relay(Gw.memberA, call, RecordingResponder()) }
+        failure = CancellationException("agent gone")
+        assertFailsWith<CancellationException> { relay(Gw.memberA, call, RecordingResponder()) }
+        assertEquals(asked.map { it.callId }, records.map { it.id }, "Each record settles its call's hold")
+        assertEquals(listOf(500 to "gateway_error", 499 to "cancelled"), records.map { it.status to it.outcome })
+        assertEquals(listOf(null, null), records.map { it.provider })
     }
 }

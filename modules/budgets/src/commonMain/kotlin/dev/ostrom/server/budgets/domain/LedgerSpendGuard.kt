@@ -13,10 +13,12 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 /**
- * The gateway's [SpendGuard] on the limits and the ledger: past a limit, the gateway refuses. Without a limit, a call
- * goes with one read of the limits, no lock and no hold. With one, [BudgetGuard] answers first (its alerts at 80 % and
- * 100 %, and a quick refusal once a limit is reached, from its cache), then the ledger admits the call against fresh
- * sums under the org's lock ([SpendAdmission]): calls at once never hold more than a limit leaves.
+ * The gateway's [SpendGuard] on the limits and the ledger: past a limit, the gateway refuses. [BudgetGuard] answers
+ * first, from its cache (a map lookup on the hot path): without a limit, the call goes with no lock and no hold; with a
+ * limit reached, it is refused at once; its alerts at 80 % and 100 % go from there. Otherwise the limits are read again
+ * and the ledger admits the call against fresh sums under the org's lock ([SpendAdmission]): calls at once never hold
+ * more than a limit leaves. A limit set on another replica applies within the guard's cache time (5 s); on this one,
+ * at once (the limit's use cases forget the cached decisions).
  *
  * What it does not promise: a provider that bills more than the call's reserve (an input larger than its estimate)
  * can take the spend past a limit, by that gap; the output part of the reserve is bounded by the call's `max_tokens`.
@@ -33,18 +35,19 @@ class LedgerSpendGuard(
     private val clock: Clock,
 ) : SpendGuard {
     override suspend fun check(request: SpendRequest): SpendDecision {
-        val limits = repository.limits(request.orgId, request.memberId)
-        if (limits.orgLimitMicros == null && limits.memberLimitMicros == null) return SpendDecision.Allowed
         val period = BudgetPeriod.of(clock.now())
-        val cached = guard.check(request.orgId, request.memberId)
-        val answer = if (cached is BudgetDecision.Exhausted) {
-            Admission.Exhausted(cached.scope.toSpendScope(), cached.limitMicros)
-        } else {
-            admission.admit(
-                SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros),
-                SpendLimits(limits.orgLimitMicros, limits.memberLimitMicros),
-                period.start,
-            )
+        val answer = when (val cached = guard.check(request.orgId, request.memberId)) {
+            // No limit applied when the guard last looked (its cache, forgotten when a limit changes here).
+            BudgetDecision.Allowed(null) -> Admission.Admitted
+            is BudgetDecision.Exhausted -> Admission.Exhausted(cached.scope.toSpendScope(), cached.limitMicros)
+            else -> {
+                val limits = repository.limits(request.orgId, request.memberId)
+                admission.admit(
+                    SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros),
+                    SpendLimits(limits.orgLimitMicros, limits.memberLimitMicros),
+                    period.start,
+                )
+            }
         }
         return answer.toDecision(period, request.reserveMicros)
     }
@@ -63,8 +66,8 @@ class LedgerSpendGuard(
         )
         is Admission.Insufficient -> SpendDecision.Insufficient(
             "$INSUFFICIENT: ${usd(availableMicros)} is left of ${scope.owner()} ${usd(limitMicros)} monthly limit " +
-                "and this call may cost up to ${usd(reserve)}. Lower its max_tokens, or retry once the calls in " +
-                "flight finish.",
+                "and this call may cost up to ${usd(reserve, up = true)}. Lower its max_tokens, or retry once the " +
+                "calls in flight finish.",
         )
     }
 
@@ -73,11 +76,19 @@ class LedgerSpendGuard(
         SpendScope.MEMBER -> "your"
     }
 
-    /** Dollars to the cent; an amount finer than a cent (a test budget, what is left of one) to the micro. */
-    private fun usd(micros: Long): String {
-        val dollars = "$" + (micros / MICROS_PER_DOLLAR) + "."
-        val fraction = (micros % MICROS_PER_DOLLAR).toString().padStart(MICRO_DIGITS, '0')
-        return if (micros >= MICROS_PER_DOLLAR || micros % MICROS_PER_CENT == 0L) {
+    /**
+     * Dollars to the cent; an amount under a dollar and finer than a cent (a test budget, what is left of one) to the
+     * micro. [up] rounds a dropped fraction of a cent up: a call's cost is never shown below what was compared.
+     */
+    private fun usd(micros: Long, up: Boolean = false): String {
+        val shown = if (micros >= MICROS_PER_DOLLAR && up) {
+            (micros + MICROS_PER_CENT - 1) / MICROS_PER_CENT * MICROS_PER_CENT
+        } else {
+            micros
+        }
+        val dollars = "$" + (shown / MICROS_PER_DOLLAR) + "."
+        val fraction = (shown % MICROS_PER_DOLLAR).toString().padStart(MICRO_DIGITS, '0')
+        return if (shown >= MICROS_PER_DOLLAR || shown % MICROS_PER_CENT == 0L) {
             dollars + fraction.take(CENT_DIGITS)
         } else {
             dollars + fraction.trimEnd('0')

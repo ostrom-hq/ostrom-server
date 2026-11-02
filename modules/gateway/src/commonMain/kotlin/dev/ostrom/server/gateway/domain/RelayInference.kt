@@ -108,9 +108,33 @@ class RelayInferenceUseCaseImpl(
         val id: Uuid,
     ) {
         /** One try: the finished call, or null to try again on another account. */
-        suspend fun attempt(tries: Int): CallState? = when (val plan = planner.plan(caller, call, org, id)) {
+        suspend fun attempt(tries: Int): CallState? = when (val plan = plan()) {
             is InferencePlan.Refused -> refuse(plan)
             is InferencePlan.Ready -> send(plan, tries)
+        }
+
+        /**
+         * Plans a try. Planning may fail after the budgets held the call's reserve (a lease that fails, the agent
+         * leaving): the call is then recorded before the failure goes on, so that its record settles the hold rather
+         * than leaving it to expire.
+         */
+        private suspend fun plan(): InferencePlan = try {
+            planner.plan(caller, call, org, id)
+        } catch (cancelled: CancellationException) {
+            abandon(CANCELLED_STATUS, "cancelled")
+            throw cancelled
+        } catch (error: Exception) {
+            abandon(FAILED_STATUS, "gateway_error")
+            throw error
+        }
+
+        private suspend fun abandon(status: Int, outcome: String) {
+            record(
+                CallState(this, "", null, null).apply {
+                    this.status = status
+                    this.outcome = outcome
+                },
+            )
         }
 
         private suspend fun refuse(plan: InferencePlan.Refused): CallState {
@@ -302,6 +326,12 @@ class RelayInferenceUseCaseImpl(
 
         /** A non-streamed answer larger than this is relayed but not metered. */
         const val MAX_BODY = 8 * 1024 * 1024
+
+        /** Recorded for a call the agent left while it was planned (as proxies record a client gone). */
+        private const val CANCELLED_STATUS = 499
+
+        /** Recorded for a call whose planning failed: the agent gets the server's 500. */
+        private const val FAILED_STATUS = 500
 
         private const val CHUNK = 16 * 1024
         private const val INITIAL_BODY = 8 * 1024

@@ -15,6 +15,7 @@ import dev.ostrom.server.usage.domain.SpendScope
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -52,25 +53,25 @@ class LedgerSpendGuardTest {
         spendGuard.check(SpendRequest(orgA, member, callId, reserve))
 
     @Test
-    fun withoutALimitACallGoesWithoutAskingTheLedger() = runTest {
+    fun withoutALimitACallGoesOnTheCachedDecisionAlone() = runTest {
         assertEquals(SpendDecision.Allowed, check())
-        assertEquals(emptyList(), guardCalls)
-        assertEquals(emptyList(), admitted)
-        assertEquals(1, repository.limitReads)
+        assertEquals(listOf(orgA to member), guardCalls)
+        assertEquals(emptyList(), admitted, "No lock, no hold")
+        assertEquals(0, repository.limitReads, "Not even a read of the limits")
     }
 
     @Test
-    fun withALimitTheLedgerAdmitsTheCallAgainstTheMonth() = runTest {
+    fun withALimitTheLedgerAdmitsTheCallAgainstFreshLimitsAndTheMonth() = runTest {
+        cached = BudgetDecision.Allowed(2_000_000)
         repository.defaultLimits[orgA] = 2_000_000
         assertEquals(SpendDecision.Allowed, check())
-        assertEquals(listOf(orgA to member), guardCalls, "The cached guard sends its alerts first")
         assertEquals(
             listOf(Triple(SpendHold(orgA, member, callId, 1_234_567), SpendLimits(null, 2_000_000), monthStart)),
             admitted,
         )
         repository.orgLimits[orgA] = 5_000_000
         check()
-        assertEquals(SpendLimits(5_000_000, 2_000_000), admitted.last().second)
+        assertEquals(SpendLimits(5_000_000, 2_000_000), admitted.last().second, "Read again for each call")
     }
 
     @Test
@@ -107,15 +108,18 @@ class LedgerSpendGuardTest {
     @Test
     fun aCallTheBudgetLeftCannotCoverIsRefusedWithWhatIsLeft() = runTest {
         repository.orgLimits[orgA] = 100_000_000
+        cached = BudgetDecision.Allowed(400_000)
         answer = Admission.Insufficient(SpendScope.ORG, 100_000_000, 400_000)
         assertEquals(
             SpendDecision.Insufficient(
                 "Budget left too low for this call: $0.40 is left of your organization's $100.00 monthly limit " +
-                    "and this call may cost up to $12.34. Lower its max_tokens, or retry once the calls in flight " +
+                    "and this call may cost up to $12.35. Lower its max_tokens, or retry once the calls in flight " +
                     "finish.",
             ),
             check(reserve = 12_345_678),
+            "What is left rounds down, what the call may cost rounds up",
         )
+        assertTrue("up to $12.00." in (check(reserve = 12_000_000) as SpendDecision.Insufficient).message)
         answer = Admission.Insufficient(SpendScope.MEMBER, 1_000_000, 9_999)
         // A sum finer than a cent is written to the micro; a cent or more, or a dollar or more, to the cent.
         assertEquals(

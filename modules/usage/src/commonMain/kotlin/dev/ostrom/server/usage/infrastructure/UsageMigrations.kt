@@ -73,7 +73,8 @@ val UsageMigrations: List<SchemaMigration> = listOf(
                 micros BIGINT NOT NULL,
                 expires_at TIMESTAMPTZ NOT NULL
             );
-            CREATE INDEX usage_holds_org_member ON usage_holds (org_id, member_id) INCLUDE (micros, expires_at);
+            CREATE INDEX usage_holds_org_member ON usage_holds (org_id, member_id)
+                INCLUDE (micros, expires_at, call_id);
             """.trimIndent(),
             tenantTableSql("usage_holds"),
         ).joinToString("\n"),
