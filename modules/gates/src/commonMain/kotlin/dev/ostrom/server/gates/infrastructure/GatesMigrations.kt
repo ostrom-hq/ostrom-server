@@ -99,5 +99,7 @@ val GatesMigrations: List<SchemaMigration> = listOf(
             WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
         """.trimIndent(),
     ),
+    // A yes is released once (AUDIT-GATES-2 M2): no more reserve, launch, release, relaunch until it expires.
+    SchemaMigration(4, "gates_released_once", "ALTER TABLE gates_gates ADD COLUMN released_at TIMESTAMPTZ"),
 )
 
