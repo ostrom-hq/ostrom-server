@@ -5,7 +5,9 @@ import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.DeviceAuthorization
 import dev.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import dev.ostrom.server.identity.domain.DeviceAuthorizationsRepository
+import dev.ostrom.server.kernel.database.withOrganization
 import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
@@ -25,10 +27,12 @@ class DeviceAuthorizationsRepositoryImpl(private val driver: Driver) : DeviceAut
         driver.execute(
             Statement.create(
                 "INSERT INTO identity_device_authorizations (id, device_code_hash, user_code, client_name, status, " +
-                    "created_at, expires_at) VALUES (:id, :hash, :code, :client, :status, :created, :expires)",
+                    "created_at, expires_at, scopes) " +
+                    "VALUES (:id, :hash, :code, :client, :status, :created, :expires, :scopes)",
             ).bind("id", authorization.id).bind("hash", deviceCodeHash).bind("code", authorization.userCode)
                 .bind("client", authorization.clientName).bind("status", authorization.status.name)
-                .bind("created", authorization.createdAt).bind("expires", authorization.expiresAt),
+                .bind("created", authorization.createdAt).bind("expires", authorization.expiresAt)
+                .bind("scopes", authorization.scopes.sorted().joinToString(" ")),
         ).getOrThrow()
     }
 
@@ -44,13 +48,20 @@ class DeviceAuthorizationsRepositoryImpl(private val driver: Driver) : DeviceAut
         ).bind("code", userCode).bind("now", now),
     ).getOrThrow().firstOrNull()?.toAuthorization()
 
-    override suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant): Boolean {
+    override suspend fun answer(
+        id: Uuid,
+        userId: Uuid,
+        approved: Boolean,
+        now: Instant,
+        approvingOrgId: Uuid?,
+    ): Boolean {
         val status = if (approved) DeviceAuthorizationStatus.APPROVED else DeviceAuthorizationStatus.DENIED
         return driver.execute(
             Statement.create(
-                "UPDATE identity_device_authorizations SET status = :status, user_id = :user " +
-                    "WHERE id = :id AND status = 'PENDING' AND expires_at > :now",
-            ).bind("status", status.name).bind("user", userId).bind("id", id).bind("now", now),
+                "UPDATE identity_device_authorizations SET status = :status, user_id = :user, " +
+                    "approving_org_id = :org WHERE id = :id AND status = 'PENDING' AND expires_at > :now",
+            ).bind("status", status.name).bind("user", userId).bind("org", approvingOrgId).bind("id", id)
+                .bind("now", now),
         ).getOrThrow() == 1L
     }
 
@@ -61,14 +72,24 @@ class DeviceAuthorizationsRepositoryImpl(private val driver: Driver) : DeviceAut
         ).getOrThrow()
     }
 
-    override suspend fun consume(id: Uuid, token: ApiToken, secretHash: String): Boolean = driver.transaction {
-        val consumed = execute(
+    override suspend fun consume(id: Uuid, token: ApiToken, secretHash: String): Boolean {
+        val orgId = token.orgId
+        return if (orgId == null) {
+            driver.transaction { consume(this, id, token, secretHash) }
+        } else {
+            // An organization's token is written in it (RLS): the authorization itself belongs to no organization.
+            driver.withOrganization(orgId) { consume(it, id, token, secretHash) }
+        }
+    }
+
+    private suspend fun consume(tx: QueryExecutor, id: Uuid, token: ApiToken, secretHash: String): Boolean {
+        val consumed = tx.execute(
             Statement.create(
                 "UPDATE identity_device_authorizations SET status = 'CONSUMED' WHERE id = :id AND status = 'APPROVED'",
             ).bind("id", id),
         ).getOrThrow() == 1L
-        if (consumed) insert(this, token, secretHash)
-        consumed
+        if (consumed) insert(tx, token, secretHash)
+        return consumed
     }
 
     private fun ResultSet.Row.toAuthorization() = DeviceAuthorization(
@@ -80,9 +101,13 @@ class DeviceAuthorizationsRepositoryImpl(private val driver: Driver) : DeviceAut
         createdAt = get("created_at").asInstant(),
         expiresAt = get("expires_at").asInstant(),
         lastPolledAt = get("last_polled_at").asInstantOrNull(),
+        scopes = get("scopes").asString().split(' ').filter { it.isNotEmpty() }.toSet(),
+        approvingOrgId = get("approving_org_id").asUuidOrNull(),
     )
 
     private companion object {
-        const val COLUMNS = "id, user_code, client_name, status, user_id, created_at, expires_at, last_polled_at"
+        const val COLUMNS =
+            "id, user_code, client_name, status, user_id, created_at, expires_at, last_polled_at, scopes, " +
+                "approving_org_id"
     }
 }
