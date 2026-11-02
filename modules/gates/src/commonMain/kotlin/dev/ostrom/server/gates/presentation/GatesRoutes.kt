@@ -3,7 +3,6 @@ package dev.ostrom.server.gates.presentation
 
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
-import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
 import dev.ostrom.server.gates.domain.models.RequestStatus
@@ -71,11 +70,11 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
             val body = call.receive<AnswerApprovalRequest>()
             val id = params.parent.id.toUuid()
             val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO
-            val view = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
-            val request = view.requests.first { it.id == id }
-            // The contract's 200 is the answered approval and its signed receipt, a no's included.
-            val receipt = receipts.read(view.gate.orgId, view.gate.receiptId)
-            call.respond(AnswerApprovalResponse(ApprovalView(request, view.gate).toApproval(), receipt))
+            val answered = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
+            // The contract's 200 is the approval as the console and the app show it, answered, with the signed
+            // receipt of the decision (a no's included).
+            val receipt = receipts.read(answered.gate.orgId, answered.gate.receiptId)
+            call.respond(view(actor, principal.toViewer(), id).toViewResponse().copy(receipt = receipt))
         }
     }
 }

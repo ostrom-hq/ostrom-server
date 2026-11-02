@@ -20,7 +20,9 @@ internal fun AuthenticatedPrincipal.toViewer() = Viewer(
         PrincipalChannel.MOBILE_APP -> ViewerChannel.APP
         PrincipalChannel.API_TOKEN -> ViewerChannel.CLI
     },
-    answers = scopes.any { it in GateScopes.answering },
+    // The app's token answers once the phone is unlocked (biometrics, `POST /auth/mobile/unlock`): read before that,
+    // the approval says what the person may do, and the answer route asks for the unlock.
+    answers = channel == PrincipalChannel.MOBILE_APP || scopes.any { it in GateScopes.answering },
 )
 
 /** The contract's `via` of a channel. */
