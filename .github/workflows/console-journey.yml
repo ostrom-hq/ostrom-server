@@ -130,7 +130,8 @@ jobs:
           # Test values only: sign-in mails are written to a directory, the console is `vite preview` on
           # localhost:4173, which proxies /api to the server, so cookies and CSRF are first-party. That proxy, on this
           # runner's loopback, is trusted for X-Forwarded-For: each person of the journeys signs in from an address of
-          # their own (ostrom-web e2e-real/real.ts), so sixty sign-ins from one machine do not trip the per-source limit.
+          # their own (ostrom-web e2e-real/real.ts, since ostrom-web#54), so sixty sign-ins from one machine do not trip the
+          # per-source limit. A console from before it fails its first limited sign-in with a message naming this setting.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -140,7 +141,7 @@ jobs:
           OSTROM_STRIPE_SECRET_KEY=sk_test_web_e2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_web_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
-          OSTROM_TRUSTED_PROXIES=127.0.0.0/8,::1/128
+          OSTROM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
