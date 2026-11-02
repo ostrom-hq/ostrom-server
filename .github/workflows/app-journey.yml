@@ -119,6 +119,22 @@ jobs:
             echo "::error::The session step gave no token or no login: the app would stop at launch"
             exit 1
           fi
+      - name: The member the app signs in as, seen with and without Ostrom-Org
+        # The app reads no role from /auth/me (it gates the yes on the approval's `you.canApprove`, which the gates
+        # resolve for the only organization without the header, server#64); this keeps the contract's case in the
+        # journey: with `Ostrom-Org`, /auth/me gives the owner's membership; without it, none (core#51).
+        env:
+          TOKEN: ${{ steps.session.outputs.token }}
+        run: |
+          auth=(-H "accept: application/json" -H "authorization: Bearer $TOKEN")
+          org="$(curl -fsS "${auth[@]}" http://127.0.0.1:4600/api/v1/me/organizations | jq -er '.items | if length == 1 then .[0].id else error("not one organization") end')"
+          role="$(curl -fsS "${auth[@]}" -H "Ostrom-Org: $org" http://127.0.0.1:4600/api/v1/auth/me | jq -r '.member.role // ""')"
+          if [ "$role" != "owner" ]; then
+            echo "::error::/auth/me with Ostrom-Org gave the role \"$role\", not owner"
+            exit 1
+          fi
+          bare="$(curl -fsS "${auth[@]}" http://127.0.0.1:4600/api/v1/auth/me | jq -r '.member.role // "none"')"
+          echo "With Ostrom-Org: $role; without: $bare"
       - name: Free disk space on the runner
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift \
