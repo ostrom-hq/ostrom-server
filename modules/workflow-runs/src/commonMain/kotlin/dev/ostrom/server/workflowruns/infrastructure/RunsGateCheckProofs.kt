@@ -40,7 +40,8 @@ class RunsGateCheckProofs(
         val last = repository.checks(orgId, RunQuery(sessionId = sessionId, nodeId = check, limit = 1)).firstOrNull()
             ?: return null
         val attestation = repository.attestations(orgId, sessionId)[last.id] ?: CheckAttestation.WORKSTATION_DECLARED
-        return GateCheckProof(attestation, passed = last.exit == 0)
+        // A run of another script than the package's never passes, as in the receipt (AUDIT-SECU-RUNNER-2 R1).
+        return GateCheckProof(attestation, passed = last.exit == 0 && last.tampered != true)
     }
 
     // The check's id is its name on the forge. A deleted ref has no commit to prove; a gate with no commit, none.

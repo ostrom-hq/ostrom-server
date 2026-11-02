@@ -134,10 +134,12 @@ interface RevokeTokenUseCase {
      *
      * @param userId The owner.
      * @param tokenId The token.
+     * @param orgId The organization the token is bound to (`ostrom logout` of the token of `ostrom login --admin`),
+     *   whose audit chain records it; null for an account-level token.
      *
      * @throws TokenNotFoundException When it is absent, another user's, or already revoked.
      */
-    suspend operator fun invoke(userId: Uuid, tokenId: Uuid)
+    suspend operator fun invoke(userId: Uuid, tokenId: Uuid, orgId: Uuid? = null)
 }
 
 /**
@@ -152,9 +154,9 @@ class RevokeTokenUseCaseImpl(
     private val audit: AuditLog,
     private val clock: Clock,
 ) : RevokeTokenUseCase {
-    override suspend fun invoke(userId: Uuid, tokenId: Uuid) {
-        if (!tokens.revoke(userId, tokenId, clock.nowMillis())) throw TokenNotFoundException()
-        audit.record(AuditEntry(null, userId, "token.revoked", "token", tokenId.toString()))
+    override suspend fun invoke(userId: Uuid, tokenId: Uuid, orgId: Uuid?) {
+        if (!tokens.revoke(userId, tokenId, clock.nowMillis(), orgId)) throw TokenNotFoundException()
+        audit.record(AuditEntry(orgId, userId, "token.revoked", "token", tokenId.toString()))
     }
 }
 

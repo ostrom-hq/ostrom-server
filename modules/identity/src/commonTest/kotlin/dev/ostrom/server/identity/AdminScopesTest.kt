@@ -1,0 +1,69 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package dev.ostrom.server.identity
+
+import dev.ostrom.server.identity.domain.ADMIN_SCOPES
+import dev.ostrom.server.identity.domain.ADMIN_TOKEN_LIFETIME
+import dev.ostrom.server.identity.domain.ADMIN_TOKEN_SCOPES
+import dev.ostrom.server.identity.domain.AuditLogGovernanceAudit
+import dev.ostrom.server.identity.domain.CLI_SCOPES
+import dev.ostrom.server.identity.domain.InvalidScopesException
+import dev.ostrom.server.identity.domain.TokenKind
+import dev.ostrom.server.identity.domain.grantedScopes
+import dev.ostrom.server.identity.domain.validateScopes
+import dev.ostrom.server.identity.fakes.RecordingAuditLog
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.hours
+import kotlin.uuid.Uuid
+
+/** The governance scopes of `ostrom login --admin`: only its token holds them, and each of its writes is recorded. */
+class AdminScopesTest {
+    @Test
+    fun onlyTheAdminTokenHoldsTheGovernanceScopesWhateverARowLists() {
+        val stored = ADMIN_SCOPES + CLI_SCOPES + "orgs:write" + "user:*"
+        assertEquals(ADMIN_TOKEN_SCOPES, grantedScopes(TokenKind.ADMIN, stored))
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES, ADMIN_TOKEN_SCOPES)
+        assertEquals(CLI_SCOPES + "orgs:write", grantedScopes(TokenKind.PERSONAL, stored - "user:*"))
+        assertEquals(CLI_SCOPES, grantedScopes(TokenKind.CLI, stored))
+        assertEquals(8.hours, ADMIN_TOKEN_LIFETIME)
+        assertEquals("osg", TokenKind.ADMIN.prefix)
+    }
+
+    @Test
+    fun aPersonalTokenCannotAskForAGovernanceScope() {
+        for (scope in ADMIN_SCOPES) {
+            assertFailsWith<InvalidScopesException>(scope) { validateScopes(listOf("orgs:read", scope)) }
+        }
+    }
+
+    @Test
+    fun eachGovernanceWriteIsAnEventOfTheTokensOrganizationByItsPerson() = runTest {
+        val audit = RecordingAuditLog()
+        val governance = AuditLogGovernanceAudit(audit)
+        val person = Uuid.random()
+        val orgId = Uuid.random()
+        val token = Uuid.random().toString()
+        val principal =
+            AuthenticatedPrincipal(person.toString(), PrincipalKind.USER, ADMIN_SCOPES, token, orgId.toString())
+
+        governance.record(principal, "policy:write", "PATCH /api/v1/rules/r1")
+        val unboundPrincipal = principal.copy(credentialId = null, orgId = null)
+        governance.record(unboundPrincipal, "harness:write", "DELETE /api/v1/workflows/w")
+
+        val (bound, unbound) = audit.entries
+        assertEquals(orgId, bound.orgId)
+        assertEquals(person, bound.actorId)
+        assertEquals("governance.write", bound.action)
+        assertEquals("route", bound.targetType)
+        assertEquals("PATCH /api/v1/rules/r1", bound.targetId)
+        assertEquals(mapOf("scope" to "policy:write", "token" to token), bound.details)
+        assertNull(unbound.orgId)
+        assertEquals(mapOf("scope" to "harness:write", "token" to ""), unbound.details)
+    }
+}
