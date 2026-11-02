@@ -225,17 +225,23 @@ jobs:
             echo "Tags:"; printf '%s\n' "${{ steps.meta.outputs.tags }}" | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The image just published, run whole in ostrom-helm's local demo stack with the customer's journey (demo-stack.yml).
+  # The image just published, run whole in ostrom-helm's local demo stack with the customer's journey (demo-stack.yml),
+  # in a run of its own: this run says only whether the image is published. Called here (workflow_call), the demo
+  # shared this run's conclusion: a newer merge's demo cancelling it (demo-stack's concurrency group) or a red step of
+  # the journey turned an Image run whose image was published `cancelled` or `failure` (runs of f0ff932 to 6249c88,
+  # 02/11). The smoke test above still blocks publication; the demo never does.
   demo:
     needs: image
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
-      contents: read
-      packages: read
-    uses: ./.github/workflows/demo-stack.yml
-    with:
-      server_image: ghcr.io/ostrom-hq/ostrom-server@${{ needs.image.outputs.digest }}
-    secrets:
-      DEPLOY_KEY_HELM: ${{ secrets.DEPLOY_KEY_HELM }}
-      DEPLOY_KEY_WEB: ${{ secrets.DEPLOY_KEY_WEB }}
-      STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+      actions: write # dispatch demo-stack.yml
+    steps:
+      - name: Demo of the image just published, in its own run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          gh workflow run demo-stack.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f server_image="${IMAGE}@${DIGEST}" -f after_merge=true

@@ -35,3 +35,15 @@ class LaunchRateLimitedException(val retryAfter: Duration) : OstromException(
  * organization, so that nothing leaks.
  */
 class NoLaunchOrganizationException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
+
+/** A member who is not an admin asked for another developer's verdict: only an owner or an admin reads it. */
+class OtherDeveloperForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an owner or an admin of the organization reads another developer's verdict.",
+)
+
+/**
+ * The developer an admin named is not a member of the organization: answered as unknown, whether the login exists
+ * elsewhere or not.
+ */
+class UnknownDeveloperException : OstromException(ErrorKind.NOT_FOUND, "Developer not found.")

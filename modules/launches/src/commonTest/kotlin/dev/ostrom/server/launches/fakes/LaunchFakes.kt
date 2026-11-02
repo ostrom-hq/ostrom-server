@@ -68,6 +68,10 @@ class FakeLaunchers(
     /** The members of [launchers], by member id: their key. */
     override suspend fun owner(orgId: Uuid, memberId: Uuid): Launcher? =
         launchers[memberId.toString()]?.takeIf { it.orgId == orgId }
+
+    /** The person of [launchers] with that login in that organization. */
+    override suspend fun colleague(orgId: Uuid, login: String): Launcher? =
+        launchers.values.firstOrNull { it.orgId == orgId && it.login == login }
 }
 
 /** Records each token issued and answers `osa_<launch>`. */

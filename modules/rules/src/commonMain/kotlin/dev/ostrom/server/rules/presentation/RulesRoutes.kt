@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules.presentation
 
+import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.WriteAccess
@@ -11,6 +12,7 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.rules.domain.models.Decider
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.OnlyConsoleDecidesException
+import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -40,7 +42,7 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
             call.respond(RulesPage(listRules(caller.orgId, filters.toQuery()).map { it.toDto() }))
         }
         post<RulesApi> {
-            val decider = call.decider(this@with)
+            val decider = call.decider(callers, actors)
             val rule = createRule(decider, call.receive<NewRuleRequest>().toNewRule())
             call.respond(HttpStatusCode.Created, rule.toDto())
         }
@@ -49,15 +51,15 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
             call.respond(getRule(caller.orgId, path.id).toDto())
         }
         patch<RulesApi.Id> { path ->
-            val decider = call.decider(this@with)
+            val decider = call.decider(callers, actors)
             call.respond(updateRule(decider, path.id, call.receive<JsonObject>().toRulePatch()).toDto())
         }
         delete<RulesApi.Id> { path ->
-            deleteRule(call.decider(this@with), path.id)
+            deleteRule(call.decider(callers, actors), path.id)
             call.respond(HttpStatusCode.NoContent)
         }
         post<RulesApi.Bulk> {
-            val decider = call.decider(this@with)
+            val decider = call.decider(callers, actors)
             val request = call.receive<BulkRulesRequest>()
             val status = ruleStatusOf(request.status)
             call.respond(BulkRulesResponse(bulkUpdateRules(decider, request.ids, status)))
@@ -75,7 +77,7 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
             call.respond(getGatePolicy(caller.orgId).toDto())
         }
         put<GatePolicyApi> {
-            val decider = call.decider(this@with, GovernanceScopes.GATES_POLICY)
+            val decider = call.decider(callers, actors, GovernanceScopes.GATES_POLICY)
             call.respond(setGatePolicy(decider, call.receive<GatePolicyDto>().toPolicy()).toDto())
         }
     }
@@ -87,17 +89,20 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
  * demoted admin's token stops deciding at once), named by their GitHub login when the gates know it. Each decision is
  * signed and kept; the elevated token's use is also recorded in the audit log before the write ([auditGovernance]).
  *
+ * @param callers Who the caller is in their organization.
+ * @param actors Their GitHub login, when the gates know it.
  * @param scope The governance scope the write needs.
  */
-private suspend fun ApplicationCall.decider(
-    dependencies: RulesRoutesDependencies,
+internal suspend fun ApplicationCall.decider(
+    callers: CallerResolver,
+    actors: GateActorResolver,
     scope: String = GovernanceScopes.POLICY_WRITE,
 ): Decider {
     val principal = requirePrincipal()
     if (!principal.governs(scope)) throw OnlyConsoleDecidesException()
-    val caller = requireCaller(dependencies.callers, scope, writers = WriteAccess.governance(scope))
+    val caller = requireCaller(callers, scope, writers = WriteAccess.governance(scope))
     caller.requireAdmin()
     auditGovernance(principal, scope)
-    val name = dependencies.actors.resolve(principal)?.personId ?: caller.memberId.toString()
+    val name = actors.resolve(principal)?.personId ?: caller.memberId.toString()
     return Decider(caller.orgId, name)
 }

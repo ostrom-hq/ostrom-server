@@ -79,6 +79,18 @@ interface UsageRepository {
     suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long
 
     /**
+     * Sums the cost one launch's agent token spent in a window (a session segment's receipt).
+     *
+     * @param orgId The org.
+     * @param launchId The launch.
+     * @param from The start, included.
+     * @param to The end, excluded.
+     *
+     * @return USD millionths, or null when no priced call of the launch falls in the window.
+     */
+    suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long?
+
+    /**
      * Totals the events of a window per group, most expensive first.
      *
      * @param window The org, the member (or the whole org) and the times.

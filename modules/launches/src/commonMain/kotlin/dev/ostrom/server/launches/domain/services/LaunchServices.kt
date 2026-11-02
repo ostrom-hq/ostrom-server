@@ -37,6 +37,16 @@ interface LauncherResolver {
      * @return The launcher, or null when the member is no longer one.
      */
     suspend fun owner(orgId: Uuid, memberId: Uuid): Launcher?
+
+    /**
+     * Resolves another developer of an organization by their login, as the person they would launch as.
+     *
+     * @param orgId The organization.
+     * @param login Their login.
+     *
+     * @return The launcher, or null when nobody of that login is a member of [orgId].
+     */
+    suspend fun colleague(orgId: Uuid, login: String): Launcher?
 }
 
 /** Issues the agent token of a launch (the identity module's agent tokens). */
