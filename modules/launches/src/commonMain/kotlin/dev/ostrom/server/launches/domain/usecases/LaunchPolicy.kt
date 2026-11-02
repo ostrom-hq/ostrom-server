@@ -10,7 +10,9 @@ import dev.ostrom.server.launches.domain.services.LaunchModelRules
  * enforced again when the launch is created: a CLI that skips the read is refused all the same.
  *
  * Every well-formed agent name is allowed (the prototype's empty agent list); a model must be well formed and allowed
- * by the organization's [LaunchModelRules].
+ * by the organization's [LaunchModelRules]. A launch that names no model is not checked against the policy's
+ * `default`: the agent then picks its own model and names it in every call (Claude Code and Codex always do), and the
+ * gateway fills `default` only into a call that names none, checking each call against the same policy.
  *
  * @param models The organization's rules on models.
  */
@@ -26,7 +28,7 @@ class LaunchPolicy(private val models: LaunchModelRules) {
      */
     suspend fun refusal(launcher: Launcher, agent: String?, model: String?): String? = malformed(agent, model)
         ?: BILLING_ONLY.takeUnless { launches(launcher.role) }
-        ?: model?.let { models.refusal(launcher.orgId, launcher.login, it) }
+        ?: model?.let { models.refusal(launcher, it) }
 
     /**
      * Says what is malformed in a launch's names.

@@ -16,12 +16,14 @@ import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.withNulls
 import dev.ostrom.server.receipts.presentation.requireReceiptReader
+import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.sessions.presentation.SessionScopes
 import dev.ostrom.server.workflowruns.domain.models.InvalidRunException
 import dev.ostrom.server.workflowruns.domain.repositories.RunQuery
 import dev.ostrom.server.workflowruns.domain.usecases.NotificationRequest
 import dev.ostrom.server.workflowruns.domain.usecases.ReceiptBundle
 import dev.ostrom.server.workflowruns.domain.usecases.WorkflowReceiptRequest
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
@@ -29,6 +31,7 @@ import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlin.uuid.Uuid
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -39,7 +42,8 @@ import kotlinx.serialization.json.put
  * The workflow-runs routes of the contract. Reports (checks, notifications, the workflow receipt) come from the
  * launcher's hooks with the launch's agent token, or from the session's person; the lists are any member's, an agent
  * token's for its own session; a bundle is read by a person who reads receipts, or by the agent token of the
- * receipt's session's launch (`ostrom <agent>` keeps it at the end).
+ * receipt's session's launch (`ostrom <agent>` keeps it at the end). Outside the contract, the runner of a cloud
+ * session reports the checks it ran itself on `/api/v1/cloud/runner/checks`, with its runner token.
  *
  * @param dependencies The use cases.
  */
@@ -80,6 +84,17 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
         get<ReceiptBundleApi> { params ->
             call.respond(bundle(bundleReader(call), params.id).toJson())
         }
+    }
+    // The runner channel: the execution's runner token, checked before the body is read (S2-46), never a member's.
+    post<RunnerChecksApi> {
+        val token = call.runnerToken()
+        checkRunnerToken(token)
+        val body = call.receive<RunnerCheckRequest>()
+        val cloudSession = Uuid.parseOrNull(body.sessionId)
+            ?: throw InvalidRunException("sessionId: the cloud session's id.")
+        val execution = authenticateRunner(token, cloudSession, body.epoch)
+        val run = reportRunnerCheck(execution.orgId, execution.id, body.check)
+        call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
     }
 }
 
@@ -135,3 +150,16 @@ private fun ReceiptBundle.toJson(): JsonObject = buildJsonObject {
 
 /** The format of a receipt bundle, which `ostrom verify` reads. */
 const val BUNDLE_FORMAT: String = "ostrom.receipt-bundle/1"
+
+/**
+ * The runner token of a runner call, `Authorization: Bearer ostrom_runner_…`, read as the runners module reads it
+ * (a module never imports another one's presentation).
+ *
+ * @throws RunnerUnauthenticatedException When absent.
+ */
+private fun ApplicationCall.runnerToken(): String {
+    val header = request.headers[HttpHeaders.Authorization] ?: throw RunnerUnauthenticatedException()
+    val token = header.removePrefix("Bearer ").trim()
+    if (token == header || token.isEmpty()) throw RunnerUnauthenticatedException()
+    return token
+}

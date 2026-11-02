@@ -26,39 +26,48 @@ object ActionClasses {
             "push-main",
             "Push to the main branch",
             listOf("Bash"),
-            listOf(
-                "\\bgit\\s+push\\b[^\\n;&|]*\\b(main|master)\\b",
-                "\\bgit\\s+push\\b[^\\n;&|]*HEAD:(refs/heads/)?(main|master)",
-            ),
+            // Every push: a bare `git push` on main names no branch. The server reads the refs the hook sends and
+            // answers a push that reaches neither main nor master as ungated (second audit H3).
+            listOf(GIT_PUSH, "\\bgh\\s+api\\b[^\\n]*git/refs/heads/(main|master)\\b"),
             listOf("push to main", "main", "pin", "production", "merge"),
         ),
         ActionClass(
             "push-tag",
             "Push a release tag",
             listOf("Bash"),
-            listOf("\\bgit\\s+push\\b[^\\n;&|]*(--tags|\\bv\\d+\\.\\d+)", "\\bgh\\s+release\\s+create\\b"),
+            // Every push too: a tag needs no `v` (`git push origin 1.4.0`); the server reads the refs for a tag.
+            listOf(GIT_PUSH, "\\bgh\\s+release\\s+create\\b", "\\bgh\\s+api\\b[^\\n]*git/refs/tags\\b"),
             listOf("tag", "release", "production"),
         ),
         ActionClass(
             "merge",
             "Merge a pull request",
-            listOf("Bash"),
-            listOf("\\bgh\\s+pr\\s+merge\\b"),
+            // The GitHub MCP server merges too (`mcp__github__merge_pull_request`), and so do the REST and GraphQL
+            // APIs.
+            listOf("Bash", "mcp"),
+            listOf(
+                "\\bgh\\s+pr\\s+merge\\b",
+                "merge_pull_request",
+                "\\bgh\\s+api\\b[^\\n]*(/pulls/[^\\s/]+/merge\\b|/merges\\b|mergePullRequest)",
+            ),
             listOf("merge", "approve", "review"),
         ),
         ActionClass(
             "deploy",
             "Deploy to production",
             listOf("Bash"),
+            // Global options may come before the verb: `kubectl -n prod apply`, `helm --kube-context x upgrade`,
+            // `terraform -chdir=infra apply` (second audit H3).
             listOf(
-                "\\bhelm\\s+(upgrade|install|rollback)\\b",
-                "\\bkubectl\\s+(apply|rollout|set\\s+image|delete|scale)\\b",
-                "\\bgh\\s+workflow\\s+run\\s+\\S*deploy",
-                "\\bterraform\\s+apply\\b",
-                "\\b(fly|flyctl)\\s+deploy\\b",
+                "\\bhelm\\b[^\\n;&|]*\\s(upgrade|install|rollback|uninstall)\\b",
+                "\\bkubectl\\b[^\\n;&|]*\\s(apply|rollout|set\\s+image|delete|scale|replace|patch)\\b",
+                "\\bgh\\s+workflow\\s+run\\b",
+                "\\bgh\\s+api\\b[^\\n]*/dispatches\\b",
+                "\\bterraform\\b[^\\n;&|]*\\s(apply|destroy)\\b",
+                "\\b(fly|flyctl)\\b[^\\n;&|]*\\sdeploy\\b",
                 "\\bvercel\\b[^\\n]*--prod",
-                "\\bnpm\\s+publish\\b",
-                "\\bdocker\\s+push\\b",
+                "\\b(npm|pnpm|yarn|bun)\\b[^\\n;&|]*\\spublish\\b",
+                "\\bdocker\\b[^\\n;&|]*(\\spush\\b|--push\\b)",
                 "(^|[\\s;&|/])deploy(\\.sh)?\\s+(prod|production)\\b",
             ),
             listOf("deploy", "production", "helm", "rollout", "pin", "release"),
@@ -140,3 +149,9 @@ data class CatalogGate(
  * @property gate The gate that covers it, or null.
  */
 data class CatalogEntry(val action: ActionClass, val gate: CatalogGate?)
+
+// `git`, its global options (`-C dir`, `-c key=value`, `--no-pager`, `--git-dir=…`), then `push` as the command:
+// `git stash push` is not one.
+// The alternatives never overlap, so a long run of options is read once, never backtracked through.
+private const val GIT_PUSH =
+    "\\bgit(\\s+(-[cC]\\s*[^\\s-]\\S*|--[a-zA-Z][\\w-]*(=\\S+)?|-[abd-zABD-Z]\\w*))*\\s+push\\b"

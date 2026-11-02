@@ -6,6 +6,7 @@ import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
 import dev.ostrom.server.compiler.domain.usecases.catalogJson
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -58,7 +59,8 @@ private fun Route.catalogRoutes(dependencies: CompilerRoutesDependencies) = with
 private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = with(dependencies) {
     get<PackagesApi.Current> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
-        val served = publish(actor.orgId, params.parent.repo, urlOf(call), actor.id)
+        val byAgent = actor.kind == ActorKind.AGENT_SESSION
+        val served = publish(actor.orgId, params.parent.repo, urlOf(call), actor.id, byAgent)
         call.respond(answerOf(served.envelope))
     }
     get<PackagesApi> { params ->
@@ -86,11 +88,14 @@ private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = wit
     }
     post<PackagesApi.Digest.Revoke> { params ->
         val actor = personOf(call, CompilerScopes.writingPackages)
+        requireManager(actor)
         val reason = call.receive<RevokeRequest>().reason
         call.respond(summary(actor, revoke.revoke(actor.orgId, params.parent.digest, actor.id, reason)))
     }
     post<PackagesApi.Digest.Restore> { params ->
         val actor = personOf(call, CompilerScopes.writingPackages)
+        // Second audit M3: a restore puts a revoked package back in force; the CLI's token never does it.
+        call.requireDecides(actor)
         call.respond(summary(actor, revoke.restore(actor.orgId, params.parent.digest, actor.id)))
     }
 }
@@ -104,7 +109,7 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     post<WorkflowsApi> {
         val actor = personOf(call, CompilerScopes.writingWorkflows)
         val body = call.receive<JsonObject>()
-        if (!call.decides()) onlyProposed(body)
+        if (!call.decides(actor)) onlyProposed(body)
         val saved = workflows.save(actor.orgId, body, null, actor.id, create = true)
         call.respond(HttpStatusCode.Created, documentOf(saved))
     }
@@ -118,7 +123,7 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
         if (id != params.id) {
             throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
         }
-        if (!call.decides()) {
+        if (!call.decides(actor)) {
             onlyProposed(body.workflow)
             onlyProposed(workflows.get(actor.orgId, params.id).doc.raw)
         }
@@ -127,7 +132,7 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     }
     delete<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        if (!call.decides()) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+        if (!call.decides(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
         workflows.delete(actor.orgId, params.id)
         call.respond(HttpStatusCode.NoContent)
     }

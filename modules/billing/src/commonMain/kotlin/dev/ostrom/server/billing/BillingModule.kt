@@ -11,9 +11,11 @@ import dev.ostrom.server.billing.domain.ChangePlanUseCase
 import dev.ostrom.server.billing.domain.ChangePlanUseCaseImpl
 import dev.ostrom.server.billing.domain.CheckEntitlementUseCase
 import dev.ostrom.server.billing.domain.CheckEntitlementUseCaseImpl
-import dev.ostrom.server.billing.domain.GetBillingOverviewUseCase
+import dev.ostrom.server.billing.domain.EndDeletedOrgSubscriptionUseCase
+import dev.ostrom.server.billing.domain.EndDeletedOrgSubscriptionUseCaseImpl
 import dev.ostrom.server.billing.domain.GetAgentUsageUseCase
 import dev.ostrom.server.billing.domain.GetAgentUsageUseCaseImpl
+import dev.ostrom.server.billing.domain.GetBillingOverviewUseCase
 import dev.ostrom.server.billing.domain.GetBillingOverviewUseCaseImpl
 import dev.ostrom.server.billing.domain.GetPlanLimitsUseCase
 import dev.ostrom.server.billing.domain.GetPlanLimitsUseCaseImpl
@@ -40,6 +42,7 @@ import dev.ostrom.server.billing.domain.StripeGateway
 import dev.ostrom.server.billing.domain.SyncSubscriptionUseCase
 import dev.ostrom.server.billing.domain.SyncSubscriptionUseCaseImpl
 import dev.ostrom.server.billing.infrastructure.BillingMigrations
+import dev.ostrom.server.billing.infrastructure.BillingOrgDeletionListener
 import dev.ostrom.server.billing.infrastructure.BillingRepositoryImpl
 import dev.ostrom.server.billing.infrastructure.GuardedBillingNotifier
 import dev.ostrom.server.billing.infrastructure.LoggingBillingMetrics
@@ -52,17 +55,19 @@ import dev.ostrom.server.billing.presentation.billingRoutes
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.kernel.module.OrgDeletionListener
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
+import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
-import kotlin.time.Clock
 
 /** How long a Stripe call may take before it fails (and its outbox task is retried). */
 private const val STRIPE_TIMEOUT_MILLIS = 30_000L
@@ -96,6 +101,9 @@ object BillingModule : ServerModule {
         }
         single<ChangePlanUseCase> { ChangePlanUseCaseImpl(get(), get(), get(), get(), get()) }
         single<SetCancellationUseCase> { SetCancellationUseCaseImpl(get(), get(), get(), get()) }
+        single<EndDeletedOrgSubscriptionUseCase> { EndDeletedOrgSubscriptionUseCaseImpl(get(), get(), get(), get()) }
+        // Named: every module binds its own listener, and the orgs module reads them all.
+        single<OrgDeletionListener>(named("billing")) { BillingOrgDeletionListener(get()) }
         single<ListInvoicesUseCase> { ListInvoicesUseCaseImpl(get(), get()) }
         single<BackfillActivePeopleUseCase> { BackfillActivePeopleUseCaseImpl(get(), get()) }
         single<HandleStripeEventUseCase> {

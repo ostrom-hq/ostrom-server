@@ -8,9 +8,11 @@ import dev.ostrom.server.gateway.domain.GetModelPolicyUseCaseImpl
 import dev.ostrom.server.gateway.domain.InferenceProvider
 import dev.ostrom.server.gateway.domain.InvalidGatewaySettingsException
 import dev.ostrom.server.gateway.domain.ModelPolicy
+import dev.ostrom.server.gateway.domain.PolicyModelAccess
 import dev.ostrom.server.gateway.domain.ProviderEndpoints
 import dev.ostrom.server.gateway.domain.PutGatewaySettingsUseCaseImpl
 import dev.ostrom.server.gateway.domain.PutModelPolicyUseCaseImpl
+import dev.ostrom.server.gateway.domain.modelNotAllowed
 import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.secrets.domain.AdminRequiredException
@@ -43,6 +45,24 @@ class GatewaySettingsTest {
                 put(Gw.adminA, GatewaySettings(openaiKeySecret = bad))
             }
         }
+    }
+
+    @Test
+    fun aLaunchReadsTheSamePolicyAsAModelCall() = runTest {
+        val access = PolicyModelAccess(repository)
+        assertNull(access.refusal(Gw.orgA, Gw.memberA.memberId, "gpt-5"), "No policy: every model")
+        repository.putPolicy(
+            Gw.orgA,
+            ModelPolicy(allowed = listOf("claude-"), byMember = mapOf("${Gw.otherA.memberId}" to listOf("gpt-"))),
+        )
+        assertNull(access.refusal(Gw.orgA, Gw.memberA.memberId, "claude-opus-4-1"), "The org's list, by prefix")
+        assertEquals(
+            "Your organization does not allow the model gpt-5.",
+            access.refusal(Gw.orgA, Gw.memberA.memberId, "gpt-5"),
+        )
+        assertNull(access.refusal(Gw.orgA, Gw.otherA.memberId, "gpt-5"), "The member's own list replaces the org's")
+        assertEquals(modelNotAllowed("claude-opus-4-1"), access.refusal(Gw.orgA, Gw.otherA.memberId, "claude-opus-4-1"))
+        assertNull(access.refusal(Gw.orgB, Gw.adminB.memberId, "gpt-5"), "Each org its own")
     }
 
     @Test

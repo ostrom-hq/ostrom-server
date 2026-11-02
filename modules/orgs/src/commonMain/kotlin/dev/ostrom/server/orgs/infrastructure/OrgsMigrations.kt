@@ -88,6 +88,72 @@ private val CROSS_ORGANIZATION_SQL: String =
     """
         .trimIndent()
 
+/** The functions of version 3, for their handover to `ostrom_router`. */
+private val DELETION_FUNCTIONS =
+    listOf(
+        "orgs_memberships_of(UUID)",
+        "orgs_deletions_to_settle(TIMESTAMPTZ, INTEGER)",
+        "orgs_due_purges(TIMESTAMPTZ, INTEGER)",
+    )
+
+/**
+ * Version 3: the time zone of an organization, and the end of a deletion. A deleted organization
+ * keeps its row and its data for 30 days (`purge_after`, set too for the organizations deleted
+ * before this version); the worker tells every module of the deletion (`deletion_settled_at`),
+ * then erases it (`purged_at`); a step a module failed on waits until `deletion_retry_at`. Finding them crosses
+ * organizations, so two `SECURITY DEFINER` functions owned by `ostrom_router` list their ids, and
+ * nothing else; `orgs_memberships_of` is made again to return the time zone.
+ */
+private val SETTINGS_AND_DELETION_SQL: String =
+    """
+    ALTER TABLE orgs_organizations
+        ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC',
+        ADD COLUMN purge_after TIMESTAMPTZ,
+        ADD COLUMN deletion_settled_at TIMESTAMPTZ,
+        ADD COLUMN purged_at TIMESTAMPTZ,
+        ADD COLUMN deletion_retry_at TIMESTAMPTZ;
+    UPDATE orgs_organizations SET purge_after = deleted_at + INTERVAL '30 days' WHERE deleted_at IS NOT NULL;
+    CREATE INDEX orgs_organizations_to_settle ON orgs_organizations (deleted_at, id)
+        WHERE deleted_at IS NOT NULL AND deletion_settled_at IS NULL;
+    CREATE INDEX orgs_organizations_to_purge ON orgs_organizations (purge_after, id)
+        WHERE purge_after IS NOT NULL AND purged_at IS NULL;
+    DROP FUNCTION orgs_memberships_of(UUID);
+    CREATE FUNCTION orgs_memberships_of(p_user UUID) RETURNS TABLE (
+        id UUID, slug TEXT, name TEXT, github_org_id BIGINT, free_claim TEXT, created_at TIMESTAMPTZ,
+        time_zone TEXT, member_id UUID, org_id UUID, user_id UUID, role TEXT, joined_at TIMESTAMPTZ
+    ) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at, o.time_zone,
+               m.id, m.org_id, m.user_id, m.role, m.joined_at
+        FROM orgs_members m JOIN orgs_organizations o ON o.id = m.org_id
+        WHERE m.user_id = p_user AND o.deleted_at IS NULL;
+    $$;
+    CREATE FUNCTION orgs_deletions_to_settle(p_now TIMESTAMPTZ, p_limit INTEGER) RETURNS SETOF UUID
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT id FROM orgs_organizations
+        WHERE deleted_at IS NOT NULL AND deletion_settled_at IS NULL
+          AND (deletion_retry_at IS NULL OR deletion_retry_at <= p_now)
+        ORDER BY deleted_at, id LIMIT p_limit;
+    $$;
+    CREATE FUNCTION orgs_due_purges(p_now TIMESTAMPTZ, p_limit INTEGER) RETURNS SETOF UUID
+        LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT id FROM orgs_organizations
+        WHERE purge_after IS NOT NULL AND purged_at IS NULL AND purge_after <= p_now
+          AND deletion_settled_at IS NOT NULL
+          AND (deletion_retry_at IS NULL OR deletion_retry_at <= p_now)
+        ORDER BY purge_after, id LIMIT p_limit;
+    $$;
+    ${DELETION_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${DELETION_FUNCTIONS.joinToString("\n            ") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${DELETION_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /**
  * The schema of the orgs module; its tables start with `orgs_`. Every table has row-level security
  * on the organization (`ostrom.org_id`, `dev.ostrom.server.kernel.database.inOrg`): the
@@ -160,5 +226,10 @@ val OrgsMigrations: List<SchemaMigration> =
             version = 2,
             name = "orgs_cross_organization_functions",
             sql = CROSS_ORGANIZATION_SQL,
+        ),
+        SchemaMigration(
+            version = 3,
+            name = "orgs_time_zone_and_deletion",
+            sql = SETTINGS_AND_DELETION_SQL,
         ),
     )

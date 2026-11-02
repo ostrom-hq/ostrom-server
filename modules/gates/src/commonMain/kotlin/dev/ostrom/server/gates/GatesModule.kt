@@ -36,6 +36,7 @@ import dev.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
 import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.GatesMigrations
+import dev.ostrom.server.gates.infrastructure.MetricsGateChannel
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
@@ -50,6 +51,7 @@ import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 /**
@@ -75,6 +77,8 @@ object GatesModule : ServerModule {
         single<GetApprovalQueueUseCase> { GetApprovalQueueUseCaseImpl(get(), get()) }
         single<GetApprovalViewUseCase> { GetApprovalViewUseCaseImpl(get(), get()) }
         single<ListSessionGatesUseCase> { ListSessionGatesUseCaseImpl(get()) }
+        // Named: the channels of other modules (notifications, Slack, GitHub) bind theirs next to it.
+        single<GateChannel>(named("metrics")) { MetricsGateChannel(get()) }
 
         single { GatesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     }
