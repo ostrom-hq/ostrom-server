@@ -157,6 +157,11 @@ class ChecksTest {
             reporting(packRepo = null)(AGENT, request())
         }
         assertEquals("s-1", reporting(sessionRepo = "")(AGENT, request()).sessionId, "A session naming no repository")
+        // A person's own session, of no launch: the repository it declares.
+        val own = FakeSessions(listOf(session(repo = "acme/docs").copy(launchId = null)))
+        assertFailsWith<RunPackageMismatchException> {
+            ReportCheckUseCaseImpl(access(own), runs, FixedClock())(ADA, request())
+        }
         assertEquals(2, runs.checks.size)
     }
 
