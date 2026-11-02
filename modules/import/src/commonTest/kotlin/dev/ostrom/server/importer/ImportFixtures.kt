@@ -14,6 +14,7 @@ import dev.ostrom.server.importer.presentation.TeamCodeMcpServerDto
 import dev.ostrom.server.importer.presentation.TeamCodeMemberDto
 import dev.ostrom.server.importer.presentation.TeamCodeStdioDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -168,7 +169,9 @@ class FakeAccountImporter : AccountImporter {
 
 /**
  * The provider's token endpoint as a fake (a test never calls a real provider): a refresh token containing `refused`
- * is refused, one containing `offline` cannot be tested, any other renews as `renewed-` plus the old tokens.
+ * is refused, one containing `offline` cannot be tested, any other renews as `renewed-` plus the old tokens. The
+ * answer names the provider account `<id>` of a refresh token `refresh-<id>-token…`, and none for one containing
+ * `anonymous`.
  */
 class TeamCodeRefresher : OAuthRefresher {
     /** How many refreshes were asked: none while TeamCode runs. */
@@ -189,6 +192,9 @@ class TeamCodeRefresher : OAuthRefresher {
                     "renewed-${credentials.refreshToken}",
                     credentials.expiresAt,
                 ),
+                credentials.refreshToken.takeUnless { "anonymous" in it }
+                    ?.substringAfter("refresh-")
+                    ?.substringBefore("-token"),
             )
         }
     }
@@ -232,8 +238,20 @@ fun userOf(token: String): Uuid = Uuid.fromLongs(0xA0, byToken.keys.indexOf(toke
 /** The callers by their principal's subject. */
 private val bySubject = byToken.mapKeys { (token, _) -> principals[token]?.subjectId ?: "${userOf(token)}" }
 
-/** The import tests' bindings: a fixed key, tokens by name, a fake token endpoint, an account import if given. */
-fun importOverrides(accounts: AccountImporter? = null): Module = module {
+/** The members of the test orgs: org A's four callers, org B's admin. */
+object ImportMembers : MemberDirectory {
+    private val active = with(Importing) { listOf(adminA, ownerA, memberA, otherA, adminB) }
+        .map { it.orgId to "${it.memberId}" }
+        .toSet()
+
+    override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = orgId to memberId in active
+}
+
+/**
+ * The import tests' bindings: a fixed key, tokens by name, a fake token endpoint, the test orgs' members unless
+ * [members] is null, an account import if given.
+ */
+fun importOverrides(accounts: AccountImporter? = null, members: MemberDirectory? = ImportMembers): Module = module {
     single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
@@ -250,6 +268,7 @@ fun importOverrides(accounts: AccountImporter? = null): Module = module {
         }
     }
     single<OAuthRefresher> { TeamCodeRefresher() }
+    members?.let { directory -> single<MemberDirectory> { directory } }
     accounts?.let { importer -> single<AccountImporter> { importer } }
 }
 

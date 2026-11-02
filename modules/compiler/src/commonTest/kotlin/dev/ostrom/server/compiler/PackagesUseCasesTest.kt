@@ -118,8 +118,13 @@ class PackagesUseCasesTest {
     fun aManualPinIsSetByTheFirstPublisher() = runTest {
         sources.settings = CompilerSettings(manualPin = true)
         save(tests("w1"))
+        // Second audit L1: an agent starting a session gets the package, unpinned, and leaves the choice to a person.
+        val byAgent = publish(org, "acme-api", "https://acme.example", "agent", byAgent = true)
+        assertFalse(byAgent.pinned)
+        assertNull(repository.pin(org, "acme-api"))
         publish(org, "acme-api", "https://acme.example", "dev-a")
         assertEquals("dev-a", repository.pin(org, "acme-api")?.by)
+        assertTrue(publish(org, "acme-api", "https://acme.example", "agent", byAgent = true).pinned)
     }
 
     @Test
