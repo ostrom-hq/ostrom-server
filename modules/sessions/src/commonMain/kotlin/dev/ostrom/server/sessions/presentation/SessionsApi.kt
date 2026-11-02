@@ -79,6 +79,8 @@ class SessionsApi(
  * @property endedBy Why it ended.
  * @property lastSeenAt The launcher's last sign of life.
  * @property gates The gates it asked or joined (single reads only).
+ * @property gateAnswers The answers to those of its gates someone answered (single reads only): the thread shows them
+ *   to a token that reads the session without reading the gates.
  * @property receiptId Its receipt.
  * @property tools Tool calls.
  * @property costUsd Cost.
@@ -108,12 +110,33 @@ data class SessionDto(
     val endedBy: String? = null,
     val lastSeenAt: String? = null,
     val gates: List<String>? = null,
+    val gateAnswers: List<SessionGateAnswerDto>? = null,
     val receiptId: String? = null,
     val tools: Int? = null,
     val costUsd: Double? = null,
     val exitCode: Int? = null,
     val ended: Boolean? = null,
     val lost: Boolean? = null,
+)
+
+/**
+ * The answer to a gate a session asked or joined (contract `SessionGateAnswer`).
+ *
+ * @property gateId The gate.
+ * @property actionClass Its action class.
+ * @property outcome `approved` or `refused`.
+ * @property by Who answered.
+ * @property at When.
+ * @property receiptId The gate's signed receipt, once signed.
+ */
+@Serializable
+data class SessionGateAnswerDto(
+    val gateId: String,
+    val actionClass: String,
+    val outcome: String,
+    val by: String,
+    val at: String,
+    val receiptId: String? = null,
 )
 
 /**
