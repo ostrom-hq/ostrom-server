@@ -252,8 +252,9 @@ class ImportAccountsPostgresTest {
                 report(request)
                 reconnectRequired("claude-1", "claude-2")
                 val normal = report(request)
+                // Unchanged: claude-3, and the agent prefix the first run set to TeamCode's.
                 assertEquals(
-                    listOf(0, 0, 1, 0, 2),
+                    listOf(0, 0, 2, 0, 2),
                     listOf(normal.created, normal.updated, normal.unchanged, normal.skipped, normal.reviveAtCutover),
                 )
                 for (token in listOf("service-import", "cli-import")) {
@@ -262,7 +263,7 @@ class ImportAccountsPostgresTest {
                 }
                 assertEquals(emptyList(), audit.entries, "Nothing recorded for a refused cutover")
                 val cutover = report(request, "owner-a", cutover = true)
-                assertEquals(listOf(2, 1, 0), listOf(cutover.updated, cutover.unchanged, cutover.reviveAtCutover))
+                assertEquals(listOf(2, 2, 0), listOf(cutover.updated, cutover.unchanged, cutover.reviveAtCutover))
                 val event = audit.entries.single()
                 assertEquals(userOf("owner-a"), event.actorId, "The owner who ran it, as a user")
                 assertEquals(adminA.orgId, event.orgId)
