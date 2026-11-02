@@ -115,6 +115,9 @@ class WorkflowsUseCaseTest {
         expectFailure(ErrorKind.NOT_FOUND) { workflows.get(elsewhere, "release") }
         assertEquals(1, workflows.get(org, "release").version, "The other organization's workflow is untouched")
 
+        // An update without a version replaces the version just read.
+        assertEquals(2, workflows.save(org, raw(release()), null, "dev-a", create = false).version)
+
         // In the caller's own organization too: an id it deleted is not saved back.
         workflows.delete(org, "release")
         expectFailure(ErrorKind.NOT_FOUND) { workflows.save(org, raw(release()), null, "dev-a", create = false) }
