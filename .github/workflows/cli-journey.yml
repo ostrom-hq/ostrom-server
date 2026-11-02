@@ -28,7 +28,6 @@ permissions:
   contents: read
 
 env:
-  KOTLIN_VERSION: '2.4.21'
   GRADLE_OPTS: -Dorg.gradle.daemon=false
 
 jobs:
@@ -101,12 +100,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-provider: basic
-      # The Kotlin/Native toolchain and its dependencies (~1 GB) are not in the Gradle cache.
+      # The Kotlin/Native toolchain and its dependencies (~1 GB) are not in the Gradle cache; keyed on the CLI's versions.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.konan
-          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ env.KOTLIN_VERSION }}-${{ hashFiles('cli/gradle/libs.versions.toml') }}
-          restore-keys: konan-${{ runner.os }}-${{ runner.arch }}-${{ env.KOTLIN_VERSION }}-
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cli/gradle/libs.versions.toml') }}
       - name: The CLI's linuxX64 release binary
         working-directory: cli
         run: |
