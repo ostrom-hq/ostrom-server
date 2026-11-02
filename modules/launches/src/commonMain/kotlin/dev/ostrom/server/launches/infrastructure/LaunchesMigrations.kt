@@ -32,4 +32,10 @@ val LaunchesMigrations: List<SchemaMigration> = listOf(
             WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
         """.trimIndent(),
     ),
+    // A launch opened by the runner of a cloud session names it: the runner reports that launch's checks.
+    SchemaMigration(
+        2,
+        "launch_cloud_session",
+        "ALTER TABLE launches_launches ADD COLUMN cloud_session_id UUID",
+    ),
 )

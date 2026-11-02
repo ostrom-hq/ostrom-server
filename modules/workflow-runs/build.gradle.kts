@@ -13,6 +13,8 @@ kotlin {
             implementation(project(":modules:sessions"))
             implementation(project(":modules:receipts"))
             implementation(project(":modules:compiler"))
+            implementation(project(":modules:launches"))
+            implementation(project(":modules:runners"))
             implementation(libs.ostrom.api)
         }
         commonTest.dependencies {
@@ -20,7 +22,6 @@ kotlin {
             implementation(project(":modules:instance"))
             implementation(project(":modules:identity"))
             implementation(project(":modules:orgs"))
-            implementation(project(":modules:launches"))
         }
     }
 }
