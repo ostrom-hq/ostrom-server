@@ -9,6 +9,7 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /** How long a browser session lasts, whatever its use: the user signs in again after that. */
 val SESSION_LIFETIME: Duration = 30.days
@@ -35,9 +36,10 @@ val DEVICE_POLL_INTERVAL: Duration = 5.seconds
 const val AGENT_SCOPE = "agent:session"
 
 /**
- * The scope that answers a gate. No token ever holds it (audit S2-04, S2-31): a token lives on the developer's
- * machine, where the agent can read it and say yes to itself. A yes comes from a browser session (the passkey
- * step-up of the console) or the phone app after biometrics, never from the CLI.
+ * The scope that answers a gate. No token the person can create or the CLI holds has it (audit S2-04, S2-31): such a
+ * token lives on the developer's machine, where the agent can read it and say yes to itself. A yes comes from a
+ * browser session (the console) or the phone app's token ([MOBILE_SCOPES]), which lives in the phone's keychain and
+ * says yes only after the phone's biometric unlock (S2-54); never from the CLI.
  */
 const val ANSWER_SCOPE = "gates:answer"
 
@@ -55,10 +57,44 @@ val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, ALL_USER_SC
 val CLI_SCOPES: Set<String> =
     setOf("profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read")
 
+/** The scope that changes the caller's notification preferences (`PUT /api/v1/me/notifications`). */
+const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
+
+/**
+ * The scopes of the phone app's token: what the app shows (the person, their organizations, the approvals and their
+ * receipts, the usage) and does (answer a gate, register for push, set its notifications). Nothing of the console's
+ * administration, no workflow write, no token management.
+ */
+val MOBILE_SCOPES: Set<String> = setOf(
+    "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", NOTIFICATIONS_WRITE_SCOPE,
+)
+
+/**
+ * How long after the phone's biometric unlock the app's token may say yes (S2-54): the step-up window of a yes. The
+ * identity module withholds [ANSWER_SCOPE] outside it, so no gate route can accept a yes from a token lifted from the
+ * phone's keychain without its biometrics, whatever it checks itself.
+ */
+val MOBILE_UNLOCK_WINDOW: Duration = 5.minutes
+
+/**
+ * The scopes the app's token grants now: [MOBILE_SCOPES] at most, and [ANSWER_SCOPE] only within
+ * [MOBILE_UNLOCK_WINDOW] of the phone's last biometric unlock.
+ *
+ * @param stored The app's token.
+ * @param now The current time.
+ *
+ * @return The scopes.
+ */
+fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
+    val granted = grantedScopes(TokenKind.MOBILE, stored.scopes)
+    val unlocked = stored.authenticatedAt?.let { now - it <= MOBILE_UNLOCK_WINDOW } == true
+    return if (unlocked) granted else granted - ANSWER_SCOPE
+}
+
 /**
  * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written
  * before S2-04, or by hand, cannot grant more): an agent token only [AGENT_SCOPE], a CLI token at most [CLI_SCOPES],
- * a personal token what it lists minus [NEVER_ON_A_TOKEN].
+ * the app's token at most [MOBILE_SCOPES], a personal token what it lists minus [NEVER_ON_A_TOKEN].
  *
  * @param kind The kind of the token.
  * @param stored The scopes its row lists.
@@ -68,6 +104,7 @@ val CLI_SCOPES: Set<String> =
 fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kind) {
     TokenKind.AGENT -> setOf(AGENT_SCOPE)
     TokenKind.CLI -> stored intersect CLI_SCOPES
+    TokenKind.MOBILE -> stored intersect MOBILE_SCOPES
     TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN
 }
 

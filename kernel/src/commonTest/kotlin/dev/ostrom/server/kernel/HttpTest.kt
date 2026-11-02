@@ -96,6 +96,8 @@ class HttpTest {
 
     private class ProbeGoneException : OstromException(ErrorKind.NOT_FOUND, "Probe gone.")
 
+    private class ProbeNotYoursException : OstromException(ErrorKind.FORBIDDEN, "Not yours.", "probe_not_yours")
+
     @Serializable
     private data class ProbeBody(val name: String)
 
@@ -106,6 +108,7 @@ class HttpTest {
         override fun routes(route: Route, koin: Koin) {
             route.get("/probe/missing") { throw OstromException(ErrorKind.NOT_FOUND, "Probe not found.") }
             route.get("/probe/subclass") { throw ProbeGoneException() }
+            route.get("/probe/typed") { throw ProbeNotYoursException() }
             route.get("/probe/quota") { throw OstromException(ErrorKind.PAYMENT_REQUIRED, "Plan limit reached.") }
             route.get("/probe/crash") { throw IllegalStateException("database password is hunter2") }
             route.get("/probe/gone") { throw NotFoundException("internal detail") }
@@ -297,6 +300,13 @@ class HttpTest {
         val response = client.get("/probe/missing")
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertEquals("""{"error":{"type":"not_found","message":"Probe not found."}}""", response.bodyAsText())
+    }
+
+    @Test
+    fun aDomainErrorWithItsOwnTypeKeepsTheStatusOfItsKind() = probeServer {
+        val response = client.get("/probe/typed")
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertEquals("""{"error":{"type":"probe_not_yours","message":"Not yours."}}""", response.bodyAsText())
     }
 
     @Test
