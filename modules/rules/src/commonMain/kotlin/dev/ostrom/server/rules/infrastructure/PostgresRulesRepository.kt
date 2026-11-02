@@ -11,6 +11,7 @@ import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.repositories.RulesTransaction
 import dev.ostrom.server.rules.domain.services.RuleDocuments
 import dev.ostrom.server.rules.domain.services.SelfApprovalValues
+import dev.ostrom.server.rules.domain.usecases.ListRulesUseCase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -42,6 +43,24 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
             // The scope is JSON: a repository filter reads it here, on a set bounded by `limit`.
             tx.fetchAll(statement).getOrThrow().map { it.toRule() }.filter { covers(it, query.repo) }
         }
+
+    override suspend fun gatedRules(orgId: Uuid): List<Rule> = driver.withOrganization(orgId) { tx ->
+        tx.fetchAll(
+            Statement.create(
+                "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org AND gate IS NOT NULL " +
+                    "AND status <> 'rejected' ORDER BY id LIMIT :limit",
+            ).bind("org", orgId).bind("limit", ListRulesUseCase.MAX_RULES),
+        ).getOrThrow().map { it.toRule() }
+    }
+
+    override suspend fun lastRuleDecisions(orgId: Uuid): List<Decision> = driver.withOrganization(orgId) { tx ->
+        tx.fetchAll(
+            Statement.create(
+                "SELECT DISTINCT ON (subject_id) $DECISION_COLUMNS FROM rules_decisions " +
+                    "WHERE org_id = :org AND subject_kind = 'rule' ORDER BY subject_id, decided_at DESC, id DESC",
+            ).bind("org", orgId),
+        ).getOrThrow().map { it.toDecision() }
+    }
 
     override suspend fun rule(orgId: Uuid, id: String): Rule? = driver.withOrganization(orgId) { tx ->
         tx.selectRule(orgId, id, lock = false)

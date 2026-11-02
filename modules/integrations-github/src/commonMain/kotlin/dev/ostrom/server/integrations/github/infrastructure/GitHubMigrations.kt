@@ -40,7 +40,10 @@ private fun tenant(table: String) = """
  * directory as last read from GitHub (repositories, teams, when), under forced row level security like the rest;
  * and the instance's App created by the manifest flow, with the single-use states of that flow. Those two are the
  * instance's, not an organization's (no `org_id`, like `instance_info`): the App's key and secrets are sealed with
- * the secrets key (`AesGcmSecretCipher`), so a read of the table alone opens nothing.
+ * the secrets key (`AesGcmSecretCipher`), so a read of the table alone opens nothing. Version 3 (AUDIT-SECU-2): who
+ * installed each installation, from its `installation.created` webhook, seen only by the transaction that names that
+ * installation (no organization owns it yet); and the ids of the webhook deliveries handled in the last 30 days, the
+ * instance's (an id and a time), so that a replayed delivery is ignored.
  */
 val GitHubMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -125,6 +128,28 @@ val GitHubMigrations: List<SchemaMigration> = listOf(
             created_by TEXT NOT NULL,
             expires_at TIMESTAMPTZ NOT NULL
         )
+        """.trimIndent(),
+    ),
+    SchemaMigration(
+        3,
+        "create_github_origins_and_deliveries",
+        """
+        CREATE TABLE github_installation_origins (
+            installation_id BIGINT PRIMARY KEY,
+            sender TEXT NOT NULL,
+            account TEXT NOT NULL,
+            account_type TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        );
+        ${forced("github_installation_origins")}
+        CREATE POLICY github_installation_origins_key ON github_installation_origins
+            USING ($INSTALLATION)
+            WITH CHECK ($INSTALLATION);
+        CREATE TABLE github_webhook_deliveries (
+            delivery_id TEXT PRIMARY KEY,
+            received_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE INDEX github_webhook_deliveries_received ON github_webhook_deliveries (received_at)
         """.trimIndent(),
     ),
 )

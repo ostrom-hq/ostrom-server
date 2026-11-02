@@ -68,6 +68,8 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
 | `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
 | `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
+| `artifacts_route_by_id(id)` | artifacts | an artifact's organization by its id, for the content origin | `ArtifactsRoutesTenancyPostgresTest` |
+| `artifacts_route_by_slug(slug)` | artifacts | an artifact's organization by its public link | `ArtifactsRoutesTenancyPostgresTest` |
 
 ## Known exceptions
 
@@ -75,8 +77,7 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 every table, policy, grant and `SECURITY DEFINER` function. The exceptions it still lists are open findings of the RLS
 audit, each to be closed by moving the cross-organization path into a function of the table above:
 
-- tables with `org_id` read across organizations without row-level security: `artifacts_routes`,
-  `runners_session_routes`, `billing_customers`, `billing_outbox`;
+- tables with `org_id` read across organizations without row-level security: `runners_session_routes`, `billing_customers`, `billing_outbox`;
 - `orgs_organizations`, `orgs_members`, `orgs_invitations`: row-level security enabled, not forced;
 - policies a setting opens to one row of any organization: the read and delete policies of
   `github_installations` (`ostrom.github_installation`) and `github_install_states` (`ostrom.github_state`).
