@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing
 
+import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -57,7 +58,9 @@ object SharingModule : ServerModule {
         single<SharedAccountRepository> { SharedAccountRepositoryImpl(get()) }
         single<QuotaWindowRepository> { QuotaWindowRepositoryImpl(get()) }
         single { AccountTokenCipher(get()) }
-        single<OAuthRefresher> { HttpOAuthRefresher(get(HTTP_CLIENT), get()) }
+        single<OAuthRefresher> {
+            HttpOAuthRefresher(get(HTTP_CLIENT), get(), SharingConfig.tokenEndpoints(get<ConfigSource>()))
+        }
         single<QuotaHeaderParser> { ProviderQuotaHeaderParser() }
         single { AccountTokens(get(), get(), get(), get()) }
         single { SharedAccountPool(get(), get(), get(), get(), spend(), get()) }
@@ -81,6 +84,11 @@ object SharingModule : ServerModule {
     private fun Scope.spend(): AccountSpendReader = getOrNull<AccountSpendReader>() ?: NoAccountSpendReader()
 
     override val migrations: List<SchemaMigration> = SharingMigrations
+
+    /** Reads the token endpoints at start, so a malformed one stops the server instead of failing a refresh. */
+    override suspend fun initialize(koin: Koin) {
+        SharingConfig.tokenEndpoints(koin.get<ConfigSource>())
+    }
 
     override fun routes(route: Route, koin: Koin) {
         route.sharingRoutes(koin.get())
