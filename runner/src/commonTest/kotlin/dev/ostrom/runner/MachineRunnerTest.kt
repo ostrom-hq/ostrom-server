@@ -8,6 +8,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -21,6 +22,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /** A registered runner on a machine (`ostrom-runner machine`): its configuration, its heartbeat and its loop. */
+@OptIn(ExperimentalCoroutinesApi::class)
 class MachineRunnerTest {
     private val id = Uuid.random()
     private val key = "ostrom_runner_" + "ab".repeat(32)
@@ -54,6 +56,7 @@ class MachineRunnerTest {
             ok - "OSTROM_SERVER_URL",
             ok + ("OSTROM_SERVER_URL" to "ftp://s"),
             ok - "OSTROM_RUNNER_ID",
+            ok + ("OSTROM_RUNNER_ID" to " "),
             ok + ("OSTROM_RUNNER_ID" to "not-a-uuid"),
             ok - "OSTROM_RUNNER_KEY",
             ok - "OSTROM_RUNNER_KEY" + ("OSTROM_RUNNER_KEY_FILE" to "/empty"),

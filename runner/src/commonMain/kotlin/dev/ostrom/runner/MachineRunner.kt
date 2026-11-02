@@ -32,7 +32,7 @@ class MachineRunner(
                 refusals = 0
             } catch (error: CancellationException) {
                 throw error
-            } catch (error: RunnerKeyRefusedException) {
+            } catch (expected: RunnerKeyRefusedException) {
                 refusals++
                 log("key refused ($refusals/$REFUSALS_TO_STOP)")
                 if (refusals == REFUSALS_TO_STOP) {
