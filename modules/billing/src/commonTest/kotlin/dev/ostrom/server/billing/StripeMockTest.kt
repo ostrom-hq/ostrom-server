@@ -39,6 +39,7 @@ class StripeMockTest {
         gateway.changePrice(subscription.id, "si_123", price, 2, Proration.CREATE_PRORATIONS)
         gateway.setCancelAtPeriodEnd(subscription.id, true)
         gateway.setQuantity(subscription.id, "si_123", 3)
+        gateway.cancelNow(subscription.id)
         gateway.recordActivePerson(customer, "mock-${Uuid.random()}", Clock.System.now())
         gateway.listInvoices(customer, 3)
     }

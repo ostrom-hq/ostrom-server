@@ -8,6 +8,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.launches.domain.models.Launcher
 import dev.ostrom.server.launches.domain.services.LauncherResolver
+import dev.ostrom.server.orgs.domain.MembersRepository
 import kotlin.uuid.Uuid
 
 /**
@@ -17,10 +18,12 @@ import kotlin.uuid.Uuid
  *
  * @param orgs Resolves the organization of a principal.
  * @param users The people.
+ * @param members The members, for the owner of a cloud session.
  */
 class IdentityLauncherResolver(
     private val orgs: PrincipalOrgResolver,
     private val users: UsersRepository,
+    private val members: MembersRepository,
 ) : LauncherResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal): Launcher? {
         // Only a person launches: an agent token, a device or a service never acts as a member (audit A2).
@@ -35,5 +38,10 @@ class IdentityLauncherResolver(
     override suspend fun member(orgId: Uuid, userId: Uuid): OrgPrincipal? {
         val person = AuthenticatedPrincipal(userId.toString(), PrincipalKind.USER, emptySet(), orgId = orgId.toString())
         return orgs.resolve(person, orgId)
+    }
+
+    override suspend fun owner(orgId: Uuid, memberId: Uuid): Launcher? {
+        val member = members.findById(orgId, memberId) ?: return null
+        return users.get(member.userId)?.let { Launcher(orgId, it.id, it.login, member.role) }
     }
 }

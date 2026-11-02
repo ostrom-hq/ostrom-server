@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.fakes
 
+import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
 import dev.ostrom.core.api.models.NotificationStatus
@@ -24,13 +25,14 @@ import dev.ostrom.server.workflowruns.domain.repositories.RunQuery
 import dev.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import dev.ostrom.server.workflowruns.domain.services.Delivery
 import dev.ostrom.server.workflowruns.domain.services.NotificationChannels
+import dev.ostrom.server.workflowruns.domain.services.RunLaunches
 import dev.ostrom.server.workflowruns.domain.services.RunPackages
 import dev.ostrom.server.workflowruns.domain.services.RunSessions
 import dev.ostrom.server.workflowruns.domain.usecases.RunAccess
-import kotlinx.serialization.json.JsonObject
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.serialization.json.JsonObject
 
 val ORG: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
 val STARTED: Instant = Instant.parse("2026-10-30T10:00:00Z")
@@ -118,12 +120,17 @@ fun access(sessions: RunSessions = FakeSessions(), packages: RunPackages = FakeP
 /** The repository in memory, with the database's rule of one notification per action of a session. */
 class InMemoryRuns : WorkflowRunsRepository {
     val checks = mutableListOf<CheckRun>()
+    val attested = mutableMapOf<String, CheckAttestation>()
     val notifications = mutableListOf<Pair<Notification, String>>()
     val queries = mutableListOf<RunQuery>()
 
-    override suspend fun addCheck(orgId: Uuid, run: CheckRun) {
+    override suspend fun addCheck(orgId: Uuid, run: CheckRun, attestation: CheckAttestation) {
         checks += run
+        if (attestation != CheckAttestation.WORKSTATION_DECLARED) attested[run.id] = attestation
     }
+
+    override suspend fun attestations(orgId: Uuid, sessionId: String): Map<String, CheckAttestation> =
+        attested.filterKeys { id -> checks.any { it.id == id && it.sessionId == sessionId } }
 
     override suspend fun checks(orgId: Uuid, query: RunQuery): List<CheckRun> {
         queries += query
@@ -151,6 +158,11 @@ class InMemoryRuns : WorkflowRunsRepository {
         return notifications.map { it.first }.filter { query.sessionId == null || it.sessionId == query.sessionId }
             .reversed()
     }
+}
+
+/** The cloud session that opened each launch of [opened]; any other launch is the CLI's. */
+class FakeLaunches(private val opened: Map<String, Uuid> = emptyMap()) : RunLaunches {
+    override suspend fun cloudSession(orgId: Uuid, launchId: String): Uuid? = opened[launchId]
 }
 
 class RecordingChannels : NotificationChannels {

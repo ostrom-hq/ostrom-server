@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.infrastructure
 
+import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
 import dev.ostrom.server.kernel.database.withOrganization
@@ -20,18 +21,27 @@ import kotlin.uuid.Uuid
  * @param driver The connection pool.
  */
 class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsRepository {
-    override suspend fun addCheck(orgId: Uuid, run: CheckRun) {
+    override suspend fun addCheck(orgId: Uuid, run: CheckRun, attestation: CheckAttestation) {
         driver.withOrganization(orgId) { tx ->
             tx.execute(
-                Statement.create(
-                    "INSERT INTO workflow_runs_checks (org_id, id, at, session_id, node_id, body) " +
-                        "VALUES (:org_id, :id, :at, :session_id, :node_id, CAST(:body AS JSONB))",
-                ).bind("org_id", orgId).bind("id", run.id).bind("at", Instant.parse(run.at))
-                    .nullable("session_id", run.sessionId).bind("node_id", run.nodeId)
+                Statement.create(RunQueries.INSERT_CHECK).bind("org_id", orgId).bind("id", run.id)
+                    .bind("at", Instant.parse(run.at)).nullable("session_id", run.sessionId)
+                    .bind("node_id", run.nodeId).bind("attestation", attestation.value)
                     .bind("body", OstromJson.encodeToString(CheckRun.serializer(), run)),
             ).getOrThrow()
         }
     }
+
+    override suspend fun attestations(orgId: Uuid, sessionId: String): Map<String, CheckAttestation> =
+        driver.withOrganization(orgId) { tx ->
+            val rows = tx.fetchAll(
+                Statement.create(RunQueries.ATTESTED).bind("org_id", orgId).bind("session_id", sessionId),
+            ).getOrThrow()
+            rows.associate { row ->
+                val value = row.get("attestation").asString()
+                row.get("id").asString() to CheckAttestation.entries.first { it.value == value }
+            }
+        }
 
     override suspend fun checks(orgId: Uuid, query: RunQuery): List<CheckRun> = driver.withOrganization(orgId) { tx ->
         tx.fetchAll(RunQueries.checks(query).bindQuery(orgId, query)).getOrThrow().map {
@@ -93,6 +103,16 @@ class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsR
 
 /** The SQL of the repository, also read by the query plans test. */
 object RunQueries {
+    /** Stores a check run with where it comes from. */
+    const val INSERT_CHECK: String =
+        "INSERT INTO workflow_runs_checks (org_id, id, at, session_id, node_id, attestation, body) " +
+            "VALUES (:org_id, :id, :at, :session_id, :node_id, :attestation, CAST(:body AS JSONB))"
+
+    /** The runs of a session the server holds a proof of (the receipt's attestations). */
+    const val ATTESTED: String =
+        "SELECT id, attestation FROM workflow_runs_checks WHERE org_id = :org_id AND session_id = :session_id " +
+            "AND attestation <> 'workstation_declared'"
+
     /** Stores a notification unless the same action of the same session has one (not counting one not sent). */
     const val INSERT_NOTIFICATION: String =
         "INSERT INTO workflow_runs_notifications (org_id, id, at, session_id, notify_id, status, action_key, body) " +

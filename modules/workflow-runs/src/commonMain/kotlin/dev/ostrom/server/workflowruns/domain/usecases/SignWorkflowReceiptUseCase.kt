@@ -88,6 +88,7 @@ class SignWorkflowReceiptUseCaseImpl(
             repository.checks(orgId, all).reversed(),
             repository.notifications(orgId, all).reversed(),
             gates,
+            repository.attestations(orgId, session.id),
         ).nodes()
         val decisions = gates.flatMap { it.decisions }.map {
             ReceiptDecision(

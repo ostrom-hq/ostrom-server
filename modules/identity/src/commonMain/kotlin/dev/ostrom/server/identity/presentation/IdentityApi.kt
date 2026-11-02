@@ -229,6 +229,15 @@ data class SignedInResponse(val redirect: String, val csrfToken: String)
 @Resource("/api/v1/tokens")
 class TokensApi {
     /**
+     * `GET /api/v1/tokens/scopes`: the scopes a personal token may be given.
+     *
+     * @property parent The tokens resource.
+     */
+    @Serializable
+    @Resource("scopes")
+    class Scopes(val parent: TokensApi = TokensApi())
+
+    /**
      * `DELETE /api/v1/tokens/{id}`: revokes a token.
      *
      * @property parent The tokens resource.
@@ -398,10 +407,27 @@ data class AuthSessionResponse(val id: String, val createdAt: String, val lastSe
 data class AuthSessionsResponse(val items: List<AuthSessionResponse>)
 
 /**
+ * A scope a personal token may be given.
+ *
+ * @property scope The scope, `resource:action`.
+ * @property description What it allows.
+ */
+@Serializable
+data class TokenScopeResponse(val scope: String, val description: String)
+
+/**
+ * The catalogue of the scopes a personal token may be given, grouped by resource.
+ *
+ * @property scopes The scopes; `POST /api/v1/tokens` refuses any other.
+ */
+@Serializable
+data class TokenScopesResponse(val scopes: List<TokenScopeResponse>)
+
+/**
  * A personal token to create.
  *
  * @property name Its label (1 to 100 characters).
- * @property scopes What it allows (`resource:action`, 1 to 32).
+ * @property scopes What it allows: 1 to 32 scopes of `GET /api/v1/tokens/scopes`.
  * @property expiresInDays Its lifetime in days (1 to 366), or null for no expiry.
  */
 @Serializable

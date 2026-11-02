@@ -20,12 +20,14 @@ import dev.ostrom.server.billing.fakes.FakeLicenseProvider
 import dev.ostrom.server.billing.fakes.FakeNotifier
 import dev.ostrom.server.billing.fakes.FixedClock
 import dev.ostrom.server.billing.fakes.NOW
+import dev.ostrom.server.billing.infrastructure.BillingOrgDeletionListener
 import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.kernel.module.OrgDeletionListener
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.koin.core.Koin
@@ -83,6 +85,8 @@ class ModuleWiringTest {
         assertTrue(koin.get<BillingSettings>().stripeEnabled)
         assertIs<StripeGatewayImpl>(koin.get<StripeGateway>())
         assertEquals(0, koin.get<ProcessOutboxUseCase>()(10))
+        // The orgs module reads every module's listener: billing's is bound under its own name.
+        assertIs<BillingOrgDeletionListener>(koin.getAll<OrgDeletionListener>().single())
         BillingModule.start(scope.backgroundScope, koin)
     }
 
