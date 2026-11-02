@@ -115,15 +115,15 @@ class AskGateUseCaseImpl(
     }
 
     // Second audit H3: the class is the hook's word, read from its patterns, and the hook asks one class per command.
-    // What the server reads itself also asks: refs reaching main or master (a push to main), tag refs (a release
-    // tag), a merge the command shows. The claimed class keeps its gate when it is enforced; else the first enforced
+    // What the server reads itself also asks: refs reaching main or master (a push to main), a tag (`refs/tags/…`, or
+    // a short name shaped as a version: the CLI sends short names), a merge the command shows. The claimed class keeps its gate when it is enforced; else the first enforced
     // gate of what was read is taken. A push-main or push-tag ask whose refs hold no such ref is no such push, so their
     // patterns may catch every push and let the refs decide.
     private suspend fun gateOf(orgId: Uuid, repo: String?, ask: AskGate, command: String): Pair<String, GateNode?> {
         val refs = ask.push?.refs.orEmpty().map { it.ref }
         val read = buildList {
             if (refs.any { it.removePrefix(HEADS) in MAIN_BRANCHES }) add(PUSH_MAIN)
-            if (refs.any { it.startsWith(TAGS) }) add(PUSH_TAG)
+            if (refs.any(::isTag)) add(PUSH_TAG)
             if (GateCommands.mentionsMerge(command)) add(MERGE)
         }
         val notSo = ask.push != null && ask.actionClass in BY_REFS && ask.actionClass !in read
@@ -238,7 +238,6 @@ class AskGateUseCaseImpl(
         const val PUSH_MAIN = "push-main"
         const val MERGE = "merge"
         const val HEADS = "refs/heads/"
-        const val TAGS = "refs/tags/"
         const val PUSH_TAG = "push-tag"
     }
 }
@@ -248,3 +247,9 @@ private val MAIN_BRANCHES = setOf("main", "master")
 
 // The classes a push's refs prove or disprove.
 private val BY_REFS = setOf("push-main", "push-tag")
+
+// `v1.4`, `1.4.0`, `v2.0.0-rc.1`: the release tags the built-in catalogue knows.
+private val VERSION = Regex("^v?\\d+(\\.\\d+)+([-+.][\\w.]+)?$")
+
+private fun isTag(ref: String): Boolean =
+    ref.startsWith("refs/tags/") || !ref.startsWith("refs/") && VERSION.matches(ref)

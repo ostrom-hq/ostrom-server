@@ -318,6 +318,15 @@ class AskGateUseCaseTest {
         val tagged = tags(agent(), pushAsk(command = "git push origin 1.4.0").copy(push = tag))
         assertEquals("push-tag", tagged.gate.subject.actionClass)
         assertEquals(GateStatus.PENDING, tagged.gate.status)
+        // The CLI sends short names: a version-shaped one is a tag; a qualified branch shaped so is not.
+        val short = tags(agent(), pushAsk(command = "git push origin v2.0.0-rc.1", diff = "short").copy(
+            push = feature.copy(refs = listOf(PushRef("v2.0.0-rc.1", SHA_B))),
+        ))
+        assertEquals("push-tag", short.gate.subject.actionClass)
+        val branch = tags(agent(), pushAsk(command = "git push", diff = "branch").copy(
+            push = feature.copy(refs = listOf(PushRef("refs/heads/1.4", SHA_B))),
+        ))
+        assertEquals(GateStatus.UNGATED, branch.gate.status)
         // A feature push the tag's pattern caught is no tag push either.
         val featureAsTag = pushAsk(command = "git push", diff = "tag").copy(push = feature, actionClass = "push-tag")
         val caughtAsTag = tags(agent(), featureAsTag)
