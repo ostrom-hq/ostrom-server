@@ -25,6 +25,7 @@ import dev.ostrom.server.gateway.domain.UpstreamRequests
 import dev.ostrom.server.gateway.infrastructure.GatewayMigrations
 import dev.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
 import dev.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
+import dev.ostrom.server.gateway.infrastructure.MeteredModelCallObserver
 import dev.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import dev.ostrom.server.gateway.presentation.gatewayRoutes
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -86,7 +87,7 @@ object GatewayModule : ServerModule {
                 upstream = get(),
                 prices = PriceTable(),
                 usage = getOrNull<ModelUsageSink>() ?: NoModelUsageSink,
-                observer = getOrNull<ModelCallObserver>() ?: NoModelCallObserver,
+                observer = MeteredModelCallObserver(get(), getOrNull<ModelCallObserver>() ?: NoModelCallObserver),
                 clock = get(),
             )
         }

@@ -296,3 +296,13 @@ A model call (gateway, extraction) runs in
 `metrics.modelCalled(call, duration)`: the span alone goes to Langfuse, prompts only when the org turned capture on.
 Metric attributes are bounded values, never ids; a new metric is added to `OstromMetrics` and to
 `ostrom-infra/observability/catalog.py` together. Event taxonomy and privacy rules: ostrom-core `docs/telemetry.md`.
+
+Where the product metrics are emitted, each next to the code that decides, never inside it:
+
+| Metric | Emitted by |
+|---|---|
+| `ostrom.gates.requested{kind}` | `gates` `MetricsGateChannel`, when an enforced gate opens (the notifier, after the commit) |
+| `ostrom.gates.answered{answer,channel}`, `ostrom.gates.time_to_answer{answer}` | `gates` `MetricsGateChannel`, when a gate is decided |
+| `ostrom.sessions.started{agent,where="local"}` | `sessions` `SessionSegments`, at a session's first segment |
+| `ostrom.sessions.started{agent,where="cloud"}` | `runners` `MeteredCreateCloudSession`, once a cloud session is created |
+| `ostrom.inference.cost_usd`, `.tokens`, `.duration` `{source,provider}` | `gateway` `MeteredModelCallObserver`, per relayed call that reached a provider |

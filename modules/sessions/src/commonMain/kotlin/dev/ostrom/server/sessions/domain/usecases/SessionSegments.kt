@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions.domain.usecases
 
+import dev.ostrom.server.kernel.observability.OstromMetrics
 import dev.ostrom.server.sessions.domain.models.EndSession
 import dev.ostrom.server.sessions.domain.models.InvalidSessionRequestException
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
@@ -19,8 +20,13 @@ import kotlin.uuid.Uuid
  *
  * @param close Closes a superseded segment, its receipt signed.
  * @param clock The time.
+ * @param metrics Counts the sessions that start (a first segment), `where = local`: written by a launcher.
  */
-class SessionSegments(private val close: CloseSessionUseCase, private val clock: Clock) {
+class SessionSegments(
+    private val close: CloseSessionUseCase,
+    private val clock: Clock,
+    private val metrics: OstromMetrics,
+) {
     /**
      * Opens or finds the segment of a launch. Call it under [SessionsTransaction.lockRoot].
      *
@@ -68,6 +74,8 @@ class SessionSegments(private val close: CloseSessionUseCase, private val clock:
             lastSeenAt = if (source != null) now() else null,
         )
         tx.insert(session)
+        // Counted once written: only a commit that fails after it would leave one too many.
+        if (segment == 1) metrics.sessionStarted(OstromMetrics.agentOf(start.agent), "local")
         return session
     }
 
