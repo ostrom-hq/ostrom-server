@@ -43,7 +43,7 @@ class OpenRunnerLaunchUseCaseImpl(
     override suspend fun invoke(session: CloudSession): CreatedLaunch {
         val agent = agentOf(session.agent) ?: throw InvalidLaunchException("A shell session runs no agent to launch.")
         val owner = Uuid.parseOrNull(session.ownerId)
-        val launcher = if (owner == null) null else launchers.member(session.orgId, owner)
+        val launcher = if (owner == null) null else launchers.owner(session.orgId, owner)
         if (launcher == null) throw NoLaunchOrganizationException()
         return createLaunch(launcher, NewLaunch(session.repository?.url, agent, session.model, session.id))
     }

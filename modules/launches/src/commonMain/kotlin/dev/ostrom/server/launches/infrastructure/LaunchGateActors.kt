@@ -6,11 +6,7 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
-import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.domain.services.LauncherResolver
-import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
-import kotlin.time.Clock
-import kotlin.uuid.Uuid
 
 /**
  * The server's [GateActorResolver], which the gates, sessions and compiler routes resolve their callers with (it
@@ -24,14 +20,9 @@ import kotlin.uuid.Uuid
  * - a device or a service key belongs to no organization here.
  *
  * @param launchers Resolves a person and their organization.
- * @param launches The launches.
- * @param clock The clock.
+ * @param agents Reads an agent token ([LaunchAgents]).
  */
-class LaunchGateActors(
-    private val launchers: LauncherResolver,
-    private val launches: LaunchesRepository,
-    private val clock: Clock,
-) : GateActorResolver {
+class LaunchGateActors(private val launchers: LauncherResolver, private val agents: LaunchAgents) : GateActorResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? = when (principal.kind) {
         PrincipalKind.AGENT -> agent(principal)
         PrincipalKind.USER -> launchers.resolve(principal)?.let {
@@ -41,15 +32,8 @@ class LaunchGateActors(
         PrincipalKind.DEVICE, PrincipalKind.SERVICE -> null
     }
 
-    private suspend fun agent(principal: AuthenticatedPrincipal): GateActor? {
-        val orgId = principal.orgId?.let(Uuid::parseOrNull)
-        val launch = orgId?.let { launches.find(it, principal.subjectId) }?.takeIf { it.expiresAt > clock.now() }
-        // The person still may: a member removed (or made billing only) stops their agents at once, like their own
-        // credentials (the orgs module checks a role at each request).
-        val role = launch?.let { launchers.role(it.orgId, it.userId) }
-        return if (launch == null || role == null || !LaunchPolicy.launches(role)) {
-            null
-        } else {
+    private suspend fun agent(principal: AuthenticatedPrincipal): GateActor? =
+        agents.resolve(principal, null)?.let { (launch) ->
             GateActor(
                 "agent-${launch.id}",
                 launch.orgId,
@@ -58,5 +42,4 @@ class LaunchGateActors(
                 personId = launch.dev,
             )
         }
-    }
 }

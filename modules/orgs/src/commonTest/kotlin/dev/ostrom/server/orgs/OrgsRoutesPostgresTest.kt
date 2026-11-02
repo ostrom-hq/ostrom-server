@@ -53,6 +53,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
@@ -258,14 +259,15 @@ class OrgsRoutesPostgresTest {
                     session(ada)
                     json(UpdateMemberRequest("admin"))
                 }
-            assertEquals("admin", promoted.body<MemberResponse>().role)
-            assertEquals(
-                "admin",
-                server.client
-                    .get("/api/v1/orgs/acme/members/bob") { session(carl) }
-                    .body<MemberResponse>()
-                    .role,
-            )
+            val bobAsAdmin = promoted.body<MemberResponse>()
+            assertEquals("admin", bobAsAdmin.role)
+            val bobSeen = server.client.get("/api/v1/orgs/acme/members/bob") { session(carl) }.body<MemberResponse>()
+            assertEquals("admin", bobSeen.role)
+            // The contract's `Member.id`: the member row's id, the same on every route that shows the member.
+            assertEquals(bobAsAdmin.id, bobSeen.id)
+            assertNotNull(Uuid.parseOrNull(bobSeen.id))
+            val listed = server.client.get("/api/v1/orgs/acme/members") { session(carl) }.body<MembersResponse>()
+            assertEquals(bobSeen.id, listed.items.single { it.login == "bob" }.id)
             val badRole =
                 server.client.patch("/api/v1/orgs/acme/members/carl") {
                     session(bob)

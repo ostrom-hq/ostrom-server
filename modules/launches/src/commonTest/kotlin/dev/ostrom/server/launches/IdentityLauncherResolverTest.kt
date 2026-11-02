@@ -52,11 +52,11 @@ class IdentityLauncherResolverTest {
 
     @Test
     fun aPersonsRoleIsReadNowInTheLaunchsOrganization() = runTest {
-        assertEquals(OrgRole.MEMBER, resolver.role(ORG, ADA.userId))
+        assertEquals(OrgRole.MEMBER, resolver.member(ORG, ADA.userId)?.role)
         assertEquals(listOf<Uuid?>(ORG), asked)
         assertEquals(ORG.toString(), seen.single().orgId, "As a credential bound to that organization")
         assertEquals(PrincipalKind.USER to ADA.userId.toString(), seen.single().kind to seen.single().subjectId)
-        assertNull(resolver.role(ORG, outsider), "No longer a member")
+        assertNull(resolver.member(ORG, outsider), "No longer a member")
     }
 
     @Test
@@ -71,9 +71,9 @@ class IdentityLauncherResolverTest {
 
     @Test
     fun aCloudSessionsOwnerIsResolvedFromTheirMemberId() = runTest {
-        assertEquals(ADA, resolver.member(ORG, adaMember))
-        assertNull(resolver.member(ORG, Uuid.random()), "No longer a member")
-        assertNull(resolver.member(ORG, ghostMember), "A member whose user is gone")
+        assertEquals(ADA, resolver.owner(ORG, adaMember))
+        assertNull(resolver.owner(ORG, Uuid.random()), "No longer a member")
+        assertNull(resolver.owner(ORG, ghostMember), "A member whose user is gone")
         assertEquals(emptyList<Uuid?>(), asked, "Read from the members, not from a credential")
     }
 

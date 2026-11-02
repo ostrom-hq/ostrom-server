@@ -12,6 +12,10 @@ kotlin {
             implementation(project(":modules:gates"))
             // The people behind a credential, and the agent token of a launch.
             implementation(project(":modules:identity"))
+            // The callers of the MCP relay, the inference gateway and the budgets, which this module resolves
+            // (CallerResolver), so that an agent token reaches them.
+            implementation(project(":modules:secrets"))
+            // The owner of a cloud session (a member), and the runner token of its execution, which opens its launch.
             implementation(project(":modules:orgs"))
             implementation(project(":modules:runners"))
         }
@@ -22,6 +26,9 @@ kotlin {
             implementation(project(":modules:instance"))
             implementation(project(":modules:receipts"))
             implementation(project(":modules:sessions"))
+            // An agent token lists and calls the organization's MCP servers through the relay.
+            implementation(project(":modules:mcp-relay"))
+            implementation(libs.ktor.client.mock)
         }
     }
 }
