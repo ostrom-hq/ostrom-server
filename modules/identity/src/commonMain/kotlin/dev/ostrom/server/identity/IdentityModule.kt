@@ -87,6 +87,8 @@ import dev.ostrom.server.identity.domain.IssueAgentTokenUseCase
 import dev.ostrom.server.identity.domain.IssueAgentTokenUseCaseImpl
 import dev.ostrom.server.identity.domain.ListAuditEventsUseCase
 import dev.ostrom.server.identity.domain.ListAuditEventsUseCaseImpl
+import dev.ostrom.server.identity.domain.ListOrgAuditUseCase
+import dev.ostrom.server.identity.domain.ListOrgAuditUseCaseImpl
 import dev.ostrom.server.identity.domain.ListTokensUseCase
 import dev.ostrom.server.identity.domain.ListTokensUseCaseImpl
 import dev.ostrom.server.identity.domain.PollDeviceAuthorizationUseCase
@@ -112,6 +114,7 @@ import dev.ostrom.server.identity.infrastructure.ApiTokensRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.AuditRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.DeviceAuthorizationsRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.IdentityMigrations
+import dev.ostrom.server.identity.infrastructure.IdentityOrgAuditTrail
 import dev.ostrom.server.identity.infrastructure.InMemoryRateLimiter
 import dev.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import dev.ostrom.server.identity.infrastructure.Sha256SecretHasher
@@ -119,7 +122,10 @@ import dev.ostrom.server.identity.infrastructure.UsersRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.WebSessionsRepositoryImpl
 import dev.ostrom.server.identity.presentation.IdentityConfig
 import dev.ostrom.server.identity.presentation.IdentityRoutesDependencies
+import dev.ostrom.server.identity.presentation.OrgAuditRoutesDependencies
 import dev.ostrom.server.identity.presentation.identityRoutes
+import dev.ostrom.server.identity.presentation.orgAuditRoutes
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
@@ -159,6 +165,9 @@ object IdentityModule : ServerModule {
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
+        single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }
+        single<ListOrgAuditUseCase> { ListOrgAuditUseCaseImpl(get(), get()) }
+        single { OrgAuditRoutesDependencies(get(), get()) }
         single<TokenAuthenticator> {
             val config = get<IdentityConfig>()
             CredentialAuthenticatorImpl(get(), get(), get(), get(), config.allowedOrigins, config.sessionCookiePrefix)
@@ -240,6 +249,7 @@ object IdentityModule : ServerModule {
         route.signInRoutes(koin.get())
         route.sessionRoutes(koin.get())
         route.mobileRoutes(koin.get())
+        route.orgAuditRoutes(koin.get())
     }
 
     private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {

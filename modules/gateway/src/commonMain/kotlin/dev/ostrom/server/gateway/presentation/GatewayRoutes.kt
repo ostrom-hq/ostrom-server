@@ -8,10 +8,12 @@ import dev.ostrom.server.gateway.domain.ModelPolicy
 import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -89,9 +91,10 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
         put<ModelPolicyApi> {
             val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
             val request = call.receive<ModelPolicyDto>()
-            call.respond(
-                putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember)).toDto(),
-            )
+            val policy = putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember))
+            val principal = call.requirePrincipal()
+            audit.record(OrgAuditRecord(caller.orgId, principal, "inference.policy.changed", "policy", "models"))
+            call.respond(policy.toDto())
         }
         get<InferenceSettingsApi> {
             call.respond(getSettings(call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)).toDto())
@@ -105,7 +108,13 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
                 request.openrouterKeySecret,
                 request.useSharedAccounts,
             )
-            call.respond(putSettings(caller, settings).toDto())
+            val saved = putSettings(caller, settings)
+            val details = mapOf("use_shared_accounts" to "${saved.useSharedAccounts}")
+            val principal = call.requirePrincipal()
+            audit.record(
+                OrgAuditRecord(caller.orgId, principal, "inference.settings.changed", "settings", "inference", details),
+            )
+            call.respond(saved.toDto())
         }
     }
 }

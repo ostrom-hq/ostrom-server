@@ -174,7 +174,7 @@ object McpRelayModule : ServerModule {
             McpRelayRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
                 get(), get(), get(), get(), get(), get(), get(), get(), get(),
-                get(), get(), get(), get(), get(), get(), get(), get(),
+                get(), get(), get(), get(), get(), get(), get(), get(), get(),
             )
         }
     }
