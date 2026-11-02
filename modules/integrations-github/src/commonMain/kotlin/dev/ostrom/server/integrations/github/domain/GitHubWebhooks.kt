@@ -7,12 +7,16 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.usecases.AskGate
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
+import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.logging.Logger
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlin.time.Clock
 
 /** What a verified webhook did. */
 enum class WebhookOutcome {
@@ -22,6 +26,12 @@ enum class WebhookOutcome {
     /** An installation was forgotten. */
     UNINSTALLED,
 
+    /** Who installed the App was recorded, for the install callback to check (AUDIT-SECU-2 M1). */
+    RECORDED,
+
+    /** A delivery already handled: a replay, ignored (AUDIT-SECU-2 B3). */
+    REPLAYED,
+
     /** Nothing to do: another event or action, or an installation no organization owns. */
     IGNORED,
 }
@@ -30,41 +40,73 @@ enum class WebhookOutcome {
 interface HandleWebhookUseCase {
     /**
      * @param event The `X-GitHub-Event` header.
+     * @param delivery The `X-GitHub-Delivery` header, GitHub's id of this delivery (kept by a redelivery).
      * @param body The body.
      * @return What was done.
+     * @throws OstromException 400 without a delivery id.
      */
-    suspend operator fun invoke(event: String?, body: String): WebhookOutcome
+    suspend operator fun invoke(event: String?, delivery: String?, body: String): WebhookOutcome
 }
 
 /**
  * [HandleWebhookUseCase]: a pull request opened, updated or reopened asks the gate of its merge (as the CI, for the
  * organization that installed the App, the author being who asks) and publishes `ostrom-gate` on its head; the same
  * request as the agent's `gh pr merge` when the head, base and gate match (gates module, APPROBATION). An
- * installation deleted on GitHub is forgotten.
+ * installation created on GitHub records who installed it, which the install callback checks (AUDIT-SECU-2 M1); one
+ * deleted is forgotten, linked or not. Each delivery is handled once (AUDIT-SECU-2 B3): a replay of a captured
+ * delivery is ignored, and a delivery whose handling failed is released, so that GitHub's redelivery is handled.
  *
  * @param repository Installations.
  * @param ask Asks gates.
  * @param checks Publishes the check.
  * @param logger Logs a refused gate.
+ * @param clock The clock.
  */
 class HandleWebhookUseCaseImpl(
     private val repository: GitHubRepository,
     private val ask: AskGateUseCase,
     private val checks: GitHubGateChecks,
     private val logger: Logger,
+    private val clock: Clock,
 ) : HandleWebhookUseCase {
-    override suspend fun invoke(event: String?, body: String): WebhookOutcome {
+    override suspend fun invoke(event: String?, delivery: String?, body: String): WebhookOutcome {
+        val id = delivery?.takeIf { DELIVERY.matches(it) }
+            ?: throw OstromException(ErrorKind.INVALID_REQUEST, "This webhook has no X-GitHub-Delivery id.")
+        if (!repository.claimDelivery(id, clock.now())) return WebhookOutcome.REPLAYED
+        var handled = false
+        try {
+            val outcome = handle(event, body)
+            handled = true
+            return outcome
+        } finally {
+            // A failure (GitHub down while the check is published) leaves the delivery to GitHub's redelivery.
+            if (!handled) withContext(NonCancellable) { repository.releaseDelivery(id) }
+        }
+    }
+
+    private suspend fun handle(event: String?, body: String): WebhookOutcome {
         val payload = parse(event, body)
-        val installation = payload?.installation?.id?.let { repository.installationById(it) }
+        val installationId = payload?.installation?.id
         return when {
-            payload == null || installation == null -> WebhookOutcome.IGNORED
-            event == "installation" && payload.action == "deleted" -> {
-                repository.removeInstallation(installation)
+            payload == null || installationId == null -> WebhookOutcome.IGNORED
+            event == INSTALLATION && payload.action == "created" -> created(installationId, payload)
+            event == INSTALLATION && payload.action == "deleted" -> {
+                repository.forgetInstallation(installationId)
                 WebhookOutcome.UNINSTALLED
             }
-            event == "pull_request" && payload.action in GATED_ACTIONS -> pullRequest(installation, payload)
+            event == "pull_request" && payload.action in GATED_ACTIONS ->
+                repository.installationById(installationId)?.let { pullRequest(it, payload) } ?: WebhookOutcome.IGNORED
             else -> WebhookOutcome.IGNORED
         }
+    }
+
+    private suspend fun created(installationId: Long, payload: Payload): WebhookOutcome {
+        val sender = payload.sender?.login
+        val account = payload.installation?.account
+        if (sender == null || account == null) return WebhookOutcome.IGNORED
+        val origin = GitHubInstallationOrigin(installationId, sender, account.login, account.type)
+        repository.saveOrigin(origin, clock.now())
+        return WebhookOutcome.RECORDED
     }
 
     private fun parse(event: String?, body: String): Payload? = try {
@@ -111,13 +153,17 @@ class HandleWebhookUseCaseImpl(
     @Serializable
     private data class Payload(
         val action: String? = null,
-        val installation: Id? = null,
+        val installation: Installation? = null,
+        val sender: Login? = null,
         val repository: Repository? = null,
         @SerialName("pull_request") val pullRequest: Pull? = null,
     )
 
     @Serializable
-    private data class Id(val id: Long)
+    private data class Installation(val id: Long, val account: Account? = null)
+
+    @Serializable
+    private data class Account(val login: String, val type: String)
 
     @Serializable
     private data class Repository(@SerialName("full_name") val fullName: String)
@@ -136,3 +182,7 @@ class HandleWebhookUseCaseImpl(
 private val json = Json { ignoreUnknownKeys = true }
 private val GATED_ACTIONS = setOf("opened", "reopened", "synchronize", "ready_for_review", "edited")
 private val MAIN_BRANCHES = setOf("main", "master")
+private const val INSTALLATION = "installation"
+
+// GitHub's delivery ids are GUIDs; bounded so that a forged header never grows the table's key.
+private val DELIVERY = Regex("^[0-9A-Fa-f-]{1,64}$")

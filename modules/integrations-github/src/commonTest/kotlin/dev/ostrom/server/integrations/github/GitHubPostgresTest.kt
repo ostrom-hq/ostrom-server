@@ -17,9 +17,11 @@ import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.integrations.github.domain.GateCheck
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
+import dev.ostrom.server.integrations.github.domain.GitHubInstallationOrigin
 import dev.ostrom.server.integrations.github.domain.GitHubPull
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
+import dev.ostrom.server.integrations.github.infrastructure.GitHubWebhookQueries
 import dev.ostrom.server.integrations.github.presentation.GitHubAppStatus
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
@@ -50,12 +52,18 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.writeString
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -154,8 +162,21 @@ class GitHubPostgresTest {
 
     private fun orgOf(letter: String) = if (letter == "a") ORG else OTHER_ORG
 
+    // GitHub has told the server who installed acme (42) and globex (43): their `installation.created` webhooks.
     private fun gitHubTest(block: suspend (TestServer) -> Unit) =
-        serverTest(listOf(GatesModule, GitHubIntegrationModule), overrides) { server -> block(server) }
+        serverTest(listOf(GatesModule, GitHubIntegrationModule), overrides) { server ->
+            for ((id, account) in listOf(42L to "acme", 43L to "globex")) {
+                val delivered = server.deliver("installation", created(id, "$account-admin", account))
+                assertEquals(HttpStatusCode.NoContent, delivered.status)
+            }
+            block(server)
+        }
+
+    private fun created(id: Long, sender: String, account: String) =
+        """{"action":"created","installation":{"id":$id,"account":{"login":"$account","type":"Organization"}},""" +
+            """"sender":{"login":"$sender"}}"""
+
+    private var deliveries = 0
 
     private suspend fun TestServer.get(token: String?, path: String): HttpResponse =
         client.config { followRedirects = false }.get(path) {
@@ -194,9 +215,15 @@ class GitHubPostgresTest {
         return "sha256=" + mac.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
     }
 
-    private suspend fun TestServer.deliver(event: String, body: String, signature: String? = null): HttpResponse =
+    private suspend fun TestServer.deliver(
+        event: String,
+        body: String,
+        signature: String? = null,
+        delivery: String? = "72f2a3c0-0000-0000-0000-${(++deliveries).toString().padStart(12, '0')}",
+    ): HttpResponse =
         client.post("/webhooks/github") {
             header("X-GitHub-Event", event)
+            delivery?.let { header("X-GitHub-Delivery", it) }
             header("X-Hub-Signature-256", signature ?: sign(body))
             contentType(ContentType.Application.Json)
             setBody(body)
@@ -332,6 +359,50 @@ class GitHubPostgresTest {
     }
 
     @Test
+    fun aMemberWithReadAccessCannotLinkTheInstallationAnAdminMade() = gitHubTest { server ->
+        // globex's owner can read acme on GitHub, so GitHub lists acme's installation among theirs (AUDIT-SECU-2 M1).
+        github.reachable["gho_globex"] = setOf(42L, 43L)
+        assertEquals(failed("installation_not_yours"), server.install("user:b:owner", 42, code = "code-globex"))
+        assertEquals(false, server.get("user:b:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
+        assertEquals(INSTALLED, server.install("user:a:owner", 42), "acme's admin, who installed it, links it")
+    }
+
+    @Test
+    fun beforeGitHubsWebhookTheInstallComesBackAsPending() = gitHubTest { server ->
+        github.accounts[44] = "initech"
+        github.reachable["gho_acme"] = setOf(42L, 44L)
+        // Nothing said who installed 44 within the wait: the console says to try again, nothing is linked.
+        assertEquals(failed("installation_pending"), server.install("user:a:owner", 44, code = "code-acme"))
+        assertEquals(false, server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
+        server.deliver("installation", created(44, "acme-admin", "initech"))
+        assertEquals(INSTALLED, server.install("user:a:owner", 44, code = "code-acme"))
+    }
+
+    @Test
+    fun anInstallStartOpenedByAnotherSiteIsRefused() = gitHubTest { server ->
+        suspend fun start(site: String, referer: String?) =
+            server.client.config { followRedirects = false }.get("/api/v1/github/app/install/start") {
+                header(HttpHeaders.Authorization, "Bearer user:a:owner")
+                header("Sec-Fetch-Site", site)
+                referer?.let { header(HttpHeaders.Referrer, it) }
+            }.status
+        assertEquals(HttpStatusCode.Forbidden, start("cross-site", "https://evil.example/"))
+        assertEquals(HttpStatusCode.Found, start("cross-site", "https://console.example/github"), "The console's link")
+        assertEquals(HttpStatusCode.Found, start("same-site", null))
+    }
+
+    @Test
+    fun aDeliveryIsHandledOnceAndOneWithoutItsIdIsRefused() = gitHubTest { server ->
+        server.install("user:a:owner", 42)
+        val id = "72f2a3c0-ffff-0000-0000-000000000001"
+        assertEquals(HttpStatusCode.NoContent, server.deliver("pull_request", opened, delivery = id).status)
+        val published = github.published.size
+        assertEquals(HttpStatusCode.NoContent, server.deliver("pull_request", opened, delivery = id).status)
+        assertEquals(published, github.published.size, "A captured delivery replayed does nothing")
+        assertEquals(HttpStatusCode.BadRequest, server.deliver("pull_request", opened, delivery = null).status)
+    }
+
+    @Test
     fun rowLevelSecurityHidesAnotherOrganizationsInstallationAndChecks() = gitHubTest { server ->
         server.install("user:a:owner", 42)
         server.deliver("pull_request", opened)
@@ -350,15 +421,18 @@ class GitHubPostgresTest {
             val setOrg = Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)")
             fetchAll(setOrg.bind("org", OTHER_ORG.toString())).getOrThrow()
             val other = listOf("github_installations", "github_checks").map { count(it) }
+            val origins = mutableListOf(count("github_installation_origins"))
             fetchAll(Statement.create("SELECT set_config('ostrom.github_installation', '43', TRUE)")).getOrThrow()
             val wrongInstallation = count("github_installations")
+            origins += count("github_installation_origins")
             fetchAll(Statement.create("SELECT set_config('ostrom.github_installation', '42', TRUE)")).getOrThrow()
-            listOf(none, other, listOf(wrongInstallation, count("github_installations")))
+            origins += count("github_installation_origins")
+            listOf(none, other, listOf(wrongInstallation, count("github_installations")), origins)
         }
         assertEquals(
-            listOf(listOf("0", "0"), listOf("0", "0"), listOf("0", "1")),
+            listOf(listOf("0", "0"), listOf("0", "0"), listOf("0", "1"), listOf("0", "1", "1")),
             counts,
-            "No key: nothing; org B: nothing; only the verified installation's own row",
+            "No key: nothing; org B: nothing; only the verified installation's own row (who installed it too)",
         )
         // PostgreSQL refuses the row (WITH CHECK): the statement fails, or the commit of the aborted transaction does.
         val forged = try {
@@ -397,12 +471,62 @@ class GitHubPostgresTest {
         repository.saveInstallation(GitHubInstallation(ORG, 44, "acme-new"), at)
         assertEquals(GitHubInstallation(ORG, 44, "acme-new"), repository.installationById(44))
         assertNull(repository.installationById(42), "Reinstalled: the organization keeps one installation")
-        repository.removeInstallation(GitHubInstallation(ORG, 44, "acme-new"))
+        repository.forgetInstallation(44)
         assertNull(repository.installation(ORG))
+
+        val origin = GitHubInstallationOrigin(44, "carol", "carol", "User")
+        repository.saveOrigin(origin, at)
+        assertEquals(origin, repository.origin(44))
+        repository.saveOrigin(origin.copy(sender = "Carol"), at)
+        assertEquals("Carol", repository.origin(44)?.sender, "A created webhook again replaces it")
+        repository.forgetInstallation(44)
+        assertNull(repository.origin(44), "Deleted on GitHub, linked or not")
+
+        assertTrue(repository.claimDelivery("d-1", at))
+        assertFalse(repository.claimDelivery("d-1", at), "A replay")
+        repository.releaseDelivery("d-1")
+        assertTrue(repository.claimDelivery("d-1", at), "Released for GitHub's redelivery")
+        assertTrue(repository.claimDelivery("d-2", at + 31.days), "And d-1, 31 days old, is forgotten")
+        assertTrue(repository.claimDelivery("d-1", at + 31.days))
 
         repository.saveState(ORG, "h1", "owner", at)
         assertNull(repository.takeState("h1", at), "Expired at that instant")
         assertNull(repository.takeState("h1", Instant.parse("2026-10-30T01:00:00Z")), "Taken already")
+    }
+
+    @Test
+    fun theWebhookAndCallbackQueriesUseTheirIndexes() = gitHubTest { server ->
+        // Fixtures only: many installations and a month of deliveries, and the statistics (#68).
+        val fixtures = server.database.superuser
+        fixtures.execute(
+            "INSERT INTO github_installation_origins (installation_id, sender, account, account_type, created_at) " +
+                "SELECT 1000 + i, 'admin', 'org-' || i, 'Organization', NOW() FROM generate_series(1, 20000) AS i",
+        ).getOrThrow()
+        fixtures.execute(
+            "INSERT INTO github_webhook_deliveries (delivery_id, received_at) SELECT 'd-' || i, " +
+                "NOW() - (i || ' minutes')::interval FROM generate_series(1, 50000) AS i",
+        ).getOrThrow()
+        fixtures.execute("VACUUM ANALYZE github_installation_origins").getOrThrow()
+        fixtures.execute("VACUUM ANALYZE github_webhook_deliveries").getOrThrow()
+        val plans = server.driver.transaction {
+            fetchAll(Statement.create("SELECT set_config('ostrom.github_installation', '42', TRUE)")).getOrThrow()
+            fun plan(sql: String) = "EXPLAIN (ANALYZE, BUFFERS) $sql"
+            linkedMapOf(
+                "who installed an installation" to fetchAll(
+                    Statement.create(plan(GitHubWebhookQueries.ORIGIN)).bind("id", 42L),
+                ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() },
+                "purge of old deliveries" to fetchAll(
+                    Statement.create(plan(GitHubWebhookQueries.PURGE)).bind("cutoff", Clock.System.now() - 30.days),
+                ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() },
+            )
+        }
+        val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
+        SystemFileSystem.createDirectories(Path("build/reports/explain"))
+        SystemFileSystem.sink(Path("build/reports/explain/integrations-github-webhooks.txt")).buffered()
+            .use { it.writeString(report) }
+        for ((name, plan) in plans) {
+            assertFalse("Seq Scan on github_" in plan, "$name scans the table:\n$plan")
+        }
     }
 
     private suspend fun QueryExecutor.count(table: String): String =

@@ -34,16 +34,23 @@ class GitHubWebhooksTest {
         override suspend fun invoke(actor: GateActor, ask: AskGate): GateView {
             asked += actor to ask
             if (ask.pullRequest == 9) throw OstromException(ErrorKind.CONFLICT, "GitHub must describe it.")
+            check(ask.pullRequest != 13) { "The database is down." }
             val base = if (ask.actionClass == "merge") "develop" else "main"
             return GateView(mergeGate(base = base), emptyList(), emptyList())
         }
     }
-    private val webhooks = HandleWebhookUseCaseImpl(
+    private val handler = HandleWebhookUseCaseImpl(
         repository,
         ask,
         GitHubGateChecks(repository, api, "https://console.example", clock),
         logger,
+        clock,
     )
+    private var delivered = 0
+
+    // Each call is a new delivery, as GitHub sends them.
+    private suspend fun webhooks(event: String?, body: String) =
+        handler(event, "0000-${(++delivered).toString().padStart(4, '0')}", body)
 
     private fun pull(action: String, number: Int = 6, base: String = "main", state: String = "open") =
         """{"action":"$action","installation":{"id":42},"repository":{"full_name":"acme/api"},""" +
@@ -109,6 +116,7 @@ class GitHubWebhooksTest {
         val state = link.substringAfter("state=")
         assertEquals(64, state.length)
         api.accounts[42] = "acme"
+        repository.saveOrigin(ACME_ORIGIN, NOW)
 
         assertEquals(GitHubInstallation(ORG, 42, "acme"), installs.finish("42", "code-acme", state, SESSION))
         assertEquals(GitHubInstallation(ORG, 42, "acme"), repository.installation(ORG))
@@ -132,6 +140,7 @@ class GitHubWebhooksTest {
         }
         // Installation 7 is reachable but not one of this App's installations GitHub knows.
         api.reachable["gho_acme"] = setOf(42L, 7L)
+        repository.saveOrigin(ACME_ORIGIN.copy(installationId = 7), NOW)
         val unknown = installs.start(ORG, "owner", SESSION).substringAfter("state=")
         val notTheApp = assertFailsWith<OstromException> { installs.finish("7", "code-acme", unknown, SESSION) }
         assertEquals(ErrorKind.INVALID_REQUEST, notTheApp.kind)
@@ -154,6 +163,8 @@ class GitHubWebhooksTest {
         val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
         api.accounts[42] = "acme"
         api.accounts[43] = "globex"
+        repository.saveOrigin(ACME_ORIGIN, NOW)
+        repository.saveOrigin(GLOBEX_ORIGIN, NOW)
         // The owner of org B, who reaches only 43, comes back with the id of acme's installation.
         val stolen = installs.start(OTHER_ORG, "owner-b", SESSION).substringAfter("state=")
         val refused = assertFailsWith<InstallationNotYoursException> {
@@ -179,6 +190,7 @@ class GitHubWebhooksTest {
     fun onlyTheSessionThatStartedAnInstallFinishesIt() = runTest {
         val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
         api.accounts[42] = "acme"
+        repository.saveOrigin(ACME_ORIGIN, NOW)
         val state = installs.start(ORG, "owner", SESSION).substringAfter("state=")
         // The state brought back by another session (a link sent to someone else) matches nothing.
         val elsewhere = assertFailsWith<OstromException> { installs.finish("42", "code-acme", state, "another") }

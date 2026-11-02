@@ -50,7 +50,7 @@ class GitHubAppManifestsTest {
 
     @Test
     fun anAdministratorStartsTheFlowWithAManifestPointingAtThisServer() = runTest {
-        val form = manifests().start(admin, null)
+        val form = manifests().start(admin, null, SESSION)
         assertTrue(form.action.startsWith("https://github.com/settings/apps/new?state="))
         assertEquals(64, form.action.substringAfter("state=").length)
         val manifest = Json.parseToJsonElement(form.manifest).jsonObject
@@ -70,7 +70,7 @@ class GitHubAppManifestsTest {
         assertEquals(1, store.states.size, "Kept as its hash only")
         assertFalse(store.states.keys.single() == form.action.substringAfter("state="))
 
-        val org = manifests().start(admin, "acme-inc")
+        val org = manifests().start(admin, "acme-inc", SESSION)
         assertTrue(org.action.startsWith("https://github.com/organizations/acme-inc/settings/apps/new?state="))
     }
 
@@ -78,8 +78,8 @@ class GitHubAppManifestsTest {
     fun onlyAnAdministratorPersonStartsItAndNeverOverAnExistingApp() = runTest {
         val service = AuthenticatedPrincipal("usr_admin", PrincipalKind.SERVICE, emptySet())
         val stranger = AuthenticatedPrincipal("usr_other", PrincipalKind.USER, emptySet())
-        assertFailsWith<NotAnInstanceAdminException> { manifests().start(service, null) }
-        assertFailsWith<NotAnInstanceAdminException> { manifests().start(stranger, null) }
+        assertFailsWith<NotAnInstanceAdminException> { manifests().start(service, null, SESSION) }
+        assertFailsWith<NotAnInstanceAdminException> { manifests().start(stranger, null, SESSION) }
         val nobody = GitHubAppManifests(
             GitHubAppSourceImpl(GitHubAppCredentials(), store, clock),
             store,
@@ -88,10 +88,10 @@ class GitHubAppManifestsTest {
             target,
             clock,
         )
-        assertFailsWith<NotAnInstanceAdminException> { nobody.start(admin, null) }
-        assertFailsWith<GitHubAppExistsException> { manifests(GitHubAppCredentials(slug = "env")).start(admin, null) }
+        assertFailsWith<NotAnInstanceAdminException> { nobody.start(admin, null, SESSION) }
+        assertFailsWith<GitHubAppExistsException> { manifests(GitHubAppCredentials(slug = "env")).start(admin, null, SESSION) }
         for (owner in listOf("-acme", "acme/x", "a".repeat(40), "")) {
-            assertEquals(ErrorKind.INVALID_REQUEST, kindOf { manifests().start(admin, owner) })
+            assertEquals(ErrorKind.INVALID_REQUEST, kindOf { manifests().start(admin, owner, SESSION) })
         }
         assertTrue(store.states.isEmpty())
     }
@@ -99,38 +99,51 @@ class GitHubAppManifestsTest {
     @Test
     fun theCallbackStoresTheAppOnceAndTheSourceServesItAtOnce() = runTest {
         val flow = manifests()
-        val state = flow.start(admin, null).action.substringAfter("state=")
+        val state = flow.start(admin, null, SESSION).action.substringAfter("state=")
         api.created["code1"] = createdApp()
-        val app = flow.finish("code1", state)
+        val app = flow.finish("code1", state, SESSION)
         assertEquals("ostrom-acme", app.slug)
         assertEquals("ostrom-acme", store.stored?.slug)
-        assertEquals(ErrorKind.FORBIDDEN, kindOf { flow.finish("code1", state) }, "Used once")
+        assertEquals(ErrorKind.FORBIDDEN, kindOf { flow.finish("code1", state, SESSION) }, "Used once")
+    }
+
+    @Test
+    fun onlyTheSessionThatStartedTheFlowFinishesIt() = runTest {
+        val flow = manifests()
+        val state = flow.start(admin, null, SESSION).action.substringAfter("state=")
+        api.created["code1"] = createdApp()
+        // A state that leaked (a proxy log, a shared history) is worth nothing in another browser.
+        assertEquals(ErrorKind.FORBIDDEN, kindOf { flow.finish("code1", state, "another-session") })
+        assertEquals(ErrorKind.UNAUTHORIZED, kindOf { flow.finish("code1", state, null) })
+        assertEquals(null, store.stored)
+        val again = flow.start(admin, null, SESSION).action.substringAfter("state=")
+        assertEquals("ostrom-acme", flow.finish("code1", again, SESSION).slug)
     }
 
     @Test
     fun aMalformedUnknownOrExpiredCallbackIsRefused() = runTest {
         val flow = manifests()
         for ((code, state) in listOf(null to "s", "bad code" to "s", "c" to null, "c" to "", "c" to "s".repeat(129))) {
-            assertEquals(ErrorKind.INVALID_REQUEST, kindOf { flow.finish(code, state) })
+            assertEquals(ErrorKind.INVALID_REQUEST, kindOf { flow.finish(code, state, SESSION) })
         }
-        assertEquals(ErrorKind.FORBIDDEN, kindOf { flow.finish("c", "unknown") })
-        val expired = flow.start(admin, null).action.substringAfter("state=")
+        assertEquals(ErrorKind.FORBIDDEN, kindOf { flow.finish("c", "unknown", SESSION) })
+        val expired = flow.start(admin, null, SESSION).action.substringAfter("state=")
         clock.now += 11.minutes
-        assertEquals(ErrorKind.FORBIDDEN, kindOf { flow.finish("c", expired) })
+        assertEquals(ErrorKind.FORBIDDEN, kindOf { flow.finish("c", expired, SESSION) })
 
-        val unknownCode = flow.start(admin, null).action.substringAfter("state=")
-        assertEquals(ErrorKind.INVALID_REQUEST, kindOf { flow.finish("nope", unknownCode) })
+        val unknownCode = flow.start(admin, null, SESSION).action.substringAfter("state=")
+        assertEquals(ErrorKind.INVALID_REQUEST, kindOf { flow.finish("nope", unknownCode, SESSION) })
     }
 
     @Test
     fun aCallbackAfterAnotherAppExistsIsAConflict() = runTest {
         val flow = manifests()
-        val first = flow.start(admin, null).action.substringAfter("state=")
-        val second = flow.start(admin, null).action.substringAfter("state=")
+        val first = flow.start(admin, null, SESSION).action.substringAfter("state=")
+        val second = flow.start(admin, null, SESSION).action.substringAfter("state=")
         api.created["a"] = createdApp(1)
         api.created["b"] = createdApp(2)
-        flow.finish("a", first)
-        assertFailsWith<GitHubAppExistsException> { flow.finish("b", second) }
+        flow.finish("a", first, SESSION)
+        assertFailsWith<GitHubAppExistsException> { flow.finish("b", second, SESSION) }
 
         // Another server stored one between the check and the save.
         val racing = MemoryGitHubAppStore()
@@ -142,21 +155,21 @@ class GitHubAppManifestsTest {
             target,
             clock,
         )
-        val state = raced.start(admin, null).action.substringAfter("state=")
+        val state = raced.start(admin, null, SESSION).action.substringAfter("state=")
         racing.stored = GitHubAppCredentials(slug = "other")
         api.created["c"] = createdApp(3)
-        assertFailsWith<GitHubAppExistsException> { raced.finish("c", state) }
+        assertFailsWith<GitHubAppExistsException> { raced.finish("c", state, SESSION) }
     }
 
     @Test
     fun gitHubFailingIsUnavailableAndACancellationStaysOne() = runTest {
         val flow = manifests()
-        val state = flow.start(admin, null).action.substringAfter("state=")
+        val state = flow.start(admin, null, SESSION).action.substringAfter("state=")
         api.failure = gitHubDown()
-        assertFailsWith<GitHubUnavailableException> { flow.finish("c", state) }
-        val again = flow.start(admin, null).action.substringAfter("state=")
+        assertFailsWith<GitHubUnavailableException> { flow.finish("c", state, SESSION) }
+        val again = flow.start(admin, null, SESSION).action.substringAfter("state=")
         api.failure = CancellationException("stopped")
-        assertFailsWith<CancellationException> { flow.finish("c", again) }
+        assertFailsWith<CancellationException> { flow.finish("c", again, SESSION) }
     }
 
     @Test
@@ -238,3 +251,5 @@ private suspend fun kindOf(block: suspend () -> Unit): ErrorKind? = try {
 } catch (error: OstromException) {
     error.kind
 }
+
+private const val SESSION = "session-of-the-admin"

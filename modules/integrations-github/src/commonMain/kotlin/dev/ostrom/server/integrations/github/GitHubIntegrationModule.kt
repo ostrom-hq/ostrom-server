@@ -115,7 +115,7 @@ object GitHubIntegrationModule : ServerModule {
         single { GitHubAppManifests(get(), get(), get(), get(), get(), get()) }
         single<PullRequestHeads> { GitHubPullRequestHeads(get(), get(), get()) }
         single { GitHubGateChecks(get(), get(), get<GitHubSettings>().webOrigin, get()) } bind GateChannel::class
-        single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get()) }
+        single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get(), get()) }
         single {
             val apps = get<GitHubAppSource>()
             val sync = get<GitHubDirectorySync>()

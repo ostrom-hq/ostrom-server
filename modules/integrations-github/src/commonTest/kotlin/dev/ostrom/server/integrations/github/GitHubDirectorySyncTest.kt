@@ -12,6 +12,8 @@ import dev.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCaseImpl
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.logging.LogLevel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -20,6 +22,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 class GitHubDirectorySyncTest {
     private val clock = SettableClock()
@@ -94,6 +97,36 @@ class GitHubDirectorySyncTest {
         val error = assertFailsWith<GitHubUnavailableException> { repos(ORG, null, null) }
         assertEquals(ErrorKind.UNAVAILABLE, error.kind)
         assertEquals(listOf(LogLevel.WARN to "github directory not read"), logger.lines)
+    }
+
+    @Test
+    fun simultaneousFirstListsReadGitHubOnce() = runTest {
+        installed()
+        val pause = CompletableDeferred<Unit>()
+        api.pause = pause
+        val first = async { sync.ensure(ORG) }
+        val second = async { sync.ensure(ORG) }
+        testScheduler.runCurrent()
+        pause.complete(Unit)
+        assertTrue(first.await())
+        assertTrue(second.await(), "Found stored once the first read ended")
+        assertEquals(1, api.reads)
+    }
+
+    @Test
+    fun afterAFailedFirstReadGitHubRestsThirtySeconds() = runTest {
+        installed()
+        api.failure = gitHubDown()
+        assertFailsWith<GitHubUnavailableException> { sync.ensure(ORG) }
+        api.failure = null
+        assertFailsWith<GitHubUnavailableException>("Not asked again at once") { sync.ensure(ORG) }
+        assertEquals(0, api.reads)
+        clock.now += 31.seconds
+        assertTrue(sync.ensure(ORG))
+        assertEquals(1, api.reads)
+        clock.now += 1.seconds
+        installations.saveInstallation(GitHubInstallation(OTHER_ORG, 43, "globex"), NOW)
+        assertTrue(sync.ensure(OTHER_ORG), "Another organization never waits for this one's failure")
     }
 
     @Test

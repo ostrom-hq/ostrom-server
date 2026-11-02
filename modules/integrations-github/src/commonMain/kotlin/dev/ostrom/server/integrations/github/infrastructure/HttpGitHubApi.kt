@@ -12,6 +12,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubPeopleApi
 import dev.ostrom.server.integrations.github.domain.GitHubPull
 import dev.ostrom.server.integrations.github.domain.GitHubRepo
 import dev.ostrom.server.integrations.github.domain.GitHubTeam
+import dev.ostrom.server.integrations.github.domain.isRepositoryName
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
@@ -81,7 +82,7 @@ class HttpGitHubApi(
 
     override suspend fun pullRequest(installationId: Long, repo: String, number: Int): GitHubPull? {
         // The hook of the agent waits for this answer: GitHub has 2 seconds.
-        val response = call(installationId, HttpMethod.Get, "/repos/$repo/pulls/$number", null, HEAD_TIMEOUT_MS)
+        val response = call(installationId, HttpMethod.Get, "${repoPath(repo)}/pulls/$number", null, HEAD_TIMEOUT_MS)
         if (response.status == HttpStatusCode.NotFound) return null
         val pull = decode<Pull>(response, "pull request")
         val open = pull.state == "open" && !pull.merged
@@ -104,7 +105,7 @@ class HttpGitHubApi(
                 put("summary", check.summary)
             }
         }
-        val path = "/repos/$repo/check-runs"
+        val path = "${repoPath(repo)}/check-runs"
         val response = if (checkRunId == null) {
             call(installationId, HttpMethod.Post, path, body)
         } else {
@@ -347,7 +348,8 @@ private val json = Json { ignoreUnknownKeys = true }
 
 /**
  * [GitHubPeopleApi] over HTTPS: the code of the install's return is exchanged with the App's OAuth client for the
- * person's token, which only reads `GET /user/installations`, then is dropped (never stored nor logged).
+ * person's token, which only reads `GET /user/installations` and `GET /user`, then is dropped (never stored nor
+ * logged).
  *
  * @param http The client (`expectSuccess = false`).
  * @param apiUrl GitHub's API.
@@ -389,6 +391,11 @@ class HttpGitHubPeople(
         return ids
     }
 
+    override suspend fun userLogin(userToken: String): String {
+        val response = http.exchange(HttpMethod.Get, "$apiUrl$USER_PATH", USER_PATH) { headers(userToken) }
+        return decode<UserLogin>(response, "person").login
+    }
+
     @Serializable
     private data class UserToken(@SerialName("access_token") val accessToken: String? = null)
 
@@ -396,11 +403,15 @@ class HttpGitHubPeople(
     private data class InstallationId(val id: Long)
 
     @Serializable
+    private data class UserLogin(val login: String)
+
+    @Serializable
     private data class UserInstallations(val installations: List<InstallationId> = emptyList())
 }
 
 private const val USER_AGENT = "ostrom"
 private const val OAUTH_TOKEN_PATH = "/login/oauth/access_token"
+private const val USER_PATH = "/user"
 private const val INSTALLATIONS_PAGE = 100
 
 // 1,000 installations reachable by one person: beyond, the install is refused rather than read forever.
@@ -441,6 +452,11 @@ private suspend inline fun <reified T> decode(response: HttpResponse, what: Stri
         throw GitHubCallException("GitHub answered an unexpected $what.", error)
     }
 }
+
+// The path of a repository in GitHub's API, only for a repository's full name: a repository an agent declared never
+// makes the installation's token call another route (AUDIT-SECU-2 B5).
+private fun repoPath(repo: String): String =
+    if (isRepositoryName(repo)) "/repos/$repo" else throw GitHubCallException("This is not a repository's full name.")
 
 // The body asking GitHub for an installation token restricted to [permissions].
 private fun tokenRequest(permissions: Map<String, String>): JsonObject = buildJsonObject {

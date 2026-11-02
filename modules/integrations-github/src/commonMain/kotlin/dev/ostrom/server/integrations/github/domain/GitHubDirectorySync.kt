@@ -5,14 +5,19 @@ import dev.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
  * Keeps an organization's directory (repositories and teams of its installation, `sync.ts` of the prototype) close to
  * GitHub without calling GitHub on every list: a list reads the stored rows. The first list after an install (or
- * ever) reads GitHub before answering, so the console never shows an empty list of a connected organization; after
+ * ever) reads GitHub before answering, once for simultaneous lists and not again for 30 seconds after a failure
+ * (AUDIT-SECU-2 B4), so the console never shows an empty list of a connected organization; after
  * that, a list older than [FRESH_FOR] answers what is stored and queues one read of GitHub, run by [run] in the
  * background and won by one server only ([GitHubDirectoryRepository.claim]). A read that fails keeps what is stored.
  *
@@ -32,6 +37,11 @@ class GitHubDirectorySync(
     // Bounded: a burst of lists of many organizations drops the extra reads, the next list queues them again.
     private val queue = Channel<GitHubInstallation>(QUEUE_SIZE, BufferOverflow.DROP_LATEST)
 
+    // The first read of each organization, one at a time on this server (AUDIT-SECU-2 B4), and when it last failed.
+    private val guard = Mutex()
+    private val firstReads = mutableMapOf<Uuid, Mutex>()
+    private val failedAt = mutableMapOf<Uuid, Instant>()
+
     /**
      * Makes the organization's directory listable.
      *
@@ -44,19 +54,37 @@ class GitHubDirectorySync(
         val now = clock.now()
         val state = directory.state(orgId)
         if (state?.syncedAt == null) {
+            firstRead(installation)
+        } else if (state.checkedAt < now - FRESH_FOR && directory.claim(orgId, now, now - FRESH_FOR)) {
+            queue.trySend(installation)
+        }
+        return true
+    }
+
+    // Simultaneous first lists of a new organization read GitHub once: the others wait, then find it stored. After a
+    // failure, GitHub is not asked again for [RETRY_AFTER]: a console that keeps reloading does not spend the quota.
+    private suspend fun firstRead(installation: GitHubInstallation) {
+        val orgId = installation.orgId
+        val lock = guard.withLock { firstReads.getOrPut(orgId) { Mutex() } }
+        lock.withLock {
+            if (directory.state(orgId)?.syncedAt != null) return
+            val failed = guard.withLock { failedAt[orgId] }
+            if (failed != null && clock.now() < failed + RETRY_AFTER) throw GitHubUnavailableException()
             val read = try {
                 read(installation)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: GitHubCallException) {
                 logger.warn("github directory not read", mapOf("installation" to installation.installationId), error)
+                guard.withLock { failedAt[orgId] = clock.now() }
                 throw GitHubUnavailableException()
             }
             directory.replace(orgId, read, clock.now())
-        } else if (state.checkedAt < now - FRESH_FOR && directory.claim(orgId, now, now - FRESH_FOR)) {
-            queue.trySend(installation)
+            guard.withLock {
+                failedAt.remove(orgId)
+                firstReads.remove(orgId)
+            }
         }
-        return true
     }
 
     /**
@@ -103,3 +131,4 @@ class GitHubDirectorySync(
 
 // Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
 private val FRESH_FOR = 10.minutes
+private val RETRY_AFTER = 30.seconds
