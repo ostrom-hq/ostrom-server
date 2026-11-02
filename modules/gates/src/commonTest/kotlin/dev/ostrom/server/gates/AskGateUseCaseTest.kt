@@ -312,6 +312,15 @@ class AskGateUseCaseTest {
         assertEquals(GateStatus.UNGATED, view.gate.status, "a pattern may catch every push: the refs decide")
         val master = feature.copy(refs = listOf(PushRef("master", SHA_B)))
         assertEquals(GateStatus.PENDING, asks(agent(), pushAsk(command = "git push").copy(push = master)).gate.status)
+        // The hook asks one class per command: a tag push caught as a push to main takes the tag's gate.
+        val tag = feature.copy(refs = listOf(PushRef("refs/tags/1.4.0", SHA_B)))
+        val tags = askByClass(bench, mapOf("push-main" to node, "push-tag" to node))
+        val tagged = tags(agent(), pushAsk(command = "git push origin 1.4.0").copy(push = tag))
+        assertEquals("push-tag", tagged.gate.subject.actionClass)
+        assertEquals(GateStatus.PENDING, tagged.gate.status)
+        // A push to main whose own gate is a shadow stays a shadow: nothing enforced was read.
+        val shadows = askByClass(bench, mapOf("push-main" to node.copy(enforced = false)))
+        assertEquals(GateMode.SHADOW, shadows(agent(), pushAsk(diff = "other")).gate.mode)
     }
 
     @Test

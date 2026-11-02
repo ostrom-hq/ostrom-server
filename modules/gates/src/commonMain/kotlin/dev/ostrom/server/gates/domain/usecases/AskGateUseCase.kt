@@ -114,24 +114,28 @@ class AskGateUseCaseImpl(
         )
     }
 
-    // Second audit H3: the class is the hook's word, read from its patterns. A push the hook read that sends nothing to
-    // main or master is no push to main, so a pattern may catch every push; a push to main, or a merge the command
-    // shows, takes its own gate when the class claimed has no enforced one.
+    // Second audit H3: the class is the hook's word, read from its patterns, and the hook asks one class per command.
+    // What the server reads itself also asks: refs reaching main or master (a push to main), tag refs (a release
+    // tag), a merge the command shows. The claimed class keeps its gate when it is enforced; else the first enforced
+    // gate of what was read is taken. A push-main ask whose refs never reach main or master is no push to main, so a
+    // pattern may catch every push and let the refs decide.
     private suspend fun gateOf(orgId: Uuid, repo: String?, ask: AskGate, command: String): Pair<String, GateNode?> {
-        val toMain = ask.push?.refs?.any { it.ref.removePrefix(HEADS) in MAIN_BRANCHES }
-        val claimed = if (ask.actionClass == PUSH_MAIN && toMain == false) {
+        val refs = ask.push?.refs.orEmpty().map { it.ref }
+        val read = buildList {
+            if (refs.any { it.removePrefix(HEADS) in MAIN_BRANCHES }) add(PUSH_MAIN)
+            if (refs.any { it.startsWith(TAGS) }) add(PUSH_TAG)
+            if (GateCommands.mentionsMerge(command)) add(MERGE)
+        }
+        val notToMain = ask.actionClass == PUSH_MAIN && ask.push != null && PUSH_MAIN !in read
+        val claimed = if (notToMain) null else nodes.resolve(orgId, repo, ask.actionClass)
+        val backstop = if (claimed?.enforced == true) {
             null
         } else {
-            nodes.resolve(orgId, repo, ask.actionClass)
+            read.filter { it != ask.actionClass }.firstNotNullOfOrNull { cls ->
+                nodes.resolve(orgId, repo, cls)?.takeIf { it.enforced }?.let { cls to it }
+            }
         }
-        val actual = when {
-            toMain == true -> PUSH_MAIN
-            GateCommands.mentionsMerge(command) -> MERGE
-            else -> ask.actionClass
-        }
-        val backstop = actual.takeIf { it != ask.actionClass && claimed?.enforced != true }
-            ?.let { nodes.resolve(orgId, repo, it) }?.takeIf { it.enforced }
-        return if (backstop != null) actual to backstop else ask.actionClass to claimed
+        return backstop ?: (ask.actionClass to claimed)
     }
 
     private fun subjectOf(
@@ -234,6 +238,8 @@ class AskGateUseCaseImpl(
         const val PUSH_MAIN = "push-main"
         const val MERGE = "merge"
         const val HEADS = "refs/heads/"
+        const val TAGS = "refs/tags/"
+        const val PUSH_TAG = "push-tag"
     }
 }
 
