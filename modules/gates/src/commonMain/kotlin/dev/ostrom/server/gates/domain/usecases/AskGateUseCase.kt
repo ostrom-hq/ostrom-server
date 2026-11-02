@@ -117,8 +117,8 @@ class AskGateUseCaseImpl(
     // Second audit H3: the class is the hook's word, read from its patterns, and the hook asks one class per command.
     // What the server reads itself also asks: refs reaching main or master (a push to main), tag refs (a release
     // tag), a merge the command shows. The claimed class keeps its gate when it is enforced; else the first enforced
-    // gate of what was read is taken. A push-main ask whose refs never reach main or master is no push to main, so a
-    // pattern may catch every push and let the refs decide.
+    // gate of what was read is taken. A push-main or push-tag ask whose refs hold no such ref is no such push, so their
+    // patterns may catch every push and let the refs decide.
     private suspend fun gateOf(orgId: Uuid, repo: String?, ask: AskGate, command: String): Pair<String, GateNode?> {
         val refs = ask.push?.refs.orEmpty().map { it.ref }
         val read = buildList {
@@ -126,8 +126,8 @@ class AskGateUseCaseImpl(
             if (refs.any { it.startsWith(TAGS) }) add(PUSH_TAG)
             if (GateCommands.mentionsMerge(command)) add(MERGE)
         }
-        val notToMain = ask.actionClass == PUSH_MAIN && ask.push != null && PUSH_MAIN !in read
-        val claimed = if (notToMain) null else nodes.resolve(orgId, repo, ask.actionClass)
+        val notSo = ask.push != null && ask.actionClass in BY_REFS && ask.actionClass !in read
+        val claimed = if (notSo) null else nodes.resolve(orgId, repo, ask.actionClass)
         val backstop = if (claimed?.enforced == true) {
             null
         } else {
@@ -245,3 +245,6 @@ class AskGateUseCaseImpl(
 
 // Top-level, not in the companion: a private companion property has a getter nothing calls.
 private val MAIN_BRANCHES = setOf("main", "master")
+
+// The classes a push's refs prove or disprove.
+private val BY_REFS = setOf("push-main", "push-tag")

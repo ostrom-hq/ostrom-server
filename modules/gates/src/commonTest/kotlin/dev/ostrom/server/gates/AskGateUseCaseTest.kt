@@ -318,6 +318,14 @@ class AskGateUseCaseTest {
         val tagged = tags(agent(), pushAsk(command = "git push origin 1.4.0").copy(push = tag))
         assertEquals("push-tag", tagged.gate.subject.actionClass)
         assertEquals(GateStatus.PENDING, tagged.gate.status)
+        // A feature push the tag's pattern caught is no tag push either.
+        val featureAsTag = pushAsk(command = "git push", diff = "tag").copy(push = feature, actionClass = "push-tag")
+        val caughtAsTag = tags(agent(), featureAsTag)
+        assertEquals(GateStatus.UNGATED, caughtAsTag.gate.status)
+        // A release made without a push (`gh release create`) keeps the class the hook read.
+        val created = pushAsk(command = "gh release create 1.4.0").copy(push = null, actionClass = "push-tag")
+        val release = tags(agent(), created)
+        assertEquals(GateStatus.PENDING, release.gate.status)
         // A push to main whose own gate is a shadow stays a shadow: nothing enforced was read.
         val shadows = askByClass(bench, mapOf("push-main" to node.copy(enforced = false)))
         assertEquals(GateMode.SHADOW, shadows(agent(), pushAsk(diff = "other")).gate.mode)
