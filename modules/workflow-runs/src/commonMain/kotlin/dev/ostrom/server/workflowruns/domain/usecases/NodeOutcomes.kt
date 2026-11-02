@@ -87,10 +87,14 @@ class NodeOutcomes(
         return reported.copy(outcome = outcome, detail = detail, ref = ref, attestation = CheckAttestation.CI)
     }
 
+    // A last run of another script than the package's proves nothing and never passes (AUDIT-SECU-RUNNER-2 R1).
     private fun ran(declared: ReceiptNode, mine: List<CheckRun>, last: CheckRun): ReceiptNode {
-        val base = declared.copy(attestation = proofs.runner[last.id] ?: CheckAttestation.WORKSTATION_DECLARED)
+        val tampered = last.tampered == true
+        val proof = proofs.runner[last.id]?.takeUnless { tampered }
+        val base = declared.copy(attestation = proof ?: CheckAttestation.WORKSTATION_DECLARED)
         val failed = mine.count { it.exit != 0 }
         val outcome = when {
+            tampered -> "failed: the script run is not the package's"
             last.exit != 0 -> "failed: action blocked (${plural(mine.size, "run")})"
             failed > 0 -> "passed after ${plural(failed, "failure")} that blocked the action"
             else -> "passed"

@@ -144,13 +144,19 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
         ).getOrThrow()
     }
 
-    override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant): Boolean = driver.execute(
-        Statement.create(
+    override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant, orgId: Uuid?): Boolean {
+        val statement = Statement.create(
             "UPDATE identity_api_tokens SET revoked_at = :at WHERE id = :id AND user_id = :user AND revoked_at " +
                 "IS NULL " +
                 "AND kind <> 'AGENT'",
-        ).bind("at", at).bind("id", id).bind("user", userId),
-    ).getOrThrow() == 1L
+        ).bind("at", at).bind("id", id).bind("user", userId)
+        val revoked = if (orgId == null) {
+            driver.execute(statement).getOrThrow()
+        } else {
+            driver.withOrganization(orgId) { it.execute(statement).getOrThrow() }
+        }
+        return revoked == 1L
+    }
 
     override suspend fun rotate(
         userId: Uuid,

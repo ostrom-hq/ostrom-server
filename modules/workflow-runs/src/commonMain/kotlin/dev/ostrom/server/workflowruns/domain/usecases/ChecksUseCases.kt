@@ -33,7 +33,8 @@ interface ReportCheckUseCase {
     suspend operator fun invoke(actor: GateActor, report: ReportCheckRequest): CheckRun
 
     /**
-     * Records a run the server holds a proof of: the same checks as [invoke], with where the run comes from.
+     * Records a run the server holds a proof of: the same checks as [invoke], with where the run comes from. The
+     * proof holds only when the run's script is the package's (its `scriptSha`): any other run is the workstation's.
      *
      * @param actor The session's agent, as the runner of its cloud session reports for it ([ReportRunnerCheckUseCase]).
      * @param report What was run.
@@ -98,7 +99,10 @@ class ReportCheckUseCaseImpl(
             dev = if (session == null) SessionAccess.person(actor) else session.dev,
             repo = session?.repo ?: pack.envelope.repo,
         )
-        repository.addCheck(actor.orgId, run, attestation)
+        // A proof holds for the package's own script only: the runner runs the text the hook sends, so a run of any
+        // other text, or of a text it did not hash, is no more than declared (AUDIT-SECU-RUNNER-2 R1).
+        val proof = if (report.scriptSha == script.sha256) attestation else CheckAttestation.WORKSTATION_DECLARED
+        repository.addCheck(actor.orgId, run, proof)
         return run
     }
 
