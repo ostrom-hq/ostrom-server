@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules.domain.models
 
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -74,5 +75,6 @@ data class DecisionQuery(
  *
  * @property orgId The organization.
  * @property name The person's login, written in the decision and its receipt.
+ * @property actor Their credential, written with each change in the organization's audit log (`rule.*`).
  */
-data class Decider(val orgId: Uuid, val name: String)
+data class Decider(val orgId: Uuid, val name: String, val actor: AuthenticatedPrincipal)

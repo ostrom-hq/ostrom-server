@@ -91,5 +91,5 @@ internal suspend fun ApplicationCall.decider(callers: CallerResolver, actors: Ga
     val caller = requireCaller(callers)
     caller.requireAdmin()
     val name = actors.resolve(principal)?.personId ?: caller.memberId.toString()
-    return Decider(caller.orgId, name)
+    return Decider(caller.orgId, name, principal)
 }
