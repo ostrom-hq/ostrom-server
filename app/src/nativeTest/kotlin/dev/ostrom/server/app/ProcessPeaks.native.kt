@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-@file:OptIn(ExperimentalForeignApi::class, NativeRuntimeApi::class)
+@file:OptIn(ExperimentalForeignApi::class, NativeRuntimeApi::class, ExperimentalStdlibApi::class)
 
 package dev.ostrom.server.app
 
