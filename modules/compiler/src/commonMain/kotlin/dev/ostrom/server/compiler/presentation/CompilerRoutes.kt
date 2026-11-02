@@ -12,6 +12,7 @@ import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.NullsKept
 import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.kernel.http.withNulls
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
@@ -23,6 +24,7 @@ import io.ktor.server.routing.Route
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 /**
  * The packages, workflows and gates catalogue routes of the contract. Every route is authenticated and scoped to the
@@ -162,8 +164,9 @@ private fun statusOf(value: String): WorkflowStatus =
         ?: throw OstromException(ErrorKind.INVALID_REQUEST, "Unknown workflow status.")
 
 // The document as saved, with its version, author and date: `version` is what a save sends back as `expectedVersion`.
+// An edge's `to` is written `null` when the document left it out (an edge that ends the run): the contract requires it.
 private fun documentOf(stored: StoredWorkflow): JsonObject = JsonObject(
-    stored.doc.raw + mapOf(
+    stored.doc.raw.withNulls("edges.*.to").jsonObject + mapOf(
         "version" to JsonPrimitive(stored.version),
         "updatedBy" to JsonPrimitive(stored.updatedBy),
         "updatedAt" to JsonPrimitive(stored.updatedAt.toString()),

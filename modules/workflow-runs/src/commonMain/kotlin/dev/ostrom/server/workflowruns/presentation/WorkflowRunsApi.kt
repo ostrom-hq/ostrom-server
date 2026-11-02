@@ -3,6 +3,7 @@ package dev.ostrom.server.workflowruns.presentation
 
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
+import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -85,7 +86,10 @@ data class WorkflowReceiptRequestBody(val digest: String, val agent: String? = n
  * @property next The id to ask the next page before, or null on the last page.
  */
 @Serializable
-data class ChecksPage(val items: List<CheckRun>, val next: String? = null)
+data class ChecksPage(val items: List<@Serializable(with = CheckRunAnswer::class) CheckRun>, val next: String? = null)
+
+/** A check run writes `exit` as `null` for a run that did not end: required and nullable in the contract. */
+object CheckRunAnswer : NullsKept<CheckRun>(CheckRun.serializer(), "exit")
 
 /**
  * A page of notifications.
