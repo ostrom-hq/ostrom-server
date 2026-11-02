@@ -250,4 +250,17 @@ val OrgsMigrations: List<SchemaMigration> =
             name = "orgs_row_level_security_forced",
             sql = FORCED_SQL.trimIndent(),
         ),
+        // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+        // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+        SchemaMigration(
+            version = 5,
+            name = "orgs_router_policies_inside_functions_only",
+            sql = """
+                ALTER POLICY orgs_organizations_router ON orgs_organizations USING (current_user = 'ostrom_router')
+                    WITH CHECK (current_user = 'ostrom_router');
+                ALTER POLICY orgs_members_router ON orgs_members USING (current_user = 'ostrom_router')
+                    WITH CHECK (current_user = 'ostrom_router');
+                ALTER POLICY orgs_invitations_router ON orgs_invitations USING (current_user = 'ostrom_router')
+            """.trimIndent(),
+        ),
     )

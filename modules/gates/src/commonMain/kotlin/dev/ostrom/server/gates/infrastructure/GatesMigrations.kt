@@ -133,5 +133,14 @@ val GatesMigrations: List<SchemaMigration> = listOf(
     ),
     // A yes is released once (AUDIT-GATES-2 M2): no more reserve, launch, release, relaunch until it expires.
     SchemaMigration(5, "gates_released_once", "ALTER TABLE gates_gates ADD COLUMN released_at TIMESTAMPTZ"),
+    // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+    // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+    SchemaMigration(
+        version = 6,
+        name = "gates_router_policies_inside_functions_only",
+        sql = """
+            ALTER POLICY gates_gates_router ON gates_gates USING (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
 )
 
