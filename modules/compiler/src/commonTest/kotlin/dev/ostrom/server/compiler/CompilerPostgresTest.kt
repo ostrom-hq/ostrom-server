@@ -38,7 +38,6 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceAudit
 import dev.ostrom.server.kernel.auth.GovernanceScopes
-import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -143,13 +142,6 @@ class CompilerPostgresTest {
             single<ConfigSource> { LayeredConfigSource(listOf(MapConfigSource(values), EnvironmentConfigSource())) }
         }
         sources?.let { fixed -> single<CompilerSources> { fixed } }
-    }
-
-    private fun roleOf(id: String): OrgRole = when (id) {
-        "member" -> OrgRole.MEMBER
-        "approver" -> OrgRole.APPROVER
-        "admin" -> OrgRole.ADMIN
-        else -> OrgRole.OWNER
     }
 
     private fun compilerTest(
