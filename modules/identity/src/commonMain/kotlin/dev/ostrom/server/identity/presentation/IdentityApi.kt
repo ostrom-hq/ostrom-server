@@ -2,6 +2,7 @@
 package dev.ostrom.server.identity.presentation
 
 import io.ktor.resources.Resource
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // The identity API. These classes move to ostrom-core (the API contract) once it is published (docs/MODULES.md);
@@ -98,15 +99,30 @@ class SignInApi {
     @Resource("{provider}")
     class Provider(val parent: SignInApi = SignInApi(), val provider: String) {
         /**
-         * `GET /api/v1/auth/{provider}/start?redirect=`: sends the browser to the provider's consent page.
+         * `GET /api/v1/auth/{provider}/start?redirect=`: sends the browser to the provider's consent page. The phone
+         * app adds `redirect_uri` (its deep link), `state` and a PKCE `code_challenge` with
+         * `code_challenge_method=S256`: the callback then returns a one-time code to the app (S2-24).
          *
          * @property parent The provider resource.
          * @property redirect The console path to return to.
          * @property reauth Whether the person signs in again before a yes (S2-54): the provider must ask again.
+         * @property redirectUri The app's deep link (`ostrom://auth/callback`).
+         * @property state The app's state, returned with the code.
+         * @property codeChallenge The app's PKCE challenge.
+         * @property codeChallengeMethod `S256`.
          */
+        @Suppress("LongParameterList") // One property per query parameter of the contract's two sign-in starts.
         @Serializable
         @Resource("start")
-        class Start(val parent: Provider, val redirect: String? = null, val reauth: Boolean = false)
+        class Start(
+            val parent: Provider,
+            val redirect: String? = null,
+            val reauth: Boolean = false,
+            @SerialName("redirect_uri") val redirectUri: String? = null,
+            val state: String? = null,
+            @SerialName("code_challenge") val codeChallenge: String? = null,
+            @SerialName("code_challenge_method") val codeChallengeMethod: String? = null,
+        )
 
         /**
          * `GET /api/v1/auth/{provider}/callback`: where the provider sends the browser back.
@@ -254,7 +270,7 @@ data class ProfileResponse(
  *
  * @property id The token id.
  * @property name Its label.
- * @property kind `personal` or `cli`.
+ * @property kind `personal`, `cli` or `mobile` (the phone app's).
  * @property scopes What it allows.
  * @property hint The first characters of its secret.
  * @property createdAt When it was issued (ISO 8601).

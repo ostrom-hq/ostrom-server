@@ -413,13 +413,8 @@ class GatesPostgresTest {
     @Test
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = gatesTest { server ->
         server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
-        // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
-        server.driver.execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
-        server.driver.execute("GRANT SELECT, INSERT ON gates_gates, gates_requests TO ostrom_rls_probe").getOrThrow()
+        // The test server's driver is the serving role, as in production: row level security applies to it.
         val counts = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             val none = fetchAll("SELECT COUNT(*) AS n FROM gates_gates").getOrThrow().first().get("n").asString()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
@@ -431,7 +426,6 @@ class GatesPostgresTest {
         }
         assertEquals(listOf("0", "0", "1"), counts, "No org set: nothing; org B: nothing; org A: its gate")
         val forged = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
             execute(
@@ -503,6 +497,44 @@ class GatesPostgresTest {
             launchIds = joiner.launchIds,
         )
         assertEquals(joined, repository.get(orgA, gate.id))
+    }
+
+    @Test
+    fun theApproversReadCapsEachGateNotTheWholePage() = gatesTest { server ->
+        val repository = server.koin.get<GatesRepository>()
+        val at = Instant.parse("2026-10-30T02:00:00Z")
+        // Ordered by id, the crowded gate comes first: one limit for the whole read would leave the next gate out.
+        val crowded = Uuid.parse("00000000-0000-0000-0000-000000000001")
+        val next = Uuid.parse("00000000-0000-0000-0000-000000000002")
+        fun gateOf(id: Uuid) = Gate(
+            id = id,
+            orgId = orgA,
+            key = "k-$id",
+            subject = GateSubject(repo = "o/r", actionClass = "push-main", command = "git push", scope = "session:s"),
+            node = null,
+            label = "Push",
+            mode = GateMode.UNGATED,
+            status = GateStatus.PENDING,
+            askedBy = listOf("lyes"),
+            askedVia = setOf(AskedVia.HOOK),
+            sessionIds = listOf(session),
+            shownDigest = "s",
+            evidence = emptyList(),
+            createdAt = at,
+        )
+        fun requestsOf(gate: Uuid, count: Int) = (0 until count).map {
+            ApprovalRequest(Uuid.random(), gate, orgA, "rev-$it", RequestStatus.PENDING, createdAt = at)
+        }
+        repository.transaction {
+            insertGate(gateOf(crowded))
+            insertGate(gateOf(next))
+            insertRequests(requestsOf(crowded, 101) + requestsOf(next, 2))
+        }
+
+        val approvers = repository.approversOf(orgA, listOf(crowded, next))
+        assertEquals((0 until 100).map { "rev-$it" }, approvers.getValue(crowded), "100 at most, in their order")
+        assertEquals(listOf("rev-0", "rev-1"), approvers.getValue(next))
+        assertEquals(emptyMap(), repository.approversOf(orgB, listOf(crowded, next)))
     }
 
     @Test
