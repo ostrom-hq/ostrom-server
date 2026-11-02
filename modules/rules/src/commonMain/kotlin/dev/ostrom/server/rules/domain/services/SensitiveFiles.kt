@@ -6,7 +6,7 @@ package dev.ostrom.server.rules.domain.services
  * runs with the repository's secrets, the infrastructure, and the database migrations.
  */
 object SensitiveFiles {
-    private const val MAX_PREFIXES = 10
+    private const val MAX_PREFIXES = 20
     private const val MAX_EVIDENCE = 5
 
     private val secretNames = setOf(
@@ -34,10 +34,12 @@ object SensitiveFiles {
         return AreaKind.entries.mapNotNull { kind ->
             val hits = found.filter { it.first.first == kind }
             hits.takeIf { it.isNotEmpty() }?.let {
+                val prefixes = covering(it.map { hit -> hit.first.second })
                 SensitiveArea(
                     kind = kind,
-                    prefixes = covering(it.map { hit -> hit.first.second }).take(MAX_PREFIXES),
+                    prefixes = prefixes.take(MAX_PREFIXES),
                     evidence = it.map { hit -> hit.second }.sorted().take(MAX_EVIDENCE),
+                    omitted = prefixes.size - minOf(prefixes.size, MAX_PREFIXES),
                 )
             }
         }
@@ -47,13 +49,14 @@ object SensitiveFiles {
     private fun classify(path: String): Pair<AreaKind, String>? {
         val segments = path.split('/')
         val name = segments.last()
+        // A file at the root is its own prefix: an empty one would gate nothing.
         val folder = path.dropLast(name.length)
         return secret(path, name)
             ?: ci(path, name)
             ?: directory(segments, migrationDirs, AreaKind.MIGRATIONS)
-            ?: (AreaKind.MIGRATIONS to folder).takeIf { flyway.matches(name) }
+            ?: (AreaKind.MIGRATIONS to folder.ifEmpty { path }).takeIf { flyway.matches(name) }
             ?: directory(segments, infraDirs, AreaKind.INFRA)
-            ?: (AreaKind.INFRA to folder).takeIf { name.endsWith(".tf") }
+            ?: (AreaKind.INFRA to folder.ifEmpty { path }).takeIf { name.endsWith(".tf") }
     }
 
     private fun secret(path: String, name: String): Pair<AreaKind, String>? {

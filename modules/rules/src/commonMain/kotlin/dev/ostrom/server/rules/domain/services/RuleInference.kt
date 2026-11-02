@@ -121,7 +121,10 @@ object RuleInference {
 
     private fun area(context: RepositoryContext, area: SensitiveArea): RuleProposal {
         val spec = areas.getValue(area.kind)
-        val approvers = CodeOwners.logins(CodeOwners.ownersOf(context.owners, area.evidence.first()))
+        // Only the people who own every file found: a yes from one team never opens another team's files.
+        val approvers = area.evidence
+            .map { CodeOwners.logins(CodeOwners.ownersOf(context.owners, it)) }
+            .reduce { common, owners -> common.filter { it in owners } }
         val yes = if (approvers.isEmpty()) "" else " from " + approvers.joinToString(", ") { "@$it" }
         val sourceKind = if (area.kind == AreaKind.CI) "ci" else RepositoryContext.FILE
         return RuleProposal(
@@ -131,7 +134,7 @@ object RuleInference {
             group = area.kind.group,
             scope = area.prefixes.map { "${context.name}/$it" },
             sources = area.evidence.map { context.file(it, sourceKind) },
-            why = spec.why(context.branch),
+            why = spec.why(context.branch) + omitted(area.omitted),
             strength = RuleStrength.REQUIRED,
             confidence = spec.confidence,
             gate = RuleGate(
@@ -149,6 +152,10 @@ object RuleInference {
             ),
         )
     }
+
+    // Said when a kind has more places than a gate lists: the others are not gated yet.
+    private fun omitted(count: Int): String =
+        if (count == 0) "" else " ${counted(count, "more place")} not listed here and not gated: accept, then add them."
 
     /**
      * A proposal of one repository, without sources, reason or gate yet.

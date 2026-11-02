@@ -106,7 +106,7 @@ class AnalysisEnginePostgresTest {
         assertEquals("ready", server.state().phase)
         val after = server.call("GET", "/api/v1/rules/$branch", "admin-a").body<RuleDto>()
         assertEquals(accepted, after, "A new run leaves the accepted rule alone")
-        assertEquals(14, server.proposals().size, "The other proposals are refreshed, not duplicated")
+        assertEquals(14, server.proposals().size, "The other proposals stay, none twice")
     }
 
     @Test

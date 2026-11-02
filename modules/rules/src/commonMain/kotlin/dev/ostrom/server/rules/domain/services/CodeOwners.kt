@@ -6,7 +6,7 @@ package dev.ostrom.server.rules.domain.services
  * the gitignore rules. Also writes the path patterns a gate matches, in a syntax every engine reads alike.
  */
 object CodeOwners {
-    private const val MAX_ENTRIES = 50
+    private const val MAX_ENTRIES = 500
     private val spaces = Regex("\\s+")
 
     /**

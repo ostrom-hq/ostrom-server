@@ -167,12 +167,14 @@ class RepositoryFactsTest {
     }
 
     @Test
-    fun anAreaKeepsTenFoldersAndFiveFilesAtMost() {
-        val paths = (1..12).map { "svc$it/migrations/1.sql" }
+    fun anAreaKeepsTwentyFoldersAndFiveFilesAtMostAndCountsTheOthers() {
+        val paths = (1..25).map { "svc$it/migrations/1.sql" }
         val area = SensitiveFiles.areas(paths).single()
-        assertEquals(10, area.prefixes.size)
+        assertEquals(20, area.prefixes.size)
+        assertEquals(5, area.omitted)
         assertEquals(5, area.evidence.size)
         assertEquals("svc1/migrations/1.sql", area.evidence.first())
+        assertEquals(0, SensitiveFiles.areas(paths.take(20)).single().omitted)
     }
 
     @Test
@@ -194,7 +196,7 @@ class RepositoryFactsTest {
             ),
             CodeOwners.parse(text),
         )
-        assertEquals(50, CodeOwners.parse((1..60).joinToString("\n") { "/d$it/ @x" }).size)
+        assertEquals(500, CodeOwners.parse((1..600).joinToString("\n") { "/d$it/ @x" }).size)
     }
 
     @Test

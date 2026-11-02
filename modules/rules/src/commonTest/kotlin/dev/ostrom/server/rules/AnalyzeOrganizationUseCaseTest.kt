@@ -113,7 +113,7 @@ class AnalyzeOrganizationUseCaseTest {
     }
 
     @Test
-    fun aNewRunRefreshesUndecidedProposalsAndNeverTouchesTheTeamsRules() = runTest {
+    fun aNewRunProposesOnlyWhatIsMissingAndNeverRewritesARule() = runTest {
         val build = "rule_learned_2ba325693cbd92ee1184b581"
         val branch = "rule_learned_96cd39a4b8216a1472494c1f"
         val ci = "rule_learned_6738541d6607a6107137544c"
@@ -121,8 +121,8 @@ class AnalyzeOrganizationUseCaseTest {
         val accepted = RulesFixtures.rule(branch, status = RuleStatus.ACCEPTED).copy(decidedBy = "lyes")
         val rejected = RulesFixtures.rule(ci, status = RuleStatus.REJECTED)
         val written = RulesFixtures.rule(secrets).copy(origin = "written")
-        val stale = RulesFixtures.rule(build).copy(statement = "Old words.")
-        listOf(accepted, rejected, written, stale).forEach { rules.rules[org to it.id] = it }
+        val edited = RulesFixtures.rule(build).copy(scope = listOf("api/src/"), reviewBy = "2027-01-28")
+        listOf(accepted, rejected, written, edited).forEach { rules.rules[org to it.id] = it }
         clock.advance(1.days)
 
         analyse(RepositoryFixtures.api)
@@ -130,10 +130,9 @@ class AnalyzeOrganizationUseCaseTest {
         assertEquals(accepted, rules.rules[org to branch], "Decided: the team's")
         assertEquals(rejected, rules.rules[org to ci], "Rejected: not proposed again")
         assertEquals(written, rules.rules[org to secrets], "Written by the team")
-        val refreshed = rules.rules.getValue(org to build)
-        assertEquals("In api, check a change with `./gradlew check` before pushing it.", refreshed.statement)
-        assertEquals(RulesFixtures.epoch, refreshed.foundAt, "Found when first found")
-        assertEquals(clock.now(), refreshed.updatedAt)
+        assertEquals(edited, rules.rules[org to build], "Still proposed, but a person may have edited it")
+        val added = rules.rules.getValue(org to "rule_learned_4316fafe7fd948d4dcd81406")
+        assertEquals(clock.now(), added.foundAt, "The missing ones are proposed")
         assertEquals(9, rules.rules.size)
     }
 
@@ -253,5 +252,6 @@ class AnalyzeOrganizationUseCaseTest {
             "The infrastructure rule's scope is too long; npm and the branch stay",
         )
         assertEquals(AnalysisRun.READY, recorded()?.phase)
+        assertEquals(listOf(LogLevel.WARN to "analysis left out a proposal"), logger.events)
     }
 }

@@ -37,8 +37,14 @@ enum class AreaKind(val group: String) {
  * @property kind What they are.
  * @property prefixes The directories (ending with `/`) or files that hold them, the shortest that cover them.
  * @property evidence A few of the files, as found.
+ * @property omitted How many more prefixes were found than listed.
  */
-data class SensitiveArea(val kind: AreaKind, val prefixes: List<String>, val evidence: List<String>)
+data class SensitiveArea(
+    val kind: AreaKind,
+    val prefixes: List<String>,
+    val evidence: List<String>,
+    val omitted: Int = 0,
+)
 
 /**
  * One line of a CODEOWNERS file.

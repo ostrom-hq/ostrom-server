@@ -144,7 +144,7 @@ class RuleInferenceTest {
                 gate = RuleGate(
                     actions = listOf(
                         RuleGateAction(
-                            "edit-owned-src-main-resources-db",
+                            "edit-owned-src-main-resources-db-8ef209f0",
                             "Change `/src/main/resources/db/`",
                             listOf("(^|/)src/main/resources/db/.*$"),
                             listOf("api"),
@@ -158,7 +158,7 @@ class RuleInferenceTest {
             rules["owners:/src/main/resources/db/:api"],
         )
         val github = rules.getValue("owners:.github/:api").gate?.actions?.single()
-        assertEquals("edit-owned-github", github?.cls)
+        assertEquals("edit-owned-github-dbee63d8", github?.cls)
         assertEquals(listOf("(^|/)\\.github/.*$"), github?.patterns)
     }
 
@@ -346,6 +346,53 @@ class RuleInferenceTest {
         assertEquals(emptyList(), rules.getValue("branch:site").gate?.approvers)
 
         val required = unprotected.copy(protection = BranchProtection(true, 1, true, emptyList(), false))
-        assertEquals("edit-owned-root", infer(required).getValue("owners:/:site").gate?.actions?.single()?.cls)
+        assertEquals("edit-owned-root-8a5edab2", infer(required).getValue("owners:/:site").gate?.actions?.single()?.cls)
+    }
+
+    @Test
+    fun theLastEntryOfAPatternNamesItsOwnersAndEachPatternGetsItsOwnClass() {
+        val text = "/docs/ @old\n*.sql @dba\n/sql/ @dba\n/docs/ @mia\n"
+        val site = RepositoryFixture(
+            RepositoryFixtures.ref("site"),
+            listOf("CODEOWNERS", "docs/a.md", "sql/a.sql"),
+            mapOf("CODEOWNERS" to text),
+            BranchProtection(true, 1, true, emptyList(), false),
+        )
+        val rules = infer(site)
+        assertEquals(listOf("mia"), rules.getValue("owners:/docs/:site").gate?.approvers, "GitHub asks the last entry")
+        assertEquals(
+            listOf("edit-owned-sql-3285449c", "edit-owned-sql-bb0251d5"),
+            listOf("owners:*.sql:site", "owners:/sql/:site").map { rules.getValue(it).gate?.actions?.single()?.cls },
+            "Two patterns never share a class, whose patterns the gates catalogue keeps once",
+        )
+    }
+
+    @Test
+    fun anAreaOwnedByTwoTeamsNamesNoApproverAndSaysWhatItDoesNotList() {
+        val text = "/infra/ @platform\n/helm/ @sre\n"
+        val paths = listOf("CODEOWNERS", "infra/a.yaml", "helm/b.yaml") + (1..21).map { "svc$it/main.tf" }
+        val ops = RepositoryFixture(RepositoryFixtures.ref("ops"), paths, mapOf("CODEOWNERS" to text))
+        val infra = infer(ops).getValue("area:ops:infra")
+        assertEquals(emptyList(), infra.gate?.approvers, "Neither team approves the other's files")
+        assertEquals(null, infra.gate?.reason)
+        assertEquals(20, infra.scope.size)
+        assertEquals("These files describe what runs in production. 3 more places not listed here and not gated: " +
+            "accept, then add them.", infra.why)
+        val one = RepositoryFixture(RepositoryFixtures.ref("one"), listOf("helm/a.yaml", "x/main.tf", "y/main.tf"))
+        val few = infer(one.copy(paths = one.paths + (1..18).map { "s$it/main.tf" })).getValue("area:one:infra")
+        assertEquals(
+            "These files describe what runs in production. 1 more place not listed here and not gated: accept, then " +
+                "add them.",
+            few.why,
+        )
+    }
+
+    @Test
+    fun aRootTerraformOrFlywayFileIsItsOwnGatedPath() {
+        val root = RepositoryFixture(RepositoryFixtures.ref("root"), listOf("main.tf", "V1__init.sql"))
+        val rules = infer(root)
+        assertEquals(listOf("root/main.tf"), rules.getValue("area:root:infra").scope)
+        assertEquals(listOf("(^|/)main\\.tf$"), rules.getValue("area:root:infra").gate?.actions?.single()?.patterns)
+        assertEquals(listOf("root/V1__init.sql"), rules.getValue("area:root:migrations").scope)
     }
 }

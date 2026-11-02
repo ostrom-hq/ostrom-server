@@ -6,7 +6,7 @@ package dev.ostrom.server.rules.domain.models
  * (`PATCH /rules/{id}`, `/rules/bulk`); a proposal is never a decision and signs nothing.
  *
  * @property key What it was found from (`area:api:ci`): the same finding in a later run gives the same key, so the
- *   same rule is refreshed rather than proposed twice.
+ *   finding is never proposed twice.
  * @property statement What it says.
  * @property output `rule`, `gate`, `check` or `note`.
  * @property group The display group.

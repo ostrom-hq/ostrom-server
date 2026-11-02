@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules.domain.services
 
+import dev.ostrom.core.receipts.Digests
 import dev.ostrom.server.rules.domain.models.BranchProtection
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
@@ -23,7 +24,8 @@ object ReviewInference {
     private const val UNREADABLE = 0.5
     private const val REVIEWS = "Reviews"
     private const val BRANCHES = "Branches"
-    private const val SLUG = 60
+    private const val SLUG = 48
+    private const val DIGEST = 8
     private const val PUSH_MAIN = "push-main"
     private const val PUSH_LABEL = "Push to the main branch"
     private val mainBranches = setOf("main", "master")
@@ -38,7 +40,12 @@ object ReviewInference {
     fun owners(context: RepositoryContext): List<RuleProposal> {
         val path = context.codeownersPath ?: return emptyList()
         val required = context.snapshot.protection?.codeOwnerReviews == true
-        return context.owners.filter { it.owners.isNotEmpty() }.distinctBy { it.pattern }.take(MAX_OWNER_RULES).map {
+        // GitHub applies the last entry of a pattern: the last ones are kept.
+        val entries = context.owners.filter { it.owners.isNotEmpty() }
+            .asReversed()
+            .distinctBy { it.pattern }
+            .asReversed()
+        return entries.takeLast(MAX_OWNER_RULES).map {
             val named = it.owners.joinToString(", ")
             val base = RuleInference.proposal(context, "owners:${it.pattern}", "", "rule").copy(
                 group = REVIEWS,
@@ -83,9 +90,12 @@ object ReviewInference {
             reason = "code owners in $path",
         )
 
-    // One class per owned pattern: the gates catalogue keeps one set of patterns per class and repository.
-    private fun ownedClass(pattern: String): String =
-        "edit-owned-" + pattern.lowercase().replace(nonWord, "-").trim('-').take(SLUG).trimEnd('-').ifEmpty { "root" }
+    // One class per owned pattern: the gates catalogue keeps one set of patterns per class and repository, so the
+    // pattern's digest keeps `*.sql` and `/sql/` (or `/Docs/` and `/docs/`) apart.
+    private fun ownedClass(pattern: String): String {
+        val slug = pattern.lowercase().replace(nonWord, "-").trim('-').take(SLUG).trimEnd('-').ifEmpty { "root" }
+        return "edit-owned-$slug-" + Digests.sha256Hex(pattern.encodeToByteArray()).take(DIGEST)
+    }
 
     /**
      * The rule of the default branch: never push to it when GitHub protects it, a yes before a push when it does not

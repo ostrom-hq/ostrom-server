@@ -51,8 +51,8 @@ interface AnalyzeOrganizationUseCase {
  * [AnalyzeOrganizationUseCase] on the runs, the rules and the repository reader.
  *
  * Each proposal is stored as a `proposed`, `learned` rule under an id derived from what it was found from: a later
- * run refreshes a proposal still undecided, and never touches a rule the team decided, rejected or wrote. The team
- * accepts a proposal like any rule, which signs the decision.
+ * run proposes only what is not stored yet and never rewrites a rule, even one still proposed: a person may have
+ * edited it. The team accepts a proposal like any rule, which signs the decision.
  *
  * @param analyses The runs.
  * @param rules The rules.
@@ -95,7 +95,7 @@ class AnalyzeOrganizationUseCaseImpl(
         }
         if (snapshots.isEmpty()) return fail(run, GITHUB, UNREAD)
         advance(run, PROPOSE, READ_SHARE)
-        propose(run.orgId, snapshots.flatMap(RuleInference::infer))
+        propose(run, snapshots.flatMap(RuleInference::infer))
         advance(run, AnalysisRun.READY, 1.0, snapshots.map(::item))
     }
 
@@ -115,26 +115,22 @@ class AnalyzeOrganizationUseCaseImpl(
         return RepositorySnapshot(repo, tree, files, reader.protection(orgId, repo))
     }
 
-    private suspend fun propose(orgId: Uuid, proposals: List<RuleProposal>) {
+    // A proposal is written once: a rule that exists (proposed, edited, decided or written by the team) is the
+    // team's from then on, and a new run never rewrites it.
+    private suspend fun propose(run: AnalysisRun, proposals: List<RuleProposal>) {
         val now = clock.now()
-        val stored = proposals.distinctBy { it.key }.take(MAX_PROPOSALS).mapNotNull { checked(orgId, it, now) }
-        rules.transaction(orgId) {
+        val stored = proposals.distinctBy { it.key }.take(MAX_PROPOSALS).mapNotNull { checked(run, it, now) }
+        rules.transaction(run.orgId) {
             for (rule in stored) {
-                val current = lockRule(rule.id)
-                when {
-                    current == null -> insertRule(rule)
-                    // Still undecided and still ours: refreshed. Decided, rejected or written: the team's.
-                    current.status == RuleStatus.PROPOSED && current.origin == LEARNED ->
-                        updateRule(rule.copy(foundAt = current.foundAt))
-                }
+                if (lockRule(rule.id) == null) insertRule(rule)
             }
         }
     }
 
     // The same bounds as a rule the console writes; a finding past them (a path of 300 characters) is left out.
-    private fun checked(orgId: Uuid, proposal: RuleProposal, now: Instant): Rule? = try {
+    private fun checked(run: AnalysisRun, proposal: RuleProposal, now: Instant): Rule? = try {
         Rule(
-            orgId = orgId,
+            orgId = run.orgId,
             id = learnedId(proposal.key),
             statement = RuleChecks.statement(proposal.statement),
             output = RuleChecks.output(proposal.output),
@@ -154,7 +150,8 @@ class AnalyzeOrganizationUseCaseImpl(
             gate = proposal.gate?.let(RuleChecks::gate),
             updatedAt = now,
         )
-    } catch (_: InvalidRuleException) {
+    } catch (error: InvalidRuleException) {
+        logger.warn("analysis left out a proposal", mapOf("run_id" to run.id, "key" to proposal.key), error)
         null
     }
 
