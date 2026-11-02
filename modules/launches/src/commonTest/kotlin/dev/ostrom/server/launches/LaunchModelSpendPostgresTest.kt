@@ -2,6 +2,8 @@
 package dev.ostrom.server.launches
 
 import dev.ostrom.server.budgets.BudgetsModule
+import dev.ostrom.server.budgets.domain.BudgetsRepository
+import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.budgets.presentation.MyBudgetResponse
 import dev.ostrom.server.gateway.GatewayModule
 import dev.ostrom.server.identity.domain.ApiToken
@@ -54,6 +56,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
@@ -192,6 +195,103 @@ class LaunchModelSpendPostgresTest {
             assertEquals(HttpStatusCode.OK, receipt.status, receipt.bodyAsText())
             val signed = Json.parseToJsonElement(receipt.bodyAsText()).jsonObject
             assertEquals(usd.toString(), signed.getValue("costUsd").jsonPrimitive.content, "Signed into the receipt")
+        }
+    }
+
+    /** One model call of the launch's agent, as Claude Code sends it. */
+    private suspend fun TestServer.infer(agentToken: String, maxTokens: Int): HttpResponse =
+        client.post("/api/v1/inference/v1/messages") {
+            header("x-api-key", agentToken)
+            val body = """{"model":"claude-opus-5","stream":true,"max_tokens":$maxTokens}"""
+            setBody(TextContent(body, ContentType.Application.Json))
+        }
+
+    private suspend fun errorOf(response: HttpResponse): Pair<String, String> {
+        val error = Json.parseToJsonElement(response.bodyAsText()).jsonObject.getValue("error").jsonObject
+        return error.getValue("type").jsonPrimitive.content to error.getValue("message").jsonPrimitive.content
+    }
+
+    @Test
+    fun pastItsBudgetAnAgentsModelCallIsRefusedWithA429ItCanRead() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val ada = owner("ada")
+            // Each call of the fake Anthropic costs 7 200 µ$ (1 200 in, 300 read from the cache, 42 out).
+            koin.get<BudgetsRepository>().putSharedLimit(ada.orgId, SharedLimit.ORG, 8_000, now)
+            val created = send(ada.cliToken, "/api/v1/launches", """{"repo":"acme/api","agent":"claude-code"}""")
+            val launch = created.body<LaunchResponse>()
+            val agent = launch.agentToken
+            val session = """{"id":"s-2","agent":"claude-code","repo":"acme/api","launchId":"${launch.launchId}"}"""
+            assertEquals(HttpStatusCode.OK, send(agent, "/api/v1/sessions", session).status)
+
+            // 100 output tokens hold 2 500 µ$ and the 56 characters of the body 182 more: 2 682, room under 8 000.
+            val first = infer(agent, maxTokens = 100)
+            assertEquals(HttpStatusCode.OK, first.status, first.bodyAsText())
+            assertEquals(events, first.bodyAsText())
+
+            val tooLarge = infer(agent, maxTokens = 100)
+            assertEquals(HttpStatusCode.TooManyRequests, tooLarge.status, tooLarge.bodyAsText())
+            val (type, message) = errorOf(tooLarge)
+            assertEquals("rate_limit_error", type, "Anthropic's shape, which Claude Code reads")
+            assertEquals(
+                "Budget left too low for this call: \$0.0008 is left of your organization's \$0.008 monthly limit " +
+                    "and this call may cost up to \$0.002682. Lower its max_tokens, or retry once the calls in " +
+                    "flight finish.",
+                message,
+            )
+            assertEquals(null, tooLarge.headers["retry-after"], "A smaller call may go now")
+
+            // One output token holds 25 µ$, and the body 175: 200 µ$, it goes. The provider then bills 7 200, past the
+            // limit: the gap the reserve does not cover (an input larger than its estimate), which the PR states.
+            assertEquals(HttpStatusCode.OK, infer(agent, maxTokens = 1).status)
+            val reached = infer(agent, maxTokens = 1)
+            assertEquals(HttpStatusCode.TooManyRequests, reached.status, reached.bodyAsText())
+            assertTrue(errorOf(reached).second.startsWith("Monthly budget reached: "), errorOf(reached).second)
+            assertTrue(reached.headers["retry-after"]!!.toLong() > 0, "Retry when the month resets")
+
+            val events = koin.get<UsageRepository>().list(ada.orgId, null, null, 10)
+            assertEquals(
+                listOf("budget_exhausted", "budget_insufficient", "ok", "ok"),
+                events.map { it.outcome }.sorted(),
+                "Every call is in the ledger, the refused ones at no cost",
+            )
+            assertEquals(14_400, events.sumOf { it.costMicros })
+            val holds = database.superuser.fetchAll("SELECT COUNT(*) AS n FROM usage_holds").getOrThrow()
+            assertEquals("0", holds.first().get("n").asString(), "Every hold is settled by its call's record")
+        }
+    }
+
+    @Test
+    fun theSpendTheProviderBilledBlocksTheNextCall() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val bob = owner("bob")
+            // A personal limit of 5 000 µ$: one call of the fake Anthropic bills 7 200.
+            koin.get<BudgetsRepository>().putMemberLimit(bob.orgId, bob.memberId, 5_000, now)
+            val launch = send(bob.cliToken, "/api/v1/launches", """{"repo":"acme/api","agent":"claude-code"}""")
+                .body<LaunchResponse>()
+            val session = """{"id":"s-3","agent":"claude-code","repo":"acme/api","launchId":"${launch.launchId}"}"""
+            assertEquals(HttpStatusCode.OK, send(launch.agentToken, "/api/v1/sessions", session).status)
+
+            // Admitted on its reserve (200 µ$), billed 7 200 by the provider: the real spend passes the limit.
+            val billed = infer(launch.agentToken, maxTokens = 1)
+            assertEquals(HttpStatusCode.OK, billed.status, billed.bodyAsText())
+            val budget = client.get("/api/v1/budgets/me") { bearerAuth(bob.readerToken) }.body<MyBudgetResponse>()
+            assertEquals(7_200L to 5_000L, budget.spentMicros to budget.limitMicros, "The budget reads the real spend")
+            assertEquals(0L, budget.remainingMicros)
+
+            // The next call is refused on what was billed, not on what was held.
+            val refused = infer(launch.agentToken, maxTokens = 1)
+            assertEquals(HttpStatusCode.TooManyRequests, refused.status, refused.bodyAsText())
+            val (type, message) = errorOf(refused)
+            assertEquals("rate_limit_error", type)
+            val reached = "Monthly budget reached: your limit of \$0.005 is spent; it resets on "
+            assertTrue(message.startsWith(reached), message)
+            assertTrue(refused.headers["retry-after"]!!.toLong() > 0, "Retry when the month resets")
+            val ledger = koin.get<UsageRepository>().list(bob.orgId, null, null, 10)
+            assertEquals(
+                listOf("budget_exhausted" to 0L, "ok" to 7_200L),
+                ledger.map { it.outcome to it.costMicros }.sortedBy { it.first },
+                "The refused call reached no provider and costs nothing",
+            )
         }
     }
 }

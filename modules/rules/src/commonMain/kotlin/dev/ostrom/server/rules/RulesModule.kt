@@ -3,13 +3,17 @@ package dev.ostrom.server.rules
 
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.infrastructure.DefaultCompilerSources
+import dev.ostrom.server.gates.domain.services.GateCheckNeeds
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.services.AnalysisEngine
+import dev.ostrom.server.rules.domain.services.RepositoryReader
 import dev.ostrom.server.rules.domain.services.DecisionSigner
+import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCase
+import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.BulkUpdateRulesUseCase
 import dev.ostrom.server.rules.domain.usecases.BulkUpdateRulesUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.CreateRuleUseCase
@@ -36,11 +40,13 @@ import dev.ostrom.server.rules.domain.usecases.StartAnalysisUseCase
 import dev.ostrom.server.rules.domain.usecases.StartAnalysisUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.UpdateRuleUseCase
 import dev.ostrom.server.rules.domain.usecases.UpdateRuleUseCaseImpl
-import dev.ostrom.server.rules.infrastructure.NoAnalysisEngine
+import dev.ostrom.server.rules.infrastructure.NoRepositoryReader
 import dev.ostrom.server.rules.infrastructure.PostgresAnalysisRepository
 import dev.ostrom.server.rules.infrastructure.PostgresRulesRepository
+import dev.ostrom.server.rules.infrastructure.RepositoryAnalysisEngine
 import dev.ostrom.server.rules.infrastructure.ReceiptsDecisionSigner
 import dev.ostrom.server.rules.infrastructure.RulesCompilerSources
+import dev.ostrom.server.rules.infrastructure.RulesGateCheckNeeds
 import dev.ostrom.server.rules.infrastructure.RulesGatePolicies
 import dev.ostrom.server.rules.infrastructure.RulesMigrations
 import dev.ostrom.server.rules.presentation.AnalysisRoutesDependencies
@@ -50,6 +56,8 @@ import dev.ostrom.server.rules.presentation.rulesRoutes
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.scope.Scope
@@ -60,7 +68,8 @@ import org.koin.dsl.module
  * owns the gates module's [GatePolicies] port: what the console sets on `/api/v1/gates/policy` is what every gate of
  * the organization applies. It also binds the compiler's [CompilerSources]: the rules harness carries the rules, and
  * a rule's gate enters the gates catalogue that the hooks and the gates module both read. The analysis of the
- * organization and the replay of its pull requests run on an [AnalysisEngine]; without one, each run fails visibly.
+ * organization and the replay of its pull requests run on an [AnalysisEngine]: by default the deterministic
+ * [RepositoryAnalysisEngine], which reads the repositories through a [RepositoryReader] and proposes their rules.
  */
 object RulesModule : ServerModule {
     override val name: String = "rules"
@@ -79,6 +88,7 @@ object RulesModule : ServerModule {
         single<GetGatePolicyUseCase> { GetGatePolicyUseCaseImpl(get()) }
         single<SetGatePolicyUseCase> { SetGatePolicyUseCaseImpl(get(), get(), get()) }
         single<GatePolicies> { RulesGatePolicies(get()) }
+        single<GateCheckNeeds> { RulesGateCheckNeeds(get()) }
         // The compiler binds its default sources only when none is bound: these replace them, repositories and
         // settings still read from the compiler's configuration.
         single<CompilerSources> { RulesCompilerSources(get(), DefaultCompilerSources(get())) }
@@ -86,6 +96,8 @@ object RulesModule : ServerModule {
         single<StartAnalysisUseCase> { StartAnalysisUseCaseImpl(get(), get(), get(), get()) }
         single<GetAnalysisStateUseCase> { GetAnalysisStateUseCaseImpl(get(), get(), get()) }
         single<GetReplayUseCase> { GetReplayUseCaseImpl(get()) }
+        single<AnalyzeOrganizationUseCase> { AnalyzeOrganizationUseCaseImpl(get(), get(), get(), get(), get()) }
+        single { RepositoryAnalysisEngine(get(), get(), get()) }
         single { AnalysisRoutesDependencies(callerResolver(), get(), get(), get(), get()) }
         single {
             RulesRoutesDependencies(
@@ -106,13 +118,23 @@ object RulesModule : ServerModule {
 
     override val migrations: List<SchemaMigration> = RulesMigrations
 
-    /** Binds the engine that refuses every run when no module bound a real one (Koin refuses two bindings). */
+    /**
+     * Binds the deterministic engine when no module bound another, and the reader that sees no organization connected
+     * when no GitHub module bound one (Koin refuses two bindings).
+     */
     override suspend fun initialize(koin: Koin) {
         koin.loadModules(listOf(defaultPorts(koin)))
     }
 
     internal fun defaultPorts(koin: Koin): Module = module {
-        if (koin.getOrNull<AnalysisEngine>() == null) single<AnalysisEngine> { NoAnalysisEngine() }
+        if (koin.getOrNull<RepositoryReader>() == null) single<RepositoryReader> { NoRepositoryReader() }
+        if (koin.getOrNull<AnalysisEngine>() == null) single<AnalysisEngine> { get<RepositoryAnalysisEngine>() }
+    }
+
+    /** Starts the engine's workers: each analyses the queued runs one after the other until the server stops. */
+    override fun start(scope: CoroutineScope, koin: Koin) {
+        val engine = koin.get<RepositoryAnalysisEngine>()
+        repeat(RepositoryAnalysisEngine.WORKERS) { scope.launch { engine.work() } }
     }
 
     override fun routes(route: Route, koin: Koin) {

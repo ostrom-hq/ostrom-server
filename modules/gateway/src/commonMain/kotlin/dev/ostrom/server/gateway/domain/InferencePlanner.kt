@@ -7,6 +7,7 @@ import dev.ostrom.server.secrets.domain.SecretUnreadableException
 import dev.ostrom.server.sharing.domain.LeaseResult
 import dev.ostrom.server.sharing.domain.SharedAccountPool
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /**
  * Decides where a member's model call goes and builds it: a valid body, an allowed model, the budgets, then the
@@ -16,7 +17,7 @@ import kotlin.time.Instant
  * @param settings The org's settings and model policy.
  * @param pool The org's shared accounts.
  * @param revealSecrets Opens the org's key secrets.
- * @param spend The budgets.
+ * @param spend The budgets, asked with what the call may cost.
  * @param keys The instance's provider keys.
  * @param requests Builds the upstream requests.
  */
@@ -24,7 +25,7 @@ class InferencePlanner(
     private val settings: GatewaySettingsRepository,
     private val pool: SharedAccountPool,
     private val revealSecrets: RevealSecretsUseCase,
-    private val spend: SpendGuard,
+    private val spend: BudgetCheck,
     private val keys: InstanceProviderKeys,
     private val requests: UpstreamRequests,
 ) {
@@ -34,7 +35,8 @@ class InferencePlanner(
      * @param caller The member.
      * @param call The call as the agent sent it.
      */
-    suspend fun plan(caller: Caller, call: InferenceCall): InferencePlan = plan(caller, call, configOf(caller))
+    suspend fun plan(caller: Caller, call: InferenceCall): InferencePlan =
+        plan(caller, call, configOf(caller), Uuid.random())
 
     /** What [plan] needs of the caller's org: one read, kept over the tries of a call. */
     suspend fun configOf(caller: Caller): GatewayOrgConfig = settings.forCall(caller.orgId)
@@ -45,15 +47,22 @@ class InferencePlanner(
      * @param caller The member.
      * @param call The call as the agent sent it.
      * @param org The org's settings and policy ([configOf]).
+     * @param callId The call, the same for each try: its budget hold is taken once.
      */
-    suspend fun plan(caller: Caller, call: InferenceCall, org: GatewayOrgConfig): InferencePlan {
+    suspend fun plan(caller: Caller, call: InferenceCall, org: GatewayOrgConfig, callId: Uuid): InferencePlan {
         val body = RequestBody.read(call.body, org.policy.default)
             ?: return refused(RefusalKind.INVALID, "The request body must be a JSON object naming a model.", "")
-        return admit(caller, body, org.policy) ?: route(caller, call, body, org.settings)
+        return admit(caller, call, body, org.policy, callId) ?: route(caller, call, body, org.settings)
     }
 
     /** The refusal of a model the org does not allow, or of a member over budget; null when the call may go. */
-    private suspend fun admit(caller: Caller, body: RequestBody, policy: ModelPolicy): InferencePlan.Refused? {
+    private suspend fun admit(
+        caller: Caller,
+        call: InferenceCall,
+        body: RequestBody,
+        policy: ModelPolicy,
+        callId: Uuid,
+    ): InferencePlan.Refused? {
         if (!policy.allows(caller.memberId, body.model)) {
             return refused(
                 RefusalKind.MODEL_NOT_ALLOWED,
@@ -61,9 +70,12 @@ class InferencePlanner(
                 body.model,
             )
         }
-        val decision = spend.check(caller.orgId, caller.memberId)
-        return (decision as? SpendDecision.Exhausted)
-            ?.let { refused(RefusalKind.BUDGET_EXHAUSTED, it.message, body.model, it.resetsAt) }
+        return when (val decision = spend.check(caller, callId, call.protocol, body)) {
+            SpendDecision.Allowed -> null
+            is SpendDecision.Exhausted ->
+                refused(RefusalKind.BUDGET_EXHAUSTED, decision.message, body.model, decision.resetsAt)
+            is SpendDecision.Insufficient -> refused(RefusalKind.BUDGET_INSUFFICIENT, decision.message, body.model)
+        }
     }
 
     private suspend fun route(
