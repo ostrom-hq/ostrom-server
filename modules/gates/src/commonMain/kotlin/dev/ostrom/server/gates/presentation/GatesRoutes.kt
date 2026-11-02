@@ -3,7 +3,6 @@ package dev.ostrom.server.gates.presentation
 
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
-import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
 import dev.ostrom.server.gates.domain.models.RequestStatus
@@ -11,9 +10,8 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.usecases.GateUse
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
-import dev.ostrom.server.kernel.errors.ErrorKind
-import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -72,11 +70,11 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
             val body = call.receive<AnswerApprovalRequest>()
             val id = params.parent.id.toUuid()
             val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO
-            val view = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
-            val request = view.requests.first { it.id == id }
-            // The contract's 200 is the answered approval and its signed receipt, a no's included.
-            val receipt = receipts.read(view.gate.orgId, view.gate.receiptId)
-            call.respond(AnswerApprovalResponse(ApprovalView(request, view.gate).toApproval(), receipt))
+            val answered = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
+            // The contract's 200 is the approval as the console and the app show it, answered, with the signed
+            // receipt of the decision (a no's included).
+            val receipt = receipts.read(answered.gate.orgId, answered.gate.receiptId)
+            call.respond(view(actor, principal.toViewer(), id).toViewResponse().copy(receipt = receipt))
         }
     }
 }
@@ -92,7 +90,7 @@ private suspend fun RoutingContext.respondUse(dependencies: GatesRoutesDependenc
 private suspend fun GateActorResolver.actorOf(principal: AuthenticatedPrincipal, accepted: Set<String>): GateActor {
     principal.requireAnyScope(accepted)
     return resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw principal.outsideOrganization()
 }
 
 private fun String.toUuid(): Uuid = Uuid.parseOrNull(this) ?: throw InvalidGateRequestException("Malformed id.")

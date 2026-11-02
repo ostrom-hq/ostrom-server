@@ -58,7 +58,7 @@ class ListRunnersUseCaseImpl(
                 agent = session.agent,
                 epoch = session.epoch,
                 lastSeenAt = seen,
-                online = seen != null && now - seen <= ReconcileCloudSessionUseCaseImpl.HEARTBEAT_LOSS,
+                online = isOnline(seen, now),
             )
         }
     }

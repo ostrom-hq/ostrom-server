@@ -17,10 +17,10 @@ import kotlin.test.assertTrue
 
 class RulesModuleRegistrationTest {
     @Test
-    fun registersUnderItsNameWithDefinitionsThatLoadAndItsMigration() {
+    fun registersUnderItsNameWithDefinitionsThatLoadAndItsMigrations() {
         assertEquals("rules", RulesModule.name)
-        assertEquals(listOf(1L), RulesModule.migrations.map { it.version })
-        assertTrue(RulesModule.migrations.single().sql.contains("FORCE ROW LEVEL SECURITY"))
+        assertEquals(listOf(1L, 2L), RulesModule.migrations.map { it.version })
+        assertTrue(RulesModule.migrations.first().sql.contains("FORCE ROW LEVEL SECURITY"))
         koinApplication { modules(RulesModule.koinModule) }.close()
     }
 

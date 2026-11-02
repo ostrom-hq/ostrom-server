@@ -11,6 +11,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
 import dev.ostrom.server.integrations.github.domain.GitHubRepo
 import dev.ostrom.server.integrations.github.domain.GitHubTeam
+import kotlinx.coroutines.CompletableDeferred
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -22,6 +23,9 @@ class FakeGitHubDirectoryApi : GitHubDirectoryApi, GitHubManifestApi {
     var failure: Exception? = null
     var reads = 0
 
+    /** Holds every read of the teams until completed: two lists of a new organization at once. */
+    var pause: CompletableDeferred<Unit>? = null
+
     override suspend fun repositories(installationId: Long): List<GitHubRepo> {
         failure?.let { throw it }
         reads++
@@ -29,6 +33,7 @@ class FakeGitHubDirectoryApi : GitHubDirectoryApi, GitHubManifestApi {
     }
 
     override suspend fun teams(installationId: Long, account: String): List<GitHubTeam> {
+        pause?.await()
         failure?.let { throw it }
         return teams[installationId].orEmpty()
     }

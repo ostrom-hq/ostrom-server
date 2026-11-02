@@ -8,8 +8,10 @@ import kotlin.uuid.Uuid
  *
  * @property orgId The caller's organization; a session of another organization does not exist for them.
  * @property memberId The caller's id.
+ * @property admin Whether the caller is an owner or an admin of the organization.
  */
 data class Caller(
     val orgId: Uuid,
     val memberId: String,
+    val admin: Boolean = false,
 )

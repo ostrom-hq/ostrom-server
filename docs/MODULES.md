@@ -284,7 +284,9 @@ The probes: `GET /health` (liveness: 200 while the dependencies answer, also whi
 The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
 `migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
 through `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, `SELECT, INSERT, UPDATE, DELETE` on its tables and `USAGE, SELECT`
-on its sequences. CI's smoke test sets them up the same way.
+on its sequences. CI's smoke test sets them up the same way. The migrations' history tables (`_migrations_<name>`)
+are the exception: after each pass, `migrate` revokes every privilege but `SELECT` on them from every role but the
+owner, so the serving role reads the history (the start-up check) and never rewrites it.
 
 ## Known limits of the foundation
 
