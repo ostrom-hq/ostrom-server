@@ -10,7 +10,6 @@ import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
-import dev.ostrom.server.orgs.presentation.CreateOrgRequest
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.measureRead
@@ -19,34 +18,29 @@ import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentType
 import kotlin.test.Test
-import kotlin.test.assertEquals
 
 /**
  * `GET /api/v1/orgs/{org}/members` on 10 organizations of 1 000 members each: the whole list and one member. Each
  * keeps the read budget (ReadBench.kt); its queries, plans and p95 are written to `build/reports/perf/orgs.txt`.
  */
 class OrgsReadsBenchTest {
+    // Organizations are written directly: the API gives a person one free organization, 402 for the next ones.
     private suspend fun TestServer.owner(index: Int): StartedSession {
         val login = "owner$index"
         val user = koin.get<ResolveUserUseCase>()(
             VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
         )
-        val session = koin.get<StartWebSessionUseCase>()(user.id)
-        val created = client.post("/api/v1/orgs") {
-            session(session)
-            header(HttpHeaders.Origin, CONSOLE_ORIGIN)
-            contentType(ContentType.Application.Json)
-            setBody(CreateOrgRequest("Org $index", "org$index"))
-        }
-        assertEquals(HttpStatusCode.Created, created.status)
-        return session
+        database.superuser.execute(
+            "INSERT INTO orgs_organizations (id, slug, name, created_at) VALUES " +
+                "(CAST(md5('org$index') AS uuid), 'org$index', 'Org $index', now())",
+        ).getOrThrow()
+        database.superuser.execute(
+            "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) VALUES (gen_random_uuid(), " +
+                "CAST(md5('org$index') AS uuid), CAST('${user.id}' AS uuid), 'owner', now())",
+        ).getOrThrow()
+        return koin.get<StartWebSessionUseCase>()(user.id)
     }
 
     private fun HttpRequestBuilder.session(started: StartedSession) {
@@ -59,7 +53,7 @@ class OrgsReadsBenchTest {
         "INSERT INTO identity_users (id, login, display_name, created_at) SELECT CAST(md5('u$index-' || i) AS uuid), " +
             "'user$index-' || i, 'User ' || i, now() FROM generate_series(2, $MEMBERS_PER_ORG) AS i",
         "INSERT INTO orgs_members (id, org_id, user_id, role, joined_at) SELECT gen_random_uuid(), " +
-            "(SELECT id FROM orgs_organizations WHERE slug = 'org$index'), CAST(md5('u$index-' || i) AS uuid), " +
+            "CAST(md5('org$index') AS uuid), CAST(md5('u$index-' || i) AS uuid), " +
             "CASE WHEN i % 10 = 0 THEN 'admin' ELSE 'member' END, now() - i * INTERVAL '1 hour' " +
             "FROM generate_series(2, $MEMBERS_PER_ORG) AS i",
     )
@@ -83,6 +77,5 @@ class OrgsReadsBenchTest {
     private companion object {
         const val ORGS = 10
         const val MEMBERS_PER_ORG = 1_000
-        const val CONSOLE_ORIGIN = "http://localhost:5173"
     }
 }

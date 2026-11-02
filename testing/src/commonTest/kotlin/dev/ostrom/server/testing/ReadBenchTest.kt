@@ -26,7 +26,7 @@ class ReadBenchTest {
         assertEquals(1, measure.queries)
         assertTrue("Result" in measure.plans.single(), measure.plans.single())
         assertEquals(CONCURRENT_CALLS * 10, measure.calls)
-        assertTrue(measure.p50 <= measure.p95)
+        assertTrue(measure.p50 <= measure.p95 && measure.http.isPositive())
         measure.assertWithinBudget(setOf("pg_class"))
         val report = writeReadReport("testing", listOf(measure))
         assertTrue("== GET /health" in report && "queries per call: 1" in report, report)
@@ -37,10 +37,10 @@ class ReadBenchTest {
     @Test
     fun aScanOrASlowPageBreaksTheBudget() {
         val plan = listOf("Seq Scan on big  (cost=0.00..1.00)")
-        val scan = ReadMeasure("scan", emptyList(), plan, 1.milliseconds, 2.milliseconds, 1)
+        val scan = ReadMeasure("scan", emptyList(), plan, listOf(1.milliseconds), 3.milliseconds)
         assertFails { scan.assertWithinBudget(setOf("big")) }
         scan.assertWithinBudget(setOf("bi", "other"))
-        val slow = ReadMeasure("slow", emptyList(), emptyList(), 1.milliseconds, READ_P95_BUDGET, 1)
+        val slow = ReadMeasure("slow", emptyList(), emptyList(), listOf(READ_P95_BUDGET), 3.milliseconds)
         assertFails { slow.assertWithinBudget(emptySet()) }
     }
 
@@ -70,15 +70,19 @@ class ReadBenchTest {
         assertEquals(8, sent.size)
         val bound = sent.map { it.statement?.namedParametersValues?.keys?.single() }
         assertEquals(listOf(null, "v", null, "n", null, "v", null, "n"), bound)
-        val plans = server.database.driver.explain(sent)
+        assertEquals(4, sent.take(4).map { it.transaction }.distinct().size, "Each on the pool in its own")
+        assertEquals(1, sent.drop(4).map { it.transaction }.distinct().size, "One transaction")
+        assertTrue(sent[4].transaction !in sent.take(4).map { it.transaction })
+        val plans = server.database.driver.replay(sent, explain = true)
         assertEquals(4, plans.size, plans.joinToString("\n\n"))
         assertTrue(plans.all { "actual time" in it }, plans.joinToString("\n\n"))
+        assertEquals(emptyList(), server.database.driver.replay(sent, explain = false))
     }
 
     @Test
     fun aNullValueIsReplayedAsNull() = serverTest(emptyList()) { server ->
         val statement = Statement.create("SELECT COALESCE(:v, 'none') AS v").bindNull("v", String::class)
-        val plans = server.database.driver.explain(listOf(SentStatement(statement.sql, statement)))
+        val plans = server.database.driver.replay(listOf(SentStatement(statement.sql, statement, 1)), explain = true)
         assertTrue("Result" in plans.single(), plans.single())
     }
 }

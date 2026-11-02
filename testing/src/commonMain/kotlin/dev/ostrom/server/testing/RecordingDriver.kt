@@ -5,6 +5,7 @@ import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -13,8 +14,10 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  *
  * @property sql Its text.
  * @property statement The statement with its bound values; null when the server sent a bare string.
+ * @property transaction Which transaction it ran in: statements of one transaction share it, a statement sent on the
+ *   pool has its own.
  */
-class SentStatement(val sql: String, val statement: Statement?)
+class SentStatement(val sql: String, val statement: Statement?, val transaction: Int)
 
 /**
  * The serving role's pool of a [serverTest], which notes every statement the server sends while [record] runs: the
@@ -29,6 +32,7 @@ class SentStatement(val sql: String, val statement: Statement?)
 @OptIn(ExperimentalAtomicApi::class)
 class RecordingDriver(private val inner: Driver) : Driver by inner {
     private val sent = AtomicReference<List<SentStatement>?>(null)
+    private val transactions = AtomicInt(0)
 
     /**
      * Runs [block] and returns the statements sent meanwhile, by [block] and by anything else running then (a
@@ -47,10 +51,12 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
         }
     }
 
-    internal fun note(sql: String, statement: Statement?) {
+    internal fun newTransaction(): Int = transactions.addAndFetch(1)
+
+    internal fun note(sql: String, statement: Statement?, transaction: Int = newTransaction()) {
         while (true) {
             val current = sent.load() ?: return
-            if (sent.compareAndSet(current, current + SentStatement(sql, statement))) return
+            if (sent.compareAndSet(current, current + SentStatement(sql, statement, transaction))) return
         }
     }
 
@@ -64,8 +70,10 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
     override suspend fun fetchAll(statement: Statement): Result<ResultSet> =
         inner.fetchAll(statement).also { note(statement.sql, statement) }
 
-    override suspend fun <T> transaction(f: suspend Transaction.() -> T): T =
-        inner.transaction { RecordingTransaction(this, this@RecordingDriver).f() }
+    override suspend fun <T> transaction(f: suspend Transaction.() -> T): T {
+        val id = newTransaction()
+        return inner.transaction { RecordingTransaction(this, this@RecordingDriver, id).f() }
+    }
 }
 
 /**
@@ -73,17 +81,21 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
  *
  * @param inner The transaction.
  * @param driver Where the statements are noted.
+ * @param id The transaction's number among the noted statements.
  */
-internal class RecordingTransaction(private val inner: Transaction, private val driver: RecordingDriver) :
-    Transaction by inner {
-    override suspend fun execute(sql: String): Result<Long> = inner.execute(sql).also { driver.note(sql, null) }
+internal class RecordingTransaction(
+    private val inner: Transaction,
+    private val driver: RecordingDriver,
+    private val id: Int,
+) : Transaction by inner {
+    override suspend fun execute(sql: String): Result<Long> = inner.execute(sql).also { driver.note(sql, null, id) }
 
     override suspend fun execute(statement: Statement): Result<Long> =
-        inner.execute(statement).also { driver.note(statement.sql, statement) }
+        inner.execute(statement).also { driver.note(statement.sql, statement, id) }
 
     override suspend fun fetchAll(sql: String): Result<ResultSet> =
-        inner.fetchAll(sql).also { driver.note(sql, null) }
+        inner.fetchAll(sql).also { driver.note(sql, null, id) }
 
     override suspend fun fetchAll(statement: Statement): Result<ResultSet> =
-        inner.fetchAll(statement).also { driver.note(statement.sql, statement) }
+        inner.fetchAll(statement).also { driver.note(statement.sql, statement, id) }
 }
