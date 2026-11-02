@@ -85,7 +85,8 @@ class CompilerIsolationPostgresTest {
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lead")
-                        else -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        // Accepting a workflow needs an owner or an admin since #98 (H4): the person carries its role.
+                        else -> GateActor(id, orgId, ActorKind.USER, personId = id, role = roleOf(id))
                     }
                 }
             }

@@ -64,3 +64,16 @@ interface NotificationChannels {
      */
     suspend fun deliver(orgId: Uuid, channel: String, text: String): Delivery
 }
+
+/** The launches a cloud session's runner opened (the launches module). */
+interface RunLaunches {
+    /**
+     * Reads which cloud session opened a launch.
+     *
+     * @param orgId The organization.
+     * @param launchId The launch.
+     *
+     * @return The cloud session whose runner opened it, or null for a launch of the CLI or an unknown one.
+     */
+    suspend fun cloudSession(orgId: Uuid, launchId: String): Uuid?
+}
