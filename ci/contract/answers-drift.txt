@@ -14,7 +14,6 @@ UNDESCRIBED POST /api/v1/test/gates/answer  test route installed by the gates te
 
 # Identity
 getMe 200  serves Profile (id, login, displayName, primaryEmail, createdAt, emails, providers, csrfToken); the contract answers Me (dev, member, organization, capabilities). Serve Me, csrfToken optional in it (AUTH-REPRISE)
-pollDeviceLogin 200  serves {status, accessToken, expiresAt, scopes, interval}; the contract answers AuthToken (token, login, scopes) and 428/400 (AUTH-REPRISE, ostrom-server#62)
 createToken 201  token.expiresAt and token.lastUsedAt omitted when null; required and nullable in the contract (kernel explicitNulls, to assign)
 rotateToken 201  token.lastUsedAt omitted when null (kernel explicitNulls, to assign)
 listMyAudit 200  events[].orgId omitted when null (kernel explicitNulls, to assign)
@@ -77,3 +76,14 @@ listInvitations 200  items[].email omitted when null (kernel explicitNulls, to a
 createOrg 402  the free team already taken; the contract lists no 402 (CORE-CONTRAT: add it)
 inviteOrgMembers 402  seat limit of the plan; the contract lists no 402 (CORE-CONTRAT: add it)
 getArtifactLinkContent 404  text/plain on the content origin; the contract says ApiError JSON (CORE-CONTRAT: describe the plain 404)
+
+# Found once main served sessions, packages and the gates catalogue (ostrom-server#26, #43, #45; core#42)
+askGate 200  gate.gate (GateRequest.gate) omitted when null; required and nullable in the contract (kernel nulls, CORE-CONTRAT: ostrom-server#93)
+getCurrentPackage 200  repo omitted when null (an organization's package); required and nullable in PackageEnvelope (kernel nulls, CORE-CONTRAT: ostrom-server#93)
+getGateCatalog 200  actions carry keywords and gate, not repos; failMode and waitSeconds are not in the contract's catalogue (GATES)
+startSession 200  Session carries ended and lost, not in the contract (SRV-LANCEUR: serve the contract's Session, or CORE-CONTRAT adds them with a written reason)
+sessionAlive 200  Session carries ended and lost, not in the contract (SRV-LANCEUR)
+getSession 200  Session carries ended and lost, not in the contract (SRV-LANCEUR)
+listSessions 200  Session carries ended and lost, not in the contract (SRV-LANCEUR)
+endSession 200  Session carries ended and lost, not in the contract (SRV-LANCEUR)
+reopenSession 200  Session carries ended and lost, and the answer a reopened flag, none in the contract (SRV-LANCEUR)
