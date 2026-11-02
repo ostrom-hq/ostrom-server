@@ -8,6 +8,7 @@ import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import kotlinx.serialization.json.JsonObject
 import kotlin.uuid.Uuid
 
 /** Hashes the canonical preimages of [dev.ostrom.server.gates.domain.models.GateKeys]. */
@@ -41,6 +42,16 @@ interface GateReceiptSigner {
      * @return The receipt id.
      */
     suspend fun sign(gate: Gate): String
+
+    /**
+     * Reads a signed receipt as the receipts module stores it, signature included: the answer to a yes or a no carries
+     * it (contract `answerApproval`).
+     *
+     * @param orgId The organization.
+     * @param receiptId The receipt, or null when the decision is not signed yet.
+     * @return The receipt, or null when there is none to read.
+     */
+    suspend fun read(orgId: Uuid, receiptId: String?): JsonObject? = null
 }
 
 /**

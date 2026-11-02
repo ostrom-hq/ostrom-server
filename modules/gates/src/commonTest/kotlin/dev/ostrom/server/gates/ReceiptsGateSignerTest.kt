@@ -15,6 +15,7 @@ import dev.ostrom.server.gates.fakes.OTHER_SESSION
 import dev.ostrom.server.gates.infrastructure.ReceiptsGateSigner
 import dev.ostrom.server.receipts.domain.services.ReceiptRule
 import dev.ostrom.server.receipts.domain.services.ReceiptRules
+import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -45,8 +46,26 @@ class ReceiptsGateSignerTest {
             listOf(ReceiptRule("r-commit-style", "79b6ac48e5225be9037493c1e8a8fc9e5fbc42e2893b0c15b8846bd39d310cd7"))
     }
 
+    // The stored receipts, by organization and id.
+    private val stored = mutableMapOf<Pair<Uuid, String>, JsonObject>()
+    private val getReceipt = object : GetReceiptUseCase {
+        override suspend fun invoke(orgId: Uuid, id: String): JsonObject = stored.getValue(orgId to id)
+    }
+
     private fun signer(bench: GateBench, sign: RecordingSign) =
-        ReceiptsGateSigner(sign, bench.repository, bench.sessions, rules)
+        ReceiptsGateSigner(sign, bench.repository, bench.sessions, rules, getReceipt)
+
+    @Test
+    fun theAnswerReadsTheStoredReceiptOnceSigned() = runTest {
+        val bench = GateBench()
+        val signer = signer(bench, RecordingSign())
+        val org = Uuid.parse("0000000a-0000-0000-0000-000000000000")
+        val receipt = JsonObject(mapOf("id" to JsonPrimitive("rcpt_gate_1"), "signature" to JsonPrimitive("sig")))
+        stored[org to "rcpt_gate_1"] = receipt
+        assertEquals(receipt, signer.read(org, "rcpt_gate_1"))
+        // Signing failed: the gate has no receipt yet, and there is nothing to read.
+        assertNull(signer.read(org, null))
+    }
 
     @Test
     fun theGatePreimageIsThePrototypes() = runTest {
