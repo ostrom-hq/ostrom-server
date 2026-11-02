@@ -11,7 +11,7 @@ private val ROUTER_FUNCTIONS = listOf(
 )
 
 /**
- * Version 2: `automations_routes` under forced row-level security like the other tables (a request writes only its
+ * Version 3: `automations_routes` under forced row-level security like the other tables (a request writes only its
  * organization's route), and its three cross-organization reads moved into narrow functions owned by `ostrom_router`
  * (`NOLOGIN`, never a member of the serving role), with `pg_temp` last in their `search_path`, executable by the
  * serving role only (RLS audit R2 and R3). `automations_due_routes` locks the routes it returns (`FOR UPDATE SKIP
@@ -65,7 +65,7 @@ private val ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL: String =
  * The schema of the automations module; its tables start with `automations_`, and each is confined by row-level
  * security to the organization of the transaction (S2-01). `automations_routes` (an automation's id and organization
  * and its next cron slot, no customer content) is also read across organizations, by a webhook (an automation found
- * by its id) and by the scheduler (the due crons of every organization): only through [ROUTER_FUNCTIONS] (version 2,
+ * by its id) and by the scheduler (the due crons of every organization): only through [ROUTER_FUNCTIONS] (version 3,
  * docs/tenancy.md).
  */
 val AutomationsMigrations: List<SchemaMigration> = listOf(
@@ -157,7 +157,7 @@ val AutomationsMigrations: List<SchemaMigration> = listOf(
         """,
     ),
     SchemaMigration(
-        version = 2,
+        version = 3,
         name = "automations_routes_under_row_level_security",
         sql = ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL,
     ),

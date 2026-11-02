@@ -31,7 +31,7 @@ import kotlin.uuid.Uuid
  *
  * Every read and write of an automation or a run runs confined to its organization ([inTenant], S2-01). Only
  * `automations_routes` is read across organizations, through the `SECURITY DEFINER` functions of
- * [AutomationsMigrations] (version 2): a webhook finds its automation's organization there, and the scheduler claims
+ * [AutomationsMigrations] (version 3): a webhook finds its automation's organization there, and the scheduler claims
  * the due crons of every organization there, then reads and writes each in its organization.
  *
  * @param driver The database.
