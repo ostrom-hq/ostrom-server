@@ -43,7 +43,7 @@ private val spanKey = AttributeKey<SpanContext>("ostrom.span")
 val ApplicationCall.spanContext: SpanContext? get() = attributes.getOrNull(spanKey)
 
 /**
- * The route template of the request (`/a/{id}/{ticket}/{path...}`), [UNMATCHED_ROUTE] when no route matched: what logs,
+ * The route template of the request (`/a/{id}/{ticket}/{...}`), [UNMATCHED_ROUTE] when no route matched: what logs,
  * spans and metrics carry, never the concrete path, which may hold an artifact ticket or a share slug.
  */
 val ApplicationCall.httpRoute: String get() = attributes.getOrNull(routeKey) ?: UNMATCHED_ROUTE
@@ -151,8 +151,9 @@ private fun Span.finish(method: String, route: String, status: Int) {
 }
 
 /**
- * The template of a matched route, without Ktor's selector segments: `/(authenticate token)/v1/gates/{id}/(method:GET)`
- * becomes `/v1/gates/{id}`.
+ * The template of a matched route, without Ktor's selector segments, parenthesized or bracketed (query parameters):
+ * `/(authenticate token)/v1/gates/{id}/[limit?]/(method:GET)` becomes `/v1/gates/{id}`. Ktor names a tail segment
+ * `{...}`.
  *
  * @param node The matched routing node.
  *
@@ -165,5 +166,8 @@ internal fun routeTemplate(node: RoutingNode): String = routeTemplate(node.toStr
  *
  * @return The template without selector segments, `/` for the root.
  */
-internal fun routeTemplate(path: String): String =
-    "/" + path.split('/').filter { it.isNotEmpty() && !(it.startsWith('(') && it.endsWith(')')) }.joinToString("/")
+internal fun routeTemplate(path: String): String = "/" + path.split('/').filter { segment ->
+    segment.isNotEmpty() && !segment.isSelector('(', ')') && !segment.isSelector('[', ']')
+}.joinToString("/")
+
+private fun String.isSelector(open: Char, close: Char): Boolean = startsWith(open) && endsWith(close)

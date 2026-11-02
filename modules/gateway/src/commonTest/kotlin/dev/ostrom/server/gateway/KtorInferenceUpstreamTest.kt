@@ -2,8 +2,8 @@
 package dev.ostrom.server.gateway
 
 import dev.ostrom.server.gateway.domain.UpstreamRequest
+import dev.ostrom.server.gateway.domain.UpstreamStalledException
 import dev.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
-import dev.ostrom.server.gateway.infrastructure.UpstreamStalledException
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope

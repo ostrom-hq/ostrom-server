@@ -59,6 +59,9 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `orgs_slug_taken(slug)` | orgs | whether a short name was ever used | `OrgsServingRolePostgresTest` |
 | `orgs_memberships_of(user)` | orgs | reads a user's memberships and their organizations | `OrgsServingRolePostgresTest` |
 | `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
+| `identity_token_by_hash(hash)` | identity | reads an API token by its hash, to authenticate it | `IdentityTenancyPostgresTest` |
+| `identity_token_touch(id, at)` | identity | notes an API token's last use | `IdentityTenancyPostgresTest` |
+| `identity_revoke_agent_session_tokens(session, at)` | identity | revokes the agent tokens of one agent session | `IdentityTenancyPostgresTest` |
 
 ## The proof
 
