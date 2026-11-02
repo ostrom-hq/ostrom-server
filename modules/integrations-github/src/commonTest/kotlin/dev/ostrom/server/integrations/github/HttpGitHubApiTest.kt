@@ -3,6 +3,7 @@ package dev.ostrom.server.integrations.github
 
 import dev.ostrom.server.integrations.github.domain.CheckRun
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
+import dev.ostrom.server.integrations.github.domain.GitHubCiRun
 import dev.ostrom.server.integrations.github.domain.GitHubPull
 import dev.ostrom.server.integrations.github.infrastructure.AppJwt
 import dev.ostrom.server.integrations.github.infrastructure.AppOAuthClient
@@ -127,6 +128,40 @@ class HttpGitHubApiTest {
         val patch = Json.parseToJsonElement((updated.body as TextContent).text).jsonObject
         assertEquals("success", patch.getValue("conclusion").jsonPrimitive.content)
         assertEquals(NOW.toString(), patch.getValue("completed_at").jsonPrimitive.content)
+    }
+
+    @Test
+    fun aCommitsCheckRunsAreReadWithTheInstallationTokenUnderTheirName() = runTest {
+        handler = { request ->
+            when (request.url.encodedPath) {
+                "/repos/acme/api/commits/$SHA/check-runs" -> json(
+                    """{"total_count":2,"check_runs":[""" +
+                        """{"id":5,"name":"unit tests","head_sha":"$SHA","status":"completed",""" +
+                        """"conclusion":"success",""" +
+                        """"app":{"slug":"github-actions"},"html_url":"https://github.test/r/5",""" +
+                        """"completed_at":"2026-10-30T04:05:00Z"},""" +
+                        """{"id":6,"name":"unit tests","head_sha":"$SHA","status":"in_progress",""" +
+                        """"app":{"slug":"circleci"}}]}""",
+                )
+                "/repos/acme/gone/commits/$SHA/check-runs" -> json("{}", HttpStatusCode.NotFound)
+                "/repos/acme/api/commits/${"0".repeat(40)}/check-runs" -> json("{}", HttpStatusCode.UnprocessableEntity)
+                else -> json("{}", HttpStatusCode.InternalServerError)
+            }
+        }
+        val github = api()
+        val runs = github.checkRuns(42, "acme/api", SHA, "unit tests")
+        val url = "https://github.test/r/5"
+        val done = GitHubCiRun(5, "unit tests", SHA, "completed", "success", "github-actions", url, NOW + 5.minutes)
+        val running = GitHubCiRun(6, "unit tests", SHA, "in_progress", null, "circleci", null, null)
+        assertEquals(listOf(done, running), runs)
+        val read = calls.last()
+        assertEquals(HttpMethod.Get, read.method)
+        assertEquals("check_name=unit%20tests&filter=latest&per_page=100", read.url.encodedQuery)
+        assertEquals("Bearer ghs_1", read.headers[HttpHeaders.Authorization], "The gate check's installation token")
+        assertEquals(emptyList(), github.checkRuns(42, "acme/gone", SHA, "unit tests"), "Not reached")
+        assertEquals(emptyList(), github.checkRuns(42, "acme/api", "0".repeat(40), "unit tests"), "Unknown commit")
+        val failed = assertFailsWith<GitHubCallException> { github.checkRuns(42, "acme/down", SHA, "unit tests") }
+        assertEquals("GitHub refused the check runs (500).", failed.message)
     }
 
     @Test

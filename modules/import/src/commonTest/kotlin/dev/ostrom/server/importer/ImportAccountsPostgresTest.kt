@@ -377,7 +377,10 @@ class ImportAccountsPostgresTest {
         serverTest(modules, withAudit(RecordingAuditLog())) { server ->
             with(server) {
                 accountLines(*(1..3).map { account("claude", "claude-$it") }.toTypedArray())
-                reconnectRequired("claude-1", "claude-2", "claude-3")
+                reconnectRequired("claude-1", "claude-2")
+                // claude-3 was found serving another subscription's tokens: the cutover revives it like the others.
+                val repository = koin.get<SharedAccountRepository>()
+                repository.setStatus(adminA.orgId, accounts().getValue("claude-3").id, AccountStatus.WRONG_ACCOUNT)
                 // An export edited by hand: claude-1's line carries another subscription's tokens, claude-2's tokens
                 // renew but the provider does not say whose they are. Neither may stand behind the org's account.
                 assertEquals(

@@ -286,6 +286,12 @@ class UsagePostgresTest {
             "until excludes",
         )
 
+        // The old retention setting opens nothing any more (RLS audit R4): only usage_purge deletes across orgs.
+        val opened = server.driver.transaction {
+            execute("SELECT set_config('ostrom.usage_retention', 'on', true)").getOrThrow()
+            execute("DELETE FROM usage_events").getOrThrow()
+        }
+        assertEquals(0L, opened)
         assertEquals(1L, repository.purge(TestCallers.epoch - 400.days, 10))
         assertEquals(0L, repository.purge(TestCallers.epoch - 400.days, 10))
         assertEquals(3, repository.list(TestCallers.orgA, null, null, 10).size)

@@ -23,6 +23,9 @@ kotlin {
             implementation(project(":testing"))
             // The launch end to end: a real person, organization and token, then a session of the launch.
             implementation(project(":modules:orgs"))
+            // A launch reads the inference gateway's model policy (its ModelAccess), with what the gateway needs.
+            implementation(project(":modules:gateway"))
+            implementation(project(":modules:sharing"))
             implementation(project(":modules:instance"))
             implementation(project(":modules:receipts"))
             implementation(project(":modules:sessions"))

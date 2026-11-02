@@ -6,6 +6,8 @@ import dev.ostrom.server.integrations.github.domain.CheckRun
 import dev.ostrom.server.integrations.github.domain.CreatedGitHubApp
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
+import dev.ostrom.server.integrations.github.domain.GitHubCiApi
+import dev.ostrom.server.integrations.github.domain.GitHubCiRun
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
 import dev.ostrom.server.integrations.github.domain.GitHubPeopleApi
@@ -28,6 +30,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
+import io.ktor.http.encodeURLParameter
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -46,7 +49,8 @@ import kotlin.time.Instant
 
 /**
  * [GitHubApi] over HTTPS as the GitHub App: the App's JWT is exchanged for an installation token restricted to
- * `checks: write` and `pull_requests: read`, kept until a minute before it expires. The directory
+ * `checks: write` and `pull_requests: read`, kept until a minute before it expires; the same token reads a commit's
+ * check runs ([GitHubCiApi]). The directory
  * ([GitHubDirectoryApi]) is read with tokens of their own, read-only: `metadata` for the repositories, `members` for
  * the teams. The manifest conversion ([GitHubManifestApi]) is the one call without a credential: the code is the
  * proof. The person's calls of the install ([GitHubPeopleApi]) go through [HttpGitHubPeople].
@@ -67,6 +71,7 @@ class HttpGitHubApi(
     webUrl: String,
     oauth: suspend () -> AppOAuthClient?,
 ) : GitHubApi,
+    GitHubCiApi,
     GitHubDirectoryApi,
     GitHubManifestApi,
     GitHubPeopleApi by HttpGitHubPeople(http, apiUrl, webUrl, oauth) {
@@ -114,8 +119,22 @@ class HttpGitHubApi(
         return decode<CheckRunId>(response, "check run").id
     }
 
+    override suspend fun checkRuns(installationId: Long, repo: String, sha: String, name: String): List<GitHubCiRun> {
+        // `checks: write` reads them too: the same token as the gate's check.
+        val query = "check_name=${name.encodeURLParameter()}&filter=latest&per_page=$PER_PAGE"
+        val response = call(installationId, HttpMethod.Get, "${repoPath(repo)}/commits/$sha/check-runs?$query", null)
+        // A repository the installation does not reach, or a commit GitHub does not know: no run, not a failure.
+        if (response.status == HttpStatusCode.NotFound || response.status == HttpStatusCode.UnprocessableEntity) {
+            return emptyList()
+        }
+        return decode<CheckRuns>(response, "check runs").checkRuns.map {
+            val completedAt = instantOrNull(it.completedAt)
+            GitHubCiRun(it.id, it.name, it.headSha, it.status, it.conclusion, it.app.slug, it.htmlUrl, completedAt)
+        }
+    }
+
     override suspend fun installationAccount(installationId: Long): String? {
-        val response = send(HttpMethod.Get, "/app/installations/$installationId", appToken(), null)
+        val response = send(HttpMethod.Get, "/app/installations/$installationId", appToken(jwt), null)
         if (response.status == HttpStatusCode.NotFound) return null
         return decode<Installation>(response, "installation").account.login
     }
@@ -206,18 +225,13 @@ class HttpGitHubApi(
             val key = installationId to permissions
             tokens[key]?.takeIf { it.expiresAt - clock.now() > REFRESH_BEFORE }?.let { return it.token }
             val path = "/app/installations/$installationId/access_tokens"
-            val response = send(HttpMethod.Post, path, appToken(), tokenRequest(permissions))
+            val response = send(HttpMethod.Post, path, appToken(jwt), tokenRequest(permissions))
             if (response.status == HttpStatusCode.UnprocessableEntity) return null
             val issued = decode<AccessToken>(response, "installation token")
             val token = InstallationToken(issued.token, Instant.parse(issued.expiresAt))
             tokens[key] = token
             token.token
         }
-
-    private suspend fun appToken(): String {
-        val app = jwt() ?: throw GitHubCallException("The GitHub App is not configured on this server.")
-        return app.token()
-    }
 
     private suspend fun send(
         method: HttpMethod,
@@ -257,6 +271,24 @@ class HttpGitHubApi(
 
     @Serializable
     private data class Installation(val account: Account)
+
+    @Serializable
+    private data class CheckRuns(@SerialName("check_runs") val checkRuns: List<CiRun>)
+
+    @Serializable
+    private data class CiRun(
+        val id: Long,
+        val name: String,
+        @SerialName("head_sha") val headSha: String,
+        val status: String,
+        val conclusion: String? = null,
+        val app: Slug,
+        @SerialName("html_url") val htmlUrl: String? = null,
+        @SerialName("completed_at") val completedAt: String? = null,
+    )
+
+    @Serializable
+    private data class Slug(val slug: String)
 
     @Serializable
     private data class AccessToken(val token: String, @SerialName("expires_at") val expiresAt: String)
@@ -457,6 +489,12 @@ private suspend inline fun <reified T> decode(response: HttpResponse, what: Stri
 // makes the installation's token call another route (AUDIT-SECU-2 B5).
 private fun repoPath(repo: String): String =
     if (isRepositoryName(repo)) "/repos/$repo" else throw GitHubCallException("This is not a repository's full name.")
+
+// The App's own JWT, for the calls made as the App rather than as an installation.
+private suspend fun appToken(jwt: suspend () -> AppJwt?): String {
+    val app = jwt() ?: throw GitHubCallException("The GitHub App is not configured on this server.")
+    return app.token()
+}
 
 // The body asking GitHub for an installation token restricted to [permissions].
 private fun tokenRequest(permissions: Map<String, String>): JsonObject = buildJsonObject {

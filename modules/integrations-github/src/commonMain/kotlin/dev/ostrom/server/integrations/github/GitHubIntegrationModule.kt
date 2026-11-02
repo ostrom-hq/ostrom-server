@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.integrations.github
 
+import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.integrations.github.domain.ConfiguredInstanceAdmins
@@ -9,6 +10,8 @@ import dev.ostrom.server.integrations.github.domain.GitHubAppManifests
 import dev.ostrom.server.integrations.github.domain.GitHubAppSource
 import dev.ostrom.server.integrations.github.domain.GitHubAppSourceImpl
 import dev.ostrom.server.integrations.github.domain.GitHubAppStore
+import dev.ostrom.server.integrations.github.domain.GitHubCiApi
+import dev.ostrom.server.integrations.github.domain.GitHubCiChecks
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.domain.GitHubDirectorySync
@@ -106,6 +109,7 @@ object GitHubIntegrationModule : ServerModule {
         single<GitHubApi> { get<HttpGitHubApi>() }
         single<GitHubDirectoryApi> { get<HttpGitHubApi>() }
         single<GitHubManifestApi> { get<HttpGitHubApi>() }
+        single<GitHubCiApi> { get<HttpGitHubApi>() }
         single<GitHubDirectoryRepository> { PostgresGitHubDirectoryRepository(get()) }
         single { GitHubDirectorySync(get(), get(), get(), get(), get()) }
         single<ListGitHubReposUseCase> { ListGitHubReposUseCaseImpl(get(), get()) }
@@ -118,6 +122,10 @@ object GitHubIntegrationModule : ServerModule {
         }
         single { GitHubAppManifests(get(), get(), get(), get(), get(), get()) }
         single<PullRequestHeads> { GitHubPullRequestHeads(get(), get(), get()) }
+        single<CiChecks> {
+            val apps = get<GitHubAppSource>()
+            GitHubCiChecks(get(), get(), { apps.current().slug }, get())
+        }
         single { GitHubGateChecks(get(), get(), get<GitHubSettings>().webOrigin, get()) } bind GateChannel::class
         single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single {
