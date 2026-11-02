@@ -3,6 +3,74 @@ package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.kernel.database.SchemaMigration
 
+/** The functions' signatures, for their handover to `ostrom_router`. */
+private val ROUTER_FUNCTIONS =
+    listOf(
+        "identity_token_by_hash(TEXT)",
+        "identity_token_touch(UUID, TIMESTAMPTZ)",
+        "identity_revoke_agent_session_tokens(TEXT, TIMESTAMPTZ)",
+    )
+
+/**
+ * Version 5 (RLS audit R1): outside any organization, the serving role only reaches the account-level tokens
+ * (`org_id IS NULL`: personal and CLI tokens, read and changed by their user); an organization's tokens (the agent
+ * tokens) are written inside their organization, and the three things done to them from outside it go through narrow
+ * `SECURITY DEFINER` functions owned by `ostrom_router` (`NOLOGIN`, never a member of the serving role): authenticating
+ * a token by its hash, noting its last use, and revoking the tokens of an agent session. `pg_temp` comes last in
+ * their `search_path`, and only the serving role may run them (S2-60), as for the orgs module's functions.
+ */
+private val TOKENS_OF_ORGANIZATIONS_SQL: String =
+    """
+    DROP POLICY identity_api_tokens_account ON identity_api_tokens;
+    CREATE POLICY identity_api_tokens_account ON identity_api_tokens
+        USING (org_id IS NULL AND NULLIF(current_setting('ostrom.org_id', true), '') IS NULL
+            AND current_user <> 'ostrom_tenant')
+        WITH CHECK (org_id IS NULL AND NULLIF(current_setting('ostrom.org_id', true), '') IS NULL
+            AND current_user <> 'ostrom_tenant');
+    DO $$ BEGIN
+        CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+    END $$;
+    DO $$ BEGIN
+        GRANT ostrom_router TO CURRENT_USER;
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END $$;
+    GRANT USAGE ON SCHEMA public TO ostrom_router;
+    CREATE POLICY identity_api_tokens_router ON identity_api_tokens TO ostrom_router USING (true) WITH CHECK (true);
+    GRANT SELECT, UPDATE (last_used_at, revoked_at) ON identity_api_tokens TO ostrom_router;
+    CREATE FUNCTION identity_token_by_hash(p_hash TEXT) RETURNS TABLE (
+        id UUID, user_id UUID, org_id UUID, name TEXT, kind TEXT, scopes TEXT, hint TEXT, agent_session_id TEXT,
+        created_at TIMESTAMPTZ, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ
+    ) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT t.id, t.user_id, t.org_id, t.name, t.kind, t.scopes, t.hint, t.agent_session_id, t.created_at,
+               t.expires_at, t.last_used_at, t.revoked_at
+        FROM identity_api_tokens t WHERE t.secret_hash = p_hash;
+    $$;
+    CREATE FUNCTION identity_token_touch(p_id UUID, p_at TIMESTAMPTZ) RETURNS VOID
+        LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        UPDATE identity_api_tokens SET last_used_at = p_at WHERE id = p_id;
+    $$;
+    CREATE FUNCTION identity_revoke_agent_session_tokens(p_session TEXT, p_at TIMESTAMPTZ) RETURNS BIGINT
+        LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        WITH revoked AS (
+            UPDATE identity_api_tokens SET revoked_at = p_at
+            WHERE agent_session_id = p_session AND kind = 'AGENT' AND revoked_at IS NULL
+            RETURNING 1
+        )
+        SELECT count(*) FROM revoked;
+    $$;
+    ${ROUTER_FUNCTIONS.joinToString("\n") { "REVOKE EXECUTE ON FUNCTION $it FROM PUBLIC;" }}
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            ${ROUTER_FUNCTIONS.joinToString("\n            ") { "GRANT EXECUTE ON FUNCTION $it TO ostrom_app;" }}
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ${ROUTER_FUNCTIONS.joinToString("\n") { "ALTER FUNCTION $it OWNER TO ostrom_router;" }}
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /**
  * The schema of the identity module; its tables start with `identity_`.
  *
@@ -194,5 +262,10 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             );
             CREATE INDEX identity_sign_in_links_expiry ON identity_sign_in_links (expires_at)
         """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 5,
+        name = "tokens_of_organizations_through_the_router",
+        sql = TOKENS_OF_ORGANIZATIONS_SQL,
     ),
 )
