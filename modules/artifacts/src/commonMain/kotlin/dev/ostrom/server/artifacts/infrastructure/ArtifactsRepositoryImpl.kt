@@ -112,9 +112,9 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
             .bind("id", id).bind("org_id", orgId),
     ).getOrThrow().firstOrNull()?.toArtifact()
 
-    override suspend fun getById(id: Uuid): Artifact? = route("artifacts_route_by_id", id)
+    override suspend fun getById(id: Uuid): Artifact? = route("artifacts_route_by_id", "UUID", id)
 
-    override suspend fun getByLinkSlug(slug: String): Artifact? = route("artifacts_route_by_slug", slug)
+    override suspend fun getByLinkSlug(slug: String): Artifact? = route("artifacts_route_by_slug", "TEXT", slug)
 
     override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> {
         val cursor = if (before == null) {
@@ -204,9 +204,9 @@ internal class ArtifactsRepositoryImpl(private val driver: Driver) : ArtifactsRe
      * The artifact a route matches, found across organizations by the `SECURITY DEFINER` [function] of
      * [ArtifactsMigrations] (version 2) on `:key`, then read in its organization.
      */
-    private suspend fun route(function: String, key: Any): Artifact? {
+    private suspend fun route(function: String, type: String, key: Any): Artifact? {
         val row = driver.fetchAll(
-            Statement.create("""SELECT artifact_id, org_id FROM $function(:key)""").bind("key", key),
+            Statement.create("""SELECT artifact_id, org_id FROM $function(CAST(:key AS $type))""").bind("key", key),
         ).getOrThrow().firstOrNull() ?: return null
         return get(row.get("org_id").asUuid(), row.get("artifact_id").asUuid())
     }
