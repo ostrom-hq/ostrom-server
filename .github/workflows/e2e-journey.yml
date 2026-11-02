@@ -1,11 +1,12 @@
 name: E2E journey
 
-# The client journey of ostrom-e2e (scenarios/parcours.e2e.ts, demo/PARCOURS.md) against a PUBLISHED image of this
-# server: the image named, or by default the newest `sha-<7>` of main's last commits published, never `edge`, which names
-# no commit. A PARCOURS cell is ✅ only on such a run (JOURNAL 03/11): the bench of ostrom-e2e builds main from its
-# Dockerfile, which proves an e2e pull request, not the image that ships. It runs in this repository because its token
-# reads its own GHCR packages, which ostrom-e2e's cannot yet (as cli-journey.yml). On demand, and, off the org's
-# one-`ci`-job rule on purpose (as cli-journey.yml), on a pull request only when the pull request changes this file.
+# ostrom-e2e's scenarios (scenarios/*.e2e.ts: the journey of demo/PARCOURS.md, budgets, attestation…) against a
+# PUBLISHED image of this server: the image named, or by default the newest `sha-<7>` of main's last commits published,
+# never `edge`, which names no commit. A PARCOURS cell is ✅ only on such a run (JOURNAL 03/11): the bench of
+# ostrom-e2e builds main from its Dockerfile, which proves an e2e pull request, not the image that ships. It runs in
+# this repository because its token reads its own GHCR packages, which ostrom-e2e's cannot yet (as cli-journey.yml).
+# On demand, and, off the org's one-`ci`-job rule on purpose (as cli-journey.yml), on a pull request only when the
+# pull request changes this file.
 on:
   workflow_dispatch:
     inputs:
@@ -15,10 +16,15 @@ on:
       e2e_ref:
         description: ostrom-e2e ref whose scenarios run
         default: main
+      files:
+        description: >-
+          Scenario files, space-separated, relative to ostrom-e2e
+          (`scenarios/budget.e2e.ts scenarios/attestation.e2e.ts`); empty = every scenarios/*.e2e.ts.
+        default: ""
       tests:
         description: >-
-          Scenarios to run, a test-name filter (`E2E-PARC-013`); empty = the whole journey. Every scenario the filter
-          names must pass: a skipped one fails the run.
+          Scenarios to run in those files, a test-name filter (`E2E-PARC-013`, `E2E-BUDGET`); empty = all of them. Every
+          scenario the filter names must pass: a skipped one fails the run.
         default: ""
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -49,12 +55,14 @@ jobs:
           --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
       # Billing creates the organization's customer: stripe-mock answers it, as on ostrom-e2e's bench.
       stripe:
-        image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78 # latest, 2026-10-01
+        # latest, 2026-10-01 (as ostrom-e2e)
+        image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78
         ports: ['12111:12111']
     env:
       WANTED_IMAGE: ${{ inputs.server_image }}
       E2E_REF: ${{ inputs.e2e_ref || 'main' }}
       # A pull request that changes this file proves it on one scenario of the main journey (3.2, the gate of a rule).
+      FILES: ${{ github.event_name == 'pull_request' && 'scenarios/parcours.e2e.ts' || inputs.files }}
       TESTS: ${{ github.event_name == 'pull_request' && 'E2E-PARC-013' || inputs.tests }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
@@ -104,7 +112,8 @@ jobs:
           {
             echo "### Images"
             echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
-            echo "- scenarios: ostrom-e2e $(git -C e2e rev-parse --short HEAD) ($E2E_REF), filter: \`${TESTS:-all}\`"
+            echo "- scenarios: ostrom-e2e $(git -C e2e rev-parse --short HEAD) ($E2E_REF)"
+            echo "- files: \`${FILES:-scenarios/*.e2e.ts}\`, filter: \`${TESTS:-all}\`"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
@@ -151,8 +160,13 @@ jobs:
           OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
         run: |
           pnpm install --frozen-lockfile
-          # A filter runs its scenarios only; the json report says which ran.
-          pnpm exec vitest run --project e2e scenarios/parcours.e2e.ts ${TESTS:+-t "$TESTS"} \
+          # The files named, or every scenario file; a filter runs its scenarios only; the json report says which ran.
+          read -r -a files <<< "${FILES:-}"
+          [ "${#files[@]}" -gt 0 ] || files=(scenarios/*.e2e.ts)
+          for f in "${files[@]}"; do
+            [ -f "$f" ] || { echo "::error::no scenario file $f in ostrom-e2e@$E2E_REF"; exit 1; }
+          done
+          pnpm exec vitest run --project e2e "${files[@]}" ${TESTS:+-t "$TESTS"} \
             --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/journey.json"
       - name: Every scenario the filter names ran and passed
         if: always() && env.TESTS != ''
