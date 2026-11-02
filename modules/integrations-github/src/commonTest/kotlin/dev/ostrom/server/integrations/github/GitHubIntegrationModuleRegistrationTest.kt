@@ -41,7 +41,12 @@ class GitHubIntegrationModuleRegistrationTest {
     fun registersUnderItsNameWithDefinitionsThatLoad() {
         assertEquals("integrations-github", GitHubIntegrationModule.name)
         val migrations = GitHubIntegrationModule.migrations.map { it.version to it.name }
-        assertEquals(listOf(1L to "create_github", 2L to "create_github_directory_and_app"), migrations)
+        val expected = listOf(
+            1L to "create_github",
+            2L to "create_github_directory_and_app",
+            3L to "create_github_origins_and_deliveries",
+        )
+        assertEquals(expected, migrations)
         koinApplication { modules(GitHubIntegrationModule.koinModule) }.close()
     }
 
