@@ -111,8 +111,10 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
                     ?.let { decided(workflow) to it.patterns }
             }
         }
-        val base = declared.firstOrNull { it.first }?.second ?: action.patterns
-        return (base + declared.filterNot { it.first }.flatMap { it.second }).distinct()
+        val (decided, proposed) = declared.partition { it.first }
+        // The first decided gate's patterns, else the built-in ones; then every proposal's.
+        val base = (decided.map { it.second } + listOf(action.patterns)).first()
+        return (base + proposed.flatMap { it.second }).distinct()
     }
 
     /** Matching helpers of the prototype, shared with the rules harness. */
