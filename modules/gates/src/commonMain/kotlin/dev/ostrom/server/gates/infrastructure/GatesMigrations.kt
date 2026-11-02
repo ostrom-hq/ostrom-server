@@ -99,5 +99,37 @@ val GatesMigrations: List<SchemaMigration> = listOf(
             WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
         """.trimIndent(),
     ),
+    // The count of the `ostrom.gates.pending` gauge, across organizations (docs/tenancy.md): a function of
+    // `ostrom_router`, which sees the status column alone, through a read-only policy of its own.
+    SchemaMigration(
+        4,
+        "gates_pending_count",
+        """
+        DO $$ BEGIN
+            CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+        EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+        END $$;
+        DO $$ BEGIN
+            GRANT ostrom_router TO CURRENT_USER;
+        EXCEPTION WHEN unique_violation THEN NULL;
+        END $$;
+        GRANT USAGE ON SCHEMA public TO ostrom_router;
+        CREATE POLICY gates_gates_router ON gates_gates FOR SELECT TO ostrom_router USING (true);
+        GRANT SELECT (status) ON gates_gates TO ostrom_router;
+        CREATE FUNCTION gates_pending_count() RETURNS BIGINT
+            LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+            SELECT count(*) FROM gates_gates WHERE status = 'PENDING';
+        $$;
+        REVOKE EXECUTE ON FUNCTION gates_pending_count() FROM PUBLIC;
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+                GRANT EXECUTE ON FUNCTION gates_pending_count() TO ostrom_app;
+            END IF;
+        END $$;
+        GRANT CREATE ON SCHEMA public TO ostrom_router;
+        ALTER FUNCTION gates_pending_count() OWNER TO ostrom_router;
+        REVOKE CREATE ON SCHEMA public FROM ostrom_router
+        """.trimIndent(),
+    ),
 )
 
