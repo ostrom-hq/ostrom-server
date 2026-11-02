@@ -8,11 +8,18 @@ import kotlin.test.assertTrue
 class ProcessMetricsTest {
     @Test
     fun cpuTimeGrowsWithWork() {
+        // The clock ticks by 10 ms on Linux: on a loaded runner it could already have moved past 0.01 s before a
+        // `while` tested it once, leaving no spin (run 41514183276). The work loop runs at least once, and the test
+        // asserts what it waited for, never how many turns that took.
         val before = processCpuSeconds()
         var spin = 0L
-        while (processCpuSeconds() - before < 0.01) spin++
+        var after: Double
+        do {
+            spin++
+            after = processCpuSeconds()
+        } while (after - before < 0.01)
 
-        assertTrue(spin > 0 && processCpuSeconds() >= before)
+        assertTrue(spin >= 1 && after - before >= 0.01, "spin $spin, ${after - before} s")
     }
 
     @Test

@@ -10,7 +10,7 @@ import kotlin.time.Clock
 /**
  * The sessions running in every organization, for the `ostrom.sessions.active{where="local"}` gauge: open, with a
  * launcher that gave a sign of life within [SweepStaleSessionsUseCaseImpl.STALE_AFTER] (a hook alone is never
- * followed, a silent launcher is about to be swept). A count through `sessions_active_count` (migration 3), which
+ * followed, a silent launcher is about to be swept). A count through `sessions_active_count` (migration 4), which
  * returns no row of any organization.
  *
  * @param driver The database, as the serving role.

@@ -49,7 +49,7 @@ private val SWEEP_THROUGH_THE_ROUTER_SQL: String =
  * The sessions schema. Rows are isolated by organization in the database itself: row level security is forced (the
  * owner included) and every query runs in a transaction that first sets `ostrom.org_id`. One read crosses
  * organizations: the sweep of lost sessions, only through `sessions_stale` (version 2), and the count of running
- * sessions, only through `sessions_active_count` (version 3, docs/tenancy.md).
+ * sessions, only through `sessions_active_count` (version 4, docs/tenancy.md).
  */
 val SessionsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -97,10 +97,17 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(2, "sweep_through_the_router", SWEEP_THROUGH_THE_ROUTER_SQL),
+    // A launch's sessions, first segment first: what a model call through the gateway is spent in (the reports'
+    // spending by agent and repository), and the sessions of a launch the API lists.
+    SchemaMigration(
+        3,
+        "index_sessions_by_launch",
+        "CREATE INDEX sessions_launch ON sessions_sessions (org_id, launch_id, segment)",
+    ),
     // The count of the `ostrom.sessions.active{where="local"}` gauge, across organizations (docs/tenancy.md): a
     // function of `ostrom_router`, through the router's read-only policy of version 2.
     SchemaMigration(
-        3,
+        4,
         "sessions_active_count",
         """
         CREATE FUNCTION sessions_active_count(p_seen_since TIMESTAMPTZ) RETURNS BIGINT
