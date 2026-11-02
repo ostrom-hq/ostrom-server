@@ -6,16 +6,22 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.orgs.domain.Member
+import dev.ostrom.server.orgs.domain.Membership
+import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.infrastructure.invitationMail
+import dev.ostrom.server.orgs.presentation.MyOrganizationResponse
 import dev.ostrom.server.orgs.presentation.OrgsConfig
 import dev.ostrom.server.orgs.presentation.key
 import dev.ostrom.server.orgs.presentation.roleOf
+import dev.ostrom.server.orgs.presentation.toMyOrganizationResponse
 import dev.ostrom.server.orgs.presentation.userId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class PresentationTest {
@@ -73,4 +79,18 @@ class PresentationTest {
             AuthenticatedPrincipal("x", PrincipalKind.USER, emptySet()).userId()
         }
     }
+
+    @Test
+    fun anOrganizationToChooseShowsItsGitHubAvatarOnlyWhenLinked() {
+        val at = Instant.fromEpochSeconds(0)
+        val org = Org(Uuid.random(), "acme", "Acme", null, null, at)
+        val membership = Membership(org, Member(Uuid.random(), org.id, Uuid.random(), OrgRole.ADMIN, at))
+        assertEquals(
+            MyOrganizationResponse(org.id.toString(), "acme", "Acme", "", "admin"),
+            membership.toMyOrganizationResponse(),
+        )
+        val linked = membership.copy(org = org.copy(githubOrgId = 42))
+        assertEquals("https://avatars.githubusercontent.com/u/42", linked.toMyOrganizationResponse().avatarUrl)
+    }
 }
+

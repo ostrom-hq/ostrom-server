@@ -92,6 +92,8 @@ interface OAuthProvider {
  * @property expiresAt When it stops being usable.
  * @property linkUserId When a signed-in user started it to link this provider to their account (S2-07), that user:
  *   the callback links the identity to them instead of signing in by it.
+ * @property mobile When the phone app started it (PKCE, S2-24), the app: the callback returns a one-time code to its
+ *   deep link instead of opening a browser session.
  */
 data class OAuthAttempt(
     val id: Uuid,
@@ -103,6 +105,7 @@ data class OAuthAttempt(
     val createdAt: Instant,
     val expiresAt: Instant,
     val linkUserId: Uuid? = null,
+    val mobile: MobileClient? = null,
 )
 
 /**

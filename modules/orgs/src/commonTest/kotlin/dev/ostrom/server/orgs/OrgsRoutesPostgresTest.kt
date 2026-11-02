@@ -14,7 +14,11 @@ import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
+import dev.ostrom.server.orgs.domain.Member
+import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.orgs.presentation.CreateLinkRequest
 import dev.ostrom.server.orgs.presentation.CreateOrgRequest
 import dev.ostrom.server.orgs.presentation.DeleteOrgRequest
@@ -26,6 +30,7 @@ import dev.ostrom.server.orgs.presentation.InviteRequestBody
 import dev.ostrom.server.orgs.presentation.InvitedResponse
 import dev.ostrom.server.orgs.presentation.MemberResponse
 import dev.ostrom.server.orgs.presentation.MembersResponse
+import dev.ostrom.server.orgs.presentation.MyOrganizationsResponse
 import dev.ostrom.server.orgs.presentation.OrgResponse
 import dev.ostrom.server.orgs.presentation.OrgsResponse
 import dev.ostrom.server.orgs.presentation.TransferRequest
@@ -48,7 +53,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
 import org.koin.dsl.module
@@ -106,6 +113,27 @@ class OrgsRoutesPostgresTest {
         }
 
     private fun tokenOf(link: String) = link.substringAfter("#token=")
+
+    @Test
+    fun aPersonInTwoOrganizationsReadsThemWithoutNamingOne() =
+        serverTest(modules, overrides) { server ->
+            val (ada, session) = server.signIn("ada")
+            val orgs = server.koin.get<OrgsRepository>()
+            val now = Clock.System.now()
+            listOf("acme", "globex").forEach { slug ->
+                val org = Org(Uuid.random(), slug, slug.uppercase(), null, null, now)
+                orgs.create(org, Member(Uuid.random(), org.id, ada.id, OrgRole.OWNER, now)) { false }
+            }
+
+            // Two memberships and no Ostrom-Org header: neither route asks for one.
+            assertEquals(HttpStatusCode.OK, server.client.get("/api/v1/auth/me") { session(session) }.status)
+            val mine = server.client.get("/api/v1/me/organizations") { session(session) }
+            assertEquals(HttpStatusCode.OK, mine.status)
+            assertEquals(
+                listOf("ACME" to "owner", "GLOBEX" to "owner"),
+                mine.body<MyOrganizationsResponse>().items.map { it.name to it.role },
+            )
+        }
 
     @Test
     @Suppress("LongMethod") // One end-to-end story through the HTTP API, read top to bottom.
@@ -231,14 +259,15 @@ class OrgsRoutesPostgresTest {
                     session(ada)
                     json(UpdateMemberRequest("admin"))
                 }
-            assertEquals("admin", promoted.body<MemberResponse>().role)
-            assertEquals(
-                "admin",
-                server.client
-                    .get("/api/v1/orgs/acme/members/bob") { session(carl) }
-                    .body<MemberResponse>()
-                    .role,
-            )
+            val bobAsAdmin = promoted.body<MemberResponse>()
+            assertEquals("admin", bobAsAdmin.role)
+            val bobSeen = server.client.get("/api/v1/orgs/acme/members/bob") { session(carl) }.body<MemberResponse>()
+            assertEquals("admin", bobSeen.role)
+            // The contract's `Member.id`: the member row's id, the same on every route that shows the member.
+            assertEquals(bobAsAdmin.id, bobSeen.id)
+            assertNotNull(Uuid.parseOrNull(bobSeen.id))
+            val listed = server.client.get("/api/v1/orgs/acme/members") { session(carl) }.body<MembersResponse>()
+            assertEquals(bobSeen.id, listed.items.single { it.login == "bob" }.id)
             val badRole =
                 server.client.patch("/api/v1/orgs/acme/members/carl") {
                     session(bob)
