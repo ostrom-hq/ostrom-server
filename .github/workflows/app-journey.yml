@@ -1,7 +1,7 @@
 name: App journey
 
 # The mobile app's flows against the real server (ostrom-app .maestro/real/, demo/PARCOURS.md 6.7) on a PUBLISHED image
-# of this server: by default `sha-<7>` of main's head, never `edge`, which a slower run of an older commit may still
+# of this server: by default the newest published `sha-<7>` of main's last commits, never `edge`, which a slower run of an older commit may still
 # hold. The job prepares the server through its own routes (ostrom-app scripts/real-server-session.sh): the phone's
 # person signs in with GitHub (the demo stack's fake GitHub, ostrom-helm compose/demo/fake-github.mjs), owns the
 # organization and approves pushes to main; another member asks two; the phone's session comes from the app's own
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       server_image:
-        description: Server image (empty = ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main's head)
+        description: Server image (empty = the newest published ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main)
         default: ""
       app_ref:
         description: ostrom-app ref whose app and flows run
@@ -52,7 +52,7 @@ jobs:
       APP_REF: ${{ inputs.app_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
     steps:
-      # The whole history: main's head names the image, and the image's own commit gives its database roles.
+      # The whole history: main's last commits name the image, and the image's own commit gives its database roles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: server
@@ -87,15 +87,27 @@ jobs:
           nohup node helm/compose/demo/fake-github.mjs > "$RUNNER_TEMP/fake-github.log" 2>&1 &
           for _ in $(seq 1 30); do curl -fsS 127.0.0.1:8080/health >/dev/null 2>&1 && exit 0; sleep 1; done
           cat "$RUNNER_TEMP/fake-github.log"; exit 1
-      - name: The server image (sha-<7> of main's head unless named)
+      - name: The server image (the newest published sha-<7> of main unless named)
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: |
           main=$(git -C server rev-parse origin/main)
-          image=${WANTED_IMAGE:-ghcr.io/ostrom-hq/ostrom-server:sha-${main:0:7}}
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker pull --quiet "$image" || { echo "::error::$image cannot be pulled (not published yet?)"; exit 1; }
+          if [ -n "$WANTED_IMAGE" ]; then
+            image=$WANTED_IMAGE
+            docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
+          else
+            # Main moves faster than its images are published: the newest `sha-<7>` among its last 20 commits.
+            image=""
+            for commit in $(git -C server rev-list --max-count=20 origin/main); do
+              if docker pull --quiet "ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}" > /dev/null 2>&1; then
+                image="ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}"
+                break
+              fi
+            done
+            [ -n "$image" ] || { echo "::error::No image of main's last 20 commits is published"; exit 1; }
+          fi
           revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
           [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
           # The database roles of the image's own commit, not of a main that may have moved past it.
