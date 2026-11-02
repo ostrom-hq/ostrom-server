@@ -13,6 +13,10 @@ import dev.ostrom.server.kernel.auth.RejectingTokenAuthenticator
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.kernel.module.serverKoin
+import dev.ostrom.server.kernel.signing.CurrentKeyring
+import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
+import dev.ostrom.server.kernel.signing.InstanceKeyring
+import dev.ostrom.server.kernel.signing.InstanceSigner
 import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.runTest
@@ -63,6 +67,22 @@ class ServerKoinTest {
     fun aModuleCannotReplaceAKernelBinding() {
         val rogue = ProbeModule("rogue", module { single<Clock> { Clock.System } })
         assertFails { serverKoin(kernel, listOf(rogue)) }
+    }
+
+    @Test
+    fun verifiesWithTheCurrentKeyAloneUntilAModuleBindsTheRing() = runTest {
+        val signer = Ed25519InstanceSigner.generate()
+        val withSigner = module {
+            single<Clock> { Clock.System }
+            single<InstanceSigner> { signer }
+        }
+        assertIs<CurrentKeyring>(serverKoin(withSigner, emptyList()).get<InstanceKeyring>())
+
+        val ring = object : InstanceKeyring {
+            override suspend fun verify(keyId: String, data: ByteArray, signature: ByteArray): Boolean? = null
+        }
+        val instance = ProbeModule("instance", module { single<InstanceKeyring> { ring } })
+        assertSame(ring, serverKoin(withSigner, listOf(instance)).get<InstanceKeyring>())
     }
 
     @Test

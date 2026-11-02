@@ -23,7 +23,9 @@ import dev.ostrom.server.kernel.audit.OrgAuditRecord
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.signing.CurrentKeyring
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
+import dev.ostrom.server.kernel.signing.InstanceKeyring
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,11 +39,11 @@ class OrgAuditTest {
     private val ada = User(Uuid.random(), "ada", "Ada", null, null, Instant.fromEpochSeconds(0))
     private val gone = Uuid.random()
 
-    private class World(signer: Ed25519InstanceSigner) {
+    private class World(signer: Ed25519InstanceSigner, keys: InstanceKeyring = CurrentKeyring(signer)) {
         val events = InMemoryAuditRepository()
         val users = InMemoryUsersRepository()
         val log = AuditLogImpl(events, signer, ShortHasher, SettableClock())
-        val verifier = AuditVerifierImpl(signer, ShortHasher)
+        val verifier = AuditVerifierImpl(keys, ShortHasher)
         val list = ListOrgAuditUseCaseImpl(events, users, verifier)
     }
 
@@ -125,19 +127,44 @@ class OrgAuditTest {
     }
 
     @Test
-    fun aLineSignedByAnotherKeyIsUnverifiableAndAForgedSignatureAltered() = runTest {
+    fun aKeyTheInstanceNeverHadOrAForgedSignatureIsAltered() = runTest {
         val world = world()
         world.fourLines()
 
-        world.rewrite(1) { it.copy(keyId = "retired-key") }
+        world.rewrite(1) { it.copy(keyId = "0000000000000000") }
         world.rewrite(2) { it.copy(signature = "not base64 %") }
         world.rewrite(3) { it.copy(signature = world.events.events.first { e -> e.sequence == 4L }.signature) }
 
         val found = world.integrities()
-        assertEquals(AuditIntegrity.UNVERIFIABLE, found[1])
+        assertEquals(AuditIntegrity.ALTERED, found[1], "Not a key of the instance")
         assertEquals(AuditIntegrity.ALTERED, found[2])
         assertEquals(AuditIntegrity.ALTERED, found[3], "Another line's signature")
         assertEquals(AuditIntegrity.VERIFIED, found[4])
+    }
+
+    @Test
+    fun theNewestLineRewrittenUnderAnotherKeyIdIsAlteredNotExcused() = runTest {
+        val world = world()
+        world.fourLines()
+
+        // The hash recomputed (no key needed) and a key id the server does not hold: the signature still decides.
+        world.rewrite(4) { it.copy(entry = it.entry.copy(action = "budget.read"), keyId = "x").rehashed() }
+
+        assertEquals(AuditIntegrity.ALTERED, world.integrities()[4])
+    }
+
+    @Test
+    fun aLineSignedByAPastKeyOfTheInstanceIsVerified() = runTest {
+        val past = Ed25519InstanceSigner.generate()
+        val current = Ed25519InstanceSigner.generate()
+        val ring = object : InstanceKeyring {
+            override suspend fun verify(keyId: String, data: ByteArray, signature: ByteArray): Boolean? =
+                listOf(past, current).firstOrNull { it.keyId == keyId }?.verify(data, signature)
+        }
+        val world = World(past, ring).apply { users.users[ada.id] = ada }
+        world.fourLines()
+
+        assertEquals(List(4) { AuditIntegrity.VERIFIED }, world.integrities().values.toList())
     }
 
     @Test

@@ -178,8 +178,8 @@ class OrgAuditRoutesPostgresTest {
             assertNull(clean.items.last().previousHash)
             assertEquals(listOf(null, "${ada.id}"), listOf(clean.items[3].actorId, clean.items[4].actorId))
             // Written as null, never left out: a client rebuilds the canonical form from them.
-            val server = audit(session, "?event=org.purged").bodyAsText()
-            assertTrue("\"actorId\":null" in server, server)
+            val purged = audit(session, "?event=org.purged").bodyAsText()
+            assertTrue("\"actorId\":null" in purged, purged)
             val first = audit(session, "?event=org.renamed").bodyAsText()
             assertTrue("\"previousHash\":null" in first, first)
             val filtered = page(session, "?actor=ada&event=budget.changed")

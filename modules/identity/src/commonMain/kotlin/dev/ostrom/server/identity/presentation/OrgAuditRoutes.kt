@@ -57,8 +57,7 @@ class OrgAuditApi(val actor: String? = null, val event: String? = null, val befo
  * @property hash The SHA-256 (hex) of the canonical form.
  * @property signature The instance's Ed25519 signature of the canonical form (base64).
  * @property keyId The instance key that signed it (`GET /api/v1/instance/keys`).
- * @property integrity What the server found when it read the line: `verified`, `altered`, `unlinked` or
- *   `unverifiable`.
+ * @property integrity What the server found when it read the line: `verified`, `altered` or `unlinked`.
  */
 @OptIn(ExperimentalSerializationApi::class)
 @KeepGeneratedSerializer
@@ -134,7 +133,7 @@ private fun OrgAuditLine.toResponse() = OrgAuditEventResponse(
     integrity.wireName(),
 )
 
-/** The contract's name of an integrity: `verified`, `altered`, `unlinked`, `unverifiable`. */
+/** The contract's name of an integrity: `verified`, `altered`, `unlinked`. */
 internal fun AuditIntegrity.wireName(): String = name.lowercase()
 
 // The person's login, their id once they no longer exist, a credential that is not a person's by its kind and id (as

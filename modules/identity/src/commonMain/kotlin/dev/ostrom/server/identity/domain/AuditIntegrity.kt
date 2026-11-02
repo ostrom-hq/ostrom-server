@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
-import dev.ostrom.server.kernel.signing.InstanceSigner
+import dev.ostrom.server.kernel.signing.InstanceKeyring
 import kotlin.io.encoding.Base64
 
 /**
@@ -18,35 +18,36 @@ enum class AuditIntegrity {
     /** The hash, the signature and the link to the previous line hold. */
     VERIFIED,
 
-    /** The line no longer matches its hash, or its signature. */
+    /**
+     * The line no longer matches its hash, or its signature does not verify with the key it names, or it names a key
+     * the instance never had.
+     */
     ALTERED,
 
     /** The previous line is missing, or is not the one this line was signed after: a line before it was erased. */
     UNLINKED,
-
-    /** Signed by a key the server does not hold: nothing else is wrong with it. */
-    UNVERIFIABLE,
 }
 
 /** Checks a line of the audit log against its canonical form, the instance key and the line before it. */
 interface AuditVerifier {
     /**
-     * Checks a line.
+     * Checks a line. Erasing the newest lines of a chain leaves a shorter chain that checks: nothing anchors its head.
      *
      * @param line The line, with the hash of the line before it.
      *
-     * @return What was found; the first fault wins: altered, then unlinked, then unverifiable.
+     * @return What was found; the first fault wins: a wrong hash, then a broken link, then a wrong signature.
      */
     suspend fun integrity(line: ChainedAuditEvent): AuditIntegrity
 }
 
 /**
- * [AuditVerifier] with the instance key and the hash [AuditLogImpl] signs with.
+ * [AuditVerifier] with every key of the instance, past ones included, and the hash [AuditLogImpl] signs with. The key
+ * id is not in the canonical form: a line rewritten with another key id still has to verify with the key it names.
  *
- * @param signer The instance key.
+ * @param keys The instance's keys.
  * @param hasher Hashes the canonical form (SHA-256).
  */
-class AuditVerifierImpl(private val signer: InstanceSigner, private val hasher: SecretHasher) : AuditVerifier {
+class AuditVerifierImpl(private val keys: InstanceKeyring, private val hasher: SecretHasher) : AuditVerifier {
     override suspend fun integrity(line: ChainedAuditEvent): AuditIntegrity {
         val event = line.event
         val canonical = auditCanonicalForm(event.id, event.sequence, event.entry, event.occurredAt, event.previousHash)
@@ -59,11 +60,14 @@ class AuditVerifierImpl(private val signer: InstanceSigner, private val hasher: 
         return when {
             hasher.hash(canonical) != event.hash -> AuditIntegrity.ALTERED
             !linked -> AuditIntegrity.UNLINKED
-            event.keyId != signer.keyId -> AuditIntegrity.UNVERIFIABLE
-            !signer.verify(canonical.encodeToByteArray(), signatureOf(event)) -> AuditIntegrity.ALTERED
-            else -> AuditIntegrity.VERIFIED
+            signedByTheInstance(event, canonical) -> AuditIntegrity.VERIFIED
+            else -> AuditIntegrity.ALTERED
         }
     }
+
+    // An unknown key id (null) is no key of the instance: not its signature.
+    private suspend fun signedByTheInstance(event: AuditEvent, canonical: String): Boolean =
+        keys.verify(event.keyId, canonical.encodeToByteArray(), signatureOf(event)) == true
 
     // A signature that is not base64 is no signature: an empty one never verifies.
     private fun signatureOf(event: AuditEvent): ByteArray = try {

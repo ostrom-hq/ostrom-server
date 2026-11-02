@@ -116,4 +116,32 @@ class Ed25519InstanceSignerTest {
             "MC4CAQAwBQYDK2VwBCIEIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g\n" +
             "-----END PRIVATE KEY-----\n"
     }
+
+    @Test
+    fun aPublishedKeyVerifiesWhatItsKeySignedAndNothingElse() = runTest {
+        val past = Ed25519InstanceSigner.generate()
+        val current = Ed25519InstanceSigner.generate()
+        val data = "line".encodeToByteArray()
+        val signature = past.sign(data)
+
+        assertTrue(Ed25519InstanceSigner.verifyWith(past.publicKeyPem, data, signature))
+        assertFalse(Ed25519InstanceSigner.verifyWith(current.publicKeyPem, data, signature))
+        assertFalse(Ed25519InstanceSigner.verifyWith(past.publicKeyPem, "other".encodeToByteArray(), signature))
+        assertFalse(Ed25519InstanceSigner.verifyWith(past.publicKeyPem, data, ByteArray(0)))
+    }
+
+    @Test
+    fun theCurrentKeyringKnowsTheCurrentKeyOnly() = runTest {
+        val signer = Ed25519InstanceSigner.generate()
+        val ring = CurrentKeyring(signer)
+        val data = "line".encodeToByteArray()
+
+        assertEquals(true, ring.verify(signer.keyId, data, signer.sign(data)))
+        assertEquals(false, ring.verify(signer.keyId, data, ByteArray(SIGNATURE_SIZE)))
+        assertEquals(null, ring.verify("0000000000000000", data, signer.sign(data)))
+    }
+
+    private companion object {
+        const val SIGNATURE_SIZE = 64
+    }
 }
