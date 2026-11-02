@@ -394,30 +394,32 @@ class GitHubDirectoryPostgresTest {
 
     @Test
     fun theDirectorysRequestPathReadsUseTheirIndexes() = gitHubTest { server ->
+        // Fixtures only: the rows of many organizations at once and the statistics, which no request writes (#68).
+        val fixtures = server.database.superuser
         val driver = server.driver
         for ((org, count) in listOf(OTHER_ORG to 20_000, ORG to 2_000)) {
-            driver.execute(
+            fixtures.execute(
                 "INSERT INTO github_repos (org_id, name, default_branch, archived, owners) " +
                     "SELECT CAST('$org' AS uuid), 'repo-' || i, 'main', FALSE, '[]' " +
                     "FROM generate_series(1, $count) AS i",
             ).getOrThrow()
-            driver.execute(
+            fixtures.execute(
                 "INSERT INTO github_teams (org_id, slug, name, members, repos) SELECT CAST('$org' AS uuid), " +
                     "'team-' || i, 'Team', '[]', '[]' FROM generate_series(1, $count) AS i",
             ).getOrThrow()
-            driver.execute(
+            fixtures.execute(
                 "INSERT INTO github_directory_syncs (org_id, synced_at, checked_at) VALUES (CAST('$org' AS uuid), " +
                     "NOW(), NOW())",
             ).getOrThrow()
         }
         // One row per organization: as many others as an instance can hold.
-        driver.execute(
+        fixtures.execute(
             "INSERT INTO github_directory_syncs (org_id, synced_at, checked_at) SELECT gen_random_uuid(), NOW(), " +
                 "NOW() FROM generate_series(1, 20000)",
         ).getOrThrow()
-        driver.execute("VACUUM ANALYZE github_repos").getOrThrow()
-        driver.execute("VACUUM ANALYZE github_teams").getOrThrow()
-        driver.execute("VACUUM ANALYZE github_directory_syncs").getOrThrow()
+        fixtures.execute("VACUUM ANALYZE github_repos").getOrThrow()
+        fixtures.execute("VACUUM ANALYZE github_teams").getOrThrow()
+        fixtures.execute("VACUUM ANALYZE github_directory_syncs").getOrThrow()
         val plans = linkedMapOf(
             "first page of repositories" to driver.explain(GitHubDirectoryQueries.repos(false)),
             "next page of repositories" to driver.explain(GitHubDirectoryQueries.repos(true), "repo-500"),
@@ -454,32 +456,17 @@ class GitHubDirectoryPostgresTest {
 }
 
 /**
- * Runs [block] in one transaction under row level security, the organization set when [org] is given. The serving role
- * of the tests is subject to it as is; a superuser (the CI's user until the tests run as `ostrom_app`) bypasses it, so
- * the transaction then takes a plain role granted the directory's tables.
+ * Runs [block] in one transaction under row level security, the organization set when [org] is given. The tests'
+ * driver is the serving role, subject to it as in production (#68).
  */
-private suspend fun <T> Driver.asTenant(org: Uuid?, block: suspend QueryExecutor.() -> T): T {
-    val superuser = fetchAll(
-        "SELECT CASE WHEN rolsuper THEN 'yes' ELSE 'no' END AS s FROM pg_roles WHERE rolname = current_user",
-    ).getOrThrow().first().get("s").asString() == "yes"
-    if (superuser) {
-        execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
-        execute(
-            "GRANT SELECT, INSERT, UPDATE, DELETE ON github_repos, github_teams, github_directory_syncs " +
-                "TO ostrom_rls_probe",
-        ).getOrThrow()
-    }
-    return transaction {
-        if (superuser) execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
+private suspend fun <T> Driver.asTenant(org: Uuid?, block: suspend QueryExecutor.() -> T): T =
+    transaction {
         if (org != null) {
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", org.toString()))
                 .getOrThrow()
         }
         block()
     }
-}
 
 // PostgreSQL refuses the row (WITH CHECK): the statement fails, or the commit of the aborted transaction does.
 private suspend fun attempt(block: suspend () -> Result<Long>): Result<Long> = try {
