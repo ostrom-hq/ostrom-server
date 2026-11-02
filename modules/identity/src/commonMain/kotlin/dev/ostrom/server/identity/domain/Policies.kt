@@ -2,6 +2,7 @@
 package dev.ostrom.server.identity.domain
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
+import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Duration
@@ -62,6 +63,19 @@ val CLI_SCOPES: Set<String> = setOf(
     "rules:read",
 )
 
+/**
+ * The governance write scopes ([GovernanceScopes]) only the token of `ostrom login --admin` holds: approved in the
+ * browser by an owner or an admin of the organization it is bound to, for [ADMIN_TOKEN_LIFETIME] at most, never
+ * renewed (decision of 02/11/2026). No personal, CLI, agent or app token ever holds them, whatever its row lists.
+ */
+val ADMIN_SCOPES: Set<String> = GovernanceScopes.ALL
+
+/** How long the token of `ostrom login --admin` lives: a working day, after which `ostrom login --admin` again. */
+val ADMIN_TOKEN_LIFETIME: Duration = 8.hours
+
+/** What the token of `ostrom login --admin` grants: what the CLI does, plus the governance writes. */
+val ADMIN_TOKEN_SCOPES: Set<String> = CLI_SCOPES + ADMIN_SCOPES
+
 /** The scope that changes the caller's notification preferences (`PUT /api/v1/me/notifications`). */
 const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
 
@@ -99,8 +113,9 @@ fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
 /**
  * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written
  * before S2-04, or by hand, cannot grant more): an agent token only [AGENT_SCOPE], a CLI token at most [CLI_SCOPES],
- * the app's token at most [MOBILE_SCOPES], a personal token what it lists minus [NEVER_ON_A_TOKEN], a service key at
- * most [SERVICE_KEY_SCOPES].
+ * the token of `ostrom login --admin` at most [ADMIN_TOKEN_SCOPES], the app's token at most [MOBILE_SCOPES], a
+ * personal token what it lists minus [NEVER_ON_A_TOKEN] and [ADMIN_SCOPES], a service key at most
+ * [SERVICE_KEY_SCOPES] (none of which is a governance scope).
  *
  * @param kind The kind of the token.
  * @param stored The scopes its row lists.
@@ -110,8 +125,9 @@ fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
 fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kind) {
     TokenKind.AGENT -> setOf(AGENT_SCOPE)
     TokenKind.CLI -> stored intersect CLI_SCOPES
+    TokenKind.ADMIN -> stored intersect ADMIN_TOKEN_SCOPES
     TokenKind.MOBILE -> stored intersect MOBILE_SCOPES
-    TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN
+    TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN - ADMIN_SCOPES
     TokenKind.SERVICE -> stored intersect SERVICE_KEY_SCOPES
 }
 
@@ -127,7 +143,7 @@ const val MAX_SERVICE_KEYS_PER_ORG = 100
 /**
  * Checks the scopes a user asks for a personal token: at least one, at most [MAX_SCOPES], each from the catalogue
  * [PERSONAL_TOKEN_SCOPES], which never lists [NEVER_ON_A_TOKEN] (an agent's scope, or [ANSWER_SCOPE]: a token never
- * says yes, S2-04).
+ * says yes, S2-04) nor [ADMIN_SCOPES], which only `ostrom login --admin` gets.
  *
  * @param scopes The requested scopes.
  *
@@ -223,6 +239,12 @@ class UserNotFoundException : OstromException(ErrorKind.NOT_FOUND, "User not fou
 
 /** Too many attempts from the same source: wait and retry. */
 class RateLimitedException : OstromException(ErrorKind.RATE_LIMITED, "Too many attempts. Wait a moment and retry.")
+
+/** `ostrom login --admin` asks for the governance write scopes: only an owner or an admin approves them. */
+class AdminApprovalForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an owner or an admin of the organization approves ostrom login --admin.",
+)
 
 /** The browser session does not exist, is not the caller's, or has ended: the same answer, to reveal nothing. */
 class WebSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Session not found.")
