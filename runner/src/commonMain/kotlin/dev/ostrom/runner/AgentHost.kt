@@ -37,7 +37,7 @@ class AgentHost(private val terminals: TerminalStarter, private val drain: Durat
                         val bytes = terminal.read() ?: break
                         AgentFrames.write(output, AgentFrame.Output(bytes))
                     }
-                    AgentFrames.write(output, AgentFrame.Exit)
+                    AgentFrames.write(output, AgentFrame.Exit(terminal.exitCode))
                 }
                 if (relayInput(input, terminal)) {
                     // Stopped by the runner: the output ends once the program is gone, then the EXIT goes out.

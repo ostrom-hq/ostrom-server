@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing.domain
 
+import dev.ostrom.server.kernel.logging.Logger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
@@ -15,16 +16,26 @@ import kotlin.uuid.Uuid
  * cloud pods, never a member). Tokens are renewed [REFRESH_MARGIN] before they expire, one refresh per account at a
  * time; a refused refresh token, or an envelope that no longer opens, marks the account RECONNECT_REQUIRED.
  *
+ * A refresh also checks whose tokens they are: the account is shared under a provider account id its owner declared
+ * (the CLI, an import), and when the provider names another account in its answer, the account is marked
+ * WRONG_ACCOUNT and serves nothing, with a warning naming the account (never a token). The new pair is not stored: it
+ * is another account's, whose refresh token the provider has rotated all the same. When the owner shared the account
+ * again during the refresh, the new tokens are used and the status is left alone, as after a refused refresh. An
+ * answer that names no account is not a refusal: the id is optional in the provider's answer, and refusing it would
+ * stop every account of the org together.
+ *
  * @param accounts Accounts and their sealed tokens.
  * @param cipher Opens and seals the tokens.
  * @param refresher Renews tokens.
  * @param clock The time.
+ * @param logger Where an account taken out of service is reported.
  */
 class AccountTokens(
     private val accounts: SharedAccountRepository,
     private val cipher: AccountTokenCipher,
     private val refresher: OAuthRefresher,
     private val clock: Clock,
+    private val logger: Logger,
 ) {
     private val mutex = Mutex()
     private val locks = mutableMapOf<Uuid, Mutex>()
@@ -72,9 +83,7 @@ class AccountTokens(
         when (val result = refresher.refresh(account.provider, stored)) {
             is RefreshResult.Renewed -> {
                 unavailableUntil.remove(account.id)
-                val sealed = cipher.seal(result.credentials, account.orgId, account.id)
-                accounts.putEnvelope(account.orgId, account.id, sealed)
-                result.credentials
+                renewed(account, stored, result)
             }
             RefreshResult.Revoked -> rotatedMeanwhile(account, stored) ?: retire(account)
             // Still valid for a few minutes: serve with it; expired: let the provider's 401 speak.
@@ -84,12 +93,38 @@ class AccountTokens(
             }
         }
 
+    private suspend fun renewed(
+        account: SharedAccount,
+        used: AccountCredentials,
+        result: RefreshResult.Renewed,
+    ): AccountCredentials? {
+        val named = result.accountId
+        if (named != null && !SharingRules.sameProviderAccount(account.providerAccountId, named)) {
+            return rotatedMeanwhile(account, used) ?: wrongAccount(account)
+        }
+        accounts.putEnvelope(account.orgId, account.id, cipher.seal(result.credentials, account.orgId, account.id))
+        return result.credentials
+    }
+
     /**
      * The tokens another replica (or the owner's CLI, by sharing again) stored while this one refreshed: the provider
      * rotates refresh tokens, so the old one is refused although the account is healthy.
      */
     private suspend fun rotatedMeanwhile(account: SharedAccount, used: AccountCredentials): AccountCredentials? =
         storedTokens(account)?.takeIf { it.refreshToken != used.refreshToken }
+
+    private suspend fun wrongAccount(account: SharedAccount): AccountCredentials? {
+        accounts.setStatus(account.orgId, account.id, AccountStatus.WRONG_ACCOUNT)
+        logger.warn(
+            "A shared account's tokens belong to another provider account: it serves nothing until shared again.",
+            mapOf(
+                "org_id" to account.orgId.toString(),
+                "account_id" to account.id.toString(),
+                "provider" to account.provider.wire,
+            ),
+        )
+        return null
+    }
 
     private suspend fun retire(account: SharedAccount): AccountCredentials? {
         accounts.setStatus(account.orgId, account.id, AccountStatus.RECONNECT_REQUIRED)

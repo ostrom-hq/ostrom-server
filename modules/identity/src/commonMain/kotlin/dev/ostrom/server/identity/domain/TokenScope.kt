@@ -33,6 +33,7 @@ val PERSONAL_TOKEN_SCOPES: List<TokenScope> = listOf(
     TokenScope("sessions:write", "Start, keep alive and end agent sessions."),
     TokenScope("gates:ask", "Open a gate and read it, as a CI job does; never answer one."),
     TokenScope("gates:read", "Read the gates and their approval requests; never answer one."),
+    TokenScope("rules:read", "Read the rules, their signed decisions and the self-approval policy."),
     TokenScope("receipts:read", "Read and verify the signed receipts."),
     TokenScope("artifacts:read", "Read the artifacts."),
     TokenScope("artifacts:write", "Publish, share and delete artifacts."),

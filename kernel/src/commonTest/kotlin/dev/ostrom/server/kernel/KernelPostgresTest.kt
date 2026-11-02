@@ -4,6 +4,7 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
+import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.database.MigrationsNotAppliedException
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.database.TENANT_ROLE
@@ -24,6 +25,7 @@ import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -204,6 +206,57 @@ class KernelPostgresTest {
         runner.verify("empty", emptyList())
         assertFailsWith<IllegalArgumentException> { runner.verify("Probe", first) }
     }
+
+    private suspend fun TestDatabase.canWrite(role: String, table: String): Boolean = owner.fetchAll(
+        Statement.create(
+            "SELECT has_table_privilege(:role, :table, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') AS w",
+        ).bind("role", role).bind("table", table),
+    ).getOrThrow().single().get("w").asBoolean()
+
+    // AUDIT-RLS R8: the serving role reads a module's history (verify, at start) and never writes it.
+    @Test
+    fun onlyTheOwnerWritesTheHistoryAndTheServingRoleReadsIt() = databaseTest { database, runner ->
+        runner.migrate("probe", first)
+        assertFalse(database.canWrite(database.servingRole, "_migrations_probe"), "Serving role writes the history")
+        assertFails { database.driver.execute("DELETE FROM _migrations_probe").getOrThrow() }
+        assertFails { database.driver.execute("UPDATE _migrations_probe SET checksum = 'x'").getOrThrow() }
+        MigrationRunnerImpl(database.driver, JsonLogger(LogLevel.INFO, sink = {})).verify("probe", first)
+        assertTrue(database.canWrite(database.ownerRole, "_migrations_probe"), "The owner writes it")
+
+        // A grant made since (by hand, or before this check existed) is revoked at the next pass.
+        database.superuser.execute("GRANT ALL ON _migrations_probe TO PUBLIC, ${database.servingRole}").getOrThrow()
+        runner.migrate("probe", first)
+        assertFalse(database.canWrite(database.servingRole, "_migrations_probe"), "Write not revoked again")
+        // The module's own tables keep the default privileges.
+        assertTrue(database.canWrite(database.servingRole, "probe_items"), "Module tables keep their grants")
+    }
+
+    @Test
+    fun aColumnGrantAndAHyphenatedModuleAreCoveredAndAFailedPassStillRevokes() = databaseTest { database, runner ->
+        val history = "_migrations_other_probe"
+        val broken = listOf(SchemaMigration(1, "broken", "CREATE TABLE ;"))
+        assertFails { runner.migrate("other-probe", broken) }
+        if (database.owner.exists(history)) {
+            assertFalse(database.canWrite(database.servingRole, history), "Writable after a failed pass")
+        }
+        val fine = listOf(SchemaMigration(1, "create_other", "CREATE TABLE other_items (id BIGINT);"))
+        database.superuser.execute("DROP TABLE IF EXISTS $history").getOrThrow()
+        runner.migrate("other-probe", fine)
+        database.superuser.execute("GRANT UPDATE (checksum) ON $history TO ${database.servingRole}").getOrThrow()
+        runner.migrate("other-probe", fine)
+        assertFalse(database.columnWrite(database.servingRole, history), "Column UPDATE not revoked")
+        assertFalse(database.canWrite(database.servingRole, history))
+        MigrationRunnerImpl(database.driver, JsonLogger(LogLevel.INFO, sink = {})).verify("other-probe", fine)
+    }
+
+    private suspend fun Driver.exists(table: String): Boolean = fetchAll(
+        Statement.create("SELECT to_regclass(:table) IS NOT NULL AS e").bind("table", table),
+    ).getOrThrow().single().get("e").asBoolean()
+
+    private suspend fun TestDatabase.columnWrite(role: String, table: String): Boolean = owner.fetchAll(
+        Statement.create("SELECT has_any_column_privilege(:role, :table, 'INSERT, UPDATE, REFERENCES') AS w")
+            .bind("role", role).bind("table", table),
+    ).getOrThrow().single().get("w").asBoolean()
 
     @Test
     fun concurrentMigrationPassesWaitForEachOther() = databaseTest { database, runner ->

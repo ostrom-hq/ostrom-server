@@ -11,15 +11,15 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.usecases.GateUse
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
-import dev.ostrom.server.kernel.errors.ErrorKind
-import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RoutingContext
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
@@ -36,7 +36,8 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
         }
         get<GatesApi.Id> { params ->
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingGates)
-            call.respond(gate(actor, params.id.toUuid()).toResponse(actor))
+            // A hook waits here for its answer, at most 30 s, instead of asking again every second.
+            call.respond(gate(actor, params.id.toUuid(), (params.wait ?: 0).seconds).toResponse(actor))
         }
         post<GatesApi.Id.Reserve> { params -> respondUse(dependencies, params.parent.id, GateUse.RESERVE) }
         post<GatesApi.Id.Consume> { params -> respondUse(dependencies, params.parent.id, GateUse.CONSUME) }
@@ -72,7 +73,9 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies) = with(dependencies
             val choice = if (body.answer == ApprovalAnswer.APPROVE) Answer.YES else Answer.NO
             val view = answer(actor, id, choice, body.shownDigest, AnswerChannel.CONSOLE)
             val request = view.requests.first { it.id == id }
-            call.respond(AnswerApprovalResponse(ApprovalView(request, view.gate).toApproval()))
+            // The contract's 200 is the answered approval and its signed receipt, a no's included.
+            val receipt = receipts.read(view.gate.orgId, view.gate.receiptId)
+            call.respond(AnswerApprovalResponse(ApprovalView(request, view.gate).toApproval(), receipt))
         }
     }
 }
@@ -88,7 +91,7 @@ private suspend fun RoutingContext.respondUse(dependencies: GatesRoutesDependenc
 private suspend fun GateActorResolver.actorOf(principal: AuthenticatedPrincipal, accepted: Set<String>): GateActor {
     principal.requireAnyScope(accepted)
     return resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw principal.outsideOrganization()
 }
 
 private fun String.toUuid(): Uuid = Uuid.parseOrNull(this) ?: throw InvalidGateRequestException("Malformed id.")

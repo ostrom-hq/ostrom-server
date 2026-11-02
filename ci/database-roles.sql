@@ -21,6 +21,8 @@ CREATE DATABASE ostrom OWNER ostrom_owner;
 ALTER SCHEMA public OWNER TO ostrom_owner;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO ostrom_app, ostrom_tenant;
+-- Every table, the migrations' history `_migrations_<module>` included: `ostrom-server migrate` then revokes every
+-- write on the history from every role but the owner (MigrationRunnerImpl), so the serving role only reads it.
 ALTER DEFAULT PRIVILEGES FOR ROLE ostrom_owner IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ostrom_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE ostrom_owner IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ostrom_app;

@@ -46,7 +46,8 @@ data class ShareAccountPayload(
  *
  * @property label New label.
  * @property priority New priority.
- * @property disabled Turns it off or back on (a RECONNECT_REQUIRED account comes back only by sharing it again).
+ * @property disabled Turns it off or back on (a RECONNECT_REQUIRED or WRONG_ACCOUNT account comes back only by
+ *   sharing it again).
  * @property limits The new limits from the current ones, so a change of one limit keeps the others.
  * @property ifVersion Changes it only if it is still at this [SharedAccount.version]; null changes it anyway.
  */
@@ -175,7 +176,7 @@ private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayl
             ownerMemberId = ownerMemberId ?: caller.memberId,
             priority = priority,
             limits = limits,
-            status = if (status == AccountStatus.RECONNECT_REQUIRED) fresh.status else status,
+            status = if (status.awaitsSignIn) fresh.status else status,
             createdAt = createdAt,
         )
     }
@@ -225,10 +226,11 @@ class UpdateSharedAccountUseCaseImpl(private val repository: SharedAccountReposi
         val limits = if (patch == null) account.limits else patch(account.limits)
         SharingRules.requireLimits(limits)
         payload.priority?.let(SharingRules::requirePriority)
-        // RECONNECT_REQUIRED is left only by sharing again: pausing and resuming must not revive dead tokens (the
-        // repository also keeps it when the pool retires the account between this read and the write).
+        // RECONNECT_REQUIRED and WRONG_ACCOUNT are left only by sharing again: pausing and resuming must not revive
+        // dead or foreign tokens (the repository also keeps them when the pool retires the account between this read
+        // and the write).
         val status = when {
-            account.status == AccountStatus.RECONNECT_REQUIRED -> account.status
+            account.status.awaitsSignIn -> account.status
             payload.disabled == true -> AccountStatus.DISABLED
             payload.disabled == false -> AccountStatus.READY
             else -> account.status

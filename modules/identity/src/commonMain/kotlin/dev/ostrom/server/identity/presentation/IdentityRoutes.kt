@@ -40,6 +40,7 @@ fun Route.identityRoutes(dependencies: IdentityRoutesDependencies) {
     authenticated {
         accountRoutes(dependencies)
         tokenRoutes(dependencies)
+        webSessionRoutes(dependencies)
         deviceAnswerRoutes(dependencies)
     }
 }
