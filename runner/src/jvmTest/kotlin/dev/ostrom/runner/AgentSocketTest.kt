@@ -113,7 +113,7 @@ class AgentSocketTest {
             val reply = connection.input.readUTF8Line()
             assertEquals(
                 """{"started":true,"exit":0,"outcome":"passed","scriptSha":"abc","outputTail":"ok",""" +
-                    """"reported":false,"error":null}""",
+                    """"reported":false}""",
                 reply,
             )
             connection.close()

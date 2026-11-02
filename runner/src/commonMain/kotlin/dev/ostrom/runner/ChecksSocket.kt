@@ -63,7 +63,7 @@ object ChecksSocket {
         val reply = try {
             val line = readLine(input)
             if (line == null) {
-                CheckReply(started = false, error = "no request.")
+                CheckReply(started = false, outputTail = "no request.")
             } else {
                 val request = JSON.decodeFromString(CheckRequest.serializer(), line)
                 run(request).also { log("check ${request.scriptId}: ${it.outcome}, reported ${it.reported}") }
@@ -72,10 +72,10 @@ object ChecksSocket {
             throw error
         } catch (error: IllegalArgumentException) {
             // SerializationException included: a line that is not a check.
-            CheckReply(started = false, error = error.message)
+            CheckReply(started = false, outputTail = error.message.orEmpty())
         } catch (error: Exception) {
             log("check failed: ${error::class.simpleName}")
-            CheckReply(started = false, error = "the runner could not run the check.")
+            CheckReply(started = false, outputTail = "the runner could not run the check.")
         }
         try {
             output.writeByteArray((JSON.encodeToString(CheckReply.serializer(), reply) + "\n").encodeToByteArray())

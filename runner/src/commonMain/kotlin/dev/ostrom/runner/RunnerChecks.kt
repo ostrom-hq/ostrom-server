@@ -11,6 +11,7 @@ import kotlinx.serialization.Serializable
 import okio.ByteString.Companion.encodeUtf8
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * A check the agent's hook asks the runner for: one JSON line on [RunnerConfig.checksSocket].
@@ -39,13 +40,12 @@ data class CheckRequest(
 /**
  * The runner's answer to the hook: one JSON line.
  *
- * @property started False when the check was not run ([error] says why): the hook refuses the action.
+ * @property started False when the check was not run ([outputTail] says why): the hook refuses the action.
  * @property exit The script's exit code, null when it was stopped at its time limit or not run.
  * @property outcome `passed`, `failed` or `timeout`; `failed` when it was not run.
  * @property scriptSha The SHA-256 of the script the runner ran.
- * @property outputTail The end of its output.
+ * @property outputTail The end of its output, or why it was not run.
  * @property reported Whether the server recorded the run, as attested by the isolated runner.
- * @property error Why it was not run.
  */
 @Serializable
 data class CheckReply(
@@ -55,7 +55,6 @@ data class CheckReply(
     val scriptSha: String = "",
     val outputTail: String = "",
     val reported: Boolean = false,
-    val error: String? = null,
 )
 
 /**
@@ -91,14 +90,14 @@ class RunnerChecks(
      */
     suspend fun run(request: CheckRequest): CheckReply {
         val refusal = refusal(request)
-        return if (refusal == null) runAccepted(request) else CheckReply(started = false, error = refusal)
+        return if (refusal == null) runAccepted(request) else CheckReply(started = false, outputTail = refusal)
     }
 
     private suspend fun runAccepted(request: CheckRequest): CheckReply {
         val sha = request.script.encodeUtf8().sha256().hex()
         val started = clock.now()
         val run = running.withPermit { execute(request) }
-            ?: return CheckReply(started = false, scriptSha = sha, error = "the check host could not be reached.")
+            ?: return CheckReply(started = false, scriptSha = sha, outputTail = "the check host could not be reached.")
         val outcome = when {
             run.timedOut -> TIMEOUT
             run.exit == 0 -> PASSED
@@ -169,9 +168,12 @@ class RunnerChecks(
         "OSTROM_CHECK" to request.scriptId,
     )
 
-    /** Reports the run; a server that cannot be reached leaves it unrecorded, never the hook waiting. */
+    /**
+     * Reports the run; a server that cannot be reached leaves it unrecorded, never the hook waiting: the hook gives the
+     * runner the script's time limit and 5 s more, and the report must fit in them.
+     */
     private suspend fun report(check: RunnerCheck): Boolean = try {
-        server.reportCheck(check)
+        withTimeoutOrNull(REPORT_TIMEOUT) { server.reportCheck(check) } ?: false
     } catch (error: CancellationException) {
         throw error
     } catch (_: Exception) {
@@ -216,6 +218,7 @@ class RunnerChecks(
         const val TIMEOUT = "timeout"
 
         private const val PARALLEL = 2
+        private val REPORT_TIMEOUT = 3.seconds
         private const val TAIL_CHARACTERS = 4_000
         private const val KEPT_BYTES = 64 * 1024
         private const val CHECK_HOME = "/tmp"

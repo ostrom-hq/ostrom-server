@@ -42,12 +42,14 @@ computes the SHA-256 of the script text itself, runs the script on the check hos
 and as tampered when the SHA-256 is not the package's. The hook gets one JSON line back:
 
 ```json
-{"started": true, "exit": 0, "outcome": "passed", "scriptSha": "…", "outputTail": "…", "reported": true,
- "error": null}
+{"started": true, "exit": 0, "outcome": "passed", "scriptSha": "…", "outputTail": "…", "reported": true}
 ```
 
-`started: false` means the check was not run (`error` says why): the hook refuses the action. Two checks run at a
-time at most.
+This is the exchange the hook of `ostrom-cli` speaks (cli#68): it reads `started`, `exit` (an integer, or `null` when
+the script ran past its limit) and `outputTail`, and ignores the rest. `started: false` means the check was not run
+(`outputTail` says why): the hook refuses the action and never runs the check itself. The hook waits for the script's
+time limit and 5 s more, so the runner gives up on a report the server has not taken within 3 s (`reported: false`).
+Two checks run at a time at most.
 
 **What this proves, and what it does not: Ostrom launched the script and read its exit code, not that the agent left
 the workspace untouched.** The check runs on the agent's workspace, which the agent could have prepared.

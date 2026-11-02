@@ -43,12 +43,12 @@ class ChecksSocketTest {
         val logs = mutableListOf<String>()
         val never: suspend (CheckRequest) -> CheckReply = { error("never") }
 
-        assertEquals(CheckReply(started = false, error = "no request."), ask("", never, logs))
+        assertEquals(CheckReply(started = false, outputTail = "no request."), ask("", never, logs))
         assertFalse(ask("not json\n", never, logs).started)
         val long = ask("x".repeat(ChecksSocket.MAX_LINE + 1), never, logs)
-        assertEquals("the request is over ${ChecksSocket.MAX_LINE} bytes.", long.error)
+        assertEquals("the request is over ${ChecksSocket.MAX_LINE} bytes.", long.outputTail)
         val broken = ask(line, { error("boom") }, logs)
-        assertEquals("the runner could not run the check.", broken.error)
+        assertEquals("the runner could not run the check.", broken.outputTail)
         assertEquals(listOf("check failed: IllegalStateException"), logs)
     }
 
@@ -70,7 +70,7 @@ class ChecksSocketTest {
         }
         // A reply the hook does not read suspends; cancelling it propagates.
         var cancelled = false
-        val huge = CheckReply(started = false, error = "x".repeat(4 shl 20))
+        val huge = CheckReply(started = false, outputTail = "x".repeat(4 shl 20))
         val writing = launch {
             try {
                 ChecksSocket.answer(ByteReadChannel("$line\n"), ByteChannel(), { huge }, {})

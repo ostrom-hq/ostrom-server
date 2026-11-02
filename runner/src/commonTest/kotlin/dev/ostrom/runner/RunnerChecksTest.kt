@@ -2,6 +2,7 @@
 package dev.ostrom.runner
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -17,7 +18,7 @@ class RunnerChecksTest {
     /** The server: records the reports, answers with [answer]. */
     private class Reports : ServerApi {
         val checks = mutableListOf<RunnerCheck>()
-        var answer: () -> Boolean = { true }
+        var answer: suspend () -> Boolean = { true }
 
         override suspend fun heartbeat(ready: Boolean, stopped: Boolean, lastModelRequestAt: String?): Instruction =
             error("no heartbeat")
@@ -156,7 +157,7 @@ class RunnerChecksTest {
         for (request in refused) {
             val reply = checks.run(request)
             assertFalse(reply.started, request.toString())
-            assertTrue(reply.error!!.isNotBlank())
+            assertTrue(reply.outputTail.isNotBlank())
         }
         assertTrue(starter.starts.isEmpty())
     }
@@ -172,9 +173,24 @@ class RunnerChecksTest {
         val reply = checks(down, server).run(request())
 
         assertFalse(reply.started)
-        assertEquals("the check host could not be reached.", reply.error)
+        assertEquals("the check host could not be reached.", reply.outputTail)
         assertEquals(64, reply.scriptSha.length)
         assertTrue(server.checks.isEmpty())
+    }
+
+    @Test
+    fun aServerSlowerThanTheHooksMarginLeavesTheRunUnreported() = runTest {
+        val terminal = ScriptedTerminal().apply {
+            exitCode = 1
+            output.send(null)
+        }
+        val server = Reports().apply { answer = { awaitCancellation() } }
+
+        val reply = checks(RecordingStarter(terminal), server).run(request())
+
+        assertEquals(1, reply.exit)
+        assertFalse(reply.reported)
+        assertEquals(1, server.checks.size)
     }
 
     @Test
