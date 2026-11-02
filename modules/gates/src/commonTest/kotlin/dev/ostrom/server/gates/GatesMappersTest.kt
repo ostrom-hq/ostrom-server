@@ -30,6 +30,7 @@ import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.toApproval
 import dev.ostrom.server.gates.presentation.toAskGate
 import dev.ostrom.server.gates.presentation.toResponse
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -176,12 +177,12 @@ class GatesMappersTest {
     }
 
     @Test
-    fun aPendingGateWaitsOnlyForTheApproversStillPending() {
+    fun aPendingGateWaitsOnlyForTheApproversStillPending() = runTest {
         val pending = gate(askedBy = listOf("lyes"))
         val requests = listOf(request(pending, "rev-b"), request(pending, "rev-c", RequestStatus.CLOSED))
-        assertEquals(listOf("rev-b"), viewOf(pending, requests, SelfApprovalPolicy.NEVER).waitingFor)
+        assertEquals(listOf("rev-b"), viewOf(pending, requests) { SelfApprovalPolicy.NEVER }.waitingFor)
         val decided = pending.copy(status = GateStatus.REJECTED)
-        assertEquals(emptyList(), viewOf(decided, requests, SelfApprovalPolicy.NEVER).waitingFor)
+        assertEquals(emptyList(), viewOf(decided, requests) { SelfApprovalPolicy.NEVER }.waitingFor)
     }
 
     @Test
