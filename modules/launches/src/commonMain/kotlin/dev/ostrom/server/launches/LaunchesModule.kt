@@ -2,6 +2,7 @@
 package dev.ostrom.server.launches
 
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.kernel.auth.ModelAccess
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
@@ -12,6 +13,8 @@ import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
+import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
+import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.infrastructure.IdentityAgentTokens
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
@@ -19,6 +22,7 @@ import dev.ostrom.server.launches.infrastructure.LaunchAgents
 import dev.ostrom.server.launches.infrastructure.LaunchGateActors
 import dev.ostrom.server.launches.infrastructure.LaunchRelayCallers
 import dev.ostrom.server.launches.infrastructure.LaunchesMigrations
+import dev.ostrom.server.launches.infrastructure.ModelAccessLaunchRules
 import dev.ostrom.server.launches.infrastructure.NoLaunchModelRules
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.LaunchesRoutesDependencies
@@ -33,15 +37,16 @@ import org.koin.dsl.module
  * The launches module: `ostrom <agent>` reads the organization's policy, then creates a launch and gets the agent
  * token its hooks use, scoped to the launch's sessions (audit A12/A13). It also resolves the callers of the gates,
  * sessions and compiler routes ([LaunchGateActors]), and those of the MCP relay, the inference gateway and the budgets
- * and the usage events ([LaunchRelayCallers]), so that an agent token reaches the organization's MCP servers. Needs the
- * identity, orgs and gates modules; it binds the secrets module's `CallerResolver`, which those modules look up.
+ * and the usage events ([LaunchRelayCallers]), so that an agent token reaches the organization's MCP servers. It also
+ * opens the launch of a cloud session its runner asks for. Needs the identity, orgs, gates and runners modules; it
+ * binds the secrets module's `CallerResolver`, which those modules look up.
  */
 object LaunchesModule : ServerModule {
     override val name: String = "launches"
 
     override val koinModule: Module = module {
         single<LaunchesRepository> { PostgresLaunchesRepository(get()) }
-        single<LauncherResolver> { IdentityLauncherResolver(get(), get()) }
+        single<LauncherResolver> { IdentityLauncherResolver(get(), get(), get()) }
         single<AgentTokenService> { IdentityAgentTokens(get()) }
         single { LaunchAgents(get(), get(), get()) }
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
@@ -49,15 +54,25 @@ object LaunchesModule : ServerModule {
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }
-        single { LaunchesRoutesDependencies(get(), get(), get()) }
+        single<OpenRunnerLaunchUseCase> { OpenRunnerLaunchUseCaseImpl(get(), get()) }
+        single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = LaunchesMigrations
 
-    /** Binds [NoLaunchModelRules] unless a loaded module (the inference gateway) binds the organization's rules. */
+    /**
+     * Binds the organization's rules on models unless a loaded module binds its own: the inference gateway's model
+     * policy when it is loaded ([ModelAccessLaunchRules] on its [ModelAccess]), every model otherwise
+     * ([NoLaunchModelRules]).
+     */
     override suspend fun initialize(koin: Koin) {
         if (koin.getOrNull<LaunchModelRules>() == null) {
-            koin.loadModules(listOf(module { single<LaunchModelRules> { NoLaunchModelRules() } }))
+            val rules = module {
+                single<LaunchModelRules> {
+                    getOrNull<ModelAccess>()?.let { ModelAccessLaunchRules(it, get()) } ?: NoLaunchModelRules()
+                }
+            }
+            koin.loadModules(listOf(rules))
         }
     }
 

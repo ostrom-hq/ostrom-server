@@ -189,6 +189,11 @@ class FakeStripeGateway : StripeGateway {
         record("cancelAtPeriodEnd $subscriptionId $cancel")
     }
 
+    override suspend fun cancelNow(subscriptionId: String) {
+        record("cancelNow $subscriptionId")
+        subscription = subscription?.copy(status = SubscriptionStatus.CANCELED)
+    }
+
     override suspend fun setQuantity(subscriptionId: String, itemId: String, quantity: Int) {
         record("setQuantity $subscriptionId $itemId $quantity")
         whileSettingQuantity()

@@ -23,6 +23,7 @@ import dev.ostrom.server.workflowruns.domain.models.RunPackage
  * @param runs Its check runs, oldest first.
  * @param notifications Its notifications, oldest first.
  * @param gates Its gates.
+ * @param attestations Where its runs come from, for those the server holds a proof of (by run id).
  */
 class NodeOutcomes(
     private val pack: RunPackage,
@@ -30,6 +31,7 @@ class NodeOutcomes(
     private val runs: List<CheckRun>,
     private val notifications: List<Notification>,
     private val gates: List<SessionGate>,
+    private val attestations: Map<String, CheckAttestation>,
 ) {
     /**
      * The nodes the receipt carries: those of the workflows the session made act, or, when none acted, those of the
@@ -59,9 +61,10 @@ class NodeOutcomes(
         }
     }
 
-    // Every check node says where its runs come from (decision 13:23, core#40). A run reaches the server only by
-    // POST /checks, from the hooks on the developer's machine, which the agent can read: it is a declaration of the
-    // workstation. `isolated_runner` and `ci` are written only once the server itself has proof of them, never before.
+    // Every check node says where its runs come from (decision 13:23, core#40): the last run's, which the outcome
+    // rests on. A run of POST /checks comes from the hooks on the developer's machine, which the agent can read: a
+    // declaration of the workstation. Only a run the cloud session's runner reported with its own token is
+    // `isolated_runner`; nothing writes `ci` before the server reads the App's check run itself.
     private fun check(base: ReceiptNode, node: PackageNode): ReceiptNode {
         val declared = base.copy(attestation = CheckAttestation.WORKSTATION_DECLARED)
         val mine = runs.filter { it.nodeId == node.id }
@@ -73,7 +76,8 @@ class NodeOutcomes(
         }
     }
 
-    private fun ran(base: ReceiptNode, mine: List<CheckRun>, last: CheckRun): ReceiptNode {
+    private fun ran(declared: ReceiptNode, mine: List<CheckRun>, last: CheckRun): ReceiptNode {
+        val base = declared.copy(attestation = attestations[last.id] ?: CheckAttestation.WORKSTATION_DECLARED)
         val failed = mine.count { it.exit != 0 }
         val outcome = when {
             last.exit != 0 -> "failed: action blocked (${plural(mine.size, "run")})"

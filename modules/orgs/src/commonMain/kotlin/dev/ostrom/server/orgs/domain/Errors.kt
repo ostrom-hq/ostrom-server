@@ -31,6 +31,17 @@ class NotAllowedException(reason: String) : OstromException(ErrorKind.FORBIDDEN,
 class InvalidOrgRequestException(reason: String) :
     OstromException(ErrorKind.INVALID_REQUEST, reason)
 
+/**
+ * The owner's sign-in is older than [DELETION_STEP_UP], or of unknown age: deleting the organization needs a fresh
+ * one, as a yes does (S2-54).
+ */
+class OrgStepUpRequiredException :
+    OstromException(
+        ErrorKind.FORBIDDEN,
+        "Sign in again to delete the organization: it needs a sign-in of less than 5 minutes.",
+        "step_up_required",
+    )
+
 /** The short name is already used by another organization. */
 class SlugTakenException : OstromException(ErrorKind.CONFLICT, "This short name is already taken.")
 
