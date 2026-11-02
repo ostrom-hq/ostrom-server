@@ -213,7 +213,7 @@ class SharedAccountPool(
         if (observed.isNotEmpty()) windows.put(account.orgId, account.id, observed)
         when (status) {
             TOO_MANY_REQUESTS -> accounts.setCooldown(account.orgId, account.id, cooldownEnd(observed, headers, now))
-            NO_ANSWER -> accounts.setCooldown(account.orgId, account.id, now + STALL_COOLDOWN)
+            NO_ANSWER -> accounts.rest(account, now + STALL_COOLDOWN)
             UNAUTHORIZED -> tokens.expire(account)
         }
     }
@@ -256,8 +256,20 @@ class SharedAccountPool(
     }
 }
 
-/** The status [AccountLease.stalled] reports: no answer, the gateway cut the call. */
+/**
+ * The status [AccountLease.stalled] reports: no HTTP answer, the gateway cut the call. It goes through
+ * [SharedAccountPool.observe] like a provider's status, so that the pool has one place that cools an account down.
+ */
 private const val NO_ANSWER = 0
+
+/**
+ * Cools an account down until [until], unless a longer cool-down (a 429's reset, set by another call meanwhile) is
+ * already stored: a short rest never reopens an account early.
+ */
+private suspend fun SharedAccountRepository.rest(account: SharedAccount, until: Instant) {
+    val stored = get(account.orgId, account.id)?.cooldownUntil
+    setCooldown(account.orgId, account.id, stored?.takeIf { it > until } ?: until)
+}
 
 /** The longest `retry-after` believed: a day. */
 private const val MAX_RETRY_AFTER_SECONDS = 86_400L

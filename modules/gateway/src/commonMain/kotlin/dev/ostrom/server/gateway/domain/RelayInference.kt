@@ -145,11 +145,13 @@ class RelayInferenceUseCaseImpl(
             plan.lease?.let { withContext(NonCancellable) { it.release() } }
         }
 
-        /** The call failed: its slot goes back, and [rest] rests a shared account whose provider stalled. */
+        /**
+         * The call failed: [rest] rests a shared account whose provider stalled, before its slot goes back so that no
+         * other call takes it in between; the rest failing or the agent leaving must not change this call's record.
+         */
         private suspend fun stop(plan: InferencePlan.Ready, state: CallState, rest: Boolean) {
+            if (rest) withContext(NonCancellable) { deliver { plan.lease?.stalled() } }
             release(plan)
-            // The next calls go to another account; the rest failing must not change this call's answer.
-            if (rest) deliver { plan.lease?.stalled() }
             failed(state)
         }
 

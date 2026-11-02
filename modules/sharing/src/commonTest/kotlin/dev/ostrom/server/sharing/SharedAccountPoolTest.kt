@@ -211,6 +211,24 @@ class SharedAccountPoolTest {
     }
 
     @Test
+    fun aStallRestsTheAccountAMinuteButNeverShortensALongerCoolDown() = runTest {
+        val account = account("a")
+        val leased = assertIs<LeaseResult.Leased>(lease()).lease
+        fun cooldown() = repository.accounts.singleOrNull()?.cooldownUntil
+        leased.stalled()
+        assertEquals(clock.now() + SharedAccountPool.STALL_COOLDOWN, cooldown(), "A provider that stalled rests it")
+        leased.stalled()
+        assertEquals(clock.now() + SharedAccountPool.STALL_COOLDOWN, cooldown())
+        leased.observe(429, mapOf("retry-after" to "3600"))
+        leased.stalled()
+        assertEquals(clock.now() + 3600.seconds, cooldown(), "A 429's longer cool-down stays")
+        repository.accounts.clear()
+        leased.stalled()
+        assertNull(cooldown(), "An account removed meanwhile has nothing to rest")
+        assertEquals(account.id, leased.account.id)
+    }
+
+    @Test
     fun observationsRecordWindowsCoolDownsAndForcedRefresh() = runTest {
         val account = account("a")
         val leased = assertIs<LeaseResult.Leased>(lease()).lease
@@ -237,12 +255,6 @@ class SharedAccountPoolTest {
         assertEquals(
             clock.now() + SharedAccountPool.DEFAULT_COOLDOWN,
             repository.get(Sharing.orgA, account.id)!!.cooldownUntil,
-        )
-        leased.stalled()
-        assertEquals(
-            clock.now() + SharedAccountPool.STALL_COOLDOWN,
-            repository.get(Sharing.orgA, account.id)!!.cooldownUntil,
-            "A provider that stalled rests the account",
         )
         leased.observe(401, emptyMap())
         assertEquals(
