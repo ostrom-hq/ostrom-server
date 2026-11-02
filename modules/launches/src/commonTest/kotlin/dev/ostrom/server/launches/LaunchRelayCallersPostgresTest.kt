@@ -175,6 +175,13 @@ class LaunchRelayCallersPostgresTest {
                 it.jsonObject["name"]!!.jsonPrimitive.content
             }
             assertEquals(listOf("query_loki_logs"), tools, "Only the person's assigned tools")
+
+            val console = client.post("/api/v1/mcp/servers") {
+                bearerAuth(agent)
+                contentType(ContentType.Application.Json)
+                setBody(McpServerDto("github", "https://mcp.github.example.com/mcp", "http"))
+            }
+            assertEquals(HttpStatusCode.Forbidden, console.status, "An owner's agent never administers")
         }
     }
 
