@@ -242,8 +242,8 @@ class LaunchModelSpendPostgresTest {
             )
             assertEquals(null, tooLarge.headers["retry-after"], "A smaller call may go now")
 
-            // One output token holds 25 µ$, and the body 175: 200 µ$, it goes. The provider then bills 7 200, past the limit: the gap the
-            // reserve does not cover (an input larger than its estimate), which the pull request states.
+            // One output token holds 25 µ$, and the body 175: 200 µ$, it goes. The provider then bills 7 200, past the
+            // limit: the gap the reserve does not cover (an input larger than its estimate), which the PR states.
             assertEquals(HttpStatusCode.OK, infer(agent, maxTokens = 1).status)
             val reached = infer(agent, maxTokens = 1)
             assertEquals(HttpStatusCode.TooManyRequests, reached.status, reached.bodyAsText())

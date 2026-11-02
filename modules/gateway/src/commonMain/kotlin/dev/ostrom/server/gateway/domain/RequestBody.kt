@@ -63,7 +63,7 @@ class RequestBody private constructor(
         const val MAX_MODEL = 200
 
         /** The fields that bound the output tokens, by API. */
-        val OUTPUT_LIMITS: List<String> = listOf("max_tokens", "max_output_tokens", "max_completion_tokens")
+        private val OUTPUT_LIMITS: List<String> = listOf("max_tokens", "max_output_tokens", "max_completion_tokens")
 
         private val FIELDS = setOf(MODEL, STREAM, METADATA, STORE, STREAM_OPTIONS) + OUTPUT_LIMITS
 

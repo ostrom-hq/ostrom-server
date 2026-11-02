@@ -121,20 +121,11 @@ class RelayInferenceUseCaseImpl(
         private suspend fun plan(): InferencePlan = try {
             planner.plan(caller, call, org, id)
         } catch (cancelled: CancellationException) {
-            abandon(CANCELLED_STATUS, "cancelled")
+            record(abandoned(CANCELLED_STATUS, "cancelled"))
             throw cancelled
         } catch (error: Exception) {
-            abandon(FAILED_STATUS, "gateway_error")
+            record(abandoned(FAILED_STATUS, "gateway_error"))
             throw error
-        }
-
-        private suspend fun abandon(status: Int, outcome: String) {
-            record(
-                CallState(this, "", null, null).apply {
-                    this.status = status
-                    this.outcome = outcome
-                },
-            )
         }
 
         private suspend fun refuse(plan: InferencePlan.Refused): CallState {
@@ -259,6 +250,12 @@ class RelayInferenceUseCaseImpl(
         var agentGone: Boolean = false
         var firstByte: Instant? = null
         var usage: TokenUsage? = null
+    }
+
+    /** The state of a call whose planning failed, recorded so that its record settles its hold. */
+    private fun Exchange.abandoned(status: Int, outcome: String) = CallState(this, "", null, null).apply {
+        this.status = status
+        this.outcome = outcome
     }
 
     private suspend fun record(state: CallState) {
