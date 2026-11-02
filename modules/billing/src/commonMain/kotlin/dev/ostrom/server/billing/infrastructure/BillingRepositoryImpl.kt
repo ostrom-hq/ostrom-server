@@ -21,6 +21,7 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -44,9 +45,8 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
     }
 
     override suspend fun findByCustomer(customerId: String): OrgBilling? = driver.fetchAll(
-        Statement.create("SELECT org_id FROM billing_customers WHERE stripe_customer_id = :customer")
-            .bind("customer", customerId),
-    ).getOrThrow().firstOrNull()?.let { get(it.get("org_id").asUuid()) }
+        Statement.create("SELECT billing_customer_org(CAST(:customer AS TEXT)) AS org_id").bind("customer", customerId),
+    ).getOrThrow().first().get("org_id").asUuidOrNull()?.let { get(it) }
 
     override suspend fun save(billing: OrgBilling): Unit = scoped(billing.orgId) {
         billing.stripeCustomerId?.let { customerId ->
@@ -184,8 +184,8 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         ).getOrThrow().map { it.get("percent").asInt() }
     }
 
-    override suspend fun enqueue(task: OutboxTask) {
-        driver.execute(
+    override suspend fun enqueue(task: OutboxTask): Unit = scoped(task.orgId) {
+        execute(
             Statement.create(
                 "INSERT INTO billing_outbox (id, org_id, kind, identifier, happened_at, attempts, next_attempt_at) " +
                     "VALUES (:id, :org_id, :kind, :identifier, :at, :attempts, :at) " +
@@ -200,16 +200,16 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         ).getOrThrow()
     }
 
-    // SKIP LOCKED lets two replicas claim at the same time without waiting for, or taking, each other's rows.
+    // SKIP LOCKED lets two replicas claim at the same time without waiting for, or taking, each other's rows. The
+    // queue spans organizations: it is claimed, completed and retried only through the functions of version 3.
     override suspend fun claimDueTasks(
         now: Instant,
         leaseUntil: Instant,
         limit: Int,
     ): List<OutboxTask> = driver.fetchAll(
         Statement.create(
-            "UPDATE billing_outbox SET next_attempt_at = :lease WHERE id IN (SELECT id FROM billing_outbox " +
-                "WHERE done_at IS NULL AND next_attempt_at <= :now ORDER BY next_attempt_at LIMIT :limit " +
-                "FOR UPDATE SKIP LOCKED) RETURNING id, org_id, kind, identifier, happened_at, attempts",
+            "SELECT id, org_id, kind, identifier, happened_at, attempts FROM billing_claim_due_tasks(" +
+                "CAST(:now AS TIMESTAMPTZ), CAST(:lease AS TIMESTAMPTZ), CAST(:limit AS INTEGER))",
         ).bind("now", now).bind("lease", leaseUntil).bind("limit", limit),
     ).getOrThrow().sortedBy { it.get("happened_at").asInstant() }.map {
         OutboxTask(
@@ -223,16 +223,16 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
     }
 
     override suspend fun completeTask(id: Uuid, at: Instant) {
-        driver.execute(
-            Statement.create("UPDATE billing_outbox SET done_at = :at WHERE id = :id").bind("id", id).bind("at", at),
+        driver.fetchAll(
+            Statement.create("SELECT billing_complete_task(CAST(:id AS UUID), CAST(:at AS TIMESTAMPTZ))")
+                .bind("id", id).bind("at", at),
         ).getOrThrow()
     }
 
     override suspend fun failTask(id: Uuid, retryAt: Instant) {
-        driver.execute(
-            Statement.create(
-                "UPDATE billing_outbox SET attempts = attempts + 1, next_attempt_at = :retry WHERE id = :id",
-            ).bind("id", id).bind("retry", retryAt),
+        driver.fetchAll(
+            Statement.create("SELECT billing_fail_task(CAST(:id AS UUID), CAST(:retry AS TIMESTAMPTZ))")
+                .bind("id", id).bind("retry", retryAt),
         ).getOrThrow()
     }
 

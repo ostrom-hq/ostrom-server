@@ -42,6 +42,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.assertEquals
@@ -271,6 +274,10 @@ fun importOverrides(accounts: AccountImporter? = null, members: MemberDirectory?
     members?.let { directory -> single<MemberDirectory> { directory } }
     accounts?.let { importer -> single<AccountImporter> { importer } }
 }
+
+/** The `error.type` of a refusal, the key the console reads. */
+suspend fun HttpResponse.errorType(): String =
+    Json.parseToJsonElement(bodyAsText()).jsonObject.getValue("error").jsonObject.getValue("type").jsonPrimitive.content
 
 /** Posts an import. */
 suspend fun TestServer.import(

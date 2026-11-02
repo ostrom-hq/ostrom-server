@@ -74,6 +74,9 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `runners_session_by_token(hash)` | runners | the session a runner token belongs to, for the runner channel | `RunnersRoutesTenancyPostgresTest` |
 | `runners_claim_due(owner, until, now, limit)` | runners | leases the due sessions of every organization to one reconciler (`FOR UPDATE SKIP LOCKED`) | `CloudSessionsPostgresTest` |
 | `runners_release(id, owner, has_next, next_at)` | runners | ends a reconciler's lease, keeping a look asked for meanwhile | `CloudSessionsPostgresTest` |
+| `billing_customer_org(customer)` | billing | an organization by its Stripe customer, for the webhook | `BillingPostgresTest` |
+| `billing_claim_due_tasks(now, lease, limit)` | billing | leases the due outbox tasks of every organization (`FOR UPDATE SKIP LOCKED`) | `BillingPostgresTest` |
+| `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
 
 ## Known exceptions
 
@@ -81,7 +84,6 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 every table, policy, grant and `SECURITY DEFINER` function. The exceptions it still lists are open findings of the RLS
 audit, each to be closed by moving the cross-organization path into a function of the table above:
 
-- tables with `org_id` read across organizations without row-level security: `billing_customers`, `billing_outbox`;
 - `orgs_organizations`, `orgs_members`, `orgs_invitations`: row-level security enabled, not forced;
 - policies a setting opens to one row of any organization: the read and delete policies of
   `github_installations` (`ostrom.github_installation`) and `github_install_states` (`ostrom.github_state`).
