@@ -72,7 +72,7 @@ object ChecksSocket {
             throw error
         } catch (error: IllegalArgumentException) {
             // SerializationException included: a line that is not a check.
-            CheckReply(started = false, outputTail = error.message.orEmpty())
+            CheckReply(started = false, outputTail = "${error.message}")
         } catch (error: Exception) {
             log("check failed: ${error::class.simpleName}")
             CheckReply(started = false, outputTail = "the runner could not run the check.")

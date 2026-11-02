@@ -105,7 +105,8 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 docker exec iso-agent test -S /run/ostrom/checks.sock || fail "The runner does not serve the checks' socket."
-docker exec iso-agent test ! -e /run/ostrom-check || fail "The agent's container sees the check host's socket directory."
+# The image has the directory, empty: what the agent must not reach is the socket mounted in it.
+docker exec iso-agent test ! -e /run/ostrom-check/check.sock || fail "The agent sees the check host's socket."
 docker exec iso-checks test ! -e /run/ostrom/agent.sock || fail "The check host's container sees the agent's socket."
 
 script='echo "host=$(hostname) uid=$(id -u)"; env; exit 3'
