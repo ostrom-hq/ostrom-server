@@ -4,6 +4,8 @@ package dev.ostrom.server.launches.domain.usecases
 import dev.ostrom.server.launches.domain.models.CreatedLaunch
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
 import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.models.LaunchLimit
+import dev.ostrom.server.launches.domain.models.LaunchRateLimitedException
 import dev.ostrom.server.launches.domain.models.LaunchRefusedException
 import dev.ostrom.server.launches.domain.models.Launcher
 import dev.ostrom.server.launches.domain.models.NewLaunch
@@ -30,6 +32,7 @@ interface CreateLaunchUseCase {
      *
      * @throws InvalidLaunchException When the repository, the agent's name or the model's is malformed.
      * @throws LaunchRefusedException When the organization's policy refuses the person or the model.
+     * @throws LaunchRateLimitedException When the person or the organization launched too many agents lately.
      */
     suspend operator fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch
 }
@@ -41,12 +44,14 @@ interface CreateLaunchUseCase {
  * @param policy The organization's policy, checked again here.
  * @param tokens Issues the agent token.
  * @param clock The clock.
+ * @param limit How many launches a window takes, per person and per organization.
  */
 class CreateLaunchUseCaseImpl(
     private val repository: LaunchesRepository,
     private val policy: LaunchPolicy,
     private val tokens: AgentTokenService,
     private val clock: Clock,
+    private val limit: LaunchLimit = LaunchLimit.DEFAULT,
 ) : CreateLaunchUseCase {
     override suspend fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch {
         val repo = request.repo
@@ -70,7 +75,8 @@ class CreateLaunchUseCaseImpl(
             cloudSessionId = request.cloudSessionId,
         )
         // The launch first: its token never exists without the launch it is scoped to.
-        repository.create(launch)
+        // Counted before any token exists: a refused launch issues nothing.
+        repository.create(launch, limit)?.let { throw LaunchRateLimitedException(it) }
         return CreatedLaunch(launch, tokens.issue(launcher, launch.id, LIFETIME))
     }
 
