@@ -2,6 +2,7 @@
 package dev.ostrom.server.rules
 
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.rules.domain.models.Decision
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.DecisionSubject
@@ -44,22 +45,26 @@ class DecisionsAndPolicyUseCasesTest {
         signed = signed,
     )
 
+    // One default, never (S2-15, decided on 02/11): the rules module, which the server binds, and the gates module's
+    // fail-closed port read the same one, so no organization that never chose lets anyone approve their own action.
     @Test
-    fun anOrganizationThatNeverChoseLetsTheSoleApproverApprove() = runTest {
-        assertEquals(SelfApprovalPolicy.SOLE_APPROVER, getPolicy(orgA))
-        assertEquals(SelfApprovalPolicy.SOLE_APPROVER, RulesGatePolicies(getPolicy).selfApproval(orgA))
+    fun anOrganizationThatNeverChoseNeverApprovesItsOwnActionOnEitherSide() = runTest {
+        assertEquals(SelfApprovalPolicy.NEVER, SelfApprovalPolicy.DEFAULT)
+        assertEquals(SelfApprovalPolicy.DEFAULT, getPolicy(orgA))
+        assertEquals(SelfApprovalPolicy.DEFAULT, RulesGatePolicies(getPolicy).selfApproval(orgA))
+        assertEquals(SelfApprovalPolicy.DEFAULT, DefaultGatePolicies().selfApproval(orgA))
     }
 
     @Test
     fun settingThePolicySignsADecisionAndTheGatesApplyIt() = runTest {
-        assertEquals(SelfApprovalPolicy.NEVER, setPolicy(lyes, SelfApprovalPolicy.NEVER))
-        assertEquals(SelfApprovalPolicy.NEVER, RulesGatePolicies(getPolicy).selfApproval(orgA))
-        assertEquals(SelfApprovalPolicy.SOLE_APPROVER, RulesGatePolicies(getPolicy).selfApproval(orgB), "Only org A's")
+        assertEquals(SelfApprovalPolicy.SOLE_APPROVER, setPolicy(lyes, SelfApprovalPolicy.SOLE_APPROVER))
+        assertEquals(SelfApprovalPolicy.SOLE_APPROVER, RulesGatePolicies(getPolicy).selfApproval(orgA))
+        assertEquals(SelfApprovalPolicy.NEVER, RulesGatePolicies(getPolicy).selfApproval(orgB), "Only org A's")
         val decision = bench.repository.decisions.single()
         assertEquals(DecisionSubject("policy", "self-approval", "Self-approval"), decision.subject)
         assertEquals("edited", decision.action)
-        assertEquals(Json.parseToJsonElement("""{"selfApproval":"sole-approver"}""").jsonObject, decision.before)
-        assertEquals(Json.parseToJsonElement("""{"selfApproval":"never"}""").jsonObject, decision.after)
+        assertEquals(Json.parseToJsonElement("""{"selfApproval":"never"}""").jsonObject, decision.before)
+        assertEquals(Json.parseToJsonElement("""{"selfApproval":"sole-approver"}""").jsonObject, decision.after)
         assertNull(decision.ruleDigest, "A policy names no rule")
         assertTrue(decision.signed)
     }
@@ -67,10 +72,20 @@ class DecisionsAndPolicyUseCasesTest {
     @Test
     fun settingThePolicyInForceRecordsNothing() = runTest {
         setPolicy(lyes, SelfApprovalPolicy.SOLE_APPROVER)
-        setPolicy(lyes, SelfApprovalPolicy.NEVER)
-        setPolicy(lyes, SelfApprovalPolicy.NEVER)
+        setPolicy(lyes, SelfApprovalPolicy.SOLE_APPROVER)
         assertEquals(1, bench.repository.decisions.size)
-        assertEquals(SelfApprovalPolicy.NEVER, bench.repository.policies[orgA])
+        assertEquals(SelfApprovalPolicy.SOLE_APPROVER, bench.repository.policies[orgA])
+    }
+
+    // Choosing the default explicitly is a decision too: the audit shows that an admin chose `never`, and when.
+    @Test
+    fun anOrganizationsFirstChoiceIsRecordedEvenWhenItIsTheDefault() = runTest {
+        setPolicy(lyes, SelfApprovalPolicy.NEVER)
+        val first = bench.repository.decisions.single()
+        assertEquals(Json.parseToJsonElement("""{"selfApproval":"never"}""").jsonObject, first.before)
+        assertEquals(Json.parseToJsonElement("""{"selfApproval":"never"}""").jsonObject, first.after)
+        setPolicy(lyes, SelfApprovalPolicy.NEVER)
+        assertEquals(1, bench.repository.decisions.size, "Choosing it again records nothing")
     }
 
     @Test

@@ -10,6 +10,8 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -59,6 +61,11 @@ object RulesCallers {
         "agent-a" to Person(memberA, "lyes", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
         "device-a" to Person(adminA, "lyes", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
         "stranger" to Person(null, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        // The tokens of `ostrom login --admin`: all three governance scopes, or only one.
+        "elevated-a" to Person(adminA, "lyes", PrincipalKind.USER, GovernanceScopes.ALL),
+        "elevated-member-a" to Person(memberA, "mia", PrincipalKind.USER, GovernanceScopes.ALL),
+        "policy-writer-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(GovernanceScopes.POLICY_WRITE)),
+        "governing-agent-a" to Person(memberA, "lyes", PrincipalKind.SERVICE, GovernanceScopes.ALL),
     )
 
     private data class Person(
@@ -91,6 +98,7 @@ object RulesCallers {
                     }
             }
         }
+        single<GovernanceAudit> { AuditRecorder() }
         single<CallerResolver> {
             object : CallerResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
@@ -140,6 +148,16 @@ object RulesCallers {
                         .takeIf { actionClass == "push-main" }
             }
         }
+    }
+}
+
+/** Keeps the governance writes recorded before they happen, as `METHOD /path` and scope. */
+class AuditRecorder : GovernanceAudit {
+    /** What was recorded, in order. */
+    val records: MutableList<String> = mutableListOf()
+
+    override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String) {
+        records += "$target $scope"
     }
 }
 

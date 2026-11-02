@@ -41,13 +41,16 @@ class ReportsQueryPlansTest {
     private suspend fun TestServer.seed(org: Uuid, scale: Int) = driver.withOrganization(org) { tx ->
         val epoch = NOW.epochSeconds
         val sql = listOf(
-            "INSERT INTO usage_events (id, org_id, member_id, kind, name, session_id, input_tokens, output_tokens, " +
-                "cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, at) SELECT " +
+            // Half the events are the launcher's (a session's id), half the gateway's (a launch's id, twice).
+            "INSERT INTO usage_events (id, org_id, member_id, kind, name, session_id, launch_id, input_tokens, " +
+                "output_tokens, cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, at) SELECT " +
                 "gen_random_uuid(), CAST('$org' AS uuid), CAST(md5('m' || (i % 30)) AS uuid), 'MODEL', 'claude', " +
-                "'s' || (i % ${scale / 4}), 10, 10, 0, 0, i % 1000, 5, 'ok', " +
+                "CASE WHEN i % 2 = 0 THEN 's' ELSE 'lch' END || (i % ${scale / 4}), CASE WHEN i % 2 = 1 THEN " +
+                "'lch' || (i % ${scale / 4}) END, 10, 10, 0, 0, i % 1000, 5, 'ok', " +
                 "to_timestamp($epoch) - (i % 1440) * INTERVAL '1 hour' FROM generate_series(1, ${scale * 4}) AS i",
-            "INSERT INTO sessions_sessions (org_id, id, root_id, segment, agent, dev, repo, started_at, ended_at, " +
-                "cost_usd) SELECT CAST('$org' AS uuid), 's' || i, 's' || i, 0, 'claude-code', 'dev' || (i % 30), " +
+            "INSERT INTO sessions_sessions (org_id, id, root_id, segment, launch_id, agent, dev, repo, started_at, " +
+                "ended_at, cost_usd) SELECT CAST('$org' AS uuid), 's' || i, 's' || i, 0, 'lch' || i, 'claude-code', " +
+                "'dev' || (i % 30), " +
                 "'acme/r' || (i % 20), to_timestamp($epoch) - i * INTERVAL '1 hour', CASE WHEN i % 2 = 0 THEN " +
                 "to_timestamp($epoch) - i * INTERVAL '1 hour' + INTERVAL '30 minutes' END, 0.5 " +
                 "FROM generate_series(1, $scale) AS i",

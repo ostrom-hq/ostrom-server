@@ -14,6 +14,7 @@ import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
 import dev.ostrom.server.gateway.domain.SpendDecision
+import dev.ostrom.server.gateway.domain.SpendRequest
 import dev.ostrom.server.gateway.domain.TokenUsage
 import dev.ostrom.server.gateway.domain.UpstreamAnswer
 import dev.ostrom.server.gateway.domain.UpstreamStalledException
@@ -347,7 +348,7 @@ class RelayInferenceTest {
 
     @Test
     fun theDefaultsAllowAndDropEverything() = runTest {
-        assertEquals(SpendDecision.Allowed, AllowAllSpend.check(Gw.orgA, Gw.memberA.memberId))
+        assertEquals(SpendDecision.Allowed, AllowAllSpend.check(SpendRequest(Gw.orgA, Gw.memberA.memberId, Gw.orgA, 1)))
         val record = ModelCallRecord(
             Gw.orgA, Gw.orgA, Gw.memberA.memberId, null, WireProtocol.CHAT, null, null, "m", null, 0, false, 400,
             "invalid", clock.now(), null, 0,

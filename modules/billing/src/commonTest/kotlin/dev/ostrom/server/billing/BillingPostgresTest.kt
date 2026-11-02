@@ -171,6 +171,42 @@ class BillingPostgresTest {
         }
 
     @Test
+    fun theCustomersAndTheQueueAreSeenAcrossOrganizationsOnlyByTheWebhookAndTheWorker() =
+        serverTest(listOf(BillingModule), overrides) { server ->
+            val repository = server.koin.get<BillingRepository>()
+            repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_a", updatedAt = NOW))
+            val task = OutboxTask(Uuid.random(), ORG_A, OutboxKind.ACTIVE_PERSON, "ostrom-a-1-bob", NOW, 0)
+            repository.enqueue(task)
+            // The test server's driver is the serving role: no organization, or another one, sees no row of A's.
+            val counts = server.driver.transaction {
+                val seen = mutableListOf<String>()
+                for (org in listOf(null, ORG_B, ORG_A)) {
+                    org?.let {
+                        fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
+                            .getOrThrow()
+                    }
+                    val customers = fetchAll("SELECT COUNT(*) AS n FROM billing_customers").getOrThrow()
+                    val tasks = fetchAll("SELECT COUNT(*) AS n FROM billing_outbox").getOrThrow()
+                    seen += "${customers.first().get("n").asString()}/${tasks.first().get("n").asString()}"
+                }
+                seen
+            }
+            assertEquals(listOf("0/0", "0/0", "1/1"), counts, "No org set: nothing; org B: nothing; org A: its rows")
+            val rewritten = server.driver.transaction {
+                fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$ORG_B"))
+                    .getOrThrow()
+                execute("UPDATE billing_customers SET org_id = '$ORG_B' WHERE stripe_customer_id = 'cus_a'")
+                    .getOrThrow() + execute("UPDATE billing_outbox SET done_at = NOW()").getOrThrow()
+            }
+            assertEquals(0L, rewritten, "Org B can neither take A's customer nor finish A's task")
+            // The webhook and the worker still reach them.
+            assertEquals(ORG_A, repository.findByCustomer("cus_a")?.orgId)
+            assertEquals(listOf(task), repository.claimDueTasks(NOW, NOW + 10.minutes, 10))
+            repository.completeTask(task.id, NOW)
+            assertEquals(emptyList(), repository.claimDueTasks(NOW + 10.minutes, NOW + 20.minutes, 10))
+        }
+
+    @Test
     fun theRepositoryRoundTripsEveryField() = serverTest(listOf(BillingModule), overrides) { server ->
         val repository = server.koin.get<BillingRepository>()
         assertNull(repository.get(ORG_A))

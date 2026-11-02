@@ -12,9 +12,11 @@ import dev.ostrom.server.identity.domain.DeviceAuthorization
 import dev.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import dev.ostrom.server.identity.domain.DeviceAuthorizationsRepository
 import dev.ostrom.server.identity.domain.DuplicateIdentityException
+import dev.ostrom.server.identity.domain.OrgAuditQuery
 import dev.ostrom.server.identity.domain.RateLimiter
 import dev.ostrom.server.identity.domain.SecretGenerator
 import dev.ostrom.server.identity.domain.SecretHasher
+import dev.ostrom.server.identity.domain.ServiceKeysRepository
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.UserEmail
@@ -189,7 +191,7 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
         update(id) { it.copy(lastUsedAt = at) }
     }
 
-    override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant): Boolean {
+    override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant, orgId: Uuid?): Boolean {
         val token = get(userId, id)?.takeIf { it.revokedAt == null && it.kind != TokenKind.AGENT } ?: return false
         update(token.id) { it.copy(revokedAt = at) }
         return true
@@ -219,6 +221,21 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
     }
 }
 
+class InMemoryServiceKeysRepository(private val tokens: InMemoryApiTokensRepository) : ServiceKeysRepository {
+    override suspend fun listLive(orgId: Uuid, now: Instant): List<ApiToken> =
+        tokens.tokens.values.filter {
+            it.orgId == orgId && it.kind == TokenKind.SERVICE && it.revokedAt == null &&
+                (it.expiresAt?.let { e -> e > now } ?: true)
+        }
+            .sortedByDescending { it.createdAt }
+
+    override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean {
+        listLive(orgId, at).firstOrNull { it.id == id } ?: return false
+        tokens.tokens.entries.first { it.value.id == id }.let { it.setValue(it.value.copy(revokedAt = at)) }
+        return true
+    }
+}
+
 class InMemoryDeviceAuthorizationsRepository(
     private val tokens: InMemoryApiTokensRepository,
 ) : DeviceAuthorizationsRepository {
@@ -238,11 +255,17 @@ class InMemoryDeviceAuthorizationsRepository(
             it.userCode == userCode && it.status == DeviceAuthorizationStatus.PENDING && it.expiresAt > now
         }
 
-    override suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant): Boolean {
+    override suspend fun answer(
+        id: Uuid,
+        userId: Uuid,
+        approved: Boolean,
+        now: Instant,
+        approvingOrgId: Uuid?,
+    ): Boolean {
         if (refuseAnswer) return false
         update(id) {
             val status = if (approved) DeviceAuthorizationStatus.APPROVED else DeviceAuthorizationStatus.DENIED
-            it.copy(status = status, userId = userId)
+            it.copy(status = status, userId = userId, approvingOrgId = approvingOrgId)
         }
         return true
     }
@@ -275,4 +298,10 @@ class InMemoryAuditRepository : AuditRepository {
     override suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent> =
         events.filter { it.entry.orgId == orgId && it.sequence < (beforeSequence ?: Long.MAX_VALUE) }
             .reversed().take(limit)
+
+    override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent> =
+        list(orgId, null, query.beforeSequence, Int.MAX_VALUE)
+            .filter { query.actorId == null || it.entry.actorId == query.actorId }
+            .filter { query.action == null || it.entry.action == query.action }
+            .take(query.limit)
 }

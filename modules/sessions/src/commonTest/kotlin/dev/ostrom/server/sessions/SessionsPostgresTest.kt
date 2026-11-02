@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions
 
+import org.koin.core.qualifier.named
+import dev.ostrom.server.kernel.observability.CachedCount
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -15,9 +17,9 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
+import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import dev.ostrom.server.sessions.fakes.SettableClock
-import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.sessions.presentation.SessionScopes
@@ -50,6 +52,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class SessionsPostgresTest {
@@ -93,10 +96,10 @@ class SessionsPostgresTest {
             }
         }
         single<Clock> { clock }
-        // The server's measure of a session's cost (the usage module, later).
+        // The server's measure of a session's cost (the usage module binds the real one).
         single<SessionCosts> {
             object : SessionCosts {
-                override suspend fun costOf(orgId: Uuid, sessionId: String): Double = 0.42
+                override suspend fun costOf(orgId: Uuid, launchId: String?, from: Instant, to: Instant): Double = 0.42
             }
         }
     }
@@ -298,5 +301,24 @@ class SessionsPostgresTest {
         }
         assertEquals(HttpStatusCode.OK, alive.status)
         assertEquals("s-1", alive.body<JsonObject>().getValue("id").jsonPrimitive.content)
+    }
+
+    @Test
+    fun theActiveCountSeesTheFollowedSessionsOfEveryOrganization() = sessionsTest { server ->
+        server.start("agent:a:launch-1", "s-1")
+        server.start("agent:b:launch-2", "s-2")
+        server.start("agent:a:launch-3", "s-3")
+        server.start("agent:a:launch-4", "s-4")
+        listOf("a:launch-1" to "s-1", "b:launch-2" to "s-2", "a:launch-4" to "s-4").forEach { (launch, id) ->
+            server.call("agent:$launch", "/api/v1/sessions/$id/alive", "{}")
+        }
+        server.call("agent:a:launch-4", "/api/v1/sessions/s-4/end", "{}")
+        val active = server.koin.get<CachedCount>(named(SessionsModule.ACTIVE_SESSIONS))
+
+        active.refresh()
+        assertEquals(2, active.value(), "Both organizations; neither a hook alone (s-3) nor an ended session (s-4)")
+        clock.now += 3.minutes
+        active.refresh()
+        assertEquals(0, active.value(), "A silent launcher is no running session")
     }
 }

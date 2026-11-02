@@ -6,6 +6,7 @@ import dev.ostrom.server.rules.domain.models.DecisionSubject
 import dev.ostrom.server.rules.domain.models.Rule
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
+import dev.ostrom.server.rules.domain.models.RuleGateCheck
 import dev.ostrom.server.rules.domain.models.RuleSource
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.models.RuleStrength
@@ -18,6 +19,7 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -67,6 +69,10 @@ private fun gateOf(json: JsonObject) = RuleGate(
     },
     approvers = strings(json.getValue("approvers")),
     reason = optional(json, "reason"),
+    checks = json["checks"]?.jsonArray.orEmpty().map { element ->
+        val check = element.jsonObject
+        RuleGateCheck(text(check, "check"), check.getValue("attested").jsonPrimitive.boolean)
+    },
 )
 
 /**

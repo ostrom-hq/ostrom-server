@@ -13,6 +13,8 @@ import dev.ostrom.server.gateway.presentation.InferenceSettingsDto
 import dev.ostrom.server.gateway.presentation.MAX_INFERENCE_REQUEST_BYTES
 import dev.ostrom.server.gateway.presentation.ModelPolicyDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -76,8 +78,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
@@ -98,7 +102,17 @@ class GatewayPostgresTest {
         "use-a" to Gw.memberA,
         "policy-a" to Gw.memberA,
         "inference-admin-a" to Gw.adminA,
+        "elevated-a" to Gw.adminA,
+        "elevated-member-a" to Gw.memberA,
+        // A browser session of Ada signed in more than five minutes ago (web audit n°2 M3).
+        "stale-admin-a" to Gw.adminA,
     )
+
+    /** The tokens of `ostrom login --admin`: a person's API token holding the governance scopes. */
+    private val elevated = setOf("elevated-a", "elevated-member-a")
+
+    /** The governance writes recorded before they happen, as `METHOD /path scope`. */
+    private val audited = mutableListOf<String>()
 
     /** Browser sessions hold every right of the user; the others hold what they list. */
     private val principals = mapOf(
@@ -135,6 +149,7 @@ class GatewayPostgresTest {
                         PrincipalKind.DEVICE,
                         setOf(RelayScopes.ALL_USER),
                     )
+                    token in elevated -> AuthenticatedPrincipal(token, PrincipalKind.USER, GovernanceScopes.ALL)
                     token in principals -> AuthenticatedPrincipal(
                         token,
                         PrincipalKind.SERVICE,
@@ -145,6 +160,7 @@ class GatewayPostgresTest {
                         PrincipalKind.USER,
                         setOf(RelayScopes.ALL_USER),
                         channel = PrincipalChannel.BROWSER,
+                        authenticatedAt = Clock.System.now() - if (token.startsWith("stale-")) 10.minutes else ZERO,
                     )
                     else -> null
                 }
@@ -154,6 +170,13 @@ class GatewayPostgresTest {
 
     private val overrides: Module = module {
         includes(authenticator)
+        single<GovernanceAudit> {
+            object : GovernanceAudit {
+                override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String) {
+                    audited += "$target $scope"
+                }
+            }
+        }
         single<CallerResolver> {
             object : CallerResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
@@ -178,8 +201,8 @@ class GatewayPostgresTest {
         }
         single<ModelCallObserver> { ModelCallObserver { traces += it } }
         single<SpendGuard> {
-            SpendGuard { _, member ->
-                if (member == Gw.otherA.memberId) {
+            SpendGuard { request ->
+                if (request.memberId == Gw.otherA.memberId) {
                     SpendDecision.Exhausted("Your monthly budget is reached.", Clock.System.now() + 1.hours)
                 } else {
                     SpendDecision.Allowed
@@ -343,6 +366,19 @@ class GatewayPostgresTest {
     }
 
     @Test
+    fun changingTheModelKeysFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                val settings = InferenceSettingsDto()
+                val stale = putJson("/api/v1/inference/settings", "stale-admin-a", settings)
+                assertEquals(HttpStatusCode.Forbidden, stale.status)
+                assertTrue("step_up_required" in stale.bodyAsText(), stale.bodyAsText())
+                val fresh = putJson("/api/v1/inference/settings", "admin-a", settings)
+                assertEquals(HttpStatusCode.OK, fresh.status, fresh.bodyAsText())
+            }
+        }
+
+    @Test
     fun anOrgKeyServesChatAndOpenRouter() = serverTest(modules, overrides) { server ->
         with(server) {
             for ((name, value) in listOf("openai-key" to "sk-org-openai", "router-key" to "sk-or-org")) {
@@ -472,6 +508,27 @@ class GatewayPostgresTest {
             assertEquals(listOf("claude-sonnet-5", "claude-"), ids)
         }
     }
+
+    @Test
+    fun theTokenOfAnAdminLoginSetsTheModelPolicyAuditedFirstAndOnlyForAnOwnerOrAdmin() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                val policy = ModelPolicyDto(allowed = listOf("claude-"), defaultModel = "claude-sonnet-5")
+                val refused = putJson("/api/v1/policy/models", "elevated-member-a", policy)
+                assertEquals(HttpStatusCode.Forbidden, refused.status, "A member's elevated token")
+                assertEquals(emptyList(), audited, "Refused before its record")
+                val saved = putJson("/api/v1/policy/models", "elevated-a", policy)
+                assertEquals(policy, saved.body<ModelPolicyDto>())
+                assertEquals(listOf("PUT /api/v1/policy/models policy:write"), audited)
+                // The console and the service key write as before, recorded elsewhere or not at all.
+                assertEquals(HttpStatusCode.OK, putJson("/api/v1/policy/models", "admin-a", policy).status)
+                assertEquals(HttpStatusCode.OK, putJson("/api/v1/policy/models", "inference-admin-a", policy).status)
+                assertEquals(1, audited.size)
+                // policy:write opens the model policy, never the inference settings.
+                val settings = putJson("/api/v1/inference/settings", "elevated-a", InferenceSettingsDto())
+                assertEquals(HttpStatusCode.Forbidden, settings.status)
+            }
+        }
 
     private suspend inline fun <reified T : Any> TestServer.putJson(path: String, token: String, body: T) =
         client.put(path) {

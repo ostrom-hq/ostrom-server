@@ -20,10 +20,57 @@ internal object UsageQueries {
         AT_AND_ID(" AND (at, id) < (:before_at, :before_id)"),
     }
 
+    /** The lock that admits an org's calls one at a time: `:key`. */
+    const val LOCK_HOLDS: String =
+        "SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) AS l"
+
+    /** The org's expired holds: `:org_id`, `:now`. */
+    const val DROP_EXPIRED_HOLDS: String = "DELETE FROM usage_holds WHERE org_id = :org_id AND expires_at <= :now"
+
+    /** A call's hold, replaced when it asks again: `:call_id`, `:org_id`, `:member_id`, `:micros`, `:expires_at`. */
+    const val PUT_HOLD: String = "INSERT INTO usage_holds (call_id, org_id, member_id, micros, expires_at) " +
+        "VALUES (:call_id, :org_id, :member_id, :micros, :expires_at) " +
+        "ON CONFLICT (call_id) DO UPDATE SET micros = EXCLUDED.micros, expires_at = EXCLUDED.expires_at"
+
+    /** The hold a recorded call settles: `:call_id`. */
+    const val DROP_HOLD: String = "DELETE FROM usage_holds WHERE call_id = :call_id"
+
+    /**
+     * What is spent since `:since` and held by the other calls at `:now` (`:org_id`, `:call_id`), for the org if [org]
+     * and for `:member_id` if [member]; 0 for a side not asked.
+     *
+     * @param org Whether the org's sums are read.
+     * @param member Whether the member's sums are read.
+     */
+    fun holdTotals(org: Boolean, member: Boolean): String {
+        val held = "SELECT SUM(micros) FROM usage_holds WHERE org_id = :org_id AND expires_at > :now " +
+            "AND call_id <> :call_id"
+        val orgSums = listOf(spentSum("FROM usage_events WHERE org_id = :org_id AND at >= :since"), held)
+        val memberSums = listOf(
+            spentSum("FROM usage_events WHERE org_id = :org_id AND at >= :since AND member_id = :member_id"),
+            "$held AND member_id = :member_id",
+        )
+        fun columns(read: Boolean, sums: List<String>, prefix: String) =
+            sums.zip(listOf("spent", "held")).joinToString(", ") { (sum, name) ->
+                (if (read) "CAST(COALESCE(($sum), 0) AS BIGINT)" else "CAST(0 AS BIGINT)") + " AS ${prefix}_$name"
+            }
+        return "SELECT ${columns(org, orgSums, "org")}, ${columns(member, memberSums, "member")}"
+    }
+
+    private fun spentSum(from: String) = "SELECT SUM(cost_micros) $from"
+
     /** The account's spend since `:since`: `:org_id`, `:account_id`, `:since`. */
     const val ACCOUNT_SPENT: String =
         "SELECT CAST(COALESCE(SUM(cost_micros), 0) AS BIGINT) AS spent FROM usage_events " +
             "WHERE org_id = :org_id AND account_id = :account_id AND at >= :since"
+
+    /**
+     * What a launch spent in a window, NULL for nothing priced: `:org_id`, `:launch_id`, `:from`, `:to`. Half open, so
+     * that a call on the boundary of two segments counts once; the window bounds the read to the org's index on `at`.
+     */
+    const val LAUNCH_SPENT: String =
+        "SELECT CAST(SUM(cost_micros) AS BIGINT) AS spent FROM usage_events " +
+            "WHERE org_id = :org_id AND at >= :from AND at < :to AND launch_id = :launch_id AND cost_micros > 0"
 
     /**
      * The org's or a member's spend since `:since`: `:org_id`, `:since`, and `:member_id` if [member].

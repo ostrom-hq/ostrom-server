@@ -237,10 +237,12 @@ interface ApiTokensRepository {
      * @param userId The owner.
      * @param id The token.
      * @param at When.
+     * @param orgId The organization the token is bound to (the token of `ostrom login --admin`), whose row is only
+     *   reached inside it; null for an account-level token.
      *
      * @return True when a live token was revoked.
      */
-    suspend fun revoke(userId: Uuid, id: Uuid, at: Instant): Boolean
+    suspend fun revoke(userId: Uuid, id: Uuid, at: Instant, orgId: Uuid? = null): Boolean
 
     /**
      * Replaces a token by a new one in one transaction: the old one is revoked only if it was still live.
@@ -264,6 +266,34 @@ interface ApiTokensRepository {
      * @return How many tokens were revoked.
      */
     suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long
+}
+
+/**
+ * An organization's service keys: the `SERVICE` tokens of [ApiTokensRepository], read and revoked inside their
+ * organization (they are created with [ApiTokensRepository.create], found by hash like any token).
+ */
+interface ServiceKeysRepository {
+    /**
+     * Lists an organization's live service keys (not revoked, not expired), inside that organization.
+     *
+     * @param orgId The organization.
+     * @param now The current time, for expiry.
+     *
+     * @return At most [MAX_SERVICE_KEYS_PER_ORG] keys, newest first.
+     */
+    suspend fun listLive(orgId: Uuid, now: Instant): List<ApiToken>
+
+    /**
+     * Revokes a live service key of an organization, inside that organization.
+     *
+     * @param orgId The organization.
+     * @param id The key.
+     * @param at When.
+     *
+     * @return True when a live key was revoked; false when it is absent, another organization's, not a service key,
+     *   expired or already revoked.
+     */
+    suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean
 }
 
 /** Device authorizations of `ostrom login`. */
@@ -302,10 +332,11 @@ interface DeviceAuthorizationsRepository {
      * @param userId The user who answers.
      * @param approved True to approve, false to deny.
      * @param now The current time: an expired one is not answered.
+     * @param approvingOrgId For `ostrom login --admin`, the organization the approver owns or administers.
      *
      * @return True when it was pending and is now answered.
      */
-    suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant): Boolean
+    suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant, approvingOrgId: Uuid? = null): Boolean
 
     /**
      * Records a poll.
@@ -317,7 +348,7 @@ interface DeviceAuthorizationsRepository {
 
     /**
      * Marks an approved authorization consumed and stores the token it gave, in one transaction: two concurrent
-     * polls never both get a token.
+     * polls never both get a token. A token bound to an organization (`ostrom login --admin`) is written in it.
      *
      * @param id The authorization.
      * @param token The CLI token.
@@ -352,4 +383,14 @@ interface AuditRepository {
      * @return The events.
      */
     suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent>
+
+    /**
+     * Lists the events of an organization's chain, newest first, as `GET /api/v1/audit` filters them.
+     *
+     * @param orgId The organization.
+     * @param query The filters, the page's cursor and its size.
+     *
+     * @return The events.
+     */
+    suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent>
 }

@@ -20,6 +20,7 @@ import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -74,7 +75,7 @@ class GatesIsolationPostgresTest {
                     val (kind, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
-                        "user" -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        "user" -> GateActor.person(id, orgId, OrgRole.MEMBER)
                         else -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
                     }
                 }

@@ -8,10 +8,16 @@ import dev.ostrom.server.gateway.domain.ModelPolicy
 import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.auditDetails
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
+import dev.ostrom.server.kernel.auth.auditGovernance
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -54,6 +60,9 @@ private val INFERENCE_SCOPES = arrayOf(RelayScopes.AGENT_SESSION, RelayScopes.IN
 /** Who changes the policy and the settings besides a browser session (S2-52, declared): an `inference:admin` key. */
 private val INFERENCE_ADMINS = WriteAccess.tokens(PrincipalKind.SERVICE)
 
+/** Who changes the model policy: an `inference:admin` key, or the token of `ostrom login --admin` (`policy:write`). */
+private val POLICY_WRITERS = WriteAccess.governance(GovernanceScopes.POLICY_WRITE, PrincipalKind.SERVICE)
+
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
 
@@ -65,7 +74,8 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  * Chat Completions), take the member's Ostrom token as `Authorization: Bearer` or `x-api-key`, and answer errors in
  * the provider's shape. An agent session reads the model policy; only `inference:admin` (or a browser session)
  * changes it and reads or changes the settings (SECURITY-AUDIT S2-03), and a token that changes them is a service key
- * (S2-52).
+ * (S2-52), or, for the model policy, the token of `ostrom login --admin`: an owner or admin, audited before the
+ * write.
  *
  * @param dependencies The use cases.
  */
@@ -86,18 +96,14 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             val caller = call.requireCaller(callers, RelayScopes.INFERENCE_READ, RelayScopes.AGENT_SESSION)
             call.respond(getPolicy(caller).toDto())
         }
-        put<ModelPolicyApi> {
-            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
-            val request = call.receive<ModelPolicyDto>()
-            call.respond(
-                putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember)).toDto(),
-            )
-        }
+        put<ModelPolicyApi> { call.putModelPolicy(dependencies) }
         get<InferenceSettingsApi> {
             call.respond(getSettings(call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)).toDto())
         }
         put<InferenceSettingsApi> {
             val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
+            call.requireRecentSignIn("change the model keys")
+            val principal = call.requirePrincipal()
             val request = call.receive<InferenceSettingsDto>()
             val settings = GatewaySettings(
                 request.anthropicKeySecret,
@@ -105,9 +111,51 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
                 request.openrouterKeySecret,
                 request.useSharedAccounts,
             )
-            call.respond(putSettings(caller, settings).toDto())
+            val saved = putSettings(caller, settings)
+            // The names of the secrets the keys are read from, never a key: repointing a key is in the log.
+            val details = auditDetails(
+                "anthropic_key_secret" to saved.anthropicKeySecret,
+                "openai_key_secret" to saved.openaiKeySecret,
+                "openrouter_key_secret" to saved.openrouterKeySecret,
+                "use_shared_accounts" to saved.useSharedAccounts,
+            )
+            audit.record(
+                OrgAuditRecord(caller.orgId, principal, "inference.settings.changed", "settings", "inference", details),
+            )
+            call.respond(saved.toDto())
         }
     }
+}
+
+/**
+ * Changes the model policy: an `inference:admin` key, a browser session or the token of `ostrom login --admin`; a
+ * person is an owner or admin, checked at every request, and the elevated token's write is recorded before it happens.
+ *
+ * @param dependencies The use cases.
+ */
+private suspend fun ApplicationCall.putModelPolicy(dependencies: GatewayRoutesDependencies) {
+    val caller = requireCaller(
+        dependencies.callers,
+        RelayScopes.INFERENCE_ADMIN,
+        GovernanceScopes.POLICY_WRITE,
+        writers = POLICY_WRITERS,
+    )
+    val principal = requirePrincipal()
+    if (principal.kind == PrincipalKind.USER) {
+        caller.requireAdmin()
+        auditGovernance(principal, GovernanceScopes.POLICY_WRITE)
+    }
+    val request = receive<ModelPolicyDto>()
+    val policy = dependencies.putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember))
+    val details = auditDetails(
+        "allowed" to policy.allowed,
+        "default_model" to policy.default,
+        "members_with_own_list" to policy.byMember.keys,
+    )
+    dependencies.audit.record(
+        OrgAuditRecord(caller.orgId, principal, "inference.policy.changed", "policy", "models", details),
+    )
+    respond(policy.toDto())
 }
 
 private fun ModelPolicy.toDto() = ModelPolicyDto(allowed, default, byMember)

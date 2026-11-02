@@ -35,6 +35,33 @@ CREATE POLICY gates_org ON gates
 
 Without an organization set, no row matches and nothing errors.
 
+### Tables without an organization
+
+Every other table is listed here, with the role that reaches it and why no organization owns its rows;
+`SchemaTenancyPostgresTest` fails on a table that has no `org_id` and is not in this list (`INSTANCE_TABLES`), and on a
+listed table that gained one. The migrator's own tables, one per module (`_migrations_<module>`), are the only ones
+admitted by their prefix: the owner role writes them when it migrates.
+
+| Table | Module | Reached by | Why no organization |
+|---|---|---|---|
+| `billing_stripe_events` | billing | serving role, Stripe webhook | the Stripe events already handled, by Stripe's id, before the organization is known |
+| `github_apps` | integrations-github | serving role | the instance's one GitHub App, its secrets sealed |
+| `github_installation_origins` | integrations-github | serving role, GitHub webhook | who installed an installation, read before its organization is known; row-level security forced, one row opened by `ostrom.github_installation` (R7) |
+| `github_manifest_states` | integrations-github | serving role | the state of an instance admin's GitHub App creation, by hash |
+| `github_webhook_deliveries` | integrations-github | serving role, GitHub webhook | the webhook deliveries already received (an id and a time), to drop a replay |
+| `identity_device_authorizations` | identity | serving role, device sign-in | a person's pending CLI sign-in |
+| `identity_identities` | identity | serving role, sign-in | a person's external accounts |
+| `identity_magic_links` | identity | serving role, sign-in | e-mail sign-in links, by hash |
+| `identity_mobile_codes` | identity | serving role, the app's sign-in | one-time codes, by hash |
+| `identity_notification_preferences` | identity | serving role | a person's preferences, across their organizations |
+| `identity_oauth_attempts` | identity | serving role, sign-in | an OAuth round trip's state, by hash |
+| `identity_sign_in_links` | identity | serving role | a signed-in person's one-time link to a browser, by hash |
+| `identity_user_emails` | identity | serving role, sign-in | a person's e-mail addresses |
+| `identity_users` | identity | serving role | the people, members of any number of organizations |
+| `identity_web_sessions` | identity | serving role | a person's browser sessions, by hash, read before an organization is chosen |
+| `instance_info` | instance | serving role | the instance's one identity row |
+| `instance_signing_keys` | instance | serving role | the public keys of the instance's receipt signatures |
+
 ## The queries
 
 A repository of a tenant table only runs inside `driver.withOrganization(orgId) { tx -> … }` (kernel,
@@ -68,6 +95,18 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
 | `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
 | `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
+| `gates_pending_count()` | gates | counts the pending gates (sees `status` alone), for the `ostrom.gates.pending` gauge | `GatesPostgresTest` |
+| `sessions_active_count(since)` | sessions | counts the open sessions of every organization seen since, for `ostrom.sessions.active` | `SessionsPostgresTest` |
+| `artifacts_route_by_id(id)` | artifacts | an artifact's organization by its id, for the content origin | `ArtifactsRoutesTenancyPostgresTest` |
+| `artifacts_route_by_slug(slug)` | artifacts | an artifact's organization by its public link | `ArtifactsRoutesTenancyPostgresTest` |
+| `runners_session_org(id)` | runners | a session's organization | `RunnersRoutesTenancyPostgresTest` |
+| `runners_session_by_token(hash)` | runners | the session a runner token belongs to, for the runner channel | `RunnersRoutesTenancyPostgresTest` |
+| `runners_claim_due(owner, until, now, limit)` | runners | leases the due sessions of every organization to one reconciler (`FOR UPDATE SKIP LOCKED`) | `CloudSessionsPostgresTest` |
+| `runners_release(id, owner, has_next, next_at)` | runners | ends a reconciler's lease, keeping a look asked for meanwhile | `CloudSessionsPostgresTest` |
+| `runners_registered_key(id)` | runners | a registered runner's organization and key hash, for its heartbeat | `RegisteredRunnersHeartbeatPostgresTest` |
+| `billing_customer_org(customer)` | billing | an organization by its Stripe customer, for the webhook | `BillingPostgresTest` |
+| `billing_claim_due_tasks(now, lease, limit)` | billing | leases the due outbox tasks of every organization (`FOR UPDATE SKIP LOCKED`) | `BillingPostgresTest` |
+| `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
 
 ## Known exceptions
 
@@ -75,8 +114,6 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 every table, policy, grant and `SECURITY DEFINER` function. The exceptions it still lists are open findings of the RLS
 audit, each to be closed by moving the cross-organization path into a function of the table above:
 
-- tables with `org_id` read across organizations without row-level security: `artifacts_routes`,
-  `runners_session_routes`, `billing_customers`, `billing_outbox`;
 - `orgs_organizations`, `orgs_members`, `orgs_invitations`: row-level security enabled, not forced;
 - policies a setting opens to one row of any organization: the read and delete policies of
   `github_installations` (`ostrom.github_installation`) and `github_install_states` (`ostrom.github_state`).

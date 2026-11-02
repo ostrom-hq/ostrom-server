@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules
 
+import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.instance.InstanceModule
+import dev.ostrom.server.kernel.auth.GovernanceAudit
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
+import dev.ostrom.server.rules.fakes.AuditRecorder
 import dev.ostrom.server.rules.fakes.RulesCallers
 import dev.ostrom.server.rules.fakes.RulesCallers.orgA
 import dev.ostrom.server.rules.fakes.RulesCallers.orgB
@@ -20,6 +24,7 @@ import dev.ostrom.server.rules.presentation.GateActionDto
 import dev.ostrom.server.rules.presentation.GatePolicyDto
 import dev.ostrom.server.rules.presentation.NewRuleRequest
 import dev.ostrom.server.rules.presentation.RuleDto
+import dev.ostrom.server.rules.presentation.RuleGateCheckDto
 import dev.ostrom.server.rules.presentation.RuleGateDto
 import dev.ostrom.server.rules.presentation.RulesPage
 import dev.ostrom.server.testing.TestServer
@@ -27,9 +32,11 @@ import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -40,11 +47,13 @@ import kotlin.time.Duration.Companion.minutes
 /** The rules, decisions and policy routes on a real PostgreSQL and real HTTP: who may call them, and org isolation. */
 class RulesPostgresTest {
     private val clock = TestClock()
-    private val modules = listOf(InstanceModule, ReceiptsModule, RulesModule)
+    private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, CompilerModule, RulesModule)
     private val gate = RuleGateDto(listOf(GateActionDto("push-main", "Push to main")), listOf("lyes", "rev-b"))
 
     private fun rulesTest(block: suspend (TestServer) -> Unit) =
-        serverTest(modules, RulesCallers.overrides(clock)) { server -> block(server) }
+        serverTest(modules, module { includes(RulesCallers.overrides(clock), RulesCallers.gateSessions) }) { server ->
+            block(server)
+        }
 
     private suspend fun TestServer.write(
         token: String = "admin-a",
@@ -106,6 +115,28 @@ class RulesPostgresTest {
     }
 
     @Test
+    fun aGateKeepsTheChecksItNeedsAndTheirAttestation() = rulesTest { server ->
+        // Written as a client sends it: `attested` left out means a declared run will do.
+        val body = Json.parseToJsonElement(
+            """{"statement":"Tests run by Ostrom or the CI before a push to main","group":"git",""" +
+                """"scope":["acme/api"],"gate":{"actions":[{"class":"push-main","label":"Push to main",""" +
+                """"patterns":[],"repos":["acme/api"]}],"approvers":[],""" +
+                """"checks":[{"check":"tests","attested":true},{"check":"lint"}]}}""",
+        )
+        val created = server.call("POST", "/api/v1/rules", "admin-a", body)
+        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        val served = """"checks":[{"check":"tests","attested":true},{"check":"lint","attested":false}]"""
+        assertTrue(served in created.bodyAsText(), created.bodyAsText())
+        val rule = created.body<RuleDto>()
+        assertEquals(listOf(RuleGateCheckDto("tests", true), RuleGateCheckDto("lint", false)), rule.gate?.checks)
+
+        assertEquals(rule, server.call("GET", "/api/v1/rules/${rule.id}", "member-a").body<RuleDto>())
+        assertEquals(listOf(rule), server.call("GET", "/api/v1/rules", "reader-a").body<RulesPage>().items)
+        val decided = server.decisions(query = "?subjectKind=rule&subjectId=${rule.id}").items.single()
+        assertTrue(""""attested":true""" in decided.after.toString(), "The signed decision shows the attestation")
+    }
+
+    @Test
     fun theConsoleFiltersAndDecidesTheSureOnesAtOnce() = rulesTest { server ->
         val repository = server.koin.get<RulesRepository>()
         repository.transaction(orgA) {
@@ -160,13 +191,14 @@ class RulesPostgresTest {
     @Test
     fun thePolicyIsReadByMembersAndSetByAdminsAsASignedDecision() = rulesTest { server ->
         val path = "/api/v1/gates/policy"
-        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "gates-reader-a").body<GatePolicyDto>())
-        val set = server.call("PUT", path, "admin-a", GatePolicyDto("never"))
+        val byDefault = server.call("GET", path, "gates-reader-a").body<GatePolicyDto>()
+        assertEquals(GatePolicyDto("never"), byDefault, "An organization that never chose")
+        val set = server.call("PUT", path, "admin-a", GatePolicyDto("sole-approver"))
         assertEquals(HttpStatusCode.OK, set.status, set.bodyAsText())
-        assertEquals(GatePolicyDto("never"), set.body<GatePolicyDto>())
-        assertEquals(GatePolicyDto("never"), server.call("GET", path, "member-a").body<GatePolicyDto>())
-        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "owner-b").body<GatePolicyDto>())
-        server.call("PUT", path, "admin-a", GatePolicyDto("never"))
+        assertEquals(GatePolicyDto("sole-approver"), set.body<GatePolicyDto>())
+        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "member-a").body<GatePolicyDto>())
+        assertEquals(GatePolicyDto("never"), server.call("GET", path, "owner-b").body<GatePolicyDto>())
+        server.call("PUT", path, "admin-a", GatePolicyDto("sole-approver"))
         val decision = server.decisions(query = "?subjectKind=policy").items.single()
         assertEquals("self-approval", decision.subject.id)
         assertEquals("policy", server.koin.get<ReceiptsRepository>().get(orgA, decision.receiptId)?.subjectKind)
@@ -239,6 +271,53 @@ class RulesPostgresTest {
         )
     }
 
+    @Test
+    fun theTokenOfAnAdminLoginWritesEveryGovernanceRouteItsScopesNameAsASignedDecision() = rulesTest { server ->
+        val created = server.write("elevated-a")
+        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        val id = created.body<RuleDto>().id
+        assertEquals("lyes", created.body<RuleDto>().decidedBy, "Named like in the console")
+        writes(id).forEach { (method, path, body) ->
+            val expected = when {
+                method == "DELETE" -> HttpStatusCode.NoContent
+                path.endsWith("/rules") -> HttpStatusCode.Created
+                "/analysis/" in path -> HttpStatusCode.Accepted
+                else -> HttpStatusCode.OK
+            }
+            assertEquals(expected, server.call(method, path, "elevated-a", body).status, "$method $path")
+        }
+        assertTrue(server.decisions().items.isNotEmpty(), "Each write is a signed decision")
+        val audited = (server.koin.get<GovernanceAudit>() as AuditRecorder).records
+        assertEquals(
+            listOf(
+                "POST /api/v1/rules policy:write",
+                "PATCH /api/v1/rules/$id policy:write",
+                "DELETE /api/v1/rules/$id policy:write",
+                "POST /api/v1/rules/bulk policy:write",
+                "PUT /api/v1/gates/policy gates:policy",
+                "POST /api/v1/analysis/start policy:write",
+                "POST /api/v1/analysis/restart policy:write",
+                "POST /api/v1/analysis/replay policy:write",
+            ),
+            audited.drop(1),
+            "Each use of the elevated token is in the audit log, before the write",
+        )
+        server.write()
+        assertEquals(9, audited.size, "The console's writes are only signed decisions")
+        val rule = server.write().body<RuleDto>().id
+        // Only the scope that names the route: policy:write decides rules, not the gate policy.
+        val patch = buildJsonObject { put("status", "rejected") }
+        assertEquals(HttpStatusCode.OK, server.call("PATCH", "/api/v1/rules/$rule", "policy-writer-a", patch).status)
+        val policy = server.call("PUT", "/api/v1/gates/policy", "policy-writer-a", GatePolicyDto("never"))
+        assertEquals(HttpStatusCode.Forbidden, policy.status)
+        // A member's elevated token, or an agent holding the scopes, decides nothing.
+        writes(rule).forEach { (method, path, body) ->
+            listOf("elevated-member-a", "governing-agent-a").forEach { token ->
+                assertEquals(HttpStatusCode.Forbidden, server.call(method, path, token, body).status, "$token $path")
+            }
+        }
+    }
+
     private data class Route(val method: String, val path: String, val body: Any? = null)
 
     private fun reads(id: String) = listOf(
@@ -246,6 +325,8 @@ class RulesPostgresTest {
         Route("GET", "/api/v1/rules/$id"),
         Route("GET", "/api/v1/decisions"),
         Route("GET", "/api/v1/gates/policy"),
+        Route("GET", "/api/v1/analysis/state"),
+        Route("GET", "/api/v1/analysis/replay"),
     )
 
     private fun writes(id: String) = listOf(
@@ -254,6 +335,9 @@ class RulesPostgresTest {
         Route("DELETE", "/api/v1/rules/$id"),
         Route("POST", "/api/v1/rules/bulk", BulkRulesRequest(listOf(id), "rejected")),
         Route("PUT", "/api/v1/gates/policy", GatePolicyDto("never")),
+        Route("POST", "/api/v1/analysis/start"),
+        Route("POST", "/api/v1/analysis/restart"),
+        Route("POST", "/api/v1/analysis/replay"),
     )
 
     private val routes = reads("rule_1") + writes("rule_1")

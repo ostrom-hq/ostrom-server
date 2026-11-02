@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.mcprelay.presentation
 
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.auditDetails
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
@@ -75,25 +78,35 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
     }
     post<McpApi.Servers> {
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val request = call.receive<McpServerDto>()
         val payload = request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed()))
         val server = createServer(caller, payload)
+        recordChange(call, caller, SERVER_CREATED, server.name, emptyMap())
         call.respond(HttpStatusCode.Created, server.toDto(directory.namesById(caller.orgId, server.secretIds())))
     }
     put<McpApi.Servers.Name> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val request = call.receive<McpServerDto>()
         if (request.name != params.name) {
             throw InvalidMcpServerException("The name of the body differs from the name of the path.")
         }
         val payload = request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed()))
         val existing = listServers(caller).firstOrNull { it.name == params.name }
-        val server = if (existing == null) createServer(caller, payload) else updateServer(caller, existing.id, payload)
+        val (server, event) = if (existing == null) {
+            createServer(caller, payload) to SERVER_CREATED
+        } else {
+            updateServer(caller, existing.id, payload) to "mcp.server.updated"
+        }
+        recordChange(call, caller, event, server.name, emptyMap())
         call.respond(server.toDto(directory.namesById(caller.orgId, server.secretIds())))
     }
     delete<McpApi.Servers.Name> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         deleteServer(caller, serverId(caller, params.name))
+        recordChange(call, caller, "mcp.server.deleted", params.name, emptyMap())
         call.respond(HttpStatusCode.NoContent)
     }
 }
@@ -108,6 +121,7 @@ private fun Route.assignmentRoutes(dependencies: McpRelayRoutesDependencies) = w
     }
     put<McpApi.Servers.Name.Assignments.Member> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val request = call.receive<McpAssignmentRequest>()
         val member = params.member.toMemberId()
         val credential = request.credentialSecret?.let { name ->
@@ -117,11 +131,17 @@ private fun Route.assignmentRoutes(dependencies: McpRelayRoutesDependencies) = w
         }
         val server = serverId(caller, params.parent.parent.name)
         val assignment = assign(caller, server, member, ToolPolicy(request.tools?.toSet()), credential)
+        // No list is every tool: written as such, never as the text "null".
+        val details = auditDetails("member" to params.member, "tools" to (request.tools ?: ALL_TOOLS))
+        recordChange(call, caller, "mcp.assignment.changed", params.parent.parent.name, details)
         call.respond(assignment.toResponse(params.parent.parent.name, request.credentialSecret))
     }
     delete<McpApi.Servers.Name.Assignments.Member> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         unassign(caller, serverId(caller, params.parent.parent.name), params.member.toMemberId())
+        val details = mapOf("member" to params.member)
+        recordChange(call, caller, "mcp.assignment.removed", params.parent.parent.name, details)
         call.respond(HttpStatusCode.NoContent)
     }
 }
@@ -134,14 +154,20 @@ private fun Route.policyRoutes(dependencies: McpRelayRoutesDependencies) = with(
     }
     post<McpApi.Servers.Name.Policies> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val request = call.receive<ArgumentPolicyRequest>()
         val policy = createPolicy(caller, serverId(caller, params.parent.name), request.toPayload())
+        val effect = policy.effect.name.lowercase()
+        val details = mapOf("policy" to "${policy.id}", "tool" to policy.tool, "effect" to effect)
+        recordChange(call, caller, "mcp.policy.created", params.parent.name, details)
         call.respond(HttpStatusCode.Created, policy.toResponse())
     }
     delete<McpApi.Servers.Name.Policies.PolicyId> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val server = serverId(caller, params.parent.parent.name)
         deletePolicy(caller, server, params.policyId.toIdOr(::McpServerNotFoundException))
+        recordChange(call, caller, "mcp.policy.deleted", params.parent.parent.name, mapOf("policy" to params.policyId))
         call.respond(HttpStatusCode.NoContent)
     }
 }
@@ -153,7 +179,11 @@ private fun Route.journalRoutes(dependencies: McpRelayRoutesDependencies) = with
     }
     put<McpApi.Settings> {
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
+        val principal = call.requirePrincipal()
         val settings = putSettings(caller, McpSettings(call.receive<McpSettingsDto>().agentPrefix))
+        val details = auditDetails("agent_prefix" to settings.agentPrefix)
+        audit.record(OrgAuditRecord(caller.orgId, principal, "mcp.settings.changed", "settings", "mcp", details))
         call.respond(McpSettingsDto(settings.agentPrefix))
     }
     get<McpApi.Calls> { params ->
@@ -237,3 +267,8 @@ private fun invalidCursor(): Nothing =
     throw OstromException(ErrorKind.INVALID_REQUEST, "before is an ISO 8601 instant or the next of a page.")
 
 private fun String.toMemberId(): Uuid? = if (this == "all") null else toIdOr(::McpServerNotFoundException)
+
+private const val SERVER_CREATED = "mcp.server.created"
+
+// What an assignment's audit line names when the member reaches every tool.
+private const val ALL_TOOLS = "*"

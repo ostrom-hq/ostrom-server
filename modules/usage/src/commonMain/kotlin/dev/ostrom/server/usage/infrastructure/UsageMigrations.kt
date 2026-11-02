@@ -54,7 +54,8 @@ private val RETENTION_THROUGH_THE_ROUTER_SQL: String =
 
 /**
  * The schema of the usage module; its tables start with `usage_`. The spend indexes include `cost_micros` so that the
- * budget sums are index-only scans; `usage_events_at` serves the retention purge.
+ * budget sums are index-only scans; `usage_events_at` serves the retention purge. `usage_holds` keeps the budget held
+ * by the model calls in flight.
  */
 val UsageMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -106,4 +107,24 @@ val UsageMigrations: List<SchemaMigration> = listOf(
         sql = "ALTER TABLE usage_events ADD COLUMN launch_id TEXT",
     ),
     SchemaMigration(version = 4, name = "retention_through_the_router", sql = RETENTION_THROUGH_THE_ROUTER_SQL),
+    SchemaMigration(
+        version = 5,
+        name = "create_usage_holds",
+        // What the model calls in flight may still cost (UsageRepository.holdWithin): each hold lives until its call is
+        // recorded (settle), or until it expires when a replica is lost before.
+        sql = listOf(
+            """
+            CREATE TABLE usage_holds (
+                call_id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                member_id UUID NOT NULL,
+                micros BIGINT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE INDEX usage_holds_org_member ON usage_holds (org_id, member_id)
+                INCLUDE (micros, expires_at, call_id);
+            """.trimIndent(),
+            tenantTableSql("usage_holds"),
+        ).joinToString("\n"),
+    ),
 )

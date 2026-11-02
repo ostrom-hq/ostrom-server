@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.models
 
+import dev.ostrom.server.kernel.auth.STEP_UP_WITHIN
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 /**
@@ -13,7 +13,7 @@ import kotlin.time.Instant
  */
 object StepUp {
     /** How old the sign-in of a yes may be. */
-    val WITHIN: Duration = 5.minutes
+    val WITHIN: Duration = STEP_UP_WITHIN
 
     /**
      * Refuses a yes whose sign-in is unknown or older than [WITHIN]; a no never needs it.

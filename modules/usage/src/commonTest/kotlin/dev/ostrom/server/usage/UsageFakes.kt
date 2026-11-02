@@ -11,6 +11,11 @@ import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.RelayScopes
+import dev.ostrom.server.usage.domain.Admission
+import dev.ostrom.server.usage.domain.HoldWindow
+import dev.ostrom.server.usage.domain.SpendHold
+import dev.ostrom.server.usage.domain.SpendLimits
+import dev.ostrom.server.usage.domain.SpendTotals
 import dev.ostrom.server.usage.domain.UsageCursor
 import dev.ostrom.server.usage.domain.UsageEvent
 import dev.ostrom.server.usage.domain.UsageGroupBy
@@ -147,12 +152,41 @@ class InMemoryUsageRepository : UsageRepository {
         this.events += events
     }
 
+    /** The holds of the calls in flight. */
+    val holds = mutableMapOf<Uuid, Pair<SpendHold, Instant>>()
+
+    override suspend fun settle(event: UsageEvent) {
+        insert(event.orgId, listOf(event))
+        holds.remove(event.id)
+    }
+
+    override suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission {
+        failure?.let { throw it }
+        val live = holds.values.filter { (other, expires) ->
+            other.orgId == hold.orgId && other.callId != hold.callId && expires > window.now
+        }.map { it.first }
+        val totals = SpendTotals(
+            orgSpent = spentMicros(hold.orgId, null, window.since),
+            orgHeld = live.sumOf { it.micros },
+            memberSpent = spentMicros(hold.orgId, hold.memberId, window.since),
+            memberHeld = live.filter { it.memberId == hold.memberId }.sumOf { it.micros },
+        )
+        return limits.admit(totals, hold.micros).also {
+            if (it == Admission.Admitted) holds[hold.callId] = hold to window.expiresAt
+        }
+    }
+
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long = events
         .filter { it.orgId == orgId && it.at >= since && (memberId == null || it.memberId == memberId) }
         .sumOf { it.costMicros }
 
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long =
         events.filter { it.orgId == orgId && it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
+
+    override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? = events
+        .filter { it.orgId == orgId && it.launchId == launchId && it.at >= from && it.at < to && it.costMicros > 0 }
+        .takeIf { it.isNotEmpty() }
+        ?.sumOf { it.costMicros }
 
     override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> =
         events.filter { it in window }
