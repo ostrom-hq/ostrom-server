@@ -23,8 +23,8 @@ on:
         default: ""
       tests:
         description: >-
-          Scenarios to run in those files, a test-name filter (`E2E-PARC-013`, `E2E-BUDGET`); empty = all of them. Every
-          scenario the filter names must pass: a skipped one fails the run.
+          Scenarios to run in those files, a test-name regular expression as vitest's -t reads it (`E2E-PARC-013`,
+          `E2E-BUDGET`); empty = all of them. Every scenario it names must pass: a skipped one fails the run.
         default: ""
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -126,7 +126,9 @@ jobs:
           # The server's non-root user writes the sign-in mails (0644); the scenarios, as the runner's user, read them.
           mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
           # Test values only, as ostrom-e2e's bench: mails to a directory, the console is the server's own origin, the
-          # scenarios' addresses come through the trusted local proxy, Stripe is stripe-mock.
+          # scenarios' addresses come through the trusted local proxy, Stripe is stripe-mock, and the providers' token
+          # endpoint and APIs behind the gateway are the fake provider a scenario starts on port 4620 (BUDGET-002,
+          # SHARE-*), wired as in ostrom-e2e's ci.yml.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -138,6 +140,10 @@ jobs:
           OSTROM_STRIPE_SECRET_KEY=sk_test_e2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_e2e_bench
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
+          OSTROM_SHARING_CLAUDE_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
+          OSTROM_SHARING_CODEX_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
+          OSTROM_GATEWAY_ANTHROPIC_URL=http://127.0.0.1:4620
+          OSTROM_GATEWAY_CODEX_URL=http://127.0.0.1:4620
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
@@ -158,6 +164,8 @@ jobs:
           OSTROM_E2E_SERVER_URL: http://127.0.0.1:4600
           OSTROM_E2E_MAIL_DIR: ${{ runner.temp }}/ostrom-mail
           OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
+          # The fake provider the scenarios start, where the server's gateway and sharing point (step above).
+          OSTROM_E2E_FAKE_TOKENS_PORT: "4620"
         run: |
           pnpm install --frozen-lockfile
           # The files named, or every scenario file; a filter runs its scenarios only; the json report says which ran.
@@ -172,15 +180,16 @@ jobs:
         if: always() && env.TESTS != ''
         run: |
           # A probe that finds a route missing skips its scenario, and a skip is green for vitest: not here.
+          # `tests` is a regular expression, as vitest's -t reads it.
           jq -e --arg t "$TESTS" '
-            [.testResults[].assertionResults[] | select(.fullName | contains($t))] as $named
+            [.testResults[].assertionResults[] | select(.fullName | test($t))] as $named
             | ($named | length) > 0 and all($named[]; .status == "passed")
           ' "$RUNNER_TEMP/journey.json" > /dev/null || {
-            jq -r --arg t "$TESTS" '.testResults[].assertionResults[] | select(.fullName | contains($t))
+            jq -r --arg t "$TESTS" '.testResults[].assertionResults[] | select(.fullName | test($t))
               | "::error::\(.status): \(.fullName)"' "$RUNNER_TEMP/journey.json"
             echo "::error::no scenario named $TESTS passed"; exit 1
           }
-          jq -r --arg t "$TESTS" '.testResults[].assertionResults[] | select(.fullName | contains($t))
+          jq -r --arg t "$TESTS" '.testResults[].assertionResults[] | select(.fullName | test($t))
             | "- \(.status): \(.fullName)"' "$RUNNER_TEMP/journey.json" >> "$GITHUB_STEP_SUMMARY"
       - name: Server logs
         if: always()
