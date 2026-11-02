@@ -49,8 +49,15 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
                 }
             }
         }
-        val chosen = declared?.let { Triple(it.second, it.third, "declared") }
-            ?: GateGuess.guess(action, repo, workflows)?.let { Triple(it.first, it.second, "guessed") }
+        val guessed = GateGuess.guess(action, repo, workflows)
+        // Second audit H2: proposing never removes a gate. A decided gate, declared or guessed, comes before any
+        // proposed one: a proposed workflow that only declares the class never turns an enforced gate into a shadow.
+        val chosen = when {
+            declared != null && decided(declared.second) -> Triple(declared.second, declared.third, "declared")
+            guessed != null && decided(guessed.first) -> Triple(guessed.first, guessed.second, "guessed")
+            declared != null -> Triple(declared.second, declared.third, "declared")
+            else -> guessed?.let { Triple(it.first, it.second, "guessed") }
+        }
         return chosen?.let { (workflow, node, basis) -> ref(workflow, node, basis) }
     }
 
@@ -88,14 +95,18 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
         return out.values.toList()
     }
 
+    // Second audit H2: the patterns a decided gate declares replace the built-in ones; a proposed workflow's only add
+    // to them. A proposal that matched nothing (`a^`) would otherwise let the action through every hook.
     private fun patternsFor(action: ActionClass, repo: String?): List<String> {
-        val declared = workflows.asSequence()
-            .flatMap { gates(it) }
-            .mapNotNull { node ->
+        val declared = workflows.flatMap { workflow ->
+            gates(workflow).mapNotNull { node ->
                 node.actions.orEmpty().firstOrNull { it.cls == action.cls && covers(it.repos, repo) }
+                    ?.takeIf { it.patterns.isNotEmpty() }
+                    ?.let { decided(workflow) to it.patterns }
             }
-            .firstOrNull { it.patterns.isNotEmpty() }
-        return if (declared != null) declared.patterns else action.patterns
+        }
+        val base = declared.firstOrNull { it.first }?.second ?: action.patterns
+        return (base + declared.filterNot { it.first }.flatMap { it.second }).distinct()
     }
 
     /** Matching helpers of the prototype, shared with the rules harness. */
