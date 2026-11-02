@@ -25,8 +25,10 @@ enum class MemberRole {
  * @property orgId The org.
  * @property memberId The member, stable across tokens.
  * @property role The member's role in the org.
+ * @property launchId The launch whose agent token made the request (`POST /launches`), or null for the member's own
+ *   credential: the journal and the usage events keep it, so an agent's call is told from the person's.
  */
-data class Caller(val orgId: Uuid, val memberId: Uuid, val role: MemberRole) {
+data class Caller(val orgId: Uuid, val memberId: Uuid, val role: MemberRole, val launchId: String? = null) {
     /**
      * Refuses a member who does not administer the org.
      *
