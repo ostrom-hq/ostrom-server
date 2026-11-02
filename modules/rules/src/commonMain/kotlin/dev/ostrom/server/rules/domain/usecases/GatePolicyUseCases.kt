@@ -34,7 +34,8 @@ class GetGatePolicyUseCaseImpl(private val repository: RulesRepository) : GetGat
 /** Sets the self-approval policy: a signed decision (APPROBATION, 28/10; prototype `PUT /api/bridge/policy`). */
 interface SetGatePolicyUseCase {
     /**
-     * Sets it. Setting what is already in force records nothing.
+     * Sets it. Setting what an earlier decision already put in force records nothing; the organization's first choice
+     * is recorded, even when it is the default.
      *
      * @param decider Who decides.
      * @param policy The setting.
@@ -58,9 +59,11 @@ class SetGatePolicyUseCaseImpl(
     override suspend fun invoke(decider: Decider, policy: SelfApprovalPolicy): SelfApprovalPolicy {
         val now = clock.now()
         val decision = repository.transaction(decider.orgId) {
-            val before = lockSelfApproval() ?: SelfApprovalPolicy.DEFAULT
+            val stored = lockSelfApproval()
+            val before = stored ?: SelfApprovalPolicy.DEFAULT
             putSelfApproval(policy, now)
-            if (before == policy) {
+            // An organization's first choice is a decision even when it is the default: the audit shows who chose.
+            if (stored != null && before == policy) {
                 null
             } else {
                 Decision(

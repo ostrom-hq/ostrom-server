@@ -71,11 +71,21 @@ class DecisionsAndPolicyUseCasesTest {
 
     @Test
     fun settingThePolicyInForceRecordsNothing() = runTest {
-        setPolicy(lyes, SelfApprovalPolicy.NEVER)
         setPolicy(lyes, SelfApprovalPolicy.SOLE_APPROVER)
         setPolicy(lyes, SelfApprovalPolicy.SOLE_APPROVER)
         assertEquals(1, bench.repository.decisions.size)
         assertEquals(SelfApprovalPolicy.SOLE_APPROVER, bench.repository.policies[orgA])
+    }
+
+    // Choosing the default explicitly is a decision too: the audit shows that an admin chose `never`, and when.
+    @Test
+    fun anOrganizationsFirstChoiceIsRecordedEvenWhenItIsTheDefault() = runTest {
+        setPolicy(lyes, SelfApprovalPolicy.NEVER)
+        val first = bench.repository.decisions.single()
+        assertEquals(Json.parseToJsonElement("""{"selfApproval":"never"}""").jsonObject, first.before)
+        assertEquals(Json.parseToJsonElement("""{"selfApproval":"never"}""").jsonObject, first.after)
+        setPolicy(lyes, SelfApprovalPolicy.NEVER)
+        assertEquals(1, bench.repository.decisions.size, "Choosing it again records nothing")
     }
 
     @Test

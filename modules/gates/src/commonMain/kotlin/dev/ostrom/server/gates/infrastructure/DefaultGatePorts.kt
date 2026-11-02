@@ -34,7 +34,7 @@ import kotlin.uuid.Uuid
 // integrations-github, notifications), which bind their implementation over these defaults. Each default fails
 // closed: until the owner is loaded, nothing is approved that should not be.
 
-/** No organization setting yet: no self-approval, a yes always comes from another person (S2-15). */
+/** No organization setting yet: [SelfApprovalPolicy.DEFAULT], what an organization that never chose gets (S2-15). */
 class DefaultGatePolicies : GatePolicies {
     override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT
 }
