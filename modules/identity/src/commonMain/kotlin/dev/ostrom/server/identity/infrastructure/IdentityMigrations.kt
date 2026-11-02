@@ -308,4 +308,14 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
         name = "tokens_of_organizations_through_the_router",
         sql = TOKENS_OF_ORGANIZATIONS_SQL,
     ),
+    // `ostrom login --admin`: the governance scopes asked for, and the organization whose owner or admin approved
+    // them (not `org_id`: the authorization belongs to no organization, only the token it gives does).
+    SchemaMigration(
+        version = 7,
+        name = "device_authorizations_for_governance",
+        sql = """
+            ALTER TABLE identity_device_authorizations ADD COLUMN scopes TEXT NOT NULL DEFAULT '';
+            ALTER TABLE identity_device_authorizations ADD COLUMN approving_org_id UUID;
+        """.trimIndent(),
+    ),
 )

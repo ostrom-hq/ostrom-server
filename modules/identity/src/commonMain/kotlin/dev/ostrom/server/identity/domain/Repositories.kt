@@ -215,10 +215,12 @@ interface ApiTokensRepository {
      * @param userId The owner.
      * @param id The token.
      * @param at When.
+     * @param orgId The organization the token is bound to (the token of `ostrom login --admin`), whose row is only
+     *   reached inside it; null for an account-level token.
      *
      * @return True when a live token was revoked.
      */
-    suspend fun revoke(userId: Uuid, id: Uuid, at: Instant): Boolean
+    suspend fun revoke(userId: Uuid, id: Uuid, at: Instant, orgId: Uuid? = null): Boolean
 
     /**
      * Replaces a token by a new one in one transaction: the old one is revoked only if it was still live.
@@ -280,10 +282,11 @@ interface DeviceAuthorizationsRepository {
      * @param userId The user who answers.
      * @param approved True to approve, false to deny.
      * @param now The current time: an expired one is not answered.
+     * @param approvingOrgId For `ostrom login --admin`, the organization the approver owns or administers.
      *
      * @return True when it was pending and is now answered.
      */
-    suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant): Boolean
+    suspend fun answer(id: Uuid, userId: Uuid, approved: Boolean, now: Instant, approvingOrgId: Uuid? = null): Boolean
 
     /**
      * Records a poll.
@@ -295,7 +298,7 @@ interface DeviceAuthorizationsRepository {
 
     /**
      * Marks an approved authorization consumed and stores the token it gave, in one transaction: two concurrent
-     * polls never both get a token.
+     * polls never both get a token. A token bound to an organization (`ostrom login --admin`) is written in it.
      *
      * @param id The authorization.
      * @param token The CLI token.

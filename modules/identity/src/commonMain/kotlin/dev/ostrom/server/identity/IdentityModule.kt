@@ -71,6 +71,7 @@ import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCase
 import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.AuditLog
+import dev.ostrom.server.identity.domain.AuditLogGovernanceAudit
 import dev.ostrom.server.identity.domain.AuditLogImpl
 import dev.ostrom.server.identity.domain.AuditRepository
 import dev.ostrom.server.identity.domain.CreatePersonalTokenUseCase
@@ -120,6 +121,7 @@ import dev.ostrom.server.identity.infrastructure.WebSessionsRepositoryImpl
 import dev.ostrom.server.identity.presentation.IdentityConfig
 import dev.ostrom.server.identity.presentation.IdentityRoutesDependencies
 import dev.ostrom.server.identity.presentation.identityRoutes
+import dev.ostrom.server.kernel.auth.GovernanceAudit
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
@@ -159,6 +161,7 @@ object IdentityModule : ServerModule {
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
+        single<GovernanceAudit> { AuditLogGovernanceAudit(get()) }
         single<TokenAuthenticator> {
             val config = get<IdentityConfig>()
             CredentialAuthenticatorImpl(get(), get(), get(), get(), config.allowedOrigins, config.sessionCookiePrefix)

@@ -103,7 +103,7 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     post<WorkflowsApi> {
         val actor = personOf(call, CompilerScopes.writingWorkflows)
         val body = call.receive<JsonObject>()
-        if (!call.decides(actor)) onlyProposed(body)
+        if (!call.decidesWorkflows(actor)) onlyProposed(body)
         val saved = workflows.save(actor.orgId, body, null, actor.id, create = true)
         call.respond(HttpStatusCode.Created, documentOf(saved))
     }
@@ -117,7 +117,7 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
         if (id != params.id) {
             throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
         }
-        if (!call.decides(actor)) {
+        if (!call.decidesWorkflows(actor)) {
             onlyProposed(body.workflow)
             onlyProposed(workflows.get(actor.orgId, params.id).doc.raw)
         }
@@ -126,7 +126,7 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     }
     delete<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        if (!call.decides(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+        if (!call.decidesWorkflows(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
         workflows.delete(actor.orgId, params.id)
         call.respond(HttpStatusCode.NoContent)
     }

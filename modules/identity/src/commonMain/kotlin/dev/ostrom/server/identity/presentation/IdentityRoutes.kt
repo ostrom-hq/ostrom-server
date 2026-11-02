@@ -9,6 +9,7 @@ import dev.ostrom.server.identity.domain.TokenNotFoundException
 import dev.ostrom.server.identity.domain.isBrowserSession
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
@@ -49,7 +50,7 @@ private fun Route.deviceLoginRoutes(dependencies: IdentityRoutesDependencies) = 
         // The body is optional: a CLI that sends none gets the default client name.
         val hasBody = call.request.headers[HttpHeaders.ContentType] != null
         val request = if (hasBody) call.receive<DeviceCodeRequest>() else null
-        val started = startDeviceAuthorization(request?.clientName, call.request.origin.remoteAddress)
+        val started = startDeviceAuthorization(request?.clientName, call.request.origin.remoteAddress, request?.scopes)
         val authorization = started.authorization
         val page = config.consoleUrl + "/device"
         call.respond(
@@ -103,7 +104,8 @@ private fun Route.accountRoutes(dependencies: IdentityRoutesDependencies) = with
             endWebSession(credential)
             call.clearSessionCookie(config)
         } else {
-            revokeToken(userId, credential)
+            // The token of `ostrom login --admin` lives in its organization.
+            revokeToken(userId, credential, principal.orgId?.let(Uuid::parse))
         }
         // After the revocation: a listener that fails cannot keep the credential alive (S2-08, APP 06:10).
         signOutListeners.forEach { it.signedOut(principal.subjectId, principal.credentialId) }
@@ -143,6 +145,9 @@ private fun Route.tokenRoutes(dependencies: IdentityRoutesDependencies) = with(d
     }
 }
 
+/** Who approves `ostrom login --admin` for their organization. */
+private val MANAGERS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+
 /** The console side of `ostrom login`: the user sees the request and answers it. */
 private fun Route.deviceAnswerRoutes(dependencies: IdentityRoutesDependencies) = with(dependencies) {
     get<AuthApi.Device> { params ->
@@ -150,11 +155,17 @@ private fun Route.deviceAnswerRoutes(dependencies: IdentityRoutesDependencies) =
         val code = params.userCode ?: throw OstromException(ErrorKind.INVALID_REQUEST, "userCode is required.")
         val authorization = getDeviceAuthorization(principal.userId(), code)
         val expiresAt = authorization.expiresAt.toString()
-        call.respond(DeviceAuthorizationResponse(authorization.userCode, authorization.clientName, expiresAt))
+        val scopes = authorization.scopes.sorted().takeIf { it.isNotEmpty() }
+        call.respond(DeviceAuthorizationResponse(authorization.userCode, authorization.clientName, expiresAt, scopes))
     }
     post<AuthApi.Device.Answer, AnswerDeviceRequest> { _, request ->
         val principal = call.requireBrowserSession()
-        answerDeviceAuthorization(principal.userId(), request.userCode, request.approve)
+        // `ostrom login --admin`: the organization the person acts in (`Ostrom-Org`, or their only one), if they own
+        // or administer it; read only when they approve such a login.
+        val managedOrg: suspend () -> Uuid? = {
+            orgResolver.resolve(principal, null)?.takeIf { it.role in MANAGERS }?.orgId
+        }
+        answerDeviceAuthorization(principal.userId(), request.userCode, request.approve, managedOrg)
         call.respond(HttpStatusCode.NoContent)
     }
 }

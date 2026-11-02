@@ -2,6 +2,9 @@
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.core.telemetry.Telemetry
+import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.RefusingGovernanceAudit
+import dev.ostrom.server.kernel.auth.governanceAuditKey
 import dev.ostrom.server.kernel.auth.token
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
@@ -57,6 +60,7 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     install(RequestLogging) { this.logger = logger }
     configureErrors(logger)
     install(Authentication) { token(koin.get()) }
+    attributes.put(governanceAuditKey, koin.getOrNull<GovernanceAudit>() ?: RefusingGovernanceAudit())
     routing {
         healthRoutes(koin.getAll(), SERVER_VERSION, koin.getOrNull<Readiness>() ?: Readiness())
         modules.forEach { it.routes(this, koin) }

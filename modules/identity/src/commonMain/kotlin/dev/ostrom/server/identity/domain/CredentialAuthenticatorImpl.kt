@@ -59,7 +59,8 @@ class CredentialAuthenticatorImpl(
                 channel = PrincipalChannel.MOBILE_APP,
                 authenticatedAt = stored.authenticatedAt,
             )
-            TokenKind.PERSONAL, TokenKind.CLI -> AuthenticatedPrincipal(
+            // A person's tokens; the one of `ostrom login --admin` is bound to its organization (`orgId`).
+            TokenKind.PERSONAL, TokenKind.CLI, TokenKind.ADMIN -> AuthenticatedPrincipal(
                 subjectId = stored.userId.toString(),
                 kind = PrincipalKind.USER,
                 scopes = grantedScopes(stored.kind, stored.scopes),

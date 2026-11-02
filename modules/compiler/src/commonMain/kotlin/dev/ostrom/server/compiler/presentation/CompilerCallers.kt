@@ -5,7 +5,10 @@ import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.requireAnyScope
+import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.auditGovernance
+import dev.ostrom.server.kernel.auth.governs
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -28,9 +31,20 @@ internal suspend fun CompilerRoutesDependencies.personOf(call: ApplicationCall, 
 
 // Only a person's browser session decides (SECURITY-AUDIT S2-04): a token with `workflows:write` (the CLI's, which
 // an agent can read on the developer's machine) proposes a workflow, never accepts, edits an accepted one or deletes.
-// And only an owner or an admin (second audit H4): any other member, in the browser too, proposes.
-internal fun ApplicationCall.decides(actor: GateActor): Boolean =
-    GateScopes.ALL_USER in requirePrincipal().scopes && actor.role in MANAGERS
+// And only an owner or an admin (second audit H4): any other member, in the browser too, proposes. A workflow is also
+// decided with the token of `ostrom login --admin` ([governing] `harness:write`, S2-52 decision of 02/11/2026).
+internal fun ApplicationCall.decides(actor: GateActor, governing: String? = null): Boolean {
+    val principal = requirePrincipal()
+    val governs = GateScopes.ALL_USER in principal.scopes || governing != null && principal.governs(governing)
+    return governs && actor.role in MANAGERS
+}
+
+// Whether the actor decides workflows; the elevated token's decision is recorded in the audit log first.
+internal suspend fun ApplicationCall.decidesWorkflows(actor: GateActor): Boolean {
+    val decides = decides(actor, GovernanceScopes.HARNESS_WRITE)
+    if (decides) auditGovernance(requirePrincipal(), GovernanceScopes.HARNESS_WRITE)
+    return decides
+}
 
 // Revoking a package stops every session that runs it: an owner or an admin, with any of their credentials, so a
 // leaked package is stopped from the terminal too (second audit H4).
@@ -54,7 +68,8 @@ internal fun onlyProposed(document: JsonObject) {
 }
 
 internal const val DECIDES =
-    "Only an owner or an admin signed in to the console accepts, edits or deletes a workflow."
+    "Only an owner or an admin signed in to the console, or with ostrom login --admin, accepts, edits or deletes a " +
+        "workflow."
 
 /** The scopes the compiler routes require; a user's browser session (`user:*`) holds them all. */
 object CompilerScopes {
@@ -81,8 +96,8 @@ object CompilerScopes {
     val readingWorkflows: Set<String> =
         setOf(GateScopes.ALL_USER, GateScopes.AGENT_SESSION, WORKFLOWS_WRITE, WORKFLOWS_READ)
 
-    /** Who writes them. */
-    val writingWorkflows: Set<String> = setOf(GateScopes.ALL_USER, WORKFLOWS_WRITE)
+    /** Who writes them: proposing takes `workflows:write`, deciding the token of `ostrom login --admin` too. */
+    val writingWorkflows: Set<String> = setOf(GateScopes.ALL_USER, WORKFLOWS_WRITE, GovernanceScopes.HARNESS_WRITE)
 }
 
 internal fun CompilerRoutesDependencies.urlOf(call: ApplicationCall): String = serverUrlOf(publicUrl) {

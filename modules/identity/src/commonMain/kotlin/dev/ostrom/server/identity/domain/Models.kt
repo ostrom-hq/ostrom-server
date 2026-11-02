@@ -123,6 +123,12 @@ enum class TokenKind(val prefix: String) {
     /** Issued to the CLI by `ostrom login` (device authorization). */
     CLI("osc"),
 
+    /**
+     * Issued to the CLI by `ostrom login --admin`: the governance writes of one organization ([ADMIN_SCOPES]), approved
+     * in the browser by an owner or an admin of it, for [ADMIN_TOKEN_LIFETIME] at most, never rotated.
+     */
+    ADMIN("osg"),
+
     /** Issued to one agent session: it can only act on that session (audit A2, JOURNAL 02:15). */
     AGENT("osa"),
 
@@ -221,6 +227,9 @@ enum class DeviceAuthorizationStatus { PENDING, APPROVED, DENIED, CONSUMED }
  * @property createdAt When the CLI started it.
  * @property expiresAt When it stops being usable.
  * @property lastPolledAt When the CLI last polled, to enforce the interval.
+ * @property scopes The governance write scopes `ostrom login --admin` asks for ([ADMIN_SCOPES]), shown before the
+ *   yes; empty for the ordinary sign-in.
+ * @property approvingOrgId The organization whose owner or admin approved them, which the token is bound to.
  */
 data class DeviceAuthorization(
     val id: Uuid,
@@ -231,6 +240,8 @@ data class DeviceAuthorization(
     val createdAt: Instant,
     val expiresAt: Instant,
     val lastPolledAt: Instant?,
+    val scopes: Set<String> = emptySet(),
+    val approvingOrgId: Uuid? = null,
 )
 
 /**
