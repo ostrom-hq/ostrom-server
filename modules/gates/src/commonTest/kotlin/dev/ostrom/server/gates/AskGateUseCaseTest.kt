@@ -6,6 +6,7 @@ import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateCommands
+import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.GatePush
@@ -29,6 +30,7 @@ import dev.ostrom.server.gates.fakes.SESSION
 import dev.ostrom.server.gates.fakes.SHA_A
 import dev.ostrom.server.gates.fakes.SHA_B
 import dev.ostrom.server.gates.fakes.agent
+import dev.ostrom.server.gates.fakes.ciService
 import dev.ostrom.server.gates.fakes.device
 import dev.ostrom.server.gates.infrastructure.ChannelsGateNotifier
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
@@ -277,6 +279,99 @@ class AskGateUseCaseTest {
             assertFailsWith<RedirectedPushException> { ask(bench)(agent(), pushAsk(command = command)) }
         }
         assertTrue(bench.repository.gates.isEmpty())
+    }
+
+    // The gate of each class, as the compiled workflows resolve it.
+    private fun askByClass(bench: GateBench, gates: Map<String, GateNode>) = AskGateUseCaseImpl(
+        bench.open,
+        object : GateNodeResolver {
+            override suspend fun resolve(orgId: Uuid, repo: String?, actionClass: String) = gates[actionClass]
+        },
+        UnknownPullRequestHeads(),
+        IdentityDigester(),
+    )
+
+    @Test
+    fun aPushToMainTakesItsGateWhateverClassTheHookClaimed() = runTest {
+        val bench = GateBench()
+        val asks = askByClass(bench, mapOf("push-main" to node))
+        val view = asks(agent(), pushAsk(command = "git -C api push").copy(actionClass = "push-any"))
+
+        assertEquals(GateStatus.PENDING, view.gate.status, "second audit H3: the refs say main")
+        assertEquals("push-main", view.gate.subject.actionClass)
+        assertEquals(GateMode.ENFORCED, view.gate.mode)
+    }
+
+    @Test
+    fun aPushThatSendsNothingToMainIsNoPushToMain() = runTest {
+        val bench = GateBench()
+        val asks = askByClass(bench, mapOf("push-main" to node))
+        val feature = GatePush("git@github.com:o/r.git", listOf(PushRef("refs/heads/feature", SHA_B)), force = false)
+        val view = asks(agent(), pushAsk(command = "git push").copy(push = feature))
+
+        assertEquals(GateStatus.UNGATED, view.gate.status, "a pattern may catch every push: the refs decide")
+        val master = feature.copy(refs = listOf(PushRef("master", SHA_B)))
+        assertEquals(GateStatus.PENDING, asks(agent(), pushAsk(command = "git push").copy(push = master)).gate.status)
+        // The hook asks one class per command: a tag push caught as a push to main takes the tag's gate.
+        val tag = feature.copy(refs = listOf(PushRef("refs/tags/1.4.0", SHA_B)))
+        val tags = askByClass(bench, mapOf("push-main" to node, "push-tag" to node))
+        val tagged = tags(agent(), pushAsk(command = "git push origin 1.4.0").copy(push = tag))
+        assertEquals("push-tag", tagged.gate.subject.actionClass)
+        assertEquals(GateStatus.PENDING, tagged.gate.status)
+        // The CLI sends short names: a version-shaped one is a tag; a qualified branch shaped so is not.
+        val short = tags(agent(), pushAsk(command = "git push origin v2.0.0-rc.1", diff = "short").copy(
+            push = feature.copy(refs = listOf(PushRef("v2.0.0-rc.1", SHA_B))),
+        ))
+        assertEquals("push-tag", short.gate.subject.actionClass)
+        val branch = tags(agent(), pushAsk(command = "git push", diff = "branch").copy(
+            push = feature.copy(refs = listOf(PushRef("refs/heads/1.4", SHA_B))),
+        ))
+        assertEquals(GateStatus.UNGATED, branch.gate.status)
+        // A feature push the tag's pattern caught is no tag push either.
+        val featureAsTag = pushAsk(command = "git push", diff = "tag").copy(push = feature, actionClass = "push-tag")
+        val caughtAsTag = tags(agent(), featureAsTag)
+        assertEquals(GateStatus.UNGATED, caughtAsTag.gate.status)
+        // A release made without a push (`gh release create`) keeps the class the hook read.
+        val created = pushAsk(command = "gh release create 1.4.0").copy(push = null, actionClass = "push-tag")
+        val release = tags(agent(), created)
+        assertEquals(GateStatus.PENDING, release.gate.status)
+        // A push to main whose own gate is a shadow stays a shadow: nothing enforced was read.
+        val shadows = askByClass(bench, mapOf("push-main" to node.copy(enforced = false)))
+        assertEquals(GateMode.SHADOW, shadows(agent(), pushAsk(diff = "other")).gate.mode)
+    }
+
+    @Test
+    fun aMergeTheCommandShowsTakesTheMergeGate() = runTest {
+        val bench = GateBench()
+        val shadow = node.copy(enforced = false)
+        val merge = AskGate(
+            sessionId = SESSION, runId = null, repo = "o/r", realRepo = null, actionClass = "deploy", tool = "Bash",
+            command = "gh api -X PUT repos/o/r/pulls/7/merge", harnessVersion = null, push = null, pullRequest = null,
+            diff = null, via = AskedVia.HOOK,
+        )
+        // Enforced merge gate, no pull request number: refused rather than bound to the text (S2-06).
+        assertFailsWith<MissingPullRequestException> {
+            askByClass(bench, mapOf("deploy" to shadow, "merge" to node))(agent(), merge)
+        }
+        // A claimed class that is enforced keeps its own gate; a read gate that is not enforced changes nothing.
+        val toMain = pushAsk(diff = "deploy").copy(actionClass = "deploy")
+        val enforced = askByClass(bench, mapOf("deploy" to node, "push-main" to node))(agent(), toMain)
+        assertEquals("deploy", enforced.gate.subject.actionClass)
+        val kept = askByClass(GateBench(), mapOf("deploy" to shadow, "push-main" to shadow))(agent(), toMain)
+        assertEquals("deploy", kept.gate.subject.actionClass)
+        assertEquals(GateMode.SHADOW, kept.gate.mode)
+    }
+
+    @Test
+    fun onlyTheGitHubCheckAsksAsTheCi() = runTest {
+        val bench = GateBench()
+        val asks = askByClass(bench, emptyMap())
+        val fromAgent = asks(agent(), pushAsk().copy(via = AskedVia.CI, actionClass = "lint"))
+        assertEquals(setOf(AskedVia.HOOK), fromAgent.gate.askedVia, "second audit L2: an agent saying ci is a hook")
+        // The GitHub check's key is a service on behalf of the person who installed it.
+        val check = ciService().copy(personId = "lead")
+        val fromCheck = asks(check, pushAsk().copy(via = AskedVia.CI, actionClass = "lint", sessionId = null))
+        assertEquals(setOf(AskedVia.CI), fromCheck.gate.askedVia)
     }
 
     @Test
