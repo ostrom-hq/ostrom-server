@@ -81,7 +81,7 @@ class RelayInferenceTest {
             FakeUpstream(
                 eventAnswer(200, listOf(events.copyOfRange(0, 10), ByteArray(0), events.copyOfRange(10, events.size))),
             )
-        relay(upstream)(Gw.memberA, call(), responder)
+        relay(upstream)(Gw.memberA.copy(launchId = "lch_1"), call(), responder)
         assertEquals(events.decodeToString(), responder.text)
         assertEquals(200, responder.status)
         assertEquals(
@@ -98,6 +98,7 @@ class RelayInferenceTest {
         assertEquals(0L, record.firstByteMillis)
         assertEquals(Gw.orgA, record.orgId)
         assertEquals(Gw.memberA.memberId, record.memberId)
+        assertEquals("lch_1", record.launchId, "An agent token's call names its launch")
         assertEquals("session-1", record.sessionId)
         assertNull(record.accountId)
         assertEquals(listOf(record), observed)

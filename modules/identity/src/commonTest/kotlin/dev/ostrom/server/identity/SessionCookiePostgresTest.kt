@@ -13,7 +13,7 @@ import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.presentation.CreateTokenRequest
 import dev.ostrom.server.identity.presentation.CreatedTokenResponse
 import dev.ostrom.server.identity.presentation.ExchangeSignInLinkRequest
-import dev.ostrom.server.identity.presentation.ProfileResponse
+import dev.ostrom.server.identity.presentation.AccountResponse
 import dev.ostrom.server.identity.presentation.SignInLinkResponse
 import dev.ostrom.server.identity.presentation.SignedInResponse
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
@@ -146,8 +146,8 @@ class SessionCookiePostgresTest {
         assertEquals(signedIn.csrfToken, csrf.value)
         assertFalse(session.value in exchanged.bodyAsText(), "The session's secret is never in a body")
         assertEquals("no-store", exchanged.headers[HttpHeaders.CacheControl])
-        val profile = server.client.get("/api/v1/auth/me") { browserSession(session.value, null) }
-        assertEquals(user.id.toString(), profile.body<ProfileResponse>().id)
+        val profile = server.client.get("/api/v1/auth/me/account") { browserSession(session.value, null) }
+        assertEquals(user.id.toString(), profile.body<AccountResponse>().id)
 
         val replay = server.exchange(link.token)
         assertEquals(HttpStatusCode.Unauthorized, replay.status)

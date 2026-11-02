@@ -56,8 +56,12 @@ class LaunchRelayCallersTest {
     @Test
     fun anAgentTokenIsThePersonWhoLaunchedItAsAPlainMember() = runTest {
         launches.create(launch)
-        val expected = Caller(ORG, memberOf(ADA.userId), MemberRole.MEMBER)
-        assertEquals(expected, callers.resolve(agent(), null), "An owner's agent never administers")
+        val expected = Caller(ORG, memberOf(ADA.userId), MemberRole.MEMBER, launchId = launch.id)
+        assertEquals(
+            expected,
+            callers.resolve(agent(), null),
+            "An owner's agent never administers, and names its launch",
+        )
         assertEquals(expected, callers.resolve(agent(), ORG))
     }
 

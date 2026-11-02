@@ -27,6 +27,16 @@ interface LauncherResolver {
      * @return Their membership (member id and role), or null when they are no longer a member.
      */
     suspend fun member(orgId: Uuid, userId: Uuid): OrgPrincipal?
+
+    /**
+     * Resolves a member as the person who launches: the owner of a cloud session, whose runner opens the launch.
+     *
+     * @param orgId The organization.
+     * @param memberId The member.
+     *
+     * @return The launcher, or null when the member is no longer one.
+     */
+    suspend fun owner(orgId: Uuid, memberId: Uuid): Launcher?
 }
 
 /** Issues the agent token of a launch (the identity module's agent tokens). */

@@ -1,0 +1,158 @@
+name: CLI journey
+
+# The CLI's journey (ostrom-cli e2e/journey.py, demo/PARCOURS.md from `ostrom login` to `ostrom claude`, its gate, the
+# second person's yes and the receipt) against a PUBLISHED image of this server: by default `sha-<7>` of main's head,
+# never `edge`, which a slower run of an older commit may still hold. The CLI is built here from ostrom-cli (its
+# linuxX64 release binary, with ostrom-core from the commit it pins). It runs in this repository because its token
+# reads its own GHCR packages, which ostrom-cli's cannot yet (the CLI's own journey is skipped there, "package Actions
+# access"). On demand, and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull request only when
+# the pull request changes this file.
+on:
+  workflow_dispatch:
+    inputs:
+      server_image:
+        description: Server image (empty = ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main's head)
+        default: ""
+      cli_ref:
+        description: ostrom-cli ref whose binary and journey run
+        default: main
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: [.github/workflows/cli-journey.yml]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  journey:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    # The database is `ostrom_ci`: ci/database-roles.sql creates `ostrom` itself, owned by its owner role.
+    services:
+      postgres:
+        image: postgres:18@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
+        env: { POSTGRES_USER: ostrom, POSTGRES_PASSWORD: ostrom, POSTGRES_DB: ostrom_ci }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CLI_REF: ${{ inputs.cli_ref || 'main' }}
+      WANTED_IMAGE: ${{ inputs.server_image }}
+    steps:
+      # The whole history: main's head names the image, and the image's own commit gives its database roles.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: server
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-cli
+          ref: ${{ env.CLI_REF }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CLI }}
+          path: cli
+          persist-credentials: false
+      - name: ostrom-core version the CLI pins
+        id: core
+        run: echo "ref=$(tr -d '[:space:]' < cli/gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      # Next to cli/: the CLI's settings include ../ostrom-core with ostrom.core.local.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.core.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: ostrom-core
+          persist-credentials: false
+      - name: The server image (sha-<7> of main's head unless named)
+        id: server
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          main=$(git -C server rev-parse origin/main)
+          image=${WANTED_IMAGE:-ghcr.io/ostrom-hq/ostrom-server:sha-${main:0:7}}
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker pull --quiet "$image" || { echo "::error::$image cannot be pulled (not published yet?)"; exit 1; }
+          revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+          [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+          # The database roles of the image's own commit, not of a main that may have moved past it.
+          git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Images"
+            echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
+            echo "- CLI: ostrom-cli $(git -C cli rev-parse --short HEAD) ($CLI_REF), built here"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+      # The Kotlin/Native toolchain and its dependencies (~1 GB) are not in the Gradle cache; keyed on the CLI's versions.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cli/gradle/libs.versions.toml') }}
+      - name: The CLI's linuxX64 release binary
+        working-directory: cli
+        run: |
+          sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+          ./gradlew -Postrom.core.local=true :cli:linkReleaseExecutableLinuxX64
+      - name: Start the server (roles, migrate, serve as ostrom_app)
+        env:
+          IMAGE: ${{ steps.server.outputs.image }}
+          PGPASSWORD: ostrom
+          OWNER_URL: postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom
+        run: |
+          psql -h localhost -U ostrom -d ostrom_ci -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/database-roles.sql"
+          docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
+          # The server's non-root user writes the mails (0644); the journey, as the runner's user, reads them.
+          mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
+          # Test values only: sign-in mails are written to a directory, the console is the server's own origin (the
+          # page of ostrom login's code), Stripe is never called by the journey.
+          cat > "$RUNNER_TEMP/server.env" <<'ENV'
+          OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
+          OSTROM_PORT=4600
+          OSTROM_MAIL_DIR=/var/lib/ostrom/mail
+          OSTROM_PUBLIC_URL=http://127.0.0.1:4600
+          OSTROM_CONSOLE_URL=http://127.0.0.1:4600
+          OSTROM_STRIPE_SECRET_KEY=sk_test_cli_e2e
+          OSTROM_STRIPE_WEBHOOK_SECRET=whsec_cli_e2e
+          OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
+          ENV
+          sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
+            --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
+          for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
+          docker logs ostrom-server; exit 1
+      - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt)
+        working-directory: cli
+        env:
+          IMAGE: ${{ steps.server.outputs.image }}
+        run: >-
+          python3 e2e/journey.py --binary cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe
+          --server http://127.0.0.1:4600 --mail-dir "$RUNNER_TEMP/ostrom-mail" --report "$RUNNER_TEMP/journey.json"
+          --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
+          $IMAGE seed-test-account"
+      - name: Server logs
+        if: always()
+        run: docker logs ostrom-server 2>&1 | tail -n 300 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: cli-journey-report
+          path: ${{ runner.temp }}/journey.json
+          if-no-files-found: ignore
+          retention-days: 7
