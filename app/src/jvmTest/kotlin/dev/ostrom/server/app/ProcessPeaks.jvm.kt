@@ -7,3 +7,9 @@ internal actual fun processStatus(): String = File("/proc/self/status").takeIf {
 
 internal actual fun threadNames(): List<String> = File("/proc/self/task").listFiles().orEmpty()
     .mapNotNull { File(it, "comm").takeIf { comm -> comm.exists() }?.readText() }
+
+internal actual fun kotlinHeapKb(): Long = Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() } / KB
+
+internal actual fun afterCollection(): String = ""
+
+private const val KB = 1024

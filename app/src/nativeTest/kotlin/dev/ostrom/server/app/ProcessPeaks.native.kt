@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, NativeRuntimeApi::class)
 
 package dev.ostrom.server.app
 
@@ -9,6 +9,9 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.toKString
+import kotlin.native.runtime.GC
+import kotlin.native.runtime.MemoryUsage
+import kotlin.native.runtime.NativeRuntimeApi
 import platform.posix.closedir
 import platform.posix.fclose
 import platform.posix.fgets
@@ -33,6 +36,18 @@ internal actual fun threadNames(): List<String> {
     return tids.map { readText("/proc/self/task/$it/comm") }
 }
 
+internal actual fun kotlinHeapKb(): Long = alive(GC.lastGCInfo?.memoryUsageBefore)
+
+internal actual fun afterCollection(): String {
+    GC.collect()
+    val info = GC.lastGCInfo
+    return "gc_alive_before_kb=${alive(info?.memoryUsageBefore)} gc_alive_after_kb=${alive(info?.memoryUsageAfter)} " +
+        "rss_after_gc_kb=${statusField(processStatus(), "VmRSS")} target_heap_kb=${GC.targetHeapBytes / KB}"
+}
+
+private fun alive(usage: Map<String, MemoryUsage>?): Long =
+    usage.orEmpty().values.sumOf { it.totalObjectsSizeBytes } / KB
+
 private fun readText(path: String): String {
     val file = fopen(path, "r") ?: return ""
     return try {
@@ -48,3 +63,4 @@ private fun readText(path: String): String {
 }
 
 private const val LINE = 256
+private const val KB = 1024
