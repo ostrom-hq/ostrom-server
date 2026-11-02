@@ -191,7 +191,7 @@ class DeviceUseCasesTest {
         answer(userId, "BCDF-GHJK", false) { error("Not asked when denying") }
         assertNull(audit.entries.single().orgId)
         start("cli", "ip")
-        answer(userId, "BCDF-GHJK", true) { error("Not asked for the ordinary sign-in") }
+        answer(userId, "MNPQ-RSTV", true) { error("Not asked for the ordinary sign-in") }
         assertEquals(TokenKind.CLI, assertIs<DevicePollResult.Approved>(poll("secret2")).token.token.kind)
     }
 

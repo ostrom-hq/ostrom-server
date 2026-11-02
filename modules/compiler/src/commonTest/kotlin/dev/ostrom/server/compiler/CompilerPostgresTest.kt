@@ -38,6 +38,7 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceAudit
 import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -114,6 +115,10 @@ class CompilerPostgresTest {
                     // A person's own token, outside the browser.
                     "pat" -> AuthenticatedPrincipal(token, PrincipalKind.USER, personalScopes)
                     "elevated" -> AuthenticatedPrincipal(token, PrincipalKind.USER, elevatedScopes)
+                    // A person signed in to the console: the session cookie, not a token.
+                    "console" -> AuthenticatedPrincipal(
+                        token, PrincipalKind.USER, setOf(GateScopes.ALL_USER), channel = PrincipalChannel.BROWSER,
+                    )
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                 }
             }
@@ -284,15 +289,16 @@ class CompilerPostgresTest {
         assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
         val edit = SaveWorkflowRequest(release(command = "make check"), expectedVersion = 1)
         assertEquals(HttpStatusCode.OK, server.call("elevated:a:lead", path, "PUT", edit).status)
+        // The console's decisions are not recorded there: they are the workflows' own history.
+        val again = SaveWorkflowRequest(release(command = "make all"), expectedVersion = 2)
+        val console = server.call("console:a:lead", path, "PUT", again)
+        assertEquals(HttpStatusCode.OK, console.status, console.bodyAsText())
         // A member's elevated token decides nothing; nor does it restore a package (not a harness write).
         assertEquals(HttpStatusCode.Forbidden, server.call("elevated:a:member", path, "DELETE").status)
         val restore = server.call("elevated:a:lead", "/api/v1/packages/x/restore", "POST")
         assertEquals(HttpStatusCode.Forbidden, restore.status)
         assertEquals(HttpStatusCode.NoContent, server.call("elevated:a:lead", path, "DELETE").status)
         assertEquals(listOf("POST /api/v1/workflows", "PUT $path", "DELETE $path"), audited)
-        // The console's decisions are not recorded there: they are the workflows' own history.
-        server.call("user:a:lead", "/api/v1/workflows", "POST", release())
-        assertEquals(3, audited.size)
     }
 
     @Test
