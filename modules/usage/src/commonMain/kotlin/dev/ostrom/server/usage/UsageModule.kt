@@ -17,6 +17,8 @@ import dev.ostrom.server.usage.domain.ListUsageEventsUseCase
 import dev.ostrom.server.usage.domain.ListUsageEventsUseCaseImpl
 import dev.ostrom.server.usage.domain.PurgeUsageUseCase
 import dev.ostrom.server.usage.domain.PurgeUsageUseCaseImpl
+import dev.ostrom.server.usage.domain.SpendAdmission
+import dev.ostrom.server.usage.domain.SpendAdmissionImpl
 import dev.ostrom.server.usage.domain.SpendReader
 import dev.ostrom.server.usage.domain.SpendReaderImpl
 import dev.ostrom.server.usage.domain.UsageFeed
@@ -82,8 +84,8 @@ data class UsageConfig(val retention: Duration) {
 }
 
 /**
- * The usage module: the central ledger. It binds [UsageRecorder] and [SpendReader], which the gateway, the budgets and
- * the sharing modules use.
+ * The usage module: the central ledger. It binds [UsageRecorder], [SpendReader] and [SpendAdmission], which the
+ * gateway, the budgets and the sharing modules use.
  */
 object UsageModule : ServerModule {
     override val name: String = "usage"
@@ -97,6 +99,7 @@ object UsageModule : ServerModule {
         single<ModelUsageSink> { LedgerModelUsageSink(get()) }
         single<SessionCosts> { LedgerSessionCosts(get()) }
         single<SpendReader> { SpendReaderImpl(get()) }
+        single<SpendAdmission> { SpendAdmissionImpl(get(), get()) }
         single<IngestUsageEventsUseCase> { IngestUsageEventsUseCaseImpl(get(), get(), get()) }
         single<UsageSummaryUseCase> { UsageSummaryUseCaseImpl(get(), get()) }
         single<UsageReportUseCase> { UsageReportUseCaseImpl(get(), get()) }

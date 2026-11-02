@@ -318,13 +318,23 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
                 WHERE kind = 'SERVICE' AND revoked_at IS NULL
         """.trimIndent(),
     ),
+    // `ostrom login --admin`: the governance scopes asked for, and the organization whose owner or admin approved
+    // them (not `org_id`: the authorization belongs to no organization, only the token it gives does).
+    SchemaMigration(
+        version = 8,
+        name = "device_authorizations_for_governance",
+        sql = """
+            ALTER TABLE identity_device_authorizations ADD COLUMN scopes TEXT NOT NULL DEFAULT '';
+            ALTER TABLE identity_device_authorizations ADD COLUMN approving_org_id UUID;
+        """.trimIndent(),
+    ),
     // Audit of the audit log, A1: the serving role holds UPDATE and DELETE on every table (default privileges) and the
     // organization policy only reads `ostrom.org_id`, which any role sets: it could rewrite or erase any organization's
     // log. One statement-level trigger refuses UPDATE, DELETE and TRUNCATE with an error, whatever rows the statement
     // reaches (none included), for every role. `ENABLE ALWAYS`: it fires in `session_replication_role = replica` too.
     // The owner (migrations, never serving) and a superuser can still drop or disable it: reading checks the chain.
     SchemaMigration(
-        version = 8,
+        version = 9,
         name = "audit_log_append_only",
         sql = """
             CREATE FUNCTION identity_audit_events_append_only() RETURNS trigger LANGUAGE plpgsql
