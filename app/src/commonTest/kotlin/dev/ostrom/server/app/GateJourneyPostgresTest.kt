@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.app
 
+import dev.ostrom.server.compiler.domain.services.CompilerSources
+import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.StartWebSessionUseCase
@@ -44,7 +46,10 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.TimeSource
+import kotlin.time.measureTime
 import kotlin.uuid.Uuid
 
 /**
@@ -54,6 +59,9 @@ import kotlin.uuid.Uuid
  * to main asked with dev-a's personal token. The gate waits for rev-b, and rev-b finds the request in their inbox.
  */
 class GateJourneyPostgresTest {
+    // The organization the last setUp created.
+    private var orgId: Uuid = Uuid.NIL
+
     private suspend fun TestServer.signIn(login: String): Pair<User, StartedSession> {
         val identity = VerifiedIdentity(
             IdentityProvider.GITHUB,
@@ -82,7 +90,7 @@ class GateJourneyPostgresTest {
     private suspend fun HttpResponse.json(): JsonObject = Json.parseToJsonElement(bodyAsText()).jsonObject
 
     /** dev-a owns the organization, rev-b and rev-c join it as admins. */
-    private suspend fun TestServer.team(devA: User, approvers: List<User>) {
+    private suspend fun TestServer.team(devA: User, approvers: List<User>): Uuid {
         val now = Clock.System.now()
         val org = Org(Uuid.random(), "acme", "Acme", null, null, now)
         koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, devA.id, OrgRole.OWNER, now)) { false }
@@ -94,16 +102,17 @@ class GateJourneyPostgresTest {
             invitations.create(invitation, "hash-of-${approver.id}")
             invitations.accept(invitation, Member(Uuid.random(), org.id, approver.id, OrgRole.ADMIN, now), now)
         }
+        return org.id
     }
 
-    private fun push(cls: String) = """
+    private fun push(cls: String, sha: String = COMMIT) = """
         {"repo": "acme/api", "class": "$cls", "tool": "Bash", "command": "git push origin main",
-         "push": {"remote": "origin", "refs": [{"ref": "refs/heads/main", "sha": "$COMMIT"}]}}
+         "push": {"remote": "origin", "refs": [{"ref": "refs/heads/main", "sha": "$sha"}]}}
     """.trimIndent()
 
     /** The benches' setup: the team, dev-a's personal token, the accepted workflow. Returns the token's secret. */
     private suspend fun TestServer.setUp(devA: Pair<User, StartedSession>, approvers: List<User>): String {
-        team(devA.first, approvers)
+        orgId = team(devA.first, approvers)
         val token = client.post("/api/v1/tokens") {
             session(devA.second)
             json("""{"name": "k6 requester", "scopes": ["gates:ask", "gates:read"], "expiresInDays": 1}""")
@@ -126,10 +135,10 @@ class GateJourneyPostgresTest {
         return token.json().getValue("secret").jsonPrimitive.content
     }
 
-    private suspend fun TestServer.ask(secret: String, cls: String): JsonObject {
+    private suspend fun TestServer.ask(secret: String, cls: String, sha: String = COMMIT): JsonObject {
         val asked = client.post("/api/v1/gates") {
             bearerAuth(secret)
-            json(push(cls))
+            json(push(cls, sha))
         }
         assertEquals(200, asked.status.value, asked.bodyAsText())
         return asked.json().getValue("gate").jsonObject
@@ -236,7 +245,39 @@ class GateJourneyPostgresTest {
         assertEquals(List(RACE) { 409 }, late.map { it.status.value })
     }
 
+    // What `POST /gates` spends its time on, step by step (`TIMING`): the bench's gate p95 went from 10 to 19 ms.
+    @Test
+    fun whatAnAskSpendsItsTimeOn() = serverTest(serverModules()) { server ->
+        val devA = server.signIn("dev-a")
+        val (revB, _) = server.signIn("rev-b")
+        val secret = server.setUp(devA, listOf(revB))
+        val nodes = server.koin.get<GateNodeResolver>()
+        val sources = server.koin.get<CompilerSources>()
+        timing("health") { assertEquals(200, server.client.get("/api/v1/health").status.value) }
+        timing("resolve") { assertNotNull(nodes.resolve(orgId, "acme/api", "push-main")) }
+        timing("ruleGates") { sources.ruleGates(orgId) }
+        timing("settings") { sources.settings(orgId) }
+        var n = 0
+        timing("ask") {
+            val sha = (n++).toString(HEX).padStart(SHA_LENGTH, '0')
+            assertEquals("pending", server.ask(secret, "push-main", sha).getValue("status").jsonPrimitive.content)
+        }
+    }
+
+    private suspend fun timing(stage: String, step: suspend () -> Unit) {
+        repeat(WARM_UP) { step() }
+        val took = List(TIMED) { TimeSource.Monotonic.measureTime { step() } }.sorted()
+        val mean = took.fold(Duration.ZERO) { sum, it -> sum + it } / TIMED
+        println("TIMING stage=$stage mean=$mean p50=${took[TIMED / 2]} p95=${took[TIMED * P95 / PERCENT]}")
+    }
+
     private companion object {
+        const val WARM_UP = 20
+        const val TIMED = 200
+        const val P95 = 95
+        const val PERCENT = 100
+        const val HEX = 16
+        const val SHA_LENGTH = 40
         const val RACE = 100
         const val CONSOLE_ORIGIN = "http://localhost:5173"
         const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
