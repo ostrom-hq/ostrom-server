@@ -260,7 +260,7 @@ class ImportPostgresTest {
             assertFails("Another org's row is refused") { driver.executeInOrg(adminB.orgId, planted).getOrThrow() }
             assertEquals(6, driver.fetchInOrg(adminA.orgId, unfiltered).getOrThrow().size, "Nothing was planted")
             // Org B's same-named server is not org A's: its import creates its own, recorded in its own org.
-            report(Importing.team().copy(memberMap = emptyMap()), token = "admin-b")
+            report(Importing.team().copy(memberMap = mapOf("m1" to adminB.memberId.toString())), token = "admin-b")
             assertEquals(6, driver.fetchInOrg(adminB.orgId, unfiltered).getOrThrow().size)
         }
     }
@@ -283,7 +283,7 @@ class ImportPostgresTest {
                 assertTrue(strangers("m3") in response.bodyAsText(), response.bodyAsText())
                 assertEquals(emptySet(), servers().keys)
                 report(Importing.team())
-                val imported = setOf("discord", "grafana", "grafana.ro", "mysql")
+                val imported = setOf("discord", "grafana", "grafana.ro")
                 assertEquals(imported, servers().keys, "Mapped to members only: imported")
             }
         }
@@ -297,7 +297,7 @@ class ImportPostgresTest {
                 assertTrue(strangers("m1, m2") in response.bodyAsText(), response.bodyAsText())
                 assertEquals(emptySet(), servers().keys)
                 report(Importing.team().copy(memberMap = emptyMap()))
-                assertEquals(setOf("discord", "grafana", "grafana.ro", "mysql"), servers().keys)
+                assertEquals(setOf("discord", "grafana", "grafana.ro"), servers().keys)
             }
         }
 

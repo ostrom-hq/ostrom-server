@@ -90,7 +90,7 @@ class SharingInfrastructureTest {
 
     @Test
     fun aRefreshSaysWhoseTokensTheyAre() = realTime {
-        fun accountOf(provider: AccountProvider, extra: String, access: String = "a"): String? {
+        suspend fun accountOf(provider: AccountProvider, extra: String, access: String = "a"): String? {
             val body = """{"access_token":"$access","expires_in":60$extra}"""
             val renewed = refresher(HttpStatusCode.OK, body).refresh(provider, old)
             return assertIs<RefreshResult.Renewed>(renewed).accountId
