@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.usecases
 
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -86,9 +87,9 @@ class AskGateUseCaseImpl(
         // `?.trim()?.takeIf` has a null check nothing reaches: Kover counts it, so the texts are read as non-null.
         val repo = ask.repo.orEmpty().trim().ifEmpty { null }
         val realRepo = ask.realRepo.orEmpty().trim().takeIf { it.isNotEmpty() && it != repo }
-        val node = nodes.resolve(orgId, realRepo ?: repo, ask.actionClass)
         // Never cut: a tail the checks did not read would run unseen. OpenGate refuses a command that is too long.
         val command = ask.command.trim()
+        val (actionClass, node) = gateOf(orgId, realRepo ?: repo, ask, command)
         val pullRequest = pullRequestOf(orgId, repo, ask, command, node?.enforced == true)
         // Audit S2-05: the hook's force flag is the machine's word; the command's options count too.
         val push = ask.push.takeIf { pullRequest == null }
@@ -96,20 +97,41 @@ class AskGateUseCaseImpl(
         // CORRECTIFS-3: a hook from before the commits were sent; its yes would be bound to the text, not the commits.
         val bound = pullRequest != null || push != null
         if (node?.enforced == true && !bound && GateCommands.mentionsPush(command)) throw OutdatedLauncherException()
-        val subject = subjectOf(ask, command, repo to realRepo, pullRequest, push)
+        val subject = subjectOf(ask.copy(actionClass = actionClass), command, repo to realRepo, pullRequest, push)
         return open(
             OpenGate(
                 actor = actor,
                 asker = asker,
-                via = ask.via,
+                // Second audit L2: the GitHub check is a service; anyone else saying `ci` asks as a hook.
+                via = if (ask.via == AskedVia.CI && actor.kind != ActorKind.SERVICE) AskedVia.HOOK else ask.via,
                 sessionId = ask.sessionId,
                 subject = subject,
                 node = node,
-                label = if (node == null) ask.actionClass else node.name,
+                label = if (node == null) actionClass else node.name,
                 evidence = evidenceOf(node, subject, asker, ask.sessionId, ask.diff?.take(MAX_DIFF)),
                 redirected = GateCommands.redirected(command),
             ),
         )
+    }
+
+    // Second audit H3: the class is the hook's word, read from its patterns. A push the hook read that sends nothing to
+    // main or master is no push to main, so a pattern may catch every push; a push to main, or a merge the command
+    // shows, takes its own gate when the class claimed has no enforced one.
+    private suspend fun gateOf(orgId: Uuid, repo: String?, ask: AskGate, command: String): Pair<String, GateNode?> {
+        val toMain = ask.push?.refs?.any { it.ref.removePrefix(HEADS) in MAIN_BRANCHES }
+        val claimed = if (ask.actionClass == PUSH_MAIN && toMain == false) {
+            null
+        } else {
+            nodes.resolve(orgId, repo, ask.actionClass)
+        }
+        val actual = when {
+            toMain == true -> PUSH_MAIN
+            GateCommands.mentionsMerge(command) -> MERGE
+            else -> ask.actionClass
+        }
+        val backstop = actual.takeIf { it != ask.actionClass && claimed?.enforced != true }
+            ?.let { nodes.resolve(orgId, repo, it) }?.takeIf { it.enforced }
+        return if (backstop != null) actual to backstop else ask.actionClass to claimed
     }
 
     private fun subjectOf(
@@ -209,5 +231,11 @@ class AskGateUseCaseImpl(
         const val SHORT_SHA = 7
         const val PUSH_SHA = 12
         const val SHORT_SESSION = 8
+        const val PUSH_MAIN = "push-main"
+        const val MERGE = "merge"
+        const val HEADS = "refs/heads/"
     }
 }
+
+// Top-level, not in the companion: a private companion property has a getter nothing calls.
+private val MAIN_BRANCHES = setOf("main", "master")

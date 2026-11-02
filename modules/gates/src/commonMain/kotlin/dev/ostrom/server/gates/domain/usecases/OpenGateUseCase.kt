@@ -119,6 +119,8 @@ class OpenGateUseCaseImpl(
         val live = same.firstOrNull { it.joinable(mode, now) }
         val refused = same.firstOrNull()?.takeIf { it.status == GateStatus.REJECTED }
         return when {
+            live != null && live.status == GateStatus.APPROVED && request.via != AskedVia.CI ->
+                taken(request, live, mode)
             live != null -> {
                 val joined = join(live, request)
                 // Only the askers: an answer, reserve or consume may have committed since `byKey` read the row.
@@ -128,6 +130,17 @@ class OpenGateUseCaseImpl(
             refused != null -> Opened(refused, requestsOf(refused.orgId, refused.id), created = false)
             else -> null
         }
+    }
+
+    // Second audit H1: the ask that finds a yes takes it. Under the row lock the gate is used up, this ask is answered
+    // approved, and the next ask of the same action opens a new gate: one yes, one action. The GitHub check, which
+    // shares a merge's gate, only reads it. A gate that moved since `byKey` read it is joined as it is now.
+    private suspend fun GatesTransaction.taken(request: OpenGate, live: Gate, mode: GateMode): Opened? {
+        val fresh = lockGate(live.orgId, live.id)
+        if (fresh == null || fresh.status != GateStatus.APPROVED) return joined(request, listOfNotNull(fresh), mode)
+        val joined = join(fresh, request)
+        updateGate(joined.copy(status = GateStatus.CONSUMED, consumedAt = clock.now()))
+        return Opened(joined, requestsOf(joined.orgId, joined.id), created = false)
     }
 
     private fun Gate.joinable(mode: GateMode, now: Instant): Boolean = when (status) {

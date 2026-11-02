@@ -41,7 +41,8 @@ private fun pullRequestNumber(number: String?): Int? = number?.let {
 /** Maps a gate for its caller: their own approval, when they are a person and an approver. */
 internal fun GateView.toResponse(actor: GateActor): GateResponse {
     val mine = requests.takeIf { actor.kind == ActorKind.USER }
-        ?.firstOrNull { SelfApproval.same(it.approverId, actor.id) }
+        // Second audit L4: requests name people, so the caller's is found by its person, not its credential.
+        ?.firstOrNull { SelfApproval.same(it.approverId, actor.personId ?: actor.id) }
     return GateResponse(
         gate = gate.toRequest(mine?.let { it.id.toString() }),
         approval = mine?.let { ApprovalView(it, gate).toApproval() },
