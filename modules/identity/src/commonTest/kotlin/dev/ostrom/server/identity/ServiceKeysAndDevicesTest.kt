@@ -113,7 +113,7 @@ class ServiceKeysAndDevicesTest {
     fun onlyAnOwnerOrAnAdminManagesKeys() = runTest {
         for (role in listOf(OrgRole.MEMBER, OrgRole.APPROVER, OrgRole.BILLING)) {
             val member = OrgPrincipal(orgA, Uuid.random(), role)
-            assertFailsWith<ServiceKeysAdminRequiredException> { create(member, ada, "k", listOf("a:b"), null) }
+            assertFailsWith<ServiceKeysAdminRequiredException> { create(member, ada, "k", listOf("cloud:read"), null) }
             assertFailsWith<ServiceKeysAdminRequiredException> { list(member) }
             assertFailsWith<ServiceKeysAdminRequiredException> { delete(member, ada, Uuid.random()) }
         }
@@ -122,20 +122,20 @@ class ServiceKeysAndDevicesTest {
 
     @Test
     fun aKeyTakesTheNameScopesAndLifetimeOfAPersonalToken() = runTest {
-        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "  ", listOf("a:b"), null) }
-        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "x".repeat(101), listOf("a:b"), null) }
+        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "  ", listOf("cloud:read"), null) }
+        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "x".repeat(101), listOf("cloud:read"), null) }
         assertFailsWith<InvalidScopesException> { create(owner, ada, "k", emptyList(), null) }
         assertFailsWith<InvalidScopesException> { create(owner, ada, "k", listOf("gates:answer"), null) }
-        assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("a:b"), 23.hours) }
-        assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("a:b"), 367.days) }
+        assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("cloud:read"), 23.hours) }
+        assertFailsWith<InvalidTokenLifetimeException> { create(owner, ada, "k", listOf("cloud:read"), 367.days) }
         assertTrue(tokens.tokens.isEmpty())
     }
 
     @Test
     fun anOrganizationHoldsAtMostAHundredLiveKeys() = runTest {
-        repeat(MAX_SERVICE_KEYS_PER_ORG) { create(owner, ada, "k$it", listOf("a:b"), null) }
-        assertFailsWith<TooManyServiceKeysException> { create(owner, ada, "one more", listOf("a:b"), null) }
-        create(adminOfB, ada, "elsewhere", listOf("a:b"), null)
+        repeat(MAX_SERVICE_KEYS_PER_ORG) { create(owner, ada, "k$it", listOf("cloud:read"), null) }
+        assertFailsWith<TooManyServiceKeysException> { create(owner, ada, "one more", listOf("cloud:read"), null) }
+        create(adminOfB, ada, "elsewhere", listOf("cloud:read"), null)
     }
 
     @Test
