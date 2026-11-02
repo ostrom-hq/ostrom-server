@@ -55,7 +55,7 @@ object SessionsModule : ServerModule {
         single<CloseSessionUseCase> {
             CloseSessionUseCaseImpl(get(), get(), get(), get(), sessionCosts(), get())
         }
-        single { SessionSegments(get(), get()) }
+        single { SessionSegments(get(), get(), get()) }
         single<StartSessionUseCase> { StartSessionUseCaseImpl(get(), get()) }
         single<EndSessionUseCase> { EndSessionUseCaseImpl(get(), get()) }
         single<SessionAliveUseCase> { SessionAliveUseCaseImpl(get(), get()) }

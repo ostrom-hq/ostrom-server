@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.models
 
+import dev.ostrom.server.kernel.auth.OrgRole
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -60,6 +61,8 @@ enum class Answer { YES, NO }
  * the token opens; the user itself for a person.
  * @property authenticatedAt When the person last proved who they are (a sign-in, the app's biometrics): a yes needs it
  *   recent (S2-54).
+ * @property role The person's role in the organization, or null when unknown: changing what is decided (workflows,
+ *   packages) needs an owner or an admin (second audit H4).
  */
 data class GateActor(
     val id: String,
@@ -68,6 +71,7 @@ data class GateActor(
     val launchId: String? = null,
     val personId: String? = null,
     val authenticatedAt: Instant? = null,
+    val role: OrgRole? = null,
 )
 
 /** The kinds of caller. Only a [USER] answers a request. */

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions.fakes
 
+import dev.ostrom.core.telemetry.metrics.MeterImpl
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.kernel.observability.OstromMetrics
 import dev.ostrom.server.receipts.domain.services.ReceiptRule
 import dev.ostrom.server.receipts.domain.services.ReceiptRules
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
@@ -149,7 +151,8 @@ class SessionBench {
     val logger = RecordingLogger()
     val costs = FakeCosts()
     val close = CloseSessionUseCaseImpl(repository, gates, rules, sign, costs, clock)
-    val segments = SessionSegments(close, clock)
+    val meter = MeterImpl(Clock.System)
+    val segments = SessionSegments(close, clock, OstromMetrics(meter))
     val start = StartSessionUseCaseImpl(repository, segments)
     val end = EndSessionUseCaseImpl(repository, close)
     val alive = SessionAliveUseCaseImpl(repository, clock)
