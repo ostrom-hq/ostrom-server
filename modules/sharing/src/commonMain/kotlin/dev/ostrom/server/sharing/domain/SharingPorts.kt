@@ -10,9 +10,13 @@ interface SharedAccountRepository {
      * Inserts, or replaces the tokens, label and email of the same provider account in the org (its limits kept);
      * returns the stored row.
      *
+     * @param expectedVersion Writes only if the org's row of that provider account is still at this version (0: only
+     *   if it has none; above 0, never if it was deleted meanwhile); null writes whatever it is.
+     *
      * @throws AccountOwnedByAnotherMemberException When another member owns that provider account meanwhile.
+     * @throws AccountChangedException When [expectedVersion] is set and the row is no longer at it.
      */
-    suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount
+    suspend fun upsert(account: SharedAccount, envelope: String, expectedVersion: Long? = null): SharedAccount
 
     /** The account. */
     suspend fun get(orgId: Uuid, id: Uuid): SharedAccount?
@@ -23,8 +27,10 @@ interface SharedAccountRepository {
     /** The org's accounts of a provider that are READY. */
     suspend fun ready(orgId: Uuid, provider: AccountProvider): List<SharedAccount>
 
-    /** Changes label, priority, status and limits; null when absent. */
-    suspend fun update(account: SharedAccount): SharedAccount?
+    /**
+     * Changes label, priority, status and limits; null when absent, or no longer at [expectedVersion] when it is set.
+     */
+    suspend fun update(account: SharedAccount, expectedVersion: Long? = null): SharedAccount?
 
     /** Deletes; false when absent. */
     suspend fun delete(orgId: Uuid, id: Uuid): Boolean

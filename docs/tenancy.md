@@ -83,3 +83,10 @@ an organization reads and writes only its rows, that no row is visible without a
 not outlive the transaction, that the serving role cannot disable row-level security, drop a policy or create a
 function or a table, and that the start check refuses a superuser, a `BYPASSRLS` role and a role that owns a table. Each module adds the same
 test for each of its tenant tables.
+
+Every PostgreSQL test runs as a deployment does (`testing/…/TestDatabase.kt`): each test database has its own owner
+role, which applies the migrations, and its own serving role, owner of nothing and member of `ostrom_tenant`, with the
+attributes and grants of `ci/database-roles.sql`. The test server and the tests' queries go through the serving role,
+which must pass the start check, so a query that forgets its organization fails in CI as it would in production. The
+configured user, a superuser, creates the database and the roles; tests use it only for what no request does
+(fixtures across organizations, statistics, the roles the start check must refuse, a count across organizations).
