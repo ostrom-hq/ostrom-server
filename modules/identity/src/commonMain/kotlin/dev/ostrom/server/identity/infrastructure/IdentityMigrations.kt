@@ -12,7 +12,7 @@ private val ROUTER_FUNCTIONS =
     )
 
 /**
- * Version 5 (RLS audit R1): outside any organization, the serving role only reaches the account-level tokens
+ * Version 6 (RLS audit R1): outside any organization, the serving role only reaches the account-level tokens
  * (`org_id IS NULL`: personal and CLI tokens, read and changed by their user); an organization's tokens (the agent
  * tokens) are written inside their organization, and the three things done to them from outside it go through narrow
  * `SECURITY DEFINER` functions owned by `ostrom_router` (`NOLOGIN`, never a member of the serving role): authenticating
@@ -43,10 +43,11 @@ private val TOKENS_OF_ORGANIZATIONS_SQL: String =
     GRANT SELECT, UPDATE (last_used_at, revoked_at) ON identity_api_tokens TO ostrom_router;
     CREATE FUNCTION identity_token_by_hash(p_hash TEXT) RETURNS TABLE (
         id UUID, user_id UUID, org_id UUID, name TEXT, kind TEXT, scopes TEXT, hint TEXT, agent_session_id TEXT,
-        created_at TIMESTAMPTZ, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ
+        created_at TIMESTAMPTZ, expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ,
+        authenticated_at TIMESTAMPTZ
     ) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
         SELECT t.id, t.user_id, t.org_id, t.name, t.kind, t.scopes, t.hint, t.agent_session_id, t.created_at,
-               t.expires_at, t.last_used_at, t.revoked_at
+               t.expires_at, t.last_used_at, t.revoked_at, t.authenticated_at
         FROM identity_api_tokens t WHERE t.secret_hash = p_hash;
     $$;
     CREATE FUNCTION identity_token_touch(p_id UUID, p_at TIMESTAMPTZ) RETURNS VOID
@@ -266,8 +267,44 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             CREATE INDEX identity_sign_in_links_expiry ON identity_sign_in_links (expires_at)
         """.trimIndent(),
     ),
+    // The phone app (S2-24, S2-31, S2-54): an OAuth attempt the app started keeps its deep link, PKCE challenge and
+    // state; its one-time code; the app's token keeps the hash of its unlock key and its last biometric unlock; and
+    // each person's notification preferences. None of these rows belongs to an organization: like the users, the
+    // sign-in links and the account-level tokens, they are read outside any organization, by hash or by user.
     SchemaMigration(
         version = 5,
+        name = "mobile_app",
+        sql = """
+            ALTER TABLE identity_oauth_attempts ADD COLUMN mobile_redirect_uri TEXT, ADD COLUMN mobile_code_challenge TEXT,
+                ADD COLUMN mobile_state TEXT;
+            ALTER TABLE identity_api_tokens ADD COLUMN unlock_key_hash TEXT, ADD COLUMN authenticated_at TIMESTAMPTZ;
+            ALTER TABLE identity_api_tokens ADD CONSTRAINT identity_api_tokens_unlock_key
+                CHECK ((kind = 'MOBILE') = (unlock_key_hash IS NOT NULL));
+            CREATE TABLE identity_mobile_codes (
+                id UUID PRIMARY KEY,
+                code_hash TEXT NOT NULL UNIQUE,
+                user_id UUID NOT NULL REFERENCES identity_users (id) ON DELETE CASCADE,
+                code_challenge TEXT NOT NULL,
+                redirect_uri TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ
+            );
+            CREATE INDEX identity_mobile_codes_expiry ON identity_mobile_codes (expires_at);
+            CREATE TABLE identity_notification_preferences (
+                user_id UUID PRIMARY KEY REFERENCES identity_users (id) ON DELETE CASCADE,
+                requests BOOLEAN NOT NULL,
+                decisions BOOLEAN NOT NULL,
+                spending BOOLEAN NOT NULL,
+                quiet_start TEXT,
+                quiet_end TEXT,
+                quiet_time_zone TEXT,
+                updated_at TIMESTAMPTZ NOT NULL
+            )
+        """.trimIndent(),
+    ),
+    SchemaMigration(
+        version = 6,
         name = "tokens_of_organizations_through_the_router",
         sql = TOKENS_OF_ORGANIZATIONS_SQL,
     ),

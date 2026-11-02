@@ -161,7 +161,7 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
 
     private companion object {
         const val TOKEN_COLUMNS = "id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, " +
-            "expires_at, last_used_at, revoked_at"
+            "expires_at, last_used_at, revoked_at, authenticated_at"
     }
 }
 
@@ -171,20 +171,27 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
  * @param executor Where to run the insert.
  * @param token The token.
  * @param secretHash The SHA-256 of its secret.
+ * @param unlockKeyHash For the phone app's token, the SHA-256 of its unlock key; null for every other kind.
  */
-internal suspend fun insert(executor: QueryExecutor, token: ApiToken, secretHash: String) {
+internal suspend fun insert(
+    executor: QueryExecutor,
+    token: ApiToken,
+    secretHash: String,
+    unlockKeyHash: String? = null,
+) {
     executor.execute(
         Statement.create(
             "INSERT INTO identity_api_tokens (id, user_id, org_id, name, kind, scopes, hint, agent_session_id, " +
                 "secret_hash, " +
-                "created_at, expires_at, last_used_at, revoked_at) VALUES (:id, :user, :org, :name, :kind, " +
-                ":scopes, :hint, " +
-                ":session, :hash, :created, :expires, NULL, NULL)",
+                "created_at, expires_at, last_used_at, revoked_at, unlock_key_hash, authenticated_at) " +
+                "VALUES (:id, :user, :org, :name, :kind, :scopes, :hint, :session, :hash, :created, :expires, " +
+                "NULL, NULL, :unlock, :authenticated)",
         ).bind("id", token.id).bind("user", token.userId).bind("org", token.orgId).bind("name", token.name)
             .bind("kind", token.kind.name).bind("scopes", token.scopes.sorted().joinToString(" "))
             .bind("hint", token.hint)
             .bind("session", token.agentSessionId).bind("hash", secretHash).bind("created", token.createdAt)
-            .bind("expires", token.expiresAt),
+            .bind("expires", token.expiresAt).bind("unlock", unlockKeyHash)
+            .bind("authenticated", token.authenticatedAt),
     ).getOrThrow()
 }
 
@@ -202,4 +209,5 @@ internal fun ResultSet.Row.toApiToken() = ApiToken(
     expiresAt = get("expires_at").asInstantOrNull(),
     lastUsedAt = get("last_used_at").asInstantOrNull(),
     revokedAt = get("revoked_at").asInstantOrNull(),
+    authenticatedAt = get("authenticated_at").asInstantOrNull(),
 )
