@@ -13,7 +13,8 @@ import io.github.smyrgeorge.sqlx4k.impl.migrate.MigrationFile
  */
 interface MigrationRunner {
     /**
-     * Applies the migrations a module has not applied yet, and verifies the checksums of those it has.
+     * Applies the migrations a module has not applied yet, and verifies the checksums of those it has. Then the history
+     * table is left writable by its owner alone (see [MigrationRunnerImpl]).
      *
      * @param module The module name (lower-case letters, digits and `-`).
      * @param migrations The module's migrations.
@@ -74,6 +75,7 @@ class MigrationRunnerImpl(
                 )
             },
         ).getOrThrow()
+        driver.execute(ownerOnly(table)).getOrThrow()
         logger.info(
             "migrations checked",
             mapOf("module" to module, "total" to results.total, "applied" to results.applied),
@@ -98,6 +100,31 @@ class MigrationRunnerImpl(
         val missing = migrations.files().filter { applied[it.version] != it.checksum }.map { it.version }
         if (missing.isNotEmpty()) throw MigrationsNotAppliedException(module, missing)
     }
+
+    /**
+     * Only the migrator writes a module's history. A deployment's default privileges (`ci/database-roles.sql`, the Helm
+     * chart) give the serving role SELECT, INSERT, UPDATE and DELETE on every table of the owner, the history tables
+     * included: the serving process could erase the trace of a migration, which the next `migrate` would then replay
+     * or fail on. Every privilege but SELECT is revoked from every role but the owner, at every pass, so a database
+     * migrated before this keeps no write either. The serving role keeps SELECT: [verify] reads the history at start.
+     * Grants made through another role are recorded as the owner's, which may therefore revoke them all.
+     */
+    private fun ownerOnly(table: String): String = """
+        DO $$
+        DECLARE grantee text;
+        BEGIN
+          FOR grantee IN
+            SELECT DISTINCT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(pg_get_userbyid(a.grantee)) END
+            FROM pg_class c, aclexplode(c.relacl) a
+            WHERE c.oid = to_regclass('$table') AND a.grantee <> c.relowner AND a.privilege_type <> 'SELECT'
+          LOOP
+            EXECUTE format(
+              'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON %I FROM %s', '$table', grantee
+            );
+          END LOOP;
+        END
+        $$
+    """.trimIndent()
 
     private fun historyTable(module: String): String {
         require(MODULE_NAME.matches(module)) { "Module name must match $MODULE_NAME." }

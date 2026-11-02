@@ -243,6 +243,13 @@ jobs:
           expect 1 MigrationsNotAppliedException -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci
           expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
           expect 0 'migrations done' -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" ostrom-server:ci migrate
+          # AUDIT-RLS R8: the serving role reads the migrations' history and never writes it.
+          writable=$(psql "$OWNER_URL" -At -v ON_ERROR_STOP=1 -c "SELECT string_agg(relname, ' ') FROM pg_class
+            WHERE relkind = 'r' AND relname LIKE '\_migrations\_%' AND has_table_privilege('ostrom_app', oid,
+            'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')")
+          histories=$(psql "$OWNER_URL" -At -c "SELECT count(*) FROM pg_class WHERE relkind = 'r' AND relname LIKE '\_migrations\_%'")
+          echo "migration histories: $histories, writable by ostrom_app: ${writable:-none}"
+          test "$histories" -gt 0 && test -z "$writable"
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL=postgresql://ostrom:ostrom@localhost:5432/ostrom \
             ostrom-server:ci
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL="$OWNER_URL" ostrom-server:ci
