@@ -5,6 +5,7 @@ import dev.ostrom.server.identity.domain.DeviceNotFoundException
 import dev.ostrom.server.identity.domain.ServiceKeyNotFoundException
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -32,6 +33,7 @@ fun Route.keysAndDevicesRoutes(dependencies: KeysAndDevicesRoutesDependencies) =
         post<ServiceKeysApi, CreateServiceKeyRequest> { _, request ->
             val userId = call.requireBrowserSession().userId()
             val member = call.requireOrgPrincipal(orgs, null)
+            call.requireRecentSignIn("create a service key")
             val issued = createServiceKey(member, userId, request.name, request.scopes, request.expiresInDays?.days)
             call.respond(HttpStatusCode.Created, issued.toCreatedServiceKeyResponse())
         }
