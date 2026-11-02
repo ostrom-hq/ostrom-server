@@ -16,6 +16,7 @@ import dev.ostrom.server.integrations.github.domain.WebhookOutcome
 import dev.ostrom.server.integrations.github.domain.installPage
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -42,6 +43,7 @@ class GitHubInstallOriginsTest {
     private val ask = object : AskGateUseCase {
         override suspend fun invoke(actor: GateActor, ask: AskGate): GateView {
             asked += ask
+            if (ask.pullRequest == 14) throw CancellationException("The server stops.")
             check(ask.pullRequest != 13) { "The database is down." }
             return GateView(mergeGate(), emptyList(), emptyList())
         }
@@ -72,6 +74,8 @@ class GitHubInstallOriginsTest {
         assertEquals(WebhookOutcome.IGNORED, webhooks("installation", "a-2", created(46, null, "acme")), "No sender")
         assertEquals(WebhookOutcome.IGNORED, webhooks("installation", "a-3", created(46, "x", null)), "No account")
         assertNull(repository.origins.origin(46))
+        val suspended = """{"action":"suspend","installation":{"id":42},"sender":{"login":"acme-admin"}}"""
+        assertEquals(WebhookOutcome.IGNORED, webhooks("installation", "a-5", suspended), "Neither created nor deleted")
         // An installation deleted before any organization linked it is forgotten too.
         val deleted = """{"action":"deleted","installation":{"id":42}}"""
         assertEquals(WebhookOutcome.UNINSTALLED, webhooks("installation", "a-4", deleted))
@@ -138,6 +142,10 @@ class GitHubInstallOriginsTest {
         assertFalse("b-2" in repository.origins.deliveries, "Released for the redelivery")
         assertFailsWith<IllegalStateException> { webhooks("pull_request", "b-2", failing) }
         assertEquals(3, asked.size, "GitHub's redelivery, same id, is handled")
+
+        // The server stopping mid-delivery: released too, and the cancellation goes on.
+        assertFailsWith<CancellationException> { webhooks("pull_request", "b-3", pull(14)) }
+        assertFalse("b-3" in repository.origins.deliveries)
     }
 
     @Test

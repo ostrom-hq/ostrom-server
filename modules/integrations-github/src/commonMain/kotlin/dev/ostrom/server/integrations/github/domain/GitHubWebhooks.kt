@@ -10,6 +10,7 @@ import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.logging.Logger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -75,40 +76,45 @@ class HandleWebhookUseCaseImpl(
         val id = delivery?.takeIf { DELIVERY.matches(it) }
             ?: throw OstromException(ErrorKind.INVALID_REQUEST, "This webhook has no X-GitHub-Delivery id.")
         if (!origins.claimDelivery(id, clock.now())) return WebhookOutcome.REPLAYED
-        var handled = false
-        try {
-            val outcome = handle(event, body)
-            handled = true
-            return outcome
-        } finally {
-            // A failure (GitHub down while the check is published) leaves the delivery to GitHub's redelivery.
-            if (!handled) withContext(NonCancellable) { origins.releaseDelivery(id) }
+        // A failure (GitHub down while the check is published, the server stopping) leaves the delivery to GitHub's
+        // redelivery.
+        return try {
+            handle(event, body)
+        } catch (error: CancellationException) {
+            withContext(NonCancellable) { origins.releaseDelivery(id) }
+            throw error
+        } catch (error: Exception) {
+            origins.releaseDelivery(id)
+            throw error
         }
     }
 
     private suspend fun handle(event: String?, body: String): WebhookOutcome {
         val payload = parse(event, body)
-        val installationId = payload?.installation?.id
+        val installation = payload?.installation
         return when {
-            payload == null || installationId == null -> WebhookOutcome.IGNORED
-            event == INSTALLATION && payload.action == "created" -> created(installationId, payload)
-            event == INSTALLATION && payload.action == "deleted" -> {
-                repository.forgetInstallation(installationId)
-                WebhookOutcome.UNINSTALLED
-            }
-            event == "pull_request" && payload.action in GATED_ACTIONS ->
-                repository.installationById(installationId)?.let { pullRequest(it, payload) } ?: WebhookOutcome.IGNORED
+            payload == null || installation == null -> WebhookOutcome.IGNORED
+            event == INSTALLATION -> installation(payload.action, installation, payload.sender?.login)
+            event == "pull_request" && payload.action in GATED_ACTIONS -> pullRequest(installation.id, payload)
             else -> WebhookOutcome.IGNORED
         }
     }
 
-    private suspend fun created(installationId: Long, payload: Payload): WebhookOutcome {
-        val sender = payload.sender?.login
-        val account = payload.installation?.account
-        if (sender == null || account == null) return WebhookOutcome.IGNORED
-        val origin = GitHubInstallationOrigin(installationId, sender, account.login, account.type)
-        origins.saveOrigin(origin, clock.now())
-        return WebhookOutcome.RECORDED
+    // Created: who installed it is recorded (AUDIT-SECU-2 M1). Deleted: forgotten, linked or not.
+    private suspend fun installation(action: String?, installation: Installation, sender: String?): WebhookOutcome {
+        val account = installation.account
+        return when {
+            action == "deleted" -> {
+                repository.forgetInstallation(installation.id)
+                WebhookOutcome.UNINSTALLED
+            }
+            action != "created" || sender == null || account == null -> WebhookOutcome.IGNORED
+            else -> {
+                val origin = GitHubInstallationOrigin(installation.id, sender, account.login, account.type)
+                origins.saveOrigin(origin, clock.now())
+                WebhookOutcome.RECORDED
+            }
+        }
     }
 
     private fun parse(event: String?, body: String): Payload? = try {
@@ -118,10 +124,11 @@ class HandleWebhookUseCaseImpl(
         null
     }
 
-    private suspend fun pullRequest(installation: GitHubInstallation, payload: Payload): WebhookOutcome {
+    private suspend fun pullRequest(installationId: Long, payload: Payload): WebhookOutcome {
+        val installation = repository.installationById(installationId)
         val pull = payload.pullRequest?.takeIf { it.state == "open" }
         val repo = payload.repository?.fullName
-        val view = if (pull == null || repo == null) null else askFor(installation, repo, pull)
+        val view = if (installation == null || pull == null || repo == null) null else askFor(installation, repo, pull)
         if (view == null) return WebhookOutcome.IGNORED
         checks.publish(view.gate, view.requests)
         return WebhookOutcome.CHECKED
