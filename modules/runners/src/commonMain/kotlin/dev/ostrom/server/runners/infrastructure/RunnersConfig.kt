@@ -29,6 +29,9 @@ data class RunnersConfig(
     /** The runtimes. */
     enum class DriverKind { NONE, KUBERNETES, DOCKER }
 
+    /** The runtime's name runners are labelled with (`kubernetes`, `docker`), null when cloud sessions are off. */
+    val runtimeLabel: String? get() = if (driver == DriverKind.NONE) null else driver.name.lowercase()
+
     /** Constants and readers of the enclosing type. */
     companion object {
         /** The runner image published by ostrom-server's CI. */
