@@ -46,11 +46,12 @@ class SharedAccountPoolTest {
         priority: Int = 0,
         limits: AccountLimits = AccountLimits(),
         expiresAt: Instant = clock.now() + 1.days,
+        provider: AccountProvider = AccountProvider.CLAUDE,
     ): SharedAccount {
         val org = Sharing.orgA
         val account =
             SharedAccount(
-                Uuid.random(), org, AccountProvider.CLAUDE, label, null, "acct-$label", Sharing.memberA.memberId,
+                Uuid.random(), org, provider, label, null, "acct-$label", Sharing.memberA.memberId,
                 priority, AccountStatus.READY, limits, null, clock.now(),
             )
         repository.accounts += account
@@ -185,6 +186,48 @@ class SharedAccountPoolTest {
         refresher.result = RefreshResult.Revoked
         assertEquals("backup", assertIs<LeaseResult.Leased>(lease()).lease.account.label)
         assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.get(Sharing.orgA, revoked.id)!!.status)
+    }
+
+    @Test
+    fun aClaudeRefreshNamingAnotherAccountTakesItOutOfServiceAndTheNextOneServes() = runTest {
+        foreignTokensAreRefused(AccountProvider.CLAUDE)
+    }
+
+    @Test
+    fun aCodexRefreshNamingAnotherAccountTakesItOutOfServiceAndTheNextOneServes() = runTest {
+        foreignTokensAreRefused(AccountProvider.CODEX)
+    }
+
+    private suspend fun foreignTokensAreRefused(provider: AccountProvider) {
+        val foreign = account("foreign", priority = 5, expiresAt = clock.now(), provider = provider)
+        account("backup", provider = provider)
+        refresher.result = RefreshResult.Renewed(
+            AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours),
+            accountId = "acct-someone-else",
+        )
+        assertEquals("backup", assertIs<LeaseResult.Leased>(lease(provider = provider)).lease.account.label)
+        assertEquals(AccountStatus.WRONG_ACCOUNT, repository.get(Sharing.orgA, foreign.id)!!.status)
+        val kept = cipher.open(repository.envelopes.getValue(foreign.id), Sharing.orgA, foreign.id)!!
+        assertEquals("access-foreign", kept.accessToken, "The other account's tokens are not stored")
+        assertEquals(1, refresher.calls)
+        assertEquals("backup", assertIs<LeaseResult.Leased>(lease(provider = provider)).lease.account.label)
+        assertEquals(1, refresher.calls, "An account out of service is not refreshed again")
+    }
+
+    @Test
+    fun aRefreshNamingNoAccountOrTheDeclaredOneServes() = runTest {
+        val silent = account("silent", expiresAt = clock.now())
+        refresher.result = RefreshResult.Renewed(AccountCredentials("access-new", "refresh-new", clock.now() + 8.hours))
+        assertEquals("access-new", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
+        assertEquals(AccountStatus.READY, repository.get(Sharing.orgA, silent.id)!!.status, "No identity, no refusal")
+        repository.accounts.clear()
+        val named = account("named", expiresAt = clock.now())
+        refresher.result = RefreshResult.Renewed(
+            AccountCredentials("access-named", "refresh-named", clock.now() + 8.hours),
+            accountId = " ACCT-NAMED ",
+        )
+        assertEquals("access-named", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
+        assertEquals(AccountStatus.READY, repository.get(Sharing.orgA, named.id)!!.status, "Case and spaces aside")
     }
 
     @Test

@@ -15,6 +15,11 @@ import kotlin.uuid.Uuid
  * cloud pods, never a member). Tokens are renewed [REFRESH_MARGIN] before they expire, one refresh per account at a
  * time; a refused refresh token, or an envelope that no longer opens, marks the account RECONNECT_REQUIRED.
  *
+ * A refresh also checks whose tokens they are: the account is shared under a provider account id its owner declared
+ * (the CLI, an import), and when the provider names another account in its answer, the account is marked
+ * WRONG_ACCOUNT and serves nothing; the new pair is not stored. An answer that names no account is not a refusal: the
+ * id is optional in the provider's answer, and refusing it would stop every account of the org together.
+ *
  * @param accounts Accounts and their sealed tokens.
  * @param cipher Opens and seals the tokens.
  * @param refresher Renews tokens.
@@ -72,9 +77,7 @@ class AccountTokens(
         when (val result = refresher.refresh(account.provider, stored)) {
             is RefreshResult.Renewed -> {
                 unavailableUntil.remove(account.id)
-                val sealed = cipher.seal(result.credentials, account.orgId, account.id)
-                accounts.putEnvelope(account.orgId, account.id, sealed)
-                result.credentials
+                renewed(account, result)
             }
             RefreshResult.Revoked -> rotatedMeanwhile(account, stored) ?: retire(account)
             // Still valid for a few minutes: serve with it; expired: let the provider's 401 speak.
@@ -83,6 +86,16 @@ class AccountTokens(
                 stored.takeIf { it.expiresAt > clock.now() }
             }
         }
+
+    private suspend fun renewed(account: SharedAccount, result: RefreshResult.Renewed): AccountCredentials? {
+        val named = result.accountId
+        if (named != null && !SharingRules.sameProviderAccount(account.providerAccountId, named)) {
+            accounts.setStatus(account.orgId, account.id, AccountStatus.WRONG_ACCOUNT)
+            return null
+        }
+        accounts.putEnvelope(account.orgId, account.id, cipher.seal(result.credentials, account.orgId, account.id))
+        return result.credentials
+    }
 
     /**
      * The tokens another replica (or the owner's CLI, by sharing again) stored while this one refreshed: the provider
