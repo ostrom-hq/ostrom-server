@@ -56,10 +56,10 @@ jobs:
         ports: ['12111:12111']
     env:
       # The console of ostrom-web main, unless a dispatch names another ref.
-      WEB_REF: ${{ inputs.web_ref || 'test/real-me-header' }}
+      WEB_REF: ${{ inputs.web_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
-      # A pull request that changes this file proves it with the /me journey (ostrom-web#42); a dispatch runs what it
-      # names, or all of e2e-real.
+      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch runs
+      # what it names, or all of e2e-real.
       SPECS: ${{ github.event_name == 'pull_request' && 'me.spec.ts' || inputs.specs }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
