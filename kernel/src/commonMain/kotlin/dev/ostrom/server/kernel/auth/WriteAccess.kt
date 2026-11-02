@@ -8,14 +8,8 @@ package dev.ostrom.server.kernel.auth
  *
  * @property mobileApp Whether the mobile app's token, presented after the phone's biometric unlock, may write.
  * @property tokenKinds The kinds of API token the route admits; none for a console write.
- * @property governing The governance scope ([GovernanceScopes]) that also admits a person's token holding it (the
- *   token of `ostrom login --admin`), or null.
  */
-class WriteAccess private constructor(
-    val mobileApp: Boolean,
-    val tokenKinds: Set<PrincipalKind>,
-    val governing: String? = null,
-) {
+class WriteAccess private constructor(val mobileApp: Boolean, val tokenKinds: Set<PrincipalKind>) {
     /** The usual declarations. */
     companion object {
         /** A browser session only: every console write unless it declares more. */
@@ -35,18 +29,6 @@ class WriteAccess private constructor(
          */
         fun tokens(vararg kinds: PrincipalKind): WriteAccess =
             WriteAccess(mobileApp = false, tokenKinds = kinds.toSet())
-
-        /**
-         * A governance write: a browser session, a person's token that holds [scope] (see [governs]), or an API token
-         * of one of [kinds].
-         *
-         * @param scope One of [GovernanceScopes].
-         * @param kinds The kinds of token also admitted, whatever they hold (a service key, for instance).
-         *
-         * @return The declaration.
-         */
-        fun governance(scope: String, vararg kinds: PrincipalKind): WriteAccess =
-            WriteAccess(mobileApp = false, tokenKinds = kinds.toSet(), governing = scope)
     }
 }
 
@@ -60,7 +42,7 @@ class WriteAccess private constructor(
 fun AuthenticatedPrincipal.mayWrite(access: WriteAccess): Boolean = when (channel) {
     PrincipalChannel.BROWSER -> kind == PrincipalKind.USER
     PrincipalChannel.MOBILE_APP -> kind == PrincipalKind.USER && access.mobileApp
-    PrincipalChannel.API_TOKEN -> kind in access.tokenKinds || access.governing?.let { governs(it) } == true
+    PrincipalChannel.API_TOKEN -> kind in access.tokenKinds
 }
 
 /**

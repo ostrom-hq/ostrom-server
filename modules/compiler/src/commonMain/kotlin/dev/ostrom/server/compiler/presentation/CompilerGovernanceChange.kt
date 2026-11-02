@@ -34,10 +34,12 @@ class CompilerGovernanceChange(
         return when (write.kind) {
             WorkflowWrites.CREATE -> {
                 val document = payload.body().jsonObject
+                workflows.check(document)
                 GovernancePreview("Create the workflow ${document.named()}", null, document)
             }
             WorkflowWrites.SAVE -> {
                 val request = payload.save()
+                workflows.check(request.workflow)
                 val before = documentOf(workflows.get(orgId, payload.id()))
                 GovernancePreview("Edit the workflow ${before.named()}", before, request.workflow)
             }

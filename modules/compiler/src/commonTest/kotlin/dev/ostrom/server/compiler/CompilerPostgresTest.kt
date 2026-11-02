@@ -21,6 +21,7 @@ import dev.ostrom.server.compiler.domain.services.HarnessStamp
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.presentation.ApproversGraphResponse
 import dev.ostrom.server.compiler.presentation.AuditPage
+import dev.ostrom.server.compiler.presentation.CompilerGovernanceChange
 import dev.ostrom.server.compiler.presentation.CompilerScopes
 import dev.ostrom.server.compiler.presentation.PackageSummary
 import dev.ostrom.server.compiler.presentation.PackagesPage
@@ -36,10 +37,13 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceConfirmer
 import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -48,6 +52,8 @@ import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.config.LayeredConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
+import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
@@ -79,10 +85,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -104,6 +112,7 @@ class CompilerPostgresTest {
 
     // The governance writes a token asked for, held for the console: their kind and request.
     private val held = mutableListOf<String>()
+    private val requests = mutableListOf<GovernanceRequest>()
 
     private fun overrides(config: Map<String, String>?, sources: CompilerSources? = null): Module = module {
         single<TokenAuthenticator> {
@@ -144,6 +153,7 @@ class CompilerPostgresTest {
             object : GovernanceConfirmations {
                 override suspend fun open(request: GovernanceRequest): GovernanceConfirmationPending {
                     held += "${request.write.kind} ${request.method} ${request.path} ${request.scope}"
+                    requests += request
                     return GovernanceConfirmationPending("gcf_${held.size}", "http://console/confirm", "later")
                 }
             }
@@ -326,6 +336,54 @@ class CompilerPostgresTest {
         // The console decides at once.
         assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", release()).status)
         assertEquals(3, held.size)
+    }
+
+    @Test
+    fun aHeldWorkflowWriteShowsWhatItChangesThenIsMadeAsTheConfirmersDecision() = compilerTest { server ->
+        val change = server.koin.get<GovernanceChange>(named("compiler"))
+        assertEquals(setOf("workflows.create", "workflows.save", "workflows.delete"), change.kinds)
+        val path = "/api/v1/workflows/release"
+        val lead = GovernanceConfirmer(
+            AuthenticatedPrincipal("user:a:lead", PrincipalKind.USER, setOf(GateScopes.ALL_USER)),
+            OrgPrincipal(orgA, Uuid.random(), OrgRole.OWNER),
+        )
+        val unlinked = lead.copy(principal = lead.principal.copy(subjectId = "nobody"))
+
+        server.call("elevated:a:lead", "/api/v1/workflows", "POST", release())
+        val create = requests.last().write
+        val creating = change.preview(orgA, create)
+        assertEquals("Create the workflow release", creating.summary)
+        assertNull(creating.before)
+        assertEquals(release(), creating.after)
+        val created = assertNotNull(change.apply(orgA, create, lead)).jsonObject
+        assertEquals(1, created.getValue("version").jsonPrimitive.int)
+
+        server.call("elevated:a:lead", path, "PUT", SaveWorkflowRequest(release(command = "make check"), 1))
+        val save = requests.last().write
+        val saving = change.preview(orgA, save)
+        assertEquals("Edit the workflow release", saving.summary)
+        assertEquals(created, saving.before)
+        assertEquals(release(command = "make check"), saving.after)
+        val saved = assertNotNull(change.apply(orgA, save, unlinked)).jsonObject
+        assertEquals(2, saved.getValue("version").jsonPrimitive.int)
+
+        server.call("elevated:a:lead", path, "DELETE")
+        val delete = requests.last().write
+        val deleting = change.preview(orgA, delete)
+        assertEquals("Delete the workflow release", deleting.summary)
+        assertNull(deleting.after)
+        assertNull(change.apply(orgA, delete, lead))
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a:lead", path).status)
+        val by = server.koin.get<CompilerRepository>().decisions(orgA).map { it.by }
+        assertEquals(listOf("lead", lead.member.memberId.toString()), by.take(2), "By the gates, else the member")
+
+        // An invalid workflow is refused when it is asked, not when an owner confirms it.
+        val garbage = JsonObject(mapOf("id" to JsonPrimitive("x")))
+        val invalid = create.copy(payload = CompilerGovernanceChange.payload(null, garbage))
+        val refused = assertFailsWith<OstromException> { change.preview(orgA, invalid) }
+        assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
+        val unnamed = create.copy(payload = CompilerGovernanceChange.payload(null, JsonObject(emptyMap())))
+        assertFailsWith<OstromException> { change.preview(orgA, unnamed) }
     }
 
     @Test

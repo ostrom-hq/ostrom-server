@@ -9,6 +9,7 @@ import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.errors.OstromException
+import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -107,11 +108,14 @@ class AnswerConfirmationUseCaseImpl(
         val result = try {
             audit.record(confirmation, ConfirmationStep.CONFIRMED, by.userId)
             change.apply(orgId, confirmation.write, confirmer.inOrganization(orgId))
-        } catch (refused: OstromException) {
-            val error = ConfirmationError(refused.type, refused.message)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            // Settled as failed whatever the cause: a confirmed one with no result would read as written.
+            val error = (failure as? OstromException)?.let { ConfirmationError(it.type, it.message) } ?: UNMADE
             repository.settle(orgId, confirmation.id, null, error)
             recordFailure(confirmation, by)
-            throw refused
+            throw failure
         }
         repository.settle(orgId, confirmation.id, result, null)
         return finish(confirmation, null, by)
@@ -169,4 +173,9 @@ class AnswerConfirmationUseCaseImpl(
             principal.copy(namedOrg = orgId.toString()),
             OrgPrincipal(orgId, member.memberId, member.role),
         )
+
+    private companion object {
+        // What is kept when the write failed for a reason the server does not show (a 500 to the confirmer).
+        val UNMADE = ConfirmationError("internal_error", "The change failed on the server.")
+    }
 }

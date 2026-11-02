@@ -13,15 +13,21 @@ import dev.ostrom.server.gateway.presentation.InferenceSettingsDto
 import dev.ostrom.server.gateway.presentation.MAX_INFERENCE_REQUEST_BYTES
 import dev.ostrom.server.gateway.presentation.ModelPolicyDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceConfirmer
 import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
+import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -72,10 +78,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -111,6 +119,7 @@ class GatewayPostgresTest {
 
     /** The governance writes a token asked for, held for the console, as `kind METHOD /path scope`. */
     private val held = mutableListOf<String>()
+    private val requests = mutableListOf<GovernanceRequest>()
 
     /** Browser sessions hold every right of the user; the others hold what they list. */
     private val principals = mapOf(
@@ -171,6 +180,7 @@ class GatewayPostgresTest {
             object : GovernanceConfirmations {
                 override suspend fun open(request: GovernanceRequest): GovernanceConfirmationPending {
                     held += "${request.write.kind} ${request.method} ${request.path} ${request.scope}"
+                    requests += request
                     return GovernanceConfirmationPending("gcf_1", "http://console/confirm/gcf_1", "later")
                 }
             }
@@ -508,6 +518,22 @@ class GatewayPostgresTest {
                 assertEquals(listOf("models.policy PUT /api/v1/policy/models policy:write"), held)
                 val unchanged = client.get("/api/v1/policy/models") { bearerAuth("admin-a") }.body<ModelPolicyDto>()
                 assertEquals(ModelPolicyDto(), unchanged, "Nothing written")
+                // Confirmed in the console: shown before and after, then set as the confirmer's.
+                val change = koin.get<GovernanceChange>(named("gateway"))
+                assertEquals(setOf("models.policy"), change.kinds)
+                val write = requests.single().write
+                val shown = change.preview(Gw.orgA, write)
+                assertEquals(OstromJson.encodeToJsonElement(ModelPolicyDto.serializer(), unchanged), shown.before)
+                assertEquals(OstromJson.encodeToJsonElement(ModelPolicyDto.serializer(), policy), shown.after)
+                val admin = GovernanceConfirmer(
+                    AuthenticatedPrincipal("admin-a", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
+                    OrgPrincipal(Gw.orgA, Gw.adminA.memberId, OrgRole.ADMIN),
+                )
+                val stranger = admin.copy(principal = admin.principal.copy(subjectId = "nobody"))
+                assertFailsWith<OstromException> { change.apply(Gw.orgA, write, stranger) }
+                assertEquals(shown.after, change.apply(Gw.orgA, write, admin))
+                val set = client.get("/api/v1/policy/models") { bearerAuth("admin-a") }.body<ModelPolicyDto>()
+                assertEquals(policy, set)
                 // The console and the service key write at once.
                 assertEquals(HttpStatusCode.OK, putJson("/api/v1/policy/models", "admin-a", policy).status)
                 assertEquals(HttpStatusCode.OK, putJson("/api/v1/policy/models", "inference-admin-a", policy).status)

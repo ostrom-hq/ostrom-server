@@ -55,15 +55,20 @@ class GetConfirmationUseCaseImpl(
         var confirmation = read(member.orgId, id)
         val mayRead = confirmation.requestedBy.userId == viewer.subjectId || member.role in ConfirmationRules.MANAGERS
         if (!mayRead) throw ConfirmationNotFoundException()
-        while (confirmation.status == ConfirmationStatus.PENDING && clock.now() < until) {
+        // Each look is a plain read: the expiry is written once, before the wait and after it if it expired meanwhile.
+        while (confirmation.statusAt(clock.now()) == ConfirmationStatus.PENDING && clock.now() < until) {
             waits.await(id, minOf(until - clock.now(), ConfirmationRules.LOOK_EVERY))
-            confirmation = read(member.orgId, id)
+            confirmation = look(member.orgId, id)
         }
+        if (confirmation.status != confirmation.statusAt(clock.now())) confirmation = read(member.orgId, id)
         return confirmation
     }
 
     private suspend fun read(orgId: Uuid, id: String): Confirmation {
         expire.inOrganization(orgId)
-        return repository.get(orgId, id) ?: throw ConfirmationNotFoundException()
+        return look(orgId, id)
     }
+
+    private suspend fun look(orgId: Uuid, id: String): Confirmation =
+        repository.get(orgId, id) ?: throw ConfirmationNotFoundException()
 }

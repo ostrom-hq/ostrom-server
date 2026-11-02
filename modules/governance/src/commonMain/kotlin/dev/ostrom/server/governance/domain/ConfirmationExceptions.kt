@@ -48,9 +48,3 @@ class ConfirmationStepUpRequiredException : OstromException(
     "Sign in again to confirm a governance change: your sign-in is more than 5 minutes old.",
     "step_up_required",
 )
-
-/** The server keeps no audit log: no confirmation is opened, so no governance change goes untraced (503). */
-class ConfirmationAuditUnavailableException : OstromException(
-    ErrorKind.UNAVAILABLE,
-    "This server keeps no audit log for governance changes: sign in to the console.",
-)

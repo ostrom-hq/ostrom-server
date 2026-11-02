@@ -3,7 +3,6 @@ package dev.ostrom.server.governance
 
 import dev.ostrom.server.governance.domain.AnswerConfirmationUseCaseImpl
 import dev.ostrom.server.governance.domain.ConfirmationAnswer
-import dev.ostrom.server.governance.domain.ConfirmationAuditUnavailableException
 import dev.ostrom.server.governance.domain.ConfirmationClosedException
 import dev.ostrom.server.governance.domain.ConfirmationCredential
 import dev.ostrom.server.governance.domain.ConfirmationError
@@ -20,7 +19,6 @@ import dev.ostrom.server.governance.domain.ExpireConfirmationsUseCaseImpl
 import dev.ostrom.server.governance.domain.GetConfirmationUseCaseImpl
 import dev.ostrom.server.governance.domain.GovernanceChanges
 import dev.ostrom.server.governance.domain.OpenConfirmationUseCaseImpl
-import dev.ostrom.server.governance.domain.RefusingConfirmationAudit
 import dev.ostrom.server.governance.fakes.ClockWaits
 import dev.ostrom.server.governance.fakes.FakeChange
 import dev.ostrom.server.governance.fakes.FakeMembers
@@ -37,6 +35,7 @@ import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -142,10 +141,9 @@ class ConfirmationUseCasesTest {
         change.refusePreview = OstromException(ErrorKind.NOT_FOUND, "Rule not found.")
         assertFailsWith<OstromException> { open(request()) }
         change.refusePreview = null
-        val refusing =
-            OpenConfirmationUseCaseImpl(repository, members, changes, RefusingConfirmationAudit(), expire, clock)
-        assertFailsWith<ConfirmationAuditUnavailableException> { refusing(request()) }
-        assertTrue(repository.rows.isEmpty(), "Nothing stored")
+        audit.failWith = IllegalStateException("The audit log is down.")
+        assertFailsWith<IllegalStateException> { open(request()) }
+        assertTrue(repository.rows.isEmpty(), "Not audited: nothing stored")
     }
 
     @Test
@@ -279,6 +277,21 @@ class ConfirmationUseCasesTest {
     }
 
     @Test
+    fun aConfirmedWriteThatCrashesIsSettledAsFailedNeverAsWritten() = runTest {
+        val opened = open(request())
+        change.refuseApply = IllegalStateException("database")
+        assertFailsWith<IllegalStateException> { confirm(browser("olga"), opened.id) }
+        val failed = repository.rows.getValue(opened.id)
+        assertEquals(ConfirmationStatus.FAILED, failed.status)
+        assertEquals("internal_error", failed.error?.type)
+        assertEquals(listOf("CREATED", "CONFIRMED", "FAILED"), audit.steps.map { it.substringBefore(' ') })
+        val cancelled = open(request(to = "cancelled"))
+        change.refuseApply = CancellationException("stopping")
+        assertFailsWith<CancellationException> { confirm(browser("olga"), cancelled.id) }
+        assertEquals(ConfirmationStatus.CONFIRMED, repository.rows.getValue(cancelled.id).status, "Cancellation passes")
+    }
+
+    @Test
     fun ofTwoAnswersOnTwoInstancesOnlyOneCounts() = runTest {
         val opened = open(request())
         repository.loseNextAnswer = true
@@ -304,6 +317,34 @@ class ConfirmationUseCasesTest {
         assertEquals(ConfirmationStatus.EXPIRED, repository.rows.getValue(b.id).status)
         assertEquals(listOf(a.id, b.id), waits.changed)
         assertEquals(100, ExpireConfirmationsUseCase.ORGANIZATIONS_PER_SWEEP)
+    }
+
+    @Test
+    fun aFailedExpiryEventCostsTheOthersNothing() = runTest {
+        val first = open(request())
+        val second = open(request(to = "other"))
+        clock.now += 15.minutes
+        audit.failWith = IllegalStateException("The audit log is down.")
+        assertFailsWith<IllegalStateException> { expire.inOrganization(orgA) }
+        assertEquals(listOf(first.id, second.id), waits.changed, "Both expired and woken")
+        val third = run {
+            audit.failWith = null
+            open(request(to = "third"))
+        }
+        clock.now += 15.minutes
+        audit.failWith = CancellationException("stopping")
+        assertFailsWith<CancellationException> { expire.inOrganization(orgA) }
+        assertEquals(ConfirmationStatus.EXPIRED, repository.rows.getValue(third.id).status)
+    }
+
+    @Test
+    fun aConfirmationThatExpiresDuringAWaitIsWrittenExpiredOnce() = runTest {
+        val opened = open(request())
+        clock.now = opened.expiresAt - 3.seconds
+        assertEquals(ConfirmationStatus.EXPIRED, get(token("ada"), opened.id, 30.seconds).status)
+        assertEquals(3.seconds, waits.waited, "Each look reads the time, not the table")
+        assertEquals(ConfirmationStatus.EXPIRED, repository.rows.getValue(opened.id).status)
+        assertEquals("EXPIRED ${opened.id}", audit.steps.last())
     }
 
     @Test

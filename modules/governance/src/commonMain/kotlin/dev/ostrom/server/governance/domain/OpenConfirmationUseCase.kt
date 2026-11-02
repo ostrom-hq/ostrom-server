@@ -20,7 +20,6 @@ interface OpenConfirmationUseCase {
      *   organization).
      * @throws ConfirmationManagersOnlyException When the person is not an owner or an admin.
      * @throws ConfirmationLimitException When they already wait for [ConfirmationRules.MAX_WAITING].
-     * @throws ConfirmationAuditUnavailableException When the server keeps no audit log.
      * @throws dev.ostrom.server.kernel.errors.OstromException The owning module's refusal of the write itself.
      */
     suspend operator fun invoke(request: GovernanceRequest): Confirmation

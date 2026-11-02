@@ -92,8 +92,10 @@ class InMemoryConfirmations : ConfirmationsRepository {
 class RecordingAudit : ConfirmationAudit {
     val steps: MutableList<String> = mutableListOf()
     val actors: MutableList<String?> = mutableListOf()
+    var failWith: Exception? = null
 
     override suspend fun record(confirmation: Confirmation, step: ConfirmationStep, actorUserId: String?) {
+        failWith?.let { throw it }
         steps += "${step.name} ${confirmation.id}"
         actors += actorUserId
     }
@@ -117,7 +119,7 @@ class FakeMembers(private val members: Map<String, Pair<Uuid, OrgRole>>) : Princ
 class FakeChange(override val kinds: Set<String> = setOf(KIND)) : GovernanceChange {
     var current: JsonElement? = JsonPrimitive("sole-approver")
     var refusePreview: OstromException? = null
-    var refuseApply: OstromException? = null
+    var refuseApply: Exception? = null
     val confirmers: MutableList<GovernanceConfirmer> = mutableListOf()
 
     override suspend fun preview(orgId: Uuid, write: GovernanceWrite): GovernancePreview {

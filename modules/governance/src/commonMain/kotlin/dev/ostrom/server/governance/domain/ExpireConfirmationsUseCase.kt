@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.governance.domain
 
+import kotlinx.coroutines.CancellationException
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -44,10 +45,19 @@ class ExpireConfirmationsUseCaseImpl(
     private val clock: Clock,
 ) : ExpireConfirmationsUseCase {
     override suspend fun inOrganization(orgId: Uuid) {
+        var failure: Exception? = null
         for (expired in repository.expire(orgId, clock.now())) {
-            audit.record(expired, ConfirmationStep.EXPIRED, null)
             waits.changed(expired.id)
+            // One failed event does not cost the others theirs: every expiry is tried, the first failure rethrown.
+            try {
+                audit.record(expired, ConfirmationStep.EXPIRED, null)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                failure = failure ?: error
+            }
         }
+        failure?.let { throw it }
     }
 
     override suspend fun everywhere(): Int {
