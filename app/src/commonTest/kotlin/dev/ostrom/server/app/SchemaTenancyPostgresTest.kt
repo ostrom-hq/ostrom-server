@@ -26,6 +26,15 @@ class SchemaTenancyPostgresTest {
     }
 
     @Test
+    fun everyTableEitherHoldsAnOrganizationOrIsListedWithItsReason() = schemaTest { server ->
+        // A table without `org_id` escapes the checks above: it must be named in INSTANCE_TABLES (docs/tenancy.md,
+        // "Tables without an organization"), with the role that reaches it and why no organization owns its rows.
+        val found = server.rows(TABLES_WITHOUT_AN_ORGANIZATION, "name").mapNotNull { it["name"] }
+            .filterNot { it.startsWith(MIGRATIONS_PREFIX) }
+        assertEquals(INSTANCE_TABLES.keys, found.toSet(), "Tables without org_id, each listed with its reason")
+    }
+
+    @Test
     fun everyPolicyOfAnOrganizationsTableIsBoundToItsOrganization() = schemaTest { server ->
         val unbound = server.rows(UNBOUND_POLICIES, "tablename", "policyname", "cmd")
             .map { "${it["tablename"]}.${it["policyname"]} (${it["cmd"]})" }
@@ -91,6 +100,16 @@ class SchemaTenancyPostgresTest {
                 SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped
             ))
         """
+
+        /** Every table of the schema that is not an organization's: each one must be in [INSTANCE_TABLES]. */
+        const val TABLES_WITHOUT_AN_ORGANIZATION = """
+            SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT ($ORG_TABLE_FILTER)
+            ORDER BY 1
+        """
+
+        /** The migrator's own tables, one per module (`_migrations_<module>`), written by the owner role at start. */
+        const val MIGRATIONS_PREFIX = "_migrations_"
 
         const val ORG_TABLES = """
             SELECT c.relname AS name, CAST(c.relrowsecurity AS TEXT) AS rls,
@@ -179,11 +198,33 @@ class SchemaTenancyPostgresTest {
             ORDER BY 1
         """
 
+        /**
+         * The tables whose rows belong to no organization, as docs/tenancy.md lists them: the role that reaches each
+         * one and why. Adding a table without `org_id` means adding it here and there, or giving it an organization.
+         */
+        val INSTANCE_TABLES = mapOf(
+            "billing_stripe_events" to "serving role, Stripe webhook: the events already handled, by Stripe's id",
+            "github_apps" to "serving role: the instance's one GitHub App, its secrets sealed",
+            "github_installation_origins" to "serving role, GitHub webhook: who installed an installation, by its id",
+            "github_manifest_states" to "serving role: the state of an instance admin's GitHub App creation, by hash",
+            "github_webhook_deliveries" to "serving role, GitHub webhook: the deliveries already received, by id",
+            "identity_device_authorizations" to "serving role, device sign-in: a person's pending CLI sign-in",
+            "identity_identities" to "serving role, sign-in: a person's external accounts",
+            "identity_magic_links" to "serving role, sign-in: e-mail links, by hash",
+            "identity_mobile_codes" to "serving role, the app's sign-in: one-time codes, by hash",
+            "identity_notification_preferences" to "serving role: a person's preferences, across organizations",
+            "identity_oauth_attempts" to "serving role, sign-in: an OAuth round trip's state, by hash",
+            "identity_sign_in_links" to "serving role: a signed-in person's one-time link to a browser, by hash",
+            "identity_user_emails" to "serving role, sign-in: a person's e-mail addresses",
+            "identity_users" to "serving role: the people, members of any number of organizations",
+            "identity_web_sessions" to "serving role: a person's browser sessions, by hash, before an organization",
+            "instance_info" to "serving role: the instance's one identity row",
+            "instance_signing_keys" to "serving role: the public keys of the instance's receipt signatures",
+        )
+
         // The known exceptions, each a finding of the RLS audit (docs/tenancy.md, "Known exceptions"): remove a line
         // with the fix that closes it.
         val UNCONFINED_TABLES = setOf(
-            "billing_customers: row level security disabled",
-            "billing_outbox: row level security disabled",
             "orgs_organizations: row level security not forced",
             "orgs_members: row level security not forced",
             "orgs_invitations: row level security not forced",

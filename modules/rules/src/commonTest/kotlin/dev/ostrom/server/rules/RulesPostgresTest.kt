@@ -191,13 +191,14 @@ class RulesPostgresTest {
     @Test
     fun thePolicyIsReadByMembersAndSetByAdminsAsASignedDecision() = rulesTest { server ->
         val path = "/api/v1/gates/policy"
-        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "gates-reader-a").body<GatePolicyDto>())
-        val set = server.call("PUT", path, "admin-a", GatePolicyDto("never"))
+        val byDefault = server.call("GET", path, "gates-reader-a").body<GatePolicyDto>()
+        assertEquals(GatePolicyDto("never"), byDefault, "An organization that never chose")
+        val set = server.call("PUT", path, "admin-a", GatePolicyDto("sole-approver"))
         assertEquals(HttpStatusCode.OK, set.status, set.bodyAsText())
-        assertEquals(GatePolicyDto("never"), set.body<GatePolicyDto>())
-        assertEquals(GatePolicyDto("never"), server.call("GET", path, "member-a").body<GatePolicyDto>())
-        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "owner-b").body<GatePolicyDto>())
-        server.call("PUT", path, "admin-a", GatePolicyDto("never"))
+        assertEquals(GatePolicyDto("sole-approver"), set.body<GatePolicyDto>())
+        assertEquals(GatePolicyDto("sole-approver"), server.call("GET", path, "member-a").body<GatePolicyDto>())
+        assertEquals(GatePolicyDto("never"), server.call("GET", path, "owner-b").body<GatePolicyDto>())
+        server.call("PUT", path, "admin-a", GatePolicyDto("sole-approver"))
         val decision = server.decisions(query = "?subjectKind=policy").items.single()
         assertEquals("self-approval", decision.subject.id)
         assertEquals("policy", server.koin.get<ReceiptsRepository>().get(orgA, decision.receiptId)?.subjectKind)
