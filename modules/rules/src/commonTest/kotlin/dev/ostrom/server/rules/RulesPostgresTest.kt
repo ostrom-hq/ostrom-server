@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules
 
+import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.repositories.ReceiptsRepository
@@ -20,6 +22,7 @@ import dev.ostrom.server.rules.presentation.GateActionDto
 import dev.ostrom.server.rules.presentation.GatePolicyDto
 import dev.ostrom.server.rules.presentation.NewRuleRequest
 import dev.ostrom.server.rules.presentation.RuleDto
+import dev.ostrom.server.rules.presentation.RuleGateCheckDto
 import dev.ostrom.server.rules.presentation.RuleGateDto
 import dev.ostrom.server.rules.presentation.RulesPage
 import dev.ostrom.server.testing.TestServer
@@ -27,9 +30,11 @@ import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -40,11 +45,13 @@ import kotlin.time.Duration.Companion.minutes
 /** The rules, decisions and policy routes on a real PostgreSQL and real HTTP: who may call them, and org isolation. */
 class RulesPostgresTest {
     private val clock = TestClock()
-    private val modules = listOf(InstanceModule, ReceiptsModule, RulesModule)
+    private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, CompilerModule, RulesModule)
     private val gate = RuleGateDto(listOf(GateActionDto("push-main", "Push to main")), listOf("lyes", "rev-b"))
 
     private fun rulesTest(block: suspend (TestServer) -> Unit) =
-        serverTest(modules, RulesCallers.overrides(clock)) { server -> block(server) }
+        serverTest(modules, module { includes(RulesCallers.overrides(clock), RulesCallers.gateSessions) }) { server ->
+            block(server)
+        }
 
     private suspend fun TestServer.write(
         token: String = "admin-a",
@@ -103,6 +110,28 @@ class RulesPostgresTest {
             server.decisions(query = "?subjectKind=rule&subjectId=${rule.id}&before=${page.items[0].id}")
                 .items.take(1).map { it.action },
         )
+    }
+
+    @Test
+    fun aGateKeepsTheChecksItNeedsAndTheirAttestation() = rulesTest { server ->
+        // Written as a client sends it: `attested` left out means a declared run will do.
+        val body = Json.parseToJsonElement(
+            """{"statement":"Tests run by Ostrom or the CI before a push to main","group":"git",""" +
+                """"scope":["acme/api"],"gate":{"actions":[{"class":"push-main","label":"Push to main",""" +
+                """"patterns":[],"repos":["acme/api"]}],"approvers":[],""" +
+                """"checks":[{"check":"tests","attested":true},{"check":"lint"}]}}""",
+        )
+        val created = server.call("POST", "/api/v1/rules", "admin-a", body)
+        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        val served = """"checks":[{"check":"tests","attested":true},{"check":"lint","attested":false}]"""
+        assertTrue(served in created.bodyAsText(), created.bodyAsText())
+        val rule = created.body<RuleDto>()
+        assertEquals(listOf(RuleGateCheckDto("tests", true), RuleGateCheckDto("lint", false)), rule.gate?.checks)
+
+        assertEquals(rule, server.call("GET", "/api/v1/rules/${rule.id}", "member-a").body<RuleDto>())
+        assertEquals(listOf(rule), server.call("GET", "/api/v1/rules", "reader-a").body<RulesPage>().items)
+        val decided = server.decisions(query = "?subjectKind=rule&subjectId=${rule.id}").items.single()
+        assertTrue(""""attested":true""" in decided.after.toString(), "The signed decision shows the attestation")
     }
 
     @Test
@@ -246,6 +275,8 @@ class RulesPostgresTest {
         Route("GET", "/api/v1/rules/$id"),
         Route("GET", "/api/v1/decisions"),
         Route("GET", "/api/v1/gates/policy"),
+        Route("GET", "/api/v1/analysis/state"),
+        Route("GET", "/api/v1/analysis/replay"),
     )
 
     private fun writes(id: String) = listOf(
@@ -254,6 +285,9 @@ class RulesPostgresTest {
         Route("DELETE", "/api/v1/rules/$id"),
         Route("POST", "/api/v1/rules/bulk", BulkRulesRequest(listOf(id), "rejected")),
         Route("PUT", "/api/v1/gates/policy", GatePolicyDto("never")),
+        Route("POST", "/api/v1/analysis/start"),
+        Route("POST", "/api/v1/analysis/restart"),
+        Route("POST", "/api/v1/analysis/replay"),
     )
 
     private val routes = reads("rule_1") + writes("rule_1")

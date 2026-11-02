@@ -48,6 +48,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -299,7 +300,7 @@ class GitHubPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, server.get("reader:a:ops", "/api/v1/github/app/install/start").status)
         assertEquals(HttpStatusCode.Forbidden, server.get("agent:a:x", "/api/v1/github/app").status)
         assertEquals(HttpStatusCode.Unauthorized, server.get(null, "/api/v1/github/app").status)
-        assertEquals(HttpStatusCode.Forbidden, server.get("user:a", "/api/v1/github/app").status, "No organization")
+        assertEquals(HttpStatusCode.NotFound, server.get("user:a", "/api/v1/github/app").status, "No organization")
 
         val callback = "installation_id=42&code=code-acme&state=${server.stateOf("user:a:owner")}"
         assertEquals(INSTALLED, server.back("user:a:owner", callback))
@@ -317,11 +318,18 @@ class GitHubPostgresTest {
             assertEquals(INSTALLED, server.back("user:a:owner", "installation_id=42&code=code-acme&state=$state"))
         }
         assertEquals(true, server.get("user:a:owner", "/api/v1/github/app").body<GitHubAppStatus>().installed)
-        // Not an owner or admin of it, not a member at all, or no such organization: 403 alike.
-        for ((token, org) in listOf("member:a:dev" to "acme", "user:a:owner" to "globex", "user:a:owner" to "nope")) {
+        // Not an owner or admin of it: 403. Not a member at all, or no such organization: 404 alike.
+        val refusals = listOf(
+            Triple("member:a:dev", "acme", HttpStatusCode.Forbidden),
+            Triple("user:a:owner", "globex", HttpStatusCode.NotFound),
+            Triple("user:a:owner", "nope", HttpStatusCode.NotFound),
+        )
+        val bodies = refusals.map { (token, org, status) ->
             val start = server.get(token, "/api/v1/github/app/install/start?org=$org")
-            assertEquals(HttpStatusCode.Forbidden, start.status, "$token ?org=$org")
+            assertEquals(status, start.status, "$token ?org=$org")
+            start.bodyAsText()
         }
+        assertEquals(bodies[1], bodies[2], "A stranger and an unknown organization read the same answer")
         assertEquals(INSTALLED, server.install("admin:b:ops", 43))
     }
 

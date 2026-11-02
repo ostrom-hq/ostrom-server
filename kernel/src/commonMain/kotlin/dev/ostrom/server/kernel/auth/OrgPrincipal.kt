@@ -84,7 +84,31 @@ class RejectingPrincipalOrgResolver : PrincipalOrgResolver {
  *   unknown organization so that its existence does not leak.
  */
 suspend fun ApplicationCall.requireOrgPrincipal(resolver: PrincipalOrgResolver, orgId: Uuid?): OrgPrincipal =
-    resolver.resolve(requirePrincipal(), orgId) ?: throw OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
+    resolver.resolve(requirePrincipal(), orgId) ?: throw OrganizationNotFoundException()
+
+/**
+ * The request names an organization the caller is not a member of (by its path, the [ORG_HEADER] header or a
+ * parameter), or the credential acts in none: 404, answered like an unknown organization so that its existence does
+ * not leak. Never a 403, which would tell that it exists.
+ */
+class OrganizationNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Organization not found.")
+
+/**
+ * A credential that is not a person's (an agent token whose launch is over, a device, a service key) acts in no
+ * organization here: 403. It never names an organization, so the answer tells nothing about one.
+ */
+class NoOrganizationCredentialException :
+    OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+
+/**
+ * The refusal of a caller that resolves to no member of the organization its request acts in: a person's credential
+ * names an organization they are not in, or none, and gets [OrganizationNotFoundException] (404); any other credential
+ * gets [NoOrganizationCredentialException] (403), which says why.
+ *
+ * @return The exception to throw.
+ */
+fun AuthenticatedPrincipal.outsideOrganization(): OstromException =
+    if (kind == PrincipalKind.USER) OrganizationNotFoundException() else NoOrganizationCredentialException()
 
 /** Nothing names the organization (path, [ORG_HEADER], bound credential) and the caller belongs to several: 409. */
 class OrgRequiredException :
