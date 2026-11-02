@@ -31,14 +31,14 @@ class OrgAuditTest {
     private val ada = User(Uuid.random(), "ada", "Ada", null, null, Instant.fromEpochSeconds(0))
     private val gone = Uuid.random()
 
-    private class World {
+    private class World(signer: Ed25519InstanceSigner) {
         val events = InMemoryAuditRepository()
         val users = InMemoryUsersRepository()
-        val log = AuditLogImpl(events, Ed25519InstanceSigner.generate(), FakeHasher(), SettableClock())
+        val log = AuditLogImpl(events, signer, FakeHasher(), SettableClock())
         val list = ListOrgAuditUseCaseImpl(events, users)
     }
 
-    private fun world() = World().apply { users.users[ada.id] = ada }
+    private suspend fun world() = World(Ed25519InstanceSigner.generate()).apply { users.users[ada.id] = ada }
 
     @Test
     fun anOwnerReadsTheNewestFirstWithTheActorsLogin() = runTest {
