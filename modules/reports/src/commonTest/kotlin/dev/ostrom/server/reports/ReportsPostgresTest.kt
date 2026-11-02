@@ -122,6 +122,37 @@ class ReportsPostgresTest {
     }
 
     @Test
+    fun aModelCallThroughTheGatewayCountsForItsLaunchsAgentAndRepository() = reportsTest { server ->
+        // A launch resumed once (two segments), and two calls of its agent through the gateway: the ledger names the
+        // launch, not a segment (RELAY, server#126).
+        for ((id, segment) in listOf("s9a" to 0, "s9b" to 1)) {
+            server.sql(
+                ORG_A,
+                "INSERT INTO sessions_sessions (org_id, id, root_id, segment, launch_id, agent, dev, repo, " +
+                    "started_at, last_seen_at) VALUES (:org, :id, 's9a', :segment, 'lch_9', 'gemini', 'mia', " +
+                    "'acme/cli', :at, :at)",
+                "org" to ORG_A, "id" to id, "segment" to segment, "at" to NOW - 20.minutes,
+            )
+        }
+        for (micros in listOf(250_000L, 150_000L)) {
+            server.sql(
+                ORG_A,
+                "INSERT INTO usage_events (id, org_id, member_id, kind, name, session_id, launch_id, input_tokens, " +
+                    "output_tokens, cache_read_tokens, cache_write_tokens, cost_micros, duration_ms, outcome, at) " +
+                    "VALUES (:id, :org, :member, 'MODEL', 'gemini-pro', 'lch_9', 'lch_9', 1, 1, 0, 0, :micros, 5, " +
+                    "'ok', :at)",
+                "id" to Uuid.random(), "org" to ORG_A, "member" to MIA.memberId, "micros" to micros,
+                "at" to NOW - 8.minutes,
+            )
+        }
+        val report = server.read("olga", "/api/v1/spending").body<SpendingDto>()
+        assertEquals(1.95, report.totalUsd, 1e-9)
+        assertEquals(SpendingLineDto("gemini", "gemini", 0.4, 1), report.byAgent.single { it.key == "gemini" })
+        assertEquals(SpendingLineDto("acme/cli", "acme/cli", 0.4, 1), report.byRepo.single { it.key == "acme/cli" })
+        assertEquals(0.05, report.byAgent.single { it.key == "" }.usd, 1e-9, "Only the call outside any session")
+    }
+
+    @Test
     fun aMemberSeesOnlyTheirOwnWeekAndATokenNeedsAReadScope() = reportsTest { server ->
         val week = server.read("mia", "/api/v1/spending?period=week").body<SpendingDto>()
         assertEquals("week", week.period)
