@@ -15,7 +15,8 @@ import kotlin.uuid.Uuid
 /**
  * Records a check run the runner of a cloud session reports with its own token (decision 13:23, S2-49): the agent
  * cannot read that token, so the run is `isolated_runner` in the receipt, where a run of the launcher's hooks is only
- * the workstation's declaration.
+ * the workstation's declaration. The runner runs the text the hook sends: a run of any other script than the package's
+ * is recorded as `tampered` and stays the workstation's declaration (AUDIT-SECU-RUNNER-2 R1).
  */
 interface ReportRunnerCheckUseCase {
     /**

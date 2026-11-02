@@ -127,12 +127,14 @@ class AskGateUseCaseImpl(
             if (GateCommands.mentionsMerge(command)) add(MERGE)
         }
         val notSo = ask.push != null && ask.actionClass in BY_REFS && ask.actionClass !in read
-        val claimed = if (notSo) null else nodes.resolve(orgId, repo, ask.actionClass)
+        // One read of the gates for every class this ask looks up (each read compiles the workflows and the rules).
+        val gateOf = nodes.resolver(orgId, repo)
+        val claimed = if (notSo) null else gateOf(ask.actionClass)
         val backstop = if (claimed?.enforced == true) {
             null
         } else {
             read.filter { it != ask.actionClass }.firstNotNullOfOrNull { cls ->
-                nodes.resolve(orgId, repo, cls)?.takeIf { it.enforced }?.let { cls to it }
+                gateOf(cls)?.takeIf { it.enforced }?.let { cls to it }
             }
         }
         return backstop ?: (ask.actionClass to claimed)
