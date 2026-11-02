@@ -35,6 +35,10 @@ import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.usage.UsageModule
+import dev.ostrom.server.usage.domain.UsageRepository
+import dev.ostrom.server.usage.presentation.UsageEventRequest
+import dev.ostrom.server.usage.presentation.UsageEventsRequest
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.mock.MockEngine
@@ -66,13 +70,14 @@ import kotlin.uuid.Uuid
 
 /**
  * `ostrom claude` keeps the organization's MCP servers (cli#57): the agent token of a launch lists the servers its
- * person is assigned and reaches them through the relay, on the real identity, orgs, launches, secrets and relay
- * modules and PostgreSQL; another organization's agent sees none of them.
+ * person is assigned and reaches them through the relay, on the real identity, orgs, launches, secrets, relay and
+ * usage modules and PostgreSQL; its journal rows and usage events name its launch. Another organization's agent sees
+ * none of the servers.
  */
 class LaunchRelayCallersPostgresTest {
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, LaunchesModule,
-        SecretsModule, McpRelayModule,
+        SecretsModule, McpRelayModule, UsageModule,
     )
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
@@ -184,6 +189,19 @@ class LaunchRelayCallersPostgresTest {
                 "The relay's journal names the agent's launch on each of its calls",
             )
             assertEquals(setOf(ada.caller.memberId), journal.map { it.memberId }.toSet())
+
+            val declared = client.post("/api/v1/usage/events") {
+                bearerAuth(agent)
+                contentType(ContentType.Application.Json)
+                setBody(UsageEventsRequest(listOf(UsageEventRequest("skill", "deploy"))))
+            }
+            assertEquals(HttpStatusCode.Accepted, declared.status, declared.bodyAsText())
+            val events = koin.get<UsageRepository>().list(ada.caller.orgId, null, null, 10)
+            assertEquals(
+                listOf(launched.launchId to ada.caller.memberId),
+                events.map { it.launchId to it.memberId },
+                "A usage event an agent sends names its launch, from the token",
+            )
 
             val console = client.post("/api/v1/mcp/servers") {
                 bearerAuth(agent)
