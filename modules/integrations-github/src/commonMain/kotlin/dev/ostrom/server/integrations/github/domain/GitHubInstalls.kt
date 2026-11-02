@@ -30,23 +30,25 @@ class InstallationNotYoursException :
  * owner's or an admin's session, used once and for 10 minutes. Only its digest is kept, over the state and the session
  * that started the install, so the state is bound to its organization and to that session: GitHub sends the browser
  * back to the callback with the person's session cookie, and a state brought back by another session (or replayed)
- * matches no row. The `installation_id` of the return is
- * never trusted on its own (installation ids are sequential): the App asks the person to authorize it during the
- * install, the callback's `code` is exchanged for their token, and the id is accepted only if GitHub lists it among
- * the installations they can reach. The installation is then read with the App's own JWT before it is linked.
+ * matches no row. The `installation_id` of the return is never trusted on its own (installation ids are sequential):
+ * the App asks the person to authorize it during the install, the callback's `code` is exchanged for their token, and
+ * the id is accepted only if GitHub lists it among the installations they can reach. The installation is then read
+ * with the App's own JWT before it is linked.
  *
  * @param repository Installations and states.
  * @param api GitHub.
- * @param slug The App's slug, or null when not configured.
+ * @param slug The App's slug, or null when not configured (read at each start: the App can be created later).
  * @param webUrl GitHub's web address.
  * @param clock The clock.
+ * @param installed Told of each installation linked (the directory is read again).
  */
 class GitHubInstalls(
     private val repository: GitHubRepository,
     private val api: GitHubApi,
-    private val slug: String?,
+    private val slug: suspend () -> String?,
     private val webUrl: String,
     private val clock: Clock,
+    private val installed: suspend (GitHubInstallation) -> Unit = {},
 ) {
     /**
      * Starts an install.
@@ -58,7 +60,7 @@ class GitHubInstalls(
      * @throws GitHubAppNotConfiguredException Without an App.
      */
     suspend fun start(orgId: Uuid, by: String, session: String): String {
-        val app = slug ?: throw GitHubAppNotConfiguredException()
+        val app = slug() ?: throw GitHubAppNotConfiguredException()
         val state = Uuid.random().toHexString() + Uuid.random().toHexString()
         repository.saveState(orgId, hash(state, session), by, clock.now() + STATE_LIFETIME)
         return "$webUrl/apps/$app/installations/new?state=$state"
@@ -97,6 +99,7 @@ class GitHubInstalls(
         }
         val installation = GitHubInstallation(orgId, id, account)
         repository.saveInstallation(installation, clock.now())
+        installed(installation)
         return installation
     }
 

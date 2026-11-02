@@ -109,6 +109,22 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         }
     }
 
+    override suspend fun approversOf(orgId: Uuid, gateIds: List<Uuid>): Map<Uuid, List<String>> {
+        if (gateIds.isEmpty()) return emptyMap()
+        return driver.transaction {
+            Tx(this).run {
+                scope.enter(orgId)
+                // Each id bound on its own (`:g0`, `:g1`…), as the gates of a page above; gates_requests_by_gate.
+                val statement = Statement.create(approversSql(gateIds.size)).bind("org", orgId)
+                gateIds.forEachIndexed { index, gateId -> statement.bind("g$index", gateId) }
+                executor.rows(statement).groupBy(
+                    keySelector = { it.get("gate_id").asUuid() },
+                    valueTransform = { it.get("approver_id").asString() },
+                )
+            }
+        }
+    }
+
     // The organization the transaction's row-level security is set to, set once per organization.
     private class OrgScope(private val executor: QueryExecutor) {
         private var org: Uuid? = null
@@ -427,3 +443,22 @@ internal data class NodeRecord(
 /** The stored form of an [Evidence] line. */
 @Serializable
 internal data class EvidenceRecord(val label: String, val value: String)
+
+/**
+ * The read of [PostgresGatesRepository.approversOf]: the approvers of [count] gates, `:org` and `:g0`…`:g<count-1>`
+ * bound, at most [APPROVERS_PER_GATE] each as when a gate's requests are read. The cap is per gate, never one limit
+ * for all of them: a gate with many requests cannot push the next gates out of the result. Shared with its plan test.
+ *
+ * @param count How many gate ids are bound.
+ * @return The statement's text.
+ */
+internal fun approversSql(count: Int): String {
+    val names = (0 until count).joinToString(", ") { ":g$it" }
+    return "SELECT gate_id, approver_id FROM (SELECT gate_id, approver_id, position, " +
+        "row_number() OVER (PARTITION BY gate_id ORDER BY position) AS rank FROM gates_requests " +
+        "WHERE org_id = :org AND gate_id IN ($names)) ranked " +
+        "WHERE rank <= $APPROVERS_PER_GATE ORDER BY gate_id, position"
+}
+
+/** How many requests a gate's read returns at most. */
+private const val APPROVERS_PER_GATE = 100

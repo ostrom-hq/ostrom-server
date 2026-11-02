@@ -98,6 +98,8 @@ jobs:
     needs: binaries
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      digest: ${{ steps.index.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -222,3 +224,18 @@ jobs:
             echo
             echo "Tags:"; printf '%s\n' "${{ steps.meta.outputs.tags }}" | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The image just published, run whole in ostrom-helm's local demo stack with the customer's journey (demo-stack.yml).
+  demo:
+    needs: image
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/demo-stack.yml
+    with:
+      server_image: ghcr.io/ostrom-hq/ostrom-server@${{ needs.image.outputs.digest }}
+    secrets:
+      DEPLOY_KEY_HELM: ${{ secrets.DEPLOY_KEY_HELM }}
+      DEPLOY_KEY_WEB: ${{ secrets.DEPLOY_KEY_WEB }}
+      STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}

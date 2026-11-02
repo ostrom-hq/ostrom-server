@@ -14,6 +14,7 @@ enum class ErrorKind(val type: String) {
     FORBIDDEN("forbidden"),
     NOT_FOUND("not_found"),
     CONFLICT("conflict"),
+    ORG_REQUIRED("org_required"),
     PAYLOAD_TOO_LARGE("payload_too_large"),
     UNSUPPORTED_MEDIA_TYPE("unsupported_media_type"),
     RATE_LIMITED("rate_limited"),

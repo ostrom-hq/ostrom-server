@@ -11,6 +11,7 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.infrastructure.GatesQueries
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
+import dev.ostrom.server.gates.infrastructure.approversSql
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -50,7 +51,7 @@ class GatesQueryPlansTest {
     @Test
     fun theGatesRequestPathReadsOnlyTheRowsItServes() = serverTest(listOf(GatesModule), signer) { server ->
         val repository = PostgresGatesRepository(server.driver)
-        val first = seed(repository, orgA, (0 until GATES_OF_A).toList()).first()
+        val ofA = seed(repository, orgA, (0 until GATES_OF_A).toList())
         for ((index, org) in others.withIndex()) {
             seed(repository, org, (GATES_OF_A + index until TOTAL_GATES step others.size).toList())
         }
@@ -61,7 +62,7 @@ class GatesQueryPlansTest {
         for (table in listOf("gates_gates", "gates_requests", "gates_sessions")) {
             server.database.owner.execute("VACUUM ANALYZE $table").getOrThrow()
         }
-        val plans = plansOf(server.driver, first)
+        val plans = plansOf(server.driver, ofA)
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/gates.txt")).buffered().use { it.writeString(report) }
@@ -72,7 +73,9 @@ class GatesQueryPlansTest {
         }
     }
 
-    private suspend fun plansOf(serving: Driver, first: Gate): Map<String, String> {
+    private suspend fun plansOf(serving: Driver, ofA: List<Gate>): Map<String, String> {
+        val first = ofA.first()
+        val page = ofA.take(QUEUE_PAGE)
         val inbox = GatesQueries.approvals(approver = true, status = false)
         val pending = GatesQueries.approvals(approver = true, status = true)
         val recent = GatesQueries.approvals(approver = false, status = false)
@@ -94,6 +97,9 @@ class GatesQueryPlansTest {
             "newest requests of the org" to serving.explain(recent) { bind("limit", 50) },
             "gates of a page of requests" to serving.explain(GatesQueries.gates(2)) {
                 bind("g0", first.id).bind("g1", Uuid.random())
+            },
+            "approvers of the gates of a yes queue (approversOf)" to serving.explain(approversSql(page.size)) {
+                page.foldIndexed(this) { index, statement, gate -> statement.bind("g$index", gate.id) }
             },
             "gates of a session (session receipt)" to serving.explain(GatesQueries.OF_SESSION) {
                 bind("session", sessionOf(7))
@@ -161,6 +167,7 @@ class GatesQueryPlansTest {
         const val KEYS = 300
         const val SESSIONS = 1_000
         const val APPROVERS = 20
+        const val QUEUE_PAGE = 108
         const val OPS = "ops@acme.test"
         // An index read filters nothing, or the few rows of a recheck: the org's 2 000 gates or 4 000 requests never.
         const val MAX_FILTERED = 100
