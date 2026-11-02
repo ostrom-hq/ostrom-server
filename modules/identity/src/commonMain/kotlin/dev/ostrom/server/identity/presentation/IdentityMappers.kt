@@ -8,13 +8,11 @@ import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.IssuedToken
 import dev.ostrom.server.identity.domain.Profile
 import dev.ostrom.server.identity.domain.TokenScope
-import dev.ostrom.server.identity.domain.WebSession
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgProfile
 import dev.ostrom.server.kernel.http.ApiError
 import dev.ostrom.server.kernel.http.ErrorDetail
 import io.ktor.http.HttpStatusCode
-import kotlin.uuid.Uuid
 
 /** Maps the account: the profile with its e-mails and ways in. */
 fun Profile.toAccountResponse() = AccountResponse(
@@ -158,11 +156,3 @@ fun List<AuditEvent>.toAuditEventsResponse(limit: Int) = AuditEventsResponse(
 
 /** The largest page of audit events, as the use case clamps it. */
 private const val MAX_AUDIT_PAGE = 200
-
-/**
- * Maps a browser session.
- *
- * @param currentId The session making the request.
- */
-fun WebSession.toAuthSessionResponse(currentId: Uuid) =
-    AuthSessionResponse(id.toString(), createdAt.toString(), lastSeenAt.toString(), current = id == currentId)
