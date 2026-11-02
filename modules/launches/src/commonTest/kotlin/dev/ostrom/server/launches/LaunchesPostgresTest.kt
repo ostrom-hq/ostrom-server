@@ -239,6 +239,15 @@ class LaunchesPostgresTest {
         serverTest(modules) { server ->
             val ada = server.person("ada")
             repeat(LAUNCHES) { server.launch(ada) }
+            // Other people of the organization, in the window and before it: each index then has a query it wins.
+            val launches = server.koin.get<LaunchesRepository>()
+            val roomy = LaunchLimit(window = 1.hours, perPerson = 1000, perOrg = 1000)
+            repeat(OTHERS_IN_WINDOW) {
+                assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 10.minutes), roomy))
+            }
+            repeat(OTHERS_BEFORE) {
+                assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 3.hours), roomy))
+            }
             server.database.owner.execute("ANALYZE launches_launches").getOrThrow() // the serving role owns no table
             val plan = server.driver.withOrganization(ada.org.id) { tx ->
                 val explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) ${PostgresLaunchesRepository.FIND}")
@@ -392,6 +401,15 @@ class LaunchesPostgresTest {
         serverTest(modules) { server ->
             val ada = server.person("ada")
             repeat(LAUNCHES) { server.launch(ada) }
+            // Other people of the organization, in the window and before it: each index then has a query it wins.
+            val launches = server.koin.get<LaunchesRepository>()
+            val roomy = LaunchLimit(window = 1.hours, perPerson = 1000, perOrg = 1000)
+            repeat(OTHERS_IN_WINDOW) {
+                assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 10.minutes), roomy))
+            }
+            repeat(OTHERS_BEFORE) {
+                assertNull(launches.create(stored(ada.org.id, Uuid.random(), now - 3.hours), roomy))
+            }
             server.database.owner.execute("ANALYZE launches_launches").getOrThrow()
             listOf(
                 PostgresLaunchesRepository.PERSON_WINDOW to "launches_launches_person",
@@ -418,6 +436,8 @@ class LaunchesPostgresTest {
 
     private companion object {
         const val LAUNCHES = 20
+        const val OTHERS_IN_WINDOW = 100
+        const val OTHERS_BEFORE = 200
         const val CONCURRENT = 8
         const val IDLE_MINUTES = 30
         const val RUN_MINUTES = 120
