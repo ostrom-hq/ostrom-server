@@ -95,10 +95,20 @@ private fun OrgAuditLine.toResponse() = OrgAuditEventResponse(
     event.id.toString(),
     event.occurredAt.toString(),
     event.entry.action,
-    actorLogin ?: event.entry.actorId?.toString() ?: event.entry.details.machineActor() ?: SERVER_ACTOR,
+    actor(),
     "${event.entry.targetType}:${event.entry.targetId}",
     event.entry.details,
 )
 
-// A credential that is not a person's: its kind and id, as IdentityOrgAuditTrail writes them.
-private fun Map<String, String>.machineActor(): String? = get("actor_kind")?.let { "$it:${get("actor_id")}" }
+// The person's login, their id once they no longer exist, a credential that is not a person's by its kind and id (as
+// IdentityOrgAuditTrail writes them), or the server.
+private fun OrgAuditLine.actor(): String {
+    val entry = event.entry
+    val kind = entry.details["actor_kind"]
+    return when {
+        actorLogin != null -> actorLogin
+        entry.actorId != null -> entry.actorId.toString()
+        kind != null -> "$kind:${entry.details["actor_id"]}"
+        else -> SERVER_ACTOR
+    }
+}

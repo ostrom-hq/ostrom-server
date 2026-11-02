@@ -117,8 +117,12 @@ class OrgAuditTest {
         trail.record(OrgAuditRecord(orgId, agent, "mcp.settings.changed", "settings", "mcp"))
         val oddPerson = AuthenticatedPrincipal("not-an-id", PrincipalKind.USER, emptySet())
         trail.record(OrgAuditRecord(orgId, oddPerson, "inference.policy.changed", "policy", "models"))
+        // A service key's id is a UUID, and still not a person's.
+        val key = Uuid.random()
+        val service = AuthenticatedPrincipal("$key", PrincipalKind.SERVICE, emptySet())
+        trail.record(OrgAuditRecord(orgId, service, "budget.changed", "budget", "organization"))
 
-        val (person, machine, odd) = log.entries
+        val (person, machine, odd, byKey) = log.entries
         val details = mapOf("a" to "1", "credential" to "browser")
         assertEquals(AuditEntry(orgId, ada.id, "budget.changed", "budget", "organization", details), person)
         assertNull(machine.actorId)
@@ -126,5 +130,7 @@ class OrgAuditTest {
         assertEquals(agentDetails, machine.details)
         assertNull(odd.actorId)
         assertEquals("user", odd.details["actor_kind"])
+        assertNull(byKey.actorId)
+        assertEquals("service" to "$key", byKey.details["actor_kind"] to byKey.details["actor_id"])
     }
 }

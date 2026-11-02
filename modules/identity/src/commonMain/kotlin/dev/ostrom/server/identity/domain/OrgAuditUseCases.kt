@@ -69,7 +69,9 @@ class ListOrgAuditUseCaseImpl(
     override suspend fun invoke(orgId: Uuid, actorLogin: String?, action: String?, before: String?): OrgAuditPage {
         val beforeSequence = before?.let { it.toLongOrNull()?.takeIf { sequence -> sequence > 0 } }
         if (before != null && beforeSequence == null) throw InvalidAuditCursorException()
-        val actorId = actorLogin?.let { users.findByLogin(it)?.id ?: return OrgAuditPage(emptyList(), null) }
+        val actorId = actorLogin?.let { login ->
+            (users.findByLogin(login) ?: return OrgAuditPage(emptyList(), null)).id
+        }
         // One line more than a page: when it comes, there is a next page; never a cursor to an empty one.
         val read = events.listOrg(orgId, OrgAuditQuery(actorId, action, beforeSequence, ORG_AUDIT_PAGE + 1))
         val page = read.take(ORG_AUDIT_PAGE)
