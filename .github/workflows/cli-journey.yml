@@ -1,21 +1,21 @@
 name: CLI journey
 
 # The CLI's journey (ostrom-cli e2e/journey.py, demo/PARCOURS.md from `ostrom login` to `ostrom claude`, its gate, the
-# second person's yes and the receipt) against a PUBLISHED image of this server: by default `sha-<7>` of main's head,
-# never `edge`, which a slower run of an older commit may still hold. The CLI is built here from ostrom-cli (its
+# second person's yes and the receipt) against a PUBLISHED image of this server: by default the newest `sha-<7>` of
+# main's last commits published, never `edge`, which names no commit and a slower run of an older one may still hold. The CLI is built here from ostrom-cli (its
 # linuxX64 release binary, with ostrom-core from the commit it pins). It runs in this repository because its token
 # reads its own GHCR packages, which ostrom-cli's cannot yet (the CLI's own journey is skipped there, "package Actions
-# access"). On demand, every night (main's CLI against `edge`, the last image main published, whose own commit gives the
-# database roles: at night no slower run holds it, and a main whose image failed still gets its journey; the hook's
-# latency budgets of step 5.8 live in ostrom-cli's e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as
-# demo-stack.yml), on a pull request only when the pull request changes this file.
+# access"). On demand, every night (main's CLI against the newest `sha-<7>` of main published, named in the run's
+# summary, so a red night points at a commit; the hook's latency budgets of step 5.8 live in ostrom-cli's
+# e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull request only when the
+# pull request changes this file.
 on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       server_image:
-        description: Server image (empty = ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main's head)
+        description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
         default: ""
       cli_ref:
         description: ostrom-cli ref whose binary and journey run
@@ -53,7 +53,7 @@ jobs:
           --health-cmd "pg_isready -U ostrom -d ostrom_ci" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       CLI_REF: ${{ inputs.cli_ref || 'main' }}
-      WANTED_IMAGE: ${{ inputs.server_image || (github.event_name == 'schedule' && 'ghcr.io/ostrom-hq/ostrom-server:edge') || '' }}
+      WANTED_IMAGE: ${{ inputs.server_image }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,17 +79,36 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: ostrom-core
           persist-credentials: false
-      - name: The server image (sha-<7> of main's head unless named)
+      - name: The server image (the newest sha-<7> of main published, unless named)
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: |
           main=$(git -C server rev-parse origin/main)
-          image=${WANTED_IMAGE:-ghcr.io/ostrom-hq/ostrom-server:sha-${main:0:7}}
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker pull --quiet "$image" || { echo "::error::$image cannot be pulled (not published yet?)"; exit 1; }
+          image=$WANTED_IMAGE
+          if [ -z "$image" ]; then
+            # as console-journey.yml: the newest of main's last commits published (a head whose image failed or is
+            # still building is skipped), never `edge`, which names no commit. Any other pull error stops the job.
+            for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
+              candidate=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
+              if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
+                image=$candidate
+                break
+              fi
+              case "$error" in
+                *"manifest unknown"* | *"not found"*) echo "$candidate is not published yet" ;;
+                *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
+              esac
+            done
+            [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
+          else
+            docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
+          fi
           revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
           [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+          git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
+            || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
           # The database roles of the image's own commit, not of a main that may have moved past it.
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
           echo "image=$image" >> "$GITHUB_OUTPUT"
