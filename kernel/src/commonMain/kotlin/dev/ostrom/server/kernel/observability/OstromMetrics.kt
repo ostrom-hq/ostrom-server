@@ -8,6 +8,7 @@ import dev.ostrom.core.telemetry.metrics.GaugeReading
 import dev.ostrom.core.telemetry.metrics.Meter
 import dev.ostrom.core.telemetry.metrics.increment
 import kotlin.concurrent.atomics.AtomicLong
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -23,6 +24,8 @@ import kotlin.time.Duration
 @OptIn(ExperimentalAtomicApi::class)
 class OstromMetrics(private val meter: Meter) {
     private val inFlight = AtomicLong(0)
+    private val activeSessions = PLACES.associateWith { AtomicReference<(() -> Long)?>(null) }
+    private val cloudCapacity = AtomicLong(NO_CAPACITY)
     private val requestDuration = meter.histogram(
         "http.server.request.duration",
         "s",
@@ -50,6 +53,14 @@ class OstromMetrics(private val meter: Meter) {
     init {
         meter.gauge("http.server.active_requests", "{request}", "HTTP requests being served.") {
             listOf(GaugeReading(inFlight.load().toDouble()))
+        }
+        meter.gauge("ostrom.sessions.active", "{session}", "Agent sessions running.") {
+            activeSessions.mapNotNull { (where, reader) ->
+                reader.load()?.let { read -> GaugeReading(read().toDouble(), Attributes.of("where" to where)) }
+            }
+        }
+        meter.gauge("ostrom.sessions.cloud_capacity", "{session}", "Cloud sessions the operator's nodes hold.") {
+            listOfNotNull(cloudCapacity.load().takeIf { it != NO_CAPACITY }?.let { GaugeReading(it.toDouble()) })
         }
     }
 
@@ -135,24 +146,32 @@ class OstromMetrics(private val meter: Meter) {
     }
 
     /**
-     * Registers the running agent sessions and the cloud capacity, read at each export.
+     * Registers the running agent sessions of one place, read at each export. The module that runs them registers its
+     * place once: `local` (sessions), `cloud` (runners). Every replica reports the same count: dashboards take the max.
      *
-     * @param active Returns the running sessions by place (`local`, `cloud`); must be fast.
-     * @param cloudCapacity The most cloud sessions allowed at once (`OSTROM_CLOUD_MAX_CONCURRENT`).
+     * @param where `local` or `cloud`; any other place is refused.
+     * @param read Returns the last known count; must be fast (a cached value, not a query).
      */
-    fun observeSessions(active: () -> Map<String, Long>, cloudCapacity: Long) {
-        meter.gauge("ostrom.sessions.active", "{session}", "Agent sessions running.") {
-            active().map { (where, count) -> GaugeReading(count.toDouble(), Attributes.of("where" to where)) }
-        }
-        meter.gauge("ostrom.sessions.cloud_capacity", "{session}", "Cloud sessions allowed at once.") {
-            listOf(GaugeReading(cloudCapacity.toDouble()))
-        }
+    fun observeSessionsActive(where: String, read: () -> Long) {
+        activeSessions.getValue(where).store(read)
+    }
+
+    /**
+     * Declares how many cloud sessions the operator's nodes hold at once (`OSTROM_CLOUD_CAPACITY`), for the saturation
+     * alert only: nothing enforces it (each organization's plan limits its own sessions). Without it, no capacity
+     * series is sent and the alert stays silent.
+     *
+     * @param capacity The sessions, at least 1.
+     */
+    fun declareCloudCapacity(capacity: Long) {
+        cloudCapacity.store(capacity)
     }
 
     /** The bounded labels the callers pass. */
     companion object {
         private const val MICROS_PER_SECOND = 1_000_000.0
         private const val MILLIS_PER_SECOND = 1_000.0
+        private const val NO_CAPACITY = -1L
 
         /**
          * The `agent` label of a coding agent's name, as a launcher or a cloud session gives it: a known agent, or
@@ -171,3 +190,6 @@ class OstromMetrics(private val meter: Meter) {
 
 // Top-level, not in the companion: a private companion property has a getter nothing calls.
 private val AGENTS = setOf("claude", "codex", "opencode", "gemini", "shell")
+
+/** The places agent sessions run in, the `where` of `ostrom.sessions.active`. */
+private val PLACES = listOf("local", "cloud")

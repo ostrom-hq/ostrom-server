@@ -2,9 +2,13 @@
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.core.telemetry.Telemetry
+import dev.ostrom.server.kernel.auth.GovernanceAudit
 import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.RefusingGovernanceAudit
 import dev.ostrom.server.kernel.auth.RefusingGovernanceConfirmations
+import dev.ostrom.server.kernel.auth.governanceAuditKey
 import dev.ostrom.server.kernel.auth.governanceConfirmationsKey
+import dev.ostrom.server.kernel.auth.stepUpClockKey
 import dev.ostrom.server.kernel.auth.token
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
@@ -23,6 +27,7 @@ import io.ktor.server.resources.Resources
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
 import org.koin.core.Koin
+import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
 /** The JSON settings of every request and answer. */
@@ -60,6 +65,8 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     install(RequestLogging) { this.logger = logger }
     configureErrors(logger)
     install(Authentication) { token(koin.get()) }
+    attributes.put(governanceAuditKey, koin.getOrNull<GovernanceAudit>() ?: RefusingGovernanceAudit())
+    attributes.put(stepUpClockKey, koin.getOrNull<Clock>() ?: Clock.System)
     attributes.put(
         governanceConfirmationsKey,
         koin.getOrNull<GovernanceConfirmations>() ?: RefusingGovernanceConfirmations(),

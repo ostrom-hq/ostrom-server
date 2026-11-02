@@ -189,3 +189,44 @@ suspend fun ApplicationCall.holdForConfirmation(orgId: Uuid, scope: String, writ
     val request = GovernanceRequest(requirePrincipal(), orgId, scope, request.httpMethod.value, request.path(), write)
     respond(HttpStatusCode.Accepted, application.attributes[governanceConfirmationsKey].open(request))
 }
+
+/**
+ * Records each use of the token of `ostrom login --admin` that is not a held governance write (starting an analysis or
+ * a replay of the rules), before it happens, in its organization's audit log, by its person and credential (decision of
+ * 02/11/2026). A governance write made with a token is never recorded here: it is held ([holdForConfirmation]) and the
+ * governance module records each step of its confirmation. The identity module binds it; until it does,
+ * [configureHttp][dev.ostrom.server.kernel.http.configureHttp] uses [RefusingGovernanceAudit], so no token acts
+ * without its trace.
+ */
+interface GovernanceAudit {
+    /**
+     * Records one use.
+     *
+     * @param principal The token's principal.
+     * @param scope The governance scope the action uses.
+     * @param target The request, as `METHOD /path`.
+     */
+    suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String)
+}
+
+/** The [GovernanceAudit] of a server without the identity module: it refuses every token's governed action. */
+class RefusingGovernanceAudit : GovernanceAudit {
+    override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String): Unit =
+        throw OstromException(ErrorKind.FORBIDDEN, "This server keeps no audit log for $scope: sign in to the console.")
+}
+
+/** The application's [GovernanceAudit], set by [configureHttp][dev.ostrom.server.kernel.http.configureHttp]. */
+internal val governanceAuditKey: AttributeKey<GovernanceAudit> = AttributeKey("ostrom.governance.audit")
+
+/**
+ * Records a governed action made with a token ([GovernanceAudit]), once the route has checked who may make it and
+ * before it changes anything: when the record fails, the action does not happen. A browser session records nothing
+ * here.
+ *
+ * @param principal Who acts.
+ * @param scope The governance scope the action uses ([GovernanceScopes]).
+ */
+suspend fun ApplicationCall.auditGovernance(principal: AuthenticatedPrincipal, scope: String) {
+    if (principal.channel != PrincipalChannel.API_TOKEN) return
+    application.attributes[governanceAuditKey].record(principal, scope, "${request.httpMethod.value} ${request.path()}")
+}

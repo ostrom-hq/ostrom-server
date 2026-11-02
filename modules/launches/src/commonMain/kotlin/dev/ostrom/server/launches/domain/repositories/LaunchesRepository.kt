@@ -2,16 +2,22 @@
 package dev.ostrom.server.launches.domain.repositories
 
 import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.models.LaunchLimit
+import kotlin.time.Duration
 import kotlin.uuid.Uuid
 
 /** Storage of the launches, isolated by organization. */
 interface LaunchesRepository {
     /**
-     * Stores a new launch.
+     * Stores a new launch unless its person or its organization already launched as many as [limit] allows: the count
+     * and the insert hold the organization's lock, so two launches at once never both take the last place.
      *
      * @param launch The launch.
+     * @param limit The limits, counted back from the launch's creation.
+     *
+     * @return Null when stored; otherwise how long until a place frees up, and nothing is stored.
      */
-    suspend fun create(launch: Launch)
+    suspend fun create(launch: Launch, limit: LaunchLimit): Duration?
 
     /**
      * Reads a launch.

@@ -10,6 +10,7 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceAudit
 import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import dev.ostrom.server.kernel.auth.GovernanceConfirmations
 import dev.ostrom.server.kernel.auth.GovernanceRequest
@@ -103,6 +104,7 @@ object RulesCallers {
                     }
             }
         }
+        single<GovernanceAudit> { AuditRecorder() }
         single<GovernanceConfirmations> { HeldConfirmations() }
         single<PrincipalOrgResolver> {
             object : PrincipalOrgResolver {
@@ -161,6 +163,16 @@ object RulesCallers {
                         .takeIf { actionClass == "push-main" }
             }
         }
+    }
+}
+
+/** Keeps the governed actions of the elevated token recorded before they happen, as `METHOD /path` and scope. */
+class AuditRecorder : GovernanceAudit {
+    /** What was recorded, in order. */
+    val records: MutableList<String> = mutableListOf()
+
+    override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String) {
+        records += "$target $scope"
     }
 }
 

@@ -19,7 +19,8 @@ import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.CloudUsageMeter
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
-import dev.ostrom.server.runners.domain.MeteredCreateCloudSession
+import dev.ostrom.server.runners.domain.DeleteRunnerUseCase
+import dev.ostrom.server.runners.domain.DeleteRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCase
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
@@ -27,14 +28,22 @@ import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCase
 import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCaseImpl
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCase
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCaseImpl
+import dev.ostrom.server.runners.domain.ListRegisteredRunnersUseCase
+import dev.ostrom.server.runners.domain.ListRegisteredRunnersUseCaseImpl
 import dev.ostrom.server.runners.domain.ListRunnersUseCase
 import dev.ostrom.server.runners.domain.ListRunnersUseCaseImpl
+import dev.ostrom.server.runners.domain.MeteredCreateCloudSession
 import dev.ostrom.server.runners.domain.OpenTerminalUseCase
 import dev.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCase
 import dev.ostrom.server.runners.domain.RecordCloudSessionActivityUseCaseImpl
+import dev.ostrom.server.runners.domain.RegisterRunnerUseCase
+import dev.ostrom.server.runners.domain.RegisterRunnerUseCaseImpl
+import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCase
+import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCaseImpl
+import dev.ostrom.server.runners.domain.RegisteredRunnersRepository
 import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
@@ -48,6 +57,7 @@ import dev.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import dev.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import dev.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
 import dev.ostrom.server.runners.infrastructure.ReconcilerWorker
+import dev.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.infrastructure.RunnersMigrations
@@ -108,9 +118,15 @@ object RunnersModule : ServerModule {
         single { ReconcilerWorker(get(), get(), get(), get()) }
         single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
         single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
+        single<RegisteredRunnersRepository> { RegisteredRunnersRepositoryImpl(get()) }
+        single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
+        single<RegisterRunnerUseCase> { RegisterRunnerUseCaseImpl(get(), get(), get()) }
+        single<DeleteRunnerUseCase> { DeleteRunnerUseCaseImpl(get()) }
+        single<RegisteredRunnerHeartbeatUseCase> { RegisteredRunnerHeartbeatUseCaseImpl(get(), get(), get()) }
         single {
             val config = get<RunnersConfig>()
-            RunnersRoutesDependencies(get(), RunnerRuntime(config.runtimeLabel, config.runnerImage), get())
+            val runtime = RunnerRuntime(config.runtimeLabel, config.runnerImage)
+            RunnersRoutesDependencies(get(), runtime, get(), get(), get(), get(), get())
         }
         single { TerminalRelay() }
         single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }

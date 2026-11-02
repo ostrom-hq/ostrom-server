@@ -308,10 +308,20 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
         name = "tokens_of_organizations_through_the_router",
         sql = TOKENS_OF_ORGANIZATIONS_SQL,
     ),
+    // An organization's service keys are listed inside it, by organization: a partial index on the live keys, so the
+    // list never scans the agent tokens of the same table.
+    SchemaMigration(
+        version = 7,
+        name = "service_keys",
+        sql = """
+            CREATE INDEX identity_api_tokens_service ON identity_api_tokens (org_id, created_at DESC)
+                WHERE kind = 'SERVICE' AND revoked_at IS NULL
+        """.trimIndent(),
+    ),
     // `ostrom login --admin`: the governance scopes asked for, and the organization whose owner or admin approved
     // them (not `org_id`: the authorization belongs to no organization, only the token it gives does).
     SchemaMigration(
-        version = 7,
+        version = 8,
         name = "device_authorizations_for_governance",
         sql = """
             ALTER TABLE identity_device_authorizations ADD COLUMN scopes TEXT NOT NULL DEFAULT '';

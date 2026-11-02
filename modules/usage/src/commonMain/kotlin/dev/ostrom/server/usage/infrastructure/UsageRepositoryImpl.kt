@@ -3,6 +3,12 @@ package dev.ostrom.server.usage.infrastructure
 
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
+import dev.ostrom.server.secrets.infrastructure.inTenant
+import dev.ostrom.server.usage.domain.Admission
+import dev.ostrom.server.usage.domain.HoldWindow
+import dev.ostrom.server.usage.domain.SpendHold
+import dev.ostrom.server.usage.domain.SpendLimits
+import dev.ostrom.server.usage.domain.SpendTotals
 import dev.ostrom.server.usage.domain.UsageCursor
 import dev.ostrom.server.usage.domain.UsageEvent
 import dev.ostrom.server.usage.domain.UsageGroupBy
@@ -40,6 +46,43 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         driver.executeInOrg(orgId, statement).getOrThrow()
     }
 
+    override suspend fun settle(event: UsageEvent) {
+        val insert = Statement.create("INSERT INTO usage_events ($COLUMNS) VALUES ($ONE_ROW)").bindEvent("", event)
+        driver.inTenant(event.orgId) {
+            execute(insert).getOrThrow()
+            execute(Statement.create(UsageQueries.DROP_HOLD).bind("call_id", event.id)).getOrThrow()
+        }
+    }
+
+    override suspend fun holdWithin(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Admission =
+        // One transaction on one connection: the lock is held until its end, and no read waits for another connection.
+        driver.inTenant(hold.orgId) {
+            fetchAll(Statement.create(UsageQueries.LOCK_HOLDS).bind("key", "usage_holds:${hold.orgId}")).getOrThrow()
+            execute(
+                Statement.create(UsageQueries.DROP_EXPIRED_HOLDS).bind("org_id", hold.orgId).bind("now", window.now),
+            ).getOrThrow()
+            val member = limits.memberMicros != null
+            val sums = Statement.create(UsageQueries.holdTotals(org = limits.orgMicros != null, member = member))
+                .bind("org_id", hold.orgId).bind("call_id", hold.callId)
+                .bind("since", window.since).bind("now", window.now)
+            if (member) sums.bind("member_id", hold.memberId)
+            val row = fetchAll(sums).getOrThrow().first()
+            val totals = SpendTotals(
+                orgSpent = row.get("org_spent").asLong(),
+                orgHeld = row.get("org_held").asLong(),
+                memberSpent = row.get("member_spent").asLong(),
+                memberHeld = row.get("member_held").asLong(),
+            )
+            limits.admit(totals, hold.micros).also { admission ->
+                if (admission == Admission.Admitted) {
+                    val put = Statement.create(UsageQueries.PUT_HOLD).bind("call_id", hold.callId)
+                        .bind("org_id", hold.orgId).bind("member_id", hold.memberId).bind("micros", hold.micros)
+                        .bind("expires_at", window.expiresAt)
+                    execute(put).getOrThrow()
+                }
+            }
+        }
+
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long {
         val statement = Statement.create(UsageQueries.spent(member = memberId != null))
             .bind("org_id", orgId).bind("since", since)
@@ -53,6 +96,13 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
             UsageQueries.ACCOUNT_SPENT,
         ).bind("org_id", orgId).bind("account_id", accountId).bind("since", since),
     ).getOrThrow().first().get("spent").asLong()
+
+    override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? =
+        driver.fetchInOrg(
+            orgId,
+            Statement.create(UsageQueries.LAUNCH_SPENT)
+                .bind("org_id", orgId).bind("launch_id", launchId).bind("from", from).bind("to", to),
+        ).getOrThrow().first().get("spent").asStringOrNull()?.toLong()
 
     override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> {
         val sql = UsageQueries.summary(groupBy, until = window.until != null, member = window.memberId != null)
@@ -96,46 +146,6 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
             .bind("before", before).bind("limit", limit),
     ).getOrThrow().first().get("n").asLong()
 
-    private fun Statement.bindEvent(prefix: String, event: UsageEvent): Statement = bind("${prefix}id", event.id)
-        .bind("${prefix}org_id", event.orgId)
-        .bindNullable("${prefix}member_id", event.memberId, Uuid::class)
-        .bind("${prefix}kind", event.kind.name)
-        .bind("${prefix}name", event.name)
-        .bindNullable("${prefix}provider", event.provider, String::class)
-        .bindNullable("${prefix}account_id", event.accountId, Uuid::class)
-        .bindNullable("${prefix}session_id", event.sessionId, String::class)
-        .bindNullable("${prefix}launch_id", event.launchId, String::class)
-        .bind("${prefix}input_tokens", event.inputTokens)
-        .bind("${prefix}output_tokens", event.outputTokens)
-        .bind("${prefix}cache_read_tokens", event.cacheReadTokens)
-        .bind("${prefix}cache_write_tokens", event.cacheWriteTokens)
-        .bind("${prefix}cost_micros", event.costMicros)
-        .bind("${prefix}duration_ms", event.durationMillis)
-        .bind("${prefix}outcome", event.outcome)
-        .bind("${prefix}at", event.at)
-
-    private fun Statement.bindNullable(name: String, value: Any?, type: KClass<*>): Statement =
-        if (value == null) bindNull(name, type) else bind(name, value)
-
-    private fun ResultSet.Row.toEvent() = UsageEvent(
-        id = get("id").asUuid(),
-        orgId = get("org_id").asUuid(),
-        memberId = get("member_id").asUuidOrNull(),
-        kind = UsageKind.valueOf(get("kind").asString()),
-        name = get("name").asString(),
-        provider = get("provider").asStringOrNull(),
-        accountId = get("account_id").asUuidOrNull(),
-        sessionId = get("session_id").asStringOrNull(),
-        launchId = get("launch_id").asStringOrNull(),
-        inputTokens = get("input_tokens").asLong(),
-        outputTokens = get("output_tokens").asLong(),
-        cacheReadTokens = get("cache_read_tokens").asLong(),
-        cacheWriteTokens = get("cache_write_tokens").asLong(),
-        costMicros = get("cost_micros").asLong(),
-        durationMillis = get("duration_ms").asLong(),
-        outcome = get("outcome").asString(),
-        at = get("at").asInstant(),
-    )
 }
 
 // Top level rather than in a companion: a private companion leaves a synthetic constructor no test can reach.
@@ -144,3 +154,45 @@ private val PARAMETERS = listOf(
     "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micros", "duration_ms", "outcome", "at",
 )
 internal val COLUMNS = PARAMETERS.joinToString(", ")
+private val ONE_ROW = PARAMETERS.joinToString(", ") { ":$it" }
+
+private fun Statement.bindEvent(prefix: String, event: UsageEvent): Statement = bind("${prefix}id", event.id)
+    .bind("${prefix}org_id", event.orgId)
+    .bindNullable("${prefix}member_id", event.memberId, Uuid::class)
+    .bind("${prefix}kind", event.kind.name)
+    .bind("${prefix}name", event.name)
+    .bindNullable("${prefix}provider", event.provider, String::class)
+    .bindNullable("${prefix}account_id", event.accountId, Uuid::class)
+    .bindNullable("${prefix}session_id", event.sessionId, String::class)
+    .bindNullable("${prefix}launch_id", event.launchId, String::class)
+    .bind("${prefix}input_tokens", event.inputTokens)
+    .bind("${prefix}output_tokens", event.outputTokens)
+    .bind("${prefix}cache_read_tokens", event.cacheReadTokens)
+    .bind("${prefix}cache_write_tokens", event.cacheWriteTokens)
+    .bind("${prefix}cost_micros", event.costMicros)
+    .bind("${prefix}duration_ms", event.durationMillis)
+    .bind("${prefix}outcome", event.outcome)
+    .bind("${prefix}at", event.at)
+
+private fun Statement.bindNullable(name: String, value: Any?, type: KClass<*>): Statement =
+    if (value == null) bindNull(name, type) else bind(name, value)
+
+private fun ResultSet.Row.toEvent() = UsageEvent(
+    id = get("id").asUuid(),
+    orgId = get("org_id").asUuid(),
+    memberId = get("member_id").asUuidOrNull(),
+    kind = UsageKind.valueOf(get("kind").asString()),
+    name = get("name").asString(),
+    provider = get("provider").asStringOrNull(),
+    accountId = get("account_id").asUuidOrNull(),
+    sessionId = get("session_id").asStringOrNull(),
+    launchId = get("launch_id").asStringOrNull(),
+    inputTokens = get("input_tokens").asLong(),
+    outputTokens = get("output_tokens").asLong(),
+    cacheReadTokens = get("cache_read_tokens").asLong(),
+    cacheWriteTokens = get("cache_write_tokens").asLong(),
+    costMicros = get("cost_micros").asLong(),
+    durationMillis = get("duration_ms").asLong(),
+    outcome = get("outcome").asString(),
+    at = get("at").asInstant(),
+)

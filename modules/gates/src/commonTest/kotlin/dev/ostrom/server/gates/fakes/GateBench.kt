@@ -12,6 +12,7 @@ import dev.ostrom.server.gates.domain.models.GatePush
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.models.PushRef
+import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.usecases.AnswerGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.GetApprovalQueueUseCaseImpl
@@ -28,13 +29,16 @@ import dev.ostrom.server.gates.infrastructure.InProcessGateChanges
 class GateBench {
     val repository = InMemoryGatesRepository()
     val sessions = FakeSessions()
-    val policies = FakePolicies()
+    // The prototype's tests model an organization that chose `sole-approver`; one that never chose is `never`.
+    val policies = FakePolicies(SelfApprovalPolicy.SOLE_APPROVER)
     val notifier = FakeNotifier()
     val signer = FakeSigner()
     val clock = SettableClock()
     val logger = RecordingLogger()
     val receipts = EnsureGateReceiptUseCaseImpl(repository, signer, logger)
-    val open = OpenGateUseCaseImpl(repository, sessions, policies, notifier, IdentityDigester(), clock)
+    val needs = FakeCheckNeeds()
+    val proofs = FakeCheckProofs()
+    val open = OpenGateUseCaseImpl(repository, sessions, policies, notifier, IdentityDigester(), clock, needs, proofs)
     val changes = InProcessGateChanges()
     val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock, changes)
     val use = UseGateUseCaseImpl(repository, receipts, clock)

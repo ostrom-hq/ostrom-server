@@ -19,6 +19,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
 
 /**
@@ -75,6 +76,18 @@ class UsageQueryPlansTest {
                     bind("limit", 50).bind("member_id", member)
                         .bind("before_at", since).bind("before_id", Uuid.random())
                 },
+                "spend of a launch while its session ran (session receipt)" to
+                    driver.explain(UsageQueries.LAUNCH_SPENT) {
+                        bind(
+                            "launch_id",
+                            "lch_1",
+                        ).bind("from", TestCallers.epoch - 2.hours).bind("to", TestCallers.epoch)
+                    },
+                "spend and holds of the org and a member (gateway admission, under the org's lock)" to
+                    driver.explain(UsageQueries.holdTotals(org = true, member = true)) {
+                        bind("since", since).bind("now", TestCallers.epoch).bind("call_id", Uuid.random())
+                            .bind("member_id", member)
+                    },
                 "summary of 30 days by model" to
                     driver.explain(UsageQueries.summary(UsageGroupBy.MODEL, false, false)) {
                         bind("since", since).bind("limit", 1000)

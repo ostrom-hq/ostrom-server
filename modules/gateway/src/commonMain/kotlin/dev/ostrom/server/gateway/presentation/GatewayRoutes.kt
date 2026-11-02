@@ -8,6 +8,8 @@ import dev.ostrom.server.gateway.domain.ModelPolicy
 import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.WireProtocol
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.auditDetails
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.GovernanceWrite
@@ -17,6 +19,7 @@ import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.confirmsByConsole
 import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.OrgNotFoundException
@@ -96,30 +99,14 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
             val caller = call.requireCaller(callers, RelayScopes.INFERENCE_READ, RelayScopes.AGENT_SESSION)
             call.respond(getPolicy(caller).toDto())
         }
-        put<ModelPolicyApi> {
-            val principal = call.requirePrincipal()
-            if (principal.confirmsByConsole) {
-                // A person's token (the CLI's, elevated or not): an owner's or admin's change, held for the console.
-                val caller = callers.resolve(principal, null) ?: throw OrgNotFoundException()
-                caller.requireAdmin()
-                val request = call.receive<ModelPolicyDto>()
-                val payload = GatewayGovernanceChange.payload(request)
-                val write = GovernanceWrite(GatewayGovernanceChange.MODEL_POLICY, payload)
-                return@put call.holdForConfirmation(caller.orgId, GovernanceScopes.POLICY_WRITE, write)
-            }
-            val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = POLICY_WRITERS)
-            // A person signed in to the console: an owner or admin, at every request.
-            if (principal.kind == PrincipalKind.USER) caller.requireAdmin()
-            val request = call.receive<ModelPolicyDto>()
-            call.respond(
-                putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember)).toDto(),
-            )
-        }
+        put<ModelPolicyApi> { call.putModelPolicy(dependencies) }
         get<InferenceSettingsApi> {
             call.respond(getSettings(call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN)).toDto())
         }
         put<InferenceSettingsApi> {
             val caller = call.requireCaller(callers, RelayScopes.INFERENCE_ADMIN, writers = INFERENCE_ADMINS)
+            call.requireRecentSignIn("change the model keys")
+            val principal = call.requirePrincipal()
             val request = call.receive<InferenceSettingsDto>()
             val settings = GatewaySettings(
                 request.anthropicKeySecret,
@@ -127,9 +114,50 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
                 request.openrouterKeySecret,
                 request.useSharedAccounts,
             )
-            call.respond(putSettings(caller, settings).toDto())
+            val saved = putSettings(caller, settings)
+            // The names of the secrets the keys are read from, never a key: repointing a key is in the log.
+            val details = auditDetails(
+                "anthropic_key_secret" to saved.anthropicKeySecret,
+                "openai_key_secret" to saved.openaiKeySecret,
+                "openrouter_key_secret" to saved.openrouterKeySecret,
+                "use_shared_accounts" to saved.useSharedAccounts,
+            )
+            audit.record(
+                OrgAuditRecord(caller.orgId, principal, "inference.settings.changed", "settings", "inference", details),
+            )
+            call.respond(saved.toDto())
         }
     }
+}
+
+/**
+ * Changes the model policy: an `inference:admin` key, a browser session or the token of `ostrom login --admin`; a
+ * person is an owner or admin, checked at every request, and the elevated token's write is recorded before it happens.
+ *
+ * @param dependencies The use cases.
+ */
+private suspend fun ApplicationCall.putModelPolicy(dependencies: GatewayRoutesDependencies) {
+    val principal = requirePrincipal()
+    if (principal.confirmsByConsole) {
+        // A person's token (the CLI's, elevated or not): an owner's or admin's change, held for the console.
+        val caller = dependencies.callers.resolve(principal, null) ?: throw OrgNotFoundException()
+        caller.requireAdmin()
+        val payload = GatewayGovernanceChange.payload(receive<ModelPolicyDto>())
+        val write = GovernanceWrite(GatewayGovernanceChange.MODEL_POLICY, payload)
+        return holdForConfirmation(caller.orgId, GovernanceScopes.POLICY_WRITE, write)
+    }
+    val caller = requireCaller(
+        dependencies.callers,
+        RelayScopes.INFERENCE_ADMIN,
+        GovernanceScopes.POLICY_WRITE,
+        writers = POLICY_WRITERS,
+    )
+    // A person signed in to the console: an owner or admin, at every request.
+    if (principal.kind == PrincipalKind.USER) caller.requireAdmin()
+    val request = receive<ModelPolicyDto>()
+    val policy = dependencies.putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember))
+    dependencies.audit.record(policy.changedBy(caller.orgId, principal))
+    respond(policy.toDto())
 }
 
 private fun ModelPolicy.toDto() = ModelPolicyDto(allowed, default, byMember)

@@ -4,6 +4,7 @@ package dev.ostrom.server.identity.presentation
 import dev.ostrom.server.identity.domain.CreateSignInLinkUseCase
 import dev.ostrom.server.identity.domain.ExchangeSignInLinkUseCase
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.HttpHeaders
@@ -68,8 +69,11 @@ class OriginNotAllowedException :
 /** Where the console goes after a sign-in link: the approval page it was made for. */
 const val SIGN_IN_LINK_LANDING = "/yes"
 
-/** The paths whose answers no cache keeps (sign-in, the profile, tokens): `Cache-Control: no-store` (S2-08). */
-private val NO_STORE_PATHS = listOf("/api/v1/auth", "/api/v1/tokens")
+/**
+ * The paths whose answers no cache keeps (sign-in, the profile, tokens, service keys, devices): `Cache-Control:
+ * no-store` (S2-08).
+ */
+private val NO_STORE_PATHS = listOf("/api/v1/auth", "/api/v1/tokens", "/api/v1/service-keys", "/api/v1/devices")
 
 /**
  * The dependencies of the session routes.
@@ -100,6 +104,9 @@ fun Route.sessionRoutes(dependencies: SessionRoutesDependencies) = with(dependen
     authenticated {
         post<SessionLinkApi.Create> {
             val principal = call.requireBrowserSession()
+            // The link starts a new session, signed in now: made from an old session, it would turn it into a fresh
+            // sign-in and pass every step-up. It takes the same fresh sign-in as the writes it would unlock.
+            call.requireRecentSignIn("make a sign-in link")
             val created = createSignInLink(principal.userId())
             val url = config.consoleUrl + SIGN_IN_LINK_LANDING + "#signin=" + created.token
             val expiresAt = created.link.expiresAt.toString()

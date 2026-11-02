@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules.presentation
 
+import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.GovernanceWrite
+import dev.ostrom.server.kernel.auth.WriteAccess
+import dev.ostrom.server.kernel.auth.auditGovernance
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.confirmsByConsole
 import dev.ostrom.server.kernel.auth.governs
@@ -13,6 +16,7 @@ import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.rules.domain.models.Decider
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.OnlyConsoleDecidesException
+import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgNotFoundException
 import dev.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.HttpStatusCode
@@ -109,10 +113,36 @@ private sealed interface Writer {
 }
 
 /**
+ * The person who decides an action that is not a held governance write (starting an analysis or a replay): signed in
+ * to the console (a user's browser session, which holds every user scope) or holding [scope] on the token of
+ * `ostrom login --admin`, owner or admin of the organization (checked at every request: a demoted admin's token stops
+ * deciding at once), named by their GitHub login when the gates know it. The elevated token's use is recorded in the
+ * audit log first ([auditGovernance]).
+ *
+ * @param callers Who the caller is in their organization.
+ * @param actors Their GitHub login, when the gates know it.
+ * @param scope The governance scope the action needs.
+ */
+internal suspend fun ApplicationCall.decider(
+    callers: CallerResolver,
+    actors: GateActorResolver,
+    scope: String = GovernanceScopes.POLICY_WRITE,
+): Decider {
+    val principal = requirePrincipal()
+    if (!principal.governs(scope)) throw OnlyConsoleDecidesException()
+    val caller = requireCaller(callers, scope, writers = WriteAccess.governance(scope))
+    caller.requireAdmin()
+    auditGovernance(principal, scope)
+    val name = actors.resolve(principal)?.personId ?: caller.memberId.toString()
+    return Decider(caller.orgId, name)
+}
+
+/**
  * Who writes, checked before the body is read: an owner or admin (checked at every request: a demoted admin stops at
  * once), signed in to the console, or with a person's token, whose write is then held ([Writer.Held]). The decider is
  * named by their GitHub login when the gates know it. Each decision is signed and kept.
  *
+ * @param dependencies Who the caller is in their organization, and their GitHub login.
  * @param scope The governance scope the write needs.
  */
 private suspend fun ApplicationCall.writer(

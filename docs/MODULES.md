@@ -301,7 +301,9 @@ The probes: `GET /health` (liveness: 200 while the dependencies answer, also whi
 The database roles of a deployment (the Helm chart creates them): an **owner**, which owns the schema and runs
 `migrate`, and a **serving role** that owns nothing, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on the schema and,
 through `ALTER DEFAULT PRIVILEGES FOR ROLE <owner>`, `SELECT, INSERT, UPDATE, DELETE` on its tables and `USAGE, SELECT`
-on its sequences. CI's smoke test sets them up the same way.
+on its sequences. CI's smoke test sets them up the same way. The migrations' history tables (`_migrations_<name>`)
+are the exception: after each pass, `migrate` revokes every privilege but `SELECT` on them from every role but the
+owner, so the serving role reads the history (the start-up check) and never rewrites it.
 
 ## Known limits of the foundation
 
@@ -344,3 +346,5 @@ Where the product metrics are emitted, each next to the code that decides, never
 | `ostrom.sessions.started{agent,where="local"}` | `sessions` `SessionSegments`, at a session's first segment |
 | `ostrom.sessions.started{agent,where="cloud"}` | `runners` `MeteredCreateCloudSession`, once a cloud session is created |
 | `ostrom.inference.cost_usd`, `.tokens`, `.duration` `{source,provider}` | `gateway` `MeteredModelCallObserver`, per relayed call that reached a provider |
+| `ostrom.gates.pending` | `gates` `PendingGatesCount`, read every 30 s across organizations (`gates_pending_count()`) |
+| `ostrom.sessions.active{where="local"}` | `sessions` `ActiveSessionsCount`, read every 30 s across organizations (`sessions_active_count`) |

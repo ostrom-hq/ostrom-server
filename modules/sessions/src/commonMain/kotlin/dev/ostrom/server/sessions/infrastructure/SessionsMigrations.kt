@@ -48,7 +48,8 @@ private val SWEEP_THROUGH_THE_ROUTER_SQL: String =
 /**
  * The sessions schema. Rows are isolated by organization in the database itself: row level security is forced (the
  * owner included) and every query runs in a transaction that first sets `ostrom.org_id`. One read crosses
- * organizations: the sweep of lost sessions, only through `sessions_stale` (version 2, docs/tenancy.md).
+ * organizations: the sweep of lost sessions, only through `sessions_stale` (version 2), and the count of running
+ * sessions, only through `sessions_active_count` (version 4, docs/tenancy.md).
  */
 val SessionsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -96,4 +97,32 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     SchemaMigration(2, "sweep_through_the_router", SWEEP_THROUGH_THE_ROUTER_SQL),
+    // A launch's sessions, first segment first: what a model call through the gateway is spent in (the reports'
+    // spending by agent and repository), and the sessions of a launch the API lists.
+    SchemaMigration(
+        3,
+        "index_sessions_by_launch",
+        "CREATE INDEX sessions_launch ON sessions_sessions (org_id, launch_id, segment)",
+    ),
+    // The count of the `ostrom.sessions.active{where="local"}` gauge, across organizations (docs/tenancy.md): a
+    // function of `ostrom_router`, through the router's read-only policy of version 2.
+    SchemaMigration(
+        4,
+        "sessions_active_count",
+        """
+        CREATE FUNCTION sessions_active_count(p_seen_since TIMESTAMPTZ) RETURNS BIGINT
+            LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+            SELECT count(*) FROM sessions_sessions WHERE ended_at IS NULL AND last_seen_at >= p_seen_since;
+        $$;
+        REVOKE EXECUTE ON FUNCTION sessions_active_count(TIMESTAMPTZ) FROM PUBLIC;
+        DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+                GRANT EXECUTE ON FUNCTION sessions_active_count(TIMESTAMPTZ) TO ostrom_app;
+            END IF;
+        END $$;
+        GRANT CREATE ON SCHEMA public TO ostrom_router;
+        ALTER FUNCTION sessions_active_count(TIMESTAMPTZ) OWNER TO ostrom_router;
+        REVOKE CREATE ON SCHEMA public FROM ostrom_router
+        """.trimIndent(),
+    ),
 )

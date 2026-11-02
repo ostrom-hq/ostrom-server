@@ -68,10 +68,17 @@ class WriteAccessTest {
     }
 
     @Test
-    fun aTokenThatHoldsAGovernanceScopeStillWritesNoConsoleRoute() {
+    fun aGovernanceWriteAdmitsTheBrowserAndAPersonsTokenThatHoldsItsScope() {
+        val access = WriteAccess.governance(GovernanceScopes.POLICY_WRITE, PrincipalKind.SERVICE)
         val elevated = AuthenticatedPrincipal("ada", PrincipalKind.USER, GovernanceScopes.ALL)
-        assertFalse(elevated.mayWrite(WriteAccess.BROWSER), "It asks for a confirmation instead (audit CLI H1)")
-        assertFalse(elevated.mayWrite(WriteAccess.tokens(PrincipalKind.SERVICE)))
+        assertTrue(browser.mayWrite(access))
+        assertTrue(elevated.mayWrite(access), "The token of ostrom login --admin")
+        assertTrue(agent.mayWrite(access), "A declared kind")
+        assertFalse(personal.mayWrite(access), "A person's token without the scope")
+        assertFalse(app.mayWrite(access))
+        val agentWithTheScope = AuthenticatedPrincipal("s", PrincipalKind.AGENT, GovernanceScopes.ALL)
+        assertFalse(agentWithTheScope.mayWrite(access), "Only a person governs")
+        assertFalse(elevated.mayWrite(WriteAccess.BROWSER), "A console write that declares no governance scope")
     }
 
     @Test

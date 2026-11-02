@@ -18,6 +18,8 @@ import kotlin.time.Instant
  * - The phone app's token acts as its user on the [PrincipalChannel.MOBILE_APP] channel, limited to [MOBILE_SCOPES],
  *   and answers a gate only within [MOBILE_UNLOCK_WINDOW] of the phone's last biometric unlock ([mobileScopes]);
  *   its `authenticatedAt` is that unlock, never its issuance (S2-54).
+ * - A service key is a [PrincipalKind.SERVICE] whose subject is the key, bound to its organization: it never acts as
+ *   the person who created it, and no organization resolves it as a member.
  * - An agent token is an [PrincipalKind.AGENT] whose subject is its agent session, with the single [AGENT_SCOPE]:
  *   it never passes a console route (audit A2) and can only act on that session.
  * - A browser session acts as its user with all their rights, and needs the CSRF token and an allowed `Origin` on
@@ -58,6 +60,14 @@ class CredentialAuthenticatorImpl(
                 credentialId = stored.id.toString(),
                 channel = PrincipalChannel.MOBILE_APP,
                 authenticatedAt = stored.authenticatedAt,
+            )
+            // An organization's service key: the key itself is the subject, never its creator.
+            TokenKind.SERVICE -> AuthenticatedPrincipal(
+                subjectId = stored.id.toString(),
+                kind = PrincipalKind.SERVICE,
+                scopes = grantedScopes(stored.kind, stored.scopes),
+                credentialId = stored.id.toString(),
+                orgId = stored.orgId?.toString(),
             )
             // A person's tokens; the one of `ostrom login --admin` is bound to its organization (`orgId`).
             TokenKind.PERSONAL, TokenKind.CLI, TokenKind.ADMIN -> AuthenticatedPrincipal(

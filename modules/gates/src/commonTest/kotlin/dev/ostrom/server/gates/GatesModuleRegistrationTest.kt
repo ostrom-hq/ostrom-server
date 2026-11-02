@@ -5,8 +5,13 @@ import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
+import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.GateCheckNeed
+import dev.ostrom.server.gates.domain.services.GateCheckNeeds
+import dev.ostrom.server.gates.domain.services.GateCheckProof
+import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
@@ -20,6 +25,8 @@ import dev.ostrom.server.gates.fakes.FakeSigner
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.infrastructure.NoCiChecks
 import dev.ostrom.server.gates.infrastructure.NoGateActors
+import dev.ostrom.server.gates.infrastructure.NoGateCheckNeeds
+import dev.ostrom.server.gates.infrastructure.NoGateCheckProofs
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
@@ -53,6 +60,15 @@ class GatesModuleRegistrationTest {
         val ci = assertIs<NoCiChecks>(app.koin.get<CiChecks>())
         // No forge, no proof: the check node stays the workstation's declaration.
         assertNull(ci.latest(Uuid.random(), "o/r", "0123456789abcdef0123456789abcdef01234567", "test"))
+        val node = GateNode("ship", "g", "Ship", listOf("lyes"), enforced = true)
+        val needs = assertIs<NoGateCheckNeeds>(app.koin.get<GateCheckNeeds>())
+        assertEquals(emptyList<GateCheckNeed>(), needs.of(Uuid.random(), node))
+        // No runs known, no proof: a check a gate needs attested is never proven.
+        val subject = GateSubject(repo = "o/r", actionClass = "push-main", command = "git push", scope = "s")
+        assertEquals(
+            GateCheckProof(attestation = null, passed = false),
+            assertIs<NoGateCheckProofs>(app.koin.get<GateCheckProofs>()).of(Uuid.random(), "s", subject, "tests"),
+        )
         app.close()
     }
 
@@ -69,6 +85,13 @@ class GatesModuleRegistrationTest {
         val ci = object : CiChecks {
             override suspend fun latest(orgId: Uuid, repo: String, sha: String, name: String): CiCheck? = null
         }
+        val needs = object : GateCheckNeeds {
+            override suspend fun of(orgId: Uuid, node: GateNode): List<GateCheckNeed> = emptyList()
+        }
+        val proofs = object : GateCheckProofs {
+            override suspend fun of(orgId: Uuid, sessionId: String?, subject: GateSubject, check: String) =
+                GateCheckProof(attestation = null, passed = false)
+        }
         val signer = FakeSigner()
         val notifier = FakeNotifier()
         val actors = object : GateActorResolver {
@@ -82,6 +105,8 @@ class GatesModuleRegistrationTest {
                     single<GateNodeResolver> { nodes }
                     single<PullRequestHeads> { heads }
                     single<CiChecks> { ci }
+                    single<GateCheckNeeds> { needs }
+                    single<GateCheckProofs> { proofs }
                     single<GateReceiptSigner> { signer }
                     single<GateNotifier> { notifier }
                     single<GateActorResolver> { actors }
@@ -94,6 +119,8 @@ class GatesModuleRegistrationTest {
         assertSame(nodes, app.koin.get<GateNodeResolver>())
         assertSame(heads, app.koin.get<PullRequestHeads>())
         assertSame(ci, app.koin.get<CiChecks>())
+        assertSame(needs, app.koin.get<GateCheckNeeds>())
+        assertSame(proofs, app.koin.get<GateCheckProofs>())
         assertSame(signer, app.koin.get<GateReceiptSigner>())
         assertSame(notifier, app.koin.get<GateNotifier>())
         assertSame(actors, app.koin.get<GateActorResolver>())
