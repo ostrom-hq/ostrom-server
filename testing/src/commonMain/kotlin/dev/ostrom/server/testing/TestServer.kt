@@ -9,9 +9,10 @@ import org.koin.core.Koin
  * What a server test can use.
  *
  * @property koin The test server's Koin, to reach a repository or use case directly.
- * @property driver The test database.
+ * @property driver The test database, connected as the serving role, like the server: row-level security applies.
  * @property client An HTTP client to the test server that reads and writes JSON.
- * @property database The test database, to run a query as a deployment's serving role ([TestDatabase.withRole]).
+ * @property database The test database with its owner and superuser pools, for what no request does (see
+ *   [TestDatabase.superuser]).
  */
 class TestServer(
     val koin: Koin,

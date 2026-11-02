@@ -417,10 +417,7 @@ class CompilerPostgresTest {
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = compilerTest { server ->
         server.call("user:a:lead", "/api/v1/workflows", "POST", release())
         server.call("agent:a:l1", "/api/v1/packages/current?repo=acme-api")
-        // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
-        server.driver.execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
+        // The test server's driver is the serving role, as in production: row level security applies to it.
         val tables = listOf(
             "compiler_workflows",
             "compiler_decisions",
@@ -429,9 +426,7 @@ class CompilerPostgresTest {
             "compiler_pins",
             "compiler_audit",
         )
-        server.driver.execute("GRANT SELECT, INSERT ON ${tables.joinToString()} TO ostrom_rls_probe").getOrThrow()
         val counts = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             suspend fun count(org: Uuid?): List<String> {
                 org?.let {
                     val scope = Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)")
@@ -445,7 +440,6 @@ class CompilerPostgresTest {
         assertTrue(counts[1].all { it == "0" }, "Org B: nothing")
         assertTrue(counts[2].all { it != "0" }, "Org A: its rows in every table, $counts")
         val forged = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
             execute(
