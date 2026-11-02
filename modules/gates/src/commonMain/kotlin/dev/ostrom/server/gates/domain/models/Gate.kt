@@ -171,4 +171,15 @@ enum class SelfApprovalPolicy {
 
     /** Never: the request waits until someone else is added to the gate. */
     NEVER,
+    ;
+
+    /** The default setting. */
+    companion object {
+        /**
+         * The setting of an organization that never chose (S2-15, decided on 02/11): never, so a yes always comes from
+         * another person. [SOLE_APPROVER] applies only once the organization sets it. The one place the default lives:
+         * the gates module and the rules module both read it.
+         */
+        val DEFAULT: SelfApprovalPolicy = NEVER
+    }
 }

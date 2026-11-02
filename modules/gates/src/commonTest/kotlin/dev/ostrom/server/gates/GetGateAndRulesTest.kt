@@ -20,6 +20,7 @@ import dev.ostrom.server.gates.fakes.OTHER_SESSION
 import dev.ostrom.server.gates.fakes.SHA_A
 import dev.ostrom.server.gates.fakes.agent
 import dev.ostrom.server.gates.fakes.user
+import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -164,5 +165,12 @@ class GetGateAndRulesTest {
         )
 
         assertEquals(listOf("a", "b"), SelfApproval.withAskers(listOf("a"), "A", " ", "b"))
+    }
+
+    // S2-15, decided on 02/11: an organization that never chose never approves its own action.
+    @Test
+    fun anOrganizationThatNeverChoseNeverApprovesItsOwnAction() = runTest {
+        assertEquals(SelfApprovalPolicy.NEVER, SelfApprovalPolicy.DEFAULT)
+        assertEquals(SelfApprovalPolicy.DEFAULT, DefaultGatePolicies().selfApproval(Uuid.random()))
     }
 }
