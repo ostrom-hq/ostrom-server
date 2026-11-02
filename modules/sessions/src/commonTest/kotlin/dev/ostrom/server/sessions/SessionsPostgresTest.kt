@@ -207,7 +207,7 @@ class SessionsPostgresTest {
         assertEquals(expected, statuses.sortedBy { it.value })
 
         val noOrg = server.call("user:nobody", "/api/v1/sessions?open=true")
-        assertEquals(HttpStatusCode.Forbidden, noOrg.status, "a credential of no organization")
+        assertEquals(HttpStatusCode.NotFound, noOrg.status, "a credential of no organization")
         val page = server.call("user:a:lyes", "/api/v1/sessions?open=true").body<SessionsPage>()
         assertEquals(1, page.items.size, "One open segment")
         val ended = server.call("user:a:lyes", "/api/v1/sessions?open=false").body<SessionsPage>().items
