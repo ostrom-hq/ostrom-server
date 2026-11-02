@@ -5,11 +5,15 @@ import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.integrations.github.domain.GitHubAppManifests
 import dev.ostrom.server.integrations.github.domain.ManifestForm
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.TOKEN_AUTH
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.resources.Resource
+import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.principal
 import io.ktor.server.resources.get
 import io.ktor.server.response.header
 import io.ktor.server.response.respondRedirect
@@ -28,8 +32,8 @@ import kotlin.uuid.Uuid
 class GitHubManifestStartPath(val owner: String? = null)
 
 /**
- * `GET /api/v1/github/app/manifest/callback`: GitHub's return once the App is created (unauthenticated: the state
- * is the proof).
+ * `GET /api/v1/github/app/manifest/callback`: GitHub's return once the App is created: the state, bound to the session
+ * that started the flow, is the proof (AUDIT-SECU-2 B2).
  *
  * @property code GitHub's code, exchanged once for the App.
  * @property state The state of the start.
@@ -59,15 +63,20 @@ data class GitHubManifestRoutesDependencies(
  * @param dependencies The flow.
  */
 fun Route.gitHubManifestRoutes(dependencies: GitHubManifestRoutesDependencies) = with(dependencies) {
-    get<GitHubManifestCallbackPath> { params ->
-        manifests.finish(params.code, params.state)
-        call.respondRedirect("$webOrigin/console/settings?github=created")
+    // GitHub sends the browser back with its session cookie (SameSite=Lax): the state is bound to that session.
+    authenticate(TOKEN_AUTH, optional = true) {
+        get<GitHubManifestCallbackPath> { params ->
+            val session = call.principal<AuthenticatedPrincipal>()?.let(::sessionOf)
+            manifests.finish(params.code, params.state, session)
+            call.respondRedirect("$webOrigin/console/settings?github=created")
+        }
     }
     authenticated {
         get<GitHubManifestStartPath> { params ->
+            call.requireStartedHere(webOrigin)
             val principal = call.requirePrincipal()
             principal.requireAnyScope(setOf(GateScopes.ALL_USER))
-            val form = manifests.start(principal, params.owner)
+            val form = manifests.start(principal, params.owner, sessionOf(principal))
             val nonce = Uuid.random().toHexString()
             call.response.header(
                 "Content-Security-Policy",

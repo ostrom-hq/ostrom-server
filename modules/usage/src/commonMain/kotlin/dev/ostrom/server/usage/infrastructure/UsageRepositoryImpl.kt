@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.usage.infrastructure
 
-import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.usage.domain.UsageCursor
@@ -55,6 +54,13 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         ).bind("org_id", orgId).bind("account_id", accountId).bind("since", since),
     ).getOrThrow().first().get("spent").asLong()
 
+    override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? =
+        driver.fetchInOrg(
+            orgId,
+            Statement.create(UsageQueries.LAUNCH_SPENT)
+                .bind("org_id", orgId).bind("launch_id", launchId).bind("from", from).bind("to", to),
+        ).getOrThrow().first().get("spent").asStringOrNull()?.toLong()
+
     override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> {
         val sql = UsageQueries.summary(groupBy, until = window.until != null, member = window.memberId != null)
         val statement = Statement.create(
@@ -91,14 +97,11 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         return driver.fetchInOrg(orgId, statement).getOrThrow().map { it.toEvent() }
     }
 
-    override suspend fun purge(before: Instant, limit: Int): Long = driver.transaction {
-        // The one operation across orgs, opened by its own policies (UsageMigrations version 2): old events only.
-        execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-        execute("SELECT set_config('$RETENTION_SETTING', 'on', true)").getOrThrow()
-        execute(
-            Statement.create(UsageQueries.PURGE).bind("before", before).bind("limit", limit),
-        ).getOrThrow()
-    }
+    // The one operation across orgs, through the function of UsageMigrations version 4: one batch of old events.
+    override suspend fun purge(before: Instant, limit: Int): Long = driver.fetchAll(
+        Statement.create("SELECT usage_purge(CAST(:before AS TIMESTAMPTZ), CAST(:limit AS INTEGER)) AS n")
+            .bind("before", before).bind("limit", limit),
+    ).getOrThrow().first().get("n").asLong()
 
     private fun Statement.bindEvent(prefix: String, event: UsageEvent): Statement = bind("${prefix}id", event.id)
         .bind("${prefix}org_id", event.orgId)

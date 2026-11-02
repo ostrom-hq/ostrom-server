@@ -62,7 +62,7 @@ object SharingModule : ServerModule {
             HttpOAuthRefresher(get(HTTP_CLIENT), get(), SharingConfig.tokenEndpoints(get<ConfigSource>()))
         }
         single<QuotaHeaderParser> { ProviderQuotaHeaderParser() }
-        single { AccountTokens(get(), get(), get(), get()) }
+        single { AccountTokens(get(), get(), get(), get(), get()) }
         single { SharedAccountPool(get(), get(), get(), get(), spend(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
         single<ListSharedAccountsUseCase> { ListSharedAccountsUseCaseImpl(get(), get(), get(), spend(), get()) }

@@ -67,8 +67,23 @@ data class RuleSource(val kind: String, val ref: String, val url: String?)
  * @property actions The actions it covers.
  * @property approvers Who may say yes (GitHub logins), in order.
  * @property reason Why these approvers, shown with the gate.
+ * @property checks The checks its actions need, each with the attestation it asks for; empty, a declared run will do.
  */
-data class RuleGate(val actions: List<RuleGateAction>, val approvers: List<String>, val reason: String?)
+data class RuleGate(
+    val actions: List<RuleGateAction>,
+    val approvers: List<String>,
+    val reason: String?,
+    val checks: List<RuleGateCheck> = emptyList(),
+)
+
+/**
+ * A check a gate needs before its actions pass (contract `RuleGateCheck`).
+ *
+ * @property check The id of the check node in the organization's workflows.
+ * @property attested When true, only a run attested by an Ostrom runner or the CI satisfies the gate, never one the
+ * workstation declares.
+ */
+data class RuleGateCheck(val check: String, val attested: Boolean)
 
 /**
  * One action a gate covers (contract `GateAction`, as workflow gate nodes declare them).

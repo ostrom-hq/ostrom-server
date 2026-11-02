@@ -127,7 +127,7 @@ object PackageCompiler {
     fun workflowsFor(inputs: CompileInputs): List<WorkflowDoc> {
         val all = inputs.workflows
         val repo = inputs.repo ?: return all
-        val catalog = GatesCatalog(all.map { it.workflow }, inputs.prodApprover).catalog(repo)
+        val catalog = GatesCatalog(all.map { it.workflow } + inputs.ruleGates, inputs.prodApprover).catalog(repo)
         val viaGate = catalog.mapNotNull { it.gate?.workflowId }.toSet()
         return all.filter { doc ->
             val workflow = doc.workflow
@@ -189,7 +189,8 @@ object PackageCompiler {
     ): CompiledBody {
         val repo = inputs.repo
         val docs = workflows.sortedWith(compareBy(JsText.localeOrder) { it.workflow.id })
-        val catalog = GatesCatalog(inputs.workflows.map { it.workflow }, inputs.prodApprover).catalog(repo)
+        val gates = inputs.workflows.map { it.workflow } + inputs.ruleGates
+        val catalog = GatesCatalog(gates, inputs.prodApprover).catalog(repo)
         val state = CompileState(inputs, catalog)
         docs.forEach { state.add(it.workflow) }
 

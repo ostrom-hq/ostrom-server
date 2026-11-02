@@ -38,6 +38,12 @@ class TokenScopesTest {
     }
 
     @Test
+    fun aTokenMayReadTheRules() {
+        // The rules routes check rules:read on a token; without it in the catalogue no token could be given it.
+        assertEquals(setOf("rules:read"), validateScopes(listOf("rules:read")))
+    }
+
+    @Test
     fun theCliTokenScopesAreInTheCatalogue() {
         assertTrue(PERSONAL_TOKEN_SCOPE_NAMES.containsAll(CLI_SCOPES))
     }

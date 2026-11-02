@@ -27,14 +27,16 @@ interface WorkflowsRepository {
     suspend fun workflow(orgId: Uuid, id: String): StoredWorkflow?
 
     /**
-     * Saves a workflow if its version is still [expectedVersion] (null: whatever it is, or a new workflow).
+     * Creates a workflow ([expectedVersion] null) if its id is free, or replaces it if its version is still
+     * [expectedVersion]: a write never creates what an update names, nor replaces what a creation names.
      *
      * @param orgId The organization.
      * @param id The workflow.
      * @param raw Its document.
-     * @param expectedVersion The version the editor read.
+     * @param expectedVersion The version the editor read, or null for a new workflow.
      * @param author Who saves, and when.
-     * @return The saved workflow, or null when someone saved another version in between.
+     * @return The saved workflow, or null when the id is taken (a creation) or someone saved another version, or
+     *   deleted it, in between (an update).
      */
     suspend fun saveWorkflow(
         orgId: Uuid,

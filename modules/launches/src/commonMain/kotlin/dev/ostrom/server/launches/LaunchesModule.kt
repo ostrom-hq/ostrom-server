@@ -13,9 +13,9 @@ import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
+import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCaseImpl
-import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.infrastructure.IdentityAgentTokens
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
 import dev.ostrom.server.launches.infrastructure.LaunchAgents
@@ -52,7 +52,7 @@ object LaunchesModule : ServerModule {
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
         single<CallerResolver> { LaunchRelayCallers(get(), get()) }
         single { LaunchPolicy(get()) }
-        single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get()) }
+        single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get(), get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }
         single<OpenRunnerLaunchUseCase> { OpenRunnerLaunchUseCaseImpl(get(), get()) }
         single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get()) }

@@ -2,6 +2,7 @@
 package dev.ostrom.server.secrets.presentation
 
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.secrets.domain.CreateSecretPayload
 import dev.ostrom.server.secrets.domain.InvalidSecretException
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -35,12 +36,14 @@ fun Route.secretsRoutes(dependencies: SecretsRoutesDependencies) = with(dependen
         }
         post<SecretsApi> {
             val caller = call.requireCaller(callers, RelayScopes.SECRETS_WRITE)
+            call.requireRecentSignIn("change a secret")
             val request = call.receive<SecretWriteRequest>()
             val payload = CreateSecretPayload(request.name, SecretValue(request.value), personalScope(request.scope))
             call.respond(HttpStatusCode.Created, createSecret(caller, payload).toSecretResponse())
         }
         put<SecretsApi.Name> { params ->
             val caller = call.requireCaller(callers, RelayScopes.SECRETS_WRITE)
+            call.requireRecentSignIn("change a secret")
             val request = call.receive<SecretWriteRequest>()
             if (request.name != params.name) {
                 throw InvalidSecretException("The name of the body differs from the name of the path.")
@@ -50,6 +53,7 @@ fun Route.secretsRoutes(dependencies: SecretsRoutesDependencies) = with(dependen
         }
         delete<SecretsApi.Name> { params ->
             val caller = call.requireCaller(callers, RelayScopes.SECRETS_WRITE)
+            call.requireRecentSignIn("change a secret")
             deleteSecret(caller, findSecret(caller, params.name, personalScope(params.scope)).id)
             call.respond(HttpStatusCode.NoContent)
         }

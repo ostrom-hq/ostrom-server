@@ -5,24 +5,9 @@ name: Demo stack
 # session image, and the console built from ostrom-web main. Then the customer's journey from outside
 # (compose/demo/journey.mjs), whose report becomes the job summary. It proves on a runner what the demo shows on a
 # laptop; the film is made there. This repository's token reads its own GHCR packages, which ostrom-helm's and
-# ostrom-e2e's cannot yet. Called by Image on main after each publication; off the org's one-`ci`-job rule on purpose:
-# on a pull request it runs only when the pull request changes this file.
+# ostrom-e2e's cannot yet. Dispatched by Image on main after each publication, in a run of its own; off the org's
+# one-`ci`-job rule on purpose: on a pull request it runs only when the pull request changes this file.
 on:
-  workflow_call:
-    inputs:
-      server_image:
-        type: string
-        default: ""
-      helm_ref:
-        type: string
-        default: main
-    secrets:
-      DEPLOY_KEY_HELM:
-        required: true
-      DEPLOY_KEY_WEB:
-        required: true
-      STRIPE_TEST_KEY:
-        required: false
   workflow_dispatch:
     inputs:
       server_image:
@@ -31,11 +16,18 @@ on:
       helm_ref:
         description: ostrom-helm ref holding compose/demo
         default: main
+      after_merge:
+        description: Dispatched by Image after a merge on main (a newer merge's demo cancels this one)
+        type: boolean
+        default: false
   pull_request:
     paths: [.github/workflows/demo-stack.yml]
 
+# Image dispatches one run per merge on main (after_merge): those share a group, so a newer merge cancels the older
+# merge's demo, in this workflow's runs only, never in Image's. A run by hand has its own group, so it never cancels a
+# merge's demo nor is cancelled by one; a pull request keeps its own.
 concurrency:
-  group: demo-stack-${{ github.ref }}
+  group: demo-stack-${{ github.event_name }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && !inputs.after_merge && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 permissions:

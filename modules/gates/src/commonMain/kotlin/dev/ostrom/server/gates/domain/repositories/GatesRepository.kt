@@ -40,6 +40,15 @@ interface GatesRepository {
     suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest>
 
     /**
+     * Reads the requests of several gates in one read, each gate's in the approvers' order.
+     *
+     * @param orgId The organization.
+     * @param gateIds The gates, at least one.
+     * @return The requests.
+     */
+    suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest>
+
+    /**
      * Reads one request with its gate.
      *
      * @param orgId The organization.

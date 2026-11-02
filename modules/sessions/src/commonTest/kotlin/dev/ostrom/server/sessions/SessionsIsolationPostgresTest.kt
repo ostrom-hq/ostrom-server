@@ -37,6 +37,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -85,7 +86,7 @@ class SessionsIsolationPostgresTest {
         single<Clock> { clock }
         single<SessionCosts> {
             object : SessionCosts {
-                override suspend fun costOf(orgId: Uuid, sessionId: String): Double = 0.42
+                override suspend fun costOf(orgId: Uuid, launchId: String?, from: Instant, to: Instant): Double = 0.42
             }
         }
     }

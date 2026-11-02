@@ -13,6 +13,10 @@ import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import org.koin.core.module.Module
 import org.koin.dsl.module
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Two orgs and their members, each with a bearer token equal to its name, for route tests. */
@@ -30,6 +34,8 @@ object TestCallers {
         "cli-a" to memberA,
         "device-a" to memberA,
         "cli-write-a" to memberA,
+        // A browser session of the admin signed in more than five minutes ago (web audit n°2 M3).
+        "stale-admin-a" to adminA,
     )
 
     private val browserScopes = setOf(RelayScopes.ALL_USER)
@@ -59,7 +65,12 @@ object TestCallers {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: (byToken[token] ?: token.takeIf { it == "stranger" })
-                        ?.let { AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, channel = BROWSER) }
+                        ?.let {
+                            AuthenticatedPrincipal(
+                                token, PrincipalKind.USER, browserScopes, channel = BROWSER,
+                                authenticatedAt = signedIn(token),
+                            )
+                        }
             }
         }
         single<CallerResolver> {
@@ -70,3 +81,7 @@ object TestCallers {
         }
     }
 }
+
+// When the fake browser session signed in: now, or more than five minutes ago for a `stale-` token.
+private fun signedIn(token: String): Instant =
+    Clock.System.now() - if (token.startsWith("stale-")) 10.minutes else ZERO
