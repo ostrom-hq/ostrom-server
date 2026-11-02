@@ -246,12 +246,12 @@ jobs:
           api=http://127.0.0.1:4600/api/v1
           check() {
             local gate="$1" wanted="$2" read status receipt verified
-            # The gate carries its signed receipt (contract `GateResponse.receipt`); the receipt's subject id is not
+            # The gate names its signed receipt (`gate.receiptId`); the receipt's subject id is the pushed commit, not
             # the gate id, so it is not looked up by subject.
             read="$(curl -fsS "${auth[@]}" "$api/gates/$gate")"
             status="$(jq -r '.gate.status' <<< "$read")"
             [ "$status" = "$wanted" ] || { echo "::error::Gate $gate is $status, not $wanted"; return 1; }
-            receipt="$(jq -er '.receipt.id' <<< "$read")" || { echo "::error::Gate $gate carries no receipt"; return 1; }
+            receipt="$(jq -er '.gate.receiptId' <<< "$read")" || { echo "::error::Gate $gate names no receipt"; return 1; }
             verified="$(curl -fsS "${auth[@]}" "$api/receipts/$receipt/verify")"
             [ "$(jq -r '.ok' <<< "$verified")" = "true" ] || { echo "::error::Receipt $receipt does not verify: $verified"; return 1; }
             echo "Gate $gate: $status; receipt $receipt verifies ($(jq -r '.kid' <<< "$verified"))"
