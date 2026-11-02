@@ -193,7 +193,6 @@ class SchemaTenancyPostgresTest {
         )
 
         val UNBOUND = setOf(
-            "identity_api_tokens.identity_api_tokens_account (ALL)",
             "sessions_sessions.sessions_sessions_sweep (SELECT)",
             "usage_events.usage_events_retention_read (SELECT)",
             "usage_events.usage_events_retention (DELETE)",
