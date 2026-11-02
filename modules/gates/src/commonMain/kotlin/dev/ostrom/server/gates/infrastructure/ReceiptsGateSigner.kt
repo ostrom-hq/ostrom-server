@@ -13,6 +13,7 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.receipts.domain.services.ReceiptRules
 import dev.ostrom.server.receipts.domain.services.receiptRulesJson
+import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.isoMillis
 import kotlinx.serialization.json.JsonArray
@@ -22,6 +23,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlin.uuid.Uuid
 
 /**
  * Signs a gate's decision with the receipts module, the receipt the prototype signs (`bridge/index.ts`,
@@ -31,6 +33,7 @@ import kotlinx.serialization.json.put
 
  *
  * @param signReceipt Signs and stores.
+ * @param getReceipt Reads a stored receipt.
  * @param repository Reads the answered request.
  * @param sessions Names the agent of the session that asked.
  * @param rules The rules in force in the repository.
@@ -40,6 +43,7 @@ class ReceiptsGateSigner(
     private val repository: GatesRepository,
     private val sessions: GateSessions,
     private val rules: ReceiptRules,
+    private val getReceipt: GetReceiptUseCase,
 ) : GateReceiptSigner {
     override suspend fun sign(gate: Gate): String {
         val decided = repository.requestsOf(gate.orgId, gate.id)
@@ -58,7 +62,7 @@ class ReceiptsGateSigner(
                 "subject",
                 buildJsonObject {
                     put("kind", "gate")
-                    put("id", gate.id.toString())
+                    put("id", subjectIdOf(gate))
                     put("digest", Digests.digestOf(preimage(gate)))
                 },
             )
@@ -69,6 +73,21 @@ class ReceiptsGateSigner(
         }
         val receipt = signReceipt(gate.orgId, draft, "rcpt_gate_${gate.id}")
         return (receipt.getValue("id") as JsonPrimitive).content
+    }
+
+    override suspend fun read(orgId: Uuid, receiptId: String?): JsonObject? =
+        receiptId?.let { getReceipt(orgId, it) }
+
+    // A gate on a commit names it in clear, the pull request's head or the pushed commit (decided 02/11/2026): the
+    // receipt says at a glance which commit was approved, and a SHA is no secret. The digest stays the request's hash.
+    private fun subjectIdOf(gate: Gate): String {
+        val pullRequest = gate.subject.pullRequest
+        val pushed = gate.subject.push?.refs.orEmpty().firstOrNull()
+        return when {
+            pullRequest != null -> pullRequest.headSha
+            pushed != null -> pushed.sha
+            else -> gate.id.toString()
+        }
     }
 
     private suspend fun agentOf(gate: Gate): String = when {

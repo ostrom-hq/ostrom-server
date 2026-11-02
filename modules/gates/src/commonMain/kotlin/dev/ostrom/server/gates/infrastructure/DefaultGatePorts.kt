@@ -2,11 +2,13 @@
 package dev.ostrom.server.gates.infrastructure
 
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -52,6 +54,11 @@ class NoGateNodes : GateNodeResolver {
 /** Without the GitHub integration, a pull request's head is unknown: the merge is bound to its command. */
 class UnknownPullRequestHeads : PullRequestHeads {
     override suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest? = null
+}
+
+/** Without the GitHub integration, no CI run is known: a check node stays the workstation's declaration. */
+class NoCiChecks : CiChecks {
+    override suspend fun latest(orgId: Uuid, repo: String, sha: String, name: String): CiCheck? = null
 }
 
 /**

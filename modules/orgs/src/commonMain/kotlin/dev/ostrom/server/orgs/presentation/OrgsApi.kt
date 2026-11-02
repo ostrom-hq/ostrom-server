@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs.presentation
 
+import dev.ostrom.server.kernel.http.NullsKept
 import dev.ostrom.server.orgs.domain.DEFAULT_TIME_ZONE
 import io.ktor.resources.Resource
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.Serializable
 
 /** `/api/v1/orgs`: the caller's organizations, and creating one. */
@@ -229,7 +232,9 @@ data class OrgResponse(
  * @property role The role.
  * @property joinedAt When they joined.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = MemberResponse.Answer::class)
 data class MemberResponse(
     val id: String,
     val login: String,
@@ -238,7 +243,10 @@ data class MemberResponse(
     val email: String?,
     val role: String,
     val joinedAt: String,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<MemberResponse>(generatedSerializer(), "email")
+}
 
 /**
  * A list of members.
@@ -258,7 +266,9 @@ data class MemberResponse(
  * @property maxUses How many people it can bring in.
  * @property uses How many it brought in.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = InvitationResponse.Answer::class)
 data class InvitationResponse(
     val id: String,
     val email: String?,
@@ -267,7 +277,10 @@ data class InvitationResponse(
     val expiresAt: String,
     val maxUses: Int?,
     val uses: Int,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<InvitationResponse>(generatedSerializer(), "email", "maxUses")
+}
 
 /**
  * A list of invitations.
@@ -294,14 +307,19 @@ data class InvitationLinkResponse(val invitation: InvitationResponse, val url: S
  * @property email The address it is for, null for a link.
  * @property expiresAt When it stops working.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = InvitationPreviewResponse.Answer::class)
 data class InvitationPreviewResponse(
     val orgName: String,
     val orgSlug: String,
     val role: String,
     val email: String?,
     val expiresAt: String,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<InvitationPreviewResponse>(generatedSerializer(), "email")
+}
 
 /**
  * One of the caller's organizations, to choose from.

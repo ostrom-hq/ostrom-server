@@ -19,6 +19,8 @@ import dev.ostrom.server.gateway.domain.UpstreamAnswer
 import dev.ostrom.server.gateway.domain.UpstreamRequest
 import dev.ostrom.server.gateway.domain.UpstreamRequests
 import dev.ostrom.server.gateway.domain.WireProtocol
+import dev.ostrom.server.kernel.logging.JsonLogger
+import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
@@ -170,7 +172,7 @@ class NoRefresh : OAuthRefresher {
 fun pool(accounts: InMemoryAccounts, clock: Clock) = SharedAccountPool(
     accounts,
     accounts,
-    AccountTokens(accounts, Gw.cipher, NoRefresh(), clock),
+    AccountTokens(accounts, Gw.cipher, NoRefresh(), clock, JsonLogger(LogLevel.ERROR, sink = {})),
     ProviderQuotaHeaderParser(),
     NoAccountSpendReader(),
     clock,

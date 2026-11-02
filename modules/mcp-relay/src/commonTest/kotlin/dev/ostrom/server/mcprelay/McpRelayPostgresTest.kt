@@ -478,6 +478,12 @@ class McpRelayPostgresTest : RelayPostgresHarness() {
                     responseBytes = 1,
                 )
                 repository.record(old)
+                // The old retention setting opens nothing any more (RLS audit R4): only mcp_relay_purge deletes.
+                val opened = driver.transaction {
+                    execute("SELECT set_config('ostrom.mcp_relay_retention', 'on', true)").getOrThrow()
+                    execute("DELETE FROM mcp_relay_calls").getOrThrow()
+                }
+                assertEquals(0L, opened, "No setting opens the calls of every org")
                 assertEquals(1L, repository.purgeCalls(Instant.parse("2021-01-01T00:00:00Z")), "Old calls of any org")
                 val left = Statement.create("SELECT id FROM mcp_relay_calls")
                 assertEquals(1, driver.fetchInOrg(Relay.adminA.orgId, left).getOrThrow().size, "Recent calls stay")

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.billing.presentation
 
+import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.Serializable
 
 /**
@@ -73,7 +76,9 @@ data class PlanRequest(val plan: String, val interval: String)
 data class RedirectResponse(val url: String)
 
 /** The limits of the plan in force; null means unlimited. */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = PlanLimitsResponse.Answer::class)
 data class PlanLimitsResponse(
     val maxPeople: Int?,
     val maxConcurrentCloudAgents: Int?,
@@ -81,27 +86,48 @@ data class PlanLimitsResponse(
     val sso: Boolean,
     val policies: Boolean,
     val receiptRetentionDays: Int?,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<PlanLimitsResponse>(
+        generatedSerializer(),
+        "maxPeople",
+        "maxConcurrentCloudAgents",
+        "agentHoursPerPeriod",
+        "receiptRetentionDays",
+    )
+}
 
 /** The cloud agent usage of the current period. */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = UsageResponse.Answer::class)
 data class UsageResponse(
     val agentSeconds: Long,
     val agentHours: Long,
     val sessions: Long,
     val percentOfHours: Int?,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<UsageResponse>(generatedSerializer(), "percentOfHours")
+}
 
 /** A payment that needs the billing admin (show a banner with the link). */
-@Serializable
-data class PaymentIssueResponse(val kind: String, val hostedInvoiceUrl: String?, val at: String)
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = PaymentIssueResponse.Answer::class)
+data class PaymentIssueResponse(val kind: String, val hostedInvoiceUrl: String?, val at: String) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<PaymentIssueResponse>(generatedSerializer(), "hostedInvoiceUrl")
+}
 
 /** A price of the catalog, for the plan picker. Amounts in cents, before tax. */
 @Serializable
 data class PriceResponse(val plan: String, val interval: String, val unitAmount: Long, val currency: String)
 
 /** The console's billing page. Dates are ISO 8601. */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = BillingOverviewResponse.Answer::class)
 data class BillingOverviewResponse(
     val orgId: String,
     val plan: String,
@@ -119,10 +145,15 @@ data class BillingOverviewResponse(
     val paymentIssue: PaymentIssueResponse?,
     val purchasable: Boolean,
     val prices: List<PriceResponse>,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<BillingOverviewResponse>(generatedSerializer(), "interval", "status", "paymentIssue")
+}
 
 /** One invoice; `hostedInvoiceUrl` shows it, pays it and gives its receipt. */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = InvoiceResponse.Answer::class)
 data class InvoiceResponse(
     val id: String,
     val number: String?,
@@ -133,7 +164,10 @@ data class InvoiceResponse(
     val created: String,
     val hostedInvoiceUrl: String?,
     val pdfUrl: String?,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<InvoiceResponse>(generatedSerializer(), "number", "hostedInvoiceUrl", "pdfUrl")
+}
 
 /** The invoices of an organization. */
 @Serializable

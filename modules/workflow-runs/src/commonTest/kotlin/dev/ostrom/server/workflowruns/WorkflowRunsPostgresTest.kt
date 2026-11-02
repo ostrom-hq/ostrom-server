@@ -383,6 +383,19 @@ class WorkflowRunsPostgresTest {
         }
 
     @Test
+    fun aCheckThatDidNotRunAnswersItsExitAsNull() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val agent = server.session(ada)
+            val notRun = CHECK.replace("\"exit\":0,\"outcome\":\"passed\"", "\"outcome\":\"failed\"")
+            val reported = server.call(agent, "/api/v1/checks", notRun)
+            assertEquals(HttpStatusCode.Created, reported.status, reported.bodyAsText())
+            assertEquals(JsonNull, reported.body<JsonObject>()["exit"], "Required and nullable in the contract")
+            val page = server.call(ada.cliToken, "/api/v1/checks?sessionId=s-1").body<JsonObject>()
+            assertEquals(JsonNull, page.getValue("items").jsonArray.single().jsonObject["exit"])
+        }
+
+    @Test
     fun aPageEndsWithACursorAndTwoPassesAtOnceKeepTheFirstNotification() =
         serverTest(modules) { server ->
             val ada = server.person("ada")
