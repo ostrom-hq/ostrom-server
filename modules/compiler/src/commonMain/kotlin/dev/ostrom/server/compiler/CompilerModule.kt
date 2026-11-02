@@ -4,6 +4,8 @@ package dev.ostrom.server.compiler
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.domain.services.HarnessReceiptSigner
+import dev.ostrom.server.compiler.domain.usecases.ApproversGraphUseCase
+import dev.ostrom.server.compiler.domain.usecases.ApproversGraphUseCaseImpl
 import dev.ostrom.server.compiler.domain.usecases.CompileSourcesUseCase
 import dev.ostrom.server.compiler.domain.usecases.CompileSourcesUseCaseImpl
 import dev.ostrom.server.compiler.domain.usecases.GatePolicyUseCase
@@ -55,6 +57,7 @@ object CompilerModule : ServerModule {
         single<RevokePackageUseCase> { RevokePackageUseCaseImpl(get(), get()) }
         single<GatesCatalogUseCase> { GatesCatalogUseCaseImpl(get(), get()) }
         single<GatePolicyUseCase> { GatePolicyUseCaseImpl(get(), get(), get()) }
+        single<ApproversGraphUseCase> { ApproversGraphUseCaseImpl(get()) }
         single<WorkflowsUseCase> { WorkflowsUseCaseImpl(get(), get(), get()) }
         // Created when the gates module looks for it, possibly before this module's initialize has bound the
         // sources: the catalogue is only fetched at the first gate.
@@ -64,7 +67,7 @@ object CompilerModule : ServerModule {
         }
         single {
             val publicUrl = get<ConfigSource>()["OSTROM_PUBLIC_URL"]
-            CompilerRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), publicUrl)
+            CompilerRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), publicUrl)
         }
     }
 

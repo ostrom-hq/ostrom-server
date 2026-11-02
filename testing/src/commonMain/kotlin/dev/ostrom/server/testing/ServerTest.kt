@@ -4,6 +4,9 @@ package dev.ostrom.server.testing
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
+import dev.ostrom.server.kernel.database.MigrationRunnerImpl
+import dev.ostrom.server.kernel.database.migrateUnderLock
+import dev.ostrom.server.kernel.database.requireRowLevelSecurity
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.configureHttp
 import dev.ostrom.server.kernel.logging.JsonLogger
@@ -21,6 +24,10 @@ import org.koin.core.module.Module
 /**
  * Runs a test against a real server: a fresh PostgreSQL database (see [TestDatabase]), the kernel, the given
  * modules with their migrations applied, and their routes. Skipped when no test database is configured.
+ *
+ * Started as a deployment starts: the owner applies the migrations (`ostrom-server migrate`), then the server connects
+ * as the serving role, which must pass the start check (no row-level security bypass), verifies the migrations and
+ * initializes the modules. Every request and every repository of the test runs as that role.
  *
  * @param modules The modules under test, in dependency order.
  * @param overrides Koin definitions replacing real ones (a fake clock, a fake token authenticator).
@@ -44,11 +51,14 @@ internal fun serverTest(
     val database = TestDatabase.create(environment) ?: return@testApplication
     try {
         val signer = Ed25519InstanceSigner.generate()
-        val kernel = kernelModule(JsonLogger(LogLevel.WARN), database.driver, signer, environment)
+        val logger = JsonLogger(LogLevel.WARN)
+        database.owner.migrateUnderLock(MigrationRunnerImpl(database.owner, logger), modules)
+        database.driver.requireRowLevelSecurity()
+        val kernel = kernelModule(logger, database.driver, signer, environment)
         val koin = serverKoin(kernel, modules, overrides)
         try {
             val migrations = koin.get<MigrationRunner>()
-            modules.forEach { migrations.migrate(it.name, it.migrations) }
+            modules.forEach { migrations.verify(it.name, it.migrations) }
             modules.forEach { it.initialize(koin) }
             application { configureHttp(koin, modules) }
             // Started now, not lazily at the first request: a test that never calls the client would otherwise start

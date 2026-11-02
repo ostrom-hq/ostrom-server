@@ -143,8 +143,8 @@ class SharingPostgresTest {
             assertFalse("secret" in created.bodyAsText(), "Tokens never come back")
             val account = created.body<SharedAccountResponse>()
             assertTrue(account.mine)
-            val stored = driver.fetchAll("SELECT envelope FROM sharing_accounts").getOrThrow().single()
-                .get("envelope").asString()
+            val stored = driver.fetchInOrg(Sharing.orgA, Statement.create("SELECT envelope FROM sharing_accounts"))
+                .getOrThrow().single().get("envelope").asString()
             assertFalse("secret" in stored, "Sealed at rest")
 
             val lease = koin.get<SharedAccountPool>()
