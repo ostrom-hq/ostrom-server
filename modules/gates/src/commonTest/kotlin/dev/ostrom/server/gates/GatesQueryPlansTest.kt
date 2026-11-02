@@ -8,6 +8,7 @@ import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.RequestStatus
+import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.infrastructure.GatesQueries
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
 import dev.ostrom.server.testing.serverTest
@@ -17,6 +18,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -36,8 +38,17 @@ class GatesQueryPlansTest {
     private val others = (1..49).map { Uuid.fromLongs(0, it.toLong()) }
     private val epoch = Instant.fromEpochSeconds(1_790_000_000)
 
+    // The routes need a receipt signer; no receipt is signed here.
+    private val signer = module {
+        single<GateReceiptSigner> {
+            object : GateReceiptSigner {
+                override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
+            }
+        }
+    }
+
     @Test
-    fun theGatesRequestPathReadsOnlyTheRowsItServes() = serverTest(listOf(GatesModule)) { server ->
+    fun theGatesRequestPathReadsOnlyTheRowsItServes() = serverTest(listOf(GatesModule), signer) { server ->
         val repository = PostgresGatesRepository(server.driver)
         val first = seed(repository, orgA, (0 until GATES_OF_A).toList()).first()
         for ((index, org) in others.withIndex()) {

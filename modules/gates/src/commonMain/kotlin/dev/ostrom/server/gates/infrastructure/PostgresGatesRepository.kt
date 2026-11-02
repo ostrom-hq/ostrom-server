@@ -169,16 +169,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                         ":reserved_at, :consumed_at, :created_at)",
                 ).bindGate(gate),
             ).getOrThrow()
-            linkSessions(gate)
-        }
-
-        // A gate's sessions are set when it opens and only grow when another session joins it (`addAskers`).
-        private suspend fun linkSessions(gate: Gate) {
-            if (gate.sessionIds.isEmpty()) return
-            val statement = Statement.create(GatesQueries.linkSessions(gate.sessionIds.size))
-                .bind("org", gate.orgId).bind("gate", gate.id)
-            gate.sessionIds.forEachIndexed { index, session -> statement.bind("s$index", session) }
-            executor.execute(statement).getOrThrow()
+            executor.linkSessions(gate)
         }
 
         override suspend fun addAskers(gate: Gate) {
@@ -194,7 +185,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
                     .bind("org_id", gate.orgId)
                     .bind("id", gate.id),
             ).getOrThrow()
-            linkSessions(gate)
+            executor.linkSessions(gate)
         }
 
         override suspend fun updateGate(gate: Gate) {
@@ -245,6 +236,15 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository {
         val evidences = ListSerializer(EvidenceRecord.serializer())
         val json = Json { ignoreUnknownKeys = true }
         val strings = ListSerializer(String.serializer())
+
+        // A gate's sessions are set when it opens and only grow when another session joins it (`addAskers`).
+        suspend fun QueryExecutor.linkSessions(gate: Gate) {
+            if (gate.sessionIds.isEmpty()) return
+            val statement = Statement.create(GatesQueries.linkSessions(gate.sessionIds.size))
+                .bind("org", gate.orgId).bind("gate", gate.id)
+            gate.sessionIds.forEachIndexed { index, session -> statement.bind("s$index", session) }
+            execute(statement).getOrThrow()
+        }
 
         suspend fun QueryExecutor.rows(statement: Statement): List<ResultSet.Row> =
             fetchAll(statement).getOrThrow().toList()
