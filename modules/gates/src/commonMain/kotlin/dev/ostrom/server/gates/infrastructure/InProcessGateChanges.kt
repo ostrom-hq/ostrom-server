@@ -14,7 +14,7 @@ import kotlin.uuid.Uuid
  * than the buffer drops the oldest wake-ups, which the waiting reads then see at their next look at the database.
  */
 class InProcessGateChanges : GateChanges {
-    private val changes = MutableSharedFlow<Uuid>(extraBufferCapacity = BUFFER, onBufferOverflow = DROP)
+    private val changes = MutableSharedFlow<Uuid>(extraBufferCapacity = BUFFER, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     override fun changed(gateId: Uuid) {
         changes.tryEmit(gateId)
@@ -26,6 +26,5 @@ class InProcessGateChanges : GateChanges {
 
     private companion object {
         const val BUFFER = 256
-        val DROP = BufferOverflow.DROP_OLDEST
     }
 }
