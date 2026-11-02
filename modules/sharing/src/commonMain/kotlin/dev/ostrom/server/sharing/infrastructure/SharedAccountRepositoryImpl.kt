@@ -15,6 +15,12 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
+ * The statuses only sharing again leaves ([AccountStatus.awaitsSignIn]), kept by a stale write; a test holds them
+ * equal.
+ */
+internal const val AWAITING_SIGN_IN: String = "'RECONNECT_REQUIRED', 'WRONG_ACCOUNT'"
+
+/**
  * [SharedAccountRepository] on PostgreSQL ([SharingMigrations]). Every query runs confined to the org it names
  * (`fetchInOrg`, `executeInOrg`): row-level security hides and refuses the rows of every other org (S2-01, S2-21).
  *
@@ -120,9 +126,6 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
     }
 
     private companion object {
-        // The statuses only sharing again leaves (AccountStatus.awaitsSignIn), kept by a stale write.
-        val AWAITING_SIGN_IN = AccountStatus.entries.filter { it.awaitsSignIn }.joinToString { "'${it.name}'" }
-
         // Sharing again keeps the limits. Two shares racing on a new account both insert: the second keeps the first
         // row's id, so its envelope (sealed for its own id) would not open; the first's stays. An account another
         // member owns is never taken over, nor a row past the expected version (no row comes back).
