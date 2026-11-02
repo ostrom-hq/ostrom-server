@@ -90,6 +90,8 @@ class NodeOutcomesTest {
         assertEquals("2 runs, sandbox ?, last exit 2", failed.detail)
         assertEquals("1 run, sandbox bwrap, last exit 1", one(check, listOf(run("chk_1", 1, head = null))).detail)
         assertEquals("failed: action blocked (1 run)", one(check, listOf(run("chk_1", null))).outcome, "Not run")
+        val rewritten = one(check, listOf(run("chk_1", 0).copy(tampered = true)))
+        assertEquals("failed: the script run is not the package's", rewritten.outcome, "Passed on another script")
     }
 
     @Test
@@ -134,6 +136,9 @@ class NodeOutcomesTest {
         val byRunner = attested(check, listOf(run("chk_1", 1), run("chk_2", 0)), runner)
         assertEquals(CheckAttestation.ISOLATED_RUNNER, byRunner.attestation)
         assertEquals("chk_2", byRunner.ref)
+        val rewritten = attested(check, listOf(run("chk_2", 0).copy(tampered = true)), runner)
+        assertEquals(CheckAttestation.WORKSTATION_DECLARED, rewritten.attestation, "Another script proves nothing")
+        assertEquals("failed: the script run is not the package's", rewritten.outcome)
         val afterIt = attested(check, listOf(run("chk_2", 0), run("chk_3", 0)), runner)
         assertEquals(CheckAttestation.WORKSTATION_DECLARED, afterIt.attestation, "The last run is the workstation's")
         val shadow = node("n-check", "check", mode = PackageMode.SHADOW)

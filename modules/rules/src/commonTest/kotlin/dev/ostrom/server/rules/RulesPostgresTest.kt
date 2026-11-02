@@ -4,11 +4,13 @@ package dev.ostrom.server.rules
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.instance.InstanceModule
+import dev.ostrom.server.kernel.auth.GovernanceAudit
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
+import dev.ostrom.server.rules.fakes.AuditRecorder
 import dev.ostrom.server.rules.fakes.RulesCallers
 import dev.ostrom.server.rules.fakes.RulesCallers.orgA
 import dev.ostrom.server.rules.fakes.RulesCallers.orgB
@@ -267,6 +269,53 @@ class RulesPostgresTest {
             HttpStatusCode.BadRequest,
             server.write(rule = NewRuleRequest("  ", "Releases")).status,
         )
+    }
+
+    @Test
+    fun theTokenOfAnAdminLoginWritesEveryGovernanceRouteItsScopesNameAsASignedDecision() = rulesTest { server ->
+        val created = server.write("elevated-a")
+        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        val id = created.body<RuleDto>().id
+        assertEquals("lyes", created.body<RuleDto>().decidedBy, "Named like in the console")
+        writes(id).forEach { (method, path, body) ->
+            val expected = when {
+                method == "DELETE" -> HttpStatusCode.NoContent
+                path.endsWith("/rules") -> HttpStatusCode.Created
+                "/analysis/" in path -> HttpStatusCode.Accepted
+                else -> HttpStatusCode.OK
+            }
+            assertEquals(expected, server.call(method, path, "elevated-a", body).status, "$method $path")
+        }
+        assertTrue(server.decisions().items.isNotEmpty(), "Each write is a signed decision")
+        val audited = (server.koin.get<GovernanceAudit>() as AuditRecorder).records
+        assertEquals(
+            listOf(
+                "POST /api/v1/rules policy:write",
+                "PATCH /api/v1/rules/$id policy:write",
+                "DELETE /api/v1/rules/$id policy:write",
+                "POST /api/v1/rules/bulk policy:write",
+                "PUT /api/v1/gates/policy gates:policy",
+                "POST /api/v1/analysis/start policy:write",
+                "POST /api/v1/analysis/restart policy:write",
+                "POST /api/v1/analysis/replay policy:write",
+            ),
+            audited.drop(1),
+            "Each use of the elevated token is in the audit log, before the write",
+        )
+        server.write()
+        assertEquals(9, audited.size, "The console's writes are only signed decisions")
+        val rule = server.write().body<RuleDto>().id
+        // Only the scope that names the route: policy:write decides rules, not the gate policy.
+        val patch = buildJsonObject { put("status", "rejected") }
+        assertEquals(HttpStatusCode.OK, server.call("PATCH", "/api/v1/rules/$rule", "policy-writer-a", patch).status)
+        val policy = server.call("PUT", "/api/v1/gates/policy", "policy-writer-a", GatePolicyDto("never"))
+        assertEquals(HttpStatusCode.Forbidden, policy.status)
+        // A member's elevated token, or an agent holding the scopes, decides nothing.
+        writes(rule).forEach { (method, path, body) ->
+            listOf("elevated-member-a", "governing-agent-a").forEach { token ->
+                assertEquals(HttpStatusCode.Forbidden, server.call(method, path, token, body).status, "$token $path")
+            }
+        }
     }
 
     private data class Route(val method: String, val path: String, val body: Any? = null)

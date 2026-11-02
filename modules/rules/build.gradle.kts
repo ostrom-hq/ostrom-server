@@ -24,6 +24,8 @@ kotlin {
             implementation(project(":testing"))
             // The receipts module signs with the instance's keys.
             implementation(project(":modules:instance"))
+            // The audit log the rules write to (`rule.*`), signed in the organization's chain.
+            implementation(project(":modules:identity"))
         }
     }
 }
