@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns
 
+import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
@@ -27,6 +28,7 @@ import dev.ostrom.server.workflowruns.infrastructure.CompilerRunPackages
 import dev.ostrom.server.workflowruns.infrastructure.LaunchesRunLaunches
 import dev.ostrom.server.workflowruns.infrastructure.LogChannels
 import dev.ostrom.server.workflowruns.infrastructure.PostgresWorkflowRunsRepository
+import dev.ostrom.server.workflowruns.infrastructure.RunsGateCheckProofs
 import dev.ostrom.server.workflowruns.infrastructure.SessionsRunSessions
 import dev.ostrom.server.workflowruns.infrastructure.WorkflowRunsMigrations
 import dev.ostrom.server.workflowruns.presentation.WorkflowRunsRoutesDependencies
@@ -59,6 +61,7 @@ object WorkflowRunsModule : ServerModule {
         single<GetReceiptBundleUseCase> { GetReceiptBundleUseCaseImpl(get(), get(), get(), get(), get()) }
         single<RunLaunches> { LaunchesRunLaunches(get()) }
         single<ReportRunnerCheckUseCase> { ReportRunnerCheckUseCaseImpl(get(), get(), get()) }
+        single<GateCheckProofs> { RunsGateCheckProofs(get()) { get() } }
         single {
             WorkflowRunsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
         }

@@ -6,6 +6,7 @@ import dev.ostrom.server.runners.domain.DeleteRunnerUseCase
 import dev.ostrom.server.runners.domain.ListRegisteredRunnersUseCase
 import dev.ostrom.server.runners.domain.ListRunnersUseCase
 import dev.ostrom.server.runners.domain.RegisterRunnerUseCase
+import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCase
 
 /**
  * Where the server runs its runners, for their labels and version.
@@ -28,6 +29,7 @@ data class RunnerRuntime(val driver: String?, val image: String) {
  * @property listRegisteredRunners Lists the organization's registered runners.
  * @property registerRunner Registers one.
  * @property deleteRunner Removes one.
+ * @property heartbeat A registered runner's sign of life.
  */
 data class RunnersRoutesDependencies(
     val listRunners: ListRunnersUseCase,
@@ -36,4 +38,5 @@ data class RunnersRoutesDependencies(
     val listRegisteredRunners: ListRegisteredRunnersUseCase,
     val registerRunner: RegisterRunnerUseCase,
     val deleteRunner: DeleteRunnerUseCase,
+    val heartbeat: RegisteredRunnerHeartbeatUseCase,
 )

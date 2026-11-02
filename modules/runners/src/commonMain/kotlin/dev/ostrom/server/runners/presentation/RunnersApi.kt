@@ -19,8 +19,25 @@ class RunnersApi {
      */
     @Serializable
     @Resource("{id}")
-    class Id(val parent: RunnersApi = RunnersApi(), val id: String)
+    class Id(val parent: RunnersApi = RunnersApi(), val id: String) {
+        /**
+         * `POST /api/v1/runners/{id}/heartbeat` (`runnerHeartbeat`): a registered runner's sign of life, with its key.
+         *
+         * @property parent The runner.
+         */
+        @Serializable
+        @Resource("heartbeat")
+        class Heartbeat(val parent: Id)
+    }
 }
+
+/**
+ * The answer of a registered runner's heartbeat, as the contract's.
+ *
+ * @property sessions The cloud sessions assigned to it.
+ */
+@Serializable
+data class RegisteredRunnerHeartbeatResponse(val sessions: List<CloudSessionResponse>)
 
 /**
  * A runner, as the contract's `Runner`.

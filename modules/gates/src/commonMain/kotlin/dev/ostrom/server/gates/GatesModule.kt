@@ -4,6 +4,8 @@ package dev.ostrom.server.gates
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.GateCheckNeeds
+import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.gates.domain.services.GateChanges
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateDigester
@@ -42,6 +44,8 @@ import dev.ostrom.server.gates.infrastructure.InProcessGateChanges
 import dev.ostrom.server.gates.infrastructure.MetricsGateChannel
 import dev.ostrom.server.gates.infrastructure.NoCiChecks
 import dev.ostrom.server.gates.infrastructure.NoGateActors
+import dev.ostrom.server.gates.infrastructure.NoGateCheckNeeds
+import dev.ostrom.server.gates.infrastructure.NoGateCheckProofs
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.PendingGatesCount
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
@@ -75,7 +79,7 @@ object GatesModule : ServerModule {
         single<GateDigester> { Sha256GateDigester() }
         single<GateReceiptSigner> { ReceiptsGateSigner(get(), get(), get(), get(), get()) }
         single<EnsureGateReceiptUseCase> { EnsureGateReceiptUseCaseImpl(get(), get(), get()) }
-        single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<OpenGateUseCase> { OpenGateUseCaseImpl(get(), get(), get(), get(), get(), get(), get(), get()) }
         single<AskGateUseCase> { AskGateUseCaseImpl(get(), get(), get(), get()) }
         single<GateChanges> { InProcessGateChanges() }
         single<AnswerGateUseCase> { AnswerGateUseCaseImpl(get(), get(), get(), get(), get(), get()) }
@@ -109,6 +113,8 @@ object GatesModule : ServerModule {
         if (koin.getOrNull<GateNodeResolver>() == null) single<GateNodeResolver> { NoGateNodes() }
         if (koin.getOrNull<PullRequestHeads>() == null) single<PullRequestHeads> { UnknownPullRequestHeads() }
         if (koin.getOrNull<CiChecks>() == null) single<CiChecks> { NoCiChecks() }
+        if (koin.getOrNull<GateCheckNeeds>() == null) single<GateCheckNeeds> { NoGateCheckNeeds() }
+        if (koin.getOrNull<GateCheckProofs>() == null) single<GateCheckProofs> { NoGateCheckProofs() }
         if (koin.getOrNull<GateNotifier>() == null) {
             single<GateNotifier> { ChannelsGateNotifier({ koin.getAll<GateChannel>() }, get()) }
         }

@@ -48,15 +48,15 @@ fun Route.analysisRoutes(dependencies: AnalysisRoutesDependencies) = with(depend
 }
 
 /**
- * The snapshot as the API serves it. The repositories stay empty until a module serves them (the analysis reads them
- * through the engine).
+ * The snapshot as the API serves it. The repositories are those the last analysis read (kept on its run, as the
+ * contract's `Repo`), so the console lists what the rules were found in.
  *
  * @return The DTO.
  */
 fun AnalysisSnapshot.toDto(): AnalysisStateDto = AnalysisStateDto(
     phase = run?.phase,
     progress = run?.progress,
-    repos = emptyList(),
+    repos = run?.items.orEmpty(),
     rules = rules.map { it.toDto() },
     workflows = workflows.map { it.toDocument() },
     failure = run?.failureFields(),

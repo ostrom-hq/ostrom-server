@@ -75,7 +75,7 @@ class InferencePlannerTest {
     @Test
     fun anExhaustedBudgetStopsTheCall() = runTest {
         val resets = clock.now() + 1.hours
-        val spend = SpendGuard { _, _ -> SpendDecision.Exhausted("Monthly budget reached.", resets) }
+        val spend = SpendGuard { _ -> SpendDecision.Exhausted("Monthly budget reached.", resets) }
         val refused = planner(settings, pool(accounts, clock), spend = spend)
             .plan(Gw.memberA, call(WireProtocol.MESSAGES, """{"model":"claude-opus-5"}"""))
         assertEquals(RefusalKind.BUDGET_EXHAUSTED, refusal(refused).kind)
