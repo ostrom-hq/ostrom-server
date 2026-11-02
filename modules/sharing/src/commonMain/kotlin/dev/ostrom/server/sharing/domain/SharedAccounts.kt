@@ -31,6 +31,16 @@ enum class AccountStatus {
 
     /** Turned off by an admin or its owner. */
     DISABLED,
+
+    /**
+     * The provider says its tokens belong to another account than the one it was shared as: the owner shares it
+     * again, signed in to that account.
+     */
+    WRONG_ACCOUNT,
+    ;
+
+    /** Whether it waits for its owner to share it again: pausing and resuming do not bring it back. */
+    val awaitsSignIn: Boolean get() = this == RECONNECT_REQUIRED || this == WRONG_ACCOUNT
 }
 
 /**
@@ -180,6 +190,16 @@ object SharingRules {
             throw InvalidAccountException("The email is malformed.")
         }
     }
+
+    /**
+     * Whether two provider account ids name the same account (case and surrounding spaces aside).
+     *
+     * @param declared The id an account was shared as.
+     * @param named The id the provider names.
+     *
+     * @return True when they are the same account.
+     */
+    fun sameProviderAccount(declared: String, named: String): Boolean = declared.trim().equals(named.trim(), true)
 
     /** Refuses tokens that cannot be OAuth tokens, and a provider account id that cannot be one. */
     fun requireTokens(accessToken: String, refreshToken: String, providerAccountId: String) {

@@ -65,8 +65,11 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `automations_route_org(id)` | automations | an automation's organization, for its webhook | `AutomationsRoutesTenancyPostgresTest` |
 | `automations_due_routes(now, limit)` | automations | claims the due crons of every organization (`FOR UPDATE SKIP LOCKED`) | `AutomationsPostgresTest` |
 | `automations_organizations()` | automations | the organizations that have automations, for the retention jobs | `AutomationsPostgresTest` |
+| `sessions_stale(cutoff, limit)` | sessions | the open sessions of every organization last seen before the cutoff, for the sweep | `SessionsPostgresTest` |
+| `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
+| `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
 | `gates_pending_count()` | gates | counts the pending gates (sees `status` alone), for the `ostrom.gates.pending` gauge | `GatesPostgresTest` |
-| `sessions_active_count(since)` | sessions | counts the open sessions seen since (sees `ended_at` and `last_seen_at` alone), for `ostrom.sessions.active` | `SessionsPostgresTest` |
+| `sessions_active_count(since)` | sessions | counts the open sessions of every organization seen since, for `ostrom.sessions.active` | `SessionsPostgresTest` |
 
 ## Known exceptions
 
@@ -77,8 +80,6 @@ audit, each to be closed by moving the cross-organization path into a function o
 - tables with `org_id` read across organizations without row-level security: `artifacts_routes`,
   `runners_session_routes`, `billing_customers`, `billing_outbox`;
 - `orgs_organizations`, `orgs_members`, `orgs_invitations`: row-level security enabled, not forced;
-- policies a setting opens to every organization: `sessions_sessions_sweep` (`ostrom.sweep`), the retention
-  policies of `usage_events` and `mcp_relay_calls`;
 - policies a setting opens to one row of any organization: the read and delete policies of
   `github_installations` (`ostrom.github_installation`) and `github_install_states` (`ostrom.github_state`).
 
