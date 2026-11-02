@@ -169,6 +169,7 @@ data class UsageSummaryResponse(
  * @property provider The provider.
  * @property accountId The pooled account.
  * @property sessionId The session.
+ * @property launchId The launch whose agent token sent it; absent for a person's own credential.
  * @property inputTokens Input tokens.
  * @property outputTokens Output tokens.
  * @property cacheReadTokens Cache read tokens.
@@ -187,6 +188,7 @@ data class UsageEventResponse(
     val provider: String? = null,
     val accountId: String? = null,
     val sessionId: String? = null,
+    val launchId: String? = null,
     val inputTokens: Long,
     val outputTokens: Long,
     val cacheReadTokens: Long,

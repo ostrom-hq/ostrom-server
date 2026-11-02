@@ -53,6 +53,7 @@ fun McpCall.toDto() = McpCallDto(
     outcome = outcome.name,
     responseBytes = responseBytes,
     policyId = policyId?.toString(),
+    launchId = launchId,
 )
 
 /** Totals usage rows by server and by tool, with details by member and server. */
