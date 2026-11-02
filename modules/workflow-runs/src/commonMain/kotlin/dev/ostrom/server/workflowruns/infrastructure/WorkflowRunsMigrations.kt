@@ -57,4 +57,13 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
         ${policy("workflow_runs_notifications")}
         """.trimIndent(),
     ),
+    // Where each run comes from (decision 13:23, core#40): the workstation's hooks, unless the server holds a proof.
+    SchemaMigration(
+        2,
+        "check_attestation",
+        """
+        ALTER TABLE workflow_runs_checks ADD COLUMN attestation TEXT NOT NULL DEFAULT 'workstation_declared'
+            CHECK (attestation IN ('workstation_declared', 'isolated_runner', 'ci'))
+        """.trimIndent(),
+    ),
 )

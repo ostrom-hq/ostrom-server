@@ -52,6 +52,10 @@ class FakeLaunchers(
         }
         return role?.let { OrgPrincipal(orgId, memberOf(userId), it) }
     }
+
+    /** The members of [launchers], by member id: their key. */
+    override suspend fun owner(orgId: Uuid, memberId: Uuid): Launcher? =
+        launchers[memberId.toString()]?.takeIf { it.orgId == orgId }
 }
 
 /** Records each token issued and answers `osa_<launch>`. */
