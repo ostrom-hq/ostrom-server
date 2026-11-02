@@ -13,6 +13,7 @@ import dev.ostrom.server.gateway.domain.ModelCallObserver
 import dev.ostrom.server.gateway.domain.ModelUsageSink
 import dev.ostrom.server.gateway.domain.NoModelCallObserver
 import dev.ostrom.server.gateway.domain.NoModelUsageSink
+import dev.ostrom.server.gateway.domain.PolicyModelAccess
 import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.PutGatewaySettingsUseCase
 import dev.ostrom.server.gateway.domain.PutGatewaySettingsUseCaseImpl
@@ -27,6 +28,7 @@ import dev.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
 import dev.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
 import dev.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import dev.ostrom.server.gateway.presentation.gatewayRoutes
+import dev.ostrom.server.kernel.auth.ModelAccess
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
@@ -45,7 +47,8 @@ import kotlin.time.Duration.Companion.milliseconds
  * The gateway module: agents send their model calls to Ostrom; the gateway serves them with the org's shared
  * subscription accounts or its provider keys, streams the answer back untouched, and records usage. Budgets, the usage
  * ledger and traces are ports ([SpendGuard], [ModelUsageSink], [ModelCallObserver]) bound by the modules that own
- * them; unbound, every call is allowed, and nothing is recorded or traced.
+ * them; unbound, every call is allowed, and nothing is recorded or traced. It binds [ModelAccess] with the org's model
+ * policy, which a launch reads before it starts.
  */
 object GatewayModule : ServerModule {
     override val name: String = "gateway"
@@ -96,6 +99,7 @@ object GatewayModule : ServerModule {
         single<GetGatewaySettingsUseCase> { GetGatewaySettingsUseCaseImpl(get()) }
         single<PutGatewaySettingsUseCase> { PutGatewaySettingsUseCaseImpl(get()) }
         single<GetModelPolicyUseCase> { GetModelPolicyUseCaseImpl(get()) }
+        single<ModelAccess> { PolicyModelAccess(get()) }
         single<PutModelPolicyUseCase> { PutModelPolicyUseCaseImpl(get()) }
         single {
             GatewayRoutesDependencies(

@@ -26,7 +26,7 @@ class LaunchPolicy(private val models: LaunchModelRules) {
      */
     suspend fun refusal(launcher: Launcher, agent: String?, model: String?): String? = malformed(agent, model)
         ?: BILLING_ONLY.takeUnless { launches(launcher.role) }
-        ?: model?.let { models.refusal(launcher.orgId, launcher.login, it) }
+        ?: model?.let { models.refusal(launcher, it) }
 
     /**
      * Says what is malformed in a launch's names.
