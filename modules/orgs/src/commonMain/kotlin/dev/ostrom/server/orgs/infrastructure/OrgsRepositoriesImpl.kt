@@ -189,6 +189,20 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
                 ?.toMember()
         }
 
+    override suspend fun findById(orgId: Uuid, memberId: Uuid): Member? =
+        driver.inOrg(orgId) {
+            fetchAll(
+                    Statement.create(
+                            "SELECT $MEMBER_COLUMNS FROM orgs_members m WHERE m.org_id = :org AND m.id = :id"
+                        )
+                        .bind("org", orgId)
+                        .bind("id", memberId)
+                )
+                .getOrThrow()
+                .firstOrNull()
+                ?.toMember()
+        }
+
     override suspend fun list(orgId: Uuid): List<Member> =
         driver.inOrg(orgId) {
             fetchAll(
