@@ -9,12 +9,12 @@ import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.orgs.domain.Invitation
 import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
-import dev.ostrom.server.orgs.domain.OrgRole
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
