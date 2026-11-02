@@ -65,8 +65,8 @@ class ReconcileCloudSessionUseCaseImpl(
         if (!driver.deleteWorkspace(session)) return now + STEP_DELAY
         val terminated = session.moveTo(SessionState.TERMINATED, now)
             .copy(terminatedAt = now, runnerTokenHash = null, phase = "cleaned")
-        write(terminated, null)
-        return null
+        // A lost write (the runner's last heartbeat, sent while its container stopped) asks for a new look.
+        return write(terminated, null)
     }
 
     private suspend fun starting(session: CloudSession, now: Instant): Instant? {

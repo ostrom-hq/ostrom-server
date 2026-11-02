@@ -2,7 +2,7 @@
 package dev.ostrom.server.launches.domain.services
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.launches.domain.models.Launcher
 import kotlin.time.Duration
 import kotlin.uuid.Uuid
@@ -19,14 +19,14 @@ interface LauncherResolver {
     suspend fun resolve(principal: AuthenticatedPrincipal): Launcher?
 
     /**
-     * Reads the role a person has in an organization now: an agent token acts only while its person still may.
+     * Reads a person's membership of an organization now: an agent token acts only while its person still may.
      *
      * @param orgId The organization.
      * @param userId The person.
      *
-     * @return Their role, or null when they are no longer a member.
+     * @return Their membership (member id and role), or null when they are no longer a member.
      */
-    suspend fun role(orgId: Uuid, userId: Uuid): OrgRole?
+    suspend fun member(orgId: Uuid, userId: Uuid): OrgPrincipal?
 }
 
 /** Issues the agent token of a launch (the identity module's agent tokens). */
