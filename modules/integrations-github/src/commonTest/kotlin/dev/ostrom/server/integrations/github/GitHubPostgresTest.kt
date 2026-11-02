@@ -340,14 +340,8 @@ class GitHubPostgresTest {
         assertNull(repository.check(OTHER_ORG, gateId))
         assertNull(repository.installation(OTHER_ORG))
 
-        // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
-        server.driver.execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
-        val tables = "github_installations, github_install_states, github_checks"
-        server.driver.execute("GRANT SELECT, INSERT, DELETE ON $tables TO ostrom_rls_probe").getOrThrow()
+        // The test's driver is the serving role, as in production (#68): row level security applies to it.
         val counts = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             val none = listOf("github_installations", "github_checks").map { count(it) }
             val setOrg = Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)")
             fetchAll(setOrg.bind("org", OTHER_ORG.toString())).getOrThrow()
@@ -365,7 +359,6 @@ class GitHubPostgresTest {
         // PostgreSQL refuses the row (WITH CHECK): the statement fails, or the commit of the aborted transaction does.
         val forged = try {
             server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
                 fetchAll(Statement.create("SELECT set_config('ostrom.github_installation', '42', TRUE)")).getOrThrow()
                 execute(
                     Statement.create(
