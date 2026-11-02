@@ -10,7 +10,7 @@ import dev.ostrom.server.kernel.database.SchemaMigration
  * transaction (S2-01). `runners_session_routes` is the one table read across organizations, by the reconciler (due
  * sessions of every organization) and by the runner channel (a session found by its runner token): it holds no
  * customer content, only a session's id and organization, the hash of its runner token and its reconcile schedule.
- * `runners_registered` (version 3) is a tenant table too: the machines an organization registered, with the hash of
+ * `runners_registered` (version 2) is a tenant table too: the machines an organization registered, with the hash of
  * their key.
  */
 val RunnersMigrations: List<SchemaMigration> = listOf(
@@ -77,10 +77,10 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             GRANT SELECT, INSERT, UPDATE ON runners_session_routes TO $TENANT_ROLE;
         """.trimIndent(),
     ),
-    // Version 2 belongs to server#104 (runners_session_routes under row-level security), open when this one was
-    // written: this one lands after it, so the versions never skip (it would take 2 if it had to land first).
+    // The migrator refuses a gap between versions: server#104 (runners_session_routes under row-level security), open
+    // when this one was written, takes the next number after it.
     SchemaMigration(
-        version = 3,
+        version = 2,
         name = "create_registered_runners",
         sql = """
             CREATE TABLE runners_registered (

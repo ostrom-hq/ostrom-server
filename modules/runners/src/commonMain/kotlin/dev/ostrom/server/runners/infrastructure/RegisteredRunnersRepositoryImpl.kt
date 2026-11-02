@@ -17,7 +17,7 @@ import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
 
 /**
- * [RegisteredRunnersRepository] on PostgreSQL (`runners_registered`, migration 3 of [RunnersMigrations]): every read
+ * [RegisteredRunnersRepository] on PostgreSQL (`runners_registered`, migration 2 of [RunnersMigrations]): every read
  * and write runs confined to the runner's organization ([inTenant], S2-01). The labels are a JSON array of strings.
  *
  * @param driver The database.
