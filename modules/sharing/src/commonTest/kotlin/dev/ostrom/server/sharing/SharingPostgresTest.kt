@@ -2,6 +2,7 @@
 package dev.ostrom.server.sharing
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
@@ -99,7 +100,8 @@ class SharingPostgresTest {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: byToken[token]?.let {
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
+                        val scopes = setOf(RelayScopes.ALL_USER)
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER)
                     }
             }
         }
