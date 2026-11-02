@@ -27,7 +27,7 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * The gates' request-path reads under `EXPLAIN ANALYZE`, as a deployment's serving role (no owner, no superuser: row
+ * The gates' request-path reads under `EXPLAIN ANALYZE`, as the serving role (no owner, no superuser: row
  * level security applies), over 50 organizations and 10 000 gates with two approval requests each, 2 000 of the gates
  * in the organization read. Each read goes through an index to the rows it serves: never a scan of a table, never the
  * organization's rows filtered one by one. The plans are written to `build/reports/explain/gates.txt`, uploaded with
@@ -57,15 +57,11 @@ class GatesQueryPlansTest {
         // A gate the GitHub check opened has no session: nothing to link.
         val unlinked = gateOf(others.first(), TOTAL_GATES).copy(sessionIds = emptyList())
         repository.transaction { insertGate(unlinked) }
-        server.driver.execute("VACUUM ANALYZE gates_gates").getOrThrow()
-        server.driver.execute("VACUUM ANALYZE gates_requests").getOrThrow()
-
-        val plans = server.database.withRole { role, serving ->
-            // What ci/database-roles.sql and the Helm chart grant `ostrom_app`.
-            server.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
-                .getOrThrow()
-            plansOf(serving, first)
+        // Statistics are the owner's to gather; the reads run as the serving role, as every test does (#68).
+        for (table in listOf("gates_gates", "gates_requests", "gates_sessions")) {
+            server.database.owner.execute("VACUUM ANALYZE $table").getOrThrow()
         }
+        val plans = plansOf(server.driver, first)
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
         SystemFileSystem.createDirectories(Path("build/reports/explain"))
         SystemFileSystem.sink(Path("build/reports/explain/gates.txt")).buffered().use { it.writeString(report) }
