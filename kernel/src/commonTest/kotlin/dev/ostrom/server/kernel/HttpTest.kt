@@ -4,6 +4,7 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgProfile
 import dev.ostrom.server.kernel.auth.OrgRequiredException
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -479,6 +480,16 @@ class HttpTest {
     @Test
     fun theRejectingResolverKnowsNoOrganization() = runTest {
         assertNull(RejectingPrincipalOrgResolver().profile(ORG))
+    }
+
+    @Test
+    fun anOrganizationIsShownToItsMemberByItsNamesAndPicture() {
+        val acme = OrgProfile(ORG, "acme", "Acme", "https://avatars.githubusercontent.com/u/7", linkedToGitHub = true)
+
+        assertEquals(ORG, acme.id)
+        assertEquals("acme" to "Acme", acme.slug to acme.name)
+        assertEquals("https://avatars.githubusercontent.com/u/7", acme.avatarUrl)
+        assertTrue(acme.linkedToGitHub)
     }
 
     @Test
