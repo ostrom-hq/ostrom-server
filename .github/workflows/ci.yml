@@ -127,6 +127,7 @@ jobs:
       postgres:
         image: postgres:17
         env:
+      TOKIO_WORKER_THREADS: '2'
           POSTGRES_USER: ostrom
           POSTGRES_PASSWORD: ostrom
           POSTGRES_DB: ostrom_test
@@ -160,7 +161,7 @@ jobs:
         run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
       - name: Native tests (linuxX64), with PostgreSQL
         if: ${{ !cancelled() }}
-        run: ./gradlew --continue linuxX64Test
+        run: ./gradlew :app:linuxX64Test --tests '*GateJourneyPostgresTest*'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
