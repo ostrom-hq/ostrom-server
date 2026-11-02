@@ -17,7 +17,6 @@ import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
-import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -119,38 +118,33 @@ class IdentityTenancyPostgresTest {
         assertEquals(emptyList(), s.asRole(TENANT_ROLE, null) { actions() })
     }
 
+    /** Runs [block] as the tables' owner (the migrations' role), confined to [org] when there is one. */
+    private suspend fun <T> TestServer.asOwner(org: Uuid?, block: suspend Transaction.() -> T): T =
+        database.owner.transaction {
+            if (org != null) {
+                execute(Statement.create("SELECT set_config('ostrom.org_id', :org, true)").bind("org", org.toString()))
+                    .getOrThrow()
+            }
+            block()
+        }
+
     @Test
     fun theTablesOwnerIsBoundByThePoliciesToo() = serverTest(listOf(IdentityModule)) { s ->
         s.seed()
-        // CI connects as a superuser, which no policy binds: the check runs as a plain role that owns the tables, the
-        // way the server's own role does in production.
-        val owner = "s2_owner_" + Random.nextLong().toULong().toString(16)
-        s.driver.execute("CREATE ROLE $owner NOLOGIN").getOrThrow()
-        try {
-            s.driver.execute("GRANT $owner TO CURRENT_USER").getOrThrow()
-            s.driver.execute("ALTER TABLE identity_api_tokens OWNER TO $owner").getOrThrow()
-            s.driver.execute("ALTER TABLE identity_audit_events OWNER TO $owner").getOrThrow()
-
-            // Account-level work (no organization set): every token, to authenticate one by its hash; account events
-            // (the seeded user's own creation among them).
-            assertEquals(listOf("a", "b"), s.asRole(owner, null) { tokenNames() })
-            assertEquals(listOf("account", "user.created"), s.asRole(owner, null) { actions() })
-            // Confined to B, the owner is held to B like the tenant role: it reads, changes and deletes B's rows only.
-            assertEquals(listOf("b"), s.asRole(owner, orgB) { tokenNames() })
-            assertEquals(listOf("b"), s.asRole(owner, orgB) { actions() })
-            s.asRole(owner, orgB) { execute("UPDATE identity_api_tokens SET name = 'renamed'").getOrThrow() }
-            s.asRole(owner, orgB) { execute("DELETE FROM identity_audit_events").getOrThrow() }
-            assertEquals(listOf("a", "renamed"), s.asRole(owner, null) { tokenNames() })
-            assertEquals(listOf("a"), s.driver.inOrg(orgA) { actions() })
-            assertEquals(emptyList(), s.driver.inOrg(orgB) { actions() })
-            assertFailsWith<Exception> { s.asRole(owner, orgB) { insertAuditRowOf(orgA) } }
-            assertFailsWith<Exception> { s.asRole(owner, orgB) { insertTokenRowOf(orgA) } }
-        } finally {
-            s.driver.execute("ALTER TABLE identity_api_tokens OWNER TO CURRENT_USER").getOrThrow()
-            s.driver.execute("ALTER TABLE identity_audit_events OWNER TO CURRENT_USER").getOrThrow()
-            // Roles outlive the test database: the one made here leaves nothing behind.
-            s.driver.execute("DROP OWNED BY $owner").getOrThrow()
-            s.driver.execute("DROP ROLE $owner").getOrThrow()
-        }
+        // Account-level work (no organization set): every token, to authenticate one by its hash; account events
+        // (the seeded user's own creation among them). The serving role reads them the same way.
+        assertEquals(listOf("a", "b"), s.asOwner(null) { tokenNames() })
+        assertEquals(listOf("account", "user.created"), s.asOwner(null) { actions() })
+        assertEquals(listOf("a", "b"), s.driver.transaction { tokenNames() })
+        // Confined to B, the owner is held to B like the tenant role: it reads, changes and deletes B's rows only.
+        assertEquals(listOf("b"), s.asOwner(orgB) { tokenNames() })
+        assertEquals(listOf("b"), s.asOwner(orgB) { actions() })
+        s.asOwner(orgB) { execute("UPDATE identity_api_tokens SET name = 'renamed'").getOrThrow() }
+        s.asOwner(orgB) { execute("DELETE FROM identity_audit_events").getOrThrow() }
+        assertEquals(listOf("a", "renamed"), s.asOwner(null) { tokenNames() })
+        assertEquals(listOf("a"), s.driver.inOrg(orgA) { actions() })
+        assertEquals(emptyList(), s.driver.inOrg(orgB) { actions() })
+        assertFailsWith<Exception> { s.asOwner(orgB) { insertAuditRowOf(orgA) } }
+        assertFailsWith<Exception> { s.asOwner(orgB) { insertTokenRowOf(orgA) } }
     }
 }
