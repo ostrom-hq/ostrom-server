@@ -162,7 +162,10 @@ jobs:
         env:
           OUTPUTS: ${{ toJSON(steps.session.outputs) }}
         run: |
-          for name in token unlock_key login yes_approval no_approval yes_gate no_gate asker_token; do
+          names="token unlock_key login yes_approval no_approval yes_gate no_gate asker_token"
+          # The repository of the requests, once the app's flow reads it (its Activity screen).
+          if grep -q OSTROM_E2E_REPO app/.maestro/real/journey.yaml; then names="$names repo"; fi
+          for name in $names; do
             if [ -z "$(jq -r --arg n "$name" '.[$n] // ""' <<< "$OUTPUTS")" ]; then
               echo "::error::The session step gave no $name: the app or the checks would fail later, unclearly"
               exit 1
@@ -240,7 +243,7 @@ jobs:
           OSTROM_E2E_LOGIN: ${{ steps.session.outputs.login }}
           OSTROM_E2E_YES: ${{ steps.session.outputs.yes_approval }}
           OSTROM_E2E_NO: ${{ steps.session.outputs.no_approval }}
-          # The repository of the requests, which the Activity screen shows (empty with an older session script).
+          # The repository of the requests, which the Activity screen shows (checked above once the flow reads it).
           OSTROM_E2E_REPO: ${{ steps.session.outputs.repo }}
         with:
           working-directory: app
