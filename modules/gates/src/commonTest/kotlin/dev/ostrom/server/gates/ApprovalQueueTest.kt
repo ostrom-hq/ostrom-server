@@ -131,6 +131,18 @@ class ApprovalQueueTest {
         assertEquals("You asked for this action and cannot approve it: rev-b must say yes.", asker.reason)
     }
 
+    // PARCOURS 3.3: a session links each of its gates by the gate's id, and the view reads that id too.
+    @Test
+    fun theViewOfAGateIsTheReadersOwnRequestElseItsFirst() = runTest {
+        val bench = GateBench()
+        val opened = bench.opened("lyes", "rev-b")
+        val gateId = opened.gate.id
+        assertEquals(opened.of("rev-b"), bench.view(user("Rev-B"), console, gateId).view, "their own, case ignored")
+        val first = bench.repository.requestsOf(ORG, gateId).first()
+        assertEquals(ApprovalView(first, opened.gate), bench.view(user("dev"), console, gateId).view)
+        assertFailsWith<GateNotFoundException> { bench.view(user("rev-b", OTHER_ORG), console, gateId) }
+    }
+
     @Test
     fun theViewIsReadByAPersonOfTheOrganizationOnly() = runTest {
         val bench = GateBench()
