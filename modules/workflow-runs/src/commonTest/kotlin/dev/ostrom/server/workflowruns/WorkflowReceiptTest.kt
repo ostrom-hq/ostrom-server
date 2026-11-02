@@ -2,7 +2,11 @@
 package dev.ostrom.server.workflowruns
 
 import dev.ostrom.core.api.models.CheckOutcome
+import dev.ostrom.core.api.models.CheckRun
+import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.core.api.models.ReportCheckRequest
+import dev.ostrom.server.gates.domain.models.CiCheck
+import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.receipts.domain.models.Verification
 import dev.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import dev.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCase
@@ -59,7 +63,8 @@ class WorkflowReceiptTest {
         listOf(session(ended = true)),
         gates = listOf(gate(approved = true, self = true), gate(false, false)),
     )
-    private val sign = SignWorkflowReceiptUseCaseImpl(access(sessions), sessions, runs, signer, verifier)
+    private val ci = RecordingCi()
+    private val sign = SignWorkflowReceiptUseCaseImpl(access(sessions), sessions, runs, signer, verifier, ci)
 
     private fun request(agent: String? = null, model: String? = null, sessionId: String = "s-1") =
         WorkflowReceiptRequest(sessionId, "sha256:pkg", agent, model)
@@ -109,13 +114,69 @@ class WorkflowReceiptTest {
         assertFailsWith<InvalidRunException> { sign(AGENT, request(model = "m".repeat(201))) }
         assertTrue(signed.isEmpty())
         val open = FakeSessions(listOf(session()))
-        val early = SignWorkflowReceiptUseCaseImpl(access(open), open, runs, signer, verifier)
+        val early = SignWorkflowReceiptUseCaseImpl(access(open), open, runs, signer, verifier, ci)
         assertFailsWith<SessionStillOpenException> { early(AGENT, request()) }
         assertTrue(signed.isEmpty(), "An open session's receipt would miss what it reports next")
         val alone = FakeSessions(listOf(session(ended = true)))
-        val ownSession = SignWorkflowReceiptUseCaseImpl(access(alone), alone, runs, signer, verifier)
+        val ownSession = SignWorkflowReceiptUseCaseImpl(access(alone), alone, runs, signer, verifier, ci)
         assertEquals(0, ownSession(AGENT, request()).receipt.getValue("decisions").jsonArray.size)
     }
 
+    @Test
+    fun aCheckTheCiRanOnTheSameCommitIsSignedAsProvenByTheCi() = runTest {
+        runs.checks += ran(head = SHA)
+        ci.answer = CiCheck(77, "Label n-check", SHA, "success", "github-actions", "https://github.com/r/77", null)
+        val node = sign(AGENT, request()).receipt.getValue("nodes").jsonArray.first().jsonObject
+        assertEquals("ci" to "passed in CI", node.text("attestation") to node.text("outcome"))
+        assertEquals("https://github.com/r/77", node.text("ref"))
+        assertEquals(listOf(listOf("acme/api", SHA, "Label n-check")), ci.asked, "Only the check node, once")
+    }
+
+    @Test
+    fun theForgeIsAskedOnlyForARunsCommitInTheRepositoryTheSessionRunsIn() = runTest {
+        sign(AGENT, request())
+        assertTrue(ci.asked.isEmpty(), "No run of the check")
+        runs.checks += ran(head = null)
+        sign(AGENT, request())
+        assertTrue(ci.asked.isEmpty(), "A run that named no commit")
+        runs.checks += ran(head = SHA)
+        val nowhere = FakeSessions(listOf(session(ended = true, repo = null)))
+        SignWorkflowReceiptUseCaseImpl(access(nowhere), nowhere, runs, signer, verifier, ci)(AGENT, request())
+        assertTrue(ci.asked.isEmpty(), "A session in no repository")
+        val moved = FakeSessions(listOf(session(ended = true).copy(realRepo = "acme/fork")))
+        val node = SignWorkflowReceiptUseCaseImpl(access(moved), moved, runs, signer, verifier, ci)(AGENT, request())
+            .receipt.getValue("nodes").jsonArray.first().jsonObject
+        assertEquals(listOf(listOf("acme/fork", SHA, "Label n-check")), ci.asked, "Where it really runs")
+        assertEquals("workstation_declared", node.text("attestation"), "No CI run: declared")
+    }
+
+    private fun ran(head: String?) = CheckRun(
+        id = "chk_${runs.checks.size}",
+        at = "2026-10-30T10:00:00.000Z",
+        sessionId = "s-1",
+        digest = "sha256:pkg",
+        nodeId = "n-check",
+        scriptId = "sc-1",
+        mode = PackageMode.ENFORCE,
+        exit = 0,
+        head = head,
+        sandbox = "bwrap",
+        dev = "ada",
+    )
+
     private fun JsonObject.text(name: String): String = getValue(name).jsonPrimitive.content
 }
+
+/** The forge's record of CI runs: one answer for every question, and the questions asked. */
+private class RecordingCi : CiChecks {
+    val asked = mutableListOf<List<String>>()
+    var answer: CiCheck? = null
+
+    override suspend fun latest(orgId: Uuid, repo: String, sha: String, name: String): CiCheck? {
+        asked += listOf(repo, sha, name)
+        return answer
+    }
+}
+
+private const val SHA = "0123456789abcdef0123456789abcdef01234567"
+

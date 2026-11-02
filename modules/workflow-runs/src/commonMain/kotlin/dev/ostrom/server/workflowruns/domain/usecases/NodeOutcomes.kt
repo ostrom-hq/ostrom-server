@@ -8,6 +8,7 @@ import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.core.api.models.ReceiptNode
 import dev.ostrom.server.compiler.domain.services.PackageTexts
+import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.workflowruns.domain.models.PackageNode
@@ -15,14 +16,16 @@ import dev.ostrom.server.workflowruns.domain.models.RunPackage
 
 /**
  * What each node of a session's workflows did (prototype `outcomes`): it says only what Ostrom saw, a check run, a
- * notification, a skill opened, never that an instruction was followed. A check node always carries its attestation,
- * and today it is the workstation's declaration: nothing in a receipt calls a reported check proven.
+ * notification, a skill opened, never that an instruction was followed. A check node always carries its attestation:
+ * the workstation's declaration, unless the forge's own record of the CI running that check on the same commit proves
+ * it (`ci`).
  *
  * @param pack The session's package.
  * @param session The session.
  * @param runs Its check runs, oldest first.
  * @param notifications Its notifications, oldest first.
  * @param gates Its gates.
+ * @param ci The CI's record of each check node, by node id, read from the forge on the commit its last run reported.
  */
 class NodeOutcomes(
     private val pack: RunPackage,
@@ -30,6 +33,7 @@ class NodeOutcomes(
     private val runs: List<CheckRun>,
     private val notifications: List<Notification>,
     private val gates: List<SessionGate>,
+    private val ci: Map<String, CiCheck> = emptyMap(),
 ) {
     /**
      * The nodes the receipt carries: those of the workflows the session made act, or, when none acted, those of the
@@ -61,7 +65,8 @@ class NodeOutcomes(
 
     // Every check node says where its runs come from (decision 13:23, core#40). A run reaches the server only by
     // POST /checks, from the hooks on the developer's machine, which the agent can read: it is a declaration of the
-    // workstation. `isolated_runner` and `ci` are written only once the server itself has proof of them, never before.
+    // workstation. `ci` is written only when the server read the CI's own run of it on GitHub (decision of 30/10
+    // 15:14); `isolated_runner` once an Ostrom runner's proof exists, never before.
     private fun check(base: ReceiptNode, node: PackageNode): ReceiptNode {
         val declared = base.copy(attestation = CheckAttestation.WORKSTATION_DECLARED)
         val mine = runs.filter { it.nodeId == node.id }
@@ -69,8 +74,16 @@ class NodeOutcomes(
         return when {
             last == null -> declared
             node.mode == PackageMode.SHADOW -> declared.copy(outcome = "shadow: would have run ${mine.size}×, not run")
-            else -> ran(declared, mine, last)
+            else -> ran(declared, mine, last).let { reported -> ci[node.id]?.let { proven(reported, it) } ?: reported }
         }
+    }
+
+    // The CI's run on that commit is the proof: its conclusion is the outcome, the workstation's runs stay as detail.
+    private fun proven(reported: ReceiptNode, check: CiCheck): ReceiptNode {
+        val outcome = if (check.conclusion == SUCCESS) "passed in CI" else "failed in CI (${check.conclusion})"
+        val detail = "CI ${check.name} by ${check.app} on ${check.headSha.take(SHORT_SHA)}; ${reported.detail}"
+        val ref = check.url ?: reported.ref
+        return reported.copy(outcome = outcome, detail = detail, ref = ref, attestation = CheckAttestation.CI)
     }
 
     private fun ran(base: ReceiptNode, mine: List<CheckRun>, last: CheckRun): ReceiptNode {
@@ -122,6 +135,7 @@ class NodeOutcomes(
 
     private companion object {
         const val NOT_TRIGGERED = "not triggered"
+        const val SUCCESS = "success"
         const val SHORT_SHA = 8
         const val DETAIL = 200
         const val HOUR = 11

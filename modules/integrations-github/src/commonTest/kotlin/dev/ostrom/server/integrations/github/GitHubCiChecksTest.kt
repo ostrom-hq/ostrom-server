@@ -65,6 +65,8 @@ class GitHubCiChecksTest {
     fun aRunWithoutItsDateCountsOnlyWhenNoneHasOne() = runTest {
         api.runs = listOf(run(7, completed = null))
         assertEquals(7L, checks().latest(ORG, "acme/api", SHA, "test")?.id)
+        api.runs = listOf(run(7, completed = null), run(8, completed = -60), run(9, completed = null))
+        assertEquals(8L, checks().latest(ORG, "acme/api", SHA, "test")?.id, "Any date is later than none")
     }
 
     @Test
