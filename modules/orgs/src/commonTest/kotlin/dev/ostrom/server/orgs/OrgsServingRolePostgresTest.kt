@@ -15,6 +15,7 @@ import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.SlugTakenException
 import dev.ostrom.server.orgs.infrastructure.InvitationsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
+import dev.ostrom.server.orgs.infrastructure.OrgDeletionsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.OrgsRepositoryImpl
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
@@ -101,6 +102,43 @@ class OrgsServingRolePostgresTest {
         }
 
     @Test
+    fun theServingRoleChangesSettingsAndFinishesADeletionAcrossOrganizations() =
+        serverTest(listOf(IdentityModule, OrgsModule)) { server ->
+            val ada = server.user("ada")
+            server.database.withRole { role, serving ->
+                val superuser = server.database.superuser
+                superuser
+                    .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
+                    .getOrThrow()
+                superuser.execute("GRANT ostrom_tenant TO $role").getOrThrow()
+                superuser.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
+                val orgs = OrgsRepositoryImpl(serving)
+                val deletions = OrgDeletionsRepositoryImpl(serving)
+                val acme = org("acme")
+                assertNull(orgs.create(acme, owner(acme, ada)) { false })
+
+                orgs.update(acme.id, "Acme Labs", "Europe/Paris")
+                val zoned = acme.copy(name = "Acme Labs", timeZone = "Europe/Paris")
+                assertEquals(zoned, orgs.get(acme.id))
+                assertEquals(zoned, orgs.findBySlug("acme"))
+                assertEquals(listOf(zoned), orgs.listOfUser(ada.id).map { it.org })
+
+                orgs.delete(acme.id, now, now + 30.days)
+                // Found with no organization set: only through the functions, which list ids and nothing else.
+                assertEquals(listOf(acme.id), deletions.deletionsToSettle(now, 10))
+                deletions.markSettled(acme.id, now)
+                assertEquals(emptyList(), deletions.deletionsToSettle(now, 10))
+                assertEquals(emptyList(), deletions.duePurges(now, 10))
+                deletions.postpone(acme.id, now + 31.days)
+                assertEquals(emptyList(), deletions.duePurges(now + 30.days, 10), "Put off")
+                assertEquals(listOf(acme.id), deletions.duePurges(now + 31.days, 10))
+                deletions.erase(acme.id, now + 31.days)
+                assertEquals(emptyList(), deletions.duePurges(now + 32.days, 10))
+                assertTrue(orgs.slugTaken("acme"))
+            }
+        }
+
+    @Test
     fun theCrossOrganizationFunctionsPutTheTemporarySchemaLast() =
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val hardened =
@@ -112,6 +150,6 @@ class OrgsServingRolePostgresTest {
                     .single()
                     .get("n")
                     .asLong()
-            assertEquals(6L, hardened)
+            assertEquals(8L, hardened)
         }
 }

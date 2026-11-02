@@ -151,6 +151,10 @@ class StripeGatewayImpl(
         call(HttpMethod.Post, "/v1/subscriptions/$subscriptionId", listOf("cancel_at_period_end" to cancel.toString()))
     }
 
+    override suspend fun cancelNow(subscriptionId: String) {
+        call(HttpMethod.Delete, "/v1/subscriptions/$subscriptionId", emptyList())
+    }
+
     override suspend fun setQuantity(subscriptionId: String, itemId: String, quantity: Int) {
         call(
             HttpMethod.Post,

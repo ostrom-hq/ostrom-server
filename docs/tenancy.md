@@ -62,6 +62,9 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `identity_token_by_hash(hash)` | identity | reads an API token by its hash, to authenticate it | `IdentityTenancyPostgresTest` |
 | `identity_token_touch(id, at)` | identity | notes an API token's last use | `IdentityTenancyPostgresTest` |
 | `identity_revoke_agent_session_tokens(session, at)` | identity | revokes the agent tokens of one agent session | `IdentityTenancyPostgresTest` |
+| `automations_route_org(id)` | automations | an automation's organization, for its webhook | `AutomationsRoutesTenancyPostgresTest` |
+| `automations_due_routes(now, limit)` | automations | claims the due crons of every organization (`FOR UPDATE SKIP LOCKED`) | `AutomationsPostgresTest` |
+| `automations_organizations()` | automations | the organizations that have automations, for the retention jobs | `AutomationsPostgresTest` |
 
 ## Known exceptions
 
@@ -70,7 +73,7 @@ every table, policy, grant and `SECURITY DEFINER` function. The exceptions it st
 audit, each to be closed by moving the cross-organization path into a function of the table above:
 
 - tables with `org_id` read across organizations without row-level security: `artifacts_routes`,
-  `automations_routes`, `runners_session_routes`, `billing_customers`, `billing_outbox`;
+  `runners_session_routes`, `billing_customers`, `billing_outbox`;
 - `orgs_organizations`, `orgs_members`, `orgs_invitations`: row-level security enabled, not forced;
 - policies a setting opens to every organization: `sessions_sessions_sweep` (`ostrom.sweep`), the retention
   policies of `usage_events` and `mcp_relay_calls`;

@@ -48,21 +48,24 @@ interface OrgsRepository {
     suspend fun slugTaken(slug: String): Boolean
 
     /**
-     * Renames an organization.
+     * Changes an organization's settings, only the columns given: two people changing two
+     * different settings at once never undo each other.
      *
      * @param id The organization.
-     * @param name The new name.
+     * @param name The new name, null to keep it.
+     * @param timeZone The new time zone, null to keep it.
      */
-    suspend fun rename(id: Uuid, name: String)
+    suspend fun update(id: Uuid, name: String?, timeZone: String?)
 
     /**
-     * Deletes an organization: marks it deleted, releases its free claim, removes its members and
-     * invitations.
+     * Deletes an organization logically: marks it deleted, releases its free claim, removes its
+     * members and invitations (nobody reaches it any more), and keeps the rest until [purgeAfter].
      *
      * @param id The organization.
      * @param at When.
+     * @param purgeAfter When it may be erased for good: [DELETION_GRACE] after [at] unless said otherwise.
      */
-    suspend fun delete(id: Uuid, at: Instant)
+    suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant = at + DELETION_GRACE)
 
     /**
      * The live organizations a user belongs to, with their membership, by name.

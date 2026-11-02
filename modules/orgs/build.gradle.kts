@@ -10,6 +10,8 @@ kotlin {
             implementation(project(":kernel"))
             // People, the audit log, secrets, the rate limiter and mail come from the identity module's interfaces.
             implementation(project(":modules:identity"))
+            // The time zone database, to accept only known zones.
+            implementation(libs.kotlinx.datetime)
         }
         commonTest.dependencies {
             implementation(project(":testing"))

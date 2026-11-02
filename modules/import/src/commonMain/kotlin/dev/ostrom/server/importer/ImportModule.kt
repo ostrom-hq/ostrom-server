@@ -12,8 +12,10 @@ import dev.ostrom.server.importer.domain.SharedAccountImporter
 import dev.ostrom.server.importer.infrastructure.IdentityImportAudit
 import dev.ostrom.server.importer.infrastructure.ImportMigrations
 import dev.ostrom.server.importer.infrastructure.ImportProvenanceRepositoryImpl
+import dev.ostrom.server.importer.infrastructure.NoMembers
 import dev.ostrom.server.importer.presentation.ImportRoutesDependencies
 import dev.ostrom.server.importer.presentation.importRoutes
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -29,7 +31,8 @@ import org.koin.dsl.module
  * it through the secrets, MCP relay and sharing modules. Its one table records what it created, so a later run updates
  * that and leaves alone what an admin created by hand. Shared accounts go through the sharing module's use cases
  * ([SharedAccountImporter]) when it is installed, or through a bound [AccountImporter]. The cutover run is recorded in
- * the identity module's audit log ([IdentityImportAudit]), and refused without one.
+ * the identity module's audit log ([IdentityImportAudit]), and refused without one. A member map is checked against
+ * the orgs module's [MemberDirectory]; without one, no member can be mapped ([NoMembers]).
  */
 object ImportModule : ServerModule {
     override val name: String = "import"
@@ -44,7 +47,8 @@ object ImportModule : ServerModule {
                     SharedAccountImporter(share, get(), get(), get())
                 }
             val audit = getOrNull<AuditLog>()?.let(::IdentityImportAudit)
-            ImportTeamCodeUseCaseImpl(get(), get(), get(), accounts, audit)
+            val members = getOrNull<MemberDirectory>() ?: NoMembers
+            ImportTeamCodeUseCaseImpl(get(), get(), get(), members, accounts, audit)
         }
         single { ImportRoutesDependencies(getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()), get()) }
     }
