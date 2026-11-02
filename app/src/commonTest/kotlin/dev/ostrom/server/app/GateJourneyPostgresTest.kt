@@ -16,6 +16,7 @@ import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
+import dev.ostrom.server.receipts.domain.usecases.VerifyReceiptUseCase
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.request.HttpRequestBuilder
@@ -29,6 +30,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -36,6 +40,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
@@ -75,68 +81,142 @@ class GateJourneyPostgresTest {
 
     private suspend fun HttpResponse.json(): JsonObject = Json.parseToJsonElement(bodyAsText()).jsonObject
 
-    /** dev-a owns the organization, rev-b joins it as an admin. */
-    private suspend fun TestServer.team(devA: User, revB: User) {
+    /** dev-a owns the organization, rev-b and rev-c join it as admins. */
+    private suspend fun TestServer.team(devA: User, approvers: List<User>) {
         val now = Clock.System.now()
         val org = Org(Uuid.random(), "acme", "Acme", null, null, now)
         koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, devA.id, OrgRole.OWNER, now)) { false }
         val invitations = koin.get<InvitationsRepository>()
-        val expires = now + 1.hours
-        val email = "rev-b@example.com"
-        val invitation = Invitation(Uuid.random(), org.id, email, OrgRole.ADMIN, devA.id, now, expires, 1, 0, null)
-        invitations.create(invitation, "hash-of-rev-b")
-        invitations.accept(invitation, Member(Uuid.random(), org.id, revB.id, OrgRole.ADMIN, now), now)
+        for (approver in approvers) {
+            val email = "${approver.login}@example.com"
+            val invitation =
+                Invitation(Uuid.random(), org.id, email, OrgRole.ADMIN, devA.id, now, now + 1.hours, 1, 0, null)
+            invitations.create(invitation, "hash-of-${approver.id}")
+            invitations.accept(invitation, Member(Uuid.random(), org.id, approver.id, OrgRole.ADMIN, now), now)
+        }
     }
 
     private fun push(cls: String) = """
         {"repo": "acme/api", "class": "$cls", "tool": "Bash", "command": "git push origin main",
-         "push": {"remote": "origin", "refs": [{"ref": "refs/heads/main", "sha": "${"a".repeat(SHA_LENGTH)}"}]}}
+         "push": {"remote": "origin", "refs": [{"ref": "refs/heads/main", "sha": "$COMMIT"}]}}
     """.trimIndent()
 
-    @Test
-    fun aPushToMainWaitsForTheApproverTheAcceptedWorkflowNames() = serverTest(serverModules()) { server ->
-        val (devA, devASession) = server.signIn("dev-a")
-        val (revB, revBSession) = server.signIn("rev-b")
-        server.team(devA, revB)
-        val token = server.client.post("/api/v1/tokens") {
-            session(devASession)
+    /** The benches' setup: the team, dev-a's personal token, the accepted workflow. Returns the token's secret. */
+    private suspend fun TestServer.setUp(devA: Pair<User, StartedSession>, approvers: List<User>): String {
+        team(devA.first, approvers)
+        val token = client.post("/api/v1/tokens") {
+            session(devA.second)
             json("""{"name": "k6 requester", "scopes": ["gates:ask", "gates:read"], "expiresInDays": 1}""")
         }
         assertEquals(201, token.status.value, token.bodyAsText())
-        val secret = token.json().getValue("secret").jsonPrimitive.content
-        val workflow = server.client.post("/api/v1/workflows") {
-            session(devASession)
+        val names = approvers.joinToString(", ") { "\"${it.login}\"" }
+        val workflow = client.post("/api/v1/workflows") {
+            session(devA.second)
             json(
                 """
                 {"id": "k6-push-main", "name": "k6 push to main", "domain": "delivery", "status": "accepted",
                  "foundAt": "2026-11-02T17:00:00Z", "edges": [],
-                 "nodes": [{"id": "push-main", "kind": "gate", "label": "Push to main", "approvers": ["rev-b"],
+                 "nodes": [{"id": "push-main", "kind": "gate", "label": "Push to main", "approvers": [$names],
                             "actions": [{"class": "push-main", "label": "Push to the main branch", "patterns": [],
                                          "repos": ["acme/api"]}]}]}
                 """.trimIndent(),
             )
         }
         assertTrue(workflow.status.value < 300, "workflow → ${workflow.status} ${workflow.bodyAsText()}")
+        return token.json().getValue("secret").jsonPrimitive.content
+    }
+
+    private suspend fun TestServer.ask(secret: String, cls: String): JsonObject {
+        val asked = client.post("/api/v1/gates") {
+            bearerAuth(secret)
+            json(push(cls))
+        }
+        assertEquals(200, asked.status.value, asked.bodyAsText())
+        return asked.json().getValue("gate").jsonObject
+    }
+
+    /** The approval waiting in [approver]'s inbox. */
+    private suspend fun TestServer.waiting(approver: StartedSession): JsonObject {
+        val inbox = client.get("/api/v1/approvals?mine=true&status=pending") { session(approver) }
+        return inbox.json().getValue("items").jsonArray.single().jsonObject
+    }
+
+    /** [approver]'s answer to [approval]. */
+    private suspend fun TestServer.answer(
+        approver: StartedSession,
+        approval: JsonObject,
+        answer: String,
+    ): HttpResponse {
+        val id = approval.getValue("id").jsonPrimitive.content
+        val shown = approval.getValue("shownDigest").jsonPrimitive.content
+        return client.post("/api/v1/approvals/$id/answer") {
+            session(approver)
+            json("""{"answer": "$answer", "shownDigest": "$shown"}""")
+        }
+    }
+
+    /**
+     * The receipt of an answer: signed by the instance, verified as `ostrom verify` does, with its result, naming the
+     * pushed commit in clear. Returns it.
+     */
+    private suspend fun TestServer.assertSignedReceipt(answered: HttpResponse, result: String): JsonObject {
+        assertEquals(200, answered.status.value, answered.bodyAsText())
+        val receipt = assertNotNull(answered.json()["receipt"]?.jsonObject, answered.bodyAsText())
+        assertTrue(receipt["signature"]?.jsonPrimitive?.content.orEmpty().isNotEmpty(), answered.bodyAsText())
+        val verification = koin.get<VerifyReceiptUseCase>().verify(receipt)
+        assertTrue(verification.ok, "verification: $verification")
+        val decision = receipt.getValue("decisions").jsonArray.single().jsonObject
+        assertEquals(result, decision.getValue("result").jsonPrimitive.content)
+        assertEquals(COMMIT, receipt.getValue("subject").jsonObject.getValue("id").jsonPrimitive.content)
+        return receipt
+    }
+
+    @Test
+    fun aPushToMainWaitsForTheApproverTheAcceptedWorkflowNames() = serverTest(serverModules()) { server ->
+        val devA = server.signIn("dev-a")
+        val (revB, revBSession) = server.signIn("rev-b")
+        val secret = server.setUp(devA, listOf(revB))
 
         // The benches ask the coarse class `git.push`; the CLI asks the catalogue's `push-main`. Both are this push.
         for (cls in listOf("git.push", "push-main")) {
-            val asked = server.client.post("/api/v1/gates") {
-                bearerAuth(secret)
-                json(push(cls))
-            }
-            assertEquals(200, asked.status.value, asked.bodyAsText())
-            val gate = asked.json().getValue("gate").jsonObject
-            assertEquals("pending", gate.getValue("status").jsonPrimitive.content, "$cls: ${asked.bodyAsText()}")
+            assertEquals("pending", server.ask(secret, cls).getValue("status").jsonPrimitive.content, cls)
         }
 
         val inbox = server.client.get("/api/v1/approvals?mine=true&status=pending") { session(revBSession) }
         assertEquals(200, inbox.status.value, inbox.bodyAsText())
         val items = inbox.json().getValue("items").jsonArray
         assertEquals(1, items.size, "rev-b's inbox: ${inbox.bodyAsText()}")
+
+        // A no is a decision too: its answer carries its signed receipt, and the server keeps it (E2E-GATE-001).
+        val answered = server.answer(revBSession, items.single().jsonObject, "reject")
+        val receipt = server.assertSignedReceipt(answered, "rejected")
+        val id = receipt.getValue("id").jsonPrimitive.content
+        val kept = server.client.get("/api/v1/receipts/$id") { session(devA.second) }
+        assertEquals(200, kept.status.value, kept.bodyAsText())
+        assertTrue(COMMIT in kept.bodyAsText() && "rev-b" in kept.bodyAsText(), kept.bodyAsText())
+    }
+
+    @Test
+    fun onlyTheWinnerOfTwoSimultaneousYesHasASignedReceipt() = serverTest(serverModules()) { server ->
+        val devA = server.signIn("dev-a")
+        val (revB, revBSession) = server.signIn("rev-b")
+        val (revC, revCSession) = server.signIn("rev-c")
+        val secret = server.setUp(devA, listOf(revB, revC))
+        assertEquals("pending", server.ask(secret, "push-main").getValue("status").jsonPrimitive.content)
+
+        // Both read their approval first, then say yes at once.
+        val approvals = listOf(revBSession, revCSession).map { it to server.waiting(it) }
+        val answers = coroutineScope {
+            approvals.map { (approver, approval) -> async { server.answer(approver, approval, "approve") } }.awaitAll()
+        }.sortedBy { it.status.value }
+        assertEquals(listOf(200, 409), answers.map { it.status.value })
+        server.assertSignedReceipt(answers.first(), "approved")
+        val refused = answers.last()
+        assertNull(refused.json()["receipt"], "a refused yes has no receipt: ${refused.bodyAsText()}")
     }
 
     private companion object {
         const val CONSOLE_ORIGIN = "http://localhost:5173"
-        const val SHA_LENGTH = 40
+        const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
     }
 }

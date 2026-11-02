@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.integrations.github
 
+import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.DirectoryState
 import dev.ostrom.server.integrations.github.domain.GitHubAppStore
 import dev.ostrom.server.integrations.github.domain.GitHubCallException
+import dev.ostrom.server.integrations.github.domain.GitHubCiApi
+import dev.ostrom.server.integrations.github.domain.GitHubCiChecks
+import dev.ostrom.server.integrations.github.domain.GitHubCiRun
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.domain.GitHubDirectorySync
@@ -90,7 +94,37 @@ class GitHubIntegrationModuleRegistrationTest {
         assertIs<HttpGitHubApi>(configured.koin.get<GitHubApi>(), "With a key: the App's JWT, read at the first call")
         assertSame<Any>(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubDirectoryApi>())
         assertSame<Any>(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubManifestApi>())
+        assertSame<Any>(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubCiApi>())
         configured.close()
+    }
+
+    @Test
+    fun theCiProofIsGitHubsRecordWithoutTheChecksOfOstromsOwnApp() = runTest {
+        val api = FakeGitHubCiApi()
+        api.runs = listOf(
+            GitHubCiRun(1, "test", SHA, "completed", "success", "ostrom-dev", null, NOW),
+            GitHubCiRun(2, "test", SHA, "completed", "failure", "github-actions", null, NOW),
+        )
+        val app = koinApplication {
+            allowOverride(true)
+            modules(
+                GitHubIntegrationModule.koinModule,
+                module {
+                    single<Clock> { SettableClock() }
+                    single<Logger> { RecordingLogger() }
+                    single { GitHubSettings("1", "pem", null, "ostrom-dev") }
+                    single<GitHubAppStore> { MemoryGitHubAppStore() }
+                    single<GitHubRepository> {
+                        MemoryGitHubRepository().apply { installations += GitHubInstallation(ORG, 42, "acme") }
+                    }
+                    single<GitHubCiApi> { api }
+                },
+            )
+        }
+        val ci = app.koin.get<CiChecks>()
+        assertIs<GitHubCiChecks>(ci)
+        assertEquals(2L, ci.latest(ORG, "acme/api", SHA, "test")?.id, "The slug of the App in use is Ostrom's own")
+        app.close()
     }
 
     @Test

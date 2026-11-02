@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.usecases
 
+import dev.ostrom.server.gates.domain.models.ApprovalRequest
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GateStatus
@@ -63,14 +64,24 @@ interface ListSessionGatesUseCase {
  * @param repository The gates.
  */
 class ListSessionGatesUseCaseImpl(private val repository: GatesRepository) : ListSessionGatesUseCase {
-    override suspend fun invoke(orgId: Uuid, sessionId: String): List<SessionGate> =
-        repository.ofSession(orgId, sessionId).map { gate ->
-            SessionGate(gate.id, gate.subject.actionClass, gate.mode, gate.status, gate.receiptId, decisionsOf(gate))
+    override suspend fun invoke(orgId: Uuid, sessionId: String): List<SessionGate> {
+        val gates = repository.ofSession(orgId, sessionId)
+        val decided = gates.filter { it.decidedAt != null }.map { it.id }
+        // One read for the answers of every decided gate, never one per gate.
+        val requests = if (decided.isEmpty()) {
+            emptyMap()
+        } else {
+            repository.requestsOfGates(orgId, decided).groupBy { it.gateId }
         }
+        return gates.map { gate ->
+            val decisions = decisionsOf(gate, requests[gate.id].orEmpty())
+            SessionGate(gate.id, gate.subject.actionClass, gate.mode, gate.status, gate.receiptId, decisions)
+        }
+    }
 
-    private suspend fun decisionsOf(gate: Gate): List<SessionGateDecision> {
+    private fun decisionsOf(gate: Gate, requests: List<ApprovalRequest>): List<SessionGateDecision> {
         val at = gate.decidedAt ?: return emptyList()
-        return repository.requestsOf(gate.orgId, gate.id)
+        return requests
             .filter { it.status == RequestStatus.APPROVED || it.status == RequestStatus.REJECTED }
             .map {
                 SessionGateDecision(it.id, it.approverId, at, it.status == RequestStatus.APPROVED, gate.selfApproved)

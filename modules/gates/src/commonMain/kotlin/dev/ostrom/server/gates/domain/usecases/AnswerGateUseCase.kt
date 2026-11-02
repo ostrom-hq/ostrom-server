@@ -19,6 +19,7 @@ import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.SelfApprovalRefusedException
 import dev.ostrom.server.gates.domain.models.StepUp
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.services.GateChanges
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import kotlin.time.Clock
@@ -61,6 +62,7 @@ interface AnswerGateUseCase {
  * @param receipts Signs the decision.
  * @param notifier Tells the other approvers, the GitHub check and the waiting hooks; it never throws.
  * @param clock The clock.
+ * @param changes Wakes the reads waiting on the gate.
  */
 class AnswerGateUseCaseImpl(
     private val repository: GatesRepository,
@@ -68,6 +70,7 @@ class AnswerGateUseCaseImpl(
     private val receipts: EnsureGateReceiptUseCase,
     private val notifier: GateNotifier,
     private val clock: Clock,
+    private val changes: GateChanges,
 ) : AnswerGateUseCase {
     override suspend fun invoke(
         actor: GateActor,
@@ -106,6 +109,7 @@ class AnswerGateUseCaseImpl(
         }
         val requests = decided.second
         val gate = receipts.ensureSigned(decided.first)
+        changes.changed(gate.id)
         notifier.decided(gate, requests)
         return viewOf(gate, requests, policy)
     }
