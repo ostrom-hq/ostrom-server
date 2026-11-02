@@ -1,0 +1,79 @@
+name: Agents pins
+
+# Every Monday, and on demand: moves the agents' CLIs of the cloud session image (runner/agents) to their latest
+# versions and opens a pull request. Never merged automatically: the pull request goes through the full `ci`, the
+# S2-49 isolation test included, and is merged by a person or an agent like any other. Nothing is published.
+on:
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: agents-pins
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: write # dispatch `ci` on the branch when the pull request is opened with GITHUB_TOKEN
+      contents: write # the branch of the pull request
+      pull-requests: write # the pull request
+    steps:
+      # With the release App, the pull request starts `ci` like any other; with GITHUB_TOKEN it does not, and `ci` is
+      # dispatched on the branch instead (its check lands on the same commit).
+      - name: Token of the release App
+        id: app
+        if: vars.RELEASE_APP_ID != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Update the pins
+        id: pins
+        run: |
+          changes=$(ci/update-agents-pins.sh)
+          echo "$changes"
+          delimiter="pins_$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          { echo "changes<<$delimiter"; echo "$changes"; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
+
+      - name: Open the pull request
+        if: steps.pins.outputs.changes != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          DISPATCH_TOKEN: ${{ github.token }}
+          WITH_APP: ${{ steps.app.outputs.token != '' }}
+          CHANGES: ${{ steps.pins.outputs.changes }}
+        run: |
+          open=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 200 --json url,headRefName \
+            -q '[.[] | select(.headRefName | startswith("chore/agents-pins-"))][0].url // ""')
+          if [ -n "$open" ]; then
+            echo "An agents pins pull request is still open: $open (merge or close it first)."
+            exit 0
+          fi
+          branch="chore/agents-pins-$(date -u +%Y-%m-%d)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git add runner/agents/package.json runner/agents/package-lock.json
+          git commit -q -m 'chore(runner): move the session image agents to their latest versions' -m "$CHANGES"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+          body=$(printf '%s\n\n%s\n\n%s\n' \
+            'The weekly move of the agents CLIs of the cloud session image (`runner/agents`), by the Agents pins workflow:' \
+            "$(printf '%s\n' "$CHANGES" | sed 's/^/- /')" \
+            'Not merged automatically: merge it once `ci` is green, the S2-49 isolation test of the image included.')
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title 'chore(runner): move the session image agents to their latest versions' --body "$body"
+          if [ "$WITH_APP" != true ]; then
+            GH_TOKEN="$DISPATCH_TOKEN" gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          fi
