@@ -1,8 +1,8 @@
 name: Console journeys
 
 # The console's journeys against the real server (ostrom-web e2e-real/, Playwright, desktop and mobile) against a
-# PUBLISHED image of this server: by default `sha-<7>` of main's head, never `edge`, which a slower run of an older
-# commit may still hold. The console is built here from ostrom-web, without mocks, and served by `vite preview`, which
+# PUBLISHED image of this server: by default the newest `sha-<7>` of main's last commits, never `edge`, which a
+# slower run of an older commit may still hold. The console is built here from ostrom-web, without mocks, and served by `vite preview`, which
 # proxies /api to the server, as in ostrom-web's own CI. It runs in this repository because its token reads its own
 # GHCR packages, which ostrom-web's cannot yet (the journeys are skipped there, "package Actions access"); the same
 # reason, and the same shape, as cli-journey.yml. On demand, and, off the org's one-`ci`-job rule on purpose (as
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       server_image:
-        description: Server image (empty = ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main's head)
+        description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
         default: ""
       web_ref:
         description: ostrom-web ref whose console and journeys run
@@ -70,17 +70,32 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_WEB }}
           path: web
           persist-credentials: false
-      - name: The server image (sha-<7> of main's head unless named)
+      - name: The server image (the newest sha-<7> of main published, unless named)
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
+          # The oldest server the console's journeys need: /auth/me with Ostrom-Org (server#92).
+          MIN_SERVER: 067f7b2
         run: |
           main=$(git -C server rev-parse origin/main)
-          image=${WANTED_IMAGE:-ghcr.io/ostrom-hq/ostrom-server:sha-${main:0:7}}
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker pull --quiet "$image" || { echo "::error::$image cannot be pulled (not published yet?)"; exit 1; }
+          image=$WANTED_IMAGE
+          if [ -z "$image" ]; then
+            # main's head is published a few minutes after its merge: the newest of its last commits that is.
+            for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
+              if docker pull --quiet "ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}" >/dev/null 2>&1; then
+                image=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
+                break
+              fi
+            done
+            [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
+          else
+            docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
+          fi
           revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
           [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+          git -C server merge-base --is-ancestor "$MIN_SERVER" "$revision" \
+            || { echo "::error::$image is ostrom-server@${revision:0:7}, older than $MIN_SERVER (server#92)"; exit 1; }
           # The database roles of the image's own commit, not of a main that may have moved past it.
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
           echo "image=$image" >> "$GITHUB_OUTPUT"
