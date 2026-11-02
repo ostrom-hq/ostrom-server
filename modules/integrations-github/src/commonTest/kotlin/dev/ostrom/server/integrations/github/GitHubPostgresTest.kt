@@ -2,7 +2,6 @@
 package dev.ostrom.server.integrations.github
 
 import dev.ostrom.server.gates.GatesModule
-import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
@@ -93,7 +92,7 @@ class GitHubPostgresTest {
             object : GateActorResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? {
                     val (_, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
-                    return GateActor(id, orgOf(org), ActorKind.USER, personId = id)
+                    return GateActor.person(id, orgOf(org), OrgRole.MEMBER)
                 }
             }
         }

@@ -72,7 +72,23 @@ data class GateActor(
     val personId: String? = null,
     val authenticatedAt: Instant? = null,
     val role: OrgRole? = null,
-)
+) {
+    companion object {
+        /**
+         * A person acting for themselves, with their role in the organization always stated: a caller built without
+         * it meets every role rule as a stranger, and a new rule then breaks whoever forgot it (main after #98).
+         *
+         * @param id The person's login.
+         * @param orgId Their organization.
+         * @param role Their role in it.
+         * @param authenticatedAt When they last proved who they are, or null.
+         *
+         * @return The actor.
+         */
+        fun person(id: String, orgId: Uuid, role: OrgRole, authenticatedAt: Instant? = null): GateActor =
+            GateActor(id, orgId, ActorKind.USER, personId = id, authenticatedAt = authenticatedAt, role = role)
+    }
+}
 
 /** The kinds of caller. Only a [USER] answers a request. */
 enum class ActorKind { USER, DEVICE, AGENT_SESSION, SERVICE }
