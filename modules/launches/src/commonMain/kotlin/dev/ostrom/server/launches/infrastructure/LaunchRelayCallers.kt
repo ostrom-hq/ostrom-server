@@ -16,7 +16,8 @@ import kotlin.uuid.Uuid
  * - a person's credential is the member the orgs module resolves, with their role;
  * - an agent token is the member who launched it, read by [LaunchAgents] like the gates read it (its own organization,
  *   a live launch, a person who may still launch). It acts as a plain member whatever that person's role: an agent
- *   never administers the organization, and its single scope already keeps it off the console's routes.
+ *   never administers the organization, and its single scope already keeps it off the console's routes. Its launch
+ *   rides along ([Caller.launchId]), for the journal and the usage events.
  *
  * @param orgs The orgs module's membership check.
  * @param agents Reads an agent token.
@@ -26,7 +27,9 @@ class LaunchRelayCallers(orgs: PrincipalOrgResolver, private val agents: LaunchA
 
     override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
         if (principal.kind == PrincipalKind.AGENT) {
-            agents.resolve(principal, orgId)?.let { Caller(it.member.orgId, it.member.memberId, MemberRole.MEMBER) }
+            agents.resolve(principal, orgId)?.let {
+                Caller(it.member.orgId, it.member.memberId, MemberRole.MEMBER, launchId = it.launch.id)
+            }
         } else {
             people.resolve(principal, orgId)
         }
