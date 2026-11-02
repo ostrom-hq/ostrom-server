@@ -253,8 +253,10 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 
 The shared accounts' tokens are renewed at the providers' OAuth token endpoints. An operator can point them elsewhere
 (a proxy, or the fake provider of the local demo, which renews any token). The refresh token is sent there: an endpoint
-is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`); anything else
-stops the server at start. A blank value counts as unset, so the provider's own endpoint is used.
+is `https`, or `http` to a local host only (`localhost`, `127.0.0.1`, `*.localhost`, `*.localtest.me`), judged on
+the host the client parses; an endpoint with credentials (`@`), a fragment (`#`), a backslash, an IPv6 literal or a
+port above 65535 is refused too. Anything else stops the server at start. A blank value counts as unset, so the
+provider's own endpoint is used.
 
 | Key | Default | Meaning |
 |---|---|---|

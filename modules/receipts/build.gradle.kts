@@ -14,6 +14,9 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(project(":testing"))
+            // The CLI's device token reading receipts, end to end (DeviceTokenReceiptsPostgresTest).
+            implementation(project(":modules:identity"))
+            implementation(project(":modules:orgs"))
         }
     }
 }

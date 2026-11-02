@@ -3,6 +3,7 @@ package dev.ostrom.server.workflowruns.presentation
 
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
+import dev.ostrom.core.api.models.ReportCheckRequest
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -120,3 +121,21 @@ data class VerificationDto(
  */
 @Serializable
 data class WorkflowReceiptResponse(val receipt: JsonObject, val verification: VerificationDto)
+
+/**
+ * `POST /api/v1/cloud/runner/checks`: a check run the runner of a cloud session ran itself, authenticated by the
+ * execution's runner token, which the agent cannot read (S2-49). Not in the contract yet.
+ */
+@Serializable
+@Resource("/api/v1/cloud/runner/checks")
+class RunnerChecksApi
+
+/**
+ * A check run the runner reports.
+ *
+ * @property sessionId The cloud session the runner was started for.
+ * @property epoch The execution it was started for.
+ * @property check The run, as the hooks report one: its `sessionId` is the workflow session it ran for.
+ */
+@Serializable
+data class RunnerCheckRequest(val sessionId: String, val epoch: Long, val check: ReportCheckRequest)

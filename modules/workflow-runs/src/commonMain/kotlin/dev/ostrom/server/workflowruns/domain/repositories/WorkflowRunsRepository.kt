@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.domain.repositories
 
+import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
 import dev.ostrom.core.api.models.NotificationStatus
@@ -36,8 +37,19 @@ interface WorkflowRunsRepository {
      *
      * @param orgId The organization.
      * @param run The run.
+     * @param attestation Where it comes from: the workstation's declaration unless the server holds a proof.
      */
-    suspend fun addCheck(orgId: Uuid, run: CheckRun)
+    suspend fun addCheck(orgId: Uuid, run: CheckRun, attestation: CheckAttestation)
+
+    /**
+     * Reads where the runs of a session come from, for those the workstation did not merely declare.
+     *
+     * @param orgId The organization.
+     * @param sessionId The session segment.
+     *
+     * @return The attestation of each such run, by run id; a run absent from it is the workstation's declaration.
+     */
+    suspend fun attestations(orgId: Uuid, sessionId: String): Map<String, CheckAttestation>
 
     /**
      * Lists check runs, newest first.
