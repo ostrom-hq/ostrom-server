@@ -116,9 +116,9 @@ class AskGateUseCaseImpl(
 
     // Second audit H3: the class is the hook's word, read from its patterns, and the hook asks one class per command.
     // What the server reads itself also asks: refs reaching main or master (a push to main), a tag (`refs/tags/…`, or
-    // a short name shaped as a version: the CLI sends short names), a merge the command shows. The claimed class keeps its gate when it is enforced; else the first enforced
-    // gate of what was read is taken. A push-main or push-tag ask whose refs hold no such ref is no such push, so their
-    // patterns may catch every push and let the refs decide.
+    // a short name shaped as a version: the CLI sends short names), a merge the command shows. The claimed class keeps
+    // its gate when it is enforced; else the first enforced gate of what was read is taken. A push-main or push-tag ask
+    // whose refs hold no such ref is no such push, so their patterns may catch every push and let the refs decide.
     private suspend fun gateOf(orgId: Uuid, repo: String?, ask: AskGate, command: String): Pair<String, GateNode?> {
         val refs = ask.push?.refs.orEmpty().map { it.ref }
         val read = buildList {
