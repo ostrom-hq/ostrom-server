@@ -154,6 +154,11 @@ class InMemoryUsageRepository : UsageRepository {
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long =
         events.filter { it.orgId == orgId && it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
 
+    override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? = events
+        .filter { it.orgId == orgId && it.launchId == launchId && it.at >= from && it.at <= to }
+        .takeIf { it.isNotEmpty() }
+        ?.sumOf { it.costMicros }
+
     override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> =
         events.filter { it in window }
             .filter { groupBy != UsageGroupBy.MODEL || it.kind == UsageKind.MODEL }

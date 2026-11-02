@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.server.launches
+
+import dev.ostrom.server.budgets.BudgetsModule
+import dev.ostrom.server.budgets.presentation.MyBudgetResponse
+import dev.ostrom.server.gates.GatesModule
+import dev.ostrom.server.gateway.GatewayModule
+import dev.ostrom.server.identity.IdentityModule
+import dev.ostrom.server.identity.domain.ApiToken
+import dev.ostrom.server.identity.domain.ApiTokensRepository
+import dev.ostrom.server.identity.domain.CLI_SCOPES
+import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.ResolveUserUseCase
+import dev.ostrom.server.identity.domain.SecretHasher
+import dev.ostrom.server.identity.domain.TokenKind
+import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.instance.InstanceModule
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.EnvironmentConfigSource
+import dev.ostrom.server.launches.presentation.LaunchResponse
+import dev.ostrom.server.orgs.OrgsModule
+import dev.ostrom.server.orgs.domain.Member
+import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgsRepository
+import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.reports.ReportsModule
+import dev.ostrom.server.reports.presentation.SpendingDto
+import dev.ostrom.server.secrets.SecretsModule
+import dev.ostrom.server.secrets.domain.SecretCipher
+import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.sessions.SessionsModule
+import dev.ostrom.server.sessions.presentation.SessionResponse
+import dev.ostrom.server.sharing.SharingModule
+import dev.ostrom.server.testing.TestServer
+import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.usage.UsageModule
+import dev.ostrom.server.usage.domain.UsageKind
+import dev.ostrom.server.usage.domain.UsageRepository
+import io.ktor.client.HttpClient
+import io.ktor.client.call.body
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.TextContent
+import io.ktor.http.contentType
+import io.ktor.http.headersOf
+import io.ktor.utils.io.ByteReadChannel
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.koin.dsl.module
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
+
+/**
+ * A model call of `ostrom claude` costs what the buyer sees: an agent token's call through the gateway is a MODEL event
+ * of the ledger with its cost and launch, the organization's spending and the person's budget count it, and the
+ * session's signed receipt carries it, on the real modules and PostgreSQL with a fake Anthropic behind the gateway.
+ */
+class LaunchModelSpendPostgresTest {
+    private val modules = listOf(
+        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, LaunchesModule,
+        SecretsModule, UsageModule, GatewayModule, BudgetsModule, SharingModule, ReportsModule,
+    )
+    private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
+
+    /** Anthropic's stream: 1 200 input tokens, 300 read from the cache, 42 output tokens. */
+    private val events = """
+        event: message_start
+        data: {"type":"message_start","message":{"usage":{"input_tokens":1200,"cache_read_input_tokens":300,"output_tokens":1}}}
+
+        event: message_delta
+        data: {"type":"message_delta","usage":{"output_tokens":42}}
+
+    """.trimIndent()
+
+    private val anthropic = HttpClient(
+        MockEngine {
+            respond(ByteReadChannel(events), HttpStatusCode.OK, headersOf("Content-Type", "text/event-stream"))
+        },
+    ) {
+        expectSuccess = false
+    }
+
+    /** The instance's Anthropic key, the environment for the rest (the test database). */
+    private val config = object : ConfigSource {
+        private val environment = EnvironmentConfigSource()
+        private val gateway = mapOf(
+            "OSTROM_GATEWAY_ANTHROPIC_URL" to "https://anthropic.test",
+            "OSTROM_GATEWAY_ANTHROPIC_API_KEY" to "sk-ant-api03-instance",
+        )
+
+        override fun get(key: String): String? = gateway[key] ?: environment[key]
+    }
+
+    private val overrides = module {
+        single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
+        single<ConfigSource> { config }
+        single(GatewayModule.HTTP_CLIENT) { anthropic }
+    }
+
+    /** The owner of a new organization: their CLI token, and a console token that reads the costs. */
+    private class Owner(val orgId: Uuid, val memberId: Uuid, val cliToken: String, val readerToken: String)
+
+    private suspend fun TestServer.owner(login: String): Owner {
+        val user = koin.get<ResolveUserUseCase>()(
+            VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
+        )
+        val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
+        val member = Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)
+        koin.get<OrgsRepository>().create(org, member) { false }
+        val tokens = koin.get<ApiTokensRepository>()
+        val hasher = koin.get<SecretHasher>()
+        suspend fun token(kind: TokenKind, scopes: Set<String>): String {
+            val secret = "${kind.prefix}_" + Uuid.random().toHexString()
+            val token = ApiToken(
+                Uuid.random(), user.id, org.id, kind.name, kind, scopes, "hint", null, now, now + 1.hours, null, null,
+            )
+            tokens.create(token, hasher.hash(secret))
+            return secret
+        }
+        return Owner(
+            org.id,
+            member.id,
+            token(TokenKind.CLI, CLI_SCOPES),
+            token(TokenKind.PERSONAL, setOf("usage:read", "budgets:read", "receipts:read")),
+        )
+    }
+
+    private suspend fun TestServer.send(token: String, path: String, body: String): HttpResponse = client.post(path) {
+        bearerAuth(token)
+        contentType(ContentType.Application.Json)
+        setBody(body)
+    }
+
+    @Test
+    fun anAgentsModelCallIsInTheLedgerTheSpendingTheBudgetAndTheReceipt() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val ada = owner("ada")
+            val created = send(ada.cliToken, "/api/v1/launches", """{"repo":"acme/api","agent":"claude-code"}""")
+            assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+            val launch = created.body<LaunchResponse>()
+            val session = """{"id":"s-1","agent":"claude-code","repo":"acme/api","launchId":"${launch.launchId}"}"""
+            val started = send(launch.agentToken, "/api/v1/sessions", session)
+            assertEquals(HttpStatusCode.OK, started.status, started.bodyAsText())
+
+            val answer = client.post("/api/v1/inference/v1/messages") {
+                header("x-api-key", launch.agentToken)
+                setBody(TextContent("""{"model":"claude-opus-5","stream":true}""", ContentType.Application.Json))
+            }
+            assertEquals(HttpStatusCode.OK, answer.status, answer.bodyAsText())
+            assertEquals(events, answer.bodyAsText())
+
+            // Anthropic's price of claude-opus-5 per million tokens: $5 in, $0.50 cache read, $25 out.
+            val micros = 1_200L * 5 + 300L / 2 + 42L * 25
+            val event = koin.get<UsageRepository>().list(ada.orgId, null, null, 10).single()
+            assertEquals(UsageKind.MODEL to "claude-opus-5", event.kind to event.name)
+            assertEquals(micros, event.costMicros, "The gateway's cost reaches the ledger")
+            assertEquals(launch.launchId to ada.memberId, event.launchId to event.memberId)
+            assertEquals(
+                listOf(1_200L, 42L, 300L),
+                listOf(event.inputTokens, event.outputTokens, event.cacheReadTokens),
+            )
+
+            val usd = micros / 1_000_000.0
+            val spending = client.get("/api/v1/spending") { bearerAuth(ada.readerToken) }
+            assertEquals(HttpStatusCode.OK, spending.status, spending.bodyAsText())
+            val report = spending.body<SpendingDto>()
+            assertEquals(usd, report.totalUsd, "The organization's spending counts the call")
+            assertEquals(listOf(ada.memberId.toString() to usd), report.byPerson.map { it.key to it.usd })
+
+            val budget = client.get("/api/v1/budgets/me") { bearerAuth(ada.readerToken) }
+            assertEquals(HttpStatusCode.OK, budget.status, budget.bodyAsText())
+            assertEquals(micros, budget.body<MyBudgetResponse>().spentMicros, "The person's budget goes down")
+
+            val ended = send(launch.agentToken, "/api/v1/sessions/s-1/end", """{"exitCode":0,"costUsd":99.0}""")
+            assertEquals(HttpStatusCode.OK, ended.status, ended.bodyAsText())
+            val closed = ended.body<SessionResponse>().session
+            assertEquals(usd, closed.costUsd, "The session costs what its launch spent, never the agent's figure")
+            val receipt = client.get("/api/v1/receipts/${closed.receiptId}") { bearerAuth(ada.readerToken) }
+            assertEquals(HttpStatusCode.OK, receipt.status, receipt.bodyAsText())
+            val signed = Json.parseToJsonElement(receipt.bodyAsText()).jsonObject
+            assertEquals(usd.toString(), signed.getValue("costUsd").jsonPrimitive.content, "Signed into the receipt")
+        }
+    }
+}

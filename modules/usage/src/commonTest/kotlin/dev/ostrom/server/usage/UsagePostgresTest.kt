@@ -286,9 +286,23 @@ class UsagePostgresTest {
             "until excludes",
         )
 
+        val launched = modelEvent(2_500_000).copy(launchId = "lch_9")
+        repository.insert(TestCallers.orgA, listOf(launched))
+        assertEquals(2_500_000L, repository.launchSpentMicros(TestCallers.orgA, "lch_9", launched.at, launched.at))
+        assertEquals(
+            null,
+            repository.launchSpentMicros(
+                TestCallers.orgA,
+                "lch_9",
+                launched.at + 1.days,
+                launched.at + 2.days,
+            ),
+        )
+        assertEquals(null, repository.launchSpentMicros(TestCallers.orgB, "lch_9", launched.at, launched.at), "Org B")
+        repository.insert(TestCallers.orgA, listOf(modelEvent(1).copy(launchId = "lch_9", at = launched.at - 1.days)))
         assertEquals(1L, repository.purge(TestCallers.epoch - 400.days, 10))
         assertEquals(0L, repository.purge(TestCallers.epoch - 400.days, 10))
-        assertEquals(3, repository.list(TestCallers.orgA, null, null, 10).size)
+        assertEquals(5, repository.list(TestCallers.orgA, null, null, 10).size)
     }
 
     @Test
