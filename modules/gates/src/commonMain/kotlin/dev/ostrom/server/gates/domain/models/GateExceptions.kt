@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.models
 
+import dev.ostrom.core.api.models.CheckAttestation
+import dev.ostrom.server.gates.domain.services.GateCheckProof
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 
@@ -107,3 +109,23 @@ class MissingPullRequestException : OstromException(
 /** A field of the request is out of bounds (too long, malformed SHA, too many refs). */
 
 class InvalidGateRequestException(reason: String) : OstromException(ErrorKind.INVALID_REQUEST, reason)
+
+/**
+ * The rule's gate needs checks run by an Ostrom runner or the CI, and at least one was not (decision 13:23, core#40):
+ * the workstation only declared it, it failed, or nothing ran it. No yes is asked: the check comes first.
+ *
+ * @property unproven Each check that is not proven, with where its last run comes from.
+ */
+class CheckNotAttestedException(val unproven: List<Pair<String, GateCheckProof>>) : OstromException(
+    ErrorKind.CONFLICT,
+    "This action needs checks run by an Ostrom runner or the CI, not only declared by the workstation: " +
+        unproven.joinToString("; ") { (check, proof) -> "$check ${why(proof)}" } +
+        ". Run them in the CI on this commit or on an Ostrom runner, then ask again.",
+    "check_not_attested",
+)
+
+private fun why(proof: GateCheckProof): String = when (val attestation = proof.attestation) {
+    null -> "has no run in this session and no CI run on this commit"
+    CheckAttestation.WORKSTATION_DECLARED -> "was only declared by the workstation (workstation_declared)"
+    else -> "failed in its last attested run (${attestation.value})"
+}
