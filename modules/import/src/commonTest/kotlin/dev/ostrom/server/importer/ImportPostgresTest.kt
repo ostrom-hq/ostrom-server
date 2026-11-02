@@ -33,6 +33,7 @@ import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.post
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -259,10 +260,46 @@ class ImportPostgresTest {
             assertFails("Another org's row is refused") { driver.executeInOrg(adminB.orgId, planted).getOrThrow() }
             assertEquals(6, driver.fetchInOrg(adminA.orgId, unfiltered).getOrThrow().size, "Nothing was planted")
             // Org B's same-named server is not org A's: its import creates its own, recorded in its own org.
-            report(Importing.team(), token = "admin-b")
+            report(Importing.team().copy(memberMap = mapOf("m1" to adminB.memberId.toString())), token = "admin-b")
             assertEquals(6, driver.fetchInOrg(adminB.orgId, unfiltered).getOrThrow().size)
         }
     }
+
+    @Test
+    fun aMemberMapNamingAnyoneButTheOrgsMembersIsRefusedBeforeAnyWrite() =
+        serverTest(modules, importOverrides()) { server ->
+            with(server) {
+                // Org B's admin maps TeamCode's members to org A's: refused, nothing written, even in a dry run.
+                for (dryRun in listOf(true, false)) {
+                    val response = import(Importing.team(), token = "admin-b", dryRun = dryRun)
+                    assertEquals(HttpStatusCode.BadRequest, response.status)
+                    assertTrue(strangers("m1, m2") in response.bodyAsText(), response.bodyAsText())
+                }
+                assertEquals(emptySet(), servers(adminB).keys)
+                // In its own org, an id that is no member is refused too, and only that one is named.
+                val unknown = Importing.members + ("m3" to Uuid.random().toString())
+                val response = import(Importing.team().copy(memberMap = unknown))
+                assertEquals(HttpStatusCode.BadRequest, response.status)
+                assertTrue(strangers("m3") in response.bodyAsText(), response.bodyAsText())
+                assertEquals(emptySet(), servers().keys)
+                report(Importing.team())
+                val imported = setOf("discord", "grafana", "grafana.ro")
+                assertEquals(imported, servers().keys, "Mapped to members only: imported")
+            }
+        }
+
+    @Test
+    fun withoutAMemberDirectoryNoMemberCanBeMapped() =
+        serverTest(modules, importOverrides(members = null)) { server ->
+            with(server) {
+                val response = import(Importing.team())
+                assertEquals(HttpStatusCode.BadRequest, response.status)
+                assertTrue(strangers("m1, m2") in response.bodyAsText(), response.bodyAsText())
+                assertEquals(emptySet(), servers().keys)
+                report(Importing.team().copy(memberMap = emptyMap()))
+                assertEquals(setOf("discord", "grafana", "grafana.ro"), servers().keys)
+            }
+        }
 
     @Test
     fun withoutIdentityBoundTheRouteStillLoadsAndRefusesStrangers() =
@@ -271,14 +308,27 @@ class ImportPostgresTest {
         }
 
     @Test
+    fun aCutoverIsRefusedWhereNoSharedAccountIsImported() = serverTest(modules, importOverrides()) { server ->
+        with(server) {
+            val response = import(Importing.team(), "owner-a", cutover = true)
+            assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+            assertEquals(emptyMap(), servers(), "Nothing imported")
+        }
+    }
+
+    @Test
     fun sharedAccountsGoThroughTheSharingModuleWhenItIsInstalled() {
         val accounts = FakeAccountImporter()
         serverTest(modules, importOverrides(accounts)) { server ->
             with(server) {
                 val plan = report(Importing.team(), dryRun = true)
                 assertEquals(
-                    listOf(line("account", "claude/Lyes", PLANNED), line("account", "codex/Lyes", PLANNED)),
+                    listOf(
+                        line("account", "claude/Lyes", PLANNED),
+                        line("account", "codex/Lyes", SKIPPED, "This account is already shared."),
+                    ),
                     plan.items.takeLast(2),
+                    "A dry run makes the importer's checks",
                 )
                 assertEquals(emptyList(), accounts.imported, "A dry run imports no account")
                 val report = report(Importing.team())
@@ -335,5 +385,8 @@ class ImportPostgresTest {
         const val NOT_IMPORTED = "Its server was not imported."
         const val HOST_DISABLED =
             "No MCP host is configured on this server (OSTROM_MCP_HOST_URL), so it cannot run a stdio server."
+
+        fun strangers(ids: String) = "These TeamCode members are mapped to ids that are not members of this " +
+            "organization: $ids. Map them to members of the organization, or leave them unmapped. Nothing was imported."
     }
 }

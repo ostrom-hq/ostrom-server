@@ -4,6 +4,7 @@ package dev.ostrom.server.rules.domain.services
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
+import dev.ostrom.server.rules.domain.models.RuleGateCheck
 import kotlinx.datetime.LocalDate
 
 /**
@@ -25,10 +26,12 @@ object RuleChecks {
     private const val MAX_TOOLS = 10
     private const val MAX_APPROVERS = 20
     private const val MAX_REASON = 500
+    private const val MAX_CHECKS = 20
 
     private val output = Regex("[a-z][a-z0-9-]{0,39}")
     private val actionClass = Regex("[a-z][a-z0-9-]{0,79}")
     private val tool = Regex("[A-Za-z][A-Za-z0-9_:.-]{0,39}")
+    private val checkId = Regex("[A-Za-z0-9][A-Za-z0-9._:-]{0,99}")
     private val login = Regex("[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
     private val date = Regex("\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])")
 
@@ -102,7 +105,7 @@ object RuleChecks {
      *
      * @param gate The gate.
      * @return It, its texts trimmed and its approvers each once.
-     * @throws InvalidRuleException When an action or an approver is out of bounds.
+     * @throws InvalidRuleException When an action, an approver or a check is out of bounds.
      */
     fun gate(gate: RuleGate): RuleGate {
         ensure(gate.actions.isNotEmpty() && gate.actions.size <= MAX_ACTIONS) {
@@ -111,12 +114,19 @@ object RuleChecks {
         ensure(gate.approvers.size <= MAX_APPROVERS) { "A gate has at most $MAX_APPROVERS approvers." }
         val approvers = gate.approvers.map { it.trim() }
         ensure(approvers.all(login::matches)) { "An approver is a GitHub login." }
-        val reason = gate.reason?.trim()?.takeIf { it.isNotEmpty() }
+        val reason = gate.reason?.trim().orEmpty().ifEmpty { null }
         ensure(reason == null || reason.length <= MAX_REASON) { "A reason has at most $MAX_REASON characters." }
+        ensure(gate.checks.size <= MAX_CHECKS) { "A gate needs at most $MAX_CHECKS checks." }
+        val checks = gate.checks.map { RuleGateCheck(it.check.trim(), it.attested) }
+        ensure(checks.all { checkId.matches(it.check) }) { "A check is the id of a check node, such as tests." }
         return RuleGate(
             actions = gate.actions.map(::action),
             approvers = approvers.distinctBy { it.lowercase() },
             reason = reason,
+            // Each check once; asked attested anywhere, it stays attested.
+            checks = checks.groupBy { it.check }.map { (check, asks) ->
+                RuleGateCheck(check, asks.any { it.attested })
+            },
         )
     }
 

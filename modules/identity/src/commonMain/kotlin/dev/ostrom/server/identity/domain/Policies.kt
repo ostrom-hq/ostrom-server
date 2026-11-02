@@ -9,6 +9,7 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /** How long a browser session lasts, whatever its use: the user signs in again after that. */
 val SESSION_LIFETIME: Duration = 30.days
@@ -35,9 +36,10 @@ val DEVICE_POLL_INTERVAL: Duration = 5.seconds
 const val AGENT_SCOPE = "agent:session"
 
 /**
- * The scope that answers a gate. No token ever holds it (audit S2-04, S2-31): a token lives on the developer's
- * machine, where the agent can read it and say yes to itself. A yes comes from a browser session (the passkey
- * step-up of the console) or the phone app after biometrics, never from the CLI.
+ * The scope that answers a gate. No token the person can create or the CLI holds has it (audit S2-04, S2-31): such a
+ * token lives on the developer's machine, where the agent can read it and say yes to itself. A yes comes from a
+ * browser session (the console) or the phone app's token ([MOBILE_SCOPES]), which lives in the phone's keychain and
+ * says yes only after the phone's biometric unlock (S2-54); never from the CLI.
  */
 const val ANSWER_SCOPE = "gates:answer"
 
@@ -48,15 +50,53 @@ const val WORKFLOWS_WRITE_SCOPE = "workflows:write"
 val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, ALL_USER_SCOPES)
 
 /**
- * The scopes the CLI token gets: what `ostrom` does for its user, nothing of the console's administration, and
- * neither [ANSWER_SCOPE] nor [WORKFLOWS_WRITE_SCOPE] (S2-04): `ostrom approve` opens the console's page instead.
+ * The scopes the CLI token gets: what `ostrom` does for its user (`ostrom receipts` and `verify` read the receipts of
+ * their organization, `ostrom inbox` and `ostrom logs` read the approvals and gates, `ostrom claude` lists the
+ * organization's MCP servers), nothing of the console's administration, and neither [ANSWER_SCOPE] nor
+ * [WORKFLOWS_WRITE_SCOPE] (S2-04): `ostrom approve` opens the console's page instead.
  */
-val CLI_SCOPES: Set<String> = setOf("profile:read", "orgs:read", "workflows:read", "sessions:write")
+val CLI_SCOPES: Set<String> =
+    setOf("profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read")
+
+/** The scope that changes the caller's notification preferences (`PUT /api/v1/me/notifications`). */
+const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
+
+/**
+ * The scopes of the phone app's token: what the app shows (the person, their organizations, the approvals and their
+ * receipts, the usage) and does (answer a gate, register for push, set its notifications). Nothing of the console's
+ * administration, no workflow write, no token management.
+ */
+val MOBILE_SCOPES: Set<String> = setOf(
+    "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", NOTIFICATIONS_WRITE_SCOPE,
+)
+
+/**
+ * How long after the phone's biometric unlock the app's token may say yes (S2-54): the step-up window of a yes. The
+ * identity module withholds [ANSWER_SCOPE] outside it, so no gate route can accept a yes from a token lifted from the
+ * phone's keychain without its biometrics, whatever it checks itself.
+ */
+val MOBILE_UNLOCK_WINDOW: Duration = 5.minutes
+
+/**
+ * The scopes the app's token grants now: [MOBILE_SCOPES] at most, and [ANSWER_SCOPE] only within
+ * [MOBILE_UNLOCK_WINDOW] of the phone's last biometric unlock.
+ *
+ * @param stored The app's token.
+ * @param now The current time.
+ *
+ * @return The scopes.
+ */
+fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
+    val granted = grantedScopes(TokenKind.MOBILE, stored.scopes)
+    val unlocked = stored.authenticatedAt?.let { now - it <= MOBILE_UNLOCK_WINDOW } == true
+    return if (unlocked) granted else granted - ANSWER_SCOPE
+}
 
 /**
  * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written
  * before S2-04, or by hand, cannot grant more): an agent token only [AGENT_SCOPE], a CLI token at most [CLI_SCOPES],
- * a personal token what it lists minus [NEVER_ON_A_TOKEN].
+ * the app's token at most [MOBILE_SCOPES], a personal token or a service key what it lists minus
+ * [NEVER_ON_A_TOKEN].
  *
  * @param kind The kind of the token.
  * @param stored The scopes its row lists.
@@ -66,11 +106,9 @@ val CLI_SCOPES: Set<String> = setOf("profile:read", "orgs:read", "workflows:read
 fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kind) {
     TokenKind.AGENT -> setOf(AGENT_SCOPE)
     TokenKind.CLI -> stored intersect CLI_SCOPES
-    TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN
+    TokenKind.MOBILE -> stored intersect MOBILE_SCOPES
+    TokenKind.PERSONAL, TokenKind.SERVICE -> stored - NEVER_ON_A_TOKEN
 }
-
-/** A scope is `resource:action`, lower case. */
-private val SCOPE_PATTERN = Regex("[a-z][a-z0-9-]{0,31}:[a-z][a-z0-9-]{0,31}")
 
 /** At most this many scopes on one token. */
 const val MAX_SCOPES = 32
@@ -78,20 +116,25 @@ const val MAX_SCOPES = 32
 /** At most this many live tokens per user: a list and a guard against a runaway script. */
 const val MAX_TOKENS_PER_USER = 100
 
+/** At most this many live service keys per organization, for the same reasons. */
+const val MAX_SERVICE_KEYS_PER_ORG = 100
+
 /**
- * Checks the scopes a user asks for a personal token: at least one, well-formed, none of [NEVER_ON_A_TOKEN] (an
- * agent's scope, or [ANSWER_SCOPE]: a token never says yes, S2-04).
+ * Checks the scopes a user asks for a personal token: at least one, at most [MAX_SCOPES], each from the catalogue
+ * [PERSONAL_TOKEN_SCOPES], which never lists [NEVER_ON_A_TOKEN] (an agent's scope, or [ANSWER_SCOPE]: a token never
+ * says yes, S2-04).
  *
  * @param scopes The requested scopes.
  *
  * @return The scopes, deduplicated.
  *
- * @throws InvalidScopesException When the set is empty, too large, malformed or names a scope no token holds.
+ * @throws InvalidScopesException When the set is empty, too large, or names a scope outside the catalogue.
  */
 fun validateScopes(scopes: Collection<String>): Set<String> {
     val set = scopes.toSet()
     if (set.isEmpty() || set.size > MAX_SCOPES) throw InvalidScopesException()
-    if (set.any { !SCOPE_PATTERN.matches(it) || it in NEVER_ON_A_TOKEN }) throw InvalidScopesException()
+    val unknown = set - PERSONAL_TOKEN_SCOPE_NAMES
+    if (unknown.isNotEmpty()) throw InvalidScopesException(unknown)
     return set
 }
 
@@ -116,14 +159,35 @@ fun normalizeEmail(raw: String): String {
 }
 
 /** The requested scopes are empty, too many, malformed, or reserved. */
-class InvalidScopesException :
-    OstromException(ErrorKind.INVALID_REQUEST, "Scopes must be 1 to $MAX_SCOPES distinct resource:action values.")
+class InvalidScopesException(unknown: Collection<String> = emptyList()) :
+    OstromException(
+        ErrorKind.INVALID_REQUEST,
+        "Scopes must be 1 to $MAX_SCOPES values from the catalogue of GET /api/v1/tokens/scopes." +
+            if (unknown.isEmpty()) "" else " Not in it: ${unknown.take(MAX_NAMED_UNKNOWN).joinToString(", ")}.",
+    )
+
+/** How many unknown scopes a refusal names, at most. */
+private const val MAX_NAMED_UNKNOWN = 5
 
 /** The value is not an e-mail address. */
 class InvalidEmailException : OstromException(ErrorKind.INVALID_REQUEST, "This is not a valid e-mail address.")
 
 /** A token name is blank or longer than 100 characters. */
 class InvalidTokenNameException : OstromException(ErrorKind.INVALID_REQUEST, "A token name has 1 to 100 characters.")
+
+/** The organization already has [MAX_SERVICE_KEYS_PER_ORG] live service keys. */
+class TooManyServiceKeysException :
+    OstromException(ErrorKind.CONFLICT, "Too many live service keys: delete one before creating another.")
+
+/** The service key is absent, another organization's, or already deleted. */
+class ServiceKeyNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Service key not found.")
+
+/** Only an owner or an admin of the organization manages its service keys. */
+class ServiceKeysAdminRequiredException :
+    OstromException(ErrorKind.FORBIDDEN, "Only an owner or an admin manages the organization's service keys.")
+
+/** The device is absent, another person's, or already signed out. */
+class DeviceNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Device not found.")
 
 /** The token lifetime is not between one day and [MAX_TOKEN_LIFETIME]. */
 class InvalidTokenLifetimeException :
@@ -141,6 +205,9 @@ class UserNotFoundException : OstromException(ErrorKind.NOT_FOUND, "User not fou
 
 /** Too many attempts from the same source: wait and retry. */
 class RateLimitedException : OstromException(ErrorKind.RATE_LIMITED, "Too many attempts. Wait a moment and retry.")
+
+/** The browser session does not exist, is not the caller's, or has ended: the same answer, to reveal nothing. */
+class WebSessionNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Session not found.")
 
 /** The device code or user code is unknown, expired or already used. */
 class DeviceCodeNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Unknown or expired code.")

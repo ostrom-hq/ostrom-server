@@ -34,6 +34,8 @@ object RunnerEnvironment {
         }
         spec.model?.let { add("OSTROM_AGENT_MODEL" to it) }
         add("OSTROM_AGENT_SOCKET" to AGENT_SOCKET)
+        add("OSTROM_RUNNER_CHECKS" to CHECKS_SOCKET)
+        add("OSTROM_CHECK_HOST_SOCKET" to CHECK_HOST_SOCKET)
         add("HOME" to "/workspace/.home")
         add("TERM" to "xterm-256color")
     }
@@ -51,4 +53,11 @@ object RunnerEnvironment {
     /** The socket between the runner and the agent host, on the volume both containers mount. */
     const val AGENT_SOCKET_DIRECTORY = "/run/ostrom"
     const val AGENT_SOCKET = "$AGENT_SOCKET_DIRECTORY/agent.sock"
+
+    /** Where the runner serves the hooks' checks: the agent socket's directory, which the agent's container mounts. */
+    const val CHECKS_SOCKET = "$AGENT_SOCKET_DIRECTORY/checks.sock"
+
+    /** The socket between the runner and the check host, on a volume the agent's container does not mount. */
+    const val CHECK_SOCKET_DIRECTORY = "/run/ostrom-check"
+    const val CHECK_HOST_SOCKET = "$CHECK_SOCKET_DIRECTORY/check.sock"
 }

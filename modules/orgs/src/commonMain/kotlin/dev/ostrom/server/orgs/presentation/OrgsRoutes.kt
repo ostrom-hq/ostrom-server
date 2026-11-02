@@ -8,6 +8,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireScope
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -17,6 +18,7 @@ import dev.ostrom.server.orgs.domain.InvitationNotFoundException
 import dev.ostrom.server.orgs.domain.InviteRequest
 import dev.ostrom.server.orgs.domain.MemberProfile
 import dev.ostrom.server.orgs.domain.Membership
+import dev.ostrom.server.orgs.domain.OrgChange
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
@@ -38,7 +40,7 @@ const val ORGS_WRITE = "orgs:write"
  * The organization routes. Every org route first resolves the caller as a member of the
  * organization it names (a 404 otherwise, for a missing organization as for someone else's), then
  * the use case checks the caller's role. Deleting an organization and transferring its ownership
- * take a browser session: never a token.
+ * take a browser session: never a token; deleting it also takes a sign-in of less than 5 minutes.
  *
  * @param dependencies The use cases.
  */
@@ -78,11 +80,13 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) =
             }
             patch<OrgsApi.Org, UpdateOrgRequest> { params, request ->
                 val (orgId, userId) = member(call, params.org, ORGS_WRITE)
-                call.respond(orgs.rename(orgId, userId, request.name).toOrgResponse())
+                val change = OrgChange(request.name, request.timeZone, request.slug)
+                call.respond(orgs.update(orgId, userId, change).toOrgResponse())
             }
             delete<OrgsApi.Org> { params ->
                 val (orgId, userId) = member(call, params.org, ORGS_WRITE, browserOnly = true)
-                orgs.delete(orgId, userId, call.receive<DeleteOrgRequest>().confirm)
+                val confirm = call.receive<DeleteOrgRequest>().confirm
+                orgs.delete(orgId, userId, confirm, call.requirePrincipal().authenticatedAt)
                 call.respond(HttpStatusCode.NoContent)
             }
             post<OrgsApi.Org.Transfer, TransferRequest> { params, request ->
@@ -230,10 +234,18 @@ internal fun roleOf(key: String): OrgRole =
 internal fun OrgRole.key(): String = name.lowercase()
 
 private fun Membership.toOrgResponse() =
-    OrgResponse(org.id.toString(), org.slug, org.name, member.role.key(), org.createdAt.toString())
+    OrgResponse(
+        org.id.toString(),
+        org.slug,
+        org.name,
+        member.role.key(),
+        org.createdAt.toString(),
+        org.timeZone,
+    )
 
 private fun MemberProfile.toMemberResponse() =
     MemberResponse(
+        member.id.toString(),
         login,
         displayName,
         avatarUrl.orEmpty(),

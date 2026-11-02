@@ -101,6 +101,7 @@ data class TokenUsage(val input: Long = 0, val output: Long = 0, val cacheRead: 
  * @property startedAt When the request arrived.
  * @property firstByteMillis Time to the first byte sent back, if any.
  * @property durationMillis Total time.
+ * @property launchId The launch whose agent token made the call, or null for a person's own credential.
  */
 data class ModelCallRecord(
     val id: Uuid,
@@ -119,6 +120,7 @@ data class ModelCallRecord(
     val startedAt: Instant,
     val firstByteMillis: Long?,
     val durationMillis: Long,
+    val launchId: String? = null,
 )
 
 /** Receives every relayed call: bound to the usage ledger by the usage wiring. */

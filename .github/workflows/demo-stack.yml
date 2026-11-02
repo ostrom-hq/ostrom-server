@@ -1,0 +1,121 @@
+name: Demo stack
+
+# The local demo stack of ostrom-helm (compose/demo: Mailpit, a fake GitHub, cloud sessions on Docker, Stripe's test
+# mode), run with the REAL images: this repository's server image (the one Image just published, or `edge`), its cloud
+# session image, and the console built from ostrom-web main. Then the customer's journey from outside
+# (compose/demo/journey.mjs), whose report becomes the job summary. It proves on a runner what the demo shows on a
+# laptop; the film is made there. This repository's token reads its own GHCR packages, which ostrom-helm's and
+# ostrom-e2e's cannot yet. Dispatched by Image on main after each publication, in a run of its own; off the org's
+# one-`ci`-job rule on purpose: on a pull request it runs only when the pull request changes this file.
+on:
+  workflow_dispatch:
+    inputs:
+      server_image:
+        description: Server image (empty = edge)
+        default: ""
+      helm_ref:
+        description: ostrom-helm ref holding compose/demo
+        default: main
+      after_merge:
+        description: Dispatched by Image after a merge on main (a newer merge's demo cancels this one)
+        type: boolean
+        default: false
+  pull_request:
+    paths: [.github/workflows/demo-stack.yml]
+
+# Image dispatches one run per merge on main (after_merge): those share a group, so a newer merge cancels the older
+# merge's demo, in this workflow's runs only, never in Image's. A run by hand has its own group, so it never cancels a
+# merge's demo nor is cancelled by one; a pull request keeps its own.
+concurrency:
+  group: demo-stack-${{ github.event_name }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && !inputs.after_merge && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    env:
+      HELM_REF: ${{ inputs.helm_ref || 'main' }}
+      SERVER_IMAGE: ${{ inputs.server_image || 'ghcr.io/ostrom-hq/ostrom-server:edge' }}
+      RUNNER_IMAGE: ghcr.io/ostrom-hq/ostrom-runner:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ref: ${{ env.HELM_REF }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-web
+          ssh-key: ${{ secrets.DEPLOY_KEY_WEB }}
+          path: web
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Images
+        id: images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker pull -q "$SERVER_IMAGE"
+          docker pull -q "$RUNNER_IMAGE"
+          server=$(docker inspect -f '{{index .RepoDigests 0}}' "$SERVER_IMAGE")
+          runner=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
+          docker build -q -t ostrom-web:demo web > /dev/null
+          { echo "server=$server"; echo "runner=$runner"; } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Images"
+            echo "- server: \`$server\`"
+            echo "- cloud session: \`$runner\`"
+            echo "- console: ostrom-web main $(git -C web rev-parse --short HEAD), built here"
+            echo "- ostrom-helm $(git -C helm rev-parse --short HEAD) ($HELM_REF)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Stripe test key, outside the workspace
+        env:
+          STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+        run: |
+          if [ -n "$STRIPE_TEST_KEY" ]; then
+            umask 077
+            printf %s "$STRIPE_TEST_KEY" > "$RUNNER_TEMP/stripe-test.key"
+          fi
+      - name: The demo's names resolve to this machine
+        run: echo "127.0.0.1 api.localhost app.localhost mail.localhost github.localtest.me" | sudo tee -a /etc/hosts > /dev/null
+      - name: Up
+        env:
+          OSTROM_SERVER_IMAGE: ${{ steps.images.outputs.server }}
+          OSTROM_RUNNER_IMAGE: ${{ steps.images.outputs.runner }}
+          OSTROM_WEB_IMAGE: ostrom-web:demo
+        run: |
+          # Stripe's test mode only when the key is there.
+          if [ -s "$RUNNER_TEMP/stripe-test.key" ]; then export OSTROM_DEMO_STRIPE_KEY_FILE="$RUNNER_TEMP/stripe-test.key"; fi
+          helm/compose/demo/demo.sh up
+      - name: The customer's journey
+        working-directory: helm/compose
+        env:
+          REPORT: ${{ runner.temp }}/demo-report.md
+          OSTROM_DEMO_SESSION_CHECK: demo/check-session.sh
+          OSTROM_DEMO_TEAMCODE_CHECK: demo/teamcode/check.sh
+        run: node demo/journey.mjs
+      - name: Report
+        if: always()
+        run: cat "$RUNNER_TEMP/demo-report.md" >> "$GITHUB_STEP_SUMMARY" 2> /dev/null || echo "no report" >> "$GITHUB_STEP_SUMMARY"
+      - name: Logs on failure
+        if: failure()
+        run: |
+          helm/compose/demo/demo.sh logs 300 || true
+          docker ps -a --filter label=app.kubernetes.io/managed-by=ostrom || true
+      - name: Down
+        if: always()
+        run: helm/compose/demo/demo.sh down || true

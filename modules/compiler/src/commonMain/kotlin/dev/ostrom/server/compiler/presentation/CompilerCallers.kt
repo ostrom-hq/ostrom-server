@@ -5,6 +5,8 @@ import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.requireAnyScope
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -18,7 +20,7 @@ internal suspend fun CompilerRoutesDependencies.actorOf(call: ApplicationCall, a
     val principal = call.requirePrincipal()
     principal.requireAnyScope(accepted)
     return actors.resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw principal.outsideOrganization()
 }
 
 internal suspend fun CompilerRoutesDependencies.personOf(call: ApplicationCall, accepted: Set<String>): GateActor =
@@ -27,14 +29,33 @@ internal suspend fun CompilerRoutesDependencies.personOf(call: ApplicationCall, 
 
 // Only a person's browser session decides (SECURITY-AUDIT S2-04): a token with `workflows:write` (the CLI's, which
 // an agent can read on the developer's machine) proposes a workflow, never accepts, edits an accepted one or deletes.
-internal fun ApplicationCall.decides(): Boolean = GateScopes.ALL_USER in requirePrincipal().scopes
+// And only an owner or an admin (second audit H4): any other member, in the browser too, proposes.
+internal fun ApplicationCall.decides(actor: GateActor): Boolean =
+    GateScopes.ALL_USER in requirePrincipal().scopes && actor.role in MANAGERS
+
+// Revoking a package stops every session that runs it: an owner or an admin, with any of their credentials, so a
+// leaked package is stopped from the terminal too (second audit H4).
+internal fun requireManager(actor: GateActor) {
+    if (actor.role !in MANAGERS) throw OstromException(ErrorKind.FORBIDDEN, MANAGES)
+}
+
+// Restoring puts a revoked package back in force: an owner's or an admin's browser session only (second audit M3).
+internal fun ApplicationCall.requireDecides(actor: GateActor) {
+    if (!decides(actor)) throw OstromException(ErrorKind.FORBIDDEN, RESTORES)
+}
+
+private val MANAGERS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+
+internal const val MANAGES = "Only an owner or an admin revokes a package."
+internal const val RESTORES = "Only an owner or an admin signed in to the console restores a package."
 
 internal fun onlyProposed(document: JsonObject) {
     val status = (document["status"] as? JsonPrimitive)?.content
     if (status != "proposed") throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
 }
 
-internal const val DECIDES = "Only a person signed in to the console accepts, edits or deletes a workflow."
+internal const val DECIDES =
+    "Only an owner or an admin signed in to the console accepts, edits or deletes a workflow."
 
 /** The scopes the compiler routes require; a user's browser session (`user:*`) holds them all. */
 object CompilerScopes {
@@ -47,7 +68,7 @@ object CompilerScopes {
     /** Reads the session packages, their audit and the gates catalogue. */
     const val PACKAGES_READ: String = "packages:read"
 
-    /** Revokes and restores a package version. */
+    /** Revokes a package version (an owner or an admin); restoring one needs the console too. */
     const val PACKAGES_WRITE: String = "packages:write"
 
     /** Who reads the catalogue and the packages: a session starting needs both. */

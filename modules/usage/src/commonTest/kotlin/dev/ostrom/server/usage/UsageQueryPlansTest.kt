@@ -19,6 +19,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
 
 /**
@@ -50,10 +51,12 @@ class UsageQueryPlansTest {
     @Test
     fun theLedgersRequestPathReadsUseTheirIndexes() =
         serverTest(listOf(SecretsModule, UsageModule), overrides) { server ->
+            // Fixtures only: the rows of two organizations at once and the statistics, which no request writes.
+            val fixtures = server.database.superuser
+            fixtures.execute(seed(TestCallers.orgB, 20_000)).getOrThrow()
+            fixtures.execute(seed(TestCallers.orgA, 2_000)).getOrThrow()
+            fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
             val driver = server.driver
-            driver.execute(seed(TestCallers.orgB, 20_000)).getOrThrow()
-            driver.execute(seed(TestCallers.orgA, 2_000)).getOrThrow()
-            driver.execute("VACUUM ANALYZE usage_events").getOrThrow()
             val since = TestCallers.epoch - 30.days
             val member = TestCallers.memberA.memberId
             val plans = linkedMapOf(
@@ -73,6 +76,13 @@ class UsageQueryPlansTest {
                     bind("limit", 50).bind("member_id", member)
                         .bind("before_at", since).bind("before_id", Uuid.random())
                 },
+                "spend of a launch while its session ran (session receipt)" to
+                    driver.explain(UsageQueries.LAUNCH_SPENT) {
+                        bind(
+                            "launch_id",
+                            "lch_1",
+                        ).bind("from", TestCallers.epoch - 2.hours).bind("to", TestCallers.epoch)
+                    },
                 "summary of 30 days by model" to
                     driver.explain(UsageQueries.summary(UsageGroupBy.MODEL, false, false)) {
                         bind("since", since).bind("limit", 1000)

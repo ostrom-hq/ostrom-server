@@ -19,6 +19,8 @@ import dev.ostrom.server.gateway.domain.UpstreamAnswer
 import dev.ostrom.server.gateway.domain.UpstreamRequest
 import dev.ostrom.server.gateway.domain.UpstreamRequests
 import dev.ostrom.server.gateway.domain.WireProtocol
+import dev.ostrom.server.kernel.logging.JsonLogger
+import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.RevealSecretsUseCase
@@ -108,7 +110,7 @@ class InMemoryAccounts :
     val envelopes = mutableMapOf<Uuid, String>()
     val windows = mutableMapOf<Uuid, List<QuotaWindow>>()
 
-    override suspend fun upsert(account: SharedAccount, envelope: String): SharedAccount {
+    override suspend fun upsert(account: SharedAccount, envelope: String, expectedVersion: Long?): SharedAccount {
         accounts += account
         envelopes[account.id] = envelope
         return account
@@ -121,7 +123,7 @@ class InMemoryAccounts :
     override suspend fun ready(orgId: Uuid, provider: AccountProvider) =
         accounts.filter { it.orgId == orgId && it.provider == provider && it.status == AccountStatus.READY }
 
-    override suspend fun update(account: SharedAccount): SharedAccount? {
+    override suspend fun update(account: SharedAccount, expectedVersion: Long?): SharedAccount? {
         val index = accounts.indexOfFirst { it.id == account.id }
         if (index < 0) return null
         accounts[index] = account
@@ -170,7 +172,7 @@ class NoRefresh : OAuthRefresher {
 fun pool(accounts: InMemoryAccounts, clock: Clock) = SharedAccountPool(
     accounts,
     accounts,
-    AccountTokens(accounts, Gw.cipher, NoRefresh(), clock),
+    AccountTokens(accounts, Gw.cipher, NoRefresh(), clock, JsonLogger(LogLevel.ERROR, sink = {})),
     ProviderQuotaHeaderParser(),
     NoAccountSpendReader(),
     clock,

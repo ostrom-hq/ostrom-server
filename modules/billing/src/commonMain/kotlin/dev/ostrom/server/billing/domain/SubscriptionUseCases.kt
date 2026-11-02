@@ -200,6 +200,57 @@ class SetCancellationUseCaseImpl(
     }
 }
 
+/**
+ * Ends the subscription of a deleted organization now (the orgs module tells billing of the deletion, and again at
+ * the purge): a deleted organization is never billed again. Every subscription that has not ended is ended, whatever
+ * its status (a checkout paid after the deletion, a paused or unpaid one would otherwise resume). Idempotent: the
+ * subscription is read from Stripe first, and one that already ended is left alone.
+ */
+interface EndDeletedOrgSubscriptionUseCase {
+    /**
+     * Ends it, if there is one.
+     *
+     * @param orgId The deleted organization.
+     */
+    suspend operator fun invoke(orgId: Uuid)
+}
+
+/**
+ * [EndDeletedOrgSubscriptionUseCase]. Nothing to do on a self-hosted server (no Stripe) or for an organization without
+ * a running subscription. The invoices stay with Stripe and the billing row stays here: accounting keeps them.
+ *
+ * @param repository The billing rows.
+ * @param stripe Stripe.
+ * @param sync Reads the subscription back from Stripe.
+ * @param settings Whether Stripe is configured.
+ */
+class EndDeletedOrgSubscriptionUseCaseImpl(
+    private val repository: BillingRepository,
+    private val stripe: StripeGateway,
+    private val sync: SyncSubscriptionUseCase,
+    private val settings: BillingSettings,
+) : EndDeletedOrgSubscriptionUseCase {
+    override suspend fun invoke(orgId: Uuid) {
+        if (!settings.stripeEnabled) return
+        val (billing, subscriptionId) = notEnded(orgId) ?: return
+        // Read first: a retry after a cancellation whose sync failed must not cancel twice.
+        val current = sync(billing, subscriptionId)
+        if (!current.ended()) {
+            stripe.cancelNow(subscriptionId)
+            sync(current, subscriptionId)
+        }
+    }
+
+    // The billing row and its subscription, unless there is none or it ended.
+    private suspend fun notEnded(orgId: Uuid): Pair<OrgBilling, String>? {
+        val billing = repository.get(orgId)?.takeUnless { it.ended() } ?: return null
+        return billing.stripeSubscriptionId?.let { billing to it }
+    }
+
+    private fun OrgBilling.ended(): Boolean =
+        status == SubscriptionStatus.CANCELED || status == SubscriptionStatus.INCOMPLETE_EXPIRED
+}
+
 /** Lists an organization's invoices and receipts. */
 interface ListInvoicesUseCase {
     /** @return The latest invoices, newest first; empty for an organization that never bought. */

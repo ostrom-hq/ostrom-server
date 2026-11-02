@@ -109,9 +109,16 @@ interface PublishPackageUseCase {
      * @param repo The repository, or null for the organization.
      * @param serverUrl The address sessions call back.
      * @param actor Who asks.
+     * @param byAgent Whether an agent session asks: under a manual pin it never sets one (second audit L1).
      * @return The package the repository's sessions receive.
      */
-    suspend operator fun invoke(orgId: Uuid, repo: String?, serverUrl: String, actor: String): ServedPackage
+    suspend operator fun invoke(
+        orgId: Uuid,
+        repo: String?,
+        serverUrl: String,
+        actor: String,
+        byAgent: Boolean = false,
+    ): ServedPackage
 }
 
 /**
@@ -130,7 +137,13 @@ class PublishPackageUseCaseImpl(
     private val signer: InstanceSigner,
     private val clock: Clock,
 ) : PublishPackageUseCase {
-    override suspend fun invoke(orgId: Uuid, repo: String?, serverUrl: String, actor: String): ServedPackage {
+    override suspend fun invoke(
+        orgId: Uuid,
+        repo: String?,
+        serverUrl: String,
+        actor: String,
+        byAgent: Boolean,
+    ): ServedPackage {
         val inputs = compiler.inputs(orgId, repo).copy(serverUrl = serverUrl)
         val body = compiler.compile(orgId, inputs)
         val stored = repository.findPackage(orgId, body.contentDigest) ?: run {
@@ -144,7 +157,8 @@ class PublishPackageUseCaseImpl(
         }
         val pin = repository.pin(orgId, repo)
         val manual = sources.settings(orgId).manualPin
-        val moves = pin == null || !manual && pin.contentDigest != stored.envelope.contentDigest
+        // A manual pin is a person's choice: an agent starting a session reads it and never sets the first one.
+        val moves = if (manual) pin == null && !byAgent else pin?.contentDigest != stored.envelope.contentDigest
         if (!stored.revoked && moves) {
             val by = if (manual) actor else AUTO_PIN
             repository.setPin(orgId, repo, PackagePin(stored.envelope.contentDigest, by, clock.now()))

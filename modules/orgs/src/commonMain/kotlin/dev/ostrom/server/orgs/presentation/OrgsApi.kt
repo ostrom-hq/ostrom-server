@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs.presentation
 
+import dev.ostrom.server.kernel.http.NullsKept
+import dev.ostrom.server.orgs.domain.DEFAULT_TIME_ZONE
 import io.ktor.resources.Resource
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.Serializable
 
 /** `/api/v1/orgs`: the caller's organizations, and creating one. */
@@ -81,6 +85,14 @@ class OrgsApi {
     }
 }
 
+/**
+ * `GET /api/v1/me/organizations`: the caller's organizations, so that a person in several can choose the one the
+ * `Ostrom-Org` header names. Never needs that header, never answers 409 `org_required`.
+ */
+@Serializable
+@Resource("/api/v1/me/organizations")
+class MyOrganizationsApi
+
 /** `/api/v1/invitations`: what a person who received a link does with it. */
 @Serializable
 @Resource("/api/v1/invitations")
@@ -113,11 +125,18 @@ class InvitationLinksApi {
 @Serializable data class CreateOrgRequest(val name: String, val slug: String? = null)
 
 /**
- * Renames an organization.
+ * Changes an organization's settings; a field left out stays as it is.
  *
  * @property name The new name.
+ * @property timeZone The new IANA time zone, such as `Europe/Paris`.
+ * @property slug The short name: accepted only unchanged, it never changes.
  */
-@Serializable data class UpdateOrgRequest(val name: String)
+@Serializable
+data class UpdateOrgRequest(
+    val name: String? = null,
+    val timeZone: String? = null,
+    val slug: String? = null,
+)
 
 /**
  * Confirms a deletion.
@@ -181,6 +200,8 @@ const val DEFAULT_LINK_USES = 10
  * @property name The name.
  * @property role The caller's role.
  * @property createdAt When it was created.
+ * @property timeZone Its IANA time zone, `UTC` until set (optional in the contract's sense: a
+ *   default, so a client built before it still reads the others).
  */
 @Serializable
 data class OrgResponse(
@@ -189,6 +210,7 @@ data class OrgResponse(
     val name: String,
     val role: String,
     val createdAt: String,
+    val timeZone: String = DEFAULT_TIME_ZONE,
 )
 
 /**
@@ -201,6 +223,8 @@ data class OrgResponse(
 /**
  * A member (the contract's `Member`).
  *
+ * @property id The member's id, stable across their tokens and sessions (`OrgPrincipal.memberId`): the id that
+ *   artifacts share with and that receipts name.
  * @property login The login.
  * @property name The name.
  * @property avatarUrl The picture, empty when none.
@@ -208,15 +232,21 @@ data class OrgResponse(
  * @property role The role.
  * @property joinedAt When they joined.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = MemberResponse.Answer::class)
 data class MemberResponse(
+    val id: String,
     val login: String,
     val name: String,
     val avatarUrl: String,
     val email: String?,
     val role: String,
     val joinedAt: String,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<MemberResponse>(generatedSerializer(), "email")
+}
 
 /**
  * A list of members.
@@ -236,7 +266,9 @@ data class MemberResponse(
  * @property maxUses How many people it can bring in.
  * @property uses How many it brought in.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = InvitationResponse.Answer::class)
 data class InvitationResponse(
     val id: String,
     val email: String?,
@@ -245,7 +277,10 @@ data class InvitationResponse(
     val expiresAt: String,
     val maxUses: Int?,
     val uses: Int,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<InvitationResponse>(generatedSerializer(), "email", "maxUses")
+}
 
 /**
  * A list of invitations.
@@ -272,11 +307,41 @@ data class InvitationLinkResponse(val invitation: InvitationResponse, val url: S
  * @property email The address it is for, null for a link.
  * @property expiresAt When it stops working.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = InvitationPreviewResponse.Answer::class)
 data class InvitationPreviewResponse(
     val orgName: String,
     val orgSlug: String,
     val role: String,
     val email: String?,
     val expiresAt: String,
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<InvitationPreviewResponse>(generatedSerializer(), "email")
+}
+
+/**
+ * One of the caller's organizations, to choose from.
+ *
+ * @property id The id, the value of the `Ostrom-Org` header.
+ * @property slug The short name.
+ * @property name The name.
+ * @property avatarUrl The picture of the linked GitHub organization, empty when none.
+ * @property role The caller's role there.
+ */
+@Serializable
+data class MyOrganizationResponse(
+    val id: String,
+    val slug: String,
+    val name: String,
+    val avatarUrl: String,
+    val role: String,
 )
+
+/**
+ * The caller's organizations.
+ *
+ * @property items The organizations, by name.
+ */
+@Serializable data class MyOrganizationsResponse(val items: List<MyOrganizationResponse>)

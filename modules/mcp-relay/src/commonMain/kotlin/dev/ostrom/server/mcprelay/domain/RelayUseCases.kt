@@ -354,6 +354,7 @@ class RelayMcpMessageUseCaseImpl(
                     durationMillis = (clock.now() - started).inWholeMilliseconds,
                     responseBytes = bytes,
                     policyId = policyId,
+                    launchId = call.caller.launchId,
                 ),
             )
         } catch (error: CancellationException) {

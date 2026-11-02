@@ -44,21 +44,18 @@ import kotlin.time.Duration.Companion.minutes
 class RulesRowLevelSecurityPostgresTest {
     private val tables = listOf("rules_rules", "rules_decisions", "rules_gate_policy", "rules_analyses")
 
-    private fun asServingRole(block: suspend (owner: Driver, serving: PostgresRulesRepository, raw: Driver) -> Unit) =
-        runTest {
-            val database = TestDatabase.create() ?: return@runTest
-            try {
-                MigrationRunnerImpl(database.driver, RecordingLogger()).migrate("rules", RulesMigrations)
-                database.withRole(poolSize = 1) { role, serving ->
-                    tables.forEach {
-                        database.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON $it TO $role").getOrThrow()
-                    }
-                    block(database.driver, PostgresRulesRepository(serving), serving)
-                }
-            } finally {
-                database.close()
-            }
+    private fun asServingRole(
+        block: suspend (superuser: Driver, serving: PostgresRulesRepository, raw: Driver) -> Unit,
+    ) = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            // The owner migrates, as `ostrom-server migrate` does; the test database's driver is the serving role.
+            MigrationRunnerImpl(database.owner, RecordingLogger()).migrate("rules", RulesMigrations)
+            block(database.superuser, PostgresRulesRepository(database.driver), database.driver)
+        } finally {
+            database.close()
         }
+    }
 
     private fun decision(id: String, orgId: kotlin.uuid.Uuid) = Decision(
         orgId = orgId,
@@ -73,7 +70,7 @@ class RulesRowLevelSecurityPostgresTest {
     )
 
     @Test
-    fun eachOrganizationSeesAndChangesOnlyItsOwnRules() = asServingRole { owner, rules, _ ->
+    fun eachOrganizationSeesAndChangesOnlyItsOwnRules() = asServingRole { superuser, rules, _ ->
         rules.transaction(orgA) {
             insertRule(RulesFixtures.rule("rule_1"))
             insertDecision(decision("dec_a", orgA))
@@ -99,8 +96,8 @@ class RulesRowLevelSecurityPostgresTest {
         assertEquals(1, rules.rules(orgA, RuleQuery(), 10).size, "Org B's delete leaves A's rule_1")
 
         listOf("rules_rules", "rules_decisions", "rules_gate_policy").forEach { table ->
-            val count = owner.fetchAll("SELECT count(*) AS n FROM $table").getOrThrow().single().get("n").asLong()
-            assertTrue(count >= 1, "The owner, a superuser in tests, sees $table")
+            val count = superuser.fetchAll("SELECT count(*) AS n FROM $table").getOrThrow().single().get("n").asLong()
+            assertTrue(count >= 1, "The superuser sees $table")
         }
     }
 

@@ -22,6 +22,7 @@ import dev.ostrom.server.rules.presentation.GateActionDto
 import dev.ostrom.server.rules.presentation.GatePolicyDto
 import dev.ostrom.server.rules.presentation.NewRuleRequest
 import dev.ostrom.server.rules.presentation.RuleDto
+import dev.ostrom.server.rules.presentation.RuleGateCheckDto
 import dev.ostrom.server.rules.presentation.RuleGateDto
 import dev.ostrom.server.rules.presentation.RulesPage
 import dev.ostrom.server.testing.TestServer
@@ -29,6 +30,7 @@ import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -111,6 +113,28 @@ class RulesPostgresTest {
     }
 
     @Test
+    fun aGateKeepsTheChecksItNeedsAndTheirAttestation() = rulesTest { server ->
+        // Written as a client sends it: `attested` left out means a declared run will do.
+        val body = Json.parseToJsonElement(
+            """{"statement":"Tests run by Ostrom or the CI before a push to main","group":"git",""" +
+                """"scope":["acme/api"],"gate":{"actions":[{"class":"push-main","label":"Push to main",""" +
+                """"patterns":[],"repos":["acme/api"]}],"approvers":[],""" +
+                """"checks":[{"check":"tests","attested":true},{"check":"lint"}]}}""",
+        )
+        val created = server.call("POST", "/api/v1/rules", "admin-a", body)
+        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        val served = """"checks":[{"check":"tests","attested":true},{"check":"lint","attested":false}]"""
+        assertTrue(served in created.bodyAsText(), created.bodyAsText())
+        val rule = created.body<RuleDto>()
+        assertEquals(listOf(RuleGateCheckDto("tests", true), RuleGateCheckDto("lint", false)), rule.gate?.checks)
+
+        assertEquals(rule, server.call("GET", "/api/v1/rules/${rule.id}", "member-a").body<RuleDto>())
+        assertEquals(listOf(rule), server.call("GET", "/api/v1/rules", "reader-a").body<RulesPage>().items)
+        val decided = server.decisions(query = "?subjectKind=rule&subjectId=${rule.id}").items.single()
+        assertTrue(""""attested":true""" in decided.after.toString(), "The signed decision shows the attestation")
+    }
+
+    @Test
     fun theConsoleFiltersAndDecidesTheSureOnesAtOnce() = rulesTest { server ->
         val repository = server.koin.get<RulesRepository>()
         repository.transaction(orgA) {
@@ -180,8 +204,11 @@ class RulesPostgresTest {
 
     @Test
     fun aDeciderWithoutALoginIsNamedByTheirMembership() = rulesTest { server ->
-        val rule = server.write("nameless-a").body<RuleDto>()
-        assertEquals("0000000a-0000-0000-0000-0000000000a1", rule.decidedBy)
+        // Unknown to the gates, or known to them without a person: either way the membership names the decider.
+        listOf("nameless-a", "unlinked-a").forEach { token ->
+            val rule = server.write(token).body<RuleDto>()
+            assertEquals("0000000a-0000-0000-0000-0000000000a1", rule.decidedBy, token)
+        }
     }
 
     @Test

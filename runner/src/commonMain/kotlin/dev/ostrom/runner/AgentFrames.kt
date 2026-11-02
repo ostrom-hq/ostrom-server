@@ -38,8 +38,12 @@ sealed interface AgentFrame {
     /** Host to runner: output. */
     class Output(val bytes: ByteArray) : AgentFrame
 
-    /** Host to runner: the program ended and its output is drained. */
-    data object Exit : AgentFrame
+    /**
+     * Host to runner: the program ended and its output is drained.
+     *
+     * @property code Its exit code (128 + the signal when a signal ended it), or null when the host could not read it.
+     */
+    data class Exit(val code: Int?) : AgentFrame
 }
 
 /** A frame that breaks the protocol: an unknown type, or a payload over [AgentFrames.MAX_PAYLOAD]. */
@@ -73,7 +77,7 @@ object AgentFrames {
             is AgentFrame.Resize -> RESIZE to intBytes(frame.columns) + intBytes(frame.rows)
             AgentFrame.Terminate -> TERMINATE to ByteArray(0)
             is AgentFrame.Output -> OUTPUT to frame.bytes
-            AgentFrame.Exit -> EXIT to ByteArray(0)
+            is AgentFrame.Exit -> EXIT to (frame.code?.let(::intBytes) ?: ByteArray(0))
         }
         channel.writeByte(type)
         channel.writeInt(payload.size)
@@ -102,7 +106,8 @@ object AgentFrames {
             RESIZE -> AgentFrame.Resize(intAt(payload, 0), intAt(payload, INT_BYTES))
             TERMINATE -> AgentFrame.Terminate
             OUTPUT -> AgentFrame.Output(payload)
-            EXIT -> AgentFrame.Exit
+            // An empty payload: a code the host could not read.
+            EXIT -> AgentFrame.Exit(if (payload.size == INT_BYTES) intAt(payload, 0) else null)
             else -> throw AgentProtocolException("An unknown frame type $type.")
         }
     }

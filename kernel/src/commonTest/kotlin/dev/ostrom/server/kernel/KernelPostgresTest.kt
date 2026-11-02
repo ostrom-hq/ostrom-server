@@ -4,6 +4,7 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.database.MigrationRunner
+import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.database.MigrationsNotAppliedException
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.database.TENANT_ROLE
@@ -24,6 +25,7 @@ import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -59,10 +61,10 @@ class KernelPostgresTest {
             val logger = JsonLogger(LogLevel.INFO, sink = { lines += it })
             val signer = Ed25519InstanceSigner.generate()
             val config = MapConfigSource(mapOf("OSTROM_PROBE" to "on"))
-            val koin = serverKoin(kernelModule(logger, database.driver, signer, config), emptyList())
+            val koin = serverKoin(kernelModule(logger, database.owner, signer, config), emptyList())
             assertSame(config, koin.get<ConfigSource>())
             assertSame(logger, koin.get<Logger>())
-            assertSame(database.driver, koin.get<Driver>())
+            assertSame(database.owner, koin.get<Driver>())
             assertSame(signer, koin.get<InstanceSigner>())
             assertSame(Clock.System, koin.get<Clock>())
             assertSame(TrustedProxies.NONE, koin.get<TrustedProxies>())
@@ -84,12 +86,12 @@ class KernelPostgresTest {
     fun appliesAModulesMigrationsOnceAndChecksThemAtEveryStart() = databaseTest { database, runner ->
         runner.migrate("probe", first)
         runner.migrate("probe", first)
-        assertEquals(1, database.driver.count("_migrations_probe"))
+        assertEquals(1, database.owner.count("_migrations_probe"))
         assertEquals(1, lines.count { "\"msg\":\"migration applied\"" in it }, "Applied once, checked twice")
 
         val second = first + SchemaMigration(2, "add_name", "ALTER TABLE probe_items ADD COLUMN name TEXT;")
         runner.migrate("probe", second)
-        assertEquals(2, database.driver.count("_migrations_probe"))
+        assertEquals(2, database.owner.count("_migrations_probe"))
     }
 
     @Test
@@ -106,14 +108,14 @@ class KernelPostgresTest {
             "other-probe",
             listOf(SchemaMigration(1, "create_other", "CREATE TABLE other_probe_items (id BIGINT PRIMARY KEY);")),
         )
-        assertEquals(1, database.driver.count("_migrations_probe"))
-        assertEquals(1, database.driver.count("_migrations_other_probe"))
+        assertEquals(1, database.owner.count("_migrations_probe"))
+        assertEquals(1, database.owner.count("_migrations_other_probe"))
     }
 
     @Test
     fun aModuleWithoutMigrationsCreatesNoTable() = databaseTest { database, runner ->
         runner.migrate("empty", emptyList())
-        val tables = database.driver.fetchAll(
+        val tables = database.owner.fetchAll(
             Statement.create("SELECT count(*) AS n FROM information_schema.tables WHERE table_name = :name")
                 .bind("name", "_migrations_empty"),
         ).getOrThrow().single().get("n").asLong()
@@ -128,7 +130,7 @@ class KernelPostgresTest {
 
     @Test
     fun aDatabaseThatDoesNotAnswerInTimeIsDown() = databaseTest { database, _ ->
-        assertFalse(DatabaseHealthCheck(database.driver, timeout = Duration.ZERO).isUp())
+        assertFalse(DatabaseHealthCheck(database.owner, timeout = Duration.ZERO).isUp())
     }
 
     @Test
@@ -136,9 +138,10 @@ class KernelPostgresTest {
         val orgA = Uuid.random()
         val orgB = Uuid.random()
         runner.migrate("probe", tenantTable)
+        // Seeded by the owner (the table is not FORCEd); read and written by the serving role, as the server does.
         val driver = database.driver
         for ((org, name) in listOf(orgA to "a", orgB to "b")) {
-            driver.execute(
+            database.owner.execute(
                 Statement.create("INSERT INTO probe_notes (org_id, name) VALUES (:org, :name)")
                     .bind("org", org).bind("name", name),
             ).getOrThrow()
@@ -156,7 +159,7 @@ class KernelPostgresTest {
                 ).getOrThrow()
             }
         }
-        assertEquals(2, driver.count("probe_notes"), "The refused write left nothing")
+        assertEquals(2, database.owner.count("probe_notes"), "The refused write left nothing")
     }
 
     // The role is global to the cluster: its creation tolerates one made by another database or test.
@@ -204,6 +207,57 @@ class KernelPostgresTest {
         assertFailsWith<IllegalArgumentException> { runner.verify("Probe", first) }
     }
 
+    private suspend fun TestDatabase.canWrite(role: String, table: String): Boolean = owner.fetchAll(
+        Statement.create(
+            "SELECT has_table_privilege(:role, :table, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') AS w",
+        ).bind("role", role).bind("table", table),
+    ).getOrThrow().single().get("w").asBoolean()
+
+    // AUDIT-RLS R8: the serving role reads a module's history (verify, at start) and never writes it.
+    @Test
+    fun onlyTheOwnerWritesTheHistoryAndTheServingRoleReadsIt() = databaseTest { database, runner ->
+        runner.migrate("probe", first)
+        assertFalse(database.canWrite(database.servingRole, "_migrations_probe"), "Serving role writes the history")
+        assertFails { database.driver.execute("DELETE FROM _migrations_probe").getOrThrow() }
+        assertFails { database.driver.execute("UPDATE _migrations_probe SET checksum = 'x'").getOrThrow() }
+        MigrationRunnerImpl(database.driver, JsonLogger(LogLevel.INFO, sink = {})).verify("probe", first)
+        assertTrue(database.canWrite(database.ownerRole, "_migrations_probe"), "The owner writes it")
+
+        // A grant made since (by hand, or before this check existed) is revoked at the next pass.
+        database.superuser.execute("GRANT ALL ON _migrations_probe TO PUBLIC, ${database.servingRole}").getOrThrow()
+        runner.migrate("probe", first)
+        assertFalse(database.canWrite(database.servingRole, "_migrations_probe"), "Write not revoked again")
+        // The module's own tables keep the default privileges.
+        assertTrue(database.canWrite(database.servingRole, "probe_items"), "Module tables keep their grants")
+    }
+
+    @Test
+    fun aColumnGrantAndAHyphenatedModuleAreCoveredAndAFailedPassStillRevokes() = databaseTest { database, runner ->
+        val history = "_migrations_other_probe"
+        val broken = listOf(SchemaMigration(1, "broken", "CREATE TABLE ;"))
+        assertFails { runner.migrate("other-probe", broken) }
+        if (database.owner.exists(history)) {
+            assertFalse(database.canWrite(database.servingRole, history), "Writable after a failed pass")
+        }
+        val fine = listOf(SchemaMigration(1, "create_other", "CREATE TABLE other_items (id BIGINT);"))
+        database.superuser.execute("DROP TABLE IF EXISTS $history").getOrThrow()
+        runner.migrate("other-probe", fine)
+        database.superuser.execute("GRANT UPDATE (checksum) ON $history TO ${database.servingRole}").getOrThrow()
+        runner.migrate("other-probe", fine)
+        assertFalse(database.columnWrite(database.servingRole, history), "Column UPDATE not revoked")
+        assertFalse(database.canWrite(database.servingRole, history))
+        MigrationRunnerImpl(database.driver, JsonLogger(LogLevel.INFO, sink = {})).verify("other-probe", fine)
+    }
+
+    private suspend fun Driver.exists(table: String): Boolean = fetchAll(
+        Statement.create("SELECT to_regclass(:table) IS NOT NULL AS e").bind("table", table),
+    ).getOrThrow().single().get("e").asBoolean()
+
+    private suspend fun TestDatabase.columnWrite(role: String, table: String): Boolean = owner.fetchAll(
+        Statement.create("SELECT has_any_column_privilege(:role, :table, 'INSERT, UPDATE, REFERENCES') AS w")
+            .bind("role", role).bind("table", table),
+    ).getOrThrow().single().get("w").asBoolean()
+
     @Test
     fun concurrentMigrationPassesWaitForEachOther() = databaseTest { database, runner ->
         val modules = listOf(
@@ -211,20 +265,20 @@ class KernelPostgresTest {
             Probe("other-probe", listOf(SchemaMigration(1, "create_other", "CREATE TABLE other_items (id BIGINT);"))),
         )
         coroutineScope {
-            List(3) { async { database.driver.migrateUnderLock(runner, modules) } }.awaitAll()
+            List(3) { async { database.owner.migrateUnderLock(runner, modules) } }.awaitAll()
         }
-        assertEquals(2, database.driver.count("_migrations_probe"))
-        assertEquals(1, database.driver.count("_migrations_other_probe"))
+        assertEquals(2, database.owner.count("_migrations_probe"))
+        assertEquals(1, database.owner.count("_migrations_other_probe"))
         modules.forEach { runner.verify(it.name, it.migrations) }
-        assertEquals(0, database.driver.advisoryLocks(), "The lock is released")
+        assertEquals(0, database.owner.advisoryLocks(), "The lock is released")
     }
 
     @Test
     fun aFailedMigrationReleasesTheLock() = databaseTest { database, runner ->
         val broken = listOf(Probe("probe", listOf(SchemaMigration(1, "broken", "CREATE TABLE ;"))))
-        assertFails { database.driver.migrateUnderLock(runner, broken) }
-        assertEquals(0, database.driver.advisoryLocks(), "The lock is released")
-        database.driver.migrateUnderLock(runner, listOf(Probe("probe", first)))
-        assertEquals(1, database.driver.count("_migrations_probe"))
+        assertFails { database.owner.migrateUnderLock(runner, broken) }
+        assertEquals(0, database.owner.advisoryLocks(), "The lock is released")
+        database.owner.migrateUnderLock(runner, listOf(Probe("probe", first)))
+        assertEquals(1, database.owner.count("_migrations_probe"))
     }
 }

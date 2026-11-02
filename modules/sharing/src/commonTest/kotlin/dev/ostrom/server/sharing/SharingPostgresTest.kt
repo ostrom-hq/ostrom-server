@@ -2,8 +2,11 @@
 package dev.ostrom.server.sharing
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -12,6 +15,7 @@ import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
+import dev.ostrom.server.sharing.domain.AccountChangedException
 import dev.ostrom.server.sharing.domain.AccountCredentials
 import dev.ostrom.server.sharing.domain.AccountOwnedByAnotherMemberException
 import dev.ostrom.server.sharing.domain.AccountProvider
@@ -19,6 +23,8 @@ import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.AccountStatus
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
 import dev.ostrom.server.sharing.domain.LeaseResult
+import dev.ostrom.server.sharing.domain.OAuthRefresher
+import dev.ostrom.server.sharing.domain.RefreshResult
 import dev.ostrom.server.sharing.domain.SharedAccountPool
 import dev.ostrom.server.sharing.domain.SharedAccountRepository
 import dev.ostrom.server.sharing.presentation.AccountLimitsDto
@@ -94,7 +100,8 @@ class SharingPostgresTest {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: byToken[token]?.let {
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
+                        val scopes = setOf(RelayScopes.ALL_USER)
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER)
                     }
             }
         }
@@ -143,8 +150,8 @@ class SharingPostgresTest {
             assertFalse("secret" in created.bodyAsText(), "Tokens never come back")
             val account = created.body<SharedAccountResponse>()
             assertTrue(account.mine)
-            val stored = driver.fetchAll("SELECT envelope FROM sharing_accounts").getOrThrow().single()
-                .get("envelope").asString()
+            val stored = driver.fetchInOrg(Sharing.orgA, Statement.create("SELECT envelope FROM sharing_accounts"))
+                .getOrThrow().single().get("envelope").asString()
             assertFalse("secret" in stored, "Sealed at rest")
 
             val lease = koin.get<SharedAccountPool>()
@@ -303,6 +310,12 @@ class SharingPostgresTest {
             assertEquals("reconnect_required", resumed.status, "Pausing and resuming never revives dead tokens")
             val stale = repository.get(Sharing.orgA, id)!!.copy(status = AccountStatus.READY)
             assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.update(stale)!!.status, "Nor does a stale write")
+            repository.setStatus(Sharing.orgA, id, AccountStatus.WRONG_ACCOUNT)
+            val foreign = patchAs("member-a", path, UpdateAccountRequest(paused = false)).body<SharedAccountResponse>()
+            assertEquals("wrong_account", foreign.status, "Nor tokens of another account")
+            val staleForeign = repository.get(Sharing.orgA, id)!!.copy(status = AccountStatus.READY)
+            assertEquals(AccountStatus.WRONG_ACCOUNT, repository.update(staleForeign)!!.status)
+            repository.setStatus(Sharing.orgA, id, AccountStatus.RECONNECT_REQUIRED)
 
             // Two first shares of one provider account: the second keeps the first row, and its envelope still opens.
             val first = repository.get(Sharing.orgA, id)!!
@@ -318,6 +331,38 @@ class SharingPostgresTest {
             }
         }
     }
+
+    @Test
+    fun sharesEditsAndStatusesBumpTheVersionAndAConditionalWriteNeverOverwritesALaterOne() =
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                val id = Uuid.parse(shareAs("member-a").body<SharedAccountResponse>().id)
+                val repository = koin.get<SharedAccountRepository>()
+                val read = repository.get(Sharing.orgA, id)!!
+                assertEquals(1L, read.version)
+                repository.setCooldown(Sharing.orgA, id, Clock.System.now())
+                repository.putEnvelope(Sharing.orgA, id, repository.envelope(Sharing.orgA, id)!!)
+                assertEquals(1L, repository.get(Sharing.orgA, id)!!.version, "The pool's routine writes do not count")
+                repository.setStatus(Sharing.orgA, id, AccountStatus.READY)
+                assertNull(
+                    repository.update(read.copy(label = "Stale"), expectedVersion = 1),
+                    "Never over a later write",
+                )
+                assertEquals(3L, repository.update(read.copy(label = "Fresh"), expectedVersion = 2)!!.version)
+                val envelope = repository.envelope(Sharing.orgA, id)!!
+                assertFailsWith<AccountChangedException> { repository.upsert(read, envelope, expectedVersion = 2) }
+                assertFailsWith<AccountChangedException>("Not new any more") {
+                    repository.upsert(read, envelope, expectedVersion = 0)
+                }
+                assertEquals("Fresh", repository.get(Sharing.orgA, id)!!.label, "Nothing overwritten")
+                assertEquals(4L, repository.upsert(read, envelope, expectedVersion = 3).version)
+                assertTrue(repository.delete(Sharing.orgA, id))
+                assertFailsWith<AccountChangedException>("Deleted meanwhile: never inserted again") {
+                    repository.upsert(read, envelope, expectedVersion = 4)
+                }
+                assertNull(repository.get(Sharing.orgA, id))
+            }
+        }
 
     private suspend fun TestServer.patchAs(token: String, path: String, request: UpdateAccountRequest) =
         client.patch(path) {
@@ -473,6 +518,35 @@ class SharingPostgresTest {
                     }
                 },
             )
+        }
+    }
+
+    @Test
+    fun theModuleRenewsAtTheTokenEndpointTheInstanceSets() {
+        val seen = mutableListOf<String>()
+        val fakeProvider = module {
+            includes(overrides)
+            single<ConfigSource> {
+                MapConfigSource(mapOf("OSTROM_SHARING_CLAUDE_TOKEN_URL" to "http://provider.localtest.me:8080/token"))
+            }
+            single(SharingModule.HTTP_CLIENT) {
+                HttpClient(
+                    MockEngine { request ->
+                        seen += request.url.toString()
+                        respond(
+                            """{"access_token":"renewed","refresh_token":"next","expires_in":28800}""",
+                            HttpStatusCode.OK,
+                            headersOf("Content-Type", "application/json"),
+                        )
+                    },
+                )
+            }
+        }
+        serverTest(modules, fakeProvider) { server ->
+            val credentials = AccountCredentials("old", "refresh", Clock.System.now())
+            val result = server.koin.get<OAuthRefresher>().refresh(AccountProvider.CLAUDE, credentials)
+            assertEquals("renewed", assertIs<RefreshResult.Renewed>(result).credentials.accessToken)
+            assertEquals(listOf("http://provider.localtest.me:8080/token"), seen)
         }
     }
 

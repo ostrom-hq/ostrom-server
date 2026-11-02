@@ -8,7 +8,10 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgProfile
+import dev.ostrom.server.kernel.auth.OrgRequiredException
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -22,6 +25,7 @@ import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgAudit
+import dev.ostrom.server.orgs.domain.OrgDeletionsRepository
 import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -31,6 +35,7 @@ import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -87,11 +92,13 @@ class OrgsPostgresTest {
         )
 
     @Test
+    @Suppress("LongMethod") // One organization's life through the repositories, read top to bottom.
     fun organizationsAreCreatedReadRenamedAndDeleted() =
         serverTest(modules) { server ->
             val orgs = server.koin.get<OrgsRepository>()
             val members = server.koin.get<MembersRepository>()
             val invitations = server.koin.get<InvitationsRepository>()
+            val deletions = server.koin.get<OrgDeletionsRepository>()
             val ada = server.user("ada")
             val acme = org("acme", "domain:acme.com")
             val owner = member(acme, ada, OrgRole.OWNER)
@@ -106,11 +113,19 @@ class OrgsPostgresTest {
             assertFailsWith<SlugTakenException> {
                 orgs.create(org("acme"), member(acme, ada, OrgRole.OWNER)) { false }
             }
-            orgs.rename(acme.id, "Acme Labs")
-            assertEquals("Acme Labs", orgs.get(acme.id)?.name)
+            orgs.update(acme.id, null, "Asia/Tokyo")
+            assertEquals(acme.copy(timeZone = "Asia/Tokyo"), orgs.get(acme.id), "Only the time zone")
+            orgs.update(acme.id, "Acme Labs", null)
+            assertEquals(acme.copy(name = "Acme Labs", timeZone = "Asia/Tokyo"), orgs.get(acme.id), "Only the name")
+            orgs.update(acme.id, null, null)
+            orgs.update(acme.id, "Acme Labs", "Europe/Paris")
+            assertEquals(acme.copy(name = "Acme Labs", timeZone = "Europe/Paris"), orgs.get(acme.id))
+            assertEquals("Europe/Paris", orgs.listOfUser(ada.id).single().org.timeZone)
+            assertEquals("Europe/Paris", orgs.findBySlug("acme")?.timeZone)
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10), "A live organization is not being deleted")
 
             invitations.create(link(acme, owner), "hash-1")
-            orgs.delete(acme.id, now)
+            orgs.delete(acme.id, now, now + 30.days)
             assertNull(orgs.get(acme.id))
             assertNull(orgs.findBySlug("acme"))
             assertTrue(orgs.slugTaken("acme"), "A deleted organization keeps its short name")
@@ -120,6 +135,34 @@ class OrgsPostgresTest {
             // Its free claim is released.
             val acme2 = org("acme-2", "domain:acme.com")
             assertNull(orgs.create(acme2, member(acme2, ada, OrgRole.OWNER)) { false })
+
+            // The worker's steps, across organizations: told, then erased after 30 days.
+            assertTrue(acme.id in deletions.deletionsToSettle(now, 10))
+            deletions.postpone(acme.id, now + 10.minutes)
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10), "Put off")
+            assertTrue(acme.id in deletions.deletionsToSettle(now + 10.minutes, 10))
+            assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10), "Never erased before every module was told")
+            deletions.markSettled(acme.id, now)
+            assertTrue(acme.id !in deletions.deletionsToSettle(now, 10))
+            assertTrue(acme.id !in deletions.duePurges(now + 30.days - 1.minutes, 10), "Kept for 30 days")
+            assertTrue(acme.id in deletions.duePurges(now + 30.days, 10))
+            deletions.erase(acme.id, now + 30.days)
+            assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10))
+            deletions.erase(acme2.id, now)
+            assertEquals(acme2, orgs.get(acme2.id), "A live organization is never erased")
+            // Read across organizations, as no request does.
+            val tombstone =
+                server.database.superuser
+                    .fetchAll(
+                        "SELECT name, github_org_id, time_zone, purged_at FROM orgs_organizations " +
+                            "WHERE id = '${acme.id}'"
+                    ).getOrThrow()
+                    .single()
+            assertEquals("", tombstone.get("name").asString())
+            assertNull(tombstone.get("github_org_id").asStringOrNull())
+            assertEquals("UTC", tombstone.get("time_zone").asString())
+            assertEquals(now + 30.days, tombstone.get("purged_at").asInstant())
+            assertTrue(orgs.slugTaken("acme"), "An erased organization still keeps its short name")
         }
 
     @Test
@@ -330,6 +373,54 @@ class OrgsPostgresTest {
         }
 
     @Test
+    fun withoutAnOrganizationInThePathTheHeaderOrTheOnlyMembershipDecides() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val resolver = server.koin.get<PrincipalOrgResolver>()
+            val ada = server.user("ada")
+            val mallory = server.user("mallory")
+            val loner = server.user("loner")
+            val acme = org("acme")
+            val acmeOwner = member(acme, ada, OrgRole.OWNER)
+            orgs.create(acme, acmeOwner) { false }
+            val evil = org("evil")
+            orgs.create(evil, member(evil, mallory, OrgRole.OWNER)) { false }
+            val person = AuthenticatedPrincipal(ada.id.toString(), PrincipalKind.USER, setOf("user:*"))
+            fun named(org: Org) = person.copy(namedOrg = org.id.toString())
+
+            assertEquals(OrgProfile(acme.id, "acme", "ACME", "", linkedToGitHub = false), resolver.profile(acme.id))
+            assertNull(resolver.profile(Uuid.random()))
+            // One membership: nothing to name.
+            assertEquals(OrgPrincipal(acme.id, acmeOwner.id, OrgRole.OWNER), resolver.resolve(person, null))
+            // No membership: nobody.
+            val alone = AuthenticatedPrincipal(loner.id.toString(), PrincipalKind.USER, emptySet())
+            assertNull(resolver.resolve(alone, null))
+
+            val globex = org("globex")
+            val globexMember = member(globex, ada, OrgRole.MEMBER)
+            orgs.create(globex, globexMember) { false }
+            // Two memberships and nothing named: the request must name one (409 org_required).
+            val unnamed = assertFailsWith<OrgRequiredException> { resolver.resolve(person, null) }
+            assertEquals("org_required", unnamed.kind.type)
+            // Two memberships and the header: the one it names, checked against the membership.
+            assertEquals(
+                OrgPrincipal(globex.id, globexMember.id, OrgRole.MEMBER),
+                resolver.resolve(named(globex), null),
+            )
+            assertEquals(acmeOwner.id, resolver.resolve(named(acme), null)?.memberId)
+            // The path wins over the header.
+            assertEquals(acmeOwner.id, resolver.resolve(named(globex), acme.id)?.memberId)
+            // A header naming an organization the caller is not in, or no id at all: nobody (404, no leak).
+            assertNull(resolver.resolve(named(evil), null))
+            assertNull(resolver.resolve(person.copy(namedOrg = "acme"), null))
+            // A bound token keeps to its organization, whatever the header says.
+            val bound = person.copy(orgId = acme.id.toString())
+            assertEquals(acmeOwner.id, resolver.resolve(bound, null)?.memberId)
+            assertEquals(acmeOwner.id, resolver.resolve(bound.copy(namedOrg = acme.id.toString()), null)?.memberId)
+            assertNull(resolver.resolve(bound.copy(namedOrg = globex.id.toString()), null))
+        }
+
+    @Test
     fun theResolverOnlyResolvesAPersonWhoIsAMember() =
         serverTest(modules) { server ->
             val orgs = server.koin.get<OrgsRepository>()
@@ -346,7 +437,7 @@ class OrgsPostgresTest {
                 resolver.resolve(person, acme.id),
             )
             assertNull(resolver.resolve(person, Uuid.random()))
-            assertNull(resolver.resolve(person, null), "No implicit current organization")
+            assertEquals(owner.id, resolver.resolve(person, null)?.memberId, "Their only organization")
             val bound = person.copy(orgId = acme.id.toString())
             assertEquals(owner.id, resolver.resolve(bound, null)?.memberId)
             assertEquals(owner.id, resolver.resolve(bound, acme.id)?.memberId)
@@ -363,6 +454,33 @@ class OrgsPostgresTest {
                     acme.id,
                 )
             )
+        }
+
+    @Test
+    fun theDirectoryKnowsTheMembersOfAnOrganizationAndNoOneElse() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val members = server.koin.get<MembersRepository>()
+            val directory = server.koin.get<MemberDirectory>()
+            val ada = server.user("ada")
+            val bob = server.user("bob")
+            val acme = org("acme")
+            val owner = member(acme, ada, OrgRole.OWNER)
+            orgs.create(acme, owner) { false }
+            val other = org("other")
+            val bobsOwner = member(other, bob, OrgRole.OWNER)
+            orgs.create(other, bobsOwner) { false }
+
+            assertEquals(owner, members.findById(acme.id, owner.id))
+            assertTrue(directory.isActiveMember(acme.id, owner.id.toString()))
+            // Another organization's member is not one, even by its exact id (row-level security).
+            assertNull(members.findById(acme.id, bobsOwner.id))
+            assertFalse(directory.isActiveMember(acme.id, bobsOwner.id.toString()))
+            assertFalse(directory.isActiveMember(acme.id, Uuid.random().toString()))
+            assertFalse(directory.isActiveMember(acme.id, "not-a-member-id"))
+            // Deleting the organization removes its members: none stays active.
+            orgs.delete(acme.id, now)
+            assertFalse(directory.isActiveMember(acme.id, owner.id.toString()))
         }
 
     @Test

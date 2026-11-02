@@ -125,6 +125,20 @@ enum class TokenKind(val prefix: String) {
 
     /** Issued to one agent session: it can only act on that session (audit A2, JOURNAL 02:15). */
     AGENT("osa"),
+
+    /**
+     * Issued to the phone app by a mobile sign-in (PKCE): it lives in the phone's keychain, never on the developer's
+     * machine, and says yes only after the phone's biometric unlock (S2-31, S2-54).
+     */
+    MOBILE("osm"),
+
+    /**
+     * An organization's service key (CI, a runner, a script), created by an owner or an admin: it belongs to the
+     * organization, not to its creator ([ApiToken.userId] only says who made it), acts as a
+     * [PrincipalKind.SERVICE][dev.ostrom.server.kernel.auth.PrincipalKind.SERVICE] bound to that organization, and is
+     * never a member: a route serves it only when it admits services.
+     */
+    SERVICE("oss"),
     ;
 
     /** Reads a stored kind back. */
@@ -157,6 +171,8 @@ enum class TokenKind(val prefix: String) {
  * @property expiresAt When it stops working, if it expires.
  * @property lastUsedAt When it was last used (updated at most once per [SESSION_TOUCH_INTERVAL]).
  * @property revokedAt When it was revoked, if so.
+ * @property authenticatedAt For a [TokenKind.MOBILE] token, the last biometric unlock of the phone (S2-54); null
+ *   before the first one, and for every other kind.
  */
 data class ApiToken(
     val id: Uuid,
@@ -171,6 +187,7 @@ data class ApiToken(
     val expiresAt: Instant?,
     val lastUsedAt: Instant?,
     val revokedAt: Instant?,
+    val authenticatedAt: Instant? = null,
 )
 
 /**

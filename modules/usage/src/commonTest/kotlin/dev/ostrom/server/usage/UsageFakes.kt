@@ -2,6 +2,7 @@
 package dev.ostrom.server.usage
 
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -43,6 +44,8 @@ object TestCallers {
         "stranger" to null,
     )
 
+    private val browserScopes = setOf(RelayScopes.ALL_USER)
+
     /** The scopes and kind of each token: a browser session has every user scope (`user:*`). */
     private val principals = mapOf(
         "agent-a" to (PrincipalKind.SERVICE to setOf(RelayScopes.AGENT_SESSION)),
@@ -64,10 +67,14 @@ object TestCallers {
         single<Clock> { clock }
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
-                override suspend fun authenticate(token: String): AuthenticatedPrincipal? {
-                    if (token !in byToken) return null
-                    val (kind, scopes) = principals[token] ?: (PrincipalKind.USER to setOf(RelayScopes.ALL_USER))
-                    return AuthenticatedPrincipal(token, kind, scopes)
+                override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when {
+                    token !in byToken -> null
+                    // A token without its own kind is a browser session, with every user scope.
+                    token !in principals ->
+                        AuthenticatedPrincipal(token, PrincipalKind.USER, browserScopes, channel = BROWSER)
+                    else -> principals.getValue(token).let { (kind, scopes) ->
+                        AuthenticatedPrincipal(token, kind, scopes)
+                    }
                 }
             }
         }
@@ -146,6 +153,11 @@ class InMemoryUsageRepository : UsageRepository {
 
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long =
         events.filter { it.orgId == orgId && it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
+
+    override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? = events
+        .filter { it.orgId == orgId && it.launchId == launchId && it.at >= from && it.at < to && it.costMicros > 0 }
+        .takeIf { it.isNotEmpty() }
+        ?.sumOf { it.costMicros }
 
     override suspend fun summary(window: UsageWindow, groupBy: UsageGroupBy, limit: Int): List<UsageTotal> =
         events.filter { it in window }

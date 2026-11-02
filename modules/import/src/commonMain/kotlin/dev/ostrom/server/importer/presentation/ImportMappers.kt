@@ -76,4 +76,5 @@ fun ImportReport.toDto() = ImportReportDto(
     updated = count(ImportAction.UPDATED),
     unchanged = count(ImportAction.UNCHANGED),
     skipped = count(ImportAction.SKIPPED),
+    reviveAtCutover = count(ImportAction.REVIVE_AT_CUTOVER),
 )

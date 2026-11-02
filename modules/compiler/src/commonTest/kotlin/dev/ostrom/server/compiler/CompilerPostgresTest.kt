@@ -91,6 +91,7 @@ class CompilerPostgresTest {
     // Tokens are `<kind>:<org letter>:<id>`: `user:a:lead` (browser session), `agent:a:launch-1`, `cli:a:dev` (the
     // CLI's token, which an agent can read on the developer's machine), `gates:a:x` (a gates-only key).
     private val cliScopes = setOf(CompilerScopes.WORKFLOWS_READ, CompilerScopes.WORKFLOWS_WRITE)
+    private val personalScopes = cliScopes + CompilerScopes.PACKAGES_READ + CompilerScopes.PACKAGES_WRITE
 
     private fun overrides(config: Map<String, String>?, sources: CompilerSources? = null): Module = module {
         single<TokenAuthenticator> {
@@ -102,6 +103,8 @@ class CompilerPostgresTest {
                     "gates" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
                     // A machine holding the packages scope: never a person.
                     "bot" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(CompilerScopes.PACKAGES_WRITE))
+                    // A person's own token, outside the browser.
+                    "pat" -> AuthenticatedPrincipal(token, PrincipalKind.USER, personalScopes)
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                 }
             }
@@ -114,7 +117,7 @@ class CompilerPostgresTest {
                     return when (kind) {
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lead")
                         "bot" -> GateActor(id, orgId, ActorKind.SERVICE)
-                        else -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        else -> GateActor(id, orgId, ActorKind.USER, personId = id, role = roleOf(id))
                     }
                 }
             }
@@ -177,6 +180,24 @@ class CompilerPostgresTest {
     }
 
     @Test
+    fun anEndingEdgeAndAnOrganizationsPackageAnswerTheContractsRequiredNulls() = compilerTest { server ->
+        // The contract's `to` is required and nullable: a client writes it, null for an edge that ends the workflow.
+        val ending = JsonObject(mapOf("from" to JsonPrimitive("g"), "to" to JsonNull))
+        val edges = JsonArray(release().getValue("edges").jsonArray + ending)
+        val doc = JsonObject(release() + ("edges" to edges))
+        val created = server.call("user:a:lead", "/api/v1/workflows", "POST", doc).body<JsonObject>()
+        assertEquals(JsonNull, created.getValue("edges").jsonArray.last().jsonObject["to"])
+        val listed = server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>().items.single()
+        assertEquals(JsonNull, listed.getValue("edges").jsonArray.last().jsonObject["to"])
+        assertEquals("t", listed.getValue("edges").jsonArray.first().jsonObject.getValue("from").jsonPrimitive.content)
+
+        val envelope = server.call("agent:a:l1", "/api/v1/packages/current").body<JsonObject>()
+        assertEquals(JsonNull, envelope["repo"])
+        val page = server.call("user:a:lead", "/api/v1/packages").body<JsonObject>()
+        assertEquals(JsonNull, page.getValue("items").jsonArray.single().jsonObject["repo"])
+    }
+
+    @Test
     fun workflowsAreSavedWithTheirVersionAndOnlyByAPerson() = compilerTest { server ->
         assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:l1", "/api/v1/workflows", "POST", release()).status)
         assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/workflows").status)
@@ -233,12 +254,12 @@ class CompilerPostgresTest {
         val machine = server.call("bot:a:ci", "/api/v1/packages/x/revoke", "POST", RevokeRequest("x"))
         assertTrue(machine.bodyAsText().contains("Only a person changes workflows and packages."))
         val orgless = server.call("user:nobody", "/api/v1/workflows")
-        assertEquals(HttpStatusCode.Forbidden, orgless.status)
-        assertTrue(orgless.bodyAsText().contains("This credential belongs to no organization."))
+        assertEquals(HttpStatusCode.NotFound, orgless.status, "Answered like an unknown organization")
+        assertTrue(orgless.bodyAsText().contains("Organization not found."))
 
         val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
         assertEquals(HttpStatusCode.Forbidden, accepted.status)
-        assertTrue(accepted.bodyAsText().contains("Only a person signed in to the console"))
+        assertTrue(accepted.bodyAsText().contains("Only an owner or an admin signed in to the console"))
         val noStatus = JsonObject(mapOf("id" to JsonPrimitive("bare")))
         assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", "/api/v1/workflows", "POST", noStatus).status)
         val proposed = server.call("cli:a:dev", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))
@@ -256,6 +277,38 @@ class CompilerPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", path, "PUT", edit).status, "Accepted stays so")
         assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", "/api/v1/gates/catalog?repo=acme-api").status)
         assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", path).status)
+    }
+
+    @Test
+    fun onlyAnOwnerOrAnAdminDecides() = compilerTest { server ->
+        // Second audit H4: a member or an approver, in the browser too, only proposes.
+        for (who in listOf("user:a:member", "user:a:approver")) {
+            val accepted = server.call(who, "/api/v1/workflows", "POST", release())
+            assertEquals(HttpStatusCode.Forbidden, accepted.status, who)
+            assertTrue(accepted.bodyAsText().contains("Only an owner or an admin signed in to the console"))
+        }
+        val proposed = server.call("user:a:member", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))
+        assertEquals(HttpStatusCode.Created, proposed.status)
+        val path = "/api/v1/workflows/release"
+        val accepting = SaveWorkflowRequest(release(), expectedVersion = 1)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", path, "PUT", accepting).status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", path, "DELETE").status)
+        assertEquals(HttpStatusCode.OK, server.call("user:a:admin", path, "PUT", accepting).status)
+
+        val envelope = server.call("user:a:admin", "/api/v1/packages/current").body<PackageEnvelope>()
+        val revokePath = "/api/v1/packages/${envelope.digest}/revoke"
+        val byMember = server.call("user:a:member", revokePath, "POST", RevokeRequest("x"))
+        assertEquals(HttpStatusCode.Forbidden, byMember.status)
+        assertTrue(byMember.bodyAsText().contains("Only an owner or an admin revokes a package."))
+        // An owner's own token revokes from the terminal; restoring needs the console (second audit M3).
+        val revoked = server.call("pat:a:lead", revokePath, "POST", RevokeRequest("leaked"))
+        assertTrue(revoked.body<PackageSummary>().revoked)
+        val restorePath = "/api/v1/packages/${envelope.digest}/restore"
+        val restore = server.call("pat:a:lead", restorePath, "POST")
+        assertEquals(HttpStatusCode.Forbidden, restore.status)
+        assertTrue(restore.bodyAsText().contains("signed in to the console restores a package"))
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", restorePath, "POST").status)
+        assertFalse(server.call("user:a:admin", restorePath, "POST").body<PackageSummary>().revoked)
     }
 
     @Test
@@ -411,16 +464,18 @@ class CompilerPostgresTest {
         assertNull(repository.pin(orgA, "acme-api"))
         assertNull(repository.saveWorkflow(orgA, "w", release(), 3, Authorship("lead", NOW)), "no such version")
         assertFalse(repository.deleteWorkflow(orgA, "w"))
+        // A creation never replaces: the second one of an id finds it taken.
+        assertEquals(1, repository.saveWorkflow(orgA, "w", release(), null, Authorship("lead", NOW))?.version)
+        assertNull(repository.saveWorkflow(orgA, "w", release(), null, Authorship("ops", NOW)), "the id is taken")
+        assertEquals("lead", repository.workflow(orgA, "w")?.updatedBy)
+        assertTrue(repository.deleteWorkflow(orgA, "w"))
     }
 
     @Test
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = compilerTest { server ->
         server.call("user:a:lead", "/api/v1/workflows", "POST", release())
         server.call("agent:a:l1", "/api/v1/packages/current?repo=acme-api")
-        // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
-        server.driver.execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
+        // The test server's driver is the serving role, as in production: row level security applies to it.
         val tables = listOf(
             "compiler_workflows",
             "compiler_decisions",
@@ -429,9 +484,7 @@ class CompilerPostgresTest {
             "compiler_pins",
             "compiler_audit",
         )
-        server.driver.execute("GRANT SELECT, INSERT ON ${tables.joinToString()} TO ostrom_rls_probe").getOrThrow()
         val counts = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             suspend fun count(org: Uuid?): List<String> {
                 org?.let {
                     val scope = Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)")
@@ -445,7 +498,6 @@ class CompilerPostgresTest {
         assertTrue(counts[1].all { it == "0" }, "Org B: nothing")
         assertTrue(counts[2].all { it != "0" }, "Org A: its rows in every table, $counts")
         val forged = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
             execute(

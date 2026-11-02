@@ -132,33 +132,29 @@ class AnalysisEnginePostgresTest {
     fun theEngineWritesUnderTheServingRoleOnlyForItsOrganization() = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
-            MigrationRunnerImpl(database.driver, RecordingLogger()).migrate("rules", RulesMigrations)
-            database.withRole(poolSize = 1) { role, serving ->
-                listOf("rules_rules", "rules_decisions", "rules_analyses").forEach {
-                    database.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON $it TO $role").getOrThrow()
-                }
-                val runs = PostgresAnalysisRepository(serving)
-                val rules = PostgresRulesRepository(serving)
-                val reader = FakeRepositoryReader().apply { connect(orgA, RepositoryFixtures.docs) }
-                val analyze = AnalyzeOrganizationUseCaseImpl(runs, rules, reader, RecordingLogger(), TestClock())
-                val run = AnalysisRun(
-                    orgA, AnalysisKind.ANALYSIS, "run_1", AnalysisRun.CONNECT, 0.0, null, "lyes",
-                    RulesFixtures.epoch, RulesFixtures.epoch,
-                )
-                runs.transaction(orgA) {
-                    lock(AnalysisKind.ANALYSIS)
-                    put(run)
-                }
-                analyze(run, listOf(RepositoryFixtures.docs.repo))
-
-                assertEquals(AnalysisRun.READY, runs.run(orgA, AnalysisKind.ANALYSIS)?.phase)
-                assertEquals(
-                    listOf(RuleStatus.PROPOSED, RuleStatus.PROPOSED),
-                    rules.rules(orgA, RuleQuery(), 10).map { it.status },
-                )
-                assertEquals(emptyList(), rules.rules(orgB, RuleQuery(), 10), "Org B reads none of A's proposals")
-                assertEquals(null, runs.run(orgB, AnalysisKind.ANALYSIS))
+            // The owner migrates, as `ostrom-server migrate` does; the test database's driver is the serving role.
+            MigrationRunnerImpl(database.owner, RecordingLogger()).migrate("rules", RulesMigrations)
+            val runs = PostgresAnalysisRepository(database.driver)
+            val rules = PostgresRulesRepository(database.driver)
+            val reader = FakeRepositoryReader().apply { connect(orgA, RepositoryFixtures.docs) }
+            val analyze = AnalyzeOrganizationUseCaseImpl(runs, rules, reader, RecordingLogger(), TestClock())
+            val run = AnalysisRun(
+                orgA, AnalysisKind.ANALYSIS, "run_1", AnalysisRun.CONNECT, 0.0, null, "lyes",
+                RulesFixtures.epoch, RulesFixtures.epoch,
+            )
+            runs.transaction(orgA) {
+                lock(AnalysisKind.ANALYSIS)
+                put(run)
             }
+            analyze(run, listOf(RepositoryFixtures.docs.repo))
+
+            assertEquals(AnalysisRun.READY, runs.run(orgA, AnalysisKind.ANALYSIS)?.phase)
+            assertEquals(
+                listOf(RuleStatus.PROPOSED, RuleStatus.PROPOSED),
+                rules.rules(orgA, RuleQuery(), 10).map { it.status },
+            )
+            assertEquals(emptyList(), rules.rules(orgB, RuleQuery(), 10), "Org B reads none of A's proposals")
+            assertEquals(null, runs.run(orgB, AnalysisKind.ANALYSIS))
         } finally {
             database.close()
         }

@@ -58,6 +58,13 @@ class InMemoryGatesRepository : GatesRepository {
     override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
         requests.values.filter { it.gateId == gateId && it.orgId == orgId }
 
+    var batchedRequestReads = 0
+
+    override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> {
+        batchedRequestReads++
+        return requests.values.filter { it.gateId in gateIds && it.orgId == orgId }
+    }
+
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> =
         gates.values.filter { it.orgId == orgId && sessionId in it.sessionIds }.sortedBy { it.createdAt }
 
@@ -77,6 +84,15 @@ class InMemoryGatesRepository : GatesRepository {
                 (approverId == null || it.approverId.equals(approverId, ignoreCase = true)) &&
                 (status == null || it.status == status)
         }.reversed().take(limit).mapNotNull { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
+
+    /** The gates `approversOf` was asked for, one list per call. */
+    val approverReads = mutableListOf<List<Uuid>>()
+
+    override suspend fun approversOf(orgId: Uuid, gateIds: List<Uuid>): Map<Uuid, List<String>> {
+        approverReads += gateIds
+        return requests.values.filter { it.orgId == orgId && it.gateId in gateIds }
+            .groupBy({ it.gateId }, { it.approverId })
+    }
 
     private inner class Tx : GatesTransaction {
         override suspend fun lockKey(orgId: Uuid, key: String) {

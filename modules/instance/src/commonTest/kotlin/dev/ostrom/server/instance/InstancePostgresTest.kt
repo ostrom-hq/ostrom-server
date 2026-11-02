@@ -6,7 +6,7 @@ import dev.ostrom.server.instance.domain.InstanceRepository
 import dev.ostrom.server.instance.infrastructure.InstanceRepositoryImpl
 import dev.ostrom.server.instance.presentation.InstanceResponse
 import dev.ostrom.server.instance.presentation.SigningKeysResponse
-import dev.ostrom.server.kernel.database.MigrationRunner
+import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -49,7 +49,9 @@ class InstancePostgresTest {
 
     @Test
     fun repositoryReadsNoInstanceBeforeItsCreation() = serverTest(emptyList()) { server ->
-        server.koin.get<MigrationRunner>().migrate(InstanceModule.name, InstanceModule.migrations)
+        // Migrations are the owner's, like `ostrom-server migrate`; the serving role cannot create a table.
+        MigrationRunnerImpl(server.database.owner, server.koin.get())
+            .migrate(InstanceModule.name, InstanceModule.migrations)
         val repository = InstanceRepositoryImpl(server.driver)
         assertNull(repository.get())
         assertEquals(emptyList(), repository.listKeys())

@@ -6,9 +6,8 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
-import dev.ostrom.server.kernel.errors.ErrorKind
-import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.sessions.domain.models.EndSession
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.SessionQuery
@@ -73,7 +72,7 @@ private suspend fun ApplicationCall.actor(actors: GateActorResolver, accepted: S
     val principal = requirePrincipal()
     principal.requireAnyScope(accepted)
     return actors.resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw principal.outsideOrganization()
 }
 
 /** The scopes the sessions routes require; a user's browser session (`user:*`) holds them all. */

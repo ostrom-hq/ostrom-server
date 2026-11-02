@@ -24,7 +24,8 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
-private const val ORG_COLUMNS = "o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at"
+private const val ORG_COLUMNS =
+    "o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at, o.time_zone"
 private const val MEMBER_COLUMNS = "m.id AS member_id, m.org_id, m.user_id, m.role, m.joined_at"
 private const val INVITATION_COLUMNS =
     "id, org_id, email, role, invited_by, created_at, expires_at, max_uses, uses, revoked_at"
@@ -46,11 +47,14 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
             driver.transaction {
                 val holder = org.freeClaim?.let { claim -> blockingHolder(this, claim, isPaying) }
                 if (holder == null) {
-                    execute(
+                    // Before the organization exists no query can be confined to it: a cross-organization
+                    // function writes it and its owner (docs/tenancy.md).
+                    fetchAll(
                             Statement.create(
-                                    "INSERT INTO orgs_organizations (id, slug, name, github_org_id, free_claim, " +
-                                        "created_at) " +
-                                        "VALUES (:id, :slug, :name, :github, :claim, :at)"
+                                    "SELECT orgs_create_organization(CAST(:id AS UUID), :slug, :name, " +
+                                        "CAST(:github AS BIGINT), CAST(:claim AS TEXT), CAST(:at AS TIMESTAMPTZ), " +
+                                        "CAST(:member AS UUID), CAST(:user AS UUID), :role, " +
+                                        "CAST(:joined AS TIMESTAMPTZ))"
                                 )
                                 .bind("id", org.id)
                                 .bind("slug", org.slug)
@@ -58,9 +62,12 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
                                 .bind("github", org.githubOrgId)
                                 .bind("claim", org.freeClaim)
                                 .bind("at", org.createdAt)
+                                .bind("member", owner.id)
+                                .bind("user", owner.userId)
+                                .bind("role", owner.role.key())
+                                .bind("joined", owner.joinedAt)
                         )
                         .getOrThrow()
-                    insertMember(this, owner)
                 }
                 holder
             }
@@ -84,10 +91,7 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
         val holders =
             executor
                 .fetchAll(
-                    Statement.create(
-                            "SELECT $ORG_COLUMNS FROM orgs_organizations o WHERE o.free_claim = :claim AND " +
-                                "o.deleted_at IS NULL"
-                        )
+                    Statement.create("SELECT $ORG_COLUMNS FROM orgs_claim_holders(:claim) o")
                         .bind("claim", claim)
                 )
                 .getOrThrow()
@@ -111,9 +115,7 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
     override suspend fun findBySlug(slug: String): Org? =
         driver
             .fetchAll(
-                Statement.create(
-                        "SELECT $ORG_COLUMNS FROM orgs_organizations o WHERE o.slug = :slug AND o.deleted_at IS NULL"
-                    )
+                Statement.create("SELECT $ORG_COLUMNS FROM orgs_find_by_slug(:slug) o")
                     .bind("slug", slug)
             )
             .getOrThrow()
@@ -122,25 +124,22 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
 
     override suspend fun slugTaken(slug: String): Boolean =
         driver
-            .fetchAll(
-                Statement.create("SELECT 1 FROM orgs_organizations WHERE slug = :slug")
-                    .bind("slug", slug)
-            )
+            .fetchAll(Statement.create("SELECT 1 WHERE orgs_slug_taken(:slug)").bind("slug", slug))
             .getOrThrow()
             .firstOrNull() != null
 
-    override suspend fun rename(id: Uuid, name: String) {
-        driver.inOrg(id) {
-            execute(
-                    Statement.create("UPDATE orgs_organizations SET name = :name WHERE id = :id")
-                        .bind("name", name)
-                        .bind("id", id)
-                )
-                .getOrThrow()
-        }
+    override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
+        val columns = listOfNotNull(name?.let { "name = :name" }, timeZone?.let { "time_zone = :zone" })
+        if (columns.isEmpty()) return
+        val statement =
+            Statement.create("UPDATE orgs_organizations SET ${columns.joinToString(", ")} WHERE id = :id")
+                .bind("id", id)
+        name?.let { statement.bind("name", it) }
+        timeZone?.let { statement.bind("zone", it) }
+        driver.inOrg(id) { execute(statement).getOrThrow() }
     }
 
-    override suspend fun delete(id: Uuid, at: Instant) {
+    override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
         driver.inOrg(id) {
             execute(
                     Statement.create("DELETE FROM orgs_invitations WHERE org_id = :id")
@@ -151,23 +150,22 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
                 .getOrThrow()
             execute(
                     Statement.create(
-                            "UPDATE orgs_organizations SET deleted_at = :at, free_claim = NULL WHERE id = :id"
+                            "UPDATE orgs_organizations SET deleted_at = :at, purge_after = :purge, " +
+                                "free_claim = NULL WHERE id = :id"
                         )
                         .bind("at", at)
+                        .bind("purge", purgeAfter)
                         .bind("id", id)
                 )
                 .getOrThrow()
         }
     }
 
+
     override suspend fun listOfUser(userId: Uuid): List<Membership> =
         driver
             .fetchAll(
-                Statement.create(
-                        "SELECT $ORG_COLUMNS, $MEMBER_COLUMNS FROM orgs_members m JOIN orgs_organizations o ON o.id " +
-                            "= m.org_id " +
-                            "WHERE m.user_id = :user AND o.deleted_at IS NULL ORDER BY o.name, o.slug"
-                    )
+                Statement.create("SELECT * FROM orgs_memberships_of(CAST(:user AS UUID)) ORDER BY name, slug")
                     .bind("user", userId)
             )
             .getOrThrow()
@@ -189,6 +187,20 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
                         )
                         .bind("org", orgId)
                         .bind("user", userId)
+                )
+                .getOrThrow()
+                .firstOrNull()
+                ?.toMember()
+        }
+
+    override suspend fun findById(orgId: Uuid, memberId: Uuid): Member? =
+        driver.inOrg(orgId) {
+            fetchAll(
+                    Statement.create(
+                            "SELECT $MEMBER_COLUMNS FROM orgs_members m WHERE m.org_id = :org AND m.id = :id"
+                        )
+                        .bind("org", orgId)
+                        .bind("id", memberId)
                 )
                 .getOrThrow()
                 .firstOrNull()
@@ -325,10 +337,7 @@ class InvitationsRepositoryImpl(private val driver: Driver) : InvitationsReposit
         driver
             .fetchAll(
                 Statement.create(
-                        "SELECT $INVITATION_COLUMNS FROM orgs_invitations i WHERE token_hash = :hash AND " +
-                            "$LIVE_INVITATION " +
-                            "AND EXISTS (SELECT 1 FROM orgs_organizations o WHERE o.id = i.org_id AND o.deleted_at " +
-                            "IS NULL)"
+                        "SELECT $INVITATION_COLUMNS FROM orgs_live_invitation(:hash, CAST(:now AS TIMESTAMPTZ))"
                     )
                     .bind("hash", tokenHash)
                     .bind("now", now)
@@ -417,6 +426,7 @@ private fun ResultSet.Row.toOrg() =
         githubOrgId = get("github_org_id").asStringOrNull()?.toLong(),
         freeClaim = get("free_claim").asStringOrNull(),
         createdAt = get("created_at").asInstant(),
+        timeZone = get("time_zone").asString(),
     )
 
 private fun ResultSet.Row.toMember() =

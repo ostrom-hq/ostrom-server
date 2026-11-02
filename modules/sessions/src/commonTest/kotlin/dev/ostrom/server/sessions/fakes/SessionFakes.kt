@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions.fakes
 
+import dev.ostrom.core.telemetry.metrics.MeterImpl
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.kernel.observability.OstromMetrics
 import dev.ostrom.server.receipts.domain.services.ReceiptRule
 import dev.ostrom.server.receipts.domain.services.ReceiptRules
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
@@ -52,8 +54,7 @@ class InMemorySessions : SessionsRepository {
     val locks = mutableListOf<String>()
     var staleCutoff: Instant? = null
 
-    override suspend fun <T> transaction(orgId: Uuid, block: suspend SessionsTransaction.() -> T): T =
-        Tx(orgId).block()
+    override suspend fun <T> transaction(orgId: Uuid, block: suspend SessionsTransaction.() -> T): T = Tx(orgId).block()
 
     override suspend fun get(orgId: Uuid, id: String): Session? = rows[orgId to id]
 
@@ -100,7 +101,6 @@ class FakeRules : ReceiptRules {
     private val rules =
         listOf(ReceiptRule("r-commit-style", "79b6ac48e5225be9037493c1e8a8fc9e5fbc42e2893b0c15b8846bd39d310cd7"))
 
-
     override suspend fun rulesFor(orgId: Uuid, repo: String?): List<ReceiptRule> = rules
 }
 
@@ -109,10 +109,18 @@ class FakeRules : ReceiptRules {
 class FakeCosts : SessionCosts {
     var cost: Double? = null
 
-    override suspend fun costOf(orgId: Uuid, sessionId: String): Double? = cost
+    /** The launch and the window each close asked about. */
+    val asked = mutableListOf<Triple<String?, Instant, Instant>>()
+
+    override suspend fun costOf(orgId: Uuid, launchId: String?, from: Instant, to: Instant): Double? {
+        asked += Triple(launchId, from, to)
+        return cost
+    }
 }
 
-class FakeSign : SignReceiptUseCase, GetReceiptUseCase {
+class FakeSign :
+    SignReceiptUseCase,
+    GetReceiptUseCase {
     val signed = linkedMapOf<String, JsonObject>()
 
     override suspend fun invoke(orgId: Uuid, draft: JsonObject, id: String?): JsonObject {
@@ -143,7 +151,8 @@ class SessionBench {
     val logger = RecordingLogger()
     val costs = FakeCosts()
     val close = CloseSessionUseCaseImpl(repository, gates, rules, sign, costs, clock)
-    val segments = SessionSegments(close, clock)
+    val meter = MeterImpl(Clock.System)
+    val segments = SessionSegments(close, clock, OstromMetrics(meter))
     val start = StartSessionUseCaseImpl(repository, segments)
     val end = EndSessionUseCaseImpl(repository, close)
     val alive = SessionAliveUseCaseImpl(repository, clock)

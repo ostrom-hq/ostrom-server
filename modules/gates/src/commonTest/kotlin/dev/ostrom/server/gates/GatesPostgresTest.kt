@@ -25,9 +25,9 @@ import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
-import dev.ostrom.server.gates.presentation.AnswerApprovalResponse
 import dev.ostrom.server.gates.presentation.Approval
 import dev.ostrom.server.gates.presentation.ApprovalAnswer
+import dev.ostrom.server.gates.presentation.ApprovalViewResponse
 import dev.ostrom.server.gates.presentation.ApprovalsPage
 import dev.ostrom.server.gates.presentation.GateAskRequest
 import dev.ostrom.server.gates.presentation.GatePullRequest as PullRequestDto
@@ -57,14 +57,22 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.time.TimeSource
 import kotlin.uuid.Uuid
@@ -99,6 +107,14 @@ class GatesPostgresTest {
                         channel = PrincipalChannel.MOBILE_APP,
                         authenticatedAt = Clock.System.now(),
                     )
+                    // The app before its biometric unlock: it reads, it does not answer yet.
+                    "locked" -> AuthenticatedPrincipal(
+                        token,
+                        PrincipalKind.USER,
+                        setOf(GateScopes.READ),
+                        channel = PrincipalChannel.MOBILE_APP,
+                        authenticatedAt = Clock.System.now() - 1.hours,
+                    )
                     // A personal token of the CLI: a person's, with every scope, yet readable by the agent (S2-31).
                     "cli" ->
                         AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.ALL_USER, GateScopes.ANSWER))
@@ -122,7 +138,8 @@ class GatesPostgresTest {
                     val (kind, org, id) = principal.subjectId.split(":").takeIf { it.size == 3 } ?: return null
                     val orgId = if (org == "a") orgA else orgB
                     return when (kind) {
-                        "user", "reader", "app", "cli", "stale" -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        "user", "reader", "app", "locked", "cli", "stale" ->
+                            GateActor(id, orgId, ActorKind.USER, personId = id)
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
                         "runner" -> GateActor(id, orgId, ActorKind.SERVICE, personId = "lyes")
                         else -> GateActor(id, orgId, ActorKind.DEVICE, personId = id)
@@ -153,6 +170,10 @@ class GatesPostgresTest {
         single<GateReceiptSigner> {
             object : GateReceiptSigner {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
+
+                // The receipts module is not loaded here: a stored receipt is its id.
+                override suspend fun read(orgId: Uuid, receiptId: String?) =
+                    receiptId?.let { JsonObject(mapOf("id" to JsonPrimitive(it))) }
             }
         }
     }
@@ -195,6 +216,13 @@ class GatesPostgresTest {
     private suspend fun TestServer.move(token: String, gate: GateResponse, move: String): HttpResponse =
         call(token, "/api/v1/gates/${gate.gate.id}/$move", post = true)
 
+    // The status and `error.type`, the key of the contract (core api/openapi.yaml) that a client branches on.
+    private suspend fun HttpResponse.assertRefused(expected: HttpStatusCode, type: String, why: String? = null) {
+        assertEquals(expected, status, why)
+        val error = Json.parseToJsonElement(bodyAsText()).jsonObject.getValue("error").jsonObject
+        assertEquals(type, error.getValue("type").jsonPrimitive.content, why)
+    }
+
     private suspend fun TestServer.answer(
         token: String,
         gate: GateResponse,
@@ -228,7 +256,7 @@ class GatesPostgresTest {
         assertEquals(listOf(sha), approvals.first().commits)
 
         val self = server.answer("user:a:lyes", opened, "lyes")
-        assertEquals(HttpStatusCode.Forbidden, self.status, "The asker never approves while someone else can")
+        self.assertRefused(HttpStatusCode.Forbidden, "self_approval_refused", "The asker never approves")
         assertTrue(self.bodyAsText().contains("rev-b or rev-c must say yes"))
         val revB = approvals.first { it.requestedFrom == "rev-b" }
         val admin = server.call(
@@ -248,9 +276,9 @@ class GatesPostgresTest {
             "/api/v1/approvals/${revB.id}/answer",
             AnswerApprovalRequest(ApprovalAnswer.APPROVE, "x"),
         )
-        assertEquals(HttpStatusCode.Conflict, stale.status, "A yes names what was shown")
+        stale.assertRefused(HttpStatusCode.Conflict, "shown_digest_mismatch", "A yes names what was shown")
 
-        val answered = server.answer("user:a:rev-b", opened, "rev-b").body<AnswerApprovalResponse>()
+        val answered = server.answer("user:a:rev-b", opened, "rev-b").body<ApprovalViewResponse>()
         assertEquals("approved", answered.approval.status)
         val approved = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
         assertEquals("approved", approved.gate.status)
@@ -261,7 +289,7 @@ class GatesPostgresTest {
             mapOf("lyes" to "expired", "rev-b" to "approved", "rev-c" to "expired"),
             server.approvalsOf(opened).associate { it.requestedFrom to it.status },
         )
-        assertEquals(HttpStatusCode.Conflict, server.answer("user:a:rev-c", opened, "rev-c").status)
+        server.answer("user:a:rev-c", opened, "rev-c").assertRefused(HttpStatusCode.Conflict, "approval_closed")
 
         assertEquals("approved", server.move(agent, opened, "reserve").body<GateResponse>().gate.status)
         assertEquals(HttpStatusCode.Conflict, server.move(agent, opened, "reserve").status)
@@ -379,6 +407,41 @@ class GatesPostgresTest {
     }
 
     @Test
+    fun aWaitOnAnotherOrganizationsGateIsRefusedAtOnce() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val started = TimeSource.Monotonic.markNow()
+        val other = server.call("user:b:rev-b", "/api/v1/gates/${opened.gate.id}?wait=30")
+        assertEquals(HttpStatusCode.NotFound, other.status)
+        val agentB = server.call("agent:b:$session", "/api/v1/gates/${opened.gate.id}?wait=30")
+        assertEquals(HttpStatusCode.NotFound, agentB.status)
+        assertTrue(started.elapsedNow() < 5.seconds, "a 404 never waits: ${started.elapsedNow()}")
+    }
+
+    @Test
+    fun twoHundredWaitingHooksHoldNoConnection() = gatesTest { server ->
+        // The test pool has 4 connections: a wait that held one would stall every other request for its 20 s.
+        val agent = "agent:a:$session"
+        val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        val path = "/api/v1/gates/${opened.gate.id}"
+        coroutineScope {
+            val waiting = List(WAITERS) { async { server.call(agent, "$path?wait=20") } }
+            delay(1.seconds)
+            val reads = List(10) {
+                val started = TimeSource.Monotonic.markNow()
+                assertEquals(HttpStatusCode.OK, server.call("user:a:rev-c", path).status)
+                started.elapsedNow()
+            }
+            assertTrue(reads.max() < 2.seconds, "a plain read waited behind the waiting ones: $reads")
+            assertTrue(waiting.none { it.isCompleted }, "nothing answered yet")
+            val answered = TimeSource.Monotonic.markNow()
+            assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status)
+            val answers = waiting.awaitAll()
+            assertTrue(answered.elapsedNow() < 5.seconds, "the waits end with the answer: ${answered.elapsedNow()}")
+            assertEquals(setOf("approved"), answers.map { it.body<GateResponse>().gate.status }.toSet())
+        }
+    }
+
+    @Test
     fun anotherOrganizationSeesNothing() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         val approval = server.approvalsOf(opened).first { it.requestedFrom == "rev-b" }
@@ -403,13 +466,8 @@ class GatesPostgresTest {
     @Test
     fun rowLevelSecurityHidesOtherOrganizationsEvenWithoutAWhereClause() = gatesTest { server ->
         server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
-        // The CI database user is a superuser, which bypasses row level security: the proof runs as a plain role.
-        server.driver.execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
-        server.driver.execute("GRANT SELECT, INSERT ON gates_gates, gates_requests TO ostrom_rls_probe").getOrThrow()
+        // The test server's driver is the serving role, as in production: row level security applies to it.
         val counts = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             val none = fetchAll("SELECT COUNT(*) AS n FROM gates_gates").getOrThrow().first().get("n").asString()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
@@ -421,7 +479,6 @@ class GatesPostgresTest {
         }
         assertEquals(listOf("0", "0", "1"), counts, "No org set: nothing; org B: nothing; org A: its gate")
         val forged = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
             execute(
@@ -496,11 +553,49 @@ class GatesPostgresTest {
     }
 
     @Test
+    fun theApproversReadCapsEachGateNotTheWholePage() = gatesTest { server ->
+        val repository = server.koin.get<GatesRepository>()
+        val at = Instant.parse("2026-10-30T02:00:00Z")
+        // Ordered by id, the crowded gate comes first: one limit for the whole read would leave the next gate out.
+        val crowded = Uuid.parse("00000000-0000-0000-0000-000000000001")
+        val next = Uuid.parse("00000000-0000-0000-0000-000000000002")
+        fun gateOf(id: Uuid) = Gate(
+            id = id,
+            orgId = orgA,
+            key = "k-$id",
+            subject = GateSubject(repo = "o/r", actionClass = "push-main", command = "git push", scope = "session:s"),
+            node = null,
+            label = "Push",
+            mode = GateMode.UNGATED,
+            status = GateStatus.PENDING,
+            askedBy = listOf("lyes"),
+            askedVia = setOf(AskedVia.HOOK),
+            sessionIds = listOf(session),
+            shownDigest = "s",
+            evidence = emptyList(),
+            createdAt = at,
+        )
+        fun requestsOf(gate: Uuid, count: Int) = (0 until count).map {
+            ApprovalRequest(Uuid.random(), gate, orgA, "rev-$it", RequestStatus.PENDING, createdAt = at)
+        }
+        repository.transaction {
+            insertGate(gateOf(crowded))
+            insertGate(gateOf(next))
+            insertRequests(requestsOf(crowded, 101) + requestsOf(next, 2))
+        }
+
+        val approvers = repository.approversOf(orgA, listOf(crowded, next))
+        assertEquals((0 until 100).map { "rev-$it" }, approvers.getValue(crowded), "100 at most, in their order")
+        assertEquals(listOf("rev-0", "rev-1"), approvers.getValue(next))
+        assertEquals(emptyMap(), repository.approversOf(orgB, listOf(crowded, next)))
+    }
+
+    @Test
     fun aNoClosesTheGateAndTheListFiltersByStatus() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         val no = server.answer("user:a:rev-b", opened, "rev-b", yes = false)
         assertEquals(HttpStatusCode.OK, no.status)
-        assertEquals("rejected", no.body<AnswerApprovalResponse>().approval.status)
+        assertEquals("rejected", no.body<ApprovalViewResponse>().approval.status)
         val closed = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
         assertEquals("rejected", closed.gate.status)
 
@@ -512,7 +607,7 @@ class GatesPostgresTest {
         assertTrue(listed("pending").isEmpty() && listed("approved").isEmpty())
         val unknown = server.call("user:a:rev-b", "/api/v1/approvals?status=maybe")
         assertEquals(HttpStatusCode.BadRequest, unknown.status)
-        assertEquals(HttpStatusCode.Forbidden, server.call("user:a", "/api/v1/approvals").status, "no organization")
+        assertEquals(HttpStatusCode.NotFound, server.call("user:a", "/api/v1/approvals").status, "no organization")
     }
 
     @Test
@@ -538,6 +633,38 @@ class GatesPostgresTest {
     }
 
     @Test
+    fun theLockedAppSeesItMaySayYesAndUnlocksToSayIt() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val approval = server.approvalsOf(opened).first { it.requestedFrom == "rev-b" }
+        // Read before the unlock: the person may answer, the app shows Approve.
+        val read = server.call("locked:a:rev-b", "/api/v1/approvals/${approval.id}/view")
+        assertEquals(HttpStatusCode.OK, read.status, read.bodyAsText())
+        assertEquals(true, read.body<ApprovalViewResponse>().you.canApprove, read.bodyAsText())
+        // The yes asks for the unlock, with the contract's code.
+        server.answer("locked:a:rev-b", opened, "rev-b").assertRefused(HttpStatusCode.Forbidden, "step_up_required")
+        val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
+        assertEquals("pending", still.gate.status)
+        // Unlocked, the same person's yes passes.
+        assertEquals(HttpStatusCode.OK, server.answer("app:a:rev-b", opened, "rev-b").status, "the app, unlocked")
+    }
+
+    @Test
+    fun theAnswerIsTheContractsApprovalViewWithItsReceipt() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val answered = server.answer("user:a:rev-b", opened, "rev-b")
+        assertEquals(HttpStatusCode.OK, answered.status, answered.bodyAsText())
+        // `ApprovalView` of core api/openapi.yaml: `approval` and `you` required; `who`, `what`, `askedVia`, `receipt`.
+        val body = Json.parseToJsonElement(answered.bodyAsText()).jsonObject
+        for (key in listOf("approval", "you", "who", "what", "askedVia", "receipt")) {
+            assertTrue(key in body, "answerApproval 200 has no `$key`: $body")
+        }
+        val view = answered.body<ApprovalViewResponse>()
+        assertEquals("approved", view.approval.status)
+        assertEquals(false, view.you.canApprove, "Answered: nothing left to say")
+        assertEquals("rcpt_${opened.gate.id}", body.getValue("receipt").jsonObject.getValue("id").jsonPrimitive.content)
+    }
+
+    @Test
     fun s231OnlyABrowserSessionOrTheAppAfterBiometricsSaysYes() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         val cli = server.answer("cli:a:rev-b", opened, "rev-b")
@@ -552,7 +679,7 @@ class GatesPostgresTest {
     fun s254ABrowserSessionOlderThanFiveMinutesSignsInAgainBeforeAYes() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         val stale = server.answer("stale:a:rev-b", opened, "rev-b")
-        assertEquals(HttpStatusCode.Forbidden, stale.status)
+        stale.assertRefused(HttpStatusCode.Forbidden, "step_up_required")
         assertTrue(stale.bodyAsText().contains("Sign in again"))
         val still = server.call("user:a:rev-b", "/api/v1/gates/${opened.gate.id}").body<GateResponse>()
         assertEquals("pending", still.gate.status)
@@ -595,7 +722,10 @@ class GatesPostgresTest {
     fun withoutATokenEveryRouteAnswers401() = gatesTest { server ->
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/approvals").status)
         assertEquals(HttpStatusCode.Unauthorized, server.call(null, "/api/v1/gates", push()).status)
-        assertEquals(HttpStatusCode.Forbidden, server.call("nobody", "/api/v1/approvals").status)
+        val nobody = server.call("nobody", "/api/v1/approvals")
+        assertEquals(HttpStatusCode.Forbidden, nobody.status)
+        // LOGIN-009: the refusal names the scope that reads, never gates:answer, which no token holds.
+        assertTrue(nobody.bodyAsText().contains("does not allow gates:read"), nobody.bodyAsText())
         // Audit S2-03, S2-04: approvals are read and answered by a signed-in person, never by an agent or device token.
         assertEquals(HttpStatusCode.Forbidden, server.call("agent:a:$session", "/api/v1/approvals").status)
         assertEquals(HttpStatusCode.Forbidden, server.call("device:a:lyes", "/api/v1/approvals?mine=true").status)
@@ -631,4 +761,5 @@ class GatesPostgresTest {
 // The decision benchmark: runs before the measure (JIT, connection pool, plans), then measured runs.
 private const val WARM_UP = 50
 private const val SAMPLES = 200
+private const val WAITERS = 200
 private const val ROUNDS = 3

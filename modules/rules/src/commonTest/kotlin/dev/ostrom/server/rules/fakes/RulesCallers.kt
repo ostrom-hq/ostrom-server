@@ -46,21 +46,28 @@ object RulesCallers {
     private val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     private val ownerB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
 
-    // token -> (caller, person, kind, scopes)
+    // token -> (caller, person, kind, scopes, channel): every user scope (ALL_USER) is a browser session
     private val people = mapOf(
-        "admin-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
-        "nameless-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
-        "member-a" to Person(memberA, "mia", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
-        "owner-b" to Person(ownerB, "bob", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
+        "admin-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        "nameless-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        "unlinked-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        "member-a" to Person(memberA, "mia", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        "owner-b" to Person(ownerB, "bob", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "reader-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf("rules:read")),
         "gates-reader-a" to Person(memberA, "mia", PrincipalKind.USER, setOf("gates:read")),
         "other-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.MCP_READ)),
         "agent-a" to Person(memberA, "lyes", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
         "device-a" to Person(adminA, "lyes", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
-        "stranger" to Person(null, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
+        "stranger" to Person(null, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
     )
 
-    private data class Person(val caller: Caller?, val login: String?, val kind: PrincipalKind, val scopes: Set<String>)
+    private data class Person(
+        val caller: Caller?,
+        val login: String?,
+        val kind: PrincipalKind,
+        val scopes: Set<String>,
+        val channel: PrincipalChannel = PrincipalChannel.API_TOKEN,
+    )
 
     /**
      * The fake authentication, callers and gate actors, and the clock.
@@ -73,12 +80,14 @@ object RulesCallers {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? =
                     people[token]?.let {
-                        // A person signs in to the console in the browser, the only channel a yes comes from,
-                        // and has just signed in: a yes needs a sign-in of less than 5 minutes.
-                        val browser = it.kind == PrincipalKind.USER
-                        val channel = if (browser) PrincipalChannel.BROWSER else PrincipalChannel.API_TOKEN
-                        val signedIn = clock.now()
-                        AuthenticatedPrincipal(token, it.kind, it.scopes, channel = channel, authenticatedAt = signedIn)
+                        // Signed in just now: the fresh proof a yes needs (S2-54), read by the gates from here.
+                        AuthenticatedPrincipal(
+                            token,
+                            it.kind,
+                            it.scopes,
+                            channel = it.channel,
+                            authenticatedAt = clock.now(),
+                        )
                     }
             }
         }
@@ -94,10 +103,13 @@ object RulesCallers {
                     val person = people[principal.subjectId]
                     val caller = person?.caller
                     val login = person?.login
-                    return if (person == null || caller == null || login == null) {
-                        null
-                    } else {
-                        actorOf(person.kind, caller.orgId, login)
+                    return when {
+                        person == null || caller == null -> null
+                        // A gate actor with no person behind it: nothing names the decider but the membership.
+                        principal.subjectId == "unlinked-a" ->
+                            GateActor(principal.subjectId, caller.orgId, ActorKind.USER)
+                        login == null -> null
+                        else -> actorOf(person.kind, caller.orgId, login)
                     }
                 }
             }
@@ -145,7 +157,7 @@ suspend fun TestServer.call(method: String, path: String, token: String?, body: 
         token?.let { bearerAuth(it) }
         when (body) {
             null -> Unit
-            // A JsonObject is a Map to Ktor's serializer lookup, which finds no serializer for its JsonLiteral values.
+            // A JSON tree has no serializer of its own once typed as Any: sent as its text.
             is JsonElement -> setBody(TextContent(body.toString(), ContentType.Application.Json))
             else -> {
                 contentType(ContentType.Application.Json)

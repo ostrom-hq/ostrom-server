@@ -2,7 +2,6 @@
 package dev.ostrom.server.automations.fakes
 
 import dev.ostrom.server.automations.domain.CreateOutcome
-import dev.ostrom.server.automations.domain.MemberDirectory
 import dev.ostrom.server.automations.domain.Wait
 import dev.ostrom.server.automations.domain.WaitAnswer
 import dev.ostrom.server.automations.domain.WaitCaller
@@ -11,8 +10,10 @@ import dev.ostrom.server.automations.domain.WaitFilter
 import dev.ostrom.server.automations.domain.WaitStatus
 import dev.ostrom.server.automations.domain.WaitsRepository
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -59,10 +60,14 @@ class RecordingEvents : WaitEvents {
     }
 }
 
+/** A browser session's scopes. */
+private val allUserScopes = setOf("user:*")
+
 /**
  * The test identities: `alice`, `bob` (members of org A), `dave` (admin of org A), `carol` (owner of org B) and
  * `nobody` (no org) sign in themselves; `reader`, `agent` and `writer` are bob's tokens with `waits:read`,
  * `waits:ask` and `waits:write`; `davekey` is dave's with `waits:write`; `cloud` is bob's with no waits scope;
+ * `alicekey` is alice's personal token with `waits:write`, `aliceapp` alice in the unlocked mobile app;
  * `autoreader` and `autowriter` are alice's with `automations:read` and `automations:write`.
  */
 val testIdentities = module {
@@ -70,7 +75,15 @@ val testIdentities = module {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
                 "alice", "bob", "dave", "carol", "nobody" ->
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, setOf("user:*"))
+                    AuthenticatedPrincipal(token, PrincipalKind.USER, allUserScopes, channel = PrincipalChannel.BROWSER)
+                "alicekey" -> AuthenticatedPrincipal("alice", PrincipalKind.USER, setOf("waits:write"))
+                "aliceapp" ->
+                    AuthenticatedPrincipal(
+                        "alice",
+                        PrincipalKind.USER,
+                        allUserScopes,
+                        channel = PrincipalChannel.MOBILE_APP,
+                    )
                 "reader" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:read"))
                 "agent" -> AuthenticatedPrincipal("bob", PrincipalKind.DEVICE, setOf("waits:ask"))
                 "writer" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("waits:write"))

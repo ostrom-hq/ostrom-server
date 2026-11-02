@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.importer
 
+import dev.ostrom.server.importer.domain.AccountImportRun
 import dev.ostrom.server.importer.domain.AccountImporter
 import dev.ostrom.server.importer.domain.ImportAction
+import dev.ostrom.server.importer.domain.TeamCodeAccount
 import dev.ostrom.server.importer.presentation.ImportItemDto
 import dev.ostrom.server.importer.presentation.ImportReportDto
 import dev.ostrom.server.importer.presentation.TeamCodeAccountDto
@@ -12,6 +14,7 @@ import dev.ostrom.server.importer.presentation.TeamCodeMcpServerDto
 import dev.ostrom.server.importer.presentation.TeamCodeMemberDto
 import dev.ostrom.server.importer.presentation.TeamCodeStdioDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -25,6 +28,10 @@ import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.sharing.domain.AccountCredentials
+import dev.ostrom.server.sharing.domain.AccountProvider
+import dev.ostrom.server.sharing.domain.OAuthRefresher
+import dev.ostrom.server.sharing.domain.RefreshResult
 import dev.ostrom.server.testing.TestServer
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -45,6 +52,7 @@ object Importing {
     val orgA: Uuid = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     val orgB: Uuid = Uuid.parse("0000000b-0000-0000-0000-000000000000")
     val adminA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000a1"), MemberRole.ADMIN)
+    val ownerA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000d1"), MemberRole.OWNER)
     val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     val otherA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000c1"), MemberRole.MEMBER)
     val adminB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
@@ -148,13 +156,47 @@ class FakeAccountImporter : AccountImporter {
     /** The providers imported. */
     val imported = mutableListOf<String>()
 
-    override suspend fun import(
-        caller: Caller,
-        account: dev.ostrom.server.importer.domain.TeamCodeAccount,
-    ): ImportAction {
-        if (account.provider != "claude") throw RefusedAccountException()
-        imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
-        return ImportAction.CREATED
+    override suspend fun begin(caller: Caller, dryRun: Boolean, cutover: Boolean): AccountImportRun =
+        object : AccountImportRun {
+            override suspend fun import(account: TeamCodeAccount): ImportAction {
+                if (account.provider != "claude") throw RefusedAccountException()
+                if (dryRun) return ImportAction.PLANNED
+                imported += "${caller.orgId}/${account.provider}/${account.accessToken.reveal()}"
+                return ImportAction.CREATED
+            }
+        }
+}
+
+/**
+ * The provider's token endpoint as a fake (a test never calls a real provider): a refresh token containing `refused`
+ * is refused, one containing `offline` cannot be tested, any other renews as `renewed-` plus the old tokens. The
+ * answer names the provider account `<id>` of a refresh token `refresh-<id>-token…`, and none for one containing
+ * `anonymous`.
+ */
+class TeamCodeRefresher : OAuthRefresher {
+    /** How many refreshes were asked: none while TeamCode runs. */
+    var calls = 0
+
+    /** Runs while a pair renews, given its access token: a change made meanwhile. */
+    var meanwhile: suspend (String) -> Unit = {}
+
+    override suspend fun refresh(provider: AccountProvider, credentials: AccountCredentials): RefreshResult {
+        calls++
+        meanwhile(credentials.accessToken)
+        return when {
+            "refused" in credentials.refreshToken -> RefreshResult.Revoked
+            "offline" in credentials.refreshToken -> RefreshResult.Unavailable
+            else -> RefreshResult.Renewed(
+                AccountCredentials(
+                    "renewed-${credentials.accessToken}",
+                    "renewed-${credentials.refreshToken}",
+                    credentials.expiresAt,
+                ),
+                credentials.refreshToken.takeUnless { "anonymous" in it }
+                    ?.substringAfter("refresh-")
+                    ?.substringBefore("-token"),
+            )
+        }
     }
 }
 
@@ -163,12 +205,14 @@ class RefusedAccountException : OstromException(ErrorKind.CONFLICT, "This accoun
 
 private val byToken = mapOf(
     "admin-a" to Importing.adminA,
+    "owner-a" to Importing.ownerA,
     "member-a" to Importing.memberA,
     "admin-b" to Importing.adminB,
     "agent-a" to Importing.adminA,
     "device-a" to Importing.adminA,
     "cli-read" to Importing.adminA,
     "cli-import" to Importing.adminA,
+    "service-import" to Importing.ownerA,
 )
 
 private val principals = mapOf(
@@ -176,26 +220,55 @@ private val principals = mapOf(
     "device-a" to AuthenticatedPrincipal("device-a", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
     "cli-read" to AuthenticatedPrincipal("cli-read", PrincipalKind.USER, setOf(RelayScopes.MCP_READ)),
     "cli-import" to AuthenticatedPrincipal("cli-import", PrincipalKind.USER, setOf("import:write")),
+    "service-import" to AuthenticatedPrincipal(
+        "000000aa-0000-0000-0000-00000000005e",
+        PrincipalKind.SERVICE,
+        setOf("import:write"),
+    ),
     "stranger" to AuthenticatedPrincipal("stranger", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
 )
 
-/** The bindings of the import tests: a fixed key, tokens by name, and the sharing module's import when given. */
-fun importOverrides(accounts: AccountImporter? = null): Module = module {
+/**
+ * The user behind a person's token (`owner-a`, `admin-a`…): its principal's subject.
+ *
+ * @param token The token.
+ */
+fun userOf(token: String): Uuid = Uuid.fromLongs(0xA0, byToken.keys.indexOf(token).toLong())
+
+/** The callers by their principal's subject. */
+private val bySubject = byToken.mapKeys { (token, _) -> principals[token]?.subjectId ?: "${userOf(token)}" }
+
+/** The members of the test orgs: org A's four callers, org B's admin. */
+object ImportMembers : MemberDirectory {
+    private val active = with(Importing) { listOf(adminA, ownerA, memberA, otherA, adminB) }
+        .map { it.orgId to "${it.memberId}" }
+        .toSet()
+
+    override suspend fun isActiveMember(orgId: Uuid, memberId: String): Boolean = orgId to memberId in active
+}
+
+/**
+ * The import tests' bindings: a fixed key, tokens by name, a fake token endpoint, the test orgs' members unless
+ * [members] is null, an account import if given.
+ */
+fun importOverrides(accounts: AccountImporter? = null, members: MemberDirectory? = ImportMembers): Module = module {
     single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String) = principals[token]
                 ?: byToken[token]?.let {
-                    AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
+                    AuthenticatedPrincipal("${userOf(token)}", PrincipalKind.USER, setOf(RelayScopes.ALL_USER))
                 }
         }
     }
     single<CallerResolver> {
         object : CallerResolver {
             override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
-                byToken[principal.subjectId]
+                bySubject[principal.subjectId]
         }
     }
+    single<OAuthRefresher> { TeamCodeRefresher() }
+    members?.let { directory -> single<MemberDirectory> { directory } }
     accounts?.let { importer -> single<AccountImporter> { importer } }
 }
 
@@ -204,7 +277,8 @@ suspend fun TestServer.import(
     request: TeamCodeImportRequest,
     token: String = "admin-a",
     dryRun: Boolean = false,
-): HttpResponse = client.post("/api/v1/import/teamcode?dryRun=$dryRun") {
+    cutover: Boolean = false,
+): HttpResponse = client.post("/api/v1/import/teamcode?dryRun=$dryRun&cutover=$cutover") {
     bearerAuth(token)
     contentType(ContentType.Application.Json)
     setBody(request)
@@ -215,8 +289,9 @@ suspend fun TestServer.report(
     request: TeamCodeImportRequest,
     token: String = "admin-a",
     dryRun: Boolean = false,
+    cutover: Boolean = false,
 ): ImportReportDto {
-    val response = import(request, token, dryRun)
+    val response = import(request, token, dryRun, cutover)
     assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
     return response.body()
 }

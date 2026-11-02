@@ -28,6 +28,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
@@ -54,7 +55,9 @@ class PackagesUseCasesTest {
 
     private suspend fun save(workflow: Workflow, orgId: Uuid = org) {
         val raw = PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
-        repository.saveWorkflow(orgId, workflow.id, raw, null, Authorship("dev-a", NOW))
+        // A new workflow, or the next version of the one saved before (a creation never replaces).
+        val current = repository.workflow(orgId, workflow.id)?.version
+        assertNotNull(repository.saveWorkflow(orgId, workflow.id, raw, current, Authorship("dev-a", NOW)))
         repository.addDecision(orgId, decision(workflow.id))
     }
 
@@ -118,8 +121,13 @@ class PackagesUseCasesTest {
     fun aManualPinIsSetByTheFirstPublisher() = runTest {
         sources.settings = CompilerSettings(manualPin = true)
         save(tests("w1"))
+        // Second audit L1: an agent starting a session gets the package, unpinned, and leaves the choice to a person.
+        val byAgent = publish(org, "acme-api", "https://acme.example", "agent", byAgent = true)
+        assertFalse(byAgent.pinned)
+        assertNull(repository.pin(org, "acme-api"))
         publish(org, "acme-api", "https://acme.example", "dev-a")
         assertEquals("dev-a", repository.pin(org, "acme-api")?.by)
+        assertTrue(publish(org, "acme-api", "https://acme.example", "agent", byAgent = true).pinned)
     }
 
     @Test

@@ -11,9 +11,11 @@ on:
     tags: ['[0-9]*']
   workflow_dispatch:
 
-# One run per workflow and ref; never cancelled on main (each push of main publishes its `edge`).
+# One image per merged commit: on main each commit has its own group, so a later push neither cancels a run in
+# progress nor replaces one waiting (runs 41037527934 and 41038003894 were replaced while pending). `edge` moves only
+# when the commit is still main's head at publish time (see "Index with every tag"). Other refs: one run per ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -23,9 +25,19 @@ env:
   IMAGE: ghcr.io/ostrom-hq/ostrom-server
 
 jobs:
+  # One native link per job and runner: both links in one job ran a 7 GB runner out of memory (run 41038910522,
+  # "The runner has received a shutdown signal" during the arm64 link). Kotlin/Native 2.4 has no Linux arm64 host,
+  # so linuxArm64 stays cross-linked from x64, alone on its runner and with swap.
   binaries:
+    name: binary (${{ matrix.arch }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, target: LinuxX64, dir: linuxX64 }
+          - { arch: arm64, target: LinuxArm64, dir: linuxArm64 }
     permissions:
       contents: read
       packages: read
@@ -55,31 +67,39 @@ jobs:
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with: { cache-disabled: true }
-      - name: Version
-        id: v
+      # Same as ci.yml since #53: swap where the root disk has room, before the native link.
+      - name: Swap for the native link
         run: |
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME}"; else v="0.0.0-edge.$(date -u +%Y%m%d%H%M%S).${GITHUB_SHA::7}"; fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-      - name: Release binaries (linuxX64, linuxArm64)
-        run: ./gradlew :app:linkReleaseExecutableLinuxX64 :app:linkReleaseExecutableLinuxArm64
-      - name: Image contexts
-        run: |
-          for a in amd64:linuxX64 arm64:linuxArm64; do
-            arch=${a%%:*}; target=${a#*:}
-            mkdir -p "ctx/$arch/dist"
-            cp Dockerfile .dockerignore "ctx/$arch/"
-            cp "app/build/bin/$target/releaseExecutable/ostrom-server.kexe" "ctx/$arch/dist/ostrom-server"
+          df -h /
+          for size in 4G 2G; do
+            if sudo fallocate -l "$size" /native-link.swap; then
+              sudo chmod 600 /native-link.swap
+              sudo mkswap /native-link.swap
+              sudo swapon /native-link.swap
+              break
+            fi
           done
-          file ctx/*/dist/ostrom-server
+          free -h
+      - name: Release binary (${{ matrix.dir }})
+        run: ./gradlew :app:linkReleaseExecutable${{ matrix.target }}
+      - name: Image context
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIR: ${{ matrix.dir }}
+        run: |
+          mkdir -p "ctx/$ARCH/dist"
+          cp Dockerfile .dockerignore "ctx/$ARCH/"
+          cp "app/build/bin/$DIR/releaseExecutable/ostrom-server.kexe" "ctx/$ARCH/dist/ostrom-server"
+          file "ctx/$ARCH/dist/ostrom-server"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: contexts, path: ctx, retention-days: 3, include-hidden-files: true }
-    outputs:
-      version: ${{ steps.v.outputs.version }}
+        with: { name: 'context-${{ matrix.arch }}', path: ctx, retention-days: 3, include-hidden-files: true }
 
   image:
     needs: binaries
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      digest: ${{ steps.index.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -88,7 +108,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, sparse-checkout: ci/database-roles.sql, sparse-checkout-cone-mode: false }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: { name: contexts, path: ctx }
+        with: { pattern: 'context-*', path: ctx, merge-multiple: true }
+      - name: Version
+        id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME}"; else v="0.0.0-edge.$(date -u +%Y%m%d%H%M%S).${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with: { cache-image: false }
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -113,36 +138,36 @@ jobs:
           labels: |
             org.opencontainers.image.title=ostrom-server
             org.opencontainers.image.licenses=AGPL-3.0-only
-            org.opencontainers.image.version=${{ needs.binaries.outputs.version }}
-      - name: Smoke test of the amd64 image against PostgreSQL
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+      # Each architecture as deployed (docs/tenancy.md): the owner migrates, the server serves as a role that owns
+      # nothing, read-only root and no capability like the chart. arm64 runs under QEMU, the same checks.
+      - name: Smoke test of each architecture against PostgreSQL
         run: |
           chmod +x ctx/*/dist/ostrom-server
-          docker build -t ostrom-server:smoke ctx/amd64
           docker network create smoke
           docker run -d --name pg --network smoke -e POSTGRES_PASSWORD=postgres postgres:17.6
           for _ in $(seq 1 30); do docker exec pg pg_isready -h 127.0.0.1 -U postgres && break; sleep 1; done
-          # As deployed (docs/tenancy.md): the owner migrates, the server serves as a role that owns nothing.
           docker exec -i pg psql -U postgres -v ON_ERROR_STOP=1 < ci/database-roles.sql
-          docker run --rm --network smoke --read-only --cap-drop ALL \
-            -e OSTROM_DATABASE_MIGRATION_URL=postgresql://ostrom_owner:ostrom_owner@pg:5432/ostrom \
-            ostrom-server:smoke migrate
-          # Read-only root and no capability, like the chart; the instance key goes to a writable /var/lib/ostrom.
-          docker run -d --name ostrom-smoke --network smoke -p 8080:8080 --read-only --cap-drop ALL \
-            --tmpfs /var/lib/ostrom:uid=65532,gid=65532 \
-            -e OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@pg:5432/ostrom \
-            ostrom-server:smoke
-          for _ in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done
-          curl -fsS localhost:8080/ready | grep -q '"status":"ready"' || { docker logs ostrom-smoke; exit 1; }
-          curl -fsS localhost:8080/health | grep -q '"status":"ok"' || { docker logs ostrom-smoke; exit 1; }
-          curl -fsS localhost:8080/api/v1/instance | grep -q '"algorithm":"ed25519"' || { docker logs ostrom-smoke; exit 1; }
-      - name: The arm64 image starts too (QEMU)
-        run: |
-          docker buildx build ctx/arm64 --platform linux/arm64 --load -t ostrom-server:smoke-arm64
-          # No database configured: the binary must load (libcrypt.so.1 and libz.so.1 of the right architecture) and refuse its config.
-          out=$(docker run --rm --platform linux/arm64 ostrom-server:smoke-arm64 2>&1 || true)
-          echo "$out"
-          echo "$out" | grep -q 'OSTROM_DATABASE_URL' || { echo "arm64 binary did not start"; exit 1; }
+          for arch in amd64 arm64; do
+            docker buildx build "ctx/$arch" --platform "linux/$arch" --load -t "ostrom-server:smoke-$arch"
+            docker run --rm --platform "linux/$arch" --network smoke --read-only --cap-drop ALL \
+              -e OSTROM_DATABASE_MIGRATION_URL=postgresql://ostrom_owner:ostrom_owner@pg:5432/ostrom \
+              "ostrom-server:smoke-$arch" migrate
+            docker run -d --name "ostrom-smoke-$arch" --platform "linux/$arch" --network smoke -p 8080:8080 \
+              --read-only --cap-drop ALL --tmpfs /var/lib/ostrom:uid=65532,gid=65532 \
+              -e OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@pg:5432/ostrom \
+              "ostrom-server:smoke-$arch"
+            for _ in $(seq 1 90); do curl -fsS localhost:8080/ready && break; sleep 1; done
+            curl -fsS localhost:8080/ready | grep -q '"status":"ready"' || { docker logs "ostrom-smoke-$arch"; exit 1; }
+            curl -fsS localhost:8080/health | grep -q '"status":"ok"' || { docker logs "ostrom-smoke-$arch"; exit 1; }
+            curl -fsS localhost:8080/api/v1/instance | grep -q '"algorithm":"ed25519"' || { docker logs "ostrom-smoke-$arch"; exit 1; }
+            docker inspect -f '{{.Architecture}}' "ostrom-server:smoke-$arch" | grep -qx "$arch"
+            docker rm -f "ostrom-smoke-$arch"
+            echo "$arch: migrate, /ready, /health, /api/v1/instance ok"
+          done
+      # Publishing only from main and tags; a dispatch on another branch stops after the smoke tests.
       - name: Build and push each architecture by digest
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         id: arch
         env:
           LABELS: ${{ steps.meta.outputs.labels }}
@@ -159,10 +184,21 @@ jobs:
             echo "$arch=$(jq -r '."containerimage.digest"' "meta-$arch.json")" >> "$GITHUB_OUTPUT"
           done
       - name: Index with every tag
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         id: index
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # `edge` is main's head: a run of an older commit, finished after a newer one, keeps only its `sha-` tag.
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            head=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              echo "main moved to $head: no edge tag for $GITHUB_SHA"
+              # shellcheck disable=SC2086
+              TAGS=$(printf '%s\n' $TAGS | grep -v ':edge$')
+            fi
+          fi
           args=""
           for t in $TAGS; do args="$args -t $t"; done
           # shellcheck disable=SC2086
@@ -171,6 +207,7 @@ jobs:
           echo "digest=$(docker buildx imagetools inspect "$first" --format '{{json .Manifest}}' | jq -r .digest)" >> "$GITHUB_OUTPUT"
           docker buildx imagetools inspect "$first"
       - name: Sign the index and both images by digest
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         env:
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
@@ -179,6 +216,7 @@ jobs:
             cosign sign --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${IMAGE}@$d"
           done
       - name: Summary
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         run: |
           {
             echo "### ${IMAGE}"
@@ -186,3 +224,24 @@ jobs:
             echo
             echo "Tags:"; printf '%s\n' "${{ steps.meta.outputs.tags }}" | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The image just published, run whole in ostrom-helm's local demo stack with the customer's journey (demo-stack.yml),
+  # in a run of its own: this run says only whether the image is published. Called here (workflow_call), the demo
+  # shared this run's conclusion: a newer merge's demo cancelling it (demo-stack's concurrency group) or a red step of
+  # the journey turned an Image run whose image was published `cancelled` or `failure` (runs of f0ff932 to 6249c88,
+  # 02/11). The smoke test above still blocks publication; the demo never does.
+  demo:
+    needs: image
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write # dispatch demo-stack.yml
+    steps:
+      - name: Demo of the image just published, in its own run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          gh workflow run demo-stack.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f server_image="${IMAGE}@${DIGEST}" -f after_merge=true

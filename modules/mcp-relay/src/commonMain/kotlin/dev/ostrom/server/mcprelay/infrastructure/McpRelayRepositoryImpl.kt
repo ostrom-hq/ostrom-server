@@ -20,7 +20,6 @@ import dev.ostrom.server.mcprelay.domain.PolicyEffect
 import dev.ostrom.server.mcprelay.domain.StdioLauncher
 import dev.ostrom.server.mcprelay.domain.StdioSpec
 import dev.ostrom.server.mcprelay.domain.ToolPolicy
-import dev.ostrom.server.secrets.infrastructure.TENANT_ROLE
 import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -225,9 +224,9 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
             call.orgId,
             Statement.create(
                 "INSERT INTO mcp_relay_calls (id, org_id, member_id, server_id, server_name, operation, tool, " +
-                    "outcome, started_at, duration_ms, response_bytes, policy_id) VALUES (:id, :org_id, :member_id, " +
-                    ":server_id, :server_name, :operation, :tool, :outcome, :started_at, :duration_ms, " +
-                    ":response_bytes, :policy_id)",
+                    "outcome, started_at, duration_ms, response_bytes, policy_id, launch_id) VALUES (:id, :org_id, " +
+                    ":member_id, :server_id, :server_name, :operation, :tool, :outcome, :started_at, :duration_ms, " +
+                    ":response_bytes, :policy_id, :launch_id)",
             )
                 .bind("id", call.id)
                 .bind("org_id", call.orgId)
@@ -240,7 +239,8 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
                 .bind("started_at", call.startedAt)
                 .bind("duration_ms", call.durationMillis)
                 .bind("response_bytes", call.responseBytes)
-                .bindNullable("policy_id", call.policyId, Uuid::class),
+                .bindNullable("policy_id", call.policyId, Uuid::class)
+                .bindNullable("launch_id", call.launchId, String::class),
         ).getOrThrow()
     }
 
@@ -261,8 +261,8 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
             (if (memberId == null) "" else " AND member_id = :member_id")
         val statement = Statement.create(
             "SELECT id, org_id, member_id, server_id, server_name, operation, tool, outcome, started_at, " +
-                "duration_ms, response_bytes, policy_id FROM mcp_relay_calls WHERE org_id = :org_id$filters ORDER BY " +
-                "started_at DESC, id DESC LIMIT :limit",
+                "duration_ms, response_bytes, policy_id, launch_id FROM mcp_relay_calls " +
+                "WHERE org_id = :org_id$filters ORDER BY started_at DESC, id DESC LIMIT :limit",
         ).bind("org_id", orgId).bind("limit", limit)
         before?.let { statement.bind("before", it.startedAt) }
         before?.id?.let { statement.bind("before_id", it) }
@@ -285,6 +285,7 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
             durationMillis = row.get("duration_ms").asLong(),
             responseBytes = row.get("response_bytes").asLong(),
             policyId = row.get("policy_id").asUuidOrNull(),
+            launchId = row.get("launch_id").asStringOrNull(),
         )
     }
 
@@ -315,14 +316,10 @@ class McpRelayRepositoryImpl(private val driver: Driver) : McpRelayRepository {
         }
     }
 
-    override suspend fun purgeCalls(before: Instant): Long = driver.transaction {
-        // The one operation across orgs, named by its own policy (McpRelayMigrations version 2): old calls only.
-        execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-        execute("SELECT set_config('$RETENTION_SETTING', 'on', true)").getOrThrow()
-        execute(
-            Statement.create("DELETE FROM mcp_relay_calls WHERE started_at < :before").bind("before", before),
-        ).getOrThrow()
-    }
+    // The one operation across orgs, through the function of McpRelayMigrations version 4: old calls only.
+    override suspend fun purgeCalls(before: Instant): Long = driver.fetchAll(
+        Statement.create("SELECT mcp_relay_purge(CAST(:before AS TIMESTAMPTZ)) AS n").bind("before", before),
+    ).getOrThrow().first().get("n").asLong()
 
     // Every column but created_at, which only INSERT names: sqlx4k refuses a value for a parameter its SQL lacks.
     private fun Statement.bindServer(server: McpServer): Statement = bind("id", server.id)

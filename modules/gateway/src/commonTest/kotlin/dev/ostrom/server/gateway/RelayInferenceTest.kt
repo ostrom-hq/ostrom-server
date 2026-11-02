@@ -16,6 +16,7 @@ import dev.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
 import dev.ostrom.server.gateway.domain.SpendDecision
 import dev.ostrom.server.gateway.domain.TokenUsage
 import dev.ostrom.server.gateway.domain.UpstreamAnswer
+import dev.ostrom.server.gateway.domain.UpstreamStalledException
 import dev.ostrom.server.gateway.domain.WireProtocol
 import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.SharedAccountPool
@@ -80,7 +81,7 @@ class RelayInferenceTest {
             FakeUpstream(
                 eventAnswer(200, listOf(events.copyOfRange(0, 10), ByteArray(0), events.copyOfRange(10, events.size))),
             )
-        relay(upstream)(Gw.memberA, call(), responder)
+        relay(upstream)(Gw.memberA.copy(launchId = "lch_1"), call(), responder)
         assertEquals(events.decodeToString(), responder.text)
         assertEquals(200, responder.status)
         assertEquals(
@@ -97,6 +98,7 @@ class RelayInferenceTest {
         assertEquals(0L, record.firstByteMillis)
         assertEquals(Gw.orgA, record.orgId)
         assertEquals(Gw.memberA.memberId, record.memberId)
+        assertEquals("lch_1", record.launchId, "An agent token's call names its launch")
         assertEquals("session-1", record.sessionId)
         assertNull(record.accountId)
         assertEquals(listOf(record), observed)
@@ -244,6 +246,53 @@ class RelayInferenceTest {
         assertNull(cut.refusal)
         assertEquals(5, cut.size, "An empty read is not the start of the answer")
         assertEquals("upstream_broken", records.last().outcome)
+    }
+
+    @Test
+    fun aSharedAccountWhoseProviderStalledRestsAMinuteAndTheNextCallsGoElsewhere() = runTest {
+        val first = accounts.share(AccountProvider.CLAUDE, "first", clock)
+        val second = accounts.share(AccountProvider.CLAUDE, "second", clock)
+        val upstream = FakeUpstream(UpstreamStalledException(), eventAnswer())
+        val cut = RecordingResponder()
+        relay(upstream, InstanceProviderKeys())(Gw.memberA, call(), cut)
+        assertEquals(RefusalKind.UPSTREAM_UNREACHABLE, cut.refusal?.kind, "Cut before the answer: a 502")
+        val stalled = records.single().accountId
+        val rest = clock.now() + SharedAccountPool.STALL_COOLDOWN
+        assertEquals(rest, accounts.accounts.single { it.id == stalled }.cooldownUntil)
+
+        val next = RecordingResponder()
+        relay(upstream, InstanceProviderKeys())(Gw.memberA, call(), next)
+        assertEquals(200, next.status)
+        assertEquals(
+            setOf(first.id, second.id),
+            setOf(stalled, records.last().accountId),
+            "The next call goes elsewhere",
+        )
+        assertEquals(0, shared.inFlight(first.id) + shared.inFlight(second.id), "Every slot is given back")
+    }
+
+    @Test
+    fun aStallMidStreamRestsTheAccountAndAStallOnAKeyRestsNothing() = runTest {
+        val account = accounts.share(AccountProvider.CLAUDE, "only", clock)
+        val broken = FailingSource(listOf(events.copyOfRange(0, 5)), UpstreamStalledException())
+        val cut = RecordingResponder()
+        relay(
+            FakeUpstream(UpstreamAnswer(200, mapOf("content-type" to "text/event-stream"), broken)),
+            InstanceProviderKeys(),
+        )(
+            Gw.memberA,
+            call(),
+            cut,
+        )
+        assertEquals(5, cut.size)
+        assertEquals("upstream_broken", records.last().outcome)
+        assertEquals(clock.now() + SharedAccountPool.STALL_COOLDOWN, accounts.accounts.single().cooldownUntil)
+        assertEquals(account.id, records.last().accountId)
+
+        val onKey = RecordingResponder()
+        relay(FakeUpstream(UpstreamStalledException()))(Gw.memberA, call(), onKey)
+        assertEquals(RefusalKind.UPSTREAM_UNREACHABLE, onKey.refusal?.kind)
+        assertNull(records.last().accountId, "An API key has no account to rest")
     }
 
     @Test

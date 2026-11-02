@@ -31,6 +31,16 @@ enum class AccountStatus {
 
     /** Turned off by an admin or its owner. */
     DISABLED,
+
+    /**
+     * The provider says its tokens belong to another account than the one it was shared as: the owner shares it
+     * again, signed in to that account.
+     */
+    WRONG_ACCOUNT,
+    ;
+
+    /** Whether it waits for its owner to share it again: pausing and resuming do not bring it back. */
+    val awaitsSignIn: Boolean get() = this == RECONNECT_REQUIRED || this == WRONG_ACCOUNT
 }
 
 /**
@@ -73,6 +83,8 @@ data class AccountLimits(
  * @property limits Its limits.
  * @property cooldownUntil Set after a provider refusal (429): no request before it.
  * @property createdAt When it was shared.
+ * @property version Bumped by every share, edit and status change of its row (not by the pool's refreshes and
+ *   cool-downs): a conditional write names the version it read, so it never overwrites a change made in between.
  */
 data class SharedAccount(
     val id: Uuid,
@@ -87,6 +99,7 @@ data class SharedAccount(
     val limits: AccountLimits,
     val cooldownUntil: Instant?,
     val createdAt: Instant,
+    val version: Long = 0,
 )
 
 /**
@@ -178,6 +191,16 @@ object SharingRules {
         }
     }
 
+    /**
+     * Whether two provider account ids name the same account (case and surrounding spaces aside).
+     *
+     * @param declared The id an account was shared as.
+     * @param named The id the provider names.
+     *
+     * @return True when they are the same account.
+     */
+    fun sameProviderAccount(declared: String, named: String): Boolean = declared.trim().equals(named.trim(), true)
+
     /** Refuses tokens that cannot be OAuth tokens, and a provider account id that cannot be one. */
     fun requireTokens(accessToken: String, refreshToken: String, providerAccountId: String) {
         val problem = when {
@@ -194,6 +217,10 @@ class InvalidAccountException(message: String) : OstromException(ErrorKind.INVAL
 
 /** The account does not exist in the org (or the caller may not see it). */
 class AccountNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Account not found.")
+
+/** A conditional write found the account changed since it was read (a reconnection, an edit, a refresh). */
+class AccountChangedException :
+    OstromException(ErrorKind.CONFLICT, "The account changed meanwhile: nothing was overwritten. Try again.")
 
 /** Too many accounts. */
 class TooManyAccountsException :
