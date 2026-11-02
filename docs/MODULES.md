@@ -208,7 +208,8 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_CLIENT_ADDRESS_HEADER` | none | A header in which the trusted proxies give the client's address, read before `X-Forwarded-For` when the peer is one of them (`CF-Connecting-IP` behind Cloudflare). Absent, sent twice, not an IP address or a trusted proxy's: `X-Forwarded-For` decides. Without `OSTROM_TRUSTED_PROXIES`, or set to `X-Forwarded-For`, the server refuses to start. Set it only when clients cannot reach the server around that proxy (Cloudflare: Authenticated Origin Pulls on the ingress), or they could choose their address |
 | `OSTROM_SHUTDOWN_DELAY_SECONDS` | `5` | 0 to 10: after SIGTERM, how long the server keeps serving with `/ready` at 503 before stopping the engine (then up to 15 s for requests in flight: at most 25 s, within the Helm grace period of 30 s) |
 | `OSTROM_READS_PER_MINUTE` | `600` | 1 to 100 000: how many calls one subject (a person, a device, an agent, a service) makes per minute to the costly reads (sessions and their thread, activity, spending, receipts, the audit log, a gate and its wait, the approvals); past it, a 429 with `Retry-After`. Counted per replica |
-| `OSTROM_READS_IN_FLIGHT` | `16` | 1 to 1 000: how many of those calls one subject holds at once (a gate's wait holds one up to 30 s); past it, a 429 with `Retry-After`. Counted per replica |
+| `OSTROM_READS_IN_FLIGHT` | `16` | 1 to 1 000: how many of those reads one subject holds at once; past it, a 429 with `Retry-After`. Counted per replica |
+| `OSTROM_READ_WAITS_IN_FLIGHT` | `256` | 1 to 10 000: how many gate reads (`GET /gates/{id}`, whose `wait` holds the call up to 30 s) one subject holds at once, apart from the reads above; they count in `OSTROM_READS_PER_MINUTE` too. Past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
 | `OSTROM_ALLOW_TEST_ACCOUNTS` | — | `true` lets `ostrom-server seed-test-account` run; never set in production |
@@ -293,7 +294,7 @@ owner, so the serving role reads the history (the start-up check) and never rewr
 ## Known limits of the foundation
 
 - **The in-memory limits are per replica**: a rate limit keyed on the client address (now the real one behind
-  `OSTROM_TRUSTED_PROXIES`) counts each pod apart, and so do the read limits (`OSTROM_READS_*`).
+  `OSTROM_TRUSTED_PROXIES`) counts each pod apart, and so do the read limits (`OSTROM_READS_*`, `OSTROM_READ_WAITS_IN_FLIGHT`).
 - **SQLite** (tests and local mode) is not wired yet: sqlx4k has a SQLite driver with the same `Driver` interface;
   repositories must stay portable SQL where they can.
 - **The instance signer is provisional** (`kernel/signing`): it moves to `ostrom-core` once published; the

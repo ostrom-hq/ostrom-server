@@ -194,10 +194,16 @@ class GatesPostgresTest {
     private fun gatesTest(block: suspend (TestServer) -> Unit) =
         serverTest(listOf(GatesModule), overrides) { server -> block(server) }
 
-    // Two hundred waits of one agent at once: past the default read limits, on purpose.
-    private val manyWaits = module {
+    // Four waits at once per subject, the default for the rest.
+    private val fewWaits = module {
         includes(overrides)
-        single { ReadThrottle(Clock.System, ReadLimits(perMinute = 10_000, inFlight = WAITERS * 2), WAITERS) }
+        single {
+            ReadThrottle(
+                Clock.System,
+                ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT, FEW_WAITS),
+                ReadThrottle.MAX_SUBJECTS,
+            )
+        }
     }
 
     private suspend fun TestServer.call(
@@ -437,9 +443,8 @@ class GatesPostgresTest {
     }
 
     @Test
-    fun twoHundredWaitingHooksHoldNoConnection() = serverTest(listOf(GatesModule), manyWaits) { server ->
-        // The test pool has 4 connections: a wait that held one would stall every other request for its 20 s. The
-        // read limits are raised here: by default one agent holds at most 16 waits (the next test).
+    fun twoHundredWaitingHooksHoldNoConnection() = gatesTest { server ->
+        // The test pool has 4 connections: a wait that held one would stall every other request for its 20 s.
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         val path = "/api/v1/gates/${opened.gate.id}"
@@ -462,13 +467,14 @@ class GatesPostgresTest {
     }
 
     @Test
-    fun anAgentPastItsWaitsAtOnceIsToldToRetryAndOthersAreNot() = gatesTest { server ->
-        // AUDIT-SECU-LECTURES M1: a wait holds one of its caller's calls at once; past them, a 429 with Retry-After.
+    fun anAgentPastItsWaitsAtOnceIsToldToRetryAndOthersAreNot() = serverTest(listOf(GatesModule), fewWaits) { server ->
+        // AUDIT-SECU-LECTURES M1: a wait holds one of its caller's waits at once; past them, a 429 with Retry-After.
+        // The default (256) lets two hundred hooks of one agent wait together (the test above); four here.
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         val path = "/api/v1/gates/${opened.gate.id}"
         coroutineScope {
-            val waiting = List(ReadLimits.DEFAULT_IN_FLIGHT) { async { server.call(agent, "$path?wait=20") } }
+            val waiting = List(FEW_WAITS) { async { server.call(agent, "$path?wait=20") } }
             delay(1.seconds)
             val refused = server.call(agent, path)
             assertEquals(HttpStatusCode.TooManyRequests, refused.status)
@@ -828,4 +834,5 @@ class GatesPostgresTest {
 private const val WARM_UP = 50
 private const val SAMPLES = 200
 private const val WAITERS = 200
+private const val FEW_WAITS = 4
 private const val ROUNDS = 3

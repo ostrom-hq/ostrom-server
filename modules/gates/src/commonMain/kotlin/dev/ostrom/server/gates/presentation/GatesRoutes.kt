@@ -14,6 +14,7 @@ import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.throttledReads
+import dev.ostrom.server.kernel.http.throttledWaits
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -28,7 +29,7 @@ import kotlin.uuid.Uuid
  * always come from the credential, never from the body.
  *
  * @param dependencies The use cases.
- * @param throttle Bounds the reads that cost the most per caller: a gate's wait, the approvals.
+ * @param throttle Bounds the reads that cost the most per caller: a gate and its wait, the approvals.
  */
 fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
     authenticated {
@@ -36,13 +37,15 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrot
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.asking)
             call.respond(ask(actor, call.receive<GateAskRequest>().toAskGate()).toResponse(actor))
         }
-        throttledReads(throttle) {
+        // A hook waits here for its answer, at most 30 s, instead of asking again every second. Its waits are counted
+        // apart from the reads: an agent waiting on many gates keeps its reads (AUDIT-SECU-LECTURES M1).
+        throttledWaits(throttle) {
             get<GatesApi.Id> { params ->
                 val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingGates)
-                // A hook waits here for its answer, at most 30 s, instead of asking again every second; the wait holds
-                // one of the caller's calls at once (AUDIT-SECU-LECTURES M1).
                 call.respond(gate(actor, params.id.toUuid(), (params.wait ?: 0).seconds).toResponse(actor))
             }
+        }
+        throttledReads(throttle) {
             get<ApprovalsApi> { params ->
                 val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingApprovals)
                 val status = params.status?.let { statusOf(it) }

@@ -129,6 +129,7 @@ jobs:
           # The server's non-root user writes the mails (0644); the session script, as the runner's user, reads them.
           mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
           # Test values only: sign-in mails are written to a directory, Stripe is never called by the flows.
+          # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -141,6 +142,9 @@ jobs:
           OSTROM_GITHUB_CLIENT_ID=Iv1.ostromappe2e
           OSTROM_GITHUB_WEB_URL=http://127.0.0.1:8080
           OSTROM_GITHUB_API_URL=http://127.0.0.1:8080/api
+          OSTROM_READS_PER_MINUTE=6000
+          OSTROM_READS_IN_FLIGHT=64
+          OSTROM_READ_WAITS_IN_FLIGHT=256
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           echo "OSTROM_GITHUB_CLIENT_SECRET=$FAKE_GITHUB_CLIENT_SECRET" >> "$RUNNER_TEMP/server.env"

@@ -28,7 +28,7 @@ import kotlin.time.Duration.Companion.seconds
  *   the engine then gives requests in flight, a stop takes at most 25 s, leaving 5 s of the Helm chart's 30 s grace
  *   period to close the pool and the workers.
  * @property readLimits How much one subject may read of the costly routes (`OSTROM_READS_PER_MINUTE`,
- *   `OSTROM_READS_IN_FLIGHT`).
+ *   `OSTROM_READS_IN_FLIGHT`, `OSTROM_READ_WAITS_IN_FLIGHT`).
  */
 data class ServerConfig(
     val host: String,
@@ -40,7 +40,8 @@ data class ServerConfig(
     val instanceId: String? = null,
     val trustedProxies: TrustedProxies = TrustedProxies.NONE,
     val drainDelay: Duration = DEFAULT_DRAIN_DELAY_SECONDS.seconds,
-    val readLimits: ReadLimits = ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT),
+    val readLimits: ReadLimits =
+        ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT, ReadLimits.DEFAULT_WAITS_IN_FLIGHT),
 ) {
     /** Reading the configuration. */
     companion object {
@@ -53,6 +54,7 @@ data class ServerConfig(
         private const val MIGRATION_CONNECTIONS = 2
         private const val MAX_READS_PER_MINUTE = 100_000
         private const val MAX_READS_IN_FLIGHT = 1000
+        private const val MAX_READ_WAITS_IN_FLIGHT = 10_000
 
         /**
          * Reads the configuration from a source.
@@ -98,8 +100,9 @@ data class ServerConfig(
         )
 
         /**
-         * The read limits of the costly routes (AUDIT-SECU-LECTURES M1): `OSTROM_READS_PER_MINUTE` (1 to 100 000,
-         * 600 by default) and `OSTROM_READS_IN_FLIGHT` (1 to 1 000, 16 by default), per subject and per replica.
+         * The read limits of the costly routes (AUDIT-SECU-LECTURES M1), per subject and per replica:
+         * `OSTROM_READS_PER_MINUTE` (1 to 100 000, 600 by default), `OSTROM_READS_IN_FLIGHT` (1 to 1 000, 16 by
+         * default) and `OSTROM_READ_WAITS_IN_FLIGHT` (1 to 10 000, 256 by default).
          *
          * @param source Where values are read from.
          *
@@ -110,6 +113,11 @@ data class ServerConfig(
         fun readLimits(source: ConfigSource): ReadLimits = ReadLimits(
             perMinute = source.int("OSTROM_READS_PER_MINUTE", ReadLimits.DEFAULT_PER_MINUTE, 1..MAX_READS_PER_MINUTE),
             inFlight = source.int("OSTROM_READS_IN_FLIGHT", ReadLimits.DEFAULT_IN_FLIGHT, 1..MAX_READS_IN_FLIGHT),
+            waitsInFlight = source.int(
+                "OSTROM_READ_WAITS_IN_FLIGHT",
+                ReadLimits.DEFAULT_WAITS_IN_FLIGHT,
+                1..MAX_READ_WAITS_IN_FLIGHT,
+            ),
         )
 
         /**
