@@ -19,6 +19,7 @@ import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.CloudUsageMeter
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.MeteredCreateCloudSession
 import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCase
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
@@ -92,7 +93,9 @@ object RunnersModule : ServerModule {
             if (read == null) RepositoryCloudUsageMeter(get()) else BillingCloudUsageMeter(read, get())
         }
         single<RuntimeDriver> { RuntimeDrivers.create(get()) }
-        single<CreateCloudSessionUseCase> { CreateCloudSessionUseCaseImpl(get(), get(), get(), get()) }
+        single<CreateCloudSessionUseCase> {
+            MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get()), get())
+        }
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
         single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get()) }

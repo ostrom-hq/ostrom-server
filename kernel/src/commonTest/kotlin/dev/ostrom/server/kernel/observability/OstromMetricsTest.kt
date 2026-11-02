@@ -78,4 +78,12 @@ class OstromMetricsTest {
         assertTrue("ostrom.gates.requested" in names)
         assertEquals("s", telemetry.metric("http.server.request.duration").unit)
     }
+
+    @Test
+    fun anAgentLabelIsAKnownAgentOrOther() {
+        val labels = listOf("claude-code", " Claude ", "codex", "opencode", "gemini", "shell", "my-own-agent")
+            .map { OstromMetrics.agentOf(it) }
+
+        assertEquals(listOf("claude", "claude", "codex", "opencode", "gemini", "shell", "other"), labels)
+    }
 }

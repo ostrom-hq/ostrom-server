@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.domain.usecases
 
+import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.core.api.models.CheckOutcome
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.PackageMode
@@ -30,6 +31,17 @@ interface ReportCheckUseCase {
      * @throws NotInPackageException When the package has no such script for that node.
      */
     suspend operator fun invoke(actor: GateActor, report: ReportCheckRequest): CheckRun
+
+    /**
+     * Records a run the server holds a proof of: the same checks as [invoke], with where the run comes from.
+     *
+     * @param actor The session's agent, as the runner of its cloud session reports for it ([ReportRunnerCheckUseCase]).
+     * @param report What was run.
+     * @param attestation Where the run comes from.
+     *
+     * @return The run as stored.
+     */
+    suspend fun attested(actor: GateActor, report: ReportCheckRequest, attestation: CheckAttestation): CheckRun
 }
 
 /**
@@ -44,7 +56,14 @@ class ReportCheckUseCaseImpl(
     private val repository: WorkflowRunsRepository,
     private val clock: Clock,
 ) : ReportCheckUseCase {
-    override suspend fun invoke(actor: GateActor, report: ReportCheckRequest): CheckRun {
+    override suspend fun invoke(actor: GateActor, report: ReportCheckRequest): CheckRun =
+        attested(actor, report, CheckAttestation.WORKSTATION_DECLARED)
+
+    override suspend fun attested(
+        actor: GateActor,
+        report: ReportCheckRequest,
+        attestation: CheckAttestation,
+    ): CheckRun {
         RunTexts.bounded("sessionId", report.sessionId)
         RunTexts.bounded("head", report.head)
         RunTexts.bounded("sandbox", report.sandbox)
@@ -79,7 +98,7 @@ class ReportCheckUseCaseImpl(
             dev = if (session == null) SessionAccess.person(actor) else session.dev,
             repo = session?.repo ?: pack.envelope.repo,
         )
-        repository.addCheck(actor.orgId, run)
+        repository.addCheck(actor.orgId, run, attestation)
         return run
     }
 
