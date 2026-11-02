@@ -10,6 +10,7 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.secrets.domain.Caller
@@ -26,10 +27,13 @@ import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
+import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
+import kotlinx.serialization.json.JsonElement
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -43,21 +47,27 @@ object RulesCallers {
     private val memberA = Caller(orgA, Uuid.parse("0000000a-0000-0000-0000-0000000000b1"), MemberRole.MEMBER)
     private val ownerB = Caller(orgB, Uuid.parse("0000000b-0000-0000-0000-0000000000a1"), MemberRole.OWNER)
 
-    // token -> (caller, person, kind, scopes)
+    // token -> (caller, person, kind, scopes, channel): every user scope (ALL_USER) is a browser session
     private val people = mapOf(
-        "admin-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
-        "nameless-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
-        "member-a" to Person(memberA, "mia", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
-        "owner-b" to Person(ownerB, "bob", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
+        "admin-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        "nameless-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        "member-a" to Person(memberA, "mia", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        "owner-b" to Person(ownerB, "bob", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "reader-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf("rules:read")),
         "gates-reader-a" to Person(memberA, "mia", PrincipalKind.USER, setOf("gates:read")),
         "other-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.MCP_READ)),
         "agent-a" to Person(memberA, "lyes", PrincipalKind.SERVICE, setOf(RelayScopes.AGENT_SESSION)),
         "device-a" to Person(adminA, "lyes", PrincipalKind.DEVICE, setOf(RelayScopes.ALL_USER)),
-        "stranger" to Person(null, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
+        "stranger" to Person(null, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
     )
 
-    private data class Person(val caller: Caller?, val login: String?, val kind: PrincipalKind, val scopes: Set<String>)
+    private data class Person(
+        val caller: Caller?,
+        val login: String?,
+        val kind: PrincipalKind,
+        val scopes: Set<String>,
+        val channel: PrincipalChannel = PrincipalChannel.API_TOKEN,
+    )
 
     /**
      * The fake authentication, callers and gate actors, and the clock.
@@ -69,7 +79,7 @@ object RulesCallers {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? =
-                    people[token]?.let { AuthenticatedPrincipal(token, it.kind, it.scopes) }
+                    people[token]?.let { AuthenticatedPrincipal(token, it.kind, it.scopes, channel = it.channel) }
             }
         }
         single<CallerResolver> {
@@ -87,7 +97,8 @@ object RulesCallers {
                     return if (person == null || caller == null || login == null) {
                         null
                     } else {
-                        actorOf(person.kind, caller.orgId, login)
+                        // Signed in just now, the fresh proof a yes needs (S2-54).
+                        actorOf(person.kind, caller.orgId, login, clock.now())
                     }
                 }
             }
@@ -128,9 +139,14 @@ object RulesCallers {
 suspend fun TestServer.call(method: String, path: String, token: String?, body: Any? = null): HttpResponse {
     val request: io.ktor.client.request.HttpRequestBuilder.() -> Unit = {
         token?.let { bearerAuth(it) }
-        if (body != null) {
-            contentType(ContentType.Application.Json)
-            setBody(body)
+        when (body) {
+            null -> Unit
+            // A JSON tree has no serializer of its own once typed as Any: sent as its text.
+            is JsonElement -> setBody(TextContent(body.toString(), ContentType.Application.Json))
+            else -> {
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
         }
     }
     return when (method) {
@@ -142,8 +158,8 @@ suspend fun TestServer.call(method: String, path: String, token: String?, body: 
     }
 }
 
-private fun actorOf(kind: PrincipalKind, orgId: Uuid, login: String): GateActor = when (kind) {
+private fun actorOf(kind: PrincipalKind, orgId: Uuid, login: String, signedInAt: Instant): GateActor = when (kind) {
     PrincipalKind.SERVICE -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = "launch-1", personId = login)
     PrincipalKind.DEVICE -> GateActor(login, orgId, ActorKind.DEVICE, personId = login)
-    else -> GateActor(login, orgId, ActorKind.USER, personId = login)
+    else -> GateActor(login, orgId, ActorKind.USER, personId = login, authenticatedAt = signedInAt)
 }
