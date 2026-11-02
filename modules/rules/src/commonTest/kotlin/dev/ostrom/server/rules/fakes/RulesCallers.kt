@@ -73,10 +73,12 @@ object RulesCallers {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? =
                     people[token]?.let {
-                        // A person signs in to the console in the browser, the only channel a yes comes from.
+                        // A person signs in to the console in the browser, the only channel a yes comes from,
+                        // and has just signed in: a yes needs a sign-in of less than 5 minutes.
                         val browser = it.kind == PrincipalKind.USER
                         val channel = if (browser) PrincipalChannel.BROWSER else PrincipalChannel.API_TOKEN
-                        AuthenticatedPrincipal(token, it.kind, it.scopes, channel = channel)
+                        val signedIn = clock.now()
+                        AuthenticatedPrincipal(token, it.kind, it.scopes, channel = channel, authenticatedAt = signedIn)
                     }
             }
         }
