@@ -205,7 +205,9 @@ class SchemaTenancyPostgresTest {
         val INSTANCE_TABLES = mapOf(
             "billing_stripe_events" to "serving role, Stripe webhook: the events already handled, by Stripe's id",
             "github_apps" to "serving role: the instance's one GitHub App, its secrets sealed",
+            "github_installation_origins" to "serving role, GitHub webhook: who installed an installation, by its id",
             "github_manifest_states" to "serving role: the state of an instance admin's GitHub App creation, by hash",
+            "github_webhook_deliveries" to "serving role, GitHub webhook: the deliveries already received, by id",
             "identity_device_authorizations" to "serving role, device sign-in: a person's pending CLI sign-in",
             "identity_identities" to "serving role, sign-in: a person's external accounts",
             "identity_magic_links" to "serving role, sign-in: e-mail links, by hash",
