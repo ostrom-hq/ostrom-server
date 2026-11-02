@@ -50,6 +50,7 @@ object RulesCallers {
     private val people = mapOf(
         "admin-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "nameless-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
+        "unlinked-a" to Person(adminA, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "member-a" to Person(memberA, "mia", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "owner-b" to Person(ownerB, "bob", PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         "reader-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf("rules:read")),
@@ -102,10 +103,13 @@ object RulesCallers {
                     val person = people[principal.subjectId]
                     val caller = person?.caller
                     val login = person?.login
-                    return if (person == null || caller == null || login == null) {
-                        null
-                    } else {
-                        actorOf(person.kind, caller.orgId, login)
+                    return when {
+                        person == null || caller == null -> null
+                        // A gate actor with no person behind it: nothing names the decider but the membership.
+                        principal.subjectId == "unlinked-a" ->
+                            GateActor(principal.subjectId, caller.orgId, ActorKind.USER)
+                        login == null -> null
+                        else -> actorOf(person.kind, caller.orgId, login)
                     }
                 }
             }

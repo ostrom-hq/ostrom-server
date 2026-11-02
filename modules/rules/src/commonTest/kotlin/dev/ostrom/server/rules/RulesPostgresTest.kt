@@ -175,8 +175,11 @@ class RulesPostgresTest {
 
     @Test
     fun aDeciderWithoutALoginIsNamedByTheirMembership() = rulesTest { server ->
-        val rule = server.write("nameless-a").body<RuleDto>()
-        assertEquals("0000000a-0000-0000-0000-0000000000a1", rule.decidedBy)
+        // Unknown to the gates, or known to them without a person: either way the membership names the decider.
+        listOf("nameless-a", "unlinked-a").forEach { token ->
+            val rule = server.write(token).body<RuleDto>()
+            assertEquals("0000000a-0000-0000-0000-0000000000a1", rule.decidedBy, token)
+        }
     }
 
     @Test

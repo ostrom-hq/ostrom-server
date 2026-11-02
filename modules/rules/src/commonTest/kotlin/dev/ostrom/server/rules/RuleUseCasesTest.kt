@@ -131,6 +131,15 @@ class RuleUseCasesTest {
     }
 
     @Test
+    fun acceptingARuleWithAReviewDateKeepsTheDateGiven() = runTest {
+        stored()
+        val accepted = update(lyes, "rule_1", RulePatch(status = RuleStatus.ACCEPTED, reviewBy = "2027-03-01"))
+        assertEquals("lyes", accepted.decidedBy)
+        assertEquals("2027-03-01", accepted.reviewBy, "Not the ninety days: the decider set the date")
+        assertEquals("accepted", bench.repository.decisions.single().action)
+    }
+
+    @Test
     fun aNewStatementWithoutAStatusMakesTheRuleEdited() = runTest {
         stored(RuleStatus.ACCEPTED)
         val edited = update(lyes, "rule_1", RulePatch(statement = " Two reviewers on main "))

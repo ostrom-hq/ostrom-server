@@ -100,7 +100,7 @@ fun GatePolicyDto.toPolicy(): SelfApprovalPolicy = SelfApprovalValues.of(selfApp
  * @throws InvalidRuleException When the status is unknown.
  */
 fun RulesApi.toQuery(): RuleQuery = RuleQuery(
-    repo = repo?.trim()?.ifEmpty { null },
+    repo = repo?.trim().orEmpty().ifEmpty { null },
     status = status?.let(::ruleStatusOf),
     group = group,
 )
@@ -116,9 +116,9 @@ fun NewRuleRequest.toNewRule(): NewRule = NewRule(
     group = group,
     output = output,
     scope = scope,
-    strength = strength?.let(::ruleStrengthOf) ?: RuleStrength.REQUIRED,
+    strength = if (strength == null) RuleStrength.REQUIRED else ruleStrengthOf(strength),
     why = why,
-    status = status?.let(::ruleStatusOf) ?: RuleStatus.ACCEPTED,
+    status = if (status == null) RuleStatus.ACCEPTED else ruleStatusOf(status),
     reviewBy = reviewBy,
     gate = gate?.toGate(),
 )
