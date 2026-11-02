@@ -286,32 +286,6 @@ class UsagePostgresTest {
             "until excludes",
         )
 
-        val launched = modelEvent(2_500_000).copy(launchId = "lch_9")
-        repository.insert(TestCallers.orgA, listOf(launched))
-        assertEquals(
-            2_500_000L,
-            repository.launchSpentMicros(
-                TestCallers.orgA,
-                "lch_9",
-                launched.at,
-                launched.at + 1.days,
-            ),
-        )
-        assertEquals(
-            null,
-            repository.launchSpentMicros(
-                TestCallers.orgA,
-                "lch_9",
-                launched.at + 1.days,
-                launched.at + 2.days,
-            ),
-        )
-        assertEquals(
-            null,
-            repository.launchSpentMicros(TestCallers.orgB, "lch_9", launched.at, launched.at + 1.days),
-            "Org B",
-        )
-        repository.insert(TestCallers.orgA, listOf(modelEvent(1).copy(launchId = "lch_9", at = launched.at - 1.days)))
         // The old retention setting opens nothing any more (RLS audit R4): only usage_purge deletes across orgs.
         val opened = server.driver.transaction {
             execute("SELECT set_config('ostrom.usage_retention', 'on', true)").getOrThrow()
@@ -320,7 +294,20 @@ class UsagePostgresTest {
         assertEquals(0L, opened)
         assertEquals(1L, repository.purge(TestCallers.epoch - 400.days, 10))
         assertEquals(0L, repository.purge(TestCallers.epoch - 400.days, 10))
-        assertEquals(5, repository.list(TestCallers.orgA, null, null, 10).size)
+        assertEquals(3, repository.list(TestCallers.orgA, null, null, 10).size)
+    }
+
+    @Test
+    fun aLaunchSpendIsReadInItsWindowAndItsOrganizationOnly() = serverTest(modules, overrides) { server ->
+        val repository = server.koin.get<UsageRepository>()
+        val launched = modelEvent(2_500_000).copy(launchId = "lch_9")
+        val before = modelEvent(1).copy(launchId = "lch_9", at = launched.at - 1.days)
+        repository.insert(TestCallers.orgA, listOf(launched, before))
+
+        val day = launched.at + 1.days
+        assertEquals(2_500_000L, repository.launchSpentMicros(TestCallers.orgA, "lch_9", launched.at, day))
+        assertEquals(null, repository.launchSpentMicros(TestCallers.orgA, "lch_9", day, day + 1.days), "Window")
+        assertEquals(null, repository.launchSpentMicros(TestCallers.orgB, "lch_9", launched.at, day), "Org B")
     }
 
     @Test
