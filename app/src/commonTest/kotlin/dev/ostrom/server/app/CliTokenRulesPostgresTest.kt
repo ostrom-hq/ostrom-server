@@ -21,11 +21,13 @@ import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
@@ -35,6 +37,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -92,6 +95,13 @@ class CliTokenRulesPostgresTest {
         return polled.json().getValue("token").jsonPrimitive.content
     }
 
+    private suspend fun TestServer.statements(owner: Owner): List<String> {
+        val rules = read("/api/v1/rules", owner.cliToken)
+        assertEquals(HttpStatusCode.OK, rules.status, rules.bodyAsText())
+        val items = rules.json().getValue("items").jsonArray
+        return items.map { it.jsonObject.getValue("statement").jsonPrimitive.content }
+    }
+
     private suspend fun TestServer.read(path: String, token: String, org: Uuid? = null): HttpResponse =
         client.get(path) {
             bearerAuth(token)
@@ -104,27 +114,40 @@ class CliTokenRulesPostgresTest {
             val ada = owner("ada", "Ada ships on Fridays")
             val bob = owner("bob", "Bob never ships")
 
-            val rules = read("/api/v1/rules", ada.cliToken)
-            assertEquals(HttpStatusCode.OK, rules.status, rules.bodyAsText())
-            val statements = rules.json().getValue("items").jsonArray.map {
-                it.jsonObject.getValue("statement").jsonPrimitive.content
-            }
-            assertEquals(listOf("Ada ships on Fridays"), statements, "Not Bob's")
+            assertEquals(listOf("Ada ships on Fridays"), statements(ada), "Not Bob's")
             assertEquals(HttpStatusCode.OK, read("/api/v1/rules/${ada.ruleId}", ada.cliToken).status)
             assertEquals(HttpStatusCode.OK, read("/api/v1/decisions", ada.cliToken).status)
-            assertEquals(HttpStatusCode.OK, read("/api/v1/gates/policy", ada.cliToken).status)
+            // The gate policy was already readable with gates:read; rules:read opens it too.
+            val policy = read("/api/v1/gates/policy", ada.cliToken)
+            assertEquals(HttpStatusCode.OK, policy.status)
 
             // Bob's organization, named or by the id of its rule: not found, as one that does not exist.
             assertEquals(HttpStatusCode.NotFound, read("/api/v1/rules", ada.cliToken, bob.orgId).status)
             assertEquals(HttpStatusCode.NotFound, read("/api/v1/rules/${bob.ruleId}", ada.cliToken).status)
             assertEquals(HttpStatusCode.NotFound, read("/api/v1/decisions", ada.cliToken, bob.orgId).status)
 
-            // Reading is all: a rule is written from the console only.
-            val write = client.post("/api/v1/rules") {
-                bearerAuth(ada.cliToken)
-                json("""{"statement": "The agent may push", "group": "Releases"}""")
+            val rule = read("/api/v1/rules/${ada.ruleId}", ada.cliToken).json()
+            // Reading is all: no write of the rules or the policy is applied with the CLI's token, whether it is
+            // refused or held for a confirmation in the console (H1). The state says so, not the status.
+            val writes = listOf(
+                HttpMethod.Post to ("/api/v1/rules" to """{"statement": "The agent may push", "group": "Releases"}"""),
+                HttpMethod.Patch to ("/api/v1/rules/${ada.ruleId}" to """{"statement": "Ada ships any day"}"""),
+                HttpMethod.Post to ("/api/v1/rules/bulk" to """{"ids": ["${ada.ruleId}"], "status": "rejected"}"""),
+                HttpMethod.Put to ("/api/v1/gates/policy" to """{"selfApproval": "never"}"""),
+                HttpMethod.Delete to ("/api/v1/rules/${ada.ruleId}" to "{}"),
+            )
+            for ((verb, call) in writes) {
+                val (path, body) = call
+                val write = client.request(path) {
+                    method = verb
+                    bearerAuth(ada.cliToken)
+                    json(body)
+                }
+                assertTrue(write.status.value == 202 || write.status.value >= 400, "$verb $path: ${write.status}")
             }
-            assertEquals(HttpStatusCode.Forbidden, write.status, write.bodyAsText())
+            assertEquals(listOf("Ada ships on Fridays"), statements(ada), "No rule written or deleted")
+            assertEquals(rule, read("/api/v1/rules/${ada.ruleId}", ada.cliToken).json(), "The rule is unchanged")
+            assertEquals(policy.json(), read("/api/v1/gates/policy", ada.cliToken).json(), "The policy is unchanged")
         }
     }
 
