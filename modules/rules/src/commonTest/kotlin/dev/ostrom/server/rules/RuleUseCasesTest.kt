@@ -35,10 +35,34 @@ import kotlin.time.Duration.Companion.hours
 
 class RuleUseCasesTest {
     private val bench = RulesBench()
-    private val create = CreateRuleUseCaseImpl(bench.repository, bench.signer, bench.signDecisions, bench.clock)
-    private val update = UpdateRuleUseCaseImpl(bench.repository, bench.signer, bench.signDecisions, bench.clock)
-    private val bulk = BulkUpdateRulesUseCaseImpl(bench.repository, bench.signer, bench.signDecisions, bench.clock)
-    private val delete = DeleteRuleUseCaseImpl(bench.repository, bench.signer, bench.signDecisions, bench.clock)
+    private val create = CreateRuleUseCaseImpl(
+        bench.repository,
+        bench.signer,
+        bench.signDecisions,
+        bench.clock,
+        bench.audit,
+    )
+    private val update = UpdateRuleUseCaseImpl(
+        bench.repository,
+        bench.signer,
+        bench.signDecisions,
+        bench.clock,
+        bench.audit,
+    )
+    private val bulk = BulkUpdateRulesUseCaseImpl(
+        bench.repository,
+        bench.signer,
+        bench.signDecisions,
+        bench.clock,
+        bench.audit,
+    )
+    private val delete = DeleteRuleUseCaseImpl(
+        bench.repository,
+        bench.signer,
+        bench.signDecisions,
+        bench.clock,
+        bench.audit,
+    )
     private val gate = RuleGate(
         listOf(RuleGateAction("push-main", "Push to main", emptyList(), emptyList(), null)),
         listOf("lyes"),
@@ -264,5 +288,26 @@ class RuleUseCasesTest {
             record(bench.signer, lyes, RulesFixtures.epoch, before = null, after = null)
         }
         assertNull(decision)
+    }
+
+    @Test
+    fun everyDecisionWritesItsLineToTheAuditLogInTheDecidersNameAndNothingElseDoes() = runTest {
+        val rule = create(lyes, NewRule("No push on Friday", "Releases"))
+        update(lyes, rule.id, RulePatch(status = RuleStatus.REJECTED))
+        update(lyes, rule.id, RulePatch(status = RuleStatus.PROPOSED))
+        update(lyes, rule.id, RulePatch(statement = "No push on Friday evening"))
+        update(lyes, rule.id, RulePatch(reviewBy = "2027-03-01"))
+        assertEquals(1, bulk(lyes, listOf(rule.id, "rule_unknown"), RuleStatus.ACCEPTED))
+        delete(lyes, rule.id)
+
+        val lines = bench.audit.records
+        val events = listOf("created", "rejected", "proposed", "edited", "accepted", "deleted").map { "rule.$it" }
+        assertEquals(events, lines.map { it.event }, "A review date alone is no decision, an unknown id no line")
+        assertTrue(lines.all { it.orgId == orgA && it.actor == lyes.actor && it.subjectType == "rule" })
+        assertTrue(lines.all { it.subjectId == rule.id })
+        assertEquals(bench.repository.decisions.map { it.id }, lines.map { it.details.getValue("decision") })
+        assertEquals("accepted", lines.first().details["status"], "A new rule says its status")
+        assertNull(lines.last().details["status"])
+        assertTrue(lines.none { it.details.values.any { value -> "Friday" in value } }, "Never the statement")
     }
 }

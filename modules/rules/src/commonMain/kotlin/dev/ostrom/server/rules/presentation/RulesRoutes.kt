@@ -116,5 +116,5 @@ internal suspend fun ApplicationCall.decider(
     caller.requireAdmin()
     auditGovernance(principal, scope)
     val name = actors.resolve(principal)?.personId ?: caller.memberId.toString()
-    return Decider(caller.orgId, name)
+    return Decider(caller.orgId, name, principal)
 }
