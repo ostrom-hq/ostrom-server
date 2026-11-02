@@ -8,7 +8,9 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgProfile
 import dev.ostrom.server.kernel.auth.OrgRequiredException
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -346,6 +348,8 @@ class OrgsPostgresTest {
             val person = AuthenticatedPrincipal(ada.id.toString(), PrincipalKind.USER, setOf("user:*"))
             fun named(org: Org) = person.copy(namedOrg = org.id.toString())
 
+            assertEquals(OrgProfile(acme.id, "acme", "ACME", "", linkedToGitHub = false), resolver.profile(acme.id))
+            assertNull(resolver.profile(Uuid.random()))
             // One membership: nothing to name.
             assertEquals(OrgPrincipal(acme.id, acmeOwner.id, OrgRole.OWNER), resolver.resolve(person, null))
             // No membership: nobody.
@@ -410,6 +414,33 @@ class OrgsPostgresTest {
                     acme.id,
                 )
             )
+        }
+
+    @Test
+    fun theDirectoryKnowsTheMembersOfAnOrganizationAndNoOneElse() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val members = server.koin.get<MembersRepository>()
+            val directory = server.koin.get<MemberDirectory>()
+            val ada = server.user("ada")
+            val bob = server.user("bob")
+            val acme = org("acme")
+            val owner = member(acme, ada, OrgRole.OWNER)
+            orgs.create(acme, owner) { false }
+            val other = org("other")
+            val bobsOwner = member(other, bob, OrgRole.OWNER)
+            orgs.create(other, bobsOwner) { false }
+
+            assertEquals(owner, members.findById(acme.id, owner.id))
+            assertTrue(directory.isActiveMember(acme.id, owner.id.toString()))
+            // Another organization's member is not one, even by its exact id (row-level security).
+            assertNull(members.findById(acme.id, bobsOwner.id))
+            assertFalse(directory.isActiveMember(acme.id, bobsOwner.id.toString()))
+            assertFalse(directory.isActiveMember(acme.id, Uuid.random().toString()))
+            assertFalse(directory.isActiveMember(acme.id, "not-a-member-id"))
+            // Deleting the organization removes its members: none stays active.
+            orgs.delete(acme.id, now)
+            assertFalse(directory.isActiveMember(acme.id, owner.id.toString()))
         }
 
     @Test

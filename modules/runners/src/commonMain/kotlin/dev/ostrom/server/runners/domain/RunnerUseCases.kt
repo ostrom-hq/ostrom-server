@@ -43,6 +43,37 @@ data class HeartbeatAnswer(
     val state: SessionState,
 )
 
+/**
+ * Checks a runner token before anything else of its call is read: the runner channel is outside the members'
+ * authentication, so without this a forged `Authorization` header would make the server read and parse a body
+ * (SECURITY-AUDIT S2-46).
+ */
+interface CheckRunnerTokenUseCase {
+    /**
+     * Checks a token.
+     *
+     * @param token The runner token, as presented.
+     *
+     * @throws RunnerUnauthenticatedException When no current execution holds it.
+     */
+    suspend operator fun invoke(token: String)
+}
+
+/**
+ * [CheckRunnerTokenUseCase] on the repository.
+ *
+ * @param repository The sessions.
+ * @param tokens Hashes the presented token.
+ */
+class CheckRunnerTokenUseCaseImpl(
+    private val repository: CloudSessionsRepository,
+    private val tokens: RunnerTokens,
+) : CheckRunnerTokenUseCase {
+    override suspend fun invoke(token: String) {
+        repository.findByRunnerTokenHash(tokens.hash(token)) ?: throw RunnerUnauthenticatedException()
+    }
+}
+
 /** The runner channel: authenticates a runner by its token and records its heartbeats. */
 interface RunnerHeartbeatUseCase {
     /**

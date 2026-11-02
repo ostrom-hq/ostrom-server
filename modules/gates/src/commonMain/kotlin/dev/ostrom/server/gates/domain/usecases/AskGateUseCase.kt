@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.usecases
 
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Evidence
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -86,9 +87,9 @@ class AskGateUseCaseImpl(
         // `?.trim()?.takeIf` has a null check nothing reaches: Kover counts it, so the texts are read as non-null.
         val repo = ask.repo.orEmpty().trim().ifEmpty { null }
         val realRepo = ask.realRepo.orEmpty().trim().takeIf { it.isNotEmpty() && it != repo }
-        val node = nodes.resolve(orgId, realRepo ?: repo, ask.actionClass)
         // Never cut: a tail the checks did not read would run unseen. OpenGate refuses a command that is too long.
         val command = ask.command.trim()
+        val (actionClass, node) = gateOf(orgId, realRepo ?: repo, ask, command)
         val pullRequest = pullRequestOf(orgId, repo, ask, command, node?.enforced == true)
         // Audit S2-05: the hook's force flag is the machine's word; the command's options count too.
         val push = ask.push.takeIf { pullRequest == null }
@@ -96,20 +97,45 @@ class AskGateUseCaseImpl(
         // CORRECTIFS-3: a hook from before the commits were sent; its yes would be bound to the text, not the commits.
         val bound = pullRequest != null || push != null
         if (node?.enforced == true && !bound && GateCommands.mentionsPush(command)) throw OutdatedLauncherException()
-        val subject = subjectOf(ask, command, repo to realRepo, pullRequest, push)
+        val subject = subjectOf(ask.copy(actionClass = actionClass), command, repo to realRepo, pullRequest, push)
         return open(
             OpenGate(
                 actor = actor,
                 asker = asker,
-                via = ask.via,
+                // Second audit L2: the GitHub check is a service; anyone else saying `ci` asks as a hook.
+                via = if (ask.via == AskedVia.CI && actor.kind != ActorKind.SERVICE) AskedVia.HOOK else ask.via,
                 sessionId = ask.sessionId,
                 subject = subject,
                 node = node,
-                label = if (node == null) ask.actionClass else node.name,
+                label = if (node == null) actionClass else node.name,
                 evidence = evidenceOf(node, subject, asker, ask.sessionId, ask.diff?.take(MAX_DIFF)),
                 redirected = GateCommands.redirected(command),
             ),
         )
+    }
+
+    // Second audit H3: the class is the hook's word, read from its patterns, and the hook asks one class per command.
+    // What the server reads itself also asks: refs reaching main or master (a push to main), a tag (`refs/tags/…`, or
+    // a short name shaped as a version: the CLI sends short names), a merge the command shows. The claimed class keeps
+    // its gate when it is enforced; else the first enforced gate of what was read is taken. A push-main or push-tag ask
+    // whose refs hold no such ref is no such push, so their patterns may catch every push and let the refs decide.
+    private suspend fun gateOf(orgId: Uuid, repo: String?, ask: AskGate, command: String): Pair<String, GateNode?> {
+        val refs = ask.push?.refs.orEmpty().map { it.ref }
+        val read = buildList {
+            if (refs.any { it.removePrefix(HEADS) in MAIN_BRANCHES }) add(PUSH_MAIN)
+            if (refs.any(::isTag)) add(PUSH_TAG)
+            if (GateCommands.mentionsMerge(command)) add(MERGE)
+        }
+        val notSo = ask.push != null && ask.actionClass in BY_REFS && ask.actionClass !in read
+        val claimed = if (notSo) null else nodes.resolve(orgId, repo, ask.actionClass)
+        val backstop = if (claimed?.enforced == true) {
+            null
+        } else {
+            read.filter { it != ask.actionClass }.firstNotNullOfOrNull { cls ->
+                nodes.resolve(orgId, repo, cls)?.takeIf { it.enforced }?.let { cls to it }
+            }
+        }
+        return backstop ?: (ask.actionClass to claimed)
     }
 
     private fun subjectOf(
@@ -209,5 +235,21 @@ class AskGateUseCaseImpl(
         const val SHORT_SHA = 7
         const val PUSH_SHA = 12
         const val SHORT_SESSION = 8
+        const val PUSH_MAIN = "push-main"
+        const val MERGE = "merge"
+        const val HEADS = "refs/heads/"
+        const val PUSH_TAG = "push-tag"
     }
 }
+
+// Top-level, not in the companion: a private companion property has a getter nothing calls.
+private val MAIN_BRANCHES = setOf("main", "master")
+
+// The classes a push's refs prove or disprove.
+private val BY_REFS = setOf("push-main", "push-tag")
+
+// `v1.4`, `1.4.0`, `v2.0.0-rc.1`: the release tags the built-in catalogue knows.
+private val VERSION = Regex("^v?\\d+(\\.\\d+)+([-+.][\\w.]+)?$")
+
+private fun isTag(ref: String): Boolean =
+    ref.startsWith("refs/tags/") || !ref.startsWith("refs/") && VERSION.matches(ref)
