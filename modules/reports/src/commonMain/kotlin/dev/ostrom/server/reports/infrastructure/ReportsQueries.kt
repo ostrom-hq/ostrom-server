@@ -12,7 +12,8 @@ internal object ReportsQueries {
      *
      * An event names its session by its id, or, for a model call through the gateway, by its launch (the event's
      * `session_id` is then the launch's id, and `launch_id` too): the agent and the repository come from the session
-     * with that id, else from the first segment of that launch, one session only so that nothing counts twice.
+     * with that id, else from the first segment of that launch, one session only so that nothing counts twice. A line's
+     * `sessions` counts the sessions its spending was found in: a launch counts once, a call outside any session never.
      *
      * @param member Whether one member's spending only.
      * @return The statement.
@@ -21,12 +22,12 @@ internal object ReportsQueries {
         val mine = if (member) " AND e.member_id = :member_id" else ""
         return """
             WITH spent AS (
-                SELECT e.member_id, e.session_id, e.cost_micros, e.at, COALESCE(s.agent, l.agent) AS agent,
-                    COALESCE(s.repo, l.repo) AS repo, u.login
+                SELECT e.member_id, COALESCE(s.id, l.id) AS spent_in, e.cost_micros, e.at,
+                    COALESCE(s.agent, l.agent) AS agent, COALESCE(s.repo, l.repo) AS repo, u.login
                 FROM usage_events e
                 LEFT JOIN sessions_sessions s ON s.org_id = e.org_id AND s.id = e.session_id
                 LEFT JOIN LATERAL (
-                    SELECT f.agent, f.repo FROM sessions_sessions f
+                    SELECT f.id, f.agent, f.repo FROM sessions_sessions f
                     WHERE s.id IS NULL AND f.org_id = e.org_id AND f.launch_id = COALESCE(e.launch_id, e.session_id)
                     ORDER BY f.segment LIMIT 1
                 ) l ON TRUE
@@ -35,15 +36,15 @@ internal object ReportsQueries {
                 WHERE e.org_id = :org_id AND e.at >= :from AND e.at < :to AND e.cost_micros > 0$mine
             )
             SELECT 'agent' AS dim, COALESCE(agent, '') AS group_key, COALESCE(agent, '') AS label,
-                CAST(SUM(cost_micros) AS BIGINT) AS micros, COUNT(DISTINCT session_id) AS sessions
+                CAST(SUM(cost_micros) AS BIGINT) AS micros, COUNT(DISTINCT spent_in) AS sessions
                 FROM spent GROUP BY agent
             UNION ALL
             SELECT 'repo', COALESCE(repo, ''), COALESCE(repo, ''), CAST(SUM(cost_micros) AS BIGINT),
-                COUNT(DISTINCT session_id) FROM spent GROUP BY repo
+                COUNT(DISTINCT spent_in) FROM spent GROUP BY repo
             UNION ALL
             SELECT 'person', COALESCE(CAST(member_id AS TEXT), ''),
                 COALESCE(MIN(login), CAST(member_id AS TEXT), ''), CAST(SUM(cost_micros) AS BIGINT),
-                COUNT(DISTINCT session_id) FROM spent GROUP BY member_id
+                COUNT(DISTINCT spent_in) FROM spent GROUP BY member_id
             UNION ALL
             SELECT 'day', to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), '', CAST(SUM(cost_micros) AS BIGINT), 0
                 FROM spent GROUP BY 2
