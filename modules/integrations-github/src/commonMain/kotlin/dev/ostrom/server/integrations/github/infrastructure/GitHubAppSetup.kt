@@ -21,8 +21,9 @@ data class GitHubAppSetup(val publicUrl: String, val appName: String, val instan
          * @return The setup; `http://localhost:8080`, `Ostrom` and nobody by default.
          */
         fun from(config: ConfigSource): GitHubAppSetup = GitHubAppSetup(
-            publicUrl = (config["OSTROM_PUBLIC_URL"]?.trim() ?: "http://localhost:8080").trimEnd('/'),
-            appName = config["OSTROM_GITHUB_APP_NAME"]?.trim() ?: "Ostrom",
+            // `(value ?: default).trim()`, not `value?.trim() ?: default`: no null check after a trim that never is.
+            publicUrl = (config["OSTROM_PUBLIC_URL"] ?: "http://localhost:8080").trim().trimEnd('/'),
+            appName = (config["OSTROM_GITHUB_APP_NAME"] ?: "Ostrom").trim(),
             instanceAdmins = config["OSTROM_INSTANCE_ADMINS"].orEmpty().split(',')
                 .map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
         )

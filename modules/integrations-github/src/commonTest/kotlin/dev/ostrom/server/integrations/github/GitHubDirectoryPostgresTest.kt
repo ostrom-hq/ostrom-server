@@ -26,8 +26,10 @@ import dev.ostrom.server.integrations.github.infrastructure.GitHubDirectoryQueri
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
 import dev.ostrom.server.integrations.github.presentation.GitHubAppStatus
+import dev.ostrom.server.integrations.github.presentation.RepoResponse
 import dev.ostrom.server.integrations.github.presentation.ReposResponse
 import dev.ostrom.server.integrations.github.presentation.TeamsResponse
+import dev.ostrom.server.integrations.github.presentation.toRepoResponse
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
@@ -258,6 +260,8 @@ class GitHubDirectoryPostgresTest {
             GitHubTeam("t" + it.toString().padStart(3, '0'), "T $it", listOf("dev"), listOf("r001"))
         }
         directory.replace(ORG, GitHubDirectory(many + bare, teams), NOW)
+        // A repository GitHub never pushed to answers without a date, as the contract's optional field.
+        assertEquals(RepoResponse("zz", null, null, "trunk", true, null, listOf("a", "b")), bare.toRepoResponse())
         assertEquals(NOW to NOW, directory.state(ORG)?.let { it.syncedAt to it.checkedAt })
         assertEquals(many.take(100), directory.repos(ORG, null, 100))
         assertEquals(listOf(bare), directory.repos(ORG, "r450", 100))

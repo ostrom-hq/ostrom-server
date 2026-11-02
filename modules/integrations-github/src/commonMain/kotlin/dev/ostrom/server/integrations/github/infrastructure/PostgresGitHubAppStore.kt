@@ -59,13 +59,14 @@ class PostgresGitHubAppStore(private val driver: Driver, private val cipher: Sec
         ).getOrThrow()
     }
 
-    override suspend fun takeState(stateHash: String, now: Instant): String? = driver.fetchAll(
-        Statement.create(
-            "DELETE FROM github_manifest_states WHERE state_hash = :hash RETURNING created_by, expires_at",
-        ).bind("hash", stateHash),
-    ).getOrThrow().firstOrNull()
-        ?.takeIf { it.get("expires_at").asInstant() > now }
-        ?.get("created_by")?.asString()
+    override suspend fun takeState(stateHash: String, now: Instant): String? {
+        val row = driver.fetchAll(
+            Statement.create(
+                "DELETE FROM github_manifest_states WHERE state_hash = :hash RETURNING created_by, expires_at",
+            ).bind("hash", stateHash),
+        ).getOrThrow().firstOrNull() ?: return null
+        return if (row.get("expires_at").asInstant() > now) row.get("created_by").asString() else null
+    }
 
     private suspend fun seal(value: String, appId: String, field: String): String =
         cipher.seal(value.encodeToByteArray(), "github-app:$appId:$field")

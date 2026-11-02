@@ -115,12 +115,12 @@ class GitHubIntegrationModuleRegistrationTest {
         }
         val sync = app.koin.get<GitHubDirectorySync>()
         directory.states[ORG] = DirectoryState(NOW - 1.hours, NOW - 1.hours)
-        // A scope of its own on the test's dispatcher: advanceUntilIdle runs it, which it never does for backgroundScope.
+        // On the test dispatcher: advanceUntilIdle runs this scope, never backgroundScope.
         val worker = CoroutineScope(coroutineContext + Job())
         GitHubIntegrationModule.start(worker, app.koin)
         assertTrue(sync.ensure(ORG))
         testScheduler.advanceUntilIdle()
-        assertEquals(1, api.reads, "Read by the worker the module started; logged: ${logger.lines}")
+        assertEquals(1, api.reads, "Read by the worker the module started, logged: ${logger.lines}")
         sync.stop()
         worker.cancel()
         app.close()
