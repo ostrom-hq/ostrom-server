@@ -132,6 +132,8 @@ jobs:
           # runner's loopback, is trusted for X-Forwarded-For: each person of the journeys signs in from an address of
           # their own (ostrom-web e2e-real/real.ts, since ostrom-web#54), so sixty sign-ins from one machine do not trip the
           # per-source limit. A console from before it sends no address of its own, and its sign-ins are limited again.
+          # Cloud sessions are open to every organization here, as on a single-user server (OSTROM_RUNNERS_ALLOWED_ORGS,
+          # audit S2-10: closed by default on a shared cluster); no driver, so a session started waits for a runner.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -142,6 +144,7 @@ jobs:
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_web_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
           OSTROM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+          OSTROM_RUNNERS_ALLOWED_ORGS=*
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
