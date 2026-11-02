@@ -70,7 +70,7 @@ class SessionsIsolationPostgresTest {
                     return when (kind) {
                         "agent" ->
                             GateActor("agent-$id", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lyes")
-                        else -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        else -> GateActor.person(id, orgId, OrgRole.MEMBER)
                     }
                 }
             }
