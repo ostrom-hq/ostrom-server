@@ -9,6 +9,7 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.identity.presentation.CreateServiceKeyRequest
 import dev.ostrom.server.identity.presentation.CreateTokenRequest
 import dev.ostrom.server.identity.presentation.CreatedTokenResponse
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
@@ -183,5 +184,13 @@ class ConsoleStepUpPostgresTest {
     @Test
     fun aSignInLinkNeedsAFreshSignIn() = stepUp(HttpStatusCode.Created) { ada, _ ->
         client.post("/api/v1/auth/links") { session(ada) }
+    }
+
+    @Test
+    fun creatingAServiceKeyNeedsAFreshSignIn() = stepUp(HttpStatusCode.Created) { ada, _ ->
+        client.post("/api/v1/service-keys") {
+            session(ada)
+            json(CreateServiceKeyRequest("ci", listOf("sessions:read")))
+        }
     }
 }
