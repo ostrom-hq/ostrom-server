@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
-import dev.ostrom.server.gates.GatesModule
-import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.StartWebSessionUseCase
@@ -12,7 +10,6 @@ import dev.ostrom.server.identity.presentation.AuthTokenResponse
 import dev.ostrom.server.identity.presentation.DeviceCodeRequest
 import dev.ostrom.server.identity.presentation.DeviceCodeResponse
 import dev.ostrom.server.identity.presentation.DeviceTokenRequest
-import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.ORG_HEADER
@@ -23,17 +20,14 @@ import dev.ostrom.server.mcprelay.domain.CreateMcpServerUseCase
 import dev.ostrom.server.mcprelay.presentation.McpServerDto
 import dev.ostrom.server.mcprelay.presentation.McpServersPage
 import dev.ostrom.server.mcprelay.presentation.toPayload
-import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
-import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.MemberRole
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
-import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -63,10 +57,7 @@ import kotlin.uuid.Uuid
  * reads its organization's approvals and lists its MCP servers, and reads nothing of an organization it is not in.
  */
 class CliTokenReadsPostgresTest {
-    private val modules = listOf(
-        InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, LaunchesModule,
-        SecretsModule, McpRelayModule,
-    )
+    private val modules = launchModules(SecretsModule, McpRelayModule)
     private val overrides = module { single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) } }
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
