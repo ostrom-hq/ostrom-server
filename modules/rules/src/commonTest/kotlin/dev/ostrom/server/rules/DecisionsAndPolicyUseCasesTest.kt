@@ -19,6 +19,7 @@ import dev.ostrom.server.rules.infrastructure.RulesGatePolicies
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -57,8 +58,8 @@ class DecisionsAndPolicyUseCasesTest {
         val decision = bench.repository.decisions.single()
         assertEquals(DecisionSubject("policy", "self-approval", "Self-approval"), decision.subject)
         assertEquals("edited", decision.action)
-        assertEquals(Json.parseToJsonElement("""{"selfApproval":"sole-approver"}"""), decision.before)
-        assertEquals(Json.parseToJsonElement("""{"selfApproval":"never"}"""), decision.after)
+        assertEquals(Json.parseToJsonElement("""{"selfApproval":"sole-approver"}""").jsonObject, decision.before)
+        assertEquals(Json.parseToJsonElement("""{"selfApproval":"never"}""").jsonObject, decision.after)
         assertNull(decision.ruleDigest, "A policy names no rule")
         assertTrue(decision.signed)
     }

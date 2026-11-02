@@ -81,6 +81,14 @@ class OrgsApi {
     }
 }
 
+/**
+ * `GET /api/v1/me/organizations`: the caller's organizations, so that a person in several can choose the one the
+ * `Ostrom-Org` header names. Never needs that header, never answers 409 `org_required`.
+ */
+@Serializable
+@Resource("/api/v1/me/organizations")
+class MyOrganizationsApi
+
 /** `/api/v1/invitations`: what a person who received a link does with it. */
 @Serializable
 @Resource("/api/v1/invitations")
@@ -201,6 +209,8 @@ data class OrgResponse(
 /**
  * A member (the contract's `Member`).
  *
+ * @property id The member's id, stable across their tokens and sessions (`OrgPrincipal.memberId`): the id that
+ *   artifacts share with and that receipts name.
  * @property login The login.
  * @property name The name.
  * @property avatarUrl The picture, empty when none.
@@ -210,6 +220,7 @@ data class OrgResponse(
  */
 @Serializable
 data class MemberResponse(
+    val id: String,
     val login: String,
     val name: String,
     val avatarUrl: String,
@@ -280,3 +291,28 @@ data class InvitationPreviewResponse(
     val email: String?,
     val expiresAt: String,
 )
+
+/**
+ * One of the caller's organizations, to choose from.
+ *
+ * @property id The id, the value of the `Ostrom-Org` header.
+ * @property slug The short name.
+ * @property name The name.
+ * @property avatarUrl The picture of the linked GitHub organization, empty when none.
+ * @property role The caller's role there.
+ */
+@Serializable
+data class MyOrganizationResponse(
+    val id: String,
+    val slug: String,
+    val name: String,
+    val avatarUrl: String,
+    val role: String,
+)
+
+/**
+ * The caller's organizations.
+ *
+ * @property items The organizations, by name.
+ */
+@Serializable data class MyOrganizationsResponse(val items: List<MyOrganizationResponse>)

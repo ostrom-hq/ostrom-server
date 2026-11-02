@@ -83,7 +83,10 @@ class UsagePostgresTest {
         assertEquals(HttpStatusCode.Accepted, declared.status, declared.bodyAsText())
         assertEquals(3, declared.body<UsageAcceptedResponse>().accepted)
 
-        val stored = server.driver.fetchAll("SELECT org_id, member_id, cost_micros FROM usage_events").getOrThrow()
+        val stored = server.driver.fetchInOrg(
+            TestCallers.orgA,
+            Statement.create("SELECT org_id, member_id, cost_micros FROM usage_events"),
+        ).getOrThrow()
         assertEquals(3, stored.size)
         assertTrue(stored.all { it.get("org_id").asUuid() == TestCallers.orgA }, "The org comes from the token")
         assertTrue(stored.all { it.get("member_id").asUuid() == TestCallers.memberA.memberId }, "The member too")
@@ -169,7 +172,8 @@ class UsagePostgresTest {
             setBody("not json")
         }
         assertEquals(HttpStatusCode.BadRequest, notJson.status)
-        assertEquals(0, server.driver.fetchAll("SELECT id FROM usage_events").getOrThrow().size)
+        val stored = server.driver.fetchInOrg(TestCallers.orgA, Statement.create("SELECT id FROM usage_events"))
+        assertEquals(0, stored.getOrThrow().size)
     }
 
     @Test
@@ -255,7 +259,7 @@ class UsagePostgresTest {
     @Test
     fun theRepositoryPagesTiesByIdAndPurgesInBatches() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<UsageRepository>()
-        val sameInstant = List(3) { modelEvent(it.toLong()) }
+        val sameInstant = List(3) { modelEvent(it.toLong()).copy(launchId = "lch_$it".takeIf { _ -> it > 0 }) }
         repository.insert(TestCallers.orgA, sameInstant + modelEvent(9, at = TestCallers.epoch - 500.days))
         repository.insert(TestCallers.orgA, emptyList())
 
@@ -269,6 +273,7 @@ class UsagePostgresTest {
         )
         val adminEvents = repository.list(TestCallers.orgA, TestCallers.adminA.memberId, null, 10)
         assertEquals(sameInstant.first(), adminEvents.first { it.id == sameInstant.first().id })
+        assertEquals(sameInstant.last(), adminEvents.first { it.id == sameInstant.last().id }, "The launch is kept")
         assertEquals(UsageKind.MODEL, first.first().kind)
         val today = UsageWindow(TestCallers.orgA, TestCallers.adminA.memberId, TestCallers.epoch - 1.days)
         assertEquals(1, repository.summary(today, UsageGroupBy.KIND, 10).size)
