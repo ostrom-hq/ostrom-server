@@ -7,6 +7,8 @@ import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.AuditLog
 import dev.ostrom.server.identity.domain.AuditLogImpl
 import dev.ostrom.server.identity.domain.AuditRepository
+import dev.ostrom.server.identity.domain.AuditVerifier
+import dev.ostrom.server.identity.domain.AuditVerifierImpl
 import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCase
 import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
@@ -183,7 +185,8 @@ object IdentityModule : ServerModule {
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
         single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }
-        single<ListOrgAuditUseCase> { ListOrgAuditUseCaseImpl(get(), get()) }
+        single<AuditVerifier> { AuditVerifierImpl(get(), get()) }
+        single<ListOrgAuditUseCase> { ListOrgAuditUseCaseImpl(get(), get(), get()) }
         single { OrgAuditRoutesDependencies(get(), get()) }
         single<TokenAuthenticator> {
             val config = get<IdentityConfig>()

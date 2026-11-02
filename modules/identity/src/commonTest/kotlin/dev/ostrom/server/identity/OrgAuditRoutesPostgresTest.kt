@@ -6,12 +6,15 @@ import dev.ostrom.server.identity.domain.AuditLog
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.ORG_AUDIT_PAGE
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
+import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.identity.domain.auditCanonicalForm
 import dev.ostrom.server.identity.presentation.CreateTokenRequest
 import dev.ostrom.server.identity.presentation.CreatedTokenResponse
+import dev.ostrom.server.identity.presentation.OrgAuditEventResponse
 import dev.ostrom.server.identity.presentation.OrgAuditPageResponse
 import dev.ostrom.server.identity.presentation.SERVER_ACTOR
 import dev.ostrom.server.kernel.audit.OrgAuditRecord
@@ -22,6 +25,7 @@ import dev.ostrom.server.kernel.auth.OrgProfile
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
+import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
@@ -30,14 +34,18 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import org.koin.dsl.module
+import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -131,6 +139,61 @@ class OrgAuditRoutesPostgresTest {
             assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/audit") { bearerAuth(narrow) }.status)
             val reader = token(owner, "audit:read")
             assertEquals(HttpStatusCode.OK, client.get("/api/v1/audit") { bearerAuth(reader) }.status)
+        }
+    }
+
+    /** Changes the table as only its owner or a superuser can, the append-only triggers set aside. */
+    private suspend fun TestServer.tamper(sql: String) = database.superuser.transaction {
+        execute("SET LOCAL session_replication_role = replica").getOrThrow()
+        execute(sql).getOrThrow()
+    }
+
+    /** Checks [line] as a client would: the canonical form rebuilt from the line, its hash and its signature. */
+    private suspend fun TestServer.checks(org: Uuid, line: OrgAuditEventResponse): Boolean {
+        val (type, target) = line.subject.split(":", limit = 2)
+        val entry = AuditEntry(org, line.actorId?.let(Uuid::parse), line.event, type, target, line.meta)
+        val at = Instant.parse(line.at)
+        val canonical = auditCanonicalForm(Uuid.parse(line.id), line.sequence, entry, at, line.previousHash)
+        val signer = koin.get<InstanceSigner>()
+        val signed = signer.verify(canonical.encodeToByteArray(), Base64.decode(line.signature))
+        return koin.get<SecretHasher>().hash(canonical) == line.hash && signed && line.keyId == signer.keyId
+    }
+
+    @Test
+    fun everyLineIsCheckedAsItIsReadAndATamperedTableIsSignalled() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
+        with(server) {
+            val (ada, session) = signIn("ada", acme)
+            val log = koin.get<AuditLog>()
+            log.record(AuditEntry(acme, ada.id, "org.renamed", "org", "$acme", mapOf("to" to "Acme: Labs")))
+            log.record(AuditEntry(acme, null, "org.purged", "org", "$acme"))
+            repeat(3) { log.record(AuditEntry(acme, ada.id, "budget.changed", "budget", "b$it")) }
+            // The same person and the same event in another organization: no filter brings them in (A6).
+            log.record(AuditEntry(evil, ada.id, "budget.changed", "budget", "evil"))
+
+            val clean = page(session)
+            assertEquals(List(5) { "verified" }, clean.items.map { it.integrity })
+            assertTrue(clean.items.all { checks(acme, it) }, "A client checks every line itself")
+            assertEquals(clean.items.drop(1).map { it.hash }, clean.items.dropLast(1).map { it.previousHash })
+            assertNull(clean.items.last().previousHash)
+            assertEquals(listOf(null, "${ada.id}"), listOf(clean.items[3].actorId, clean.items[4].actorId))
+            // Written as null, never left out: a client rebuilds the canonical form from them.
+            val server = audit(session, "?event=org.purged").bodyAsText()
+            assertTrue("\"actorId\":null" in server, server)
+            val first = audit(session, "?event=org.renamed").bodyAsText()
+            assertTrue("\"previousHash\":null" in first, first)
+            val filtered = page(session, "?actor=ada&event=budget.changed")
+            assertEquals(listOf("budget:b2", "budget:b1", "budget:b0"), filtered.items.map { it.subject })
+
+            // Line 2 rewritten in place, then line 3 erased.
+            tamper("UPDATE identity_audit_events SET action = 'org.kept' WHERE chain = '$acme' AND sequence = 2")
+            tamper("DELETE FROM identity_audit_events WHERE chain = '$acme' AND sequence = 3")
+
+            val read = page(session).items.associate { it.sequence to it.integrity }
+            assertEquals(mapOf(5L to "verified", 4L to "unlinked", 2L to "altered", 1L to "verified"), read)
+            // The line before is read even when the filter leaves it out.
+            val byEvent = page(session, "?event=budget.changed").items.associate { it.sequence to it.integrity }
+            assertEquals(mapOf(5L to "verified", 4L to "unlinked"), byEvent)
         }
     }
 

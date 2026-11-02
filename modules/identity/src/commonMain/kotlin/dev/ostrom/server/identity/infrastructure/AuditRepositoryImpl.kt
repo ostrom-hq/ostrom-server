@@ -4,6 +4,7 @@ package dev.ostrom.server.identity.infrastructure
 import dev.ostrom.server.identity.domain.AuditEntry
 import dev.ostrom.server.identity.domain.AuditEvent
 import dev.ostrom.server.identity.domain.AuditRepository
+import dev.ostrom.server.identity.domain.ChainedAuditEvent
 import dev.ostrom.server.identity.domain.OrgAuditQuery
 import dev.ostrom.server.kernel.database.inOrg
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -89,20 +90,17 @@ class AuditRepositoryImpl(private val driver: Driver) : AuditRepository {
         }
     }
 
-    override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent> {
-        // Only the filters asked for are in the SQL, each value bound, never spliced.
-        val filters = listOfNotNull(
-            "AND actor_id = :actor".takeIf { query.actorId != null },
-            "AND action = :action".takeIf { query.action != null },
-        ).joinToString(" ")
-        val statement = Statement.create(
-            "SELECT $COLUMNS FROM identity_audit_events WHERE chain = :chain AND sequence < :before $filters " +
-                "ORDER BY sequence DESC LIMIT :limit",
-        ).bind("chain", orgId.toString()).bind("before", query.beforeSequence ?: Long.MAX_VALUE)
+    override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<ChainedAuditEvent> {
+        val statement = Statement.create(orgAuditSql(query.actorId != null, query.action != null))
+            .bind("chain", orgId.toString()).bind("before", query.beforeSequence ?: Long.MAX_VALUE)
             .bind("limit", query.limit)
         query.actorId?.let { statement.bind("actor", it) }
         query.action?.let { statement.bind("action", it) }
-        return driver.inOrg(orgId) { fetchAll(statement).getOrThrow().map { it.toEvent() } }
+        return driver.inOrg(orgId) {
+            fetchAll(statement).getOrThrow().map { row ->
+                ChainedAuditEvent(row.toEvent(), row.get("predecessor_hash").asStringOrNull())
+            }
+        }
     }
 
     private fun ResultSet.Row.toEvent() = AuditEvent(
@@ -130,4 +128,26 @@ class AuditRepositoryImpl(private val driver: Driver) : AuditRepository {
         val DETAILS = MapSerializer(String.serializer(), String.serializer())
         val DETAILS_JSON = Json
     }
+}
+
+/**
+ * The read of `GET /api/v1/audit`: an organization's lines, newest first, each joined to the line before it in the
+ * chain (`sequence - 1`, the unique index `(chain, sequence)`) whatever the filters, so its link can be checked. Only
+ * the filters asked for are in the SQL, each value bound, never spliced.
+ *
+ * @param byActor Whether the read keeps one person's lines (`:actor`).
+ * @param byAction Whether the read keeps one event name (`:action`).
+ *
+ * @return The SQL, with `:chain`, `:before` and `:limit`.
+ */
+internal fun orgAuditSql(byActor: Boolean, byAction: Boolean): String {
+    val filters = listOfNotNull(
+        "AND e.actor_id = :actor".takeIf { byActor },
+        "AND e.action = :action".takeIf { byAction },
+    ).joinToString(" ")
+    return "SELECT e.id, e.sequence, e.org_id, e.actor_id, e.action, e.target_type, e.target_id, e.details, " +
+        "e.occurred_at, e.previous_hash, e.hash, e.signature, e.key_id, p.hash AS predecessor_hash " +
+        "FROM identity_audit_events e LEFT JOIN identity_audit_events p " +
+        "ON p.chain = e.chain AND p.sequence = e.sequence - 1 " +
+        "WHERE e.chain = :chain AND e.sequence < :before $filters ORDER BY e.sequence DESC LIMIT :limit"
 }

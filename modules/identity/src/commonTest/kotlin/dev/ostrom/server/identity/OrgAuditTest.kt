@@ -2,12 +2,17 @@
 package dev.ostrom.server.identity
 
 import dev.ostrom.server.identity.domain.AuditEntry
+import dev.ostrom.server.identity.domain.AuditEvent
+import dev.ostrom.server.identity.domain.AuditIntegrity
 import dev.ostrom.server.identity.domain.AuditLogImpl
+import dev.ostrom.server.identity.domain.AuditVerifierImpl
+import dev.ostrom.server.identity.domain.ChainedAuditEvent
 import dev.ostrom.server.identity.domain.InvalidAuditCursorException
 import dev.ostrom.server.identity.domain.ListOrgAuditUseCaseImpl
 import dev.ostrom.server.identity.domain.ORG_AUDIT_PAGE
 import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.User
+import dev.ostrom.server.identity.domain.auditCanonicalForm
 import dev.ostrom.server.identity.fakes.FakeHasher
 import dev.ostrom.server.identity.fakes.InMemoryAuditRepository
 import dev.ostrom.server.identity.fakes.InMemoryUsersRepository
@@ -36,7 +41,8 @@ class OrgAuditTest {
         val events = InMemoryAuditRepository()
         val users = InMemoryUsersRepository()
         val log = AuditLogImpl(events, signer, ShortHasher, SettableClock())
-        val list = ListOrgAuditUseCaseImpl(events, users)
+        val verifier = AuditVerifierImpl(signer, ShortHasher)
+        val list = ListOrgAuditUseCaseImpl(events, users, verifier)
     }
 
     // FakeHasher wraps its input, so a chain of hashes grows with every line, escaped again each time: 50 lines run
@@ -59,7 +65,98 @@ class OrgAuditTest {
 
         assertEquals(listOf("org.purged", "member.removed", "org.created"), page.lines.map { it.event.entry.action })
         assertEquals(listOf(null, null, "ada"), page.lines.map { it.actorLogin })
+        assertEquals(List(3) { AuditIntegrity.VERIFIED }, page.lines.map { it.integrity })
         assertNull(page.next)
+    }
+
+    /** Four lines of [orgId], sequences 1 to 4, as the log writes them. */
+    private suspend fun World.fourLines() = repeat(4) {
+        log.record(AuditEntry(orgId, ada.id, "budget.changed", "budget", "$it"))
+    }
+
+    private suspend fun World.integrities(action: String? = null): Map<Long, AuditIntegrity> =
+        list(orgId, null, action, null).lines.associate { it.event.sequence to it.integrity }
+
+    /** Replaces the line [sequence] of [orgId] in place, as a write in the table would. */
+    private fun World.rewrite(sequence: Long, change: (AuditEvent) -> AuditEvent) {
+        val index = events.events.indexOfFirst { it.entry.orgId == orgId && it.sequence == sequence }
+        events.events[index] = change(events.events[index])
+    }
+
+    private suspend fun AuditEvent.rehashed(): AuditEvent =
+        copy(hash = ShortHasher.hash(auditCanonicalForm(id, sequence, entry, occurredAt, previousHash)))
+
+    @Test
+    fun aLineChangedInTheTableIsAlteredAndTheNextOneStaysLinked() = runTest {
+        val world = world()
+        world.fourLines()
+
+        world.rewrite(2) { it.copy(entry = it.entry.copy(action = "budget.read")) }
+
+        val found = world.integrities()
+        assertEquals(AuditIntegrity.ALTERED, found[2])
+        // Line 3 was signed after the hash line 2 still carries: its link holds.
+        assertEquals(listOf(AuditIntegrity.VERIFIED), listOf(1L, 3L, 4L).map { found[it] }.distinct())
+    }
+
+    @Test
+    fun aLineRewrittenWithANewHashFailsItsSignatureAndUnlinksTheNext() = runTest {
+        val world = world()
+        world.fourLines()
+
+        world.rewrite(2) { it.copy(entry = it.entry.copy(action = "budget.read")).rehashed() }
+
+        val found = world.integrities()
+        assertEquals(AuditIntegrity.ALTERED, found[2], "Only the instance key signs a line")
+        assertEquals(AuditIntegrity.UNLINKED, found[3])
+        assertEquals(AuditIntegrity.VERIFIED, found[4])
+    }
+
+    @Test
+    fun anErasedLineUnlinksTheNextEvenWhenAFilterLeavesItOut() = runTest {
+        val world = world()
+        world.fourLines()
+        world.log.record(AuditEntry(orgId, ada.id, "org.renamed", "org", "$orgId"))
+
+        world.events.events.removeAll { it.entry.orgId == orgId && it.sequence == 4L }
+
+        assertEquals(AuditIntegrity.UNLINKED, world.integrities()[5])
+        assertEquals(mapOf(5L to AuditIntegrity.UNLINKED), world.integrities("org.renamed"))
+    }
+
+    @Test
+    fun aLineSignedByAnotherKeyIsUnverifiableAndAForgedSignatureAltered() = runTest {
+        val world = world()
+        world.fourLines()
+
+        world.rewrite(1) { it.copy(keyId = "retired-key") }
+        world.rewrite(2) { it.copy(signature = "not base64 %") }
+        world.rewrite(3) { it.copy(signature = world.events.events.first { e -> e.sequence == 4L }.signature) }
+
+        val found = world.integrities()
+        assertEquals(AuditIntegrity.UNVERIFIABLE, found[1])
+        assertEquals(AuditIntegrity.ALTERED, found[2])
+        assertEquals(AuditIntegrity.ALTERED, found[3], "Another line's signature")
+        assertEquals(AuditIntegrity.VERIFIED, found[4])
+    }
+
+    @Test
+    fun theFirstLineOfAChainFollowsNothing() = runTest {
+        val world = world()
+        world.fourLines()
+        val first = world.events.events.first { it.entry.orgId == orgId && it.sequence == 1L }
+        val second = world.events.events.first { it.entry.orgId == orgId && it.sequence == 2L }
+
+        assertEquals(AuditIntegrity.VERIFIED, world.verifier.integrity(ChainedAuditEvent(first, null)))
+        // A line found before the first one: the chain was rewritten under it.
+        assertEquals(AuditIntegrity.UNLINKED, world.verifier.integrity(ChainedAuditEvent(first, "h0")))
+        // A first line that claims to follow another, its hash recomputed: unlinked before its signature is read.
+        val claims = first.copy(previousHash = "h0").rehashed()
+        assertEquals(AuditIntegrity.UNLINKED, world.verifier.integrity(ChainedAuditEvent(claims, null)))
+        // A later line with no line before it, or another one.
+        assertEquals(AuditIntegrity.UNLINKED, world.verifier.integrity(ChainedAuditEvent(second, null)))
+        assertEquals(AuditIntegrity.UNLINKED, world.verifier.integrity(ChainedAuditEvent(second, "h0")))
+        assertEquals(AuditIntegrity.VERIFIED, world.verifier.integrity(ChainedAuditEvent(second, first.hash)))
     }
 
     @Test

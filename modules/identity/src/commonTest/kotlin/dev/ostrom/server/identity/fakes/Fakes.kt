@@ -8,6 +8,7 @@ import dev.ostrom.server.identity.domain.AuditEntry
 import dev.ostrom.server.identity.domain.AuditEvent
 import dev.ostrom.server.identity.domain.AuditLog
 import dev.ostrom.server.identity.domain.AuditRepository
+import dev.ostrom.server.identity.domain.ChainedAuditEvent
 import dev.ostrom.server.identity.domain.DeviceAuthorization
 import dev.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import dev.ostrom.server.identity.domain.DeviceAuthorizationsRepository
@@ -293,9 +294,13 @@ class InMemoryAuditRepository : AuditRepository {
         events.filter { it.entry.orgId == orgId && it.sequence < (beforeSequence ?: Long.MAX_VALUE) }
             .reversed().take(limit)
 
-    override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent> =
+    override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<ChainedAuditEvent> =
         list(orgId, null, query.beforeSequence, Int.MAX_VALUE)
             .filter { query.actorId == null || it.entry.actorId == query.actorId }
             .filter { query.action == null || it.entry.action == query.action }
             .take(query.limit)
+            .map { event ->
+                val before = events.firstOrNull { it.entry.orgId == orgId && it.sequence == event.sequence - 1 }
+                ChainedAuditEvent(event, before?.hash)
+            }
 }
