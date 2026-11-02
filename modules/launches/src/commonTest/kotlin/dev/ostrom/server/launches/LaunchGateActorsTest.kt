@@ -39,7 +39,7 @@ class LaunchGateActorsTest {
     fun aPersonIsAUserOfTheirOrganizationNamedByTheirLogin() = runTest {
         val person = principal(ADA.userId.toString(), PrincipalKind.USER)
         assertEquals(
-            GateActor("ada", ORG, ActorKind.USER, personId = "ada", authenticatedAt = signedIn),
+            GateActor("ada", ORG, ActorKind.USER, personId = "ada", authenticatedAt = signedIn, role = OrgRole.MEMBER),
             actors.resolve(person),
         )
         assertNull(actors.resolve(principal("000000ff-0000-0000-0000-000000000000", PrincipalKind.USER)))

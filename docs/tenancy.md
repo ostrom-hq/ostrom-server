@@ -63,6 +63,20 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `identity_token_touch(id, at)` | identity | notes an API token's last use | `IdentityTenancyPostgresTest` |
 | `identity_revoke_agent_session_tokens(session, at)` | identity | revokes the agent tokens of one agent session | `IdentityTenancyPostgresTest` |
 
+## Known exceptions
+
+`app/…/SchemaTenancyPostgresTest.kt` reads the catalog once every module has migrated and checks the rules above for
+every table, policy, grant and `SECURITY DEFINER` function. The exceptions it still lists are open findings of the RLS
+audit, each to be closed by moving the cross-organization path into a function of the table above:
+
+- tables with `org_id` read across organizations without row-level security: `artifacts_routes`,
+  `automations_routes`, `runners_session_routes`, `billing_customers`, `billing_outbox`;
+- `orgs_organizations`, `orgs_members`, `orgs_invitations`: row-level security enabled, not forced;
+- policies a setting opens to every organization: `sessions_sessions_sweep` (`ostrom.sweep`), the retention
+  policies of `usage_events` and `mcp_relay_calls`;
+- policies a setting opens to one row of any organization: the read and delete policies of
+  `github_installations` (`ostrom.github_installation`) and `github_install_states` (`ostrom.github_state`).
+
 ## The proof
 
 `kernel/src/commonTest/…/TenancyPostgresTest.kt` connects as a serving role (`TestDatabase.withRole`) and proves that
