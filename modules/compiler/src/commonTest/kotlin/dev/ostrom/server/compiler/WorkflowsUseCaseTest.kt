@@ -107,6 +107,24 @@ class WorkflowsUseCaseTest {
     }
 
     @Test
+    fun anUpdateOfAnUnknownWorkflowIsNotFoundAndCreatesNothing() = runTest {
+        workflows.save(org, raw(release()), null, "dev-a", create = true)
+        val elsewhere = Uuid.parse("0000000e-0000-0000-0000-000000000000")
+        expectFailure(ErrorKind.NOT_FOUND) { workflows.save(elsewhere, raw(release()), null, "dev-e", create = false) }
+        expectFailure(ErrorKind.NOT_FOUND) { workflows.save(elsewhere, raw(release()), 1, "dev-e", create = false) }
+        expectFailure(ErrorKind.NOT_FOUND) { workflows.get(elsewhere, "release") }
+        assertEquals(1, workflows.get(org, "release").version, "The other organization's workflow is untouched")
+
+        // An update without a version replaces the version just read.
+        assertEquals(2, workflows.save(org, raw(release()), null, "dev-a", create = false).version)
+
+        // In the caller's own organization too: an id it deleted is not saved back.
+        workflows.delete(org, "release")
+        expectFailure(ErrorKind.NOT_FOUND) { workflows.save(org, raw(release()), null, "dev-a", create = false) }
+        expectFailure(ErrorKind.NOT_FOUND) { workflows.get(org, "release") }
+    }
+
+    @Test
     fun theListFiltersByRepositoryAndStatus() = runTest {
         workflows.save(org, raw(release()), null, "dev-a", create = true)
         val other = workflow("web", listOf(node("s", STEP, label = "Ship the site")), name = "Website")

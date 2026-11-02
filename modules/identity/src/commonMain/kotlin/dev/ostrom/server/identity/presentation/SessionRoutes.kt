@@ -68,8 +68,11 @@ class OriginNotAllowedException :
 /** Where the console goes after a sign-in link: the approval page it was made for. */
 const val SIGN_IN_LINK_LANDING = "/yes"
 
-/** The paths whose answers no cache keeps (sign-in, the profile, tokens): `Cache-Control: no-store` (S2-08). */
-private val NO_STORE_PATHS = listOf("/api/v1/auth", "/api/v1/tokens")
+/**
+ * The paths whose answers no cache keeps (sign-in, the profile, tokens, service keys, devices): `Cache-Control:
+ * no-store` (S2-08).
+ */
+private val NO_STORE_PATHS = listOf("/api/v1/auth", "/api/v1/tokens", "/api/v1/service-keys", "/api/v1/devices")
 
 /**
  * The dependencies of the session routes.

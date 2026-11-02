@@ -51,9 +51,7 @@ class PostgresWorkflowsRepository(private val driver: Driver) : WorkflowsReposit
         val statement = if (expectedVersion == null) {
             Statement.create(
                 "INSERT INTO compiler_workflows (org_id, id, doc, version, updated_by, updated_at, created_at) " +
-                    "VALUES (:org, :id, :doc, 1, :by, :at, :at) ON CONFLICT (org_id, id) DO UPDATE SET " +
-                    "doc = EXCLUDED.doc, version = compiler_workflows.version + 1, " +
-                    "updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at " +
+                    "VALUES (:org, :id, :doc, 1, :by, :at, :at) ON CONFLICT (org_id, id) DO NOTHING " +
                     "RETURNING $WORKFLOW_COLUMNS",
             )
         } else {
