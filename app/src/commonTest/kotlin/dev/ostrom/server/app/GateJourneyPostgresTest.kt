@@ -235,14 +235,24 @@ class GateJourneyPostgresTest {
         val approval = server.waiting(revBSession)
         val id = approval.getValue("id").jsonPrimitive.content
 
-        val race = peaks("race") { List(RACE) { async { server.answer(revBSession, approval, "approve") } }.awaitAll() }
-        assertEquals(listOf(200) + List(RACE - 1) { 409 }, race.map { it.status.value }.sorted())
-        val reads = peaks("reads") {
-            List(RACE) { async { server.client.get("/api/v1/approvals/$id/view") { session(revBSession) } } }.awaitAll()
+        // Only the statuses are kept: a response held by the test would count as the server's memory.
+        val race = peaks("race") {
+            List(RACE) { async { server.answer(revBSession, approval, "approve").status.value } }.awaitAll()
         }
-        assertEquals(List(RACE) { 200 }, reads.map { it.status.value })
-        val late = peaks("late") { List(RACE) { async { server.answer(revBSession, approval, "approve") } }.awaitAll() }
-        assertEquals(List(RACE) { 409 }, late.map { it.status.value })
+        assertEquals(listOf(200) + List(RACE - 1) { 409 }, race.sorted())
+        val view = "/api/v1/approvals/$id/view"
+        val reads = peaks("reads") {
+            List(RACE) { async { server.client.get(view) { session(revBSession) }.status.value } }.awaitAll()
+        }
+        assertEquals(List(RACE) { 200 }, reads)
+        val late = peaks("late") {
+            List(RACE) { async { server.answer(revBSession, approval, "approve").status.value } }.awaitAll()
+        }
+        assertEquals(List(RACE) { 409 }, late)
+        val oneByOne = peaks("sequential") {
+            List(RACE) { server.answer(revBSession, approval, "approve").status.value }
+        }
+        assertEquals(List(RACE) { 409 }, oneByOne)
     }
 
     // What `POST /gates` spends its time on, step by step (`TIMING`): the bench's gate p95 went from 10 to 19 ms.
