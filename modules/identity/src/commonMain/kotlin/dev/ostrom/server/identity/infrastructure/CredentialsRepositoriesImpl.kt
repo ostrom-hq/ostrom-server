@@ -3,6 +3,7 @@ package dev.ostrom.server.identity.infrastructure
 
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
+import dev.ostrom.server.identity.domain.MAX_SERVICE_KEYS_PER_ORG
 import dev.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.WebSession
@@ -159,11 +160,38 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
         ).bind("session", agentSessionId).bind("at", at),
     ).getOrThrow().first().get("revoked").asLong()
 
+    override suspend fun listLiveServiceKeys(orgId: Uuid, now: Instant): List<ApiToken> =
+        driver.withOrganization(orgId) { tx ->
+            tx.fetchAll(
+                Statement.create(LIVE_SERVICE_KEYS_SQL).bind("org", orgId).bind("now", now)
+                    .bind("limit", MAX_SERVICE_KEYS_PER_ORG),
+            ).getOrThrow().map { it.toApiToken() }
+        }
+
+    override suspend fun revokeServiceKey(orgId: Uuid, id: Uuid, at: Instant): Boolean =
+        driver.withOrganization(orgId) { tx ->
+            tx.execute(
+                Statement.create(
+                    "UPDATE identity_api_tokens SET revoked_at = :at WHERE id = :id AND org_id = :org " +
+                        "AND kind = 'SERVICE' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > :at)",
+                ).bind("at", at).bind("id", id).bind("org", orgId),
+            ).getOrThrow() == 1L
+        }
+
     private companion object {
         const val TOKEN_COLUMNS = "id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, " +
             "expires_at, last_used_at, revoked_at, authenticated_at"
     }
 }
+
+/**
+ * An organization's live service keys (`:org`, `:now`, `:limit`), newest first, read through the partial index
+ * `identity_api_tokens_service` (`ServiceKeysQueryPlansTest`).
+ */
+internal const val LIVE_SERVICE_KEYS_SQL: String =
+    "SELECT id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, expires_at, last_used_at, " +
+        "revoked_at, authenticated_at FROM identity_api_tokens WHERE org_id = :org AND kind = 'SERVICE' " +
+        "AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > :now) ORDER BY created_at DESC, id LIMIT :limit"
 
 /**
  * Inserts a token with an executor (the pool, or a transaction).

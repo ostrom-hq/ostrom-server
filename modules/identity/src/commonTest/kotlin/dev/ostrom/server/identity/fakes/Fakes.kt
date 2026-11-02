@@ -202,6 +202,19 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
         return live.size.toLong()
     }
 
+    override suspend fun listLiveServiceKeys(orgId: Uuid, now: Instant): List<ApiToken> =
+        tokens.values.filter {
+            it.orgId == orgId && it.kind == TokenKind.SERVICE && it.revokedAt == null &&
+                (it.expiresAt?.let { e -> e > now } ?: true)
+        }
+            .sortedByDescending { it.createdAt }
+
+    override suspend fun revokeServiceKey(orgId: Uuid, id: Uuid, at: Instant): Boolean {
+        val key = listLiveServiceKeys(orgId, at).firstOrNull { it.id == id } ?: return false
+        update(key.id) { it.copy(revokedAt = at) }
+        return true
+    }
+
     private fun update(id: Uuid, change: (ApiToken) -> ApiToken) {
         tokens.entries.firstOrNull { it.value.id == id }?.let { it.setValue(change(it.value)) }
     }

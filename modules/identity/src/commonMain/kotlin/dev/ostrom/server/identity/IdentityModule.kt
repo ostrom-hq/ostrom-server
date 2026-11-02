@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.CreateServiceKeyUseCase
+import dev.ostrom.server.identity.domain.CreateServiceKeyUseCaseImpl
+import dev.ostrom.server.identity.domain.DeleteServiceKeyUseCase
+import dev.ostrom.server.identity.domain.DeleteServiceKeyUseCaseImpl
+import dev.ostrom.server.identity.domain.ListDevicesUseCase
+import dev.ostrom.server.identity.domain.ListDevicesUseCaseImpl
+import dev.ostrom.server.identity.domain.ListServiceKeysUseCase
+import dev.ostrom.server.identity.domain.ListServiceKeysUseCaseImpl
+import dev.ostrom.server.identity.domain.SignOutDeviceUseCase
+import dev.ostrom.server.identity.domain.SignOutDeviceUseCaseImpl
+import dev.ostrom.server.identity.presentation.KeysAndDevicesRoutesDependencies
+import dev.ostrom.server.identity.presentation.keysAndDevicesRoutes
 import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCase
 import dev.ostrom.server.identity.domain.CompleteMobileSignInUseCaseImpl
 import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
@@ -175,6 +187,12 @@ object IdentityModule : ServerModule {
         single<RotateTokenUseCase> { RotateTokenUseCaseImpl(get(), get(), get(), get(), get()) }
         single<IssueAgentTokenUseCase> { IssueAgentTokenUseCaseImpl(get(), get(), get(), get()) }
         single<RevokeAgentTokensUseCase> { RevokeAgentTokensUseCaseImpl(get(), get()) }
+        single<CreateServiceKeyUseCase> { CreateServiceKeyUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<ListServiceKeysUseCase> { ListServiceKeysUseCaseImpl(get(), get()) }
+        single<DeleteServiceKeyUseCase> { DeleteServiceKeyUseCaseImpl(get(), get(), get()) }
+        single<ListDevicesUseCase> { ListDevicesUseCaseImpl(get(), get()) }
+        single<SignOutDeviceUseCase> { SignOutDeviceUseCaseImpl(get(), get(), get()) }
+        single { KeysAndDevicesRoutesDependencies(get(), get(), get(), get(), get(), get()) }
         single<StartDeviceAuthorizationUseCase> {
             StartDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get())
         }
@@ -240,6 +258,7 @@ object IdentityModule : ServerModule {
         route.signInRoutes(koin.get())
         route.sessionRoutes(koin.get())
         route.mobileRoutes(koin.get())
+        route.keysAndDevicesRoutes(koin.get())
     }
 
     private fun signInMethods(config: SignInConfig, http: HttpClient, clock: Clock): SignInMethods {
