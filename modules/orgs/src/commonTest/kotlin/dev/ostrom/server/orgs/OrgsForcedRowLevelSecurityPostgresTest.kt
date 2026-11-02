@@ -27,10 +27,10 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
- * The organizations, their members and their invitations under forced row-level security (RLS audit R5): even the
- * tables' owner, the role that migrates, sees and changes only the rows of the organization its transaction names.
- * What crosses organizations (a user's organizations, an invitation found by its link before its holder is a member)
- * still goes through the `ostrom_router` functions.
+ * The organizations, their members and their invitations under forced row-level security (RLS audit R5), like every
+ * other tenant table: a request sees and changes only the rows of the organization its transaction names, and what
+ * crosses organizations (a user's organizations, an invitation found by its link before its holder is a member) goes
+ * through the `ostrom_router` functions.
  */
 class OrgsForcedRowLevelSecurityPostgresTest {
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
@@ -51,7 +51,7 @@ class OrgsForcedRowLevelSecurityPostgresTest {
     }
 
     @Test
-    fun theOwnerOfTheTablesSeesAndChangesOnlyTheOrganizationItsTransactionNames() =
+    fun aRequestSeesAndChangesOnlyTheOrganizationItsTransactionNames() =
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val ada = server.user("ada")
             val bob = server.user("bob")
@@ -65,12 +65,19 @@ class OrgsForcedRowLevelSecurityPostgresTest {
                 Invitation(Uuid.random(), acme.id, null, OrgRole.MEMBER, adaOwner.id, now, now + 7.days, 1, 0, null)
             InvitationsRepositoryImpl(server.driver).create(invitation, "hash-acme")
 
-            // The owner role bypassed the policies while row-level security was not forced: no longer.
-            val owner = server.database.owner
-            assertEquals(listOf(0L, 0L, 0L), owner.counts(null), "Nothing without an organization")
-            assertEquals(listOf(1L, 1L, 1L), owner.counts(acme.id), "Acme's row, member and invitation")
-            assertEquals(listOf(1L, 1L, 0L), owner.counts(globex.id), "Globex's own, nothing of Acme's")
-            val renamed = owner.transaction {
+            // Row-level security is forced: it binds the tables' owner too (docs/tenancy.md).
+            val forced = server.database.superuser.fetchAll(
+                "SELECT relname FROM pg_class WHERE relname IN ('orgs_organizations', 'orgs_members', " +
+                    "'orgs_invitations') AND relrowsecurity AND relforcerowsecurity ORDER BY relname",
+            ).getOrThrow().map { it.get("relname").asString() }
+            assertEquals(TABLES.sorted(), forced)
+
+            // The serving role, the path of every request.
+            val serving = server.driver
+            assertEquals(listOf(0L, 0L, 0L), serving.counts(null), "Nothing without an organization")
+            assertEquals(listOf(1L, 1L, 1L), serving.counts(acme.id), "Acme's row, member and invitation")
+            assertEquals(listOf(1L, 1L, 0L), serving.counts(globex.id), "Globex's own, nothing of Acme's")
+            val renamed = serving.transaction {
                 val confine = Statement.create("SELECT set_config('ostrom.org_id', :org, true)")
                 fetchAll(confine.bind("org", globex.id.toString())).getOrThrow()
                 val rename = Statement.create("UPDATE orgs_organizations SET name = 'Stolen' WHERE id = :id")

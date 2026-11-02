@@ -156,9 +156,9 @@ private val SETTINGS_AND_DELETION_SQL: String =
 
 /**
  * Version 4: row-level security forced on the three tables (RLS audit R5), as on every other tenant table. The serving
- * role owns nothing and was already bound by the policies; forcing them binds the tables' owner too, the role that
- * migrates, so a later data migration of these tables sees only the organization its transaction names. What crosses
- * organizations already goes through the `ostrom_router` functions of versions 2 and 3.
+ * role owns nothing and was already bound by the policies; forcing them puts the tables' owner, the role that migrates,
+ * under them too (it still passes the `ostrom_router` policies, being a member of the role it hands the functions to).
+ * What crosses organizations already goes through the `ostrom_router` functions of versions 2 and 3.
  */
 private const val FORCED_SQL: String =
     """
