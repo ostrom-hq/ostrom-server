@@ -318,4 +318,25 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
                 WHERE kind = 'SERVICE' AND revoked_at IS NULL
         """.trimIndent(),
     ),
+    // Audit of the audit log, A1: the serving role holds UPDATE and DELETE on every table (default privileges) and the
+    // organization policy only reads `ostrom.org_id`, which any role sets: it could rewrite or erase any organization's
+    // log. The log is append-only for every role, the owner and a superuser included: a change or a deletion is an
+    // error, never zero rows in silence. Only the owner can disable the triggers (`ALTER TABLE`); it serves nothing.
+    SchemaMigration(
+        version = 8,
+        name = "audit_log_append_only",
+        sql = """
+            CREATE FUNCTION identity_audit_events_append_only() RETURNS trigger LANGUAGE plpgsql
+                SET search_path = pg_catalog AS $$
+            BEGIN
+                RAISE EXCEPTION 'identity_audit_events is append-only: % refused', TG_OP
+                    USING ERRCODE = 'insufficient_privilege';
+            END
+            $$;
+            CREATE TRIGGER identity_audit_events_no_change BEFORE UPDATE OR DELETE ON identity_audit_events
+                FOR EACH ROW EXECUTE FUNCTION identity_audit_events_append_only();
+            CREATE TRIGGER identity_audit_events_no_truncate BEFORE TRUNCATE ON identity_audit_events
+                FOR EACH STATEMENT EXECUTE FUNCTION identity_audit_events_append_only()
+        """.trimIndent(),
+    ),
 )

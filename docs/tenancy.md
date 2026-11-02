@@ -78,6 +78,13 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `billing_claim_due_tasks(now, lease, limit)` | billing | leases the due outbox tasks of every organization (`FOR UPDATE SKIP LOCKED`) | `BillingPostgresTest` |
 | `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
 
+## The audit log is append-only
+
+The policies say which organization's rows a query reaches, not what it may do to them, and the serving role holds
+`UPDATE` and `DELETE` on every table through the default privileges. For `identity_audit_events`, the signed log, that
+is not enough: two triggers (identity migration 8) refuse `UPDATE`, `DELETE` and `TRUNCATE` with an error, for every
+role, the owner and a superuser included. Only the owner, which serves no request, can disable them.
+
 ## Known exceptions
 
 `app/…/SchemaTenancyPostgresTest.kt` reads the catalog once every module has migrated and checks the rules above for

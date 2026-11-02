@@ -143,17 +143,50 @@ class IdentityTenancyPostgresTest {
         assertEquals(listOf("personal"), s.asOwner(null) { tokenNames() })
         assertEquals(listOf("account", "user.created"), s.asOwner(null) { actions() })
         assertEquals(listOf("personal"), s.driver.transaction { tokenNames() })
-        // Confined to B, the owner is held to B like the tenant role: it reads, changes and deletes B's rows only.
+        // Confined to B, the owner is held to B like the tenant role: it reads and changes B's rows only (the audit
+        // log, append-only, is changed by nobody: theAuditLogIsAppendOnlyForEveryRole).
         assertEquals(listOf("b"), s.asOwner(orgB) { tokenNames() })
         assertEquals(listOf("b"), s.asOwner(orgB) { actions() })
         s.asOwner(orgB) { execute("UPDATE identity_api_tokens SET name = 'renamed'").getOrThrow() }
-        s.asOwner(orgB) { execute("DELETE FROM identity_audit_events").getOrThrow() }
         assertEquals(listOf("renamed"), s.asOwner(orgB) { tokenNames() })
         assertEquals(listOf("a"), s.asOwner(orgA) { tokenNames() })
-        assertEquals(listOf("a"), s.driver.inOrg(orgA) { actions() })
-        assertEquals(emptyList(), s.driver.inOrg(orgB) { actions() })
         assertFailsWith<Exception> { s.asOwner(orgB) { insertAuditRowOf(orgA) } }
         assertFailsWith<Exception> { s.asOwner(orgB) { insertTokenRowOf(orgA) } }
+    }
+
+    /** Runs [block] as the serving role itself (no `SET ROLE`), with `ostrom.org_id` set to [org] when there is one. */
+    private suspend fun <T> TestServer.asServingRole(org: Uuid?, block: suspend Transaction.() -> T): T =
+        driver.transaction {
+            if (org != null) {
+                execute(Statement.create("SELECT set_config('ostrom.org_id', :org, true)").bind("org", org.toString()))
+                    .getOrThrow()
+            }
+            block()
+        }
+
+    @Test
+    fun theAuditLogIsAppendOnlyForEveryRole() = serverTest(listOf(IdentityModule)) { s ->
+        s.seed()
+        val rewrite = "UPDATE identity_audit_events SET action = 'forged'"
+        val erase = "DELETE FROM identity_audit_events"
+        // The serving role holds UPDATE and DELETE (default privileges) and sets the organization itself: before the
+        // append-only triggers it rewrote and erased A's log, and the account chain outside any organization.
+        assertFailsWith<Exception> { s.asServingRole(orgA) { execute(rewrite).getOrThrow() } }
+        assertFailsWith<Exception> { s.asServingRole(orgA) { execute(erase).getOrThrow() } }
+        assertFailsWith<Exception> { s.asServingRole(null) { execute(rewrite).getOrThrow() } }
+        assertFailsWith<Exception> { s.asServingRole(null) { execute(erase).getOrThrow() } }
+        // The owner and a superuser, who bypass the policies or own the table, are refused the same, TRUNCATE too.
+        assertFailsWith<Exception> { s.asOwner(orgB) { execute(erase).getOrThrow() } }
+        assertFailsWith<Exception> { s.asOwner(null) { execute("TRUNCATE identity_audit_events").getOrThrow() } }
+        assertFailsWith<Exception> { s.database.superuser.execute(rewrite).getOrThrow() }
+        assertFailsWith<Exception> { s.database.superuser.execute("TRUNCATE identity_audit_events").getOrThrow() }
+
+        assertEquals(listOf("a"), s.driver.inOrg(orgA) { actions() })
+        assertEquals(listOf("b"), s.driver.inOrg(orgB) { actions() })
+        assertEquals(listOf("account", "user.created"), s.asOwner(null) { actions() })
+        // Appending is untouched.
+        s.driver.inOrg(orgA) { insertAuditRowOf(orgA) }
+        assertEquals(listOf("a", "x"), s.driver.inOrg(orgA) { actions() })
     }
 
     @Test
