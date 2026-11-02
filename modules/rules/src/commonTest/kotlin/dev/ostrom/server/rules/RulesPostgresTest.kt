@@ -277,9 +277,13 @@ class RulesPostgresTest {
         val id = created.body<RuleDto>().id
         assertEquals("lyes", created.body<RuleDto>().decidedBy, "Named like in the console")
         writes(id).forEach { (method, path, body) ->
-            val expected = if (method == "DELETE") HttpStatusCode.NoContent else HttpStatusCode.OK
-            val ok = if (method == "POST" && path.endsWith("/rules")) HttpStatusCode.Created else expected
-            assertEquals(ok, server.call(method, path, "elevated-a", body).status, "$method $path")
+            val expected = when {
+                method == "DELETE" -> HttpStatusCode.NoContent
+                path.endsWith("/rules") -> HttpStatusCode.Created
+                "/analysis/" in path -> HttpStatusCode.Accepted
+                else -> HttpStatusCode.OK
+            }
+            assertEquals(expected, server.call(method, path, "elevated-a", body).status, "$method $path")
         }
         assertTrue(server.decisions().items.isNotEmpty(), "Each write is a signed decision")
         val audited = (server.koin.get<GovernanceAudit>() as AuditRecorder).records
@@ -290,12 +294,15 @@ class RulesPostgresTest {
                 "DELETE /api/v1/rules/$id policy:write",
                 "POST /api/v1/rules/bulk policy:write",
                 "PUT /api/v1/gates/policy gates:policy",
+                "POST /api/v1/analysis/start policy:write",
+                "POST /api/v1/analysis/restart policy:write",
+                "POST /api/v1/analysis/replay policy:write",
             ),
             audited.drop(1),
             "Each use of the elevated token is in the audit log, before the write",
         )
         server.write()
-        assertEquals(6, audited.size, "The console's writes are only signed decisions")
+        assertEquals(9, audited.size, "The console's writes are only signed decisions")
         val rule = server.write().body<RuleDto>().id
         // Only the scope that names the route: policy:write decides rules, not the gate policy.
         val patch = buildJsonObject { put("status", "rejected") }
