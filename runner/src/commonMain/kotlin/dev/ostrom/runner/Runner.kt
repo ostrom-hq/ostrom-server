@@ -66,7 +66,8 @@ class Runner(
             log("execution ended: ${error.message}")
             return 1
         }
-        val agentEnvironment = SessionScript.environment(environment, config) - RUNNER_SOCKETS + launchVariables(launch)
+        val agentEnvironment =
+            SessionScript.environment(environment, config) - RunnerConfig.RUNNER_SOCKETS + launchVariables(launch)
         val current = Current(terminals.start(SessionScript.FIRST, agentEnvironment, config.workspace))
         return try {
             coroutineScope {
@@ -195,16 +196,10 @@ class Runner(
             delay(reconnectDelay)
         }
     }
-
-    /** Constants of the runner. */
-    private companion object {
-        /** How many times the launch is asked for before the agent is left out. */
-        const val LAUNCH_ATTEMPTS = 10
-
-        /** Why the agent does not start when the server never answered the launch. */
-        const val UNREACHABLE = "the server could not be reached."
-
-        /** The runner's sockets: the agent only learns the checks', and only with a launch. */
-        val RUNNER_SOCKETS = setOf(RunnerConfig.CHECKS_VARIABLE, "OSTROM_CHECK_HOST_SOCKET")
-    }
 }
+
+/** How many times the launch is asked for before the agent is left out. */
+private const val LAUNCH_ATTEMPTS = 10
+
+/** Why the agent does not start when the server never answered the launch. */
+private const val UNREACHABLE = "the server could not be reached."

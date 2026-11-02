@@ -103,6 +103,9 @@ data class RunnerConfig(
         /** The variable that tells the agent's hooks where to ask for their checks. */
         const val CHECKS_VARIABLE = "OSTROM_RUNNER_CHECKS"
 
+        /** The runner's sockets: the agent only learns the checks', and only with a launch. */
+        val RUNNER_SOCKETS = setOf(CHECKS_VARIABLE, "OSTROM_CHECK_HOST_SOCKET")
+
         /** Where the runner serves the checks: the agent socket's directory, which the agent's container mounts. */
         const val DEFAULT_CHECKS_SOCKET = "/run/ostrom/checks.sock"
 

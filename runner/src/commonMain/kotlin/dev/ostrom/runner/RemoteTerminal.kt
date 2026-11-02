@@ -89,7 +89,7 @@ internal class RemoteTerminal(private val connection: AgentConnection, private v
             when (frame) {
                 is AgentFrame.Output -> return frame.bytes
                 is AgentFrame.Exit, null -> {
-                    code = (frame as? AgentFrame.Exit)?.code
+                    code = frame?.code
                     exited.complete(Unit)
                     return null
                 }

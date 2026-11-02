@@ -123,6 +123,11 @@ class DockerRuntimeDriverTest {
         )
         assertNull(checkHost["GroupAdd"])
         assertFalse("ostrom_runner_xyz" in checks.toString())
+    }
+
+    @Test
+    fun theRunnerHasItsOwnUidTheTokenAndBothSocketsButNoWorkspace() = runTest {
+        driver.startExecution(spec)
         // The runner: another uid, the shared group for the sockets, the token, and no workspace.
         val container = body(4)
         assertEquals("ghcr.io/ostrom-hq/ostrom-runner:1.2", container["Image"]!!.jsonPrimitive.content)
