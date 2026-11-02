@@ -73,6 +73,7 @@ data class GateActor(
     val authenticatedAt: Instant? = null,
     val role: OrgRole? = null,
 ) {
+    /** The shared ways to build an actor, so that what a rule reads is always stated. */
     companion object {
         /**
          * A person acting for themselves, with their role in the organization always stated: a caller built without
