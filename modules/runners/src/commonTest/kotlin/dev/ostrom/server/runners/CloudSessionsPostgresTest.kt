@@ -477,6 +477,17 @@ class CloudSessionsPostgresTest {
                 "Bearer $token",
             ).status,
         )
+
+        // S2-46: the token is checked before the body is read, and the body is capped.
+        suspend fun raw(text: String, auth: String) = server.client.post("/api/v1/cloud/runner/heartbeat") {
+            header(HttpHeaders.Authorization, auth)
+            contentType(ContentType.Application.Json)
+            setBody(text)
+        }
+        assertEquals(HttpStatusCode.Unauthorized, raw("{not json", "Bearer x").status, "Unknown token: body unread")
+        assertEquals(HttpStatusCode.BadRequest, raw("{not json", "Bearer $token").status)
+        val padded = """{"sessionId":"${starting.id}","epoch":2,"pad":"${"x".repeat(5000)}"}"""
+        assertEquals(HttpStatusCode.PayloadTooLarge, raw(padded, "Bearer $token").status)
     }
 
     @Test

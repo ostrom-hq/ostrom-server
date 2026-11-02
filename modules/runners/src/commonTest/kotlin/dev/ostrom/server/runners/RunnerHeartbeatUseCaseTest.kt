@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
+import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
 import dev.ostrom.server.runners.domain.CloudUsageMeter
 import dev.ostrom.server.runners.domain.DesiredState
 import dev.ostrom.server.runners.domain.ExecutionFencedException
@@ -48,6 +49,14 @@ class RunnerHeartbeatUseCaseTest {
         model: kotlin.time.Instant? = null,
     ) =
         RunnerHeartbeat(id, epoch, ready, stopped, model)
+
+    @Test
+    fun aRunnerIsAuthenticatedByTheTokenOfACurrentExecution() = runTest {
+        running()
+        val check = CheckRunnerTokenUseCaseImpl(repository, FakeRunnerTokens())
+        check("tok")
+        assertFailsWith<RunnerUnauthenticatedException> { check("forged") }
+    }
 
     @Test
     fun aReadyHeartbeatMakesTheSessionRunning() = runTest {
