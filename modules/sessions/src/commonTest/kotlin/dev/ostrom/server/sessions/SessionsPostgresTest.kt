@@ -15,9 +15,9 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
+import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import dev.ostrom.server.sessions.fakes.SettableClock
-import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.sessions.presentation.SessionScopes
@@ -50,6 +50,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class SessionsPostgresTest {
@@ -93,10 +94,10 @@ class SessionsPostgresTest {
             }
         }
         single<Clock> { clock }
-        // The server's measure of a session's cost (the usage module, later).
+        // The server's measure of a session's cost (the usage module binds the real one).
         single<SessionCosts> {
             object : SessionCosts {
-                override suspend fun costOf(orgId: Uuid, sessionId: String): Double = 0.42
+                override suspend fun costOf(orgId: Uuid, launchId: String?, from: Instant, to: Instant): Double = 0.42
             }
         }
     }
@@ -205,7 +206,7 @@ class SessionsPostgresTest {
         assertEquals(expected, statuses.sortedBy { it.value })
 
         val noOrg = server.call("user:nobody", "/api/v1/sessions?open=true")
-        assertEquals(HttpStatusCode.Forbidden, noOrg.status, "a credential of no organization")
+        assertEquals(HttpStatusCode.NotFound, noOrg.status, "a credential of no organization")
         val page = server.call("user:a:lyes", "/api/v1/sessions?open=true").body<SessionsPage>()
         assertEquals(1, page.items.size, "One open segment")
         val ended = server.call("user:a:lyes", "/api/v1/sessions?open=false").body<SessionsPage>().items
@@ -265,7 +266,8 @@ class SessionsPostgresTest {
             val written = execute("UPDATE sessions_sessions SET dev = 'mallory'").getOrThrow()
             listOf(none, other, swept, written.toString())
         }
-        assertEquals(listOf("0", "0", "1", "0"), seen, "The sweep reads every organization and writes none")
+        // The old sweep setting opens nothing any more (RLS audit R4): only sessions_stale reads across organizations.
+        assertEquals(listOf("0", "0", "0", "0"), seen, "No setting opens another organization, nothing is written")
         // The driver throws a refused write rather than returning it as a failure: both count as refused.
         val insert = try {
             server.driver.transaction {

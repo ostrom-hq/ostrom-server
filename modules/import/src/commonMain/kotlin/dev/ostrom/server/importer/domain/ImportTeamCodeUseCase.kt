@@ -49,17 +49,32 @@ class UnknownImportMembersException(teamCodeIds: List<String>) :
             "Nothing was imported.",
     )
 
-/** Only an owner runs the cutover import. */
+/** Only an owner runs the cutover import: a 403 `cutover_owner_required`, so the console names the reason. */
 class CutoverOwnerRequiredException :
-    OstromException(ErrorKind.FORBIDDEN, "Only an owner of the organization runs the cutover import.")
+    OstromException(
+        ErrorKind.FORBIDDEN,
+        "Only an owner of the organization runs the cutover import.",
+        "cutover_owner_required",
+    )
 
-/** The cutover import is recorded in the audit log, and this server has none. */
+/** The cutover import is recorded in the audit log, and this server has none: a 503 `cutover_audit_unavailable`. */
 class CutoverAuditUnavailableException :
-    OstromException(ErrorKind.UNAVAILABLE, "This server keeps no audit log, so it cannot record a cutover import.")
+    OstromException(
+        ErrorKind.UNAVAILABLE,
+        "This server keeps no audit log, so it cannot record a cutover import.",
+        "cutover_audit_unavailable",
+    )
 
-/** The cutover run revives shared accounts, and this server does not import them. */
+/**
+ * The cutover run revives shared accounts, and this server does not import them: a 503
+ * `cutover_sharing_unavailable`.
+ */
 class CutoverSharingUnavailableException :
-    OstromException(ErrorKind.UNAVAILABLE, "This server does not import shared accounts, so it has no cutover to run.")
+    OstromException(
+        ErrorKind.UNAVAILABLE,
+        "This server does not import shared accounts, so it has no cutover to run.",
+        "cutover_sharing_unavailable",
+    )
 
 /** This server does not import shared accounts. */
 private class NoSharingException :

@@ -2,12 +2,14 @@
 package dev.ostrom.server.gates.domain.services
 
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import kotlinx.serialization.json.JsonObject
 import kotlin.uuid.Uuid
 
 /** Hashes the canonical preimages of [dev.ostrom.server.gates.domain.models.GateKeys]. */
@@ -27,7 +29,7 @@ interface GatePolicies {
      * Reads the self-approval setting.
      *
      * @param orgId The organization.
-     * @return The setting; [SelfApprovalPolicy.NEVER] when the organization never chose (S2-15).
+     * @return The setting; [SelfApprovalPolicy.DEFAULT] when the organization never chose (S2-15).
      */
     suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy
 }
@@ -41,6 +43,16 @@ interface GateReceiptSigner {
      * @return The receipt id.
      */
     suspend fun sign(gate: Gate): String
+
+    /**
+     * Reads a signed receipt as the receipts module stores it, signature included: the answer to a yes or a no carries
+     * it (contract `answerApproval`).
+     *
+     * @param orgId The organization.
+     * @param receiptId The receipt, or null when the decision is not signed yet.
+     * @return The receipt, or null when there is none to read.
+     */
+    suspend fun read(orgId: Uuid, receiptId: String?): JsonObject? = null
 }
 
 /**
@@ -142,6 +154,23 @@ interface PullRequestHeads {
      * @return The pull request, or null when GitHub does not answer or does not know it.
      */
     suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest?
+}
+
+/**
+ * Reads what a CI ran on a commit from the forge (integrations-github, with the organization's installation), never
+ * from the workstation: the `ci` attestation of a receipt's check node (decision of 30/10 15:14).
+ */
+interface CiChecks {
+    /**
+     * The latest completed run of a check on a commit, by another App than Ostrom's.
+     *
+     * @param orgId The organization (its GitHub installation).
+     * @param repo The repository (`owner/name`).
+     * @param sha The commit.
+     * @param name The check's name.
+     * @return The run, or null when the forge has none, does not answer, or the organization has no installation.
+     */
+    suspend fun latest(orgId: Uuid, repo: String, sha: String, name: String): CiCheck?
 }
 
 /**

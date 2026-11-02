@@ -58,6 +58,13 @@ class InMemoryGatesRepository : GatesRepository {
     override suspend fun requestsOf(orgId: Uuid, gateId: Uuid): List<ApprovalRequest> =
         requests.values.filter { it.gateId == gateId && it.orgId == orgId }
 
+    var batchedRequestReads = 0
+
+    override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> {
+        batchedRequestReads++
+        return requests.values.filter { it.gateId in gateIds && it.orgId == orgId }
+    }
+
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> =
         gates.values.filter { it.orgId == orgId && sessionId in it.sessionIds }.sortedBy { it.createdAt }
 
@@ -144,7 +151,7 @@ class IdentityDigester : GateDigester {
     override fun digest(text: String): String = text
 }
 
-class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.SOLE_APPROVER) : GatePolicies {
+class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT) : GatePolicies {
     override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = policy
 }
 

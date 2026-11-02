@@ -148,6 +148,28 @@ interface WebSessionsRepository {
      * @return How many sessions were revoked.
      */
     suspend fun revokeAllOfUser(userId: Uuid, at: Instant): Long
+
+    /**
+     * Lists the live sessions of a user (neither revoked nor expired), the last used first.
+     *
+     * @param userId The user.
+     * @param now The time that decides which sessions are expired.
+     * @param limit The most sessions returned.
+     *
+     * @return The sessions.
+     */
+    suspend fun listLive(userId: Uuid, now: Instant, limit: Int): List<WebSession>
+
+    /**
+     * Revokes one live session of a user (sign out of that browser).
+     *
+     * @param userId The user: a session of anyone else is never revoked.
+     * @param id The session.
+     * @param at When, also the time that decides whether it is expired.
+     *
+     * @return Whether a live session of the user was revoked.
+     */
+    suspend fun revokeOfUser(userId: Uuid, id: Uuid, at: Instant): Boolean
 }
 
 /** API tokens. */
@@ -244,6 +266,34 @@ interface ApiTokensRepository {
     suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long
 }
 
+/**
+ * An organization's service keys: the `SERVICE` tokens of [ApiTokensRepository], read and revoked inside their
+ * organization (they are created with [ApiTokensRepository.create], found by hash like any token).
+ */
+interface ServiceKeysRepository {
+    /**
+     * Lists an organization's live service keys (not revoked, not expired), inside that organization.
+     *
+     * @param orgId The organization.
+     * @param now The current time, for expiry.
+     *
+     * @return At most [MAX_SERVICE_KEYS_PER_ORG] keys, newest first.
+     */
+    suspend fun listLive(orgId: Uuid, now: Instant): List<ApiToken>
+
+    /**
+     * Revokes a live service key of an organization, inside that organization.
+     *
+     * @param orgId The organization.
+     * @param id The key.
+     * @param at When.
+     *
+     * @return True when a live key was revoked; false when it is absent, another organization's, not a service key,
+     *   expired or already revoked.
+     */
+    suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean
+}
+
 /** Device authorizations of `ostrom login`. */
 interface DeviceAuthorizationsRepository {
     /**
@@ -330,4 +380,14 @@ interface AuditRepository {
      * @return The events.
      */
     suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent>
+
+    /**
+     * Lists the events of an organization's chain, newest first, as `GET /api/v1/audit` filters them.
+     *
+     * @param orgId The organization.
+     * @param query The filters, the page's cursor and its size.
+     *
+     * @return The events.
+     */
+    suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent>
 }

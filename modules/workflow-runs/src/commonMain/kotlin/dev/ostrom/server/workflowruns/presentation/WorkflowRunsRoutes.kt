@@ -10,10 +10,10 @@ import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
-import dev.ostrom.server.kernel.errors.ErrorKind
-import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.kernel.http.withNulls
 import dev.ostrom.server.receipts.presentation.requireReceiptReader
 import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.sessions.presentation.SessionScopes
@@ -30,12 +30,12 @@ import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-import kotlin.uuid.Uuid
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlin.uuid.Uuid
 
 /**
  * The workflow-runs routes of the contract. Reports (checks, notifications, the workflow receipt) come from the
@@ -51,7 +51,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
         post<ChecksApi> {
             val actor = actorOf(call, SessionScopes.writing)
             val run = reportCheck(actor, call.receive<ReportCheckRequest>())
-            call.respond(HttpStatusCode.Created, run)
+            call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
         }
         get<ChecksApi> { params ->
             val actor = actorOf(call, SessionScopes.reading)
@@ -92,7 +92,8 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
         val cloudSession = Uuid.parseOrNull(body.sessionId)
             ?: throw InvalidRunException("sessionId: the cloud session's id.")
         val execution = authenticateRunner(token, cloudSession, body.epoch)
-        call.respond(HttpStatusCode.Created, reportRunnerCheck(execution.orgId, execution.id, body.check))
+        val run = reportRunnerCheck(execution.orgId, execution.id, body.check)
+        call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
     }
 }
 
@@ -105,7 +106,7 @@ private suspend fun WorkflowRunsRoutesDependencies.actorOf(call: ApplicationCall
 
 private suspend fun WorkflowRunsRoutesDependencies.resolve(principal: AuthenticatedPrincipal): GateActor =
     actors.resolve(principal)
-        ?: throw OstromException(ErrorKind.FORBIDDEN, "This credential belongs to no organization.")
+        ?: throw principal.outsideOrganization()
 
 // A person reads receipts with a receipts scope (S2-47); an agent token only its own launch's (the use case checks).
 private suspend fun WorkflowRunsRoutesDependencies.bundleReader(call: ApplicationCall): GateActor {
@@ -123,13 +124,14 @@ private fun statusOf(value: String?): NotificationStatus? = value?.let { text ->
         ?: throw InvalidRunException("status: queued, sent, logged-only or not-sent.")
 }
 
-// `package` is always written, null when the receipt cites none (the contract requires the key).
+// `package` is always written, null when the receipt cites none, and so is its `repo`, null for an organization's
+// package (the contract requires both keys).
 private fun ReceiptBundle.toJson(): JsonObject = buildJsonObject {
     put("format", BUNDLE_FORMAT)
     put("receipt", receipt)
     put("chain", JsonArray(chain))
-    val pack = envelope
-    put("package", if (pack == null) JsonNull else OstromJson.encodeToJsonElement(PackageEnvelope.serializer(), pack))
+    val pack = envelope?.let { OstromJson.encodeToJsonElement(PackageEnvelope.serializer(), it).withNulls("repo") }
+    put("package", pack ?: JsonNull)
     put(
         "keys",
         JsonArray(

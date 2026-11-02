@@ -12,6 +12,7 @@ import dev.ostrom.server.gates.domain.models.GatePush
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.GateView
 import dev.ostrom.server.gates.domain.models.PushRef
+import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.usecases.AnswerGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.EnsureGateReceiptUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.GetApprovalQueueUseCaseImpl
@@ -22,21 +23,24 @@ import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.OpenGate
 import dev.ostrom.server.gates.domain.usecases.OpenGateUseCaseImpl
 import dev.ostrom.server.gates.domain.usecases.UseGateUseCaseImpl
+import dev.ostrom.server.gates.infrastructure.InProcessGateChanges
 
 /** Every gate use case wired on the fakes, with helpers that build the requests of the prototype's tests. */
 class GateBench {
     val repository = InMemoryGatesRepository()
     val sessions = FakeSessions()
-    val policies = FakePolicies()
+    // The prototype's tests model an organization that chose `sole-approver`; one that never chose is `never`.
+    val policies = FakePolicies(SelfApprovalPolicy.SOLE_APPROVER)
     val notifier = FakeNotifier()
     val signer = FakeSigner()
     val clock = SettableClock()
     val logger = RecordingLogger()
     val receipts = EnsureGateReceiptUseCaseImpl(repository, signer, logger)
     val open = OpenGateUseCaseImpl(repository, sessions, policies, notifier, IdentityDigester(), clock)
-    val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock)
+    val changes = InProcessGateChanges()
+    val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock, changes)
     val use = UseGateUseCaseImpl(repository, receipts, clock)
-    val get = GetGateUseCaseImpl(repository, policies, receipts)
+    val get = GetGateUseCaseImpl(repository, policies, receipts, changes)
     val approvals = ListApprovalsUseCaseImpl(repository)
     val approval = GetApprovalUseCaseImpl(repository)
     val queue = GetApprovalQueueUseCaseImpl(repository, policies)

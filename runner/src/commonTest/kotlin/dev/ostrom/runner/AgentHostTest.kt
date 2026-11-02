@@ -16,6 +16,7 @@ import kotlin.time.Duration.Companion.seconds
 /** A terminal whose output the test writes; [terminate] ends it unless [stubborn]. */
 internal class ScriptedTerminal(private val stubborn: Boolean = false) : Terminal {
     val output = Channel<ByteArray?>(Channel.UNLIMITED)
+    override var exitCode: Int? = null
     val written = mutableListOf<String>()
     val sizes = mutableListOf<Pair<Int, Int>>()
     var terminated = 0
@@ -78,10 +79,11 @@ class AgentHostTest {
         AgentFrames.write(fromRunner, AgentFrame.Input("ls\r".encodeToByteArray()))
         AgentFrames.write(fromRunner, AgentFrame.Resize(100, 30))
         // Frames the runner has no reason to send are ignored.
-        AgentFrames.write(fromRunner, AgentFrame.Exit)
+        AgentFrames.write(fromRunner, AgentFrame.Exit(0))
         AgentFrames.write(fromRunner, start)
+        terminal.exitCode = 7
         terminal.output.send(null)
-        assertEquals(AgentFrame.Exit, AgentFrames.read(toRunner))
+        assertEquals(AgentFrame.Exit(7), AgentFrames.read(toRunner))
         fromRunner.flushAndClose()
         served.join()
         assertEquals(listOf(Triple("run", mapOf("TERM" to "xterm"), "/workspace")), starter.starts)
@@ -98,7 +100,7 @@ class AgentHostTest {
         val served = launch { AgentHost(RecordingStarter(terminal)).serve(fromRunner, toRunner) }
         AgentFrames.write(fromRunner, start)
         AgentFrames.write(fromRunner, AgentFrame.Terminate)
-        assertEquals(AgentFrame.Exit, AgentFrames.read(toRunner))
+        assertEquals(AgentFrame.Exit(null), AgentFrames.read(toRunner))
         served.join()
         assertEquals(2, terminal.terminated)
         assertTrue(terminal.closed)

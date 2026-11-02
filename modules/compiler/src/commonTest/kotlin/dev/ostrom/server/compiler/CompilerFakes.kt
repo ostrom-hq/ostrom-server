@@ -47,7 +47,7 @@ internal class MemoryCompilerRepository : CompilerRepository {
         author: Authorship,
     ): StoredWorkflow? {
         val current = workflows[orgId to id]
-        if (expectedVersion != null && current?.version != expectedVersion) return null
+        if (current?.version != expectedVersion) return null
         val saved = StoredWorkflow(CompilerDocs.workflow(raw), (current?.version ?: 0) + 1, author.by, author.at)
         workflows[orgId to id] = saved
         return saved

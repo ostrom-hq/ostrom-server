@@ -4,6 +4,7 @@ package dev.ostrom.server.rules
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
+import dev.ostrom.server.rules.domain.models.RuleGateCheck
 import dev.ostrom.server.rules.domain.models.RuleSource
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.services.RuleDecisions
@@ -73,6 +74,20 @@ class RuleDocumentsTest {
         val plain = RuleDocuments.gate(gate.copy(actions = gate.actions.map { it.copy(tools = null) }, reason = null))
         assertEquals(setOf("actions", "approvers"), plain.keys)
         assertFalse("tools" in plain.getValue("actions").jsonArray[0].jsonObject)
+    }
+
+    @Test
+    fun aGateKeepsItsChecksOnlyWhenItNeedsSome() {
+        val checked = RuleDocuments.gate(
+            gate.copy(
+                checks = listOf(RuleGateCheck("tests", attested = true), RuleGateCheck("lint", attested = false)),
+            ),
+        )
+        assertEquals(
+            Json.parseToJsonElement("""[{"check":"tests","attested":true},{"check":"lint","attested":false}]"""),
+            checked.getValue("checks"),
+        )
+        assertFalse("checks" in RuleDocuments.gate(gate))
     }
 
     @Test

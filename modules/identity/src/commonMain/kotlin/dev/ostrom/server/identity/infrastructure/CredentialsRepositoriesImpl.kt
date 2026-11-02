@@ -38,20 +38,9 @@ class WebSessionsRepositoryImpl(private val driver: Driver) : WebSessionsReposit
     }
 
     override suspend fun findBySecretHash(secretHash: String): WebSession? = driver.fetchAll(
-        Statement.create(
-            "SELECT id, user_id, created_at, expires_at, last_seen_at, revoked_at FROM identity_web_sessions " +
-                "WHERE secret_hash = :hash",
-        ).bind("hash", secretHash),
-    ).getOrThrow().firstOrNull()?.let {
-        WebSession(
-            id = it.get("id").asUuid(),
-            userId = it.get("user_id").asUuid(),
-            createdAt = it.get("created_at").asInstant(),
-            expiresAt = it.get("expires_at").asInstant(),
-            lastSeenAt = it.get("last_seen_at").asInstant(),
-            revokedAt = it.get("revoked_at").asInstantOrNull(),
-        )
-    }
+        Statement.create("SELECT $SESSION_COLUMNS FROM identity_web_sessions WHERE secret_hash = :hash")
+            .bind("hash", secretHash),
+    ).getOrThrow().firstOrNull()?.toWebSession()
 
     override suspend fun touch(id: Uuid, at: Instant) {
         driver.execute(
@@ -73,7 +62,35 @@ class WebSessionsRepositoryImpl(private val driver: Driver) : WebSessionsReposit
         )
             .bind("at", at).bind("user", userId),
     ).getOrThrow()
+
+    override suspend fun listLive(userId: Uuid, now: Instant, limit: Int): List<WebSession> = driver.fetchAll(
+        Statement.create(
+            "SELECT $SESSION_COLUMNS FROM identity_web_sessions WHERE user_id = :user AND revoked_at IS NULL " +
+                "AND expires_at > :now ORDER BY last_seen_at DESC, id LIMIT :limit",
+        ).bind("user", userId).bind("now", now).bind("limit", limit),
+    ).getOrThrow().map { it.toWebSession() }
+
+    override suspend fun revokeOfUser(userId: Uuid, id: Uuid, at: Instant): Boolean = driver.execute(
+        Statement.create(
+            "UPDATE identity_web_sessions SET revoked_at = :at WHERE id = :id AND user_id = :user " +
+                "AND revoked_at IS NULL AND expires_at > :at",
+        ).bind("at", at).bind("id", id).bind("user", userId),
+    ).getOrThrow() == 1L
+
+    private companion object {
+        const val SESSION_COLUMNS = "id, user_id, created_at, expires_at, last_seen_at, revoked_at"
+    }
 }
+
+/** Reads a browser session row. */
+private fun ResultSet.Row.toWebSession() = WebSession(
+    id = get("id").asUuid(),
+    userId = get("user_id").asUuid(),
+    createdAt = get("created_at").asInstant(),
+    expiresAt = get("expires_at").asInstant(),
+    lastSeenAt = get("last_seen_at").asInstant(),
+    revokedAt = get("revoked_at").asInstantOrNull(),
+)
 
 /**
  * [ApiTokensRepository] on PostgreSQL. Scopes are stored space-separated (a scope never contains a space).

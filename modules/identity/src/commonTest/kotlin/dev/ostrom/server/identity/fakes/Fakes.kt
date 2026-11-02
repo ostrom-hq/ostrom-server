@@ -12,9 +12,11 @@ import dev.ostrom.server.identity.domain.DeviceAuthorization
 import dev.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import dev.ostrom.server.identity.domain.DeviceAuthorizationsRepository
 import dev.ostrom.server.identity.domain.DuplicateIdentityException
+import dev.ostrom.server.identity.domain.OrgAuditQuery
 import dev.ostrom.server.identity.domain.RateLimiter
 import dev.ostrom.server.identity.domain.SecretGenerator
 import dev.ostrom.server.identity.domain.SecretHasher
+import dev.ostrom.server.identity.domain.ServiceKeysRepository
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.UserEmail
@@ -143,6 +145,18 @@ class InMemoryWebSessionsRepository : WebSessionsRepository {
         return live.size.toLong()
     }
 
+    override suspend fun listLive(userId: Uuid, now: Instant, limit: Int): List<WebSession> =
+        sessions.values.filter { it.userId == userId && it.revokedAt == null && it.expiresAt > now }
+            .sortedByDescending { it.lastSeenAt }.take(limit)
+
+    override suspend fun revokeOfUser(userId: Uuid, id: Uuid, at: Instant): Boolean {
+        val live = sessions.values.any {
+            it.id == id && it.userId == userId && it.revokedAt == null && it.expiresAt > at
+        }
+        if (live) revoke(id, at)
+        return live
+    }
+
     private fun update(id: Uuid, change: (WebSession) -> WebSession) {
         sessions.entries.firstOrNull { it.value.id == id }?.let { it.setValue(change(it.value)) }
     }
@@ -207,6 +221,21 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
     }
 }
 
+class InMemoryServiceKeysRepository(private val tokens: InMemoryApiTokensRepository) : ServiceKeysRepository {
+    override suspend fun listLive(orgId: Uuid, now: Instant): List<ApiToken> =
+        tokens.tokens.values.filter {
+            it.orgId == orgId && it.kind == TokenKind.SERVICE && it.revokedAt == null &&
+                (it.expiresAt?.let { e -> e > now } ?: true)
+        }
+            .sortedByDescending { it.createdAt }
+
+    override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean {
+        listLive(orgId, at).firstOrNull { it.id == id } ?: return false
+        tokens.tokens.entries.first { it.value.id == id }.let { it.setValue(it.value.copy(revokedAt = at)) }
+        return true
+    }
+}
+
 class InMemoryDeviceAuthorizationsRepository(
     private val tokens: InMemoryApiTokensRepository,
 ) : DeviceAuthorizationsRepository {
@@ -263,4 +292,10 @@ class InMemoryAuditRepository : AuditRepository {
     override suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent> =
         events.filter { it.entry.orgId == orgId && it.sequence < (beforeSequence ?: Long.MAX_VALUE) }
             .reversed().take(limit)
+
+    override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent> =
+        list(orgId, null, query.beforeSequence, Int.MAX_VALUE)
+            .filter { query.actorId == null || it.entry.actorId == query.actorId }
+            .filter { query.action == null || it.entry.action == query.action }
+            .take(query.limit)
 }

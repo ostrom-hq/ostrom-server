@@ -103,6 +103,11 @@ class CloseSessionTest {
         assertEquals(7, ended.tools)
         assertEquals("opus", ended.model)
         assertEquals(1.5, ended.costUsd)
+        assertEquals(
+            listOf(Triple(session.launchId, session.startedAt, ended.endedAt!!)),
+            bench.costs.asked,
+            "The cost is the launch's while the segment ran",
+        )
         assertEquals(0, ended.exitCode)
         assertEquals(ended, bench.repository.get(ORG, "s-1"))
 

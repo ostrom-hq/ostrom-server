@@ -2,11 +2,13 @@
 package dev.ostrom.server.gates.infrastructure
 
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
+import dev.ostrom.server.gates.domain.models.CiCheck
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -32,9 +34,9 @@ import kotlin.uuid.Uuid
 // integrations-github, notifications), which bind their implementation over these defaults. Each default fails
 // closed: until the owner is loaded, nothing is approved that should not be.
 
-/** No organization setting yet: no self-approval, a yes always comes from another person (S2-15). */
+/** No organization setting yet: [SelfApprovalPolicy.DEFAULT], what an organization that never chose gets (S2-15). */
 class DefaultGatePolicies : GatePolicies {
-    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = SelfApprovalPolicy.NEVER
+    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT
 }
 
 /** Without the sessions module, a gate asked inside a session is refused rather than added to an unknown session. */
@@ -52,6 +54,11 @@ class NoGateNodes : GateNodeResolver {
 /** Without the GitHub integration, a pull request's head is unknown: the merge is bound to its command. */
 class UnknownPullRequestHeads : PullRequestHeads {
     override suspend fun head(orgId: Uuid, repo: String, number: Int): GatePullRequest? = null
+}
+
+/** Without the GitHub integration, no CI run is known: a check node stays the workstation's declaration. */
+class NoCiChecks : CiChecks {
+    override suspend fun latest(orgId: Uuid, repo: String, sha: String, name: String): CiCheck? = null
 }
 
 /**

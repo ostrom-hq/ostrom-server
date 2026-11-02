@@ -73,6 +73,7 @@ data class DecisionDoc(
  * @property prodApprover The default approver of a gate that names none.
  * @property codePublishers Who may publish a node that runs code; null for every person who decides.
  * @property now The compilation time.
+ * @property ruleGates The gates the rules put on boundary actions, as one-gate workflows: in the gates catalogue only.
  */
 data class CompileInputs(
     val repo: String?,
@@ -84,4 +85,5 @@ data class CompileInputs(
     val prodApprover: String?,
     val codePublishers: List<String>?,
     val now: Instant,
+    val ruleGates: List<Workflow> = emptyList(),
 )
