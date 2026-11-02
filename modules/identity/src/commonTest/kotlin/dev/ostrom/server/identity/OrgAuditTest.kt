@@ -6,6 +6,7 @@ import dev.ostrom.server.identity.domain.AuditLogImpl
 import dev.ostrom.server.identity.domain.InvalidAuditCursorException
 import dev.ostrom.server.identity.domain.ListOrgAuditUseCaseImpl
 import dev.ostrom.server.identity.domain.ORG_AUDIT_PAGE
+import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.fakes.FakeHasher
 import dev.ostrom.server.identity.fakes.InMemoryAuditRepository
@@ -34,8 +35,14 @@ class OrgAuditTest {
     private class World(signer: Ed25519InstanceSigner) {
         val events = InMemoryAuditRepository()
         val users = InMemoryUsersRepository()
-        val log = AuditLogImpl(events, signer, FakeHasher(), SettableClock())
+        val log = AuditLogImpl(events, signer, ShortHasher, SettableClock())
         val list = ListOrgAuditUseCaseImpl(events, users)
+    }
+
+    // FakeHasher wraps its input, so a chain of hashes grows with every line, escaped again each time: 50 lines run
+    // out of memory. A hash of fixed length keeps a long log small.
+    private object ShortHasher : SecretHasher by FakeHasher() {
+        override suspend fun hash(secret: String): String = "h${secret.hashCode()}"
     }
 
     private suspend fun world() = World(Ed25519InstanceSigner.generate()).apply { users.users[ada.id] = ada }
