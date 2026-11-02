@@ -5,6 +5,8 @@ import dev.ostrom.server.identity.domain.MAX_AGENT_TOKEN_LIFETIME
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
+import dev.ostrom.server.launches.domain.models.LaunchLimit
+import dev.ostrom.server.launches.domain.models.LaunchRateLimitedException
 import dev.ostrom.server.launches.domain.models.LaunchRefusedException
 import dev.ostrom.server.launches.domain.models.NewLaunch
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
@@ -15,14 +17,15 @@ import dev.ostrom.server.launches.fakes.FixedClock
 import dev.ostrom.server.launches.fakes.InMemoryLaunches
 import dev.ostrom.server.launches.fakes.ORG
 import dev.ostrom.server.launches.fakes.RecordingTokens
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
-import kotlinx.coroutines.test.runTest
 
 class CreateLaunchTest {
     private val clock = FixedClock()
@@ -52,6 +55,19 @@ class CreateLaunchTest {
         assertEquals(listOf(launch), launches.launches)
         assertEquals(listOf(Triple(ADA, launch.id, CreateLaunchUseCaseImpl.LIFETIME)), tokens.issued)
         assertEquals("osa_${launch.id}", created.agentToken)
+    }
+
+    @Test
+    fun aLaunchOverTheLimitIsRefusedWithItsWaitAndIssuesNoToken() = runTest {
+        create(ADA, NewLaunch(null, "codex", null))
+        assertEquals(listOf(LaunchLimit.DEFAULT), launches.limits, "The server's limits by default")
+        launches.refusal = 90.seconds
+        val refused = assertFailsWith<LaunchRateLimitedException> { create(ADA, NewLaunch(null, "codex", null)) }
+        assertEquals(ErrorKind.RATE_LIMITED, refused.kind)
+        assertEquals(90.seconds, refused.retryAfter)
+        assertEquals("Too many launches: try again in 91 s.", refused.message)
+        assertEquals(1, launches.launches.size)
+        assertEquals(1, tokens.issued.size, "Only the launch that was stored has a token")
     }
 
     @Test

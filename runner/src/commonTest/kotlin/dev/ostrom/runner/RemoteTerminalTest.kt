@@ -66,9 +66,11 @@ class RemoteTerminalTest {
         AgentFrames.write(pipe.fromHost, AgentFrame.Output("hi".encodeToByteArray()))
         // Frames only the runner sends are ignored.
         AgentFrames.write(pipe.fromHost, AgentFrame.Terminate)
-        AgentFrames.write(pipe.fromHost, AgentFrame.Exit)
+        AgentFrames.write(pipe.fromHost, AgentFrame.Exit(4))
         assertEquals("hi", terminal.read()?.decodeToString())
+        assertNull(terminal.exitCode)
         assertNull(terminal.read())
+        assertEquals(4, terminal.exitCode)
         terminal.close()
         assertTrue(pipe.closed)
     }
@@ -77,7 +79,10 @@ class RemoteTerminalTest {
     fun aBrokenConnectionEndsTheTerminal() = runTest {
         val closed = Pipe()
         closed.fromHost.flushAndClose()
-        assertNull(RemoteTerminal(closed, 5.seconds).read())
+        val ended = RemoteTerminal(closed, 5.seconds)
+        assertNull(ended.read())
+        // No code was reported.
+        assertNull(ended.exitCode)
         val garbage = Pipe()
         garbage.fromHost.writeByte(42)
         garbage.fromHost.writeInt(0)
@@ -114,7 +119,7 @@ class RemoteTerminalTest {
         val reader = launch { while (terminal.read() != null) Unit }
         val stopping = launch { terminal.terminate() }
         assertEquals(AgentFrame.Terminate, AgentFrames.read(pipe.toHost))
-        AgentFrames.write(pipe.fromHost, AgentFrame.Exit)
+        AgentFrames.write(pipe.fromHost, AgentFrame.Exit(143))
         stopping.join()
         reader.join()
     }

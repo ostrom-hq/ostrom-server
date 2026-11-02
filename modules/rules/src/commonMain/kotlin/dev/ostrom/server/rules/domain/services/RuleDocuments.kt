@@ -94,6 +94,19 @@ object RuleDocuments {
         )
         put("approvers", texts(gate.approvers))
         gate.reason?.let { put("reason", it) }
+        if (gate.checks.isNotEmpty()) {
+            put(
+                "checks",
+                JsonArray(
+                    gate.checks.map { check ->
+                        buildJsonObject {
+                            put("check", check.check)
+                            put("attested", check.attested)
+                        }
+                    },
+                ),
+            )
+        }
     }
 
     /**
