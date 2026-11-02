@@ -345,6 +345,8 @@ class RuleInferenceTest {
         assertEquals(null, rules.getValue("branch:site").gate?.reason, "A team owns everything: no login, no reason")
         assertEquals(emptyList(), rules.getValue("branch:site").gate?.approvers)
 
+        val open = unprotected.copy(protection = BranchProtection(false, 0, false, emptyList(), false))
+        assertEquals(RuleStrength.RECOMMENDED, infer(open).getValue("owners:/docs/:site").strength, "Not required")
         val required = unprotected.copy(protection = BranchProtection(true, 1, true, emptyList(), false))
         assertEquals("edit-owned-root-8a5edab2", infer(required).getValue("owners:/:site").gate?.actions?.single()?.cls)
     }
