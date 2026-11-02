@@ -2,16 +2,11 @@
 package dev.ostrom.server.rules.presentation
 
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
-import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.receipts.domain.usecases.isoMillis
 import dev.ostrom.server.rules.domain.models.AnalysisKind
 import dev.ostrom.server.rules.domain.models.AnalysisRun
 import dev.ostrom.server.rules.domain.usecases.AnalysisSnapshot
-import dev.ostrom.server.rules.domain.usecases.GetAnalysisStateUseCase
-import dev.ostrom.server.rules.domain.usecases.GetReplayUseCase
-import dev.ostrom.server.rules.domain.usecases.StartAnalysisUseCase
-import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.resources.get
@@ -20,23 +15,6 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-
-/**
- * What the analysis routes need.
- *
- * @property callers Resolves the caller's organization and role.
- * @property actors Names the person who starts a run.
- * @property start Starts an analysis or a replay.
- * @property state Reads the snapshot.
- * @property replay Reads the last replay.
- */
-data class AnalysisRoutesDependencies(
-    val callers: CallerResolver,
-    val actors: GateActorResolver,
-    val start: StartAnalysisUseCase,
-    val state: GetAnalysisStateUseCase,
-    val replay: GetReplayUseCase,
-)
 
 /**
  * The analysis routes: an owner or admin in the console starts a run (it reads every repository and spends on the

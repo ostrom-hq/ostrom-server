@@ -255,7 +255,11 @@ class RuleInferenceTest {
                 "needs a yes.",
             rules.getValue("area:web:migrations").statement,
         )
-        val branch = rules.getValue("branch:web")
+    }
+
+    @Test
+    fun anUnprotectedDefaultBranchOtherThanMainGetsItsOwnPushPattern() {
+        val branch = infer(RepositoryFixtures.web).getValue("branch:web")
         assertEquals("A push to `develop` of web needs a yes.", branch.statement)
         assertEquals(
             "GitHub does not protect `develop`: anyone with write access, an agent included, can push to it.",

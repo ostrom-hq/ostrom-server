@@ -88,13 +88,7 @@ object RuleInference {
         val languages = BuildFacts.languages(paths)
         val code = languages.takeIf { it.isNotEmpty() }?.let(::languageSentence)
         val tools = BuildFacts.buildTools(paths, context.snapshot.files[RepositoryFacts.PACKAGE_JSON])
-        if (tools.isEmpty()) {
-            val top = languages.firstOrNull() ?: return emptyList()
-            return listOf(
-                proposal(context, "languages", "${context.name} is written mostly in ${top.name}.", "note")
-                    .copy(why = code.orEmpty(), confidence = LANGUAGES_ONLY),
-            )
-        }
+        if (tools.isEmpty()) return listOfNotNull(languagesNote(context, languages, code))
         return tools.map { tool ->
             val statement = tool.command?.let { "In ${context.name}, check a change with `$it` before pushing it." }
                 ?: "In ${context.name}, build with ${tool.name}."
@@ -109,6 +103,13 @@ object RuleInference {
                 )
         }
     }
+
+    // A repository with code but no build tool: what it is written in.
+    private fun languagesNote(context: RepositoryContext, languages: List<LanguageShare>, code: String?) =
+        languages.firstOrNull()?.let { top ->
+            proposal(context, "languages", "${context.name} is written mostly in ${top.name}.", "note")
+                .copy(why = code.orEmpty(), confidence = LANGUAGES_ONLY)
+        }
 
     private fun languageSentence(languages: List<LanguageShare>): String {
         val total = languages.sumOf { it.files }

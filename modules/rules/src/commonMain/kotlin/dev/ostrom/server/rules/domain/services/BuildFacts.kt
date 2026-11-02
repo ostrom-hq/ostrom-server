@@ -3,6 +3,7 @@ package dev.ostrom.server.rules.domain.services
 
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 /** A repository's languages, counted by file extension, and the build tools its root files name. */
@@ -93,14 +94,15 @@ object BuildFacts {
     }
 
     private fun scripts(packageJson: String?): Set<String> {
-        val text = packageJson ?: return emptySet()
-        val parsed = try {
-            Json.parseToJsonElement(text)
-        } catch (_: SerializationException) {
-            // A manifest that is not JSON names no script; the tool is still found by its file.
-            return emptySet()
-        }
+        val parsed = packageJson?.let(::parse)
         return ((parsed as? JsonObject)?.get("scripts") as? JsonObject)?.keys.orEmpty()
+    }
+
+    // A manifest that is not JSON names no script; the tool is still found by its file.
+    private fun parse(text: String): JsonElement? = try {
+        Json.parseToJsonElement(text)
+    } catch (_: SerializationException) {
+        null
     }
 
     private fun python(paths: List<String>, root: Set<String>): BuildTool? {
