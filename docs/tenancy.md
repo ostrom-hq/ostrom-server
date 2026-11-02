@@ -59,6 +59,9 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `orgs_slug_taken(slug)` | orgs | whether a short name was ever used | `OrgsServingRolePostgresTest` |
 | `orgs_memberships_of(user)` | orgs | reads a user's memberships and their organizations | `OrgsServingRolePostgresTest` |
 | `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
+| `automations_route_org(id)` | automations | an automation's organization, for its webhook | `AutomationsRoutesTenancyPostgresTest` |
+| `automations_due_routes(now, limit)` | automations | claims the due crons of every organization (`FOR UPDATE SKIP LOCKED`) | `AutomationsPostgresTest` |
+| `automations_organizations()` | automations | the organizations that have automations, for the retention jobs | `AutomationsPostgresTest` |
 
 ## The proof
 
