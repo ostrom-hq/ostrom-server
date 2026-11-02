@@ -537,6 +537,44 @@ class GatesPostgresTest {
     }
 
     @Test
+    fun theApproversReadCapsEachGateNotTheWholePage() = gatesTest { server ->
+        val repository = server.koin.get<GatesRepository>()
+        val at = Instant.parse("2026-10-30T02:00:00Z")
+        // Ordered by id, the crowded gate comes first: one limit for the whole read would leave the next gate out.
+        val crowded = Uuid.parse("00000000-0000-0000-0000-000000000001")
+        val next = Uuid.parse("00000000-0000-0000-0000-000000000002")
+        fun gateOf(id: Uuid) = Gate(
+            id = id,
+            orgId = orgA,
+            key = "k-$id",
+            subject = GateSubject(repo = "o/r", actionClass = "push-main", command = "git push", scope = "session:s"),
+            node = null,
+            label = "Push",
+            mode = GateMode.UNGATED,
+            status = GateStatus.PENDING,
+            askedBy = listOf("lyes"),
+            askedVia = setOf(AskedVia.HOOK),
+            sessionIds = listOf(session),
+            shownDigest = "s",
+            evidence = emptyList(),
+            createdAt = at,
+        )
+        fun requestsOf(gate: Uuid, count: Int) = (0 until count).map {
+            ApprovalRequest(Uuid.random(), gate, orgA, "rev-$it", RequestStatus.PENDING, createdAt = at)
+        }
+        repository.transaction {
+            insertGate(gateOf(crowded))
+            insertGate(gateOf(next))
+            insertRequests(requestsOf(crowded, 101) + requestsOf(next, 2))
+        }
+
+        val approvers = repository.approversOf(orgA, listOf(crowded, next))
+        assertEquals((0 until 100).map { "rev-$it" }, approvers.getValue(crowded), "100 at most, in their order")
+        assertEquals(listOf("rev-0", "rev-1"), approvers.getValue(next))
+        assertEquals(emptyMap(), repository.approversOf(orgB, listOf(crowded, next)))
+    }
+
+    @Test
     fun aNoClosesTheGateAndTheListFiltersByStatus() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
         val no = server.answer("user:a:rev-b", opened, "rev-b", yes = false)

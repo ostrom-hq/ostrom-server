@@ -24,7 +24,10 @@ data class Org(
     val githubOrgId: Long?,
     val freeClaim: String?,
     val createdAt: Instant,
-)
+) {
+    /** Its picture: the linked GitHub organization's avatar, or empty when it is not linked. */
+    val avatarUrl: String get() = githubOrgId?.let { "https://avatars.githubusercontent.com/u/$it" }.orEmpty()
+}
 
 /**
  * A person's membership of an organization.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs
 
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
@@ -60,6 +61,7 @@ import dev.ostrom.server.orgs.infrastructure.IdentityPeople
 import dev.ostrom.server.orgs.infrastructure.IdentityRateLimiter
 import dev.ostrom.server.orgs.infrastructure.InvitationsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MailInvitationMailer
+import dev.ostrom.server.orgs.infrastructure.MemberDirectoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembershipOrgResolver
 import dev.ostrom.server.orgs.infrastructure.OrgsMigrations
@@ -70,6 +72,7 @@ import dev.ostrom.server.orgs.presentation.MemberCommands
 import dev.ostrom.server.orgs.presentation.OrgCommands
 import dev.ostrom.server.orgs.presentation.OrgsConfig
 import dev.ostrom.server.orgs.presentation.OrgsRoutesDependencies
+import dev.ostrom.server.orgs.presentation.myOrganizationsRoutes
 import dev.ostrom.server.orgs.presentation.orgsRoutes
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
@@ -81,7 +84,8 @@ import org.koin.dsl.module
  * the server's [PrincipalOrgResolver].
  *
  * Other modules use it through the interfaces it binds: [PrincipalOrgResolver] (through the
- * kernel's `requireOrgPrincipal`), [CountMembersUseCase] for per-seat billing. Until the billing
+ * kernel's `requireOrgPrincipal`), [MemberDirectory] (who a wait may be asked of), [CountMembersUseCase] for
+ * per-seat billing. Until the billing
  * module binds its own [SeatPolicy] here, every organization has the free plan's limit
  * ([FreePlanSeats]).
  */
@@ -99,7 +103,8 @@ object OrgsModule : ServerModule {
         single<OrgRateLimiter> { IdentityRateLimiter(get()) }
         single<InvitationMailer> { MailInvitationMailer(get()) }
         single<SeatPolicy> { FreePlanSeats() }
-        single<PrincipalOrgResolver> { MembershipOrgResolver(get()) }
+        single<PrincipalOrgResolver> { MembershipOrgResolver(get(), get()) }
+        single<MemberDirectory> { MemberDirectoryImpl(get()) }
         // Identity has no teams: the QA account (a person, their team, a token) is assembled here.
         single<TestAccountSeeder> { TestAccountSeederImpl(get(), get(), get(), get()) }
         single {
@@ -147,6 +152,8 @@ object OrgsModule : ServerModule {
     override val migrations: List<SchemaMigration> = OrgsMigrations
 
     override fun routes(route: Route, koin: Koin) {
-        route.orgsRoutes(koin.get())
+        val dependencies = koin.get<OrgsRoutesDependencies>()
+        route.orgsRoutes(dependencies)
+        route.myOrganizationsRoutes(dependencies)
     }
 }
