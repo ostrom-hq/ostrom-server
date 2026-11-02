@@ -26,6 +26,8 @@ import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCase
 import dev.ostrom.server.runners.domain.IssueTerminalTicketUseCaseImpl
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCase
 import dev.ostrom.server.runners.domain.ListCloudSessionsUseCaseImpl
+import dev.ostrom.server.runners.domain.ListRunnersUseCase
+import dev.ostrom.server.runners.domain.ListRunnersUseCaseImpl
 import dev.ostrom.server.runners.domain.OpenTerminalUseCase
 import dev.ostrom.server.runners.domain.OpenTerminalUseCaseImpl
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
@@ -51,8 +53,11 @@ import dev.ostrom.server.runners.infrastructure.RunnersMigrations
 import dev.ostrom.server.runners.infrastructure.RuntimeDrivers
 import dev.ostrom.server.runners.infrastructure.TerminalRelay
 import dev.ostrom.server.runners.presentation.CloudSessionsRoutesDependencies
+import dev.ostrom.server.runners.presentation.RunnerRuntime
+import dev.ostrom.server.runners.presentation.RunnersRoutesDependencies
 import dev.ostrom.server.runners.presentation.TerminalRoutesDependencies
 import dev.ostrom.server.runners.presentation.cloudSessionsRoutes
+import dev.ostrom.server.runners.presentation.runnersRoutes
 import dev.ostrom.server.runners.presentation.terminalRoutes
 import io.ktor.server.routing.Route
 import kotlinx.coroutines.CoroutineScope
@@ -99,6 +104,11 @@ object RunnersModule : ServerModule {
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
         single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
+        single<ListRunnersUseCase> { ListRunnersUseCaseImpl(get(), get()) }
+        single {
+            val config = get<RunnersConfig>()
+            RunnersRoutesDependencies(get(), RunnerRuntime(config.runtimeLabel, config.runnerImage), get())
+        }
         single { TerminalRelay() }
         single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }
@@ -113,6 +123,7 @@ object RunnersModule : ServerModule {
 
     override fun routes(route: Route, koin: Koin) {
         route.cloudSessionsRoutes(koin.get())
+        route.runnersRoutes(koin.get())
         route.terminalRoutes(koin.get())
     }
 
