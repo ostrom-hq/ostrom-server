@@ -47,6 +47,8 @@ import dev.ostrom.server.identity.domain.ListAuditEventsUseCase
 import dev.ostrom.server.identity.domain.ListAuditEventsUseCaseImpl
 import dev.ostrom.server.identity.domain.ListDevicesUseCase
 import dev.ostrom.server.identity.domain.ListDevicesUseCaseImpl
+import dev.ostrom.server.identity.domain.ListOrgAuditUseCase
+import dev.ostrom.server.identity.domain.ListOrgAuditUseCaseImpl
 import dev.ostrom.server.identity.domain.ListServiceKeysUseCase
 import dev.ostrom.server.identity.domain.ListServiceKeysUseCaseImpl
 import dev.ostrom.server.identity.domain.ListTokensUseCase
@@ -102,6 +104,7 @@ import dev.ostrom.server.identity.infrastructure.DirectoryMailSender
 import dev.ostrom.server.identity.infrastructure.GitHubOAuthProvider
 import dev.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import dev.ostrom.server.identity.infrastructure.IdentityMigrations
+import dev.ostrom.server.identity.infrastructure.IdentityOrgAuditTrail
 import dev.ostrom.server.identity.infrastructure.InMemoryRateLimiter
 import dev.ostrom.server.identity.infrastructure.MagicLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.MobileCodesRepositoryImpl
@@ -124,6 +127,7 @@ import dev.ostrom.server.identity.presentation.IdentityConfig
 import dev.ostrom.server.identity.presentation.IdentityRoutesDependencies
 import dev.ostrom.server.identity.presentation.KeysAndDevicesRoutesDependencies
 import dev.ostrom.server.identity.presentation.MobileRoutesDependencies
+import dev.ostrom.server.identity.presentation.OrgAuditRoutesDependencies
 import dev.ostrom.server.identity.presentation.SessionRoutesDependencies
 import dev.ostrom.server.identity.presentation.SignInConfig
 import dev.ostrom.server.identity.presentation.SignInRoutesDependencies
@@ -131,8 +135,10 @@ import dev.ostrom.server.identity.presentation.identityRoutes
 import dev.ostrom.server.identity.presentation.keysAndDevicesRoutes
 import dev.ostrom.server.identity.presentation.mobileRoutes
 import dev.ostrom.server.identity.presentation.noStoreOnIdentityRoutes
+import dev.ostrom.server.identity.presentation.orgAuditRoutes
 import dev.ostrom.server.identity.presentation.sessionRoutes
 import dev.ostrom.server.identity.presentation.signInRoutes
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -176,6 +182,9 @@ object IdentityModule : ServerModule {
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
+        single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }
+        single<ListOrgAuditUseCase> { ListOrgAuditUseCaseImpl(get(), get()) }
+        single { OrgAuditRoutesDependencies(get(), get()) }
         single<TokenAuthenticator> {
             val config = get<IdentityConfig>()
             CredentialAuthenticatorImpl(get(), get(), get(), get(), config.allowedOrigins, config.sessionCookiePrefix)
@@ -264,6 +273,7 @@ object IdentityModule : ServerModule {
         route.signInRoutes(koin.get())
         route.sessionRoutes(koin.get())
         route.mobileRoutes(koin.get())
+        route.orgAuditRoutes(koin.get())
         route.keysAndDevicesRoutes(koin.get())
     }
 

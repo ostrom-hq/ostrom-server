@@ -281,8 +281,13 @@ class ImportAccountsPostgresTest {
     fun onlyAnOwnerRunsTheCutoverAndOnlyWhereAnAuditLogRecordsIt() = serverTest(modules, importOverrides()) { server ->
         with(server) {
             val request = TeamCodeImportRequest(accounts = listOf(account("claude", "claude-1")))
-            assertEquals(HttpStatusCode.Forbidden, import(request, "admin-a", dryRun = true, cutover = true).status)
-            assertEquals(HttpStatusCode.ServiceUnavailable, import(request, "owner-a", cutover = true).status)
+            // Each refusal has its own key, so the console names the reason without reading the message.
+            val byAnAdmin = import(request, "admin-a", dryRun = true, cutover = true)
+            assertEquals(HttpStatusCode.Forbidden, byAnAdmin.status)
+            assertEquals("cutover_owner_required", byAnAdmin.errorType())
+            val withoutAudit = import(request, "owner-a", cutover = true)
+            assertEquals(HttpStatusCode.ServiceUnavailable, withoutAudit.status)
+            assertEquals("cutover_audit_unavailable", withoutAudit.errorType())
             assertEquals(emptyMap(), accounts(), "Nothing imported")
         }
     }

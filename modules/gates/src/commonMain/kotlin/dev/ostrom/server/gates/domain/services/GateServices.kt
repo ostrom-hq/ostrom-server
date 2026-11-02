@@ -29,7 +29,7 @@ interface GatePolicies {
      * Reads the self-approval setting.
      *
      * @param orgId The organization.
-     * @return The setting; [SelfApprovalPolicy.NEVER] when the organization never chose (S2-15).
+     * @return The setting; [SelfApprovalPolicy.DEFAULT] when the organization never chose (S2-15).
      */
     suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy
 }

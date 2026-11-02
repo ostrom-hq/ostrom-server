@@ -4,6 +4,7 @@ package dev.ostrom.server.identity.infrastructure
 import dev.ostrom.server.identity.domain.AuditEntry
 import dev.ostrom.server.identity.domain.AuditEvent
 import dev.ostrom.server.identity.domain.AuditRepository
+import dev.ostrom.server.identity.domain.OrgAuditQuery
 import dev.ostrom.server.kernel.database.inOrg
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
@@ -86,6 +87,22 @@ class AuditRepositoryImpl(private val driver: Driver) : AuditRepository {
                 ).bind("chain", orgId.toString()).bind("before", before).bind("limit", limit),
             ).getOrThrow().map { it.toEvent() }
         }
+    }
+
+    override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent> {
+        // Only the filters asked for are in the SQL, each value bound, never spliced.
+        val filters = listOfNotNull(
+            "AND actor_id = :actor".takeIf { query.actorId != null },
+            "AND action = :action".takeIf { query.action != null },
+        ).joinToString(" ")
+        val statement = Statement.create(
+            "SELECT $COLUMNS FROM identity_audit_events WHERE chain = :chain AND sequence < :before $filters " +
+                "ORDER BY sequence DESC LIMIT :limit",
+        ).bind("chain", orgId.toString()).bind("before", query.beforeSequence ?: Long.MAX_VALUE)
+            .bind("limit", query.limit)
+        query.actorId?.let { statement.bind("actor", it) }
+        query.action?.let { statement.bind("action", it) }
+        return driver.inOrg(orgId) { fetchAll(statement).getOrThrow().map { it.toEvent() } }
     }
 
     private fun ResultSet.Row.toEvent() = AuditEvent(

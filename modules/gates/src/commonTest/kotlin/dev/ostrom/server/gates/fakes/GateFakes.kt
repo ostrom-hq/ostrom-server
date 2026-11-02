@@ -151,7 +151,7 @@ class IdentityDigester : GateDigester {
     override fun digest(text: String): String = text
 }
 
-class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.SOLE_APPROVER) : GatePolicies {
+class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT) : GatePolicies {
     /** How many times the setting was read. */
     var reads = 0
 
