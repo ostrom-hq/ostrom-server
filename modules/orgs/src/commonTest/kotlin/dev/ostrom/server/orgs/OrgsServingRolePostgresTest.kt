@@ -106,11 +106,12 @@ class OrgsServingRolePostgresTest {
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
             val ada = server.user("ada")
             server.database.withRole { role, serving ->
-                server.driver
+                val superuser = server.database.superuser
+                superuser
                     .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
                     .getOrThrow()
-                server.driver.execute("GRANT ostrom_tenant TO $role").getOrThrow()
-                server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
+                superuser.execute("GRANT ostrom_tenant TO $role").getOrThrow()
+                superuser.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
                 val orgs = OrgsRepositoryImpl(serving)
                 val deletions = OrgDeletionsRepositoryImpl(serving)
                 val acme = org("acme")

@@ -138,8 +138,9 @@ class OrgsPostgresTest {
             assertTrue(acme.id !in deletions.duePurges(now + 31.days, 10))
             deletions.erase(acme2.id, now)
             assertEquals(acme2, orgs.get(acme2.id), "A live organization is never erased")
+            // Read across organizations, as no request does.
             val tombstone =
-                server.driver
+                server.database.superuser
                     .fetchAll(
                         "SELECT name, github_org_id, time_zone, purged_at FROM orgs_organizations " +
                             "WHERE id = '${acme.id}'"

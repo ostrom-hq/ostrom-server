@@ -12,6 +12,7 @@ import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.kernel.module.OrgDeletionListener
 import dev.ostrom.server.orgs.domain.DeletionPass
+import dev.ostrom.server.orgs.domain.OrgDeletionsRepository
 import dev.ostrom.server.orgs.domain.SettleOrgDeletionsUseCase
 import dev.ostrom.server.orgs.fakes.SettableClock
 import dev.ostrom.server.orgs.presentation.CreateLinkRequest
@@ -142,8 +143,9 @@ class OrgSettingsPostgresTest {
         assertEquals(type, error.getValue("type").jsonPrimitive.content)
     }
 
+    // A check across organizations and modules, as no request does: the superuser's pool.
     private suspend fun TestServer.count(sql: String): Long =
-        driver.fetchAll(sql).getOrThrow().single().get("n").asLong()
+        database.superuser.fetchAll(sql).getOrThrow().single().get("n").asLong()
 
     @Test
     fun anOwnerOrAdminSetsTheTimeZoneAndTheShortNameNeverChanges() =
@@ -207,6 +209,8 @@ class OrgSettingsPostgresTest {
             assertEquals(emptyList(), told)
         }
 
+    private fun OrgResponse.uuid(): Uuid = Uuid.parse(id)
+
     private suspend fun TestServer.settle(): DeletionPass = koin.get<SettleOrgDeletionsUseCase>()()
 
     @Test
@@ -234,8 +238,10 @@ class OrgSettingsPostgresTest {
             val worker = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             try {
                 OrgsModule.start(worker, server.koin)
+                // Until the deletion is marked settled: the worker tells the modules, then marks it.
+                val deletions = server.koin.get<OrgDeletionsRepository>()
                 withContext(Dispatchers.Default) {
-                    withTimeout(30.seconds) { while (told.isEmpty()) delay(20) }
+                    withTimeout(30.seconds) { while (acme.uuid() in deletions.deletionsToSettle(10)) delay(20) }
                 }
             } finally {
                 worker.cancel()
