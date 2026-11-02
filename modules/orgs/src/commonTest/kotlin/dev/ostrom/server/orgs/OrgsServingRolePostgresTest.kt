@@ -32,8 +32,9 @@ import kotlin.uuid.Uuid
 
 /**
  * The organizations under a deployment's serving role (`ostrom_app` of `ci/database-roles.sql`): not a superuser,
- * owning nothing, subject to row-level security. The other tests run as the test database's superuser, which bypasses
- * it, and could not see that creating an organization needs a cross-organization function.
+ * owning nothing, subject to row-level security, here a fresh role granted exactly what `ostrom_app` is granted. Before
+ * the test server itself ran as the serving role, the tests ran as a superuser, which bypasses it, and could not see
+ * that creating an organization needs a cross-organization function.
  */
 class OrgsServingRolePostgresTest {
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
@@ -54,14 +55,16 @@ class OrgsServingRolePostgresTest {
             val bob = server.user("bob")
             server.database.withRole { role, serving ->
                 // What ci/database-roles.sql and the Helm chart grant `ostrom_app`.
-                server.driver
+                server.database.superuser
                     .execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
                     .getOrThrow()
-                server.driver.execute("GRANT ostrom_tenant TO $role").getOrThrow()
+                server.database.superuser.execute("GRANT ostrom_tenant TO $role").getOrThrow()
                 val orgs = OrgsRepositoryImpl(serving)
                 // Without its own EXECUTE grant, a role cannot run them: PUBLIC has none (S2-60).
                 assertFails { orgs.slugTaken("acme") }
-                server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
+                server.database.superuser
+                    .execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role")
+                    .getOrThrow()
                 val members = MembersRepositoryImpl(serving)
                 val invitations = InvitationsRepositoryImpl(serving)
 

@@ -253,13 +253,9 @@ class SessionsPostgresTest {
     @Test
     fun theDatabaseItselfKeepsOrganizationsApart() = sessionsTest { server ->
         server.start("agent:a:launch-1", "s-1")
-        server.driver.execute(
-            "DO \$\$ BEGIN CREATE ROLE ostrom_rls_probe NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$",
-        ).getOrThrow()
-        server.driver.execute("GRANT SELECT, INSERT, UPDATE ON sessions_sessions TO ostrom_rls_probe").getOrThrow()
         val count = "SELECT COUNT(*) AS n FROM sessions_sessions"
+        // The test server's driver is the serving role, as in production: row level security applies to it.
         val seen = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
             val none = fetchAll(count).getOrThrow().first().get("n").asString()
             fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()))
                 .getOrThrow()
@@ -273,7 +269,6 @@ class SessionsPostgresTest {
         // The driver throws a refused write rather than returning it as a failure: both count as refused.
         val insert = try {
             server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_rls_probe").getOrThrow()
                 fetchAll(
                     Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", orgB.toString()),
                 ).getOrThrow()
