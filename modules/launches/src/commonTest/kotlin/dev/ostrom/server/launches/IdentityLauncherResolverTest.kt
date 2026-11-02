@@ -12,6 +12,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.launches.fakes.ADA
 import dev.ostrom.server.launches.fakes.ORG
+import dev.ostrom.server.launches.fakes.OTHER_ORG
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.MembersRepository
@@ -77,6 +78,15 @@ class IdentityLauncherResolverTest {
         assertEquals(emptyList<Uuid?>(), asked, "Read from the members, not from a credential")
     }
 
+    @Test
+    fun anotherDeveloperIsReadByLoginInTheOrganizationOnly() = runTest {
+        assertEquals(ADA, resolver.colleague(ORG, "ada"))
+        assertEquals(ADA, resolver.colleague(ORG, "Ada"), "A login is matched as the users repository matches it")
+        assertNull(resolver.colleague(OTHER_ORG, "ada"), "Not a member of that organization")
+        assertNull(resolver.colleague(ORG, "nobody"), "No such login")
+        assertEquals(emptyList<Uuid?>(), asked, "Read from the members, not from a credential")
+    }
+
     /** Ada's member and the ghost's, in [ORG]; the launches module reads nothing else from the members. */
     private inner class AdaAndTheGhost : MembersRepository {
         private val at = Instant.parse("2026-10-30T10:00:00Z")
@@ -88,7 +98,8 @@ class IdentityLauncherResolverTest {
         override suspend fun findById(orgId: Uuid, memberId: Uuid): Member? =
             members.firstOrNull { it.orgId == orgId && it.id == memberId }
 
-        override suspend fun findByUser(orgId: Uuid, userId: Uuid): Member? = unused()
+        override suspend fun findByUser(orgId: Uuid, userId: Uuid): Member? =
+            members.firstOrNull { it.orgId == orgId && it.userId == userId }
 
         override suspend fun list(orgId: Uuid): List<Member> = unused()
 
@@ -100,7 +111,7 @@ class IdentityLauncherResolverTest {
 
         override suspend fun transferOwnership(orgId: Uuid, oldOwnerId: Uuid, newOwnerId: Uuid) = unused()
 
-        private fun unused(): Nothing = error("The launches module only reads a member by id.")
+        private fun unused(): Nothing = error("The launches module only reads a member by id or by user.")
     }
 
     /** A users repository that knows Ada only; the launches module reads nothing else from it. */
@@ -115,7 +126,7 @@ class IdentityLauncherResolverTest {
 
         override suspend fun loginTaken(login: String): Boolean = unused()
 
-        override suspend fun findByLogin(login: String): User? = unused()
+        override suspend fun findByLogin(login: String): User? = ada.takeIf { login.lowercase() == it.login }
 
         override suspend fun getMany(ids: Collection<Uuid>): List<User> = unused()
 
@@ -127,6 +138,6 @@ class IdentityLauncherResolverTest {
 
         override suspend fun listIssuers(userId: Uuid): List<String> = unused()
 
-        private fun unused(): Nothing = error("The launches module only reads a user by id.")
+        private fun unused(): Nothing = error("The launches module only reads a user by id or by login.")
     }
 }

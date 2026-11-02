@@ -5,18 +5,54 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.launches.domain.models.AgentVerdict
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
+import dev.ostrom.server.launches.domain.models.OtherDeveloperForbiddenException
+import dev.ostrom.server.launches.domain.models.UnknownDeveloperException
 import dev.ostrom.server.launches.fakes.ADA
+import dev.ostrom.server.launches.fakes.FakeLaunchers
 import dev.ostrom.server.launches.fakes.FakeModelRules
 import dev.ostrom.server.launches.fakes.ORG
+import dev.ostrom.server.launches.fakes.OTHER_ORG
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.test.runTest
 
 class CheckAgentPolicyTest {
     private val rules = FakeModelRules(mapOf("gpt-5" to "gpt-5 is not on the allowlist."))
-    private val check = CheckAgentPolicyUseCaseImpl(LaunchPolicy(rules))
+    private val bob = ADA.copy(userId = Uuid.random(), login = "bob", role = OrgRole.BILLING)
+    private val eve = ADA.copy(orgId = OTHER_ORG, userId = Uuid.random(), login = "eve")
+    private val check = CheckAgentPolicyUseCaseImpl(
+        LaunchPolicy(rules),
+        FakeLaunchers(listOf(ADA, bob, eve).associateBy { it.userId.toString() }),
+    )
+
+    @Test
+    fun anOwnerOrAnAdminReadsAnotherDevelopersVerdictInTheirOrganization() = runTest {
+        for (role in listOf(OrgRole.OWNER, OrgRole.ADMIN)) {
+            val admin = ADA.copy(role = role)
+            assertEquals(AgentVerdict(false, LaunchPolicy.BILLING_ONLY), check(admin, "codex", null, "bob"), role.name)
+        }
+        check(ADA, "codex", "gpt-5", "ADA")
+        assertEquals(listOf(Triple(ORG, "ada", "gpt-5")), rules.asked, "Their own login, in any case, is the caller")
+    }
+
+    @Test
+    fun aMemberReadsTheirOwnVerdictOnlyAndLearnsNothingOfTheOthers() = runTest {
+        assertEquals(AgentVerdict(allowed = true), check(ADA, "codex", null, "ada"))
+        for (dev in listOf("bob", "eve", "nobody")) {
+            assertFailsWith<OtherDeveloperForbiddenException> { check(ADA, "codex", null, dev) }
+        }
+    }
+
+    @Test
+    fun anAdminNamingSomeoneOutsideTheOrganizationGetsUnknown() = runTest {
+        val admin = ADA.copy(role = OrgRole.ADMIN)
+        assertFailsWith<UnknownDeveloperException> { check(admin, "codex", null, "eve") }
+        assertFailsWith<UnknownDeveloperException> { check(admin, "codex", null, "nobody") }
+    }
 
     @Test
     fun everyWellFormedAgentIsAllowedWithAModelTheOrganizationAllows() = runTest {

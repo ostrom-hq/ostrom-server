@@ -298,6 +298,19 @@ class UsagePostgresTest {
     }
 
     @Test
+    fun aLaunchSpendIsReadInItsWindowAndItsOrganizationOnly() = serverTest(modules, overrides) { server ->
+        val repository = server.koin.get<UsageRepository>()
+        val launched = modelEvent(2_500_000).copy(launchId = "lch_9")
+        val before = modelEvent(1).copy(launchId = "lch_9", at = launched.at - 1.days)
+        repository.insert(TestCallers.orgA, listOf(launched, before))
+
+        val day = launched.at + 1.days
+        assertEquals(2_500_000L, repository.launchSpentMicros(TestCallers.orgA, "lch_9", launched.at, day))
+        assertEquals(null, repository.launchSpentMicros(TestCallers.orgA, "lch_9", day, day + 1.days), "Window")
+        assertEquals(null, repository.launchSpentMicros(TestCallers.orgB, "lch_9", launched.at, day), "Org B")
+    }
+
+    @Test
     fun anotherOrgNeitherSeesNorReadsTheUsage() = serverTest(modules, overrides) { server ->
         server.koin.get<UsageRecorder>().record(modelEvent(1_000))
 

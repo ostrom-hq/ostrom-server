@@ -101,7 +101,10 @@ class SharingPostgresTest {
                 override suspend fun authenticate(token: String) = principals[token]
                     ?: byToken[token]?.let {
                         val scopes = setOf(RelayScopes.ALL_USER)
-                        AuthenticatedPrincipal(token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER)
+                        AuthenticatedPrincipal(
+                            token, PrincipalKind.USER, scopes, channel = PrincipalChannel.BROWSER,
+                            authenticatedAt = Clock.System.now(),
+                        )
                     }
             }
         }
