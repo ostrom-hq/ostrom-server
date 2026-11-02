@@ -25,7 +25,7 @@ class MetricsGateChannel(private val metrics: OstromMetrics) : GateChannel {
         val decidedAt = gate.decidedAt ?: return
         val answered = requests.firstOrNull { it.status in ANSWERED } ?: return
         val answer = if (gate.status == GateStatus.APPROVED) "yes" else "no"
-        val channel = answered.channel?.name?.lowercase() ?: UNKNOWN
+        val channel = answered.channel?.let { it.name.lowercase() } ?: UNKNOWN
         metrics.gateAnswered(answer, channel, decidedAt - gate.createdAt)
     }
 
