@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules
 
+import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
 import dev.ostrom.server.gates.presentation.ApprovalAnswer
@@ -30,7 +31,7 @@ import kotlin.test.assertTrue
  * cannot approve their own push; once the organization chooses `sole-approver` they can, and `never` again refuses.
  */
 class GatePolicyGovernsGatesPostgresTest {
-    private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, RulesModule)
+    private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, CompilerModule, RulesModule)
     private val overrides = module {
         includes(RulesCallers.overrides(), RulesCallers.gates)
     }

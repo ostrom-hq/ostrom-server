@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs.domain
 
+import dev.ostrom.server.kernel.auth.STEP_UP_WITHIN
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
@@ -29,7 +30,7 @@ val DELETION_RETRY: Duration = 10.minutes
 private val KNOWN_ZONES: Set<String> by lazy { TimeZone.availableZoneIds }
 
 /** How old the owner's sign-in may be to delete the organization: the same proof as a yes (S2-54). */
-val DELETION_STEP_UP: Duration = 5.minutes
+val DELETION_STEP_UP: Duration = STEP_UP_WITHIN
 
 private const val MIN_SLUG = 2
 private const val SLUG_ATTEMPTS = 20

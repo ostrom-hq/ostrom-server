@@ -26,6 +26,14 @@ internal object UsageQueries {
             "WHERE org_id = :org_id AND account_id = :account_id AND at >= :since"
 
     /**
+     * What a launch spent in a window, NULL for nothing priced: `:org_id`, `:launch_id`, `:from`, `:to`. Half open, so
+     * that a call on the boundary of two segments counts once; the window bounds the read to the org's index on `at`.
+     */
+    const val LAUNCH_SPENT: String =
+        "SELECT CAST(SUM(cost_micros) AS BIGINT) AS spent FROM usage_events " +
+            "WHERE org_id = :org_id AND at >= :from AND at < :to AND launch_id = :launch_id AND cost_micros > 0"
+
+    /**
      * The org's or a member's spend since `:since`: `:org_id`, `:since`, and `:member_id` if [member].
      *
      * @param member Whether one member's.

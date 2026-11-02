@@ -41,6 +41,42 @@ import kotlin.uuid.Uuid
 /** Assignments, policies, settings and the journal managed over HTTP, and the repository on its own. */
 class McpRelayManagementPostgresTest : RelayPostgresHarness() {
     @Test
+    fun changingAnMcpServerFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                val sentry = McpServerDto("sentry", "https://sentry.example.com/mcp", "http")
+                val path = "$admin/servers/sentry"
+                val stale = listOf(
+                    sendJson(HttpMethod.Post, "$admin/servers", sentry, "stale-admin-a"),
+                    sendJson(HttpMethod.Put, path, sentry, "stale-admin-a"),
+                    client.delete(path) { bearerAuth("stale-admin-a") },
+                )
+                for (refused in stale) {
+                    assertEquals(HttpStatusCode.Forbidden, refused.status)
+                    assertTrue("step_up_required" in refused.bodyAsText(), refused.bodyAsText())
+                }
+                assertEquals(HttpStatusCode.Created, sendJson(HttpMethod.Post, "$admin/servers", sentry).status)
+                assertEquals(HttpStatusCode.OK, sendJson(HttpMethod.Put, path, sentry).status)
+                // Who may use a server, its argument policies and the agents' prefix are the server's too.
+                val assignment = "$path/assignments/${Relay.memberA.memberId}"
+                val policy = ArgumentPolicyRequest("query", emptyList(), "deny", "No.")
+                val alsoStale = listOf(
+                    sendJson(HttpMethod.Put, assignment, McpAssignmentRequest(listOf("send")), "stale-admin-a"),
+                    client.delete(assignment) { bearerAuth("stale-admin-a") },
+                    sendJson(HttpMethod.Post, "$path/policies", policy, "stale-admin-a"),
+                    client.delete("$path/policies/${Uuid.random()}") { bearerAuth("stale-admin-a") },
+                    sendJson(HttpMethod.Put, "$admin/settings", McpSettingsDto("evil"), "stale-admin-a"),
+                )
+                for (refused in alsoStale) {
+                    assertEquals(HttpStatusCode.Forbidden, refused.status)
+                    assertTrue("step_up_required" in refused.bodyAsText(), refused.bodyAsText())
+                }
+                assertEquals(McpSettingsDto("ostrom"), client.get("$admin/settings") { bearerAuth("admin-a") }.body())
+                assertEquals(HttpStatusCode.NoContent, client.delete(path) { bearerAuth("admin-a") }.status)
+            }
+        }
+
+    @Test
     fun assignmentsCarryAMembersOwnCredentialAndAreRemoved() =
         serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
             with(server) {
