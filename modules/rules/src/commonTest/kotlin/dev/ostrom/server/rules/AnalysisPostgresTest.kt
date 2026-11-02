@@ -17,6 +17,7 @@ import dev.ostrom.server.rules.fakes.FakeAnalysisEngine
 import dev.ostrom.server.rules.fakes.RulesCallers
 import dev.ostrom.server.rules.fakes.RulesCallers.orgA
 import dev.ostrom.server.rules.fakes.call
+import dev.ostrom.server.rules.infrastructure.NoRepositoryReader
 import dev.ostrom.server.rules.presentation.AnalysisStarted
 import dev.ostrom.server.rules.presentation.AnalysisStateDto
 import dev.ostrom.server.rules.presentation.NewRuleRequest
@@ -38,7 +39,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The analysis routes on a real PostgreSQL and real HTTP: a run without an engine fails where the console sees it, a
+ * The analysis routes on a real PostgreSQL and real HTTP: a run without GitHub fails where the console sees it, a
  * run in progress refuses a second one, the snapshot carries the rules and workflows, and each organization sees only
  * its own runs.
  */
@@ -66,7 +67,7 @@ class AnalysisPostgresTest {
     }
 
     @Test
-    fun withoutAnEngineAnAnalysisFailsVisiblyAndCanBeRestarted() = analysisTest { server ->
+    fun withoutGitHubAnAnalysisFailsVisiblyAndCanBeRestarted() = analysisTest { server ->
         val before = server.state()
         assertNull(before.phase, "Never analysed")
         assertNull(before.failure)
@@ -75,14 +76,17 @@ class AnalysisPostgresTest {
         assertTrue(runId.startsWith("run_"))
         val failed = server.state()
         assertEquals("failed", failed.phase)
-        assertEquals("engine", failed.failure?.get("stage"))
-        assertEquals("No analysis engine runs on this server yet.", failed.failure?.get("reason"))
+        assertEquals("github", failed.failure?.get("stage"))
+        assertEquals(NoRepositoryReader.REASON, failed.failure?.get("reason"))
         assertEquals("/api/v1/analysis/restart", failed.failure?.get("retryPath"))
 
         val again = server.start("restart")
         assertTrue(again != runId, "A new run")
         val replay = server.start("replay")
         assertTrue(replay.startsWith("run_"))
+        val replayed = server.koin.get<AnalysisRepository>().transaction(orgA) { lock(AnalysisKind.REPLAY) }
+        assertEquals("engine", replayed?.failure?.stage)
+        assertEquals("The replay of pull requests is not available on this server yet.", replayed?.failure?.reason)
         val page = server.call("GET", "/api/v1/analysis/replay", "reader-a").body<ReplayPage>()
         assertEquals(emptyList(), page.items)
     }

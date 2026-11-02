@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sessions
 
+import org.koin.core.qualifier.named
+import dev.ostrom.server.kernel.observability.CachedCount
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -299,5 +301,24 @@ class SessionsPostgresTest {
         }
         assertEquals(HttpStatusCode.OK, alive.status)
         assertEquals("s-1", alive.body<JsonObject>().getValue("id").jsonPrimitive.content)
+    }
+
+    @Test
+    fun theActiveCountSeesTheFollowedSessionsOfEveryOrganization() = sessionsTest { server ->
+        server.start("agent:a:launch-1", "s-1")
+        server.start("agent:b:launch-2", "s-2")
+        server.start("agent:a:launch-3", "s-3")
+        server.start("agent:a:launch-4", "s-4")
+        listOf("a:launch-1" to "s-1", "b:launch-2" to "s-2", "a:launch-4" to "s-4").forEach { (launch, id) ->
+            server.call("agent:$launch", "/api/v1/sessions/$id/alive", "{}")
+        }
+        server.call("agent:a:launch-4", "/api/v1/sessions/s-4/end", "{}")
+        val active = server.koin.get<CachedCount>(named(SessionsModule.ACTIVE_SESSIONS))
+
+        active.refresh()
+        assertEquals(2, active.value(), "Both organizations; neither a hook alone (s-3) nor an ended session (s-4)")
+        clock.now += 3.minutes
+        active.refresh()
+        assertEquals(0, active.value(), "A silent launcher is no running session")
     }
 }

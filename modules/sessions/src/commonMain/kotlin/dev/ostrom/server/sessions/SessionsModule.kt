@@ -4,6 +4,8 @@ package dev.ostrom.server.sessions
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.observability.CachedCount
+import dev.ostrom.server.kernel.observability.OstromMetrics
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
 import dev.ostrom.server.sessions.domain.services.NoSessionCosts
 import dev.ostrom.server.sessions.domain.services.SessionCosts
@@ -26,6 +28,7 @@ import dev.ostrom.server.sessions.domain.usecases.StartSessionUseCase
 import dev.ostrom.server.sessions.domain.usecases.StartSessionUseCaseImpl
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCaseImpl
+import dev.ostrom.server.sessions.infrastructure.ActiveSessionsCount
 import dev.ostrom.server.sessions.infrastructure.PostgresSessionsRepository
 import dev.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import dev.ostrom.server.sessions.infrastructure.SessionsMigrations
@@ -38,6 +41,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
 
@@ -64,6 +68,7 @@ object SessionsModule : ServerModule {
         single<GetSessionUseCase> { GetSessionUseCaseImpl(get(), get(), get()) }
         single<ListSessionsUseCase> { ListSessionsUseCaseImpl(get()) }
         single<SweepStaleSessionsUseCase> { SweepStaleSessionsUseCaseImpl(get(), get(), get(), get()) }
+        single(named(ACTIVE_SESSIONS)) { CachedCount(ActiveSessionsCount(get(), get())::read) }
         single { SessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
@@ -73,7 +78,10 @@ object SessionsModule : ServerModule {
         route.sessionsRoutes(koin.get())
     }
 
-    /** Closes the lost sessions every 30 s; a failing run is logged by the server's scope and the next one runs. */
+    /**
+     * Closes the lost sessions every 30 s; a failing run is logged by the server's scope and the next one runs. Keeps
+     * the count of the `ostrom.sessions.active{where="local"}` gauge the same way.
+     */
     override fun start(scope: CoroutineScope, koin: Koin) {
         val sweep = koin.get<SweepStaleSessionsUseCase>()
         scope.launch {
@@ -82,7 +90,13 @@ object SessionsModule : ServerModule {
                 supervisorScope { launch { sweep() } }
             }
         }
+        val active = koin.get<CachedCount>(named(ACTIVE_SESSIONS))
+        koin.get<OstromMetrics>().observeSessionsActive("local", active::value)
+        active.refreshEvery(scope)
     }
+
+    /** The Koin name of the running sessions' count. */
+    const val ACTIVE_SESSIONS: String = "sessions.active"
 }
 
 /** The cost the usage module measures when it is there; without it, none ([NoSessionCosts]), never the agent's. */
