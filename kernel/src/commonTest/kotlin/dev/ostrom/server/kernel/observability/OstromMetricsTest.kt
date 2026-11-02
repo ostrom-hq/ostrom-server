@@ -6,6 +6,7 @@ import dev.ostrom.core.telemetry.genai.ModelCall
 import dev.ostrom.core.telemetry.genai.ModelCallSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -50,6 +51,15 @@ class OstromMetricsTest {
 
         assertTrue("ostrom.sessions.active" !in names)
         assertTrue("ostrom.sessions.cloud_capacity" !in names)
+    }
+
+    @Test
+    fun aPlaceWithoutSessionsRegisteredSendsNoSeriesAndAnUnknownPlaceIsRefused() {
+        metrics.observeSessionsActive("local") { 3L }
+
+        val active = telemetry.gauge("ostrom.sessions.active").associate { it.attributes to it.value }
+        assertEquals(mapOf(Attributes.of("where" to "local") to 3.0), active)
+        assertFailsWith<NoSuchElementException> { metrics.observeSessionsActive("moon") { 1L } }
     }
 
     @Test

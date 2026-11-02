@@ -12,7 +12,6 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
-import kotlin.concurrent.atomics.updateAndFetch
 import kotlin.time.Duration
 
 /**
@@ -25,7 +24,7 @@ import kotlin.time.Duration
 @OptIn(ExperimentalAtomicApi::class)
 class OstromMetrics(private val meter: Meter) {
     private val inFlight = AtomicLong(0)
-    private val activeSessions = AtomicReference<Map<String, () -> Long>>(emptyMap())
+    private val activeSessions = PLACES.associateWith { AtomicReference<(() -> Long)?>(null) }
     private val cloudCapacity = AtomicLong(NO_CAPACITY)
     private val requestDuration = meter.histogram(
         "http.server.request.duration",
@@ -56,8 +55,8 @@ class OstromMetrics(private val meter: Meter) {
             listOf(GaugeReading(inFlight.load().toDouble()))
         }
         meter.gauge("ostrom.sessions.active", "{session}", "Agent sessions running.") {
-            activeSessions.load().map { (where, read) ->
-                GaugeReading(read().toDouble(), Attributes.of("where" to where))
+            activeSessions.mapNotNull { (where, reader) ->
+                reader.load()?.let { read -> GaugeReading(read().toDouble(), Attributes.of("where" to where)) }
             }
         }
         meter.gauge("ostrom.sessions.cloud_capacity", "{session}", "Cloud sessions the operator's nodes hold.") {
@@ -114,7 +113,7 @@ class OstromMetrics(private val meter: Meter) {
      * Counts an agent session.
      *
      * @param agent The agent's label (`claude`, `codex`, `opencode`, `gemini`, `shell`, `other`).
-     * @param where `local` or `cloud`.
+     * @param where `local` or `cloud`; any other place is refused.
      */
     fun sessionStarted(agent: String, where: String) {
         sessionsStarted.increment(Attributes.of("agent" to agent, "where" to where))
@@ -150,11 +149,11 @@ class OstromMetrics(private val meter: Meter) {
      * Registers the running agent sessions of one place, read at each export. The module that runs them registers its
      * place once: `local` (sessions), `cloud` (runners). Every replica reports the same count: dashboards take the max.
      *
-     * @param where `local` or `cloud`.
+     * @param where `local` or `cloud`; any other place is refused.
      * @param read Returns the last known count; must be fast (a cached value, not a query).
      */
     fun observeSessionsActive(where: String, read: () -> Long) {
-        activeSessions.updateAndFetch { it + (where to read) }
+        activeSessions.getValue(where).store(read)
     }
 
     /**
@@ -191,3 +190,6 @@ class OstromMetrics(private val meter: Meter) {
 
 // Top-level, not in the companion: a private companion property has a getter nothing calls.
 private val AGENTS = setOf("claude", "codex", "opencode", "gemini", "shell")
+
+/** The places agent sessions run in, the `where` of `ostrom.sessions.active`. */
+private val PLACES = listOf("local", "cloud")
