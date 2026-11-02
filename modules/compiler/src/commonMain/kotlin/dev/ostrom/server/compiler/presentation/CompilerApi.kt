@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler.presentation
 
+import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
@@ -135,7 +138,9 @@ class WorkflowsApi(val repo: String? = null, val status: String? = null) {
  * @property revokeReason Why.
  * @property counts What it holds.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = PackageSummary.Answer::class)
 data class PackageSummary(
     val version: String,
     val digest: String,
@@ -147,7 +152,10 @@ data class PackageSummary(
     val revokedBy: String? = null,
     val revokeReason: String? = null,
     val counts: Map<String, Int>,
-)
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<PackageSummary>(generatedSerializer(), "repo")
+}
 
 /**
  * A page of versions.
