@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
+import dev.ostrom.server.gates.domain.services.GateReceiptSigner
+import dev.ostrom.server.gates.fakes.FakeSigner
 import dev.ostrom.server.gates.infrastructure.approversSql
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -10,6 +12,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.uuid.Uuid
@@ -22,6 +25,9 @@ import kotlin.uuid.Uuid
 class GatesQueryPlansTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
     private val orgB = Uuid.parse("0000000b-0000-0000-0000-000000000000")
+
+    // The server starts every route's dependencies, and the receipts module is not loaded here: its signer is a fake.
+    private val overrides = module { single<GateReceiptSigner> { FakeSigner() } }
 
     // [count] pending gates of [org] with three requests each, written in the org (row level security) so that the
     // seed passes under the serving role too. No colon in the inserts: the driver would read `:x` as a parameter.
@@ -45,7 +51,7 @@ class GatesQueryPlansTest {
     }
 
     @Test
-    fun theApproversOfAPageOfGatesAreReadThroughTheirIndex() = serverTest(listOf(GatesModule)) { server ->
+    fun theApproversOfAPageOfGatesAreReadThroughTheirIndex() = serverTest(listOf(GatesModule), overrides) { server ->
         val driver = server.driver
         driver.seed(orgB, 20_000)
         driver.seed(orgA, 2_000)
