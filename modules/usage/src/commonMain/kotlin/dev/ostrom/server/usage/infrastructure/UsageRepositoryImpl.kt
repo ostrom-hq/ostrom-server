@@ -108,6 +108,7 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         .bindNullable("${prefix}provider", event.provider, String::class)
         .bindNullable("${prefix}account_id", event.accountId, Uuid::class)
         .bindNullable("${prefix}session_id", event.sessionId, String::class)
+        .bindNullable("${prefix}launch_id", event.launchId, String::class)
         .bind("${prefix}input_tokens", event.inputTokens)
         .bind("${prefix}output_tokens", event.outputTokens)
         .bind("${prefix}cache_read_tokens", event.cacheReadTokens)
@@ -129,6 +130,7 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         provider = get("provider").asStringOrNull(),
         accountId = get("account_id").asUuidOrNull(),
         sessionId = get("session_id").asStringOrNull(),
+        launchId = get("launch_id").asStringOrNull(),
         inputTokens = get("input_tokens").asLong(),
         outputTokens = get("output_tokens").asLong(),
         cacheReadTokens = get("cache_read_tokens").asLong(),
@@ -142,7 +144,7 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
 
 // Top level rather than in a companion: a private companion leaves a synthetic constructor no test can reach.
 private val PARAMETERS = listOf(
-    "id", "org_id", "member_id", "kind", "name", "provider", "account_id", "session_id", "input_tokens",
+    "id", "org_id", "member_id", "kind", "name", "provider", "account_id", "session_id", "launch_id", "input_tokens",
     "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micros", "duration_ms", "outcome", "at",
 )
 internal val COLUMNS = PARAMETERS.joinToString(", ")

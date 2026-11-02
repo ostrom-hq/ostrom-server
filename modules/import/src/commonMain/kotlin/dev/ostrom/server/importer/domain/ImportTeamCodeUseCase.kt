@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.importer.domain
 
+import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.secrets.domain.Caller
@@ -14,8 +15,8 @@ interface ImportTeamCodeUseCase {
      *
      * @param caller An owner or admin of the org.
      * @param export What the CLI read from TeamCode.
-     * @param memberMap TeamCode member id to Ostrom member id; unmapped members' assignments are skipped. The ids are
-     *   not checked against the org's members: this server has no members port yet.
+     * @param memberMap TeamCode member id to Ostrom member id; unmapped members' assignments are skipped. Every Ostrom
+     *   id must be an active member of the caller's org, or nothing is imported.
      * @param dryRun Reports what the import would do without writing anything.
      * @param cutoverBy For the final run, once TeamCode is stopped, the user who runs it (null for a normal run): an
      *   owner only, recorded in the audit log in that user's name; it also revives the shared accounts waiting for a
@@ -24,6 +25,7 @@ interface ImportTeamCodeUseCase {
      * @return One line per item.
      *
      * @throws dev.ostrom.server.secrets.domain.AdminRequiredException When the caller does not administer the org.
+     * @throws UnknownImportMembersException When an Ostrom id of [memberMap] is not a member of the caller's org.
      * @throws CutoverOwnerRequiredException When [cutoverBy] is given and the caller is an admin, not an owner.
      * @throws CutoverAuditUnavailableException When [cutoverBy] is given and no audit log is installed.
      * @throws CutoverSharingUnavailableException When [cutoverBy] is given and this server does not import shared
@@ -37,6 +39,15 @@ interface ImportTeamCodeUseCase {
         cutoverBy: Uuid?,
     ): ImportReport
 }
+
+/** The member map names Ostrom ids that are not members of the caller's org. */
+class UnknownImportMembersException(teamCodeIds: List<String>) :
+    OstromException(
+        ErrorKind.INVALID_REQUEST,
+        "These TeamCode members are mapped to ids that are not members of this organization: " +
+            "${teamCodeIds.joinToString()}. Map them to members of the organization, or leave them unmapped. " +
+            "Nothing was imported.",
+    )
 
 /** Only an owner runs the cutover import. */
 class CutoverOwnerRequiredException :
@@ -72,6 +83,7 @@ private class NoSharingException :
  * @param secrets The secrets use cases.
  * @param mcp The MCP relay use cases.
  * @param provenance What the import created, per org.
+ * @param members Who is an active member of an org: a member map naming anyone else is refused before any write.
  * @param accounts The sharing module's account import, or null when it is not installed.
  * @param audit The audit log of a cutover run, or null when none is installed (a cutover is then refused, as it is
  *   without [accounts]).
@@ -80,6 +92,7 @@ class ImportTeamCodeUseCaseImpl(
     private val secrets: SecretPorts,
     private val mcp: McpPorts,
     private val provenance: ImportProvenanceRepository,
+    private val members: MemberDirectory,
     private val accounts: AccountImporter?,
     private val audit: ImportAudit?,
 ) : ImportTeamCodeUseCase {
@@ -91,6 +104,10 @@ class ImportTeamCodeUseCaseImpl(
         cutoverBy: Uuid?,
     ): ImportReport {
         caller.requireAdmin()
+        // One lookup per Ostrom id, however many TeamCode members map to it.
+        val outside = memberMap.values.toSet().filterNot { members.isActiveMember(caller.orgId, it.toString()) }
+        val strangers = memberMap.filterValues { it in outside }.keys
+        if (strangers.isNotEmpty()) throw UnknownImportMembersException(strangers.sorted())
         cutoverBy?.let { startCutover(caller, it, export.accounts.size, dryRun) }
         val records = provenance.list(caller.orgId)
         val serverRecords = records.filter { it.kind == ImportRecordKind.SERVER }

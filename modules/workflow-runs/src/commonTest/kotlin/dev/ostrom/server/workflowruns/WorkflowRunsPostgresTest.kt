@@ -219,9 +219,10 @@ class WorkflowRunsPostgresTest {
             }
             val badStatus = server.call(ada.cliToken, "/api/v1/notifications?status=lost")
             assertEquals(HttpStatusCode.BadRequest, badStatus.status)
-            // The CLI's own token reads no receipt (it holds no receipts scope).
+            // The CLI's own token reads its organization's receipts (`ostrom receipts`, `verify`, #83): one not signed
+            // yet is absent, as for anyone.
             val cliBundle = server.call(ada.cliToken, "/api/v1/receipts/rcpt_session_s-1/bundle")
-            assertEquals(HttpStatusCode.Forbidden, cliBundle.status)
+            assertEquals(HttpStatusCode.NotFound, cliBundle.status, cliBundle.bodyAsText())
             // A credential of no organization: its person left it.
             server.koin.get<OrgsRepository>().delete(ada.org.id, now)
             assertEquals(HttpStatusCode.Forbidden, server.call(ada.cliToken, "/api/v1/checks").status)
