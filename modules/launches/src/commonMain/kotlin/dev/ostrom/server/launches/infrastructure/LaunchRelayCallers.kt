@@ -26,7 +26,7 @@ class LaunchRelayCallers(orgs: PrincipalOrgResolver, private val agents: LaunchA
 
     override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
         if (principal.kind == PrincipalKind.AGENT) {
-            agents.resolve(principal, orgId)?.member?.let { Caller(it.orgId, it.memberId, MemberRole.MEMBER) }
+            agents.resolve(principal, orgId)?.let { Caller(it.member.orgId, it.member.memberId, MemberRole.MEMBER) }
         } else {
             people.resolve(principal, orgId)
         }

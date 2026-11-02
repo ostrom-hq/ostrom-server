@@ -33,7 +33,13 @@ class LaunchGateActors(private val launchers: LauncherResolver, private val agen
     }
 
     private suspend fun agent(principal: AuthenticatedPrincipal): GateActor? =
-        agents.resolve(principal, null)?.launch?.let {
-            GateActor("agent-${it.id}", it.orgId, ActorKind.AGENT_SESSION, launchId = it.id, personId = it.dev)
+        agents.resolve(principal, null)?.let { (launch) ->
+            GateActor(
+                "agent-${launch.id}",
+                launch.orgId,
+                ActorKind.AGENT_SESSION,
+                launchId = launch.id,
+                personId = launch.dev,
+            )
         }
 }
