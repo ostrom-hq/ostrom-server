@@ -18,7 +18,6 @@ import dev.ostrom.server.billing.fakes.FakeStripeGateway
 import dev.ostrom.server.billing.fakes.FixedClock
 import dev.ostrom.server.billing.fakes.NOW
 import dev.ostrom.server.billing.fakes.stripeSubscription
-import dev.ostrom.server.billing.infrastructure.BillingRepositoryImpl
 import dev.ostrom.server.billing.infrastructure.hmacSha256Hex
 import dev.ostrom.server.billing.presentation.BillingOverviewResponse
 import dev.ostrom.server.billing.presentation.InvoicesResponse
@@ -34,7 +33,6 @@ import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
@@ -50,7 +48,6 @@ import io.ktor.http.contentType
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -171,57 +168,6 @@ class BillingPostgresTest {
                 )
             }
             assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
-        }
-
-    @Test
-    fun customersAndOutboxAreConfinedAndReachedOnlyByKey() = serverTest(listOf(BillingModule), overrides) { server ->
-        val repository = server.koin.get<BillingRepository>()
-        repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_a", updatedAt = NOW))
-        // S2-51: the customers and the outbox are confined too, reached across organizations only by key. The proof
-        // runs as the serving role, which row-level security binds.
-        repository.enqueue(OutboxTask(Uuid.random(), ORG_A, OutboxKind.entries.first(), "evt_a", NOW, 0))
-        suspend fun asServing(org: Uuid?, sql: String) = server.driver.transaction {
-            org?.let {
-                fetchAll(Statement.create("SELECT set_config('ostrom.org_id', :org, TRUE)").bind("org", "$it"))
-                    .getOrThrow()
-            }
-            fetchAll(sql).getOrThrow().map { it.get("org_id").asUuid() }
-        }
-        for (table in listOf("billing_customers", "billing_outbox")) {
-            assertEquals(emptyList(), asServing(null, "SELECT org_id FROM $table"), table)
-            assertEquals(emptyList(), asServing(ORG_B, "SELECT org_id FROM $table"), table)
-            assertEquals(listOf(ORG_A), asServing(ORG_A, "SELECT org_id FROM $table"), table)
-        }
-        assertFails("Org B cannot write a customer of org A") {
-            asServing(ORG_B, "INSERT INTO billing_customers VALUES ('cus_x', '$ORG_A') RETURNING org_id")
-        }
-        assertEquals(listOf(ORG_A), asServing(null, "SELECT org_id FROM billing_org_of_customer('cus_a')"))
-        assertEquals(emptyList(), asServing(null, "SELECT org_id FROM billing_org_of_customer('cus_unknown')"))
-        assertEquals(emptyList(), asServing(null, "SELECT org_id FROM billing_org_of_customer(NULL)"))
-        val claimed = asServing(null, "SELECT org_id FROM billing_claim_outbox('$NOW', '$NOW', 10)")
-        assertEquals(listOf(ORG_A), claimed, "The worker claims the due tasks of every organization")
-    }
-
-    @Test
-    fun aServingRoleReachesCustomersAndTheOutboxOnlyThroughTheRoutersFunctions() =
-        serverTest(listOf(BillingModule), overrides) { server ->
-            // S2-51, as deployed: the serving role, where row-level security applies to every query, with only the
-            // privileges a deployment grants it (EXECUTE on the router's functions, S2-60).
-            val repository = BillingRepositoryImpl(server.driver)
-            repository.save(OrgBilling(orgId = ORG_A, stripeCustomerId = "cus_serving", updatedAt = NOW))
-            assertEquals(ORG_A, repository.findByCustomer("cus_serving")?.orgId)
-            assertNull(repository.findByCustomer("cus_other"))
-            val task = OutboxTask(Uuid.random(), ORG_A, OutboxKind.entries.first(), "evt_serving", NOW, 0)
-            repository.enqueue(task)
-            assertEquals(listOf(task.id), repository.claimDueTasks(NOW, NOW, 10).map { it.id })
-            repository.failTask(task.id, NOW)
-            assertEquals(listOf(1), repository.claimDueTasks(NOW, NOW, 10).map { it.attempts })
-            repository.completeTask(task.id, NOW)
-            assertEquals(emptyList(), repository.claimDueTasks(NOW, NOW, 10))
-            for (table in listOf("billing_customers", "billing_outbox")) {
-                val unconfined = server.driver.fetchAll("SELECT COUNT(*) AS n FROM $table").getOrThrow()
-                assertEquals("0", unconfined.single().get("n").asString(), "Outside an organization: $table")
-            }
         }
 
     @Test

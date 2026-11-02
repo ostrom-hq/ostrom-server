@@ -1,27 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.infrastructure
 
-import dev.ostrom.server.kernel.database.ROUTER_ROLE
-import dev.ostrom.server.kernel.database.ROUTER_ROLE_SQL
 import dev.ostrom.server.kernel.database.SchemaMigration
-import dev.ostrom.server.kernel.database.routedTableSql
-import dev.ostrom.server.kernel.database.routerFunctionsSql
-
-/** Hands the cross-organization functions of version 2 over to [ROUTER_ROLE]. */
-private val ROUTE_FUNCTIONS_OWNER = routerFunctionsSql(
-    "runners_route_by_session(UUID)",
-    "runners_route_by_token(TEXT)",
-    "runners_claim_due(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)",
-    "runners_release(UUID, TEXT, BOOLEAN, TIMESTAMPTZ)",
-)
 
 /**
  * The schema of the runners module; its tables start with `runners_`.
  *
- * Every table is confined by row-level security to the organization of the transaction (S2-01, S2-51).
- * `runners_session_routes` (a session's id and organization, the hash of its runner token and its reconcile schedule)
- * is also reached across organizations, only through the narrow `SECURITY DEFINER` functions of version 2, owned by
- * [ROUTER_ROLE]: the reconciler claims and releases due sessions, the runner channel finds a session by its token.
+ * `runners_sessions` and `runners_usage` are tenant tables, confined by row-level security to the organization of the
+ * transaction (S2-01). `runners_session_routes` is the one table read across organizations, by the reconciler (due
+ * sessions of every organization) and by the runner channel (a session found by its runner token): it holds no
+ * customer content, only a session's id and organization, the hash of its runner token and its reconcile schedule.
  */
 val RunnersMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -85,48 +73,6 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("runners_sessions")}
             ${tenantTableSql("runners_usage")}
             GRANT SELECT, INSERT, UPDATE ON runners_session_routes TO $TENANT_ROLE;
-        """.trimIndent(),
-    ),
-    SchemaMigration(
-        version = 2,
-        name = "confine_session_routes",
-        sql = """
-            $ROUTER_ROLE_SQL
-            ${routedTableSql("runners_session_routes", "SELECT, UPDATE")}
-            CREATE FUNCTION runners_route_by_session(p_session_id UUID) RETURNS TABLE (session_id UUID, org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
-                AS $$ SELECT r.session_id, r.org_id FROM runners_session_routes r WHERE r.session_id = p_session_id $$;
-            CREATE FUNCTION runners_route_by_token(p_hash TEXT) RETURNS TABLE (session_id UUID, org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
-                AS $$ SELECT r.session_id, r.org_id FROM runners_session_routes r WHERE r.runner_token_hash = p_hash $$;
-            CREATE FUNCTION runners_claim_due(p_owner TEXT, p_until TIMESTAMPTZ, p_now TIMESTAMPTZ, p_limit INTEGER)
-                RETURNS TABLE (session_id UUID, org_id UUID)
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
-                AS $$
-                UPDATE runners_session_routes r SET reconcile_owner = p_owner, reconcile_until = p_until,
-                    claimed_at = p_now
-                WHERE r.session_id IN (
-                    SELECT d.session_id FROM runners_session_routes d WHERE d.next_reconcile_at <= p_now
-                    AND (d.reconcile_until IS NULL OR d.reconcile_until < p_now) ORDER BY d.next_reconcile_at
-                    LIMIT p_limit FOR UPDATE SKIP LOCKED
-                )
-                RETURNING r.session_id, r.org_id
-                $$;
-            CREATE FUNCTION runners_release(p_session_id UUID, p_owner TEXT, p_has_next BOOLEAN, p_next_at TIMESTAMPTZ)
-                RETURNS VOID
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
-                AS $$
-                UPDATE runners_session_routes r SET reconcile_owner = NULL, reconcile_until = NULL,
-                    next_reconcile_at = CASE
-                        WHEN r.next_reconcile_at > r.claimed_at AND p_has_next
-                            THEN LEAST(r.next_reconcile_at, p_next_at)
-                        WHEN r.next_reconcile_at > r.claimed_at THEN r.next_reconcile_at
-                        WHEN p_has_next THEN p_next_at
-                        ELSE NULL
-                    END
-                WHERE r.session_id = p_session_id AND r.reconcile_owner = p_owner
-                $$;
-            $ROUTE_FUNCTIONS_OWNER
         """.trimIndent(),
     ),
 )

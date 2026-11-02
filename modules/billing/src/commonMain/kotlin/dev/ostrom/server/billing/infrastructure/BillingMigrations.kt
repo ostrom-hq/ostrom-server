@@ -1,19 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.billing.infrastructure
 
-import dev.ostrom.server.kernel.database.ROUTER_ROLE
-import dev.ostrom.server.kernel.database.ROUTER_ROLE_SQL
 import dev.ostrom.server.kernel.database.SchemaMigration
-import dev.ostrom.server.kernel.database.routedTableSql
-import dev.ostrom.server.kernel.database.routerFunctionsSql
-
-/** Hands the cross-organization functions of version 3 over to [ROUTER_ROLE]. */
-private val ROUTER_FUNCTIONS_OWNER = routerFunctionsSql(
-    "billing_org_of_customer(TEXT)",
-    "billing_claim_outbox(TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)",
-    "billing_complete_outbox(UUID, TIMESTAMPTZ)",
-    "billing_fail_outbox(UUID, TIMESTAMPTZ)",
-)
 
 /** The row-level policy of an org-keyed table: only the organization set by `ostrom.org_id` in the transaction. */
 private fun orgPolicy(table: String) = """
@@ -25,12 +13,11 @@ private fun orgPolicy(table: String) = """
 """.trimIndent()
 
 /**
- * The schema of the billing module; its tables start with `billing_`. Every table with an `org_id` is under row-level
- * security, scoped per transaction (S2-01, S2-51, CONVENTIONS § 16.1). `billing_customers` (Stripe customer id to
- * organization) and `billing_outbox` (the worker's queue) are also reached across organizations, only through the
- * narrow `SECURITY DEFINER` functions of version 3, owned by [ROUTER_ROLE]: the signed webhook finds an organization
- * by its Stripe customer, the worker claims, completes and retries due tasks. `billing_stripe_events` holds event ids
- * only, no organization.
+ * The schema of the billing module; its tables start with `billing_`. The tables a route reads (accounts, active
+ * people, usage, alerts) are under row-level security, scoped per transaction (S2-01, CONVENTIONS § 16.1). Three
+ * tables are not, and no route reads them: `billing_stripe_events` (event ids, written by the signed webhook),
+ * `billing_customers` (Stripe customer id to organization, read by the webhook before it knows the organization) and
+ * `billing_outbox` (the worker's queue across organizations).
  */
 val BillingMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -110,38 +97,5 @@ val BillingMigrations: List<SchemaMigration> = listOf(
             orgPolicy("billing_usage"),
             orgPolicy("billing_alerts"),
         ).joinToString("\n"),
-    ),
-    SchemaMigration(
-        version = 3,
-        name = "confine_customers_and_outbox",
-        sql = """
-            $ROUTER_ROLE_SQL
-            ${routedTableSql("billing_customers", "SELECT")}
-            ${routedTableSql("billing_outbox", "SELECT, UPDATE")}
-            CREATE FUNCTION billing_org_of_customer(p_customer TEXT) RETURNS TABLE (org_id UUID)
-                LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
-                AS $$ SELECT c.org_id FROM billing_customers c WHERE c.stripe_customer_id = p_customer $$;
-            CREATE FUNCTION billing_claim_outbox(p_now TIMESTAMPTZ, p_lease TIMESTAMPTZ, p_limit INTEGER)
-                RETURNS TABLE (
-                    id UUID, org_id UUID, kind TEXT, identifier TEXT, happened_at TIMESTAMPTZ, attempts INTEGER
-                )
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
-                AS $$
-                UPDATE billing_outbox o SET next_attempt_at = p_lease WHERE o.id IN (
-                    SELECT d.id FROM billing_outbox d WHERE d.done_at IS NULL AND d.next_attempt_at <= p_now
-                    ORDER BY d.next_attempt_at LIMIT p_limit FOR UPDATE SKIP LOCKED
-                )
-                RETURNING o.id, o.org_id, o.kind, o.identifier, o.happened_at, o.attempts
-                $$;
-            CREATE FUNCTION billing_complete_outbox(p_id UUID, p_at TIMESTAMPTZ) RETURNS VOID
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
-                AS $$ UPDATE billing_outbox o SET done_at = p_at WHERE o.id = p_id $$;
-            CREATE FUNCTION billing_fail_outbox(p_id UUID, p_retry TIMESTAMPTZ) RETURNS VOID
-                LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
-                AS $$
-                UPDATE billing_outbox o SET attempts = o.attempts + 1, next_attempt_at = p_retry WHERE o.id = p_id
-                $$;
-            $ROUTER_FUNCTIONS_OWNER
-        """.trimIndent(),
     ),
 )

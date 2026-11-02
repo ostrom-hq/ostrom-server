@@ -51,30 +51,14 @@ policy `TO ostrom_router` of their tables, and set `search_path = pg_catalog, pu
 a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLIC` and granted to `ostrom_app` only
 (audit S2-60).
 
-The kernel creates `ostrom_router` when missing (`ROUTER_ROLE_SQL`, `database/CrossOrganization.kt`); the owner of
-the schema is a member, to hand the functions over (`routerFunctionsSql`, which grants `CREATE` on the schema for the
-handover only, and does the `EXECUTE` revoke and grant above). A routing table (`routedTableSql`) has the tenant
-policy of every table plus a policy that lets `ostrom_router` alone reach every row, with only the privileges its
-functions need. Each function takes exactly the key of its operation and returns nothing for an unknown or `NULL`
-key. `CREATE OR REPLACE` keeps the owner; a function re-created under a new name is handed over again.
-
 | Function | Module | What it touches | Test |
 |---|---|---|---|
-| `artifacts_route_by_id(UUID)`, `artifacts_route_by_slug(TEXT)` | artifacts | reads the id and organization of one `artifacts_routes` row, by signed id or link slug (the content origin) | `ArtifactsPostgresTest.anotherOrganizationsRowsAreNeitherSeenNorWritten`, `aServingRoleFindsAnArtifactOnlyThroughTheRoutersFunctions` |
-| `runners_route_by_session(UUID)`, `runners_route_by_token(TEXT)` | runners | reads the id and organization of one `runners_session_routes` row, by session id or runner token hash (the runner channel) | `CloudSessionsPostgresTest.anotherOrganizationsRowsAreNeitherSeenNorWritten`, `aServingRoleReachesRoutesOnlyThroughTheRoutersFunctions` |
-| `runners_claim_due(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)`, `runners_release(UUID, TEXT, BOOLEAN, TIMESTAMPTZ)` | runners | leases due `runners_session_routes` rows to a reconciler, at most the limit, and releases its own lease | same |
-| `billing_org_of_customer(TEXT)` | billing | reads the organization of one `billing_customers` row, by Stripe customer id (the signed webhook) | `BillingPostgresTest.customersAndOutboxAreConfinedAndReachedOnlyByKey`, `aServingRoleReachesCustomersAndTheOutboxOnlyThroughTheRoutersFunctions` |
-| `billing_claim_outbox(TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)`, `billing_complete_outbox(UUID, TIMESTAMPTZ)`, `billing_fail_outbox(UUID, TIMESTAMPTZ)` | billing | leases due `billing_outbox` tasks to the worker, at most the limit, then marks one done or retried | same |
 | `orgs_create_organization(…)` | orgs | inserts an organization and its owner | `OrgsServingRolePostgresTest` |
 | `orgs_claim_holders(claim)` | orgs | reads the live organizations holding a free-plan claim | `OrgsServingRolePostgresTest` |
 | `orgs_find_by_slug(slug)` | orgs | reads a live organization by short name | `OrgsServingRolePostgresTest` |
 | `orgs_slug_taken(slug)` | orgs | whether a short name was ever used | `OrgsServingRolePostgresTest` |
 | `orgs_memberships_of(user)` | orgs | reads a user's memberships and their organizations | `OrgsServingRolePostgresTest` |
 | `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
-
-The kernel's `KernelPostgresTest.aRoutedTableIsConfinedAndOnlyTheRoutersFunctionsCrossOrganizations` proves the
-mechanism itself: the function's owner is `ostrom_router`, `PUBLIC` (and so `ostrom_tenant`) cannot run it, the
-serving role reads its own organization's rows only, and the function answers a known key and nothing else.
 
 ## The proof
 

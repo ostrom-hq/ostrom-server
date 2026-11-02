@@ -43,10 +43,8 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         ).getOrThrow().firstOrNull()?.toBilling()
     }
 
-    // The organizations of the webhook and the worker come from the cross-organization functions of
-    // BillingMigrations' version 3 (S2-51): billing_customers and billing_outbox are otherwise confined.
     override suspend fun findByCustomer(customerId: String): OrgBilling? = driver.fetchAll(
-        Statement.create("SELECT org_id FROM billing_org_of_customer(CAST(:customer AS TEXT))")
+        Statement.create("SELECT org_id FROM billing_customers WHERE stripe_customer_id = :customer")
             .bind("customer", customerId),
     ).getOrThrow().firstOrNull()?.let { get(it.get("org_id").asUuid()) }
 
@@ -186,8 +184,8 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         ).getOrThrow().map { it.get("percent").asInt() }
     }
 
-    override suspend fun enqueue(task: OutboxTask): Unit = scoped(task.orgId) {
-        execute(
+    override suspend fun enqueue(task: OutboxTask) {
+        driver.execute(
             Statement.create(
                 "INSERT INTO billing_outbox (id, org_id, kind, identifier, happened_at, attempts, next_attempt_at) " +
                     "VALUES (:id, :org_id, :kind, :identifier, :at, :attempts, :at) " +
@@ -209,8 +207,9 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
         limit: Int,
     ): List<OutboxTask> = driver.fetchAll(
         Statement.create(
-            "SELECT id, org_id, kind, identifier, happened_at, attempts FROM billing_claim_outbox(" +
-                "CAST(:now AS TIMESTAMPTZ), CAST(:lease AS TIMESTAMPTZ), CAST(:limit AS INTEGER))",
+            "UPDATE billing_outbox SET next_attempt_at = :lease WHERE id IN (SELECT id FROM billing_outbox " +
+                "WHERE done_at IS NULL AND next_attempt_at <= :now ORDER BY next_attempt_at LIMIT :limit " +
+                "FOR UPDATE SKIP LOCKED) RETURNING id, org_id, kind, identifier, happened_at, attempts",
         ).bind("now", now).bind("lease", leaseUntil).bind("limit", limit),
     ).getOrThrow().sortedBy { it.get("happened_at").asInstant() }.map {
         OutboxTask(
@@ -224,16 +223,16 @@ class BillingRepositoryImpl(private val driver: Driver) : BillingRepository {
     }
 
     override suspend fun completeTask(id: Uuid, at: Instant) {
-        driver.fetchAll(
-            Statement.create("SELECT billing_complete_outbox(CAST(:id AS UUID), CAST(:at AS TIMESTAMPTZ))")
-                .bind("id", id).bind("at", at),
+        driver.execute(
+            Statement.create("UPDATE billing_outbox SET done_at = :at WHERE id = :id").bind("id", id).bind("at", at),
         ).getOrThrow()
     }
 
     override suspend fun failTask(id: Uuid, retryAt: Instant) {
-        driver.fetchAll(
-            Statement.create("SELECT billing_fail_outbox(CAST(:id AS UUID), CAST(:retry AS TIMESTAMPTZ))")
-                .bind("id", id).bind("retry", retryAt),
+        driver.execute(
+            Statement.create(
+                "UPDATE billing_outbox SET attempts = attempts + 1, next_attempt_at = :retry WHERE id = :id",
+            ).bind("id", id).bind("retry", retryAt),
         ).getOrThrow()
     }
 
