@@ -63,9 +63,9 @@ interface OrgsRepository {
      *
      * @param id The organization.
      * @param at When.
-     * @param purgeAfter When it may be erased for good.
+     * @param purgeAfter When it may be erased for good: [DELETION_GRACE] after [at] unless said otherwise.
      */
-    suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant)
+    suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant = at + DELETION_GRACE)
 
     /**
      * The live organizations a user belongs to, with their membership, by name.
