@@ -36,7 +36,7 @@ import kotlin.uuid.Uuid
 
 /** No organization setting yet: no self-approval, a yes always comes from another person (S2-15). */
 class DefaultGatePolicies : GatePolicies {
-    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = SelfApprovalPolicy.NEVER
+    override suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT
 }
 
 /** Without the sessions module, a gate asked inside a session is refused rather than added to an unknown session. */

@@ -26,8 +26,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The self-approval policy set in the console governs the real gates: the gate's sole approver approves their own
- * push while the organization allows it, and is refused once it sets `never`.
+ * The self-approval policy set in the console governs the real gates: by default (`never`) the gate's sole approver
+ * cannot approve their own push; once the organization chooses `sole-approver` they can, and `never` again refuses.
  */
 class GatePolicyGovernsGatesPostgresTest {
     private val modules = listOf(InstanceModule, GatesModule, ReceiptsModule, RulesModule)
@@ -62,10 +62,16 @@ class GatePolicyGovernsGatesPostgresTest {
     }
 
     @Test
-    fun theSoleApproverApprovesTheirOwnPushUntilThePolicySaysNever() = serverTest(modules, overrides) { server ->
+    fun theSoleApproverApprovesTheirOwnPushOnlyOnceThePolicySaysSo() = serverTest(modules, overrides) { server ->
+        val byDefault = server.ask("00112233445566778899aabbccddeeff00112233")
+        assertEquals(emptyList(), byDefault.waitingFor, "Never by default: nobody else can say yes")
+        assertEquals(HttpStatusCode.Forbidden, server.answerAsLyes(byDefault).status, "lyes may not approve their own")
+
+        val chosen = server.call("PUT", "/api/v1/gates/policy", "admin-a", GatePolicyDto("sole-approver"))
+        assertEquals(HttpStatusCode.OK, chosen.status, chosen.bodyAsText())
         val first = server.ask("0123456789abcdef0123456789abcdef01234567")
         assertEquals("pending", first.gate.status)
-        assertEquals(listOf("lyes"), first.waitingFor, "Allowed by default: lyes may say yes to their own push")
+        assertEquals(listOf("lyes"), first.waitingFor, "Chosen by the organization: lyes may say yes to their own push")
         val allowed = server.answerAsLyes(first)
         assertEquals(HttpStatusCode.OK, allowed.status, allowed.bodyAsText())
 

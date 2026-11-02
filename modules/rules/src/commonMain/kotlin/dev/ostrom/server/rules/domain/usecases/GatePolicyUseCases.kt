@@ -16,7 +16,7 @@ interface GetGatePolicyUseCase {
      * Reads it.
      *
      * @param orgId The organization.
-     * @return The setting; [SelfApprovalPolicy.SOLE_APPROVER] when the organization never chose.
+     * @return The setting; [SelfApprovalPolicy.DEFAULT] when the organization never chose.
      */
     suspend operator fun invoke(orgId: Uuid): SelfApprovalPolicy
 }
@@ -28,7 +28,7 @@ interface GetGatePolicyUseCase {
  */
 class GetGatePolicyUseCaseImpl(private val repository: RulesRepository) : GetGatePolicyUseCase {
     override suspend fun invoke(orgId: Uuid): SelfApprovalPolicy =
-        repository.selfApproval(orgId) ?: SelfApprovalPolicy.SOLE_APPROVER
+        repository.selfApproval(orgId) ?: SelfApprovalPolicy.DEFAULT
 }
 
 /** Sets the self-approval policy: a signed decision (APPROBATION, 28/10; prototype `PUT /api/bridge/policy`). */
@@ -58,7 +58,7 @@ class SetGatePolicyUseCaseImpl(
     override suspend fun invoke(decider: Decider, policy: SelfApprovalPolicy): SelfApprovalPolicy {
         val now = clock.now()
         val decision = repository.transaction(decider.orgId) {
-            val before = lockSelfApproval() ?: SelfApprovalPolicy.SOLE_APPROVER
+            val before = lockSelfApproval() ?: SelfApprovalPolicy.DEFAULT
             putSelfApproval(policy, now)
             if (before == policy) {
                 null

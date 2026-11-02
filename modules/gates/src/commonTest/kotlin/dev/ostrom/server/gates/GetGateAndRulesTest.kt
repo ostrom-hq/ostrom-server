@@ -14,6 +14,7 @@ import dev.ostrom.server.gates.domain.models.NotYourGateException
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
 import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.OTHER_ORG
 import dev.ostrom.server.gates.fakes.OTHER_SESSION
@@ -164,5 +165,12 @@ class GetGateAndRulesTest {
         )
 
         assertEquals(listOf("a", "b"), SelfApproval.withAskers(listOf("a"), "A", " ", "b"))
+    }
+
+    // S2-15, decided on 02/11: an organization that never chose never approves its own action.
+    @Test
+    fun anOrganizationThatNeverChoseNeverApprovesItsOwnAction() = runTest {
+        assertEquals(SelfApprovalPolicy.NEVER, SelfApprovalPolicy.DEFAULT)
+        assertEquals(SelfApprovalPolicy.DEFAULT, DefaultGatePolicies().selfApproval(Uuid.random()))
     }
 }
