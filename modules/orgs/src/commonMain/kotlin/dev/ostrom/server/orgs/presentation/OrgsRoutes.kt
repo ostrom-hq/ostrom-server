@@ -9,6 +9,7 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.auth.requireScope
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
@@ -90,8 +91,8 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) =
                 call.respond(HttpStatusCode.NoContent)
             }
             post<OrgsApi.Org.Transfer, TransferRequest> { params, request ->
-                val (orgId, userId) =
-                    member(call, params.parent.org, ORGS_WRITE, browserOnly = true)
+                val (orgId, userId) = member(call, params.parent.org, ORGS_WRITE, browserOnly = true)
+                call.requireRecentSignIn("transfer the organization")
                 orgs.transfer(orgId, userId, request.login)
                 call.respond(HttpStatusCode.NoContent)
             }
@@ -117,6 +118,7 @@ private fun Route.memberRoutes(dependencies: OrgsRoutesDependencies) =
         }
         patch<OrgsApi.Org.Members.Login, UpdateMemberRequest> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
+            call.requireRecentSignIn("change a member's role")
             call.respond(
                 members
                     .changeRole(orgId, userId, params.login, roleOf(request.role))
@@ -125,6 +127,7 @@ private fun Route.memberRoutes(dependencies: OrgsRoutesDependencies) =
         }
         delete<OrgsApi.Org.Members.Login> { params ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
+            call.requireRecentSignIn("remove a member")
             members.remove(orgId, userId, params.login)
             call.respond(HttpStatusCode.NoContent)
         }

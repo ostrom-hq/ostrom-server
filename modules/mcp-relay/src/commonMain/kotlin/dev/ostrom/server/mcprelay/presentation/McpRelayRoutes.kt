@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
@@ -75,6 +76,7 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
     }
     post<McpApi.Servers> {
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val request = call.receive<McpServerDto>()
         val payload = request.toPayload(directory.idsByName(caller.orgId, null, request.secretNamesUsed()))
         val server = createServer(caller, payload)
@@ -82,6 +84,7 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
     }
     put<McpApi.Servers.Name> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         val request = call.receive<McpServerDto>()
         if (request.name != params.name) {
             throw InvalidMcpServerException("The name of the body differs from the name of the path.")
@@ -93,6 +96,7 @@ private fun Route.serverRoutes(dependencies: McpRelayRoutesDependencies) = with(
     }
     delete<McpApi.Servers.Name> { params ->
         val caller = call.requireCaller(callers, RelayScopes.MCP_ADMIN)
+        call.requireRecentSignIn("change an MCP server")
         deleteServer(caller, serverId(caller, params.name))
         call.respond(HttpStatusCode.NoContent)
     }

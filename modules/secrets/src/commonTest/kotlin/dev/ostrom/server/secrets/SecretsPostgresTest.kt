@@ -46,6 +46,35 @@ class SecretsPostgresTest {
     private val base = "/api/v1/secrets"
 
     @Test
+    fun changingASecretFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
+        serverTest(listOf(SecretsModule), TestCallers.overrides) { server ->
+            val write = SecretWriteRequest("GRAFANA_TOKEN", "glsa_value")
+            val created = server.client.post(base) {
+                bearerAuth("stale-admin-a")
+                contentType(ContentType.Application.Json)
+                setBody(write)
+            }
+            val fresh = server.client.post(base) {
+                bearerAuth("admin-a")
+                contentType(ContentType.Application.Json)
+                setBody(write)
+            }
+            assertEquals(HttpStatusCode.Created, fresh.status, fresh.bodyAsText())
+            val rotated = server.client.put("$base/GRAFANA_TOKEN") {
+                bearerAuth("stale-admin-a")
+                contentType(ContentType.Application.Json)
+                setBody(write)
+            }
+            val deleted = server.client.delete("$base/GRAFANA_TOKEN") { bearerAuth("stale-admin-a") }
+            for (refused in listOf(created, rotated, deleted)) {
+                assertEquals(HttpStatusCode.Forbidden, refused.status)
+                assertTrue("step_up_required" in refused.bodyAsText(), refused.bodyAsText())
+            }
+            val names = server.client.get(base) { bearerAuth("admin-a") }.body<SecretsPageResponse>().items
+            assertEquals(listOf("GRAFANA_TOKEN"), names.map { it.name }, "Still there")
+        }
+
+    @Test
     fun anAdminStoresASecretThatIsEncryptedAtRestAndNeverReturned() =
         serverTest(listOf(SecretsModule), TestCallers.overrides) { server ->
             val created = server.client.post(base) {
