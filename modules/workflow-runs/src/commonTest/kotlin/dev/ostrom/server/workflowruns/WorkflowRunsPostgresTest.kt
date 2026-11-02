@@ -61,11 +61,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -74,6 +69,11 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * `ostrom claude` after the launch, on the real modules and PostgreSQL: the hooks report a check and a notification
@@ -331,9 +331,10 @@ class WorkflowRunsPostgresTest {
             }
             val badStatus = server.call(ada.cliToken, "/api/v1/notifications?status=lost")
             assertEquals(HttpStatusCode.BadRequest, badStatus.status)
-            // The CLI's own token reads no receipt (it holds no receipts scope).
+            // The CLI's own token reads its organization's receipts (`ostrom receipts`, `verify`, #83): one not signed
+            // yet is absent, as for anyone.
             val cliBundle = server.call(ada.cliToken, "/api/v1/receipts/rcpt_session_s-1/bundle")
-            assertEquals(HttpStatusCode.Forbidden, cliBundle.status)
+            assertEquals(HttpStatusCode.NotFound, cliBundle.status, cliBundle.bodyAsText())
             // A credential of no organization: its person left it.
             server.koin.get<OrgsRepository>().delete(ada.org.id, now)
             assertEquals(HttpStatusCode.Forbidden, server.call(ada.cliToken, "/api/v1/checks").status)

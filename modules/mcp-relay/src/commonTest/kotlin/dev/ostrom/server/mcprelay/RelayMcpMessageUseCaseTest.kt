@@ -182,7 +182,7 @@ class RelayMcpMessageUseCaseTest {
             ),
             123,
         )
-        val answer = relay()(Relay.memberA, "grafana", message("tools/list"))
+        val answer = relay()(Relay.memberA.copy(launchId = "lch_1"), "grafana", message("tools/list"))
         val names = answer.body!!.jsonObject["result"]!!.jsonObject["tools"]!!.jsonArray.map {
             it.jsonObject["name"]!!.jsonPrimitive.content
         }
@@ -191,6 +191,7 @@ class RelayMcpMessageUseCaseTest {
         assertEquals(McpOperation.LIST, journaled.operation)
         assertEquals(McpOutcome.OK, journaled.outcome)
         assertEquals(123, journaled.responseBytes)
+        assertEquals("lch_1", journaled.launchId, "An agent token's call names its launch")
     }
 
     @Test
@@ -248,6 +249,7 @@ class RelayMcpMessageUseCaseTest {
         assertEquals(McpOutcome.OK, journaled.outcome)
         assertEquals(Relay.memberA.memberId, journaled.memberId)
         assertEquals(40, journaled.responseBytes)
+        assertNull(journaled.launchId, "The member's own credential names no launch")
     }
 
     @Test

@@ -12,8 +12,11 @@ import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartedSession
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.identity.presentation.MeOrganizationResponse
+import dev.ostrom.server.identity.presentation.MeResponse
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
+import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.orgs.domain.Member
@@ -54,6 +57,7 @@ import io.ktor.http.contentType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
@@ -113,6 +117,51 @@ class OrgsRoutesPostgresTest {
         }
 
     private fun tokenOf(link: String) = link.substringAfter("#token=")
+
+    @Test
+    fun meShowsTheMembershipOfTheOrganizationTheHeaderNamesAndIgnoresAnyOther() =
+        serverTest(modules, overrides) { server ->
+            val (ada, session) = server.signIn("ada")
+            val (bob, _) = server.signIn("bob")
+            val orgs = server.koin.get<OrgsRepository>()
+            val now = Clock.System.now()
+            val alpha = Org(Uuid.random(), "alpha", "Alpha", null, null, now)
+            orgs.create(alpha, Member(Uuid.random(), alpha.id, ada.id, OrgRole.MEMBER, now)) { false }
+            val beta = Org(Uuid.random(), "beta", "Beta", 42L, null, now)
+            val adaInBeta = Member(Uuid.random(), beta.id, ada.id, OrgRole.OWNER, now)
+            orgs.create(beta, adaInBeta) { false }
+            val foreign = Org(Uuid.random(), "foreign", "Foreign", null, null, now)
+            orgs.create(foreign, Member(Uuid.random(), foreign.id, bob.id, OrgRole.OWNER, now)) { false }
+            suspend fun me(org: String?) =
+                server.client.get("/api/v1/auth/me") {
+                    session(session)
+                    if (org != null) header(ORG_HEADER, org)
+                }
+
+            val inBeta = me(beta.id.toString())
+            assertEquals(HttpStatusCode.OK, inBeta.status)
+            // The contract's `Me`: Ada's membership in Beta, and Beta with its GitHub organization's avatar.
+            val profile = inBeta.body<MeResponse>()
+            assertEquals(adaInBeta.id.toString(), profile.member?.id)
+            assertEquals("owner", profile.member?.role)
+            assertEquals(ada.login, profile.member?.login)
+            val avatar = "https://avatars.githubusercontent.com/u/42"
+            assertEquals(MeOrganizationResponse(beta.id.toString(), "Beta", avatar, "github-app"), profile.organization)
+            assertEquals(beta.id.toString(), profile.dev.organizationId)
+            val inAlpha = me(alpha.id.toString()).body<MeResponse>()
+            assertEquals("member", inAlpha.member?.role)
+            // Alpha is linked to no GitHub organization: no avatar, and no connection rather than a false one.
+            assertEquals(MeOrganizationResponse(alpha.id.toString(), "Alpha", "", null), inAlpha.organization)
+            // Not a membership, not an id, or no header: 200 without a member, never a 404 or a 409.
+            listOf(foreign.id.toString(), "not-an-id", null).forEach { org ->
+                val ignored = me(org)
+                assertEquals(HttpStatusCode.OK, ignored.status)
+                val unnamed = ignored.body<MeResponse>()
+                assertNull(unnamed.member)
+                assertNull(unnamed.organization)
+                assertNull(unnamed.dev.organizationId)
+            }
+        }
 
     @Test
     fun aPersonInTwoOrganizationsReadsThemWithoutNamingOne() =
