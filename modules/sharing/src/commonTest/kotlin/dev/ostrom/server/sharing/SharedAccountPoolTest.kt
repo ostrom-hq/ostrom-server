@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -39,7 +40,9 @@ class SharedAccountPoolTest {
     private val refresher = FakeRefresher()
     private var spend: AccountSpendReader = NoAccountSpendReader()
 
-    private fun pool() = pool(repository, cipher, refresher, spend, clock)
+    private val logged = mutableListOf<String>()
+
+    private fun pool() = pool(repository, tokens(repository, cipher, refresher, clock, logged::add), spend, clock)
 
     private suspend fun account(
         label: String,
@@ -212,6 +215,28 @@ class SharedAccountPoolTest {
         assertEquals(1, refresher.calls)
         assertEquals("backup", assertIs<LeaseResult.Leased>(lease(provider = provider)).lease.account.label)
         assertEquals(1, refresher.calls, "An account out of service is not refreshed again")
+        val warning = logged.single()
+        assertTrue(foreign.id.toString() in warning && provider.wire in warning, warning)
+        assertFalse("access-new" in warning || "refresh-new" in warning, "No token is logged")
+    }
+
+    @Test
+    fun anAccountSharedAgainDuringAForeignRefreshKeepsItsNewTokens() = runTest {
+        val account = account("raced", expiresAt = clock.now())
+        refresher.result = RefreshResult.Renewed(
+            AccountCredentials("access-foreign", "refresh-foreign", clock.now() + 8.hours),
+            accountId = "acct-someone-else",
+        )
+        refresher.onRefresh = {
+            repository.envelopes[account.id] = cipher.seal(
+                AccountCredentials("access-owner", "refresh-owner", clock.now() + 8.hours),
+                Sharing.orgA,
+                account.id,
+            )
+        }
+        assertEquals("access-owner", assertIs<LeaseResult.Leased>(lease()).lease.credentials.accessToken)
+        assertEquals(AccountStatus.READY, repository.get(Sharing.orgA, account.id)!!.status, "Its share stands")
+        assertEquals(emptyList(), logged)
     }
 
     @Test

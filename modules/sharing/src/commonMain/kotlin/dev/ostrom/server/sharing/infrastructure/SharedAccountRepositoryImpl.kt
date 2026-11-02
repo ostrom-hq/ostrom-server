@@ -78,7 +78,7 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
         account.orgId,
         Statement.create(
             "UPDATE sharing_accounts SET label = :label, priority = :priority, " +
-                "status = CASE WHEN status IN ('RECONNECT_REQUIRED', 'WRONG_ACCOUNT') THEN status ELSE :status END, " +
+                "status = CASE WHEN status IN ($AWAITING_SIGN_IN) THEN status ELSE :status END, " +
                 "max_concurrent = :max_concurrent, utilization_ceiling = :ceiling, " +
                 "monthly_budget_micros = :budget, allowed_members = :allowed, version = version + 1 " +
                 "WHERE org_id = :org_id AND id = :id AND version = COALESCE(:expected, version) " +
@@ -120,6 +120,9 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
     }
 
     private companion object {
+        // The statuses only sharing again leaves (AccountStatus.awaitsSignIn), kept by a stale write.
+        val AWAITING_SIGN_IN = AccountStatus.entries.filter { it.awaitsSignIn }.joinToString { "'${it.name}'" }
+
         // Sharing again keeps the limits. Two shares racing on a new account both insert: the second keeps the first
         // row's id, so its envelope (sealed for its own id) would not open; the first's stays. An account another
         // member owns is never taken over, nor a row past the expected version (no row comes back).
