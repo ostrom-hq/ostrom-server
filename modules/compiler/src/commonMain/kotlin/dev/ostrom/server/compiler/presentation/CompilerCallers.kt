@@ -39,10 +39,12 @@ internal fun ApplicationCall.decides(actor: GateActor, governing: String? = null
     return governs && actor.role in MANAGERS
 }
 
-// Whether the actor decides workflows; the elevated token's decision is recorded in the audit log first.
+// Whether the actor decides workflows; a decision the elevated token makes (not a console session's) is recorded in
+// the audit log first.
 internal suspend fun ApplicationCall.decidesWorkflows(actor: GateActor): Boolean {
     val decides = decides(actor, GovernanceScopes.HARNESS_WRITE)
-    if (decides) auditGovernance(requirePrincipal(), GovernanceScopes.HARNESS_WRITE)
+    val principal = requirePrincipal()
+    if (decides && GateScopes.ALL_USER !in principal.scopes) auditGovernance(principal, GovernanceScopes.HARNESS_WRITE)
     return decides
 }
 
