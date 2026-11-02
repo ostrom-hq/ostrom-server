@@ -73,8 +73,8 @@ key. `CREATE OR REPLACE` keeps the owner; a function re-created under a new name
 | `orgs_live_invitation(hash, now)` | orgs | reads a live invitation by its token's hash | `OrgsServingRolePostgresTest` |
 
 The kernel's `KernelPostgresTest.aRoutedTableIsConfinedAndOnlyTheRoutersFunctionsCrossOrganizations` proves the
-mechanism itself: the function's owner is `ostrom_router`, a plain role reads its own organization's rows only, the
-function answers a known key and nothing else.
+mechanism itself: the function's owner is `ostrom_router`, `PUBLIC` (and so `ostrom_tenant`) cannot run it, the
+serving role reads its own organization's rows only, and the function answers a known key and nothing else.
 
 ## The proof
 

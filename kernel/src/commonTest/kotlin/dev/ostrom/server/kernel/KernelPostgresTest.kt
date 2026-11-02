@@ -28,6 +28,7 @@ import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -246,34 +247,34 @@ class KernelPostgresTest {
                 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
                 AS $$ SELECT r.id, r.org_id FROM probe_routes r WHERE r.slug = p_slug $$;
             ${routerFunctionsSql("probe_route(TEXT)")}
-            DO $$ BEGIN CREATE ROLE ostrom_probe_serving NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-            GRANT SELECT, INSERT ON probe_routes TO ostrom_probe_serving;
-            INSERT INTO probe_routes VALUES ('$ROUTE_A', '$ORG_A', 'slug-a'), ('$ROUTE_B', '$ORG_B', 'slug-b');
             """.trimIndent(),
         )
         runner.migrate("probe", listOf(routes))
+        // The serving role, as the server: never a superuser, owner of nothing, so row-level security binds it.
         val driver = database.driver
-        val owner = driver.fetchAll("SELECT pg_get_userbyid(proowner) AS o FROM pg_proc WHERE proname = 'probe_route'")
-            .getOrThrow().single().get("o").asString()
-        assertEquals(ROUTER_ROLE, owner)
-        // S2-60: PUBLIC cannot run it, a role runs it only once granted (the serving role, by routerFunctionsSql).
-        val public = "SELECT has_function_privilege('ostrom_probe_serving', 'probe_route(TEXT)', 'EXECUTE') AS e"
-        assertFalse(driver.fetchAll(public).getOrThrow().single().get("e").asBoolean())
-        driver.execute("GRANT EXECUTE ON FUNCTION probe_route(TEXT) TO ostrom_probe_serving").getOrThrow()
-
-        // The CI user is a superuser, which bypasses row-level security: the proof runs as a plain role.
         suspend fun asServing(org: String?, sql: String) = driver.transaction {
-            execute("SET LOCAL ROLE ostrom_probe_serving").getOrThrow()
             org?.let { execute("SELECT set_config('ostrom.org_id', '$it', true)").getOrThrow() }
             fetchAll(sql).getOrThrow().map { row -> row.get("org_id").asString() }
         }
+        asServing(ORG_A, "INSERT INTO probe_routes VALUES ('$ROUTE_A', '$ORG_A', 'slug-a') RETURNING org_id")
+        asServing(ORG_B, "INSERT INTO probe_routes VALUES ('$ROUTE_B', '$ORG_B', 'slug-b') RETURNING org_id")
+        val owner = driver.fetchAll("SELECT pg_get_userbyid(proowner) AS o FROM pg_proc WHERE proname = 'probe_route'")
+            .getOrThrow().single().get("o").asString()
+        assertEquals(ROUTER_ROLE, owner)
+        // S2-60: PUBLIC, and so the tenant role, cannot run it; the serving role was granted it.
+        suspend fun canRun(role: String) = driver.fetchAll(
+            "SELECT has_function_privilege('$role', 'probe_route(TEXT)', 'EXECUTE') AS e",
+        ).getOrThrow().single().get("e").asBoolean()
+        assertFalse(canRun(TENANT_ROLE), "PUBLIC's EXECUTE is revoked")
+        assertTrue(canRun(database.servingRole))
+
         assertEquals(emptyList(), asServing(null, "SELECT org_id FROM probe_routes"), "No organization: no row")
-        assertEquals(listOf("$ORG_B"), asServing("$ORG_B", "SELECT org_id FROM probe_routes"), "Its own row only")
-        assertEquals(listOf("$ORG_A"), asServing(null, "SELECT org_id FROM probe_route('slug-a')"))
+        assertEquals(listOf(ORG_B), asServing(ORG_B, "SELECT org_id FROM probe_routes"), "Its own row only")
+        assertEquals(listOf(ORG_A), asServing(null, "SELECT org_id FROM probe_route('slug-a')"))
         assertEquals(emptyList(), asServing(null, "SELECT org_id FROM probe_route('slug-c')"), "A wrong key: nothing")
         assertEquals(emptyList(), asServing(null, "SELECT org_id FROM probe_route(NULL)"), "No key: nothing")
         assertFails("Organization B cannot write a row of organization A") {
-            asServing("$ORG_B", "INSERT INTO probe_routes VALUES (gen_random_uuid(), '$ORG_A', 'x') RETURNING org_id")
+            asServing(ORG_B, "INSERT INTO probe_routes VALUES (gen_random_uuid(), '$ORG_A', 'x') RETURNING org_id")
         }
     }
 

@@ -167,11 +167,10 @@ class ArtifactsPostgresTest {
         }
         assertEquals(emptyList(), repository.members(ORG_B, mine.id))
         assertNull(repository.blob(ORG_B, mine.id, "sha-a"))
-        // S2-51: the routes are reached across organizations only through the router's functions, by key.
-        suspend fun lookup(sql: String) = server.driver.transaction {
-            execute("SET LOCAL ROLE ostrom_tenant").getOrThrow()
-            fetchAll(Statement.create(sql)).getOrThrow().map { it.get("org_id").asUuid() }
-        }
+        // S2-51: the routes are reached across organizations only through the router's functions, by key; the
+        // serving role, outside any organization, reads no route itself.
+        suspend fun lookup(sql: String) =
+            server.driver.fetchAll(Statement.create(sql)).getOrThrow().map { it.get("org_id").asUuid() }
         assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_routes"), "No organization: no route")
         assertEquals(listOf(ORG_A), lookup("SELECT org_id FROM artifacts_route_by_id('${mine.id}')"))
         assertEquals(emptyList(), lookup("SELECT org_id FROM artifacts_route_by_id('${Uuid.random()}')"))
@@ -183,23 +182,17 @@ class ArtifactsPostgresTest {
 
     @Test
     fun aServingRoleFindsAnArtifactOnlyThroughTheRoutersFunctions() = serverTest(listOf(ArtifactsModule)) { server ->
-        // S2-51, as deployed: a role that is not a superuser, where row-level security applies to every query.
-        server.database.withRole { role, driver ->
-            server.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
-                .getOrThrow()
-            server.driver.execute("GRANT ostrom_tenant TO $role").getOrThrow()
-            // What the deployment grants `ostrom_app`: PUBLIC cannot run the router's functions (S2-60).
-            server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
-            val repository = ArtifactsRepositoryImpl(driver)
-            val linked = artifact(access = ArtifactAccess.LINK).copy(linkSlug = "serving-slug")
-            repository.create(linked, version(linked, 1, "a" to "s"), emptyMap())
-            assertEquals(linked.id, repository.getById(linked.id)?.id)
-            assertEquals(linked.id, repository.getByLinkSlug("serving-slug")?.id)
-            assertNull(repository.getByLinkSlug("other-slug"))
-            assertNull(repository.getById(Uuid.random()))
-            val unconfined = driver.fetchAll("SELECT COUNT(*) AS n FROM artifacts_routes").getOrThrow()
-            assertEquals(0L, unconfined.single().get("n").asLong(), "Outside an organization, no route is read")
-        }
+        // S2-51, as deployed: the serving role, where row-level security applies to every query, with only the
+        // privileges a deployment grants it (EXECUTE on the router's functions, S2-60).
+        val repository = ArtifactsRepositoryImpl(server.driver)
+        val linked = artifact(access = ArtifactAccess.LINK).copy(linkSlug = "serving-slug")
+        repository.create(linked, version(linked, 1, "a" to "s"), emptyMap())
+        assertEquals(linked.id, repository.getById(linked.id)?.id)
+        assertEquals(linked.id, repository.getByLinkSlug("serving-slug")?.id)
+        assertNull(repository.getByLinkSlug("other-slug"))
+        assertNull(repository.getById(Uuid.random()))
+        val unconfined = server.driver.fetchAll("SELECT COUNT(*) AS n FROM artifacts_routes").getOrThrow()
+        assertEquals(0L, unconfined.single().get("n").asLong(), "Outside an organization, no route is read")
     }
 
     @Test

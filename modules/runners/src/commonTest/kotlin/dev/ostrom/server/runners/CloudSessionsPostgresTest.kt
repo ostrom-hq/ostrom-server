@@ -129,10 +129,9 @@ class CloudSessionsPostgresTest {
         }
         assertEquals(0L, unset)
         // S2-51: the routes are reached across organizations only through the router's functions, by key.
-        suspend fun lookup(sql: String) = server.driver.transaction {
-            execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-            fetchAll(Statement.create(sql)).getOrThrow().map { it.get("org_id").asUuid() }
-        }
+        // The serving role, outside any organization, reads no route itself.
+        suspend fun lookup(sql: String) =
+            server.driver.fetchAll(Statement.create(sql)).getOrThrow().map { it.get("org_id").asUuid() }
         assertEquals(emptyList(), lookup("SELECT org_id FROM runners_session_routes"), "No organization: no route")
         assertEquals(listOf(ORG_A), lookup("SELECT org_id FROM runners_route_by_session('${ofA.id}')"))
         assertEquals(emptyList(), lookup("SELECT org_id FROM runners_route_by_session('${Uuid.random()}')"))
@@ -143,40 +142,32 @@ class CloudSessionsPostgresTest {
             "SELECT org_id FROM runners_claim_due('probe', '${t0 + 5.minutes}', '${t0 + 1.minutes}', 10)",
         )
         assertEquals(listOf(ORG_A), claimed, "The reconciler claims due sessions of every organization")
-        server.driver.transaction {
-            execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-            fetchAll("SELECT runners_release('${ofA.id}', 'probe', false, '$t0')").getOrThrow()
+        server.driver.fetchAll("SELECT runners_release('${ofA.id}', 'probe', false, '$t0')").getOrThrow()
+        val owner = server.driver.inTenant(ORG_A) {
+            fetchAll("SELECT reconcile_owner FROM runners_session_routes WHERE session_id = '${ofA.id}'")
+                .getOrThrow().single().get("reconcile_owner").asStringOrNull()
         }
-        val owner = server.driver.fetchAll(
-            "SELECT reconcile_owner FROM runners_session_routes WHERE session_id = '${ofA.id}'",
-        ).getOrThrow().single().get("reconcile_owner").asStringOrNull()
         assertNull(owner, "Released")
     }
 
     @Test
     fun aServingRoleReachesRoutesOnlyThroughTheRoutersFunctions() = serverTest(listOf(RunnersModule)) { server ->
-        // S2-51, as deployed: a role that is not a superuser, where row-level security applies to every query.
-        server.database.withRole { role, driver ->
-            server.driver.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $role")
-                .getOrThrow()
-            server.driver.execute("GRANT $TENANT_ROLE TO $role").getOrThrow()
-            // What the deployment grants `ostrom_app`: PUBLIC cannot run the router's functions (S2-60).
-            server.driver.execute("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO $role").getOrThrow()
-            val repository = CloudSessionsRepositoryImpl(driver)
-            val mine = session(createdAt = t0).copy(runnerTokenHash = "hash(serving)")
-            assertTrue(repository.createWithinCap(mine, 5))
-            assertEquals(mine.id, repository.getById(mine.id)?.id)
-            assertEquals(mine.id, repository.findByRunnerTokenHash("hash(serving)")?.id)
-            assertNull(repository.findByRunnerTokenHash("hash(forged)"))
-            assertNull(repository.getById(Uuid.random()))
-            val claimed = repository.claimDue("serving", t0 + 1.minutes, t0 + 5.minutes, 10)
-            assertEquals(listOf(mine.id), claimed.map { it.id })
-            repository.release(mine.id, "serving", null)
-            repository.touchActivity(mine.id, t0 + 2.minutes)
-            assertEquals(t0 + 2.minutes, repository.get(ORG_A, mine.id)?.lastActivityAt)
-            val unconfined = driver.fetchAll("SELECT COUNT(*) AS n FROM runners_session_routes").getOrThrow()
-            assertEquals(0L, unconfined.single().get("n").asLong(), "Outside an organization, no route is read")
-        }
+        // S2-51, as deployed: the serving role, where row-level security applies to every query, with only the
+        // privileges a deployment grants it (EXECUTE on the router's functions, S2-60).
+        val repository = CloudSessionsRepositoryImpl(server.driver)
+        val mine = session(createdAt = t0).copy(runnerTokenHash = "hash(serving)")
+        assertTrue(repository.createWithinCap(mine, 5))
+        assertEquals(mine.id, repository.getById(mine.id)?.id)
+        assertEquals(mine.id, repository.findByRunnerTokenHash("hash(serving)")?.id)
+        assertNull(repository.findByRunnerTokenHash("hash(forged)"))
+        assertNull(repository.getById(Uuid.random()))
+        val claimed = repository.claimDue("serving", t0 + 1.minutes, t0 + 5.minutes, 10)
+        assertEquals(listOf(mine.id), claimed.map { it.id })
+        repository.release(mine.id, "serving", null)
+        repository.touchActivity(mine.id, t0 + 2.minutes)
+        assertEquals(t0 + 2.minutes, repository.get(ORG_A, mine.id)?.lastActivityAt)
+        val unconfined = server.driver.fetchAll("SELECT COUNT(*) AS n FROM runners_session_routes").getOrThrow()
+        assertEquals(0L, unconfined.single().get("n").asLong(), "Outside an organization, no route is read")
     }
 
     @Test
