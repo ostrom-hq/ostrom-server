@@ -110,7 +110,7 @@ fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
  * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written
  * before S2-04, or by hand, cannot grant more): an agent token only [AGENT_SCOPE], a CLI token at most [CLI_SCOPES],
  * the token of `ostrom login --admin` at most [ADMIN_TOKEN_SCOPES], the app's token at most [MOBILE_SCOPES], a
- * personal token what it lists minus [NEVER_ON_A_TOKEN] and [ADMIN_SCOPES].
+ * personal token or a service key what it lists minus [NEVER_ON_A_TOKEN] and [ADMIN_SCOPES].
  *
  * @param kind The kind of the token.
  * @param stored The scopes its row lists.
@@ -122,7 +122,7 @@ fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kin
     TokenKind.CLI -> stored intersect CLI_SCOPES
     TokenKind.ADMIN -> stored intersect ADMIN_TOKEN_SCOPES
     TokenKind.MOBILE -> stored intersect MOBILE_SCOPES
-    TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN - ADMIN_SCOPES
+    TokenKind.PERSONAL, TokenKind.SERVICE -> stored - NEVER_ON_A_TOKEN - ADMIN_SCOPES
 }
 
 /** At most this many scopes on one token. */
@@ -130,6 +130,9 @@ const val MAX_SCOPES = 32
 
 /** At most this many live tokens per user: a list and a guard against a runaway script. */
 const val MAX_TOKENS_PER_USER = 100
+
+/** At most this many live service keys per organization, for the same reasons. */
+const val MAX_SERVICE_KEYS_PER_ORG = 100
 
 /**
  * Checks the scopes a user asks for a personal token: at least one, at most [MAX_SCOPES], each from the catalogue
@@ -186,6 +189,20 @@ class InvalidEmailException : OstromException(ErrorKind.INVALID_REQUEST, "This i
 
 /** A token name is blank or longer than 100 characters. */
 class InvalidTokenNameException : OstromException(ErrorKind.INVALID_REQUEST, "A token name has 1 to 100 characters.")
+
+/** The organization already has [MAX_SERVICE_KEYS_PER_ORG] live service keys. */
+class TooManyServiceKeysException :
+    OstromException(ErrorKind.CONFLICT, "Too many live service keys: delete one before creating another.")
+
+/** The service key is absent, another organization's, or already deleted. */
+class ServiceKeyNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Service key not found.")
+
+/** Only an owner or an admin of the organization manages its service keys. */
+class ServiceKeysAdminRequiredException :
+    OstromException(ErrorKind.FORBIDDEN, "Only an owner or an admin manages the organization's service keys.")
+
+/** The device is absent, another person's, or already signed out. */
+class DeviceNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Device not found.")
 
 /** The token lifetime is not between one day and [MAX_TOKEN_LIFETIME]. */
 class InvalidTokenLifetimeException :

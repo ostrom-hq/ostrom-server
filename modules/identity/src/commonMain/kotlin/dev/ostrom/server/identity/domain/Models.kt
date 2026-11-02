@@ -137,6 +137,14 @@ enum class TokenKind(val prefix: String) {
      * machine, and says yes only after the phone's biometric unlock (S2-31, S2-54).
      */
     MOBILE("osm"),
+
+    /**
+     * An organization's service key (CI, a runner, a script), created by an owner or an admin: it belongs to the
+     * organization, not to its creator ([ApiToken.userId] only says who made it), acts as a
+     * [PrincipalKind.SERVICE][dev.ostrom.server.kernel.auth.PrincipalKind.SERVICE] bound to that organization, and is
+     * never a member: a route serves it only when it admits services.
+     */
+    SERVICE("oss"),
     ;
 
     /** Reads a stored kind back. */

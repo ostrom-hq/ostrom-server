@@ -8,6 +8,7 @@ import dev.ostrom.server.rules.domain.models.GateChange
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
+import dev.ostrom.server.rules.domain.models.RuleGateCheck
 import dev.ostrom.server.rules.domain.models.RuleSource
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.models.RuleStrength
@@ -15,6 +16,7 @@ import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.presentation.GateActionDto
 import dev.ostrom.server.rules.presentation.GatePolicyDto
 import dev.ostrom.server.rules.presentation.NewRuleRequest
+import dev.ostrom.server.rules.presentation.RuleGateCheckDto
 import dev.ostrom.server.rules.presentation.RuleGateDto
 import dev.ostrom.server.rules.presentation.RulesApi
 import dev.ostrom.server.rules.presentation.toDto
@@ -31,8 +33,12 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
 class RulesMappersTest {
-    private val gate =
-        RuleGate(listOf(RuleGateAction("push-main", "Push", listOf("p"), listOf("r"), null)), listOf("lyes"), "x")
+    private val gate = RuleGate(
+        listOf(RuleGateAction("push-main", "Push", listOf("p"), listOf("r"), null)),
+        listOf("lyes"),
+        "x",
+        listOf(RuleGateCheck("tests", attested = true)),
+    )
 
     private fun patch(json: String) = Json.parseToJsonElement(json).jsonObject.toRulePatch()
 
@@ -99,6 +105,7 @@ class RulesMappersTest {
                 listOf(GateActionDto("push-main", "Push", listOf("p"), listOf("r"))),
                 listOf("lyes"),
                 "x",
+                listOf(RuleGateCheckDto("tests", attested = true)),
             ),
         ).toNewRule()
         assertEquals(RuleStrength.RECOMMENDED, gated.strength)
@@ -116,7 +123,8 @@ class RulesMappersTest {
         val full = patch(
             """{"statement":"s","status":"edited","strength":"recommended","reviewBy":"2027-01-01","scope":["a"],""" +
                 """"group":"g","why":"w","output":"check","gate":{"actions":[{"class":"push-main","label":"Push",""" +
-                """"patterns":["p"],"repos":["r"]}],"approvers":["lyes"],"reason":"x"}}""",
+                """"patterns":["p"],"repos":["r"]}],"approvers":["lyes"],"reason":"x",""" +
+                """"checks":[{"check":"tests","attested":true}]}}""",
         )
         assertEquals("s", full.statement)
         assertEquals(RuleStatus.EDITED, full.status)

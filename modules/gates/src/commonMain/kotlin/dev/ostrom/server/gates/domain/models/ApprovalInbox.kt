@@ -17,7 +17,8 @@ enum class ViewerChannel {
  * Who reads an approval, as their credential says.
  *
  * @property channel Where the credential is held.
- * @property answers True when the credential holds a scope that answers an approval; a read-only one never does.
+ * @property answers True when the credential answers approvals: it holds the scope, or it is the app's, which answers
+ *   once the phone is unlocked. A read-only credential never does.
  */
 data class Viewer(val channel: ViewerChannel, val answers: Boolean)
 
@@ -26,8 +27,8 @@ data class Viewer(val channel: ViewerChannel, val answers: Boolean)
  *
  * @property login The person a yes would be signed as.
  * @property self True when that person asked for the action.
- * @property canApprove True when their yes would pass, the fresh sign-in aside (a stale one is told by the answer
- *   route, `step_up_required`).
+ * @property canApprove True when their yes would pass, the fresh sign-in or the app's unlock aside (the answer route
+ *   asks for them, `step_up_required`).
  * @property reason Why their yes would be refused, in plain words; null when it would pass.
  * @property selfApproval True when their yes would pass as a self-approval: they asked, and they are the only approver.
  */
