@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.module
 
+import dev.ostrom.server.kernel.audit.DiscardingOrgAuditTrail
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.RejectingPrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.RejectingTokenAuthenticator
@@ -13,8 +15,9 @@ import org.koin.dsl.module
 /**
  * Builds the server's Koin: the kernel, then every module, **without overrides** (two modules binding the same type
  * fail the start instead of one silently replacing the other). The only defaults a module may replace are the
- * [TokenAuthenticator] and the [PrincipalOrgResolver]: when no module binds them (before the identity and orgs
- * modules exist), every token is rejected and no one is a member of any organization.
+ * [TokenAuthenticator], the [PrincipalOrgResolver] and the [OrgAuditTrail]: when no module binds them (before the
+ * identity and orgs modules exist, or in a module's own tests), every token is rejected, no one is a member of any
+ * organization and the audit trail writes nothing.
  *
  * @param kernel The kernel definitions ([kernelModule]).
  * @param modules The functional modules.
@@ -32,6 +35,9 @@ fun serverKoin(kernel: Module, modules: List<ServerModule>, overrides: Module? =
     }
     if (koin.getOrNull<PrincipalOrgResolver>() == null) {
         koin.loadModules(listOf(module { single<PrincipalOrgResolver> { RejectingPrincipalOrgResolver() } }))
+    }
+    if (koin.getOrNull<OrgAuditTrail>() == null) {
+        koin.loadModules(listOf(module { single<OrgAuditTrail> { DiscardingOrgAuditTrail() } }))
     }
     if (overrides != null) koin.loadModules(listOf(overrides), allowOverride = true)
     return koin

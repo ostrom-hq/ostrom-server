@@ -6,6 +6,7 @@ import dev.ostrom.server.gateway.domain.GetModelPolicyUseCase
 import dev.ostrom.server.gateway.domain.PutGatewaySettingsUseCase
 import dev.ostrom.server.gateway.domain.PutModelPolicyUseCase
 import dev.ostrom.server.gateway.domain.RelayInferenceUseCase
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.secrets.domain.CallerResolver
 import kotlin.time.Clock
@@ -21,6 +22,7 @@ import kotlin.time.Clock
  * @property getPolicy Reads the model policy.
  * @property putPolicy Changes it.
  * @property clock The time.
+ * @property audit Writes a change of the policy or the settings to the organization's audit log.
  */
 data class GatewayRoutesDependencies(
     val tokens: TokenAuthenticator,
@@ -31,4 +33,5 @@ data class GatewayRoutesDependencies(
     val getPolicy: GetModelPolicyUseCase,
     val putPolicy: PutModelPolicyUseCase,
     val clock: Clock,
+    val audit: OrgAuditTrail,
 )

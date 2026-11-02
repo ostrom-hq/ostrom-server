@@ -28,8 +28,7 @@ class LaunchGateActors(private val launchers: LauncherResolver, private val agen
         PrincipalKind.USER -> launchers.resolve(principal)?.let {
             val signedIn = principal.authenticatedAt
             // The role decides who may change what is decided (the compiler's workflows, its package pin).
-            val (login, orgId) = it.login to it.orgId
-            GateActor(login, orgId, ActorKind.USER, personId = login, authenticatedAt = signedIn, role = it.role)
+            GateActor.person(it.login, it.orgId, it.role, authenticatedAt = signedIn)
         }
         PrincipalKind.DEVICE, PrincipalKind.SERVICE -> null
     }
