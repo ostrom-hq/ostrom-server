@@ -10,9 +10,10 @@ internal object ReportsQueries {
      * The ledger of a window joined to the session of each event, grouped four ways: `dim` is `agent`, `repo`,
      * `person` or `day`. Parameters `:org_id`, `:from`, `:to`, and `:member_id` if [member].
      *
-     * An event names its session by its id, or, for a model call through the gateway, by its launch (the event's
-     * `session_id` is then the launch's id, and `launch_id` too): the agent and the repository come from the session
-     * with that id, else from the first segment of that launch, one session only so that nothing counts twice. A line's
+     * An event names its session by its id, or, for a model call through the gateway, by its launch (`launch_id`; its
+     * `session_id` is then the launch's id too): the agent and the repository come from the session with that id, else
+     * from the first segment of that launch, one session only so that nothing counts twice. The launch is compared as
+     * the column itself, no expression: under row level security only a leakproof comparison reaches the index. A line's
      * `sessions` counts the sessions its spending was found in: a launch counts once, a call outside any session never.
      *
      * @param member Whether one member's spending only.
@@ -28,7 +29,7 @@ internal object ReportsQueries {
                 LEFT JOIN sessions_sessions s ON s.org_id = e.org_id AND s.id = e.session_id
                 LEFT JOIN LATERAL (
                     SELECT f.id, f.agent, f.repo FROM sessions_sessions f
-                    WHERE s.id IS NULL AND f.org_id = e.org_id AND f.launch_id = COALESCE(e.launch_id, e.session_id)
+                    WHERE s.id IS NULL AND f.org_id = e.org_id AND f.launch_id = e.launch_id
                     ORDER BY f.segment LIMIT 1
                 ) l ON TRUE
                 LEFT JOIN orgs_members m ON m.org_id = e.org_id AND m.id = e.member_id
