@@ -249,7 +249,7 @@ class CompilerPostgresTest {
 
         val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
         assertEquals(HttpStatusCode.Forbidden, accepted.status)
-        assertTrue(accepted.bodyAsText().contains("Only a person signed in to the console"))
+        assertTrue(accepted.bodyAsText().contains("Only an owner or an admin signed in to the console"))
         val noStatus = JsonObject(mapOf("id" to JsonPrimitive("bare")))
         assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", "/api/v1/workflows", "POST", noStatus).status)
         val proposed = server.call("cli:a:dev", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))

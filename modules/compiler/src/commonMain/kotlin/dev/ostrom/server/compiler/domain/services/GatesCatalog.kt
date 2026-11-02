@@ -38,6 +38,21 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
      * @return The gate, or null.
      */
     fun gateFor(action: ActionClass, repo: String?): CatalogGate? {
+        val declared = declaredGate(action, repo)
+        val guessed = GateGuess.guess(action, repo, workflows)
+        // Second audit H2: proposing never removes a gate. A decided gate, declared or guessed, comes before any
+        // proposed one: a proposed workflow that only declares the class never turns an enforced gate into a shadow.
+        val chosen = when {
+            declared != null && decided(declared.first) -> Triple(declared.first, declared.second, "declared")
+            guessed != null && decided(guessed.first) -> Triple(guessed.first, guessed.second, "guessed")
+            declared != null -> Triple(declared.first, declared.second, "declared")
+            else -> guessed?.let { Triple(it.first, it.second, "guessed") }
+        }
+        return chosen?.let { (workflow, node, basis) -> ref(workflow, node, basis) }
+    }
+
+    // The gate that declares the class, decided first, then the one that names the repository; the first of equals.
+    private fun declaredGate(action: ActionClass, repo: String?): Pair<Workflow, WorkflowNode>? {
         var declared: Triple<Int, Workflow, WorkflowNode>? = null
         for (workflow in workflows) {
             for (node in gates(workflow)) {
@@ -49,16 +64,7 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
                 }
             }
         }
-        val guessed = GateGuess.guess(action, repo, workflows)
-        // Second audit H2: proposing never removes a gate. A decided gate, declared or guessed, comes before any
-        // proposed one: a proposed workflow that only declares the class never turns an enforced gate into a shadow.
-        val chosen = when {
-            declared != null && decided(declared.second) -> Triple(declared.second, declared.third, "declared")
-            guessed != null && decided(guessed.first) -> Triple(guessed.first, guessed.second, "guessed")
-            declared != null -> Triple(declared.second, declared.third, "declared")
-            else -> guessed?.let { Triple(it.first, it.second, "guessed") }
-        }
-        return chosen?.let { (workflow, node, basis) -> ref(workflow, node, basis) }
+        return declared?.let { it.second to it.third }
     }
 
     private fun decidedScore(workflow: Workflow): Int = if (decided(workflow)) 2 else 0
