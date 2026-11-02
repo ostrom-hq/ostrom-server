@@ -12,8 +12,8 @@ import kotlin.uuid.Uuid
  * @property serverUrl The server (`http(s)://`).
  * @property runnerId The registered runner (`OSTROM_RUNNER_ID`).
  * @property key Its key (`OSTROM_RUNNER_KEY` or the file `OSTROM_RUNNER_KEY_FILE`).
- * @property interval Between heartbeats (`OSTROM_RUNNER_INTERVAL_SECONDS`, 1 to 60 s, 30 s by default): well inside
- *   the 90 s after which the server shows the runner offline.
+ * @property interval Between heartbeats (`OSTROM_RUNNER_INTERVAL_SECONDS`, 1 to 30 s, 20 s by default): one lost
+ *   heartbeat, its 10 s timeout included, stays inside the 90 s after which the server shows the runner offline.
  */
 data class MachineConfig(
     val serverUrl: String,
@@ -27,16 +27,20 @@ data class MachineConfig(
     /** Constants and readers of the enclosing type. */
     companion object {
         /** Between heartbeats by default. */
-        val DEFAULT_INTERVAL = 30.seconds
+        val DEFAULT_INTERVAL = 20.seconds
 
-        /** The longest interval: the server shows a runner offline 90 s after its last heartbeat. */
-        private const val MAX_INTERVAL_SECONDS = 60
+        /**
+         * The longest interval: the server shows a runner offline 90 s after its last heartbeat, and a lost one (two
+         * intervals and a 10 s timeout) must stay inside.
+         */
+        private const val MAX_INTERVAL_SECONDS = 30
 
         /**
          * Reads the configuration.
          *
          * @param environment The process environment.
-         * @param readFile Reads the key file.
+         * @param readFile Reads the key file; an [IllegalArgumentException] it throws (an unreadable file) is a bad
+         *   configuration too.
          *
          * @return The configuration.
          *

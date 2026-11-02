@@ -29,7 +29,7 @@ its process namespace. On Docker, the driver runs the same three containers.
 
 An owner or an admin registers a machine of the organization with `POST /api/v1/runners`; the answer shows the
 runner's key once. On that machine, `ostrom-runner machine` signs of life with it on
-`POST /api/v1/runners/{id}/heartbeat`, at once and then every 30 s, so `GET /api/v1/runners` shows it `online`
+`POST /api/v1/runners/{id}/heartbeat`, at once and then every 20 s, so `GET /api/v1/runners` shows it `online`
 (offline 90 s after its last heartbeat):
 
 ```sh
@@ -44,11 +44,12 @@ docker run -d --name ostrom-machine \
 | `OSTROM_SERVER_URL` | the server, `http(s)://` |
 | `OSTROM_RUNNER_ID` | the registered runner |
 | `OSTROM_RUNNER_KEY` or `OSTROM_RUNNER_KEY_FILE` | its key; the file is better, the key is never logged |
-| `OSTROM_RUNNER_INTERVAL_SECONDS` | between heartbeats, 1 to 60 (30 by default) |
+| `OSTROM_RUNNER_INTERVAL_SECONDS` | between heartbeats, 1 to 30 (20 by default): a lost heartbeat stays inside the 90 s |
 
-A heartbeat that fails (server unreachable, 5xx) is logged and retried at the next interval. When the server refuses
-the key (401: the runner was removed, or its key replaced), the process ends with code 3. A bad configuration ends it
-with code 2, a stop (SIGTERM) with 0. No session runs on a registered runner yet: the heartbeat's `sessions` is empty.
+A heartbeat that fails (server unreachable, 5xx) is logged with its cause and retried at the next interval. When the
+server refuses the key three times in a row (401: the runner was removed, or its key replaced; a single 401 may come
+from a proxy), the process ends with code 3. A bad configuration, an unreadable key file included, ends it with code 2,
+a stop (SIGTERM) with 0. No session runs on a registered runner yet: the heartbeat's `sessions` is empty.
 
 ## Checks run by the runner (`isolated_runner`)
 

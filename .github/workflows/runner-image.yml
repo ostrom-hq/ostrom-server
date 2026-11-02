@@ -64,9 +64,12 @@ jobs:
           set +e
           docker run --rm ostrom-runner:ci; code=$?
           docker run --rm ostrom-runner:ci machine; machine=$?
+          docker run --rm -e OSTROM_SERVER_URL=http://server -e OSTROM_RUNNER_ID=00000000-0000-4000-8000-000000000000 \
+            -e OSTROM_RUNNER_KEY_FILE=/nonexistent ostrom-runner:ci machine; unreadable=$?
           set -e
           test "$code" = 2
           test "$machine" = 2
+          test "$unreadable" = 2
           docker run --rm --entrypoint sh ostrom-runner:ci -c 'claude --version && codex --version && git --version && id -u | grep -x 1000'
 
       - name: Push to GHCR

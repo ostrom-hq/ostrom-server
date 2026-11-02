@@ -16,6 +16,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.cinterop.toKString
 import kotlinx.coroutines.runBlocking
+import kotlinx.io.IOException
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -92,14 +93,19 @@ fun main(args: Array<String>) {
 }
 
 /**
- * A registered runner (`ostrom-runner machine`): heartbeats with its key until the server refuses it (exit 3) or the
- * machine stops it (SIGTERM, exit 0).
+ * A registered runner (`ostrom-runner machine`): heartbeats with its key until the server refuses it three times in a
+ * row (exit 3) or the machine stops it (SIGTERM, exit 0). A bad configuration, an unreadable key file included, exits
+ * with 2.
  */
 private fun machine(environment: Map<String, String>): Nothing {
     signal(SIGTERM, staticCFunction<Int, Unit> { _exit(0) })
     val config = try {
         MachineConfig.from(environment) { path ->
-            SystemFileSystem.source(Path(path)).buffered().use { it.readString() }
+            try {
+                SystemFileSystem.source(Path(path)).buffered().use { it.readString() }
+            } catch (error: IOException) {
+                throw IllegalArgumentException("OSTROM_RUNNER_KEY_FILE cannot be read (${error::class.simpleName}).")
+            }
         }
     } catch (error: IllegalArgumentException) {
         log("invalid configuration: ${error.message}")

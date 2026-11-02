@@ -31,7 +31,7 @@ class MachineRunnerTest {
         val inline = MachineConfig.from(env + ("OSTROM_RUNNER_KEY" to key)) { error("no file") }
         assertEquals(MachineConfig("https://api.example.com", id, key), inline)
         assertFalse(key in inline.toString())
-        assertEquals(30.seconds, inline.interval)
+        assertEquals(20.seconds, inline.interval)
 
         val fromFile = MachineConfig.from(
             env + ("OSTROM_RUNNER_KEY_FILE" to "/run/key") + ("OSTROM_RUNNER_INTERVAL_SECONDS" to "5"),
@@ -58,7 +58,7 @@ class MachineRunnerTest {
             ok - "OSTROM_RUNNER_KEY",
             ok - "OSTROM_RUNNER_KEY" + ("OSTROM_RUNNER_KEY_FILE" to "/empty"),
             ok + ("OSTROM_RUNNER_INTERVAL_SECONDS" to "0"),
-            ok + ("OSTROM_RUNNER_INTERVAL_SECONDS" to "90"),
+            ok + ("OSTROM_RUNNER_INTERVAL_SECONDS" to "31"),
             ok + ("OSTROM_RUNNER_INTERVAL_SECONDS" to "x"),
         )
         for (env in broken) {
@@ -85,7 +85,7 @@ class MachineRunnerTest {
     }
 
     @Test
-    fun theMachineBeatsEveryIntervalOutlivesAnOutageAndStopsWhenItsKeyIsRefused() = runTest {
+    fun theMachineBeatsEveryIntervalOutlivesAnOutageAndStopsWhenItsKeyIsRefusedThreeTimesInARow() = runTest {
         val beats = mutableListOf<Long>()
         val lines = mutableListOf<String>()
         var answer: () -> Unit = {}
@@ -105,10 +105,21 @@ class MachineRunnerTest {
         answer = { error("connection refused") }
         advanceTimeBy(10.seconds)
         runCurrent()
-        assertTrue(lines.any { it.startsWith("heartbeat failed: IllegalStateException") }, lines.toString())
+        assertTrue("heartbeat failed: IllegalStateException: connection refused" in lines, lines.toString())
         assertFalse(code.isCompleted, "An outage does not stop the machine")
 
+        // Two refusals then a success: a proxy's or a restarting server's 401 does not stop it.
+        var refusals = 0
+        answer = { if (refusals++ < 2) throw RunnerKeyRefusedException() }
+        advanceTimeBy(30.seconds)
+        runCurrent()
+        assertFalse(code.isCompleted, "Two refusals then a success: the machine goes on")
+        assertTrue("key refused (2/3)" in lines, lines.toString())
+
         answer = { throw RunnerKeyRefusedException() }
+        advanceTimeBy(20.seconds)
+        runCurrent()
+        assertFalse(code.isCompleted, "The count started again after the success")
         advanceTimeBy(10.seconds)
         runCurrent()
         assertEquals(MachineRunner.EXIT_KEY_REFUSED, code.await())
