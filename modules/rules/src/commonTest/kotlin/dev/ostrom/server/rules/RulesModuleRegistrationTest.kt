@@ -27,6 +27,7 @@ import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import dev.ostrom.server.secrets.domain.UnresolvedCallerResolver
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -40,6 +41,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class RulesModuleRegistrationTest {
     @Test
     fun registersUnderItsNameWithDefinitionsThatLoadAndItsMigrations() {

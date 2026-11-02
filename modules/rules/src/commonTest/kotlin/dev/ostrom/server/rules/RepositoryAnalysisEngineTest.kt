@@ -15,6 +15,7 @@ import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.infrastructure.NoRepositoryReader
 import dev.ostrom.server.rules.infrastructure.RepositoryAnalysisEngine
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -22,6 +23,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class RepositoryAnalysisEngineTest {
     private val org = RulesFixtures.orgA
     private val reader = FakeRepositoryReader()

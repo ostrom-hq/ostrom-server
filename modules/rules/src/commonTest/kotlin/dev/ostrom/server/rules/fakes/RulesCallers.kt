@@ -10,6 +10,7 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.secrets.domain.Caller
@@ -26,7 +27,9 @@ import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
+import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
+import kotlinx.serialization.json.JsonElement
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.time.Clock
@@ -69,7 +72,12 @@ object RulesCallers {
         single<TokenAuthenticator> {
             object : TokenAuthenticator {
                 override suspend fun authenticate(token: String): AuthenticatedPrincipal? =
-                    people[token]?.let { AuthenticatedPrincipal(token, it.kind, it.scopes) }
+                    people[token]?.let {
+                        // A person signs in to the console in the browser, the only channel a yes comes from.
+                        val browser = it.kind == PrincipalKind.USER
+                        val channel = if (browser) PrincipalChannel.BROWSER else PrincipalChannel.API_TOKEN
+                        AuthenticatedPrincipal(token, it.kind, it.scopes, channel = channel)
+                    }
             }
         }
         single<CallerResolver> {
@@ -133,9 +141,14 @@ object RulesCallers {
 suspend fun TestServer.call(method: String, path: String, token: String?, body: Any? = null): HttpResponse {
     val request: io.ktor.client.request.HttpRequestBuilder.() -> Unit = {
         token?.let { bearerAuth(it) }
-        if (body != null) {
-            contentType(ContentType.Application.Json)
-            setBody(body)
+        when (body) {
+            null -> Unit
+            // A JsonObject is a Map to Ktor's serializer lookup, which finds no serializer for its JsonLiteral values.
+            is JsonElement -> setBody(TextContent(body.toString(), ContentType.Application.Json))
+            else -> {
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
         }
     }
     return when (method) {

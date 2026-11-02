@@ -145,16 +145,19 @@ class AnalysisEnginePostgresTest {
                     orgA, AnalysisKind.ANALYSIS, "run_1", AnalysisRun.CONNECT, 0.0, null, "lyes",
                     RulesFixtures.epoch, RulesFixtures.epoch,
                 )
-                runs.transaction(orgA) { put(run) }
+                runs.transaction(orgA) {
+                    lock(AnalysisKind.ANALYSIS)
+                    put(run)
+                }
                 analyze(run, listOf(RepositoryFixtures.docs.repo))
 
-                assertEquals(AnalysisRun.READY, runs.transaction(orgA) { lock(AnalysisKind.ANALYSIS) }?.phase)
+                assertEquals(AnalysisRun.READY, runs.run(orgA, AnalysisKind.ANALYSIS)?.phase)
                 assertEquals(
                     listOf(RuleStatus.PROPOSED, RuleStatus.PROPOSED),
                     rules.rules(orgA, RuleQuery(), 10).map { it.status },
                 )
                 assertEquals(emptyList(), rules.rules(orgB, RuleQuery(), 10), "Org B reads none of A's proposals")
-                assertEquals(null, runs.transaction(orgB) { lock(AnalysisKind.ANALYSIS) })
+                assertEquals(null, runs.run(orgB, AnalysisKind.ANALYSIS))
             }
         } finally {
             database.close()
