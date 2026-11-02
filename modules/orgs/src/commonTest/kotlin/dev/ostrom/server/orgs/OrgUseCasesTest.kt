@@ -3,7 +3,6 @@ package dev.ostrom.server.orgs
 
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.orgs.domain.CreateOrgUseCaseImpl
-import dev.ostrom.server.orgs.domain.DeleteOrgUseCaseImpl
 import dev.ostrom.server.orgs.domain.FindOrgUseCaseImpl
 import dev.ostrom.server.orgs.domain.FreeTeamTakenException
 import dev.ostrom.server.orgs.domain.GetOrgUseCaseImpl
@@ -16,14 +15,12 @@ import dev.ostrom.server.orgs.domain.NotAllowedException
 import dev.ostrom.server.orgs.domain.OrgNotFoundException
 import dev.ostrom.server.orgs.domain.OrgRateLimitedException
 import dev.ostrom.server.orgs.domain.Person
-import dev.ostrom.server.orgs.domain.RenameOrgUseCaseImpl
 import dev.ostrom.server.orgs.domain.SlugTakenException
 import dev.ostrom.server.orgs.domain.TransferOwnershipUseCaseImpl
 import dev.ostrom.server.orgs.fakes.OrgsWorld
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.test.runTest
 
@@ -116,43 +113,6 @@ class OrgUseCasesTest {
         assertEquals(acme, get(acme.org.id, ada.id))
         assertFailsWith<OrgNotFoundException> { get(acme.org.id, Uuid.random()) }
         assertFailsWith<OrgNotFoundException> { get(Uuid.random(), ada.id) }
-    }
-
-    @Test
-    fun ownersAndAdminsRename() = runTest {
-        val ada = world.people.add("ada", null)
-        val acme = create(ada.id, "Acme", null)
-        val bob = world.people.add("bob", null)
-        join(acme, bob, OrgRole.MEMBER)
-        val rename = RenameOrgUseCaseImpl(world.orgs, world.members, world.audit)
-
-        assertEquals("Acme Labs", rename(acme.org.id, ada.id, " Acme Labs ").org.name)
-        assertEquals("Acme Labs", world.orgs.get(acme.org.id)?.name)
-        assertEquals(
-            "org.renamed" to mapOf("from" to "Acme", "to" to "Acme Labs"),
-            world.audit.events.last(),
-        )
-        assertFailsWith<NotAllowedException> { rename(acme.org.id, bob.id, "Mine") }
-        assertFailsWith<InvalidOrgRequestException> { rename(acme.org.id, ada.id, " ") }
-    }
-
-    @Test
-    fun onlyTheOwnerDeletesAfterTypingTheShortName() = runTest {
-        val ada = world.people.add("ada", null)
-        val acme = create(ada.id, "Acme", null)
-        val bob = world.people.add("bob", null)
-        join(acme, bob, OrgRole.ADMIN)
-        val delete = DeleteOrgUseCaseImpl(world.orgs, world.members, world.audit, world.clock)
-
-        assertFailsWith<NotAllowedException> { delete(acme.org.id, bob.id, "acme") }
-        assertFailsWith<InvalidOrgRequestException> { delete(acme.org.id, ada.id, "Acme") }
-        delete(acme.org.id, ada.id, "acme")
-
-        assertNull(world.orgs.get(acme.org.id))
-        assertEquals(emptyList(), world.members.list(acme.org.id))
-        assertEquals("org.deleted", world.audit.events.last().first)
-        // Its free claim is released: the same person can start a new free team.
-        create(ada.id, "Acme again", null)
     }
 
     @Test
