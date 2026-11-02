@@ -33,13 +33,6 @@ data class GitHubSettings(
     /** Whether the App can authenticate: an id and a key. */
     val configured: Boolean get() = appId != null && privateKeyPem != null
 
-    /** The App's OAuth client, when both its id and its secret are set. */
-    val oauthClient: AppOAuthClient?
-        get() = if (clientId == null || clientSecret == null) null else AppOAuthClient(clientId, clientSecret)
-
-    /** The slug to install the App with, only when the server can check who installs it (its OAuth client). */
-    val installSlug: String? get() = if (oauthClient == null) null else slug
-
     // The key never appears in a log or a dump of the settings.
     override fun toString(): String = "GitHubSettings(appId=$appId, slug=$slug, apiUrl=$apiUrl, configured=$configured)"
 

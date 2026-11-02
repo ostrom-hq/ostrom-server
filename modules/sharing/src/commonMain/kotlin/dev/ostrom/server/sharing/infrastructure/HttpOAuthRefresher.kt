@@ -23,6 +23,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlin.io.encoding.Base64
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -57,7 +58,7 @@ class HttpOAuthRefresher(
                 when (response.status) {
                     HttpStatusCode.OK -> {
                         val body = response.bodyAsChannel().readRemaining(MAX_BODY).readByteArray().decodeToString()
-                        parse(body, credentials)
+                        parse(provider, body, credentials)
                     }
                     in REFUSED -> refused(
                         response.bodyAsChannel().readRemaining(MAX_BODY).readByteArray().decodeToString(),
@@ -85,7 +86,7 @@ class HttpOAuthRefresher(
         return if (error == "invalid_grant") RefreshResult.Revoked else RefreshResult.Unavailable
     }
 
-    private fun parse(body: String, previous: AccountCredentials): RefreshResult {
+    private fun parse(provider: AccountProvider, body: String, previous: AccountCredentials): RefreshResult {
         val value = try {
             Json.parseToJsonElement(body) as? JsonObject
         } catch (_: SerializationException) {
@@ -94,10 +95,35 @@ class HttpOAuthRefresher(
         val access = value?.string("access_token")
         val refresh = value?.string("refresh_token") ?: previous.refreshToken
         val seconds = (value?.get("expires_in") as? JsonPrimitive)?.longOrNull?.takeIf { it in 1..MAX_EXPIRES_IN }
-        return if (access == null || seconds == null) {
+        return if (value == null || access == null || seconds == null) {
             RefreshResult.Unavailable
         } else {
-            RefreshResult.Renewed(AccountCredentials(access, refresh, clock.now() + seconds.seconds))
+            val renewed = AccountCredentials(access, refresh, clock.now() + seconds.seconds)
+            RefreshResult.Renewed(renewed, accountOf(provider, value))
+        }
+    }
+
+    /**
+     * The provider account the answer names: Claude's `account.uuid`; for Codex, the ChatGPT account id of the
+     * `id_token` claims (or of the access token's, also a JWT). The answer comes straight from the provider's token
+     * endpoint over TLS, so its JWT is read, not verified.
+     */
+    private fun accountOf(provider: AccountProvider, answer: JsonObject): String? = when (provider) {
+        AccountProvider.CLAUDE -> (answer["account"] as? JsonObject)?.string("uuid")
+        AccountProvider.CODEX -> listOf("id_token", "access_token").firstNotNullOfOrNull { key ->
+            (claims(answer.string(key))?.get(OPENAI_AUTH_CLAIM) as? JsonObject)?.string("chatgpt_account_id")
+        }
+    }
+
+    /** The claims of a JWT, or null when [jwt] is not one. */
+    private fun claims(jwt: String?): JsonObject? {
+        val parts = jwt?.split('.').orEmpty()
+        if (parts.size != JWT_PARTS) return null
+        return try {
+            Json.parseToJsonElement(JWT_BASE64.decode(parts[1]).decodeToString()) as? JsonObject
+        } catch (_: IllegalArgumentException) {
+            // A bad base64 or JSON: SerializationException is an IllegalArgumentException.
+            null
         }
     }
 
@@ -121,6 +147,9 @@ class HttpOAuthRefresher(
         )
 
         private const val MAX_BODY = 256L * 1024
+        private const val JWT_PARTS = 3
+        private const val OPENAI_AUTH_CLAIM = "https://api.openai.com/auth"
+        private val JWT_BASE64 = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT_OPTIONAL)
         private const val MAX_EXPIRES_IN = 31_536_000L
         private val REFUSED = setOf(HttpStatusCode.BadRequest, HttpStatusCode.Unauthorized)
     }

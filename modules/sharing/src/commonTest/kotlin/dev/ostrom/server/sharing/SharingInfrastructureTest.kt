@@ -25,6 +25,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
+import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -88,6 +89,42 @@ class SharingInfrastructureTest {
     }
 
     @Test
+    fun aRefreshSaysWhoseTokensTheyAre() = realTime {
+        suspend fun accountOf(provider: AccountProvider, extra: String, access: String = "a"): String? {
+            val body = """{"access_token":"$access","expires_in":60$extra}"""
+            val renewed = refresher(HttpStatusCode.OK, body).refresh(provider, old)
+            return assertIs<RefreshResult.Renewed>(renewed).accountId
+        }
+        val claude = ""","account":{"uuid":"claude-uuid","email_address":"lyes@example.com"}"""
+        assertEquals("claude-uuid", accountOf(AccountProvider.CLAUDE, claude))
+        for (extra in listOf("", ""","account":"claude-uuid"""", ""","account":{}""", ""","account":{"uuid":" "}""")) {
+            assertNull(accountOf(AccountProvider.CLAUDE, extra), "Claude's answer names no account: $extra")
+        }
+        val urlSafe = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
+        fun jwt(claims: String) = "header.${urlSafe.encode(claims.encodeToByteArray())}.signature"
+        val auth = jwt("""{"https://api.openai.com/auth":{"chatgpt_account_id":"chatgpt-1"}}""")
+        assertEquals("chatgpt-1", accountOf(AccountProvider.CODEX, ""","id_token":"$auth""""))
+        assertEquals("chatgpt-1", accountOf(AccountProvider.CODEX, "", access = auth), "The access token is a JWT too")
+        assertEquals(
+            "chatgpt-1",
+            accountOf(AccountProvider.CODEX, ""","id_token":"${jwt("{}")}"""", access = auth),
+            "An id_token without the claim falls back on the access token",
+        )
+        for (idToken in listOf(
+            "not-a-jwt",
+            "header.!!!.signature",
+            jwt("{"),
+            jwt("[1]"),
+            jwt("{}"),
+            jwt("""{"https://api.openai.com/auth":"chatgpt-1"}"""),
+            jwt("""{"https://api.openai.com/auth":{}}"""),
+        )) {
+            assertNull(accountOf(AccountProvider.CODEX, ""","id_token":"$idToken""""), "No account in $idToken")
+        }
+        assertNull(accountOf(AccountProvider.CODEX, ""), "No id_token, an opaque access token")
+    }
+
+    @Test
     fun theInstanceConfigurationPointsTheTokenEndpointsElsewhere() {
         assertEquals(HttpOAuthRefresher.ENDPOINTS, SharingConfig.tokenEndpoints(MapConfigSource(emptyMap())))
         val claude = "OSTROM_SHARING_CLAUDE_TOKEN_URL"
@@ -100,6 +137,9 @@ class SharingInfrastructureTest {
             "http://127.0.0.1/oauth/token",
             "http://provider.localhost/oauth/token",
             "http://provider.localtest.me:8080/v1/oauth/token",
+            "http://LOCALHOST:65535/oauth/token",
+            "https://proxy.example?tenant=a",
+            "https://proxy.example",
         )
         for (url in accepted) assertEquals(url, claudeAt(" $url "), "Accepted, trimmed: $url")
         val refused = listOf(
@@ -108,12 +148,37 @@ class SharingInfrastructureTest {
             "http://proxy.internal/oauth/token",
             "http://localhost@evil.example/oauth/token",
             "ftp://x",
+            // The host is the parsed one, never a suffix of the string: a fragment, credentials or a backslash
+            // can never make a remote host pass for a local one.
+            "http://evil.example#@localhost/oauth/token",
+            "http://evil.example#.localhost/oauth/token",
+            "http://evil.example/#@localhost",
+            "http://evil.example?@localhost/oauth/token",
+            "http://evil.example\\@localhost/oauth/token",
+            "http://evil.example\\.localhost/oauth/token",
+            "http://user:secret@localhost/oauth/token",
+            "https://user:secret@proxy.example/oauth/token",
+            "http://localhost:secret@evil.example/oauth/token",
+            "http://localhost.evil.example/oauth/token",
+            "http://evil.example/.localhost",
+            "http://evil.example:8080/localhost",
+            "http://[::1]/oauth/token",
+            "http://localhost:/oauth/token",
+            "http://localhost:99999/oauth/token",
+            "http://localhost:80x/oauth/token",
+            "https:///oauth/token",
+            "https://./oauth/token",
+            "https://proxy..example/oauth/token",
+            "https://proxy.example./oauth/token",
+            "https://token_proxy/oauth/token",
+            "//localhost/oauth/token",
         )
         for (url in refused) {
             val error = assertFailsWith<InvalidConfigException>(url) { claudeAt(url) }
             assertEquals(
                 "$claude must be an https URL, or http to a local host (localhost, 127.0.0.1, *.localhost, " +
-                    "*.localtest.me).",
+                    "*.localtest.me), with a plain host name or IPv4 address, a port up to 65535, and no " +
+                    "credentials (@), fragment (#) or backslash.",
                 error.message,
             )
         }

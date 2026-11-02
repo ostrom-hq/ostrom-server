@@ -17,16 +17,21 @@ import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 private val requestStart = AttributeKey<TimeSource.Monotonic.ValueTimeMark>("ostrom.request.start")
+private val requestLogged = AttributeKey<Unit>("ostrom.request.logged")
 
 /**
- * One structured line per answered request: method, route template (never the path nor the query string, which may
- * carry an artifact ticket, a share slug or a token), status, duration, request id, and the trace and span ids when
- * the request is traced. The probes (`/health`, `/ready`) are logged at DEBUG so as not to flood the logs.
+ * One structured line per answered request: method, route template ([httpRoute]: never the concrete path, which can
+ * hold an artifact ticket or a public link's slug, nor the query string, which may carry a token; S2-45), status,
+ * duration, request id, and the trace and span ids when the request is traced. The probes (`/health`, `/ready`) are
+ * logged at DEBUG so as not to flood the logs. One line per call: a status page (the JSON of a 404) is sent from within
+ * the first response, and both sends end in `ResponseSent`.
  */
 val RequestLogging = createApplicationPlugin("RequestLogging", ::RequestLoggingConfig) {
     val logger = pluginConfig.logger
     onCall { call -> call.attributes.put(requestStart, TimeSource.Monotonic.markNow()) }
     on(ResponseSent) { call ->
+        if (call.attributes.contains(requestLogged)) return@on
+        call.attributes.put(requestLogged, Unit)
         logger.log(
             if (call.request.path() in PROBE_PATHS) LogLevel.DEBUG else LogLevel.INFO,
             "request served",

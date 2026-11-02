@@ -103,7 +103,7 @@ class GitHubWebhooksTest {
 
     @Test
     fun anInstallLinksTheInstallationToTheOrganizationThatStartedItOnce() = runTest {
-        val installs = GitHubInstalls(repository, api, "ostrom-dev", "https://github.com", clock)
+        val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
         val link = installs.start(ORG, "owner", SESSION)
         assertTrue(link.startsWith("https://github.com/apps/ostrom-dev/installations/new?state="))
         val state = link.substringAfter("state=")
@@ -145,13 +145,13 @@ class GitHubWebhooksTest {
         val reinstalled = installs.finish("42", "code-acme", again, SESSION)
         assertEquals(GitHubInstallation(ORG, 42, "acme"), reinstalled, "Installed again")
 
-        val unconfigured = GitHubInstalls(repository, api, null, "https://github.com", clock)
+        val unconfigured = GitHubInstalls(repository, api, { null }, "https://github.com", clock)
         assertFailsWith<GitHubAppNotConfiguredException> { unconfigured.start(ORG, "owner", SESSION) }
     }
 
     @Test
     fun anInstallationIsLinkedOnlyIfThePersonWhoCameBackReachesIt() = runTest {
-        val installs = GitHubInstalls(repository, api, "ostrom-dev", "https://github.com", clock)
+        val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
         api.accounts[42] = "acme"
         api.accounts[43] = "globex"
         // The owner of org B, who reaches only 43, comes back with the id of acme's installation.
@@ -177,7 +177,7 @@ class GitHubWebhooksTest {
 
     @Test
     fun onlyTheSessionThatStartedAnInstallFinishesIt() = runTest {
-        val installs = GitHubInstalls(repository, api, "ostrom-dev", "https://github.com", clock)
+        val installs = GitHubInstalls(repository, api, { "ostrom-dev" }, "https://github.com", clock)
         api.accounts[42] = "acme"
         val state = installs.start(ORG, "owner", SESSION).substringAfter("state=")
         // The state brought back by another session (a link sent to someone else) matches nothing.

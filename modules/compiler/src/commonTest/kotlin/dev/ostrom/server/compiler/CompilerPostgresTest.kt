@@ -91,6 +91,7 @@ class CompilerPostgresTest {
     // Tokens are `<kind>:<org letter>:<id>`: `user:a:lead` (browser session), `agent:a:launch-1`, `cli:a:dev` (the
     // CLI's token, which an agent can read on the developer's machine), `gates:a:x` (a gates-only key).
     private val cliScopes = setOf(CompilerScopes.WORKFLOWS_READ, CompilerScopes.WORKFLOWS_WRITE)
+    private val personalScopes = cliScopes + CompilerScopes.PACKAGES_READ + CompilerScopes.PACKAGES_WRITE
 
     private fun overrides(config: Map<String, String>?, sources: CompilerSources? = null): Module = module {
         single<TokenAuthenticator> {
@@ -102,6 +103,8 @@ class CompilerPostgresTest {
                     "gates" -> AuthenticatedPrincipal(token, PrincipalKind.USER, setOf(GateScopes.READ))
                     // A machine holding the packages scope: never a person.
                     "bot" -> AuthenticatedPrincipal(token, PrincipalKind.SERVICE, setOf(CompilerScopes.PACKAGES_WRITE))
+                    // A person's own token, outside the browser.
+                    "pat" -> AuthenticatedPrincipal(token, PrincipalKind.USER, personalScopes)
                     else -> AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                 }
             }
@@ -114,7 +117,7 @@ class CompilerPostgresTest {
                     return when (kind) {
                         "agent" -> GateActor("agent", orgId, ActorKind.AGENT_SESSION, launchId = id, personId = "lead")
                         "bot" -> GateActor(id, orgId, ActorKind.SERVICE)
-                        else -> GateActor(id, orgId, ActorKind.USER, personId = id)
+                        else -> GateActor(id, orgId, ActorKind.USER, personId = id, role = roleOf(id))
                     }
                 }
             }
@@ -238,7 +241,7 @@ class CompilerPostgresTest {
 
         val accepted = server.call("cli:a:dev", "/api/v1/workflows", "POST", release())
         assertEquals(HttpStatusCode.Forbidden, accepted.status)
-        assertTrue(accepted.bodyAsText().contains("Only a person signed in to the console"))
+        assertTrue(accepted.bodyAsText().contains("Only an owner or an admin signed in to the console"))
         val noStatus = JsonObject(mapOf("id" to JsonPrimitive("bare")))
         assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", "/api/v1/workflows", "POST", noStatus).status)
         val proposed = server.call("cli:a:dev", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))
@@ -256,6 +259,38 @@ class CompilerPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, server.call("cli:a:dev", path, "PUT", edit).status, "Accepted stays so")
         assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", "/api/v1/gates/catalog?repo=acme-api").status)
         assertEquals(HttpStatusCode.OK, server.call("cli:a:dev", path).status)
+    }
+
+    @Test
+    fun onlyAnOwnerOrAnAdminDecides() = compilerTest { server ->
+        // Second audit H4: a member or an approver, in the browser too, only proposes.
+        for (who in listOf("user:a:member", "user:a:approver")) {
+            val accepted = server.call(who, "/api/v1/workflows", "POST", release())
+            assertEquals(HttpStatusCode.Forbidden, accepted.status, who)
+            assertTrue(accepted.bodyAsText().contains("Only an owner or an admin signed in to the console"))
+        }
+        val proposed = server.call("user:a:member", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))
+        assertEquals(HttpStatusCode.Created, proposed.status)
+        val path = "/api/v1/workflows/release"
+        val accepting = SaveWorkflowRequest(release(), expectedVersion = 1)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", path, "PUT", accepting).status)
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", path, "DELETE").status)
+        assertEquals(HttpStatusCode.OK, server.call("user:a:admin", path, "PUT", accepting).status)
+
+        val envelope = server.call("user:a:admin", "/api/v1/packages/current").body<PackageEnvelope>()
+        val revokePath = "/api/v1/packages/${envelope.digest}/revoke"
+        val byMember = server.call("user:a:member", revokePath, "POST", RevokeRequest("x"))
+        assertEquals(HttpStatusCode.Forbidden, byMember.status)
+        assertTrue(byMember.bodyAsText().contains("Only an owner or an admin revokes a package."))
+        // An owner's own token revokes from the terminal; restoring needs the console (second audit M3).
+        val revoked = server.call("pat:a:lead", revokePath, "POST", RevokeRequest("leaked"))
+        assertTrue(revoked.body<PackageSummary>().revoked)
+        val restorePath = "/api/v1/packages/${envelope.digest}/restore"
+        val restore = server.call("pat:a:lead", restorePath, "POST")
+        assertEquals(HttpStatusCode.Forbidden, restore.status)
+        assertTrue(restore.bodyAsText().contains("signed in to the console restores a package"))
+        assertEquals(HttpStatusCode.Forbidden, server.call("user:a:member", restorePath, "POST").status)
+        assertFalse(server.call("user:a:admin", restorePath, "POST").body<PackageSummary>().revoked)
     }
 
     @Test

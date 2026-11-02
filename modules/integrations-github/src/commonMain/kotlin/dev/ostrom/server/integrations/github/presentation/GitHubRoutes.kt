@@ -115,12 +115,14 @@ fun Route.gitHubRoutes(dependencies: GitHubRoutesDependencies) = with(dependenci
         get<GitHubAppPath> {
             val actor = actorOf(call, setOf(GateScopes.ALL_USER, ORGS_READ))
             val installation = repository.installation(actor.orgId)
+            // The environment's App, or the one the manifest flow created.
+            val slug = apps.current().slug
             call.respond(
                 GitHubAppStatus(
                     installed = installation != null,
-                    slug = settings.slug,
+                    slug = slug,
                     installationId = installation?.installationId,
-                    htmlUrl = settings.slug?.let { "${settings.webUrl}/apps/$it" },
+                    htmlUrl = slug?.let { "${settings.webUrl}/apps/$it" },
                 ),
             )
         }
