@@ -12,6 +12,8 @@ import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCase
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
+import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
+import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCaseImpl
 import dev.ostrom.server.runners.domain.CloudPlanProvider
 import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.CloudUsageMeter
@@ -89,13 +91,14 @@ object RunnersModule : ServerModule {
         single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
         single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get()) }
+        single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), get()) }
         single<RunnerHeartbeatUseCase> { RunnerHeartbeatUseCaseImpl(get(), get(), get(), get()) }
         single<RecordCloudSessionActivityUseCase> { RecordCloudSessionActivityUseCaseImpl(get(), get()) }
         single<ReconcileCloudSessionUseCase> {
             ReconcileCloudSessionUseCaseImpl(get(), get(), get(), get(), get(), get())
         }
         single { ReconcilerWorker(get(), get(), get(), get()) }
-        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single { CloudSessionsRoutesDependencies(get(), get(), get(), get(), get(), get(), get()) }
         single { TerminalRelay() }
         single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }
         single<AuthenticateRunnerUseCase> { AuthenticateRunnerUseCaseImpl(get(), get()) }

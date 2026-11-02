@@ -38,6 +38,12 @@ enum class ImportAction {
 
     /** Not imported; the reason says why. */
     SKIPPED,
+
+    /**
+     * A shared account waiting for a reconnection, left so: reviving it tests TeamCode's tokens, which rotates them and
+     * disconnects TeamCode, so only the cutover run does it.
+     */
+    REVIVE_AT_CUTOVER,
 }
 
 /**
