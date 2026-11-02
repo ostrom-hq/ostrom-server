@@ -78,8 +78,11 @@ enum class RefusalKind(val status: Int, val anthropicType: String, val openAiTyp
     /** The org does not allow this model. */
     MODEL_NOT_ALLOWED(FORBIDDEN, "permission_error", "permission_error"),
 
-    /** A budget is exhausted. */
+    /** A monthly budget is reached. */
     BUDGET_EXHAUSTED(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota"),
+
+    /** What is left of a budget does not cover what this call may cost. */
+    BUDGET_INSUFFICIENT(TOO_MANY_REQUESTS, "rate_limit_error", "insufficient_quota"),
 
     /** Every shared account is busy or at its limit. */
     NO_CAPACITY(TOO_MANY_REQUESTS, "rate_limit_error", "rate_limit_exceeded"),

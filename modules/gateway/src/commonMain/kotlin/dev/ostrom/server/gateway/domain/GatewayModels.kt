@@ -85,7 +85,7 @@ data class TokenUsage(val input: Long = 0, val output: Long = 0, val cacheRead: 
 /**
  * One relayed model call, for the usage ledger, budgets, per-account limits and traces. Never holds prompt or output.
  *
- * @property id The call.
+ * @property id The call; it settles the call's budget hold ([SpendRequest.callId]).
  * @property orgId The org.
  * @property memberId The member.
  * @property sessionId The agent session, when the agent named it.
@@ -97,7 +97,7 @@ data class TokenUsage(val input: Long = 0, val output: Long = 0, val cacheRead: 
  * @property costMicros Equivalent API cost, USD millionths (0 when the model has no price).
  * @property priced Whether a price row applied.
  * @property status The HTTP status answered to the agent.
- * @property outcome `ok`, `provider_error`, `cancelled`, `budget_exhausted`, `no_capacity`...
+ * @property outcome `ok`, `provider_error`, `cancelled`, `budget_exhausted`, `budget_insufficient`, `no_capacity`...
  * @property startedAt When the request arrived.
  * @property firstByteMillis Time to the first byte sent back, if any.
  * @property durationMillis Total time.
@@ -145,29 +145,48 @@ object NoModelCallObserver : ModelCallObserver {
     override suspend fun observe(call: ModelCallRecord) = Unit
 }
 
+/**
+ * One call asking to spend: what it may cost at most, held against the budgets until its cost is recorded.
+ *
+ * @property orgId The org.
+ * @property memberId The member.
+ * @property callId The call: its [ModelCallRecord.id], which settles the hold. Every try of a call asks with the
+ *   same id.
+ * @property reserveMicros What the call may cost at most, USD millionths ([BudgetCheck]); 0 when unpriced.
+ */
+data class SpendRequest(val orgId: Uuid, val memberId: Uuid, val callId: Uuid, val reserveMicros: Long)
+
 /** Whether a member may spend now. */
 sealed interface SpendDecision {
-    /** Yes. */
+    /** Yes: the call's reserve is held until its cost is recorded. */
     data object Allowed : SpendDecision
 
     /**
-     * No: a budget is exhausted.
+     * No: a monthly budget is reached.
      *
      * @property message Safe for the agent.
      * @property resetsAt When it resets.
      */
     data class Exhausted(val message: String, val resetsAt: Instant?) : SpendDecision
+
+    /**
+     * No: what is left of a budget does not cover what this call may cost. A smaller call (fewer output tokens), or the
+     * same once the calls in flight are recorded, may go.
+     *
+     * @property message Safe for the agent.
+     */
+    data class Insufficient(val message: String) : SpendDecision
 }
 
 /** Budgets as the gateway sees them; bound to the budgets module by the budgets wiring. */
 fun interface SpendGuard {
-    /** Decides for the member. */
-    suspend fun check(orgId: Uuid, memberId: Uuid): SpendDecision
+    /** Decides for the member's call, and holds its reserve when it may go. */
+    suspend fun check(request: SpendRequest): SpendDecision
 }
 
 /** Allows every call: the default until the budgets module binds its [SpendGuard]. */
 object AllowAllSpend : SpendGuard {
-    override suspend fun check(orgId: Uuid, memberId: Uuid): SpendDecision = SpendDecision.Allowed
+    override suspend fun check(request: SpendRequest): SpendDecision = SpendDecision.Allowed
 }
 
 /**

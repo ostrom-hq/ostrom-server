@@ -6,6 +6,7 @@ import dev.ostrom.core.telemetry.genai.ModelCall
 import dev.ostrom.core.telemetry.genai.ModelCallSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -31,7 +32,9 @@ class OstromMetricsTest {
         var pending = 4L
         metrics.sessionStarted("claude", "cloud")
         metrics.observeGatesPending { pending }
-        metrics.observeSessions({ mapOf("local" to 2L, "cloud" to 1L) }, cloudCapacity = 20)
+        metrics.observeSessionsActive("local") { 2L }
+        metrics.observeSessionsActive("cloud") { 1L }
+        metrics.declareCloudCapacity(20)
         pending = 5
 
         val started = Attributes.of("agent" to "claude", "where" to "cloud")
@@ -40,6 +43,23 @@ class OstromMetricsTest {
         val active = telemetry.gauge("ostrom.sessions.active").associate { it.attributes to it.value }
         assertEquals(mapOf(Attributes.of("where" to "local") to 2.0, Attributes.of("where" to "cloud") to 1.0), active)
         assertEquals(20.0, telemetry.gauge("ostrom.sessions.cloud_capacity").single().value)
+    }
+
+    @Test
+    fun withoutPlacesNorCapacityNoSessionSeriesIsSent() {
+        val names = telemetry.meter.collect().map { it.name }
+
+        assertTrue("ostrom.sessions.active" !in names)
+        assertTrue("ostrom.sessions.cloud_capacity" !in names)
+    }
+
+    @Test
+    fun aPlaceWithoutSessionsRegisteredSendsNoSeriesAndAnUnknownPlaceIsRefused() {
+        metrics.observeSessionsActive("local") { 3L }
+
+        val active = telemetry.gauge("ostrom.sessions.active").associate { it.attributes to it.value }
+        assertEquals(mapOf(Attributes.of("where" to "local") to 3.0), active)
+        assertFailsWith<NoSuchElementException> { metrics.observeSessionsActive("moon") { 1L } }
     }
 
     @Test

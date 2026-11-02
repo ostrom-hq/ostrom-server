@@ -30,14 +30,17 @@ data class ModelPrice(
  */
 class PriceTable(private val prices: List<ModelPrice> = ANTHROPIC_LIST_PRICES) {
     /** The cost in USD millionths, or null when no row prices the model. */
-    fun costMicros(provider: InferenceProvider, model: String, usage: TokenUsage): Long? {
+    fun costMicros(provider: InferenceProvider, model: String, usage: TokenUsage): Long? =
+        priceOf(provider, model)?.let {
+            cost(usage.input, it.input) + cost(usage.cacheWrite, it.cacheWrite) +
+                cost(usage.cacheRead, it.cacheRead) + cost(usage.output, it.output)
+        }
+
+    /** The row that prices [model] at [provider]'s family, or null when none does. */
+    fun priceOf(provider: InferenceProvider, model: String): ModelPrice? {
         val served = model.lowercase()
         return prices.filter { it.provider == provider.family && served.startsWith(it.model) }
             .maxWithOrNull(compareBy<ModelPrice>({ it.model == served }, { it.model.length }))
-            ?.let {
-                cost(usage.input, it.input) + cost(usage.cacheWrite, it.cacheWrite) +
-                    cost(usage.cacheRead, it.cacheRead) + cost(usage.output, it.output)
-            }
     }
 
     private fun cost(count: Long, perMillion: Long): Long = (count.toDouble() * perMillion / PER_MILLION).roundToLong()

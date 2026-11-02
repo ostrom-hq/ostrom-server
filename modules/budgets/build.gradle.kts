@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Module budgets: monthly spending limits per org and per member, and the guard the gateway asks before each model
-// call. Reads the spend from the usage ledger.
+// call. Reads the spend and holds the calls in flight on the usage ledger.
 plugins {
     id("ostrom.native-module")
 }
@@ -11,6 +11,8 @@ kotlin {
             implementation(project(":kernel"))
             implementation(project(":modules:secrets"))
             api(project(":modules:usage"))
+            // The gateway's SpendGuard port, bound here to the limits and the ledger's holds.
+            implementation(project(":modules:gateway"))
             implementation(libs.kotlinx.datetime)
         }
         commonTest.dependencies {

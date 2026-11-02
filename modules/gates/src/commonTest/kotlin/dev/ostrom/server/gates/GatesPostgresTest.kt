@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
+import dev.ostrom.core.telemetry.metrics.MeterImpl
+import dev.ostrom.core.telemetry.metrics.MetricData
+import dev.ostrom.server.kernel.observability.OstromMetrics
+import io.github.smyrgeorge.sqlx4k.Driver
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import org.koin.dsl.koinApplication
+import kotlin.time.Duration.Companion.seconds
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.AnswerChannel
 import dev.ostrom.server.gates.domain.models.ApprovalRequest
@@ -769,6 +780,29 @@ class GatesPostgresTest {
             HttpStatusCode.NotFound,
             server.call("agent:a:$session", "/api/v1/gates/${Uuid.random()}/explode", post = true).status,
         )
+    }
+
+    @Test
+    fun thePendingGaugeCountsTheGatesOfEveryOrganizationThroughTheRouter() = gatesTest { server ->
+        server.call("agent:a:$session", "/api/v1/gates", push())
+        server.call("agent:b:$session", "/api/v1/gates", push())
+        val meter = MeterImpl(Clock.System)
+        val koin = koinApplication {
+            modules(module { single { server.koin.get<Driver>() } }, module { single { OstromMetrics(meter) } })
+        }.koin
+        val scope = CoroutineScope(Job())
+        fun pending() = (meter.collect().single { it.name == "ostrom.gates.pending" } as MetricData.Gauge).points
+            .single().value
+
+        try {
+            GatesModule.start(scope, koin)
+            // The serving role reads no row of org B (its tenant policy): the router's count sees both.
+            withTimeout(10.seconds) { while (pending() != 2.0) delay(50.milliseconds) }
+        } finally {
+            scope.cancel()
+            koin.close()
+        }
+        assertEquals(2.0, pending())
     }
 }
 

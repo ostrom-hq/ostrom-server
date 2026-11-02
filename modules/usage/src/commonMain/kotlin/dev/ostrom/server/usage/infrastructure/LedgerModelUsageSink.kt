@@ -10,13 +10,14 @@ import dev.ostrom.server.usage.domain.UsageRecorder
 
 /**
  * The gateway's model calls into the ledger: each call is one MODEL event, with its tokens, its cost and the launch of
- * the agent token that made it. The spending, the budgets and a session's receipt read them from there.
+ * the agent token that made it, written with the release of the call's budget hold. The spending, the budgets and a
+ * session's receipt read them from there.
  *
  * @param recorder Writes and publishes the event; a failed write is logged, never thrown at the gateway.
  */
 class LedgerModelUsageSink(private val recorder: UsageRecorder) : ModelUsageSink {
     override suspend fun record(call: ModelCallRecord) {
-        recorder.record(call.toUsageEvent())
+        recorder.settle(call.toUsageEvent())
     }
 }
 
