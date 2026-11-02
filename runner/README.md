@@ -29,3 +29,8 @@ runs one session as the Docker driver does, then checks four things:
 - the same search in the runner's container does find the token.
 
 The image is built from `runner/Dockerfile`; the binary is native (Kotlin/Native, `linuxX64` and `linuxArm64`).
+
+The agents' CLIs (Claude Code, Codex, opencode, Gemini CLI) are pinned in `runner/agents/package.json` and its
+`package-lock.json`, installed by `npm ci`. To move a version: change it in `package.json`, run
+`npm install --package-lock-only --ignore-scripts` in `runner/agents`, and commit both files. The build context is laid
+out by `ci/session-image-context.sh`; the CI keeps an npm cache per lockfile (`ci/warm-agents-npm-cache.sh`).

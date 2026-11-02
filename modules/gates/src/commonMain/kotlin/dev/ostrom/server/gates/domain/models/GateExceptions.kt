@@ -11,6 +11,13 @@ class GateNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Gate not fou
 class NotTheApproverException :
     OstromException(ErrorKind.FORBIDDEN, "Only the approver this request was sent to can answer it.")
 
+/** A yes from a sign-in older than [StepUp.WITHIN], or of unknown age (S2-54). */
+class StepUpRequiredException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Sign in again to say yes: a yes needs a sign-in of less than 5 minutes, or the app's biometrics.",
+    "step_up_required",
+)
+
 /** A device, agent or service token tried to answer: only a signed-in person says yes or no. */
 class OnlyPeopleAnswerException : OstromException(ErrorKind.FORBIDDEN, "Only a signed-in person can answer a gate.")
 
@@ -27,15 +34,18 @@ class SelfApprovalRefusedException(val others: List<String>) : OstromException(
     } else {
         "You asked for this action and cannot approve it: ${others.joinToString(" or ")} must say yes."
     },
+    "self_approval_refused",
 )
 
 /** The gate or request was already answered: a yes is given once. */
-class GateAlreadyDecidedException : OstromException(ErrorKind.CONFLICT, "This gate was already answered.")
+class GateAlreadyDecidedException :
+    OstromException(ErrorKind.CONFLICT, "This gate was already answered.", "approval_closed")
 
 /** What the approver saw is not what the gate covers now: the yes is bound to what was shown. */
 class GateChangedException : OstromException(
     ErrorKind.CONFLICT,
     "What this gate covers changed since you opened it. Reload it and answer again.",
+    "shown_digest_mismatch",
 )
 
 /** The gate has no approver: nobody can open it, so it is refused before anyone waits. */
@@ -49,6 +59,12 @@ class GateNotUsableException(reason: String) : OstromException(ErrorKind.CONFLIC
 
 /** The caller's session did not ask for this gate: a yes serves the sessions that asked for it, nobody else. */
 class NotYourGateException : OstromException(ErrorKind.FORBIDDEN, "This gate was not asked by your session.")
+
+/** The credential belongs to no person (a key or an agent its resolver could not tie to one): it asks no gate. */
+class NoPersonException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This credential belongs to no person: a gate is asked on behalf of a person.",
+)
 
 /**
  * The push rewrites where git reads or sends (`GIT_DIR`, `--git-dir`, `-c remote.*`…): Ostrom cannot tie a yes to
