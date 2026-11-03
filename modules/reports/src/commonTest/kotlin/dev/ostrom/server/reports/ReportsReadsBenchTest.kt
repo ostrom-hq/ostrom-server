@@ -25,10 +25,9 @@ import kotlin.uuid.Uuid
  * `GET /api/v1/spending` on a ledger of 1 000 000 model calls of 10 organizations (100 000 each) in 50 000
  * sessions of 20 calls, one session every 15 minutes over 52 days: the owner's month and week, a member's month.
  * Each reads the ledger through its index, never a sequential scan of it or of the sessions, and no step of its plan
- * runs once per call; its queries, plans and
- * p95 are written to `build/reports/perf/reports.txt`. The p95 is not held to the read budget (ReadBench.kt) yet: the
- * month sums 56 000 calls of the ledger at each read, and only a daily total kept by the usage module brings it under
- * 50 ms.
+ * runs once per call; its queries, plans and p95 are written to `build/reports/perf/reports.txt`. The p95 is not
+ * held to the read budget (ReadBench.kt) yet: the month sums 56 000 calls of the ledger at each read, and only a
+ * daily total kept by the usage module brings it under 50 ms.
  */
 class ReportsReadsBenchTest {
     private val modules = listOf(
