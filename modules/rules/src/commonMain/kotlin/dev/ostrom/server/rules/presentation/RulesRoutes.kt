@@ -12,6 +12,7 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.rules.domain.models.Decider
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.OnlyConsoleDecidesException
+import dev.ostrom.server.rules.domain.usecases.ListRulesUseCase
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.HttpStatusCode
@@ -39,7 +40,8 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
     authenticated {
         get<RulesApi> { filters ->
             val caller = call.requireCaller(callers, RuleScopes.READ)
-            call.respond(RulesPage(listRules(caller.orgId, filters.toQuery()).map { it.toDto() }))
+            val page = listRules(caller.orgId, filters.toQuery(), filters.limit ?: ListRulesUseCase.MAX_RULES)
+            call.respond(RulesPage(page.items.map { it.toDto() }, page.next?.wire))
         }
         post<RulesApi> {
             val decider = call.decider(callers, actors)

@@ -29,19 +29,7 @@ import kotlin.uuid.Uuid
 class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
     override suspend fun rules(orgId: Uuid, query: RuleQuery, limit: Int): List<Rule> =
         driver.withOrganization(orgId) { tx ->
-            val filters = buildString {
-                append("org_id = :org")
-                if (query.status != null) append(" AND status = :status")
-                if (query.group != null) append(" AND rule_group = :group")
-            }
-            val statement = Statement.create(
-                "SELECT $RULE_COLUMNS FROM rules_rules WHERE $filters ORDER BY rule_group, id LIMIT :limit",
-            ).bind("org", orgId).bind("limit", limit)
-            // A named parameter is bound only when the SQL names it: sqlx4k refuses an unknown one.
-            query.status?.let { statement.bind("status", it.value) }
-            query.group?.let { statement.bind("group", it) }
-            // The scope is JSON: a repository filter reads it here, on a set bounded by `limit`.
-            tx.fetchAll(statement).getOrThrow().map { it.toRule() }.filter { covers(it, query.repo) }
+            tx.fetchAll(rulesStatement(orgId, query, limit)).getOrThrow().map { it.toRule() }
         }
 
     override suspend fun gatedRules(orgId: Uuid): List<Rule> = driver.withOrganization(orgId) { tx ->
@@ -197,7 +185,53 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
             .bind("updated_at", rule.updatedAt)
     }
 
-    private companion object {
+    internal companion object {
+        /**
+         * The rules of an organization a query lists, in the order of the console (group, then id), after its cursor,
+         * at most [limit]. Every filter is in the SQL, before the limit: a repository's rules are never cut by the
+         * others' (audit of the reads, B2). A rule covers a repository when its scope is empty, names it, or names a
+         * path under it, case ignored as GitHub names repositories; the scope is the JSON array the contract writes.
+         *
+         * @param orgId The organization.
+         * @param query The filters.
+         * @param limit The most rules.
+         * @return The statement.
+         */
+        fun rulesStatement(orgId: Uuid, query: RuleQuery, limit: Int): Statement {
+            val statement = Statement.create(rulesSql(query)).bind("org", orgId).bind("limit", limit)
+            // A named parameter is bound only when the SQL names it: sqlx4k refuses an unknown one.
+            query.status?.let { statement.bind("status", it.value) }
+            query.group?.let { statement.bind("group", it) }
+            query.repo?.lowercase()?.let { statement.bind("repo", it).bind("under", "$it/") }
+            query.after?.let { statement.bind("after_group", it.group).bind("after_id", it.id) }
+            return statement
+        }
+
+        /**
+         * The SQL of [rulesStatement], its parameters named: `org`, `limit`, and `status`, `group`, `repo` and `under`
+         * (the repository and a path under it, lowercased), `after_group` and `after_id` when the query has them.
+         *
+         * @param query The filters.
+         * @return The SQL.
+         */
+        fun rulesSql(query: RuleQuery): String {
+            val filters = buildString {
+                append("org_id = :org")
+                if (query.status != null) append(" AND status = :status")
+                if (query.group != null) append(" AND rule_group = :group")
+                if (query.repo != null) append(" AND $COVERS")
+                // The list's own order, on the index `rules_rules_by_group`.
+                if (query.after != null) append(" AND (rule_group, id) > (:after_group, :after_id)")
+            }
+            return "SELECT $RULE_COLUMNS FROM rules_rules WHERE $filters ORDER BY rule_group, id LIMIT :limit"
+        }
+
+        // An empty scope covers every repository; otherwise one entry is the repository or a path under it. No `::`
+        // cast: the driver would read `:jsonb` as a named parameter.
+        private const val COVERS = "(jsonb_array_length(CAST(scope AS jsonb)) = 0 OR EXISTS (" +
+            "SELECT 1 FROM jsonb_array_elements_text(CAST(scope AS jsonb)) AS entry(name) " +
+            "WHERE lower(entry.name) = :repo OR starts_with(lower(entry.name), :under)))"
+
         const val RULE_COLUMNS = "org_id, id, statement, output, rule_group, scope, sources, why, strength, " +
             "confidence, status, found_by, found_at, review_by, decided_by, decided_at, origin, gate, updated_at"
         const val DECISION_COLUMNS = "org_id, id, decided_at, decided_by, subject_kind, subject_id, subject_label, " +
@@ -215,16 +249,6 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
                 "SELECT self_approval FROM rules_gate_policy WHERE org_id = :org" + if (lock) " FOR UPDATE" else "",
             ).bind("org", orgId),
         ).getOrThrow().firstOrNull()?.let { SelfApprovalValues.of(it.get("self_approval").asString()) }
-
-        // Whole names or a path under them, case ignored, as GitHub names repositories.
-        fun covers(rule: Rule, repo: String?): Boolean {
-            if (repo == null) return true
-            val name = repo.lowercase()
-            return rule.scope.isEmpty() || rule.scope.any { entry ->
-                val scoped = entry.lowercase()
-                scoped == name || scoped.startsWith("$name/")
-            }
-        }
 
         fun texts(values: List<String>): JsonArray = JsonArray(values.map(::JsonPrimitive))
     }

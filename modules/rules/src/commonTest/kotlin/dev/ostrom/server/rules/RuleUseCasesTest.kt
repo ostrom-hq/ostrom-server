@@ -4,6 +4,7 @@ package dev.ostrom.server.rules
 import dev.ostrom.server.rules.domain.models.GateChange
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.NewRule
+import dev.ostrom.server.rules.domain.models.RuleCursor
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
 import dev.ostrom.server.rules.domain.models.RuleNotFoundException
@@ -276,10 +277,29 @@ class RuleUseCasesTest {
     fun listingAndReadingStayInTheOrganization() = runTest {
         stored(id = "rule_1")
         bench.repository.rules[RulesFixtures.orgB to "rule_9"] = RulesFixtures.rule("rule_9", RulesFixtures.orgB)
-        val listed = ListRulesUseCaseImpl(bench.repository)(orgA, RuleQuery())
-        assertEquals(listOf("rule_1"), listed.map { it.id })
-        assertEquals(listOf(ListRulesUseCase.MAX_RULES), bench.repository.limits)
+        val listed = ListRulesUseCaseImpl(bench.repository)(orgA, RuleQuery(), ListRulesUseCase.MAX_RULES)
+        assertEquals(listOf("rule_1"), listed.items.map { it.id })
+        assertNull(listed.next)
+        assertEquals(listOf(ListRulesUseCase.MAX_RULES + 1), bench.repository.limits, "One more tells a next page")
         assertEquals("rule_9", GetRuleUseCaseImpl(bench.repository)(RulesFixtures.orgB, "rule_9").id)
+    }
+
+    @Test
+    fun aListComesAPageAtATime() = runTest {
+        val groups = listOf("rule_1" to "B", "rule_2" to "A", "rule_3" to "B", "rule_4" to "A", "rule_5" to "C")
+        groups.forEach { (id, group) -> bench.repository.rules[orgA to id] = RulesFixtures.rule(id, group = group) }
+        val list = ListRulesUseCaseImpl(bench.repository)
+        val first = list(orgA, RuleQuery(), 2)
+        assertEquals(listOf("rule_2", "rule_4"), first.items.map { it.id }, "By group, then id")
+        assertEquals(RuleCursor("A", "rule_4"), first.next)
+        val second = list(orgA, RuleQuery(after = first.next), 2)
+        assertEquals(listOf("rule_1", "rule_3"), second.items.map { it.id })
+        val last = list(orgA, RuleQuery(after = second.next), 2)
+        assertEquals(listOf("rule_5"), last.items.map { it.id })
+        assertNull(last.next, "The last page")
+        assertEquals(listOf("rule_2"), list(orgA, RuleQuery(), 0).items.map { it.id }, "At least one")
+        list(orgA, RuleQuery(), 5_000)
+        assertEquals(ListRulesUseCase.MAX_RULES + 1, bench.repository.limits.last(), "At most 1 000")
     }
 
     @Test
