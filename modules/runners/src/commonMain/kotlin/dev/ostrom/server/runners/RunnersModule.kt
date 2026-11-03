@@ -21,6 +21,7 @@ import dev.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.DeleteRunnerUseCase
 import dev.ostrom.server.runners.domain.DeleteRunnerUseCaseImpl
+import dev.ostrom.server.runners.domain.ExecutionPlanner
 import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCase
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
@@ -45,6 +46,7 @@ import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RegisteredRunnersRepository
 import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
+import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerTokens
@@ -55,9 +57,12 @@ import dev.ostrom.server.runners.infrastructure.BillingCloudPlanProvider
 import dev.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import dev.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import dev.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
+import dev.ostrom.server.runners.infrastructure.DockerExecutionPlan
 import dev.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
 import dev.ostrom.server.runners.infrastructure.ReconcilerWorker
 import dev.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
+import dev.ostrom.server.runners.infrastructure.RegisteredRuntimeDriver
+import dev.ostrom.server.runners.infrastructure.RunnerAssignmentsRepositoryImpl
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.infrastructure.RunnersMigrations
