@@ -3,6 +3,9 @@ package dev.ostrom.server.budgets.infrastructure
 
 /** The SQL of the budgets that is built from parts. */
 internal object BudgetsQueries {
+    /** The rows that apply to one member's call: the org's, the default's, their own, its workflow's; two each. */
+    const val LIMIT_ROWS: Int = 8
+
     /** The columns of a limit row. */
     const val LIMIT_COLUMNS: String = "scope, member_id, workflow_id, period, action, limit_micros, updated_at"
 
@@ -13,9 +16,6 @@ internal object BudgetsQueries {
     const val LIMITS: String = "SELECT $LIMIT_COLUMNS FROM budgets_limits " +
         "WHERE org_id = :org_id AND (member_id IS NULL OR member_id = :member_id) " +
         "AND (workflow_id IS NULL OR workflow_id = :workflow_id) ORDER BY period DESC LIMIT $LIMIT_ROWS"
-
-    /** The rows that apply to one member's call: the org's, the default's, their own, its workflow's; two each. */
-    const val LIMIT_ROWS: Int = 8
 
     /**
      * Every row of the first `:limit` workflows by id that have a budget (`:org_id`): a workflow is listed whole,
