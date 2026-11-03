@@ -66,11 +66,28 @@ class SeededApplicationsInARowTest {
 
     // Runs [ROUNDS] applications one after the other, printing the process's threads before the first and after each
     // one has stopped: a count that climbs from one to the next is what server#266 measures on the real server.
-    private fun rounds(kind: String, round: (Int) -> Unit) {
+    private fun rounds(kind: String, count: Int = ROUNDS, round: (Int) -> Unit) {
         println(threadsLine("threads before the first $kind round"))
-        repeat(ROUNDS) {
+        repeat(count) {
             round(it)
             println(threadsLine("threads after $kind round $it"))
+        }
+    }
+
+    @Test
+    fun isolationMatricesInARowEachAnswerEveryRequest() = rounds("matrix", MATRIX_ROUNDS) { round ->
+        benchTest(serverModules(), overrides) { server ->
+            val a = server.party("ma$round")
+            val b = server.party("mb$round")
+            a.trace = ::println
+            b.trace = ::println
+            server.seed(a, spends = false)
+            server.seed(b, spends = true)
+            val matrix = IsolationMatrix(direct(), ISOLATION_REGISTRY, b.values, b.canaries())
+            val changes = matrix.watch(b.browser) { matrix.run(a.credentials) }
+            println("round $round matrix: ${matrix.requests} requests")
+            val all = a.problems + b.problems + matrix.findings + changes
+            assertTrue(all.isEmpty(), "round $round:\n${all.joinToString("\n")}")
         }
     }
 
@@ -78,5 +95,6 @@ class SeededApplicationsInARowTest {
 
     private companion object {
         const val ROUNDS = 6
+        const val MATRIX_ROUNDS = 3
     }
 }

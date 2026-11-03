@@ -13,6 +13,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.bearerAuth
 import io.ktor.server.testing.ApplicationTestBuilder
 import org.koin.dsl.module
+import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -73,6 +74,9 @@ class IsolationMatrixPostgresTest {
             report(a.problems + findings + changes, matrix)
         }
 
+    // Left out of this reproduction only (server#331): it stops the native process, and SeededApplicationsInARowTest
+    // must run after the two benches above.
+    @Ignore
     @Test
     fun anAgentTokenReachesNothingOfAnotherLaunch() = benchTest(serverModules(), overrides) { server ->
         val a = server.party("a")
@@ -92,6 +96,9 @@ class IsolationMatrixPostgresTest {
         report(a.problems + missing.map { "second launch: no $it" } + matrix.findings + changes, matrix)
     }
 
+    // Left out of this reproduction only (server#331): it stops the native process, and SeededApplicationsInARowTest
+    // must run after the two benches above.
+    @Ignore
     @Test
     fun aServiceKeyReachesOnlyTheRoutesOfItsScope() = benchTest(serverModules(), overrides) { server ->
         val a = server.party("a")
