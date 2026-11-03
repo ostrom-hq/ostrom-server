@@ -2,6 +2,7 @@
 package dev.ostrom.server.rules
 
 import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.services.CompiledPackages
 import dev.ostrom.server.compiler.domain.usecases.PublishPackageUseCase
 import dev.ostrom.server.compiler.domain.usecases.ServedPackage
@@ -22,11 +23,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -66,7 +69,11 @@ class CompiledPackageFollowsTheRulesPostgresTest {
 
         val theirs = server.current(RulesCallers.orgB)
         assertEquals(2, packages.compilations, "Another organization's sources, the same, are compiled again")
-        assertNotEquals(first.harness(), theirs.harness(), "Its harness is signed for it, not taken from the first")
+        // The same sources at the same time give the same harness version and receipt id, so they cannot tell the
+        // organizations apart: B's harness stored under B can, as a body taken from A's compilation stores none.
+        val digest = theirs.harness()?.jsonObject?.get("digest")?.jsonPrimitive?.content.orEmpty()
+        val stamp = server.koin.get<CompilerRepository>().harness(RulesCallers.orgB, REPO, digest)
+        assertNotNull(stamp, "Its harness is signed and stored for it, not taken from the first")
 
         val created = server.call("POST", "/api/v1/rules", "admin-a", RULE)
         assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
