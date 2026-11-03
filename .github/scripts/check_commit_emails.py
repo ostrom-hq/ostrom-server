@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every commit of a pull request carries a GitHub noreply e-mail address, as author and as committer.
 
 The repository is public and so are the commits of its pull requests (refs/pull/*), which a squash does not remove: a
