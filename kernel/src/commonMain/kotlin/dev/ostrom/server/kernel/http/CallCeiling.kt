@@ -4,14 +4,16 @@
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.server.kernel.errors.ErrorKind
-import dev.ostrom.server.kernel.errors.OstromException
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.Hook
 import io.ktor.server.application.call
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.response.header
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RouteSelector
 import io.ktor.server.routing.RouteSelectorEvaluation
@@ -236,12 +238,6 @@ class CallsInProgress(
     }
 }
 
-/** A replica running as many calls as it holds: 503, with `Retry-After`. */
-class ServerBusyException : OstromException(
-    ErrorKind.UNAVAILABLE,
-    "This server is answering as many calls as it can hold. Retry in a moment.",
-)
-
 /** The server's counters, put on the application by [configureHttp] before the routes are built. */
 internal val callsInProgressKey = AttributeKey<CallsInProgress>("ostrom.calls.in.progress")
 
@@ -268,7 +264,10 @@ val CallCeiling = createRouteScopedPlugin("CallCeiling", ::CallCeilingConfig) {
             val place = calls.enter(kind)
             if (place == null) {
                 call.response.header(HttpHeaders.RetryAfter, RETRY_AFTER_SECONDS)
-                throw ServerBusyException()
+                // Written as is, never through content negotiation: a stream's client asks `text/event-stream`, for
+                // which no converter exists, and the ApiError went out as a 406 (CHARGE 41672759077).
+                call.respondText(BUSY_BODY, ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
+                return@on
             }
             try {
                 proceed()
@@ -280,6 +279,16 @@ val CallCeiling = createRouteScopedPlugin("CallCeiling", ::CallCeilingConfig) {
 }
 
 private const val RETRY_AFTER_SECONDS = "1"
+
+private val BUSY_BODY = OstromJson.encodeToString(
+    ApiError.serializer(),
+    ApiError(
+        ErrorDetail(
+            ErrorKind.UNAVAILABLE.type,
+            "This server is answering as many calls as it can hold. Retry in a moment.",
+        ),
+    ),
+)
 
 /**
  * Routes whose calls stay open (a wait, a WebSocket, a stream): counted under [CallKind.HELD], apart from the
@@ -332,6 +341,10 @@ private object AroundEveryPlugin : Hook<suspend (ApplicationCall, suspend () -> 
         pipeline: ApplicationCallPipeline,
         handler: suspend (ApplicationCall, suspend () -> Unit) -> Unit,
     ) {
-        pipeline.intercept(ApplicationCallPipeline.Plugins) { handler(call) { proceed() } }
+        pipeline.intercept(ApplicationCallPipeline.Plugins) {
+            handler(call) { proceed() }
+            // A handler that answered without proceeding (a refusal) ends the call here; after a proceed, all is done.
+            finish()
+        }
     }
 }
