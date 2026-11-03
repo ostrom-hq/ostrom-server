@@ -171,12 +171,25 @@ class ContractObserver(
         val response = operation.response(status) ?: UNFORESEEN.takeIf { status == INTERNAL }
         val json = type?.match(ContentType.Application.Json) == true
         val declared = response?.json
-        val parsed = if (json && body.isNotEmpty()) parsed(body) else null
         return when {
             response == null -> listOf(Violation("$", DriftKind.STATUS, "status $status is not declared"))
             declared == null && json && body.isNotEmpty() -> listOf(body("JSON where the contract declares none"))
             declared == null -> emptyList()
-            !json && response.other -> emptyList()
+            else -> declaredViolations(schema, declared, response.other, json, body)
+        }
+    }
+
+    // The answer of a response that declares a JSON body; [other] when it declares another type too.
+    private fun declaredViolations(
+        schema: ContractSchema,
+        declared: JsonObject,
+        other: Boolean,
+        json: Boolean,
+        body: ByteArray,
+    ): List<Violation> {
+        val parsed = if (json && body.isNotEmpty()) parsed(body) else null
+        return when {
+            !json && other -> emptyList()
             !json || body.isEmpty() -> listOf(body("no JSON body where the contract declares one"))
             parsed == null -> listOf(body("a body that is not JSON"))
             else -> schema.violations(declared, parsed)
