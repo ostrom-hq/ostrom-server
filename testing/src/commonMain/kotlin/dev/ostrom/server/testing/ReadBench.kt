@@ -154,12 +154,22 @@ private fun SentStatement.copy(prefix: String): Statement {
  * @param largeTables The tables never to scan.
  */
 fun ReadMeasure.assertWithinBudget(largeTables: Set<String>) {
+    assertNoScan(largeTables)
+    assertTrue(p95 < READ_P95_BUDGET, "$name: database p95 $p95 over $READ_P95_BUDGET:\n${describe()}")
+}
+
+/**
+ * Fails if this route scans any of [largeTables] sequentially: the organization tables the test filled past
+ * 10 000 rows.
+ *
+ * @param largeTables The tables never to scan.
+ */
+fun ReadMeasure.assertNoScan(largeTables: Set<String>) {
     val scanned = largeTables.filter { table ->
         val scan = Regex("Seq Scan on ${Regex.escape(table)}\\b")
         plans.any { scan.containsMatchIn(it) }
     }
     assertTrue(scanned.isEmpty(), "$name scans $scanned:\n${describe()}")
-    assertTrue(p95 < READ_P95_BUDGET, "$name: database p95 $p95 over $READ_P95_BUDGET:\n${describe()}")
 }
 
 /**
