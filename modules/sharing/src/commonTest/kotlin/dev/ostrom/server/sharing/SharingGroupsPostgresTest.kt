@@ -176,19 +176,23 @@ class SharingGroupsPostgresTest {
     private fun assertStatus(expected: HttpStatusCode, response: HttpResponse, what: String) =
         assertEquals(expected, response.status, what)
 
-    @Test
-    fun anOwnerMakesAGroupEveryMemberReadsItAndOnlyAdminsChangeIt() = serverTest(modules, overrides) { server ->
-        with(server) {
-            val kira = person("kira")
-            val (org, kiraMember) = organization("kira-co", kira)
-            join(org, person("liam"))
-            join(org, person("mia"))
-            join(org, person("ana"), role = "admin")
-            val max = account(org, kiraMember, "max")
+    /** Kira's organization with liam, mia, an admin ana and the account max; the group Backend lends max to liam. */
+    private suspend fun TestServer.team(): Pair<String, JsonObject> {
+        val kira = person("kira")
+        val (org, kiraMember) = organization("kira-co", kira)
+        join(org, person("liam"))
+        join(org, person("mia"))
+        join(org, person("ana"), role = "admin")
+        val max = account(org, kiraMember, "max")
+        val made = send("POST", "kira", base, group(" Backend ", listOf("liam", "LIAM"), listOf(max)))
+        assertStatus(HttpStatusCode.Created, made, made.bodyAsText())
+        return max to made.json()
+    }
 
-            val made = send("POST", "kira", base, group(" Backend ", listOf("liam", "LIAM"), listOf(max)))
-            assertStatus(HttpStatusCode.Created, made, made.bodyAsText())
-            val backend = made.json()
+    @Test
+    fun anOwnerMakesAGroupEveryMemberReadsItAndNoMemberChangesIt() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val (max, backend) = team()
             val id = backend.text("id")
             assertEquals("Backend", backend.text("name"), "The name is trimmed")
             assertEquals(listOf("liam"), backend.strings("members"), "A login in any case names one member")
@@ -210,8 +214,14 @@ class SharingGroupsPostgresTest {
                 send("POST", "mia", "$base/$id/members/liam/pause", pause(later)),
                 "member pauses",
             )
+        }
+    }
 
-            // An admin writes like the owner.
+    @Test
+    fun anAdminRenamesAndLendsUnderANameUniqueInAnyCase() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val (max, backend) = team()
+            val id = backend.text("id")
             val mobile = send("POST", "ana", base, group("Mobile"))
             assertStatus(HttpStatusCode.Created, mobile, mobile.bodyAsText())
             val mobileId = mobile.json().text("id")
@@ -240,6 +250,19 @@ class SharingGroupsPostgresTest {
             val same = send("PATCH", "kira", "$base/$id", rename("platform"))
             assertEquals("platform", same.json().text("name"), "A group keeps its own name in another case")
 
+            assertStatus(HttpStatusCode.NoContent, send("DELETE", "kira", "$base/$mobileId"), "delete mobile")
+            assertEquals(
+                listOf(id),
+                send("GET", "kira", base).json().getValue("items").jsonArray.map { it.jsonObject.text("id") },
+            )
+        }
+    }
+
+    @Test
+    fun anAdminChangesMembersAndARemovedAccountIsNoLongerLent() = serverTest(modules, overrides) { server ->
+        with(server) {
+            val (max, backend) = team()
+            val id = backend.text("id")
             assertStatus(HttpStatusCode.NoContent, send("PUT", "kira", "$base/$id/members/mia"), "add mia")
             assertStatus(HttpStatusCode.NoContent, send("PUT", "kira", "$base/$id/members/mia"), "add mia again")
             assertStatus(
@@ -266,12 +289,6 @@ class SharingGroupsPostgresTest {
             // An account removed from the organization is no longer lent.
             assertStatus(HttpStatusCode.NoContent, send("DELETE", "kira", "/api/v1/accounts/$max"), "remove max")
             assertEquals(emptyList(), send("GET", "kira", "$base/$id").json().strings("accounts"))
-
-            assertStatus(HttpStatusCode.NoContent, send("DELETE", "kira", "$base/$mobileId"), "delete mobile")
-            assertEquals(
-                listOf(id),
-                send("GET", "kira", base).json().getValue("items").jsonArray.map { it.jsonObject.text("id") },
-            )
         }
     }
 
