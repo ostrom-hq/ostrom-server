@@ -76,7 +76,7 @@ class EnrollSharedAccountUseCaseImpl(
                 email = null,
                 providerAccountId = "secret:${secret.id}",
                 accessToken = secret.value.trim(),
-                refreshToken = null,
+                refreshToken = "",
                 expiresAt = Instant.DISTANT_FUTURE,
                 limits = AccountLimits(dailyBudgetMicros = payload.dailyBudgetMicros, allowedMembers = members),
             ),

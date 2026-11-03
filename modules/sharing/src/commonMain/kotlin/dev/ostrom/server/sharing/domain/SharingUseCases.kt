@@ -16,7 +16,7 @@ import kotlin.uuid.Uuid
  * @property email The account's address, if given.
  * @property providerAccountId The provider's account id: sharing it again replaces its tokens.
  * @property accessToken The OAuth access token.
- * @property refreshToken The OAuth refresh token, or null for a long-lived token that is never renewed (one enrolled
+ * @property refreshToken The OAuth refresh token, or empty for a long-lived token that is never renewed (one enrolled
  *   from a secret).
  * @property expiresAt When the access token expires.
  * @property limits Its limits.
@@ -32,7 +32,7 @@ data class ShareAccountPayload(
     val email: String?,
     val providerAccountId: String,
     val accessToken: String,
-    val refreshToken: String?,
+    val refreshToken: String,
     val expiresAt: Instant,
     val limits: AccountLimits = AccountLimits(),
     val disabled: Boolean = false,
@@ -133,7 +133,7 @@ class ShareAccountUseCaseImpl(
 ) : ShareAccountUseCase {
     override suspend fun invoke(caller: Caller, payload: ShareAccountPayload): SharedAccount {
         val account = sameAccount(caller, payload).sharedAgain(caller, payload, clock)
-        val credentials = AccountCredentials(payload.accessToken, payload.refreshToken.orEmpty(), payload.expiresAt)
+        val credentials = AccountCredentials(payload.accessToken, payload.refreshToken, payload.expiresAt)
         return repository.upsert(account, cipher.seal(credentials, account.orgId, account.id), payload.ifVersion)
     }
 

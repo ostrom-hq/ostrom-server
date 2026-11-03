@@ -216,11 +216,12 @@ object SharingRules {
 
     /**
      * Refuses tokens that cannot be OAuth tokens, and a provider account id that cannot be one; a long-lived token has
-     * no refresh token ([refreshToken] null).
+     * no refresh token ([refreshToken] empty).
      */
-    fun requireTokens(accessToken: String, refreshToken: String?, providerAccountId: String) {
+    fun requireTokens(accessToken: String, refreshToken: String, providerAccountId: String) {
         val problem = when {
-            !token.matches(accessToken) || !token.matches(refreshToken ?: accessToken) -> "The tokens are malformed."
+            !token.matches(accessToken) || !token.matches(refreshToken.ifEmpty { accessToken }) ->
+                "The tokens are malformed."
             !providerAccount.matches(providerAccountId) -> "providerAccountId is malformed."
             else -> null
         }
