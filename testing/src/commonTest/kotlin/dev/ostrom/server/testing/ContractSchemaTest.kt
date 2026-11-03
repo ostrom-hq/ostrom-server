@@ -100,6 +100,7 @@ class ContractSchemaTest {
         val failMode = found.first { it.path == "$.failMode" }
         assertEquals("$.failMode: \"open\" is not one of [\"closed\"]", failMode.toString())
         assertEquals("$.actions MISSING", violations("""{"labels": {}}""").single().key)
+        assertEquals("$.waitSeconds TYPE", violations("""{"actions": [], "waitSeconds": "300"}""").single().key)
         assertEquals("$: [] is not object", violations("[]").single().toString())
     }
 

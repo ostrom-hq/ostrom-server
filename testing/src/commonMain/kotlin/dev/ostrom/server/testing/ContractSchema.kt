@@ -44,11 +44,9 @@ data class Violation(val path: String, val kind: DriftKind, val detail: String) 
     val key: String get() = "${path.replace(INDEX, "[*]")} $kind"
 
     override fun toString(): String = "$path: $detail"
-
-    private companion object {
-        val INDEX = Regex("""\[\d+]""")
-    }
 }
+
+private val INDEX = Regex("""\[\d+]""")
 
 /**
  * Checks JSON against the schemas of the ostrom-core contract (`api/openapi.yaml`, as JSON), strictly: every required
@@ -101,7 +99,7 @@ class ContractSchema(private val document: JsonObject) {
     }
 
     private fun against(schema: JsonObject, value: JsonElement, at: String): List<Violation> {
-        val ref = schema[REF]?.jsonPrimitive?.content
+        val ref = schema[REF]?.let { it.jsonPrimitive.content }
         val all = schema["allOf"]?.jsonArray
         val one = schema["oneOf"]?.jsonArray
         val any = schema["anyOf"]?.jsonArray
@@ -118,7 +116,7 @@ class ContractSchema(private val document: JsonObject) {
     // required; otherwise the first part that says it wins (a closed part must not refuse its sibling's properties).
     private fun merged(parts: JsonArray): JsonObject {
         val schemas = parts.map { part ->
-            part.jsonObject[REF]?.jsonPrimitive?.content?.let(::resolve) ?: part.jsonObject
+            part.jsonObject[REF]?.let { resolve(it.jsonPrimitive.content) } ?: part.jsonObject
         }
         val properties = schemas.flatMap { it["properties"]?.jsonObject.orEmpty().entries }.associate { it.toPair() }
         val required = schemas.flatMap { it["required"]?.jsonArray.orEmpty() }.distinct()
@@ -148,7 +146,7 @@ class ContractSchema(private val document: JsonObject) {
         return when {
             types.isEmpty() -> emptyList()
             type == null -> listOf(Violation(at, DriftKind.TYPE, "$value is not ${types.joinToString(" or ")}"))
-            type == "array" -> value.jsonArray.flatMapIndexed { index, item ->
+            type == "array" -> value.jsonArray.withIndex().flatMap { (index, item) ->
                 against(schema.getValue("items").jsonObject, item, "$at[$index]")
             }
             type == "object" -> objectViolations(schema, value.jsonObject, at)
@@ -164,7 +162,7 @@ class ContractSchema(private val document: JsonObject) {
     }
 
     private fun property(schema: JsonObject, key: String, item: JsonElement, at: String): List<Violation> {
-        val declared = schema["properties"]?.jsonObject?.get(key)
+        val declared = schema["properties"]?.let { it.jsonObject[key] }
         val additional = schema["additionalProperties"]
         return when {
             declared != null -> against(declared.jsonObject, item, at)

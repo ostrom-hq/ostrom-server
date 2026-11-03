@@ -34,7 +34,8 @@ import kotlin.test.fail
 class Contract(val schema: ContractSchema, val operations: ContractOperations) {
     /** Where the contract comes from. */
     companion object {
-        private var loaded: Pair<String, Contract>? = null
+        // Each contract file read, once per test process.
+        private val loaded = mutableMapOf<String, Contract>()
 
         /**
          * The contract CI gives (`OSTROM_CONTRACT_OPENAPI`, ostrom-core main's `api/openapi.yaml` as JSON), read once
@@ -49,9 +50,7 @@ class Contract(val schema: ContractSchema, val operations: ContractOperations) {
             check(path != null || environment["OSTROM_CONTRACT_REQUIRED"] != "true") {
                 "OSTROM_CONTRACT_REQUIRED is true but OSTROM_CONTRACT_OPENAPI is not set."
             }
-            return path?.let { file ->
-                loaded?.takeIf { it.first == file }?.second ?: read(file).also { loaded = file to it }
-            }
+            return path?.let { file -> loaded.getOrPut(file) { read(file) } }
         }
 
         /**
@@ -132,7 +131,9 @@ class ContractObserver(
         val found = violations(contract.schema, operation, status, type, body)
         lock.withLock {
             drifts += found.map { Drift(operation.id, status, it) }
-            if (status in SUCCESS && operation.response(status)?.json != null && body.isNotEmpty()) seen += operation.id
+            if (status in SUCCESS && operation.response(status)?.json != null && body.isNotEmpty()) {
+                seen += operation.id
+            }
         }
     }
 
@@ -168,13 +169,14 @@ class ContractObserver(
         val response = operation.response(status) ?: UNFORESEEN.takeIf { status == INTERNAL }
         val json = type?.match(ContentType.Application.Json) == true
         val declared = response?.json
+        val parsed = if (json && body.isNotEmpty()) parsed(body) else null
         return when {
             response == null -> listOf(Violation("$", DriftKind.STATUS, "status $status is not declared"))
             declared == null && json && body.isNotEmpty() -> listOf(body("JSON where the contract declares none"))
             declared == null -> emptyList()
             !json || body.isEmpty() -> listOf(body("no JSON body where the contract declares one"))
-            else -> parsed(body)?.let { schema.violations(declared, it) }
-                ?: listOf(body("a body that is not JSON"))
+            parsed == null -> listOf(body("a body that is not JSON"))
+            else -> schema.violations(declared, parsed)
         }
     }
 
@@ -186,13 +188,14 @@ class ContractObserver(
 
     private fun body(detail: String) = Violation("$", DriftKind.BODY, detail)
 
-    private companion object {
-        const val REPORTS = "build/reports/contract"
-        const val INTERNAL = 500
-        val UNFORESEEN = ContractResponse(JsonObject(mapOf("\$ref" to JsonPrimitive("#/components/schemas/ApiError"))))
-        val SUCCESS = 200..299
-
-        // One file per test process: the module's test tasks never write to the same one.
-        val FILE = "observed-${Random.nextLong().toULong()}.txt"
-    }
 }
+
+private const val REPORTS = "build/reports/contract"
+private const val INTERNAL = 500
+private val UNFORESEEN = ContractResponse(JsonObject(mapOf("\$ref" to JsonPrimitive("#/components/schemas/ApiError"))))
+private const val FIRST_SUCCESS = 200
+private const val LAST_SUCCESS = 299
+private val SUCCESS = FIRST_SUCCESS..LAST_SUCCESS
+
+// One file per test process: the module's test tasks never write to the same one.
+private val FILE = "observed-${Random.nextLong().toULong()}.txt"

@@ -78,13 +78,15 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
 
     private fun operation(schema: ContractSchema, path: String, method: String, operation: JsonObject) =
         ContractOperation(
-            id = operation["operationId"]?.jsonPrimitive?.content ?: "${method.uppercase()} $path",
+            id = operation["operationId"]?.let { it.jsonPrimitive.content } ?: "${method.uppercase()} $path",
             method = method.uppercase(),
             path = path,
-            served = operation["x-ostrom-status"]?.jsonPrimitive?.content == "served",
+            served = operation["x-ostrom-status"]?.let { it.jsonPrimitive.content } == "served",
             responses = operation["responses"]?.jsonObject.orEmpty().mapValues { (_, value) ->
-                val response = value.jsonObject[REF]?.jsonPrimitive?.content?.let(schema::resolve) ?: value.jsonObject
-                ContractResponse(response["content"]?.jsonObject?.get(JSON)?.jsonObject?.get("schema")?.jsonObject)
+                val reference = value.jsonObject[REF]?.let { schema.resolve(it.jsonPrimitive.content) }
+                val response = reference ?: value.jsonObject
+                val json = response["content"]?.let { it.jsonObject[JSON] }?.let { it.jsonObject["schema"] }
+                ContractResponse(json?.let { it.jsonObject })
             },
         )
 
@@ -96,10 +98,8 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
             template.zip(request).all { (expected, actual) -> expected.startsWith("{") || expected == actual }
         return if (matched) template.count { !it.startsWith("{") } else null
     }
-
-    private companion object {
-        const val REF = "\$ref"
-        const val JSON = "application/json"
-        val METHODS = setOf("get", "put", "post", "delete", "patch")
-    }
 }
+
+private const val REF = "\$ref"
+private const val JSON = "application/json"
+private val METHODS = setOf("get", "put", "post", "delete", "patch")

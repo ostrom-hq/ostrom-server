@@ -121,6 +121,7 @@ object KnownDrifts {
             "enrollSharedAccount 201 $.spentMicros UNDECLARED",
             "enrollSharedAccount 201 $.windows UNDECLARED",
             "getMcpUsage 200 $.rows UNDECLARED",
+            "getDeviceLogin 200 $.requestedAt UNDECLARED",
             "getMe 200 $.csrfToken UNDECLARED",
             "getOrg 200 $.timeZone UNDECLARED",
             "getOrgMember 200 $.id UNDECLARED",

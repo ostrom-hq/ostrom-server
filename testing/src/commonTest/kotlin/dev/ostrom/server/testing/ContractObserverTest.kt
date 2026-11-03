@@ -50,6 +50,7 @@ class ContractObserverTest {
                     "teapot" -> call.respondText("{}", json, HttpStatusCode(418, "Teapot"))
                     "crash" -> call.respondText("""{"error": {}}""", json, HttpStatusCode.InternalServerError)
                     "crash-bare" -> call.respondText("{}", json, HttpStatusCode.InternalServerError)
+                    "accepted" -> call.respondText("{}", json, HttpStatusCode.Accepted)
                     "text" -> call.respondText("a")
                     "broken" -> call.respondText("{not json", json)
                     else -> call.respondText("", json)
@@ -79,7 +80,7 @@ class ContractObserverTest {
         val observer = ContractObserver(ContractFixtures.contract, setOf("getThing 418 $ STATUS"), reports.toString())
         things(observer)
         client.get("/api/v1/things")
-        val things = listOf("a", "drift", "teapot", "crash", "crash-bare", "text", "broken", "empty")
+        val things = listOf("a", "drift", "teapot", "crash", "crash-bare", "text", "broken", "empty", "accepted")
         things.forEach { client.get("/api/v1/things/$it") }
         listOf("", "?as=json", "?as=empty", "?as=error").forEach { client.post("/api/v1/things$it") }
         client.get("/api/v1/things/export")
@@ -92,6 +93,7 @@ class ContractObserverTest {
             "getThing 200 $.name UNDECLARED",
             "getThing 500 $.error MISSING",
             "getThing 200 $ BODY",
+            "getThing 202 $ STATUS",
             "createThing 204 $ BODY",
         )
         assertEquals(expected, failure.lines().drop(1).map { it.substringBefore("  (") }, failure)
