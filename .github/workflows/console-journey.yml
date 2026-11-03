@@ -158,6 +158,7 @@ jobs:
           OSTROM_GITHUB_APP_CLIENT_ID=Iv1.fake
           OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
           OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_web_journey
+          OSTROM_WEB_ORIGIN=http://localhost:4173
           ENV
           printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$E2E_GITHUB_APP_PEM" >> "$RUNNER_TEMP/server.env"
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
@@ -187,6 +188,7 @@ jobs:
           # The fake GitHub the server points at (step "Test key of the journeys' GitHub App"): the journeys start it.
           OSTROM_E2E_FAKE_GITHUB_PORT: '4610'
           OSTROM_E2E_GITHUB_PORT: '4700'
+          OSTROM_E2E_GITHUB_WEBHOOK_SECRET: whsec_github_web_journey
           OSTROM_E2E_REQUIRE_ORGS: 'true'
         # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.
         run: |
