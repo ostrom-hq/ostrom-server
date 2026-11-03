@@ -155,7 +155,7 @@ class RegisteredSessionsPostgresTest {
                 round++
                 for (machine in machines.shuffled()) {
                     val work = server.work(machine.id, machine.token)
-                    work.executions.forEach { takenIn.putIfAbsent(it.sessionId, round) }
+                    work.executions.forEach { takenIn.getOrPut(it.sessionId) { round } }
                 }
             }
             assertEquals(ASKED / MACHINES, round, "Rounds of heartbeats until every session is taken")
