@@ -76,6 +76,16 @@ interface RunnerAssignmentsRepository {
      * @param now The time.
      */
     suspend fun delivered(orgId: Uuid, sessionId: Uuid, epoch: Long, now: Instant)
+
+    /**
+     * Whether an organization has an execution not stopped and not handed over yet: queued for any runner, or
+     * assigned to one that has not taken it. A waiting heartbeat in that organization then looks.
+     *
+     * @param orgId The organization.
+     *
+     * @return True when it has one.
+     */
+    suspend fun hasWork(orgId: Uuid): Boolean
 }
 
 /**
