@@ -44,8 +44,14 @@ internal data class Answer(
         return status != other.status || type != other.type || mask(message, sent) != mask(other.message, otherSent)
     }
 
+    // The values sent, then the instants: two calls a few milliseconds apart name different times ("ended at …").
     private fun mask(text: String?, values: Collection<String>): String? =
         values.sortedByDescending { it.length }.fold(text) { masked, value -> masked?.replace(value, "<value>") }
+            ?.replace(INSTANT, "<time>")
+
+    private companion object {
+        val INSTANT = Regex("""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z""")
+    }
 }
 
 /** One request of the matrix, resolved: its path, its body, its `Ostrom-Org` header and the values it names. */
