@@ -57,6 +57,9 @@ jobs:
       OSTROM_STRIPE_MOCK_REQUIRED: 'true'
       OSTROM_STRIPE_E2E_KEY: ${{ secrets.STRIPE_TEST_KEY }}
       OSTROM_STRIPE_E2E_REQUIRED: 'true'
+      # The contract tests (ContractSchema) compare real answers with ostrom-core main's schemas, written as JSON by
+      # the contract step below; they fail instead of being skipped here.
+      OSTROM_CONTRACT_REQUIRED: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # docs-truth (ostrom-core's tools/docs-truth) at a pinned commit, whose api/contract/served-routes.txt says what
@@ -88,6 +91,9 @@ jobs:
           mv contract-core "$RUNNER_TEMP/contract-core"
           python3 scripts/check-contract.py --self-test
           python3 scripts/check-contract.py "$RUNNER_TEMP/contract-core"
+          # The same contract as JSON, for the tests that check real answers against its schemas (ContractSchema).
+          yq -o=json "$RUNNER_TEMP/contract-core/api/openapi.yaml" > "$RUNNER_TEMP/openapi.json"
+          echo "OSTROM_CONTRACT_OPENAPI=$RUNNER_TEMP/openapi.json" >> "$GITHUB_ENV"
       - uses: ./.github/actions/build-setup
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
