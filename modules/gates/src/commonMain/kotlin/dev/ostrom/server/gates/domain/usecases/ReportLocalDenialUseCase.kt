@@ -57,8 +57,18 @@ class ReportLocalDenialUseCaseImpl(
     private val audit: OrgAuditTrail,
 ) : ReportLocalDenialUseCase {
     override suspend fun invoke(actor: GateActor, by: AuthenticatedPrincipal, denial: LocalDenial) {
-        // Red (TDD): accepts the report without checking the session nor writing the audit line.
         validate(denial)
+        // An agent token speaks only of its own launch's sessions; the sessions module checks the session is one.
+        if (actor.kind == ActorKind.AGENT_SESSION && actor.launchId == null) throw NotYourGateException()
+        sessions.assertOpen(actor.orgId, denial.sessionId, actor.launchId)
+        val details = buildMap {
+            put("session", denial.sessionId)
+            put("class", denial.actionClass)
+            put("reason", denial.reason)
+            put("command", SecretMasks.masked(denial.command))
+            denial.repo?.let { put("repo", it) }
+        }
+        audit.record(OrgAuditRecord(actor.orgId, by, EVENT, SUBJECT, denial.sessionId, details))
     }
 
     private fun validate(denial: LocalDenial) {
