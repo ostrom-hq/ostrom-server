@@ -69,11 +69,15 @@ class SetBudgetUseCaseImpl(
         caller.requireAdmin()
         limits.forEach { BudgetRules.requireLimit(it.micros) }
         // A limit is set only on one of the org's workflows; removing one never asks (its workflow may be gone).
-        (target as? BudgetTarget.Workflow)?.takeIf { limits.isNotEmpty() }
-            ?.takeIf { workflows?.name(caller.orgId, it.workflowId) == null }
-            ?.let { throw BudgetWorkflowNotFoundException() }
+        // Without a directory the server keeps no workflows, so none is found.
+        if (target is BudgetTarget.Workflow && limits.isNotEmpty() && !knows(caller, target.workflowId)) {
+            throw BudgetWorkflowNotFoundException()
+        }
         repository.replaceLimits(caller.orgId, target, limits, clock.now())
         cache.invalidate(caller.orgId)
         return getBudgets(caller)
     }
+
+    private suspend fun knows(caller: Caller, workflowId: String): Boolean =
+        workflows?.name(caller.orgId, workflowId) != null
 }

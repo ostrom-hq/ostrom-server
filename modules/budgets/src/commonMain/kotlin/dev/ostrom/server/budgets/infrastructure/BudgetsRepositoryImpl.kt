@@ -5,6 +5,7 @@ import dev.ostrom.server.budgets.domain.BudgetAction
 import dev.ostrom.server.budgets.domain.BudgetAlert
 import dev.ostrom.server.budgets.domain.BudgetLimit
 import dev.ostrom.server.budgets.domain.BudgetLimits
+import dev.ostrom.server.budgets.domain.BudgetRules
 import dev.ostrom.server.budgets.domain.BudgetScope
 import dev.ostrom.server.budgets.domain.BudgetSettings
 import dev.ostrom.server.budgets.domain.BudgetTarget
@@ -37,17 +38,16 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         val rows = driver.fetchInOrg(
             orgId,
             Statement.create(
-                "SELECT $LIMIT_COLUMNS FROM budgets_limits WHERE org_id = :org_id AND scope <> 'WORKFLOW' " +
+                "SELECT ${BudgetsQueries.LIMIT_COLUMNS} FROM budgets_limits WHERE org_id = :org_id " +
+                    "AND scope <> 'WORKFLOW' " +
                     "ORDER BY scope = 'MEMBER', scope, member_id, period DESC LIMIT :limit",
             ).bind("org_id", orgId).bind("limit", maxOverrides * WINDOWS + SHARED_ROWS),
         ).getOrThrow().map { it.toStored() }
-        // The workflows' rows apart, so that they never take the members' places; as many as members at most.
+        // The workflows' rows apart, so that they never take the members' places, and whole workflows only.
         val workflows = driver.fetchInOrg(
             orgId,
-            Statement.create(
-                "SELECT $LIMIT_COLUMNS FROM budgets_limits WHERE org_id = :org_id AND scope = 'WORKFLOW' " +
-                    "ORDER BY workflow_id, period DESC LIMIT :limit",
-            ).bind("org_id", orgId).bind("limit", maxOverrides * WINDOWS),
+            Statement.create(BudgetsQueries.WORKFLOW_LIMITS)
+                .bind("org_id", orgId).bind("limit", BudgetRules.MAX_WORKFLOW_BUDGETS),
         ).getOrThrow().map { it.toStored() }
         val kept = rows.mapNotNull { it.memberId }.distinct().take(maxOverrides).toSet()
         return BudgetSettings(
@@ -68,11 +68,8 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         // A workflow's rows have no member: only the call's workflow's are read, none without one.
         val rows = driver.fetchInOrg(
             orgId,
-            Statement.create(
-                "SELECT $LIMIT_COLUMNS FROM budgets_limits " +
-                    "WHERE org_id = :org_id AND (member_id IS NULL OR member_id = :member_id) " +
-                    "AND (workflow_id IS NULL OR workflow_id = :workflow_id) ORDER BY period DESC LIMIT $LIMIT_ROWS",
-            ).bind("org_id", orgId).bind("member_id", memberId).bindWorkflow(workflowId),
+            Statement.create(BudgetsQueries.LIMITS)
+                .bind("org_id", orgId).bind("member_id", memberId).bindWorkflow(workflowId),
         ).getOrThrow().map { it.toStored() }
         fun of(scope: String) = rows.filter { it.scope == scope }.map { it.limit }
         // A member's own limits replace the default member limits whole.
@@ -89,10 +86,7 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         driver.inTenant(orgId) {
             // One write of a subject at a time: without it, a second write's DELETE skips the rows the first one
             // inserts meanwhile, and the subject keeps a mix of both writes' windows and actions.
-            fetchAll(
-                Statement.create("SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) l")
-                    .bind("key", "budgets_limits:$orgId:$scope:${memberId ?: ""}:${workflowId ?: ""}"),
-            ).getOrThrow()
+            fetchAll(lockSubject(orgId, scope, memberId, workflowId)).getOrThrow()
             execute(
                 Statement.create(
                     "DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = :scope " +
@@ -111,6 +105,16 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
                         .bind("period", limit.window.name).bind("action", limit.action.name)
                         .bind("limit", limit.micros).bind("at", at),
                 ).getOrThrow()
+            }
+        }
+    }
+
+    override suspend fun removeWorkflow(orgId: Uuid, workflowId: String) {
+        driver.inTenant(orgId) {
+            // Under the subject's lock, so that a budget set at the same moment is not left behind.
+            fetchAll(lockSubject(orgId, WORKFLOW, null, workflowId)).getOrThrow()
+            for (sql in BudgetsQueries.REMOVE_WORKFLOW) {
+                execute(Statement.create(sql).bind("org_id", orgId).bind("workflow_id", workflowId)).getOrThrow()
             }
         }
     }
@@ -200,6 +204,11 @@ private class StoredLimit(
     val updatedAt: Instant,
 )
 
+/** The advisory lock of one subject's limits, held to the end of the transaction. */
+private fun lockSubject(orgId: Uuid, scope: String, memberId: Uuid?, workflowId: String?): Statement =
+    Statement.create("SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) l")
+        .bind("key", "budgets_limits:$orgId:$scope:${memberId ?: ""}:${workflowId ?: ""}")
+
 /** One row per subject and window, and the action with it: a monthly write that stops sets it back. */
 private const val UPSERT = "ON CONFLICT (org_id, scope, member_id, workflow_id, period) DO UPDATE " +
     "SET limit_micros = EXCLUDED.limit_micros, action = EXCLUDED.action, updated_at = EXCLUDED.updated_at"
@@ -207,7 +216,6 @@ private const val ORG = "ORG"
 private const val DEFAULT_MEMBER = "DEFAULT_MEMBER"
 private const val MEMBER = "MEMBER"
 private const val WORKFLOW = "WORKFLOW"
-private const val LIMIT_COLUMNS = "scope, member_id, workflow_id, period, action, limit_micros, updated_at"
 
 /** The org's and the default member's rows: two windows each. */
 private const val SHARED_ROWS = 4
@@ -215,5 +223,3 @@ private const val SHARED_ROWS = 4
 /** The windows a subject may have a limit in: a day and a month. */
 private const val WINDOWS = 2
 
-/** The rows that apply to a member's call: the org's, the default's, their own, its workflow's; two windows each. */
-private const val LIMIT_ROWS = 8

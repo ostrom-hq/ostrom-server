@@ -17,6 +17,9 @@ import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.domain.services.WorkflowRepos
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.workflows.WorkflowRemovals
+import kotlin.time.Clock
+import kotlin.uuid.Uuid
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -24,8 +27,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
-import kotlin.time.Clock
-import kotlin.uuid.Uuid
 
 /** Signs the receipt of a decision on a workflow (`decisions.ts` `recordSigned`, receipt kind `workflow`). */
 interface WorkflowDecisionSigner {
@@ -108,11 +109,13 @@ interface WorkflowsUseCase {
  * @param repository The compiler's storage.
  * @param signer Signs the decisions.
  * @param clock The time.
+ * @param removals Told of a deleted workflow (its budgets go with it); null, nobody keeps anything about one.
  */
 class WorkflowsUseCaseImpl(
     private val repository: CompilerRepository,
     private val signer: WorkflowDecisionSigner,
     private val clock: Clock,
+    private val removals: WorkflowRemovals? = null,
 ) : WorkflowsUseCase {
     override suspend fun list(orgId: Uuid, repo: String?, status: WorkflowStatus?): List<StoredWorkflow> {
         val all = repository.workflows(orgId)

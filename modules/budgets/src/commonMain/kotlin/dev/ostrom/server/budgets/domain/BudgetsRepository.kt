@@ -31,7 +31,7 @@ data class MemberBudget(
  * @property defaultMember What each member may spend, unless they have limits of their own.
  * @property overrides Members' own limits, by member id.
  * @property workflows The workflows' limits, by workflow id: what the model calls of the launches that play each one
- *   may spend.
+ *   may spend; [BudgetRules.MAX_WORKFLOW_BUDGETS] workflows at most, each whole.
  */
 data class BudgetSettings(
     val org: List<BudgetLimit>,
@@ -121,6 +121,14 @@ interface BudgetsRepository {
      * @param at The time of the change.
      */
     suspend fun replaceLimits(orgId: Uuid, target: BudgetTarget, limits: List<BudgetLimit>, at: Instant)
+
+    /**
+     * Forgets a deleted workflow's limits and alerts, so that a workflow created again under its id starts without.
+     *
+     * @param orgId The org.
+     * @param workflowId The deleted workflow.
+     */
+    suspend fun removeWorkflow(orgId: Uuid, workflowId: String)
 
     /**
      * Records that an alert is being sent, once across replicas.

@@ -153,12 +153,18 @@ class BudgetGuardImpl(
     }
 
     /** A workflow's limits, measured on the spend of the calls of the launches that play it. */
-    private suspend fun measuredWorkflow(orgId: Uuid, workflowId: String, limits: List<BudgetLimit>, now: Instant) =
-        limits.map { limit ->
+    private suspend fun measuredWorkflow(
+        orgId: Uuid,
+        workflowId: String,
+        limits: List<BudgetLimit>,
+        now: Instant,
+    ): List<Measured> {
+        val subject = Subject(orgId, null, BudgetScope.WORKFLOW, workflowId)
+        return limits.map { limit ->
             val period = limit.window.periodOf(now)
-            val subject = Subject(orgId, null, BudgetScope.WORKFLOW, workflowId)
             Measured(subject, limit, period, spend.workflowSpentMicros(orgId, workflowId, period.start))
         }
+    }
 
     private suspend fun orgSpent(orgId: Uuid, period: BudgetPeriod, now: Instant, readAt: Long): Long {
         val key = SpendKey(orgId, period)

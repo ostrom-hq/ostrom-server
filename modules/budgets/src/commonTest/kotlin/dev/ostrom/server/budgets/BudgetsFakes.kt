@@ -238,6 +238,10 @@ class InMemoryBudgetsRepository : BudgetsRepository {
         return stops
     }
 
+    override suspend fun removeWorkflow(orgId: Uuid, workflowId: String) {
+        otherLimits.remove(orgId to BudgetTarget.Workflow(workflowId))
+    }
+
     override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
         markFailure?.let { throw it }
         return marked.add(alert.markKey())

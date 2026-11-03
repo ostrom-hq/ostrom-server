@@ -15,6 +15,7 @@ import dev.ostrom.server.budgets.domain.LedgerSpendGuard
 import dev.ostrom.server.budgets.domain.NoBudgetAlerts
 import dev.ostrom.server.budgets.domain.SetBudgetUseCase
 import dev.ostrom.server.budgets.domain.SetBudgetUseCaseImpl
+import dev.ostrom.server.budgets.domain.WorkflowBudgetsRemoval
 import dev.ostrom.server.budgets.infrastructure.BudgetsMigrations
 import dev.ostrom.server.budgets.infrastructure.BudgetsRepositoryImpl
 import dev.ostrom.server.budgets.presentation.BudgetsRoutesDependencies
@@ -23,6 +24,7 @@ import dev.ostrom.server.gateway.domain.SpendGuard
 import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.workflows.WorkflowRemovals
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.server.routing.Route
@@ -52,6 +54,7 @@ object BudgetsModule : ServerModule {
         single<GetBudgetsUseCase> { GetBudgetsUseCaseImpl(get(), get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
         single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get(), workflows = getOrNull()) }
+        single<WorkflowRemovals> { WorkflowBudgetsRemoval(get(), get()) }
         single { BudgetsRoutesDependencies(callerResolver(), get(), get(), get(), get()) }
     }
 

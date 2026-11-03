@@ -22,6 +22,7 @@ import dev.ostrom.server.gateway.domain.SpendRequest
 import dev.ostrom.server.kernel.audit.OrgAuditRecord
 import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.workflows.WorkflowDirectory
+import dev.ostrom.server.kernel.workflows.WorkflowRemovals
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
@@ -198,6 +199,11 @@ class BudgetsPostgresTest {
         for (budget in refused) {
             assertEquals(HttpStatusCode.BadRequest, server.putBudget("admin-a", budget).status, budget.toString())
         }
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.putBudget("admin-a", BudgetDto("workflow", "deploy", 1.0)).status,
+            "A server without workflows knows none",
+        )
         assertEquals(
             listOf(BudgetDto("member", usdPerMonth = 1.0)),
             server.budgets().items,
@@ -418,6 +424,18 @@ class BudgetsPostgresTest {
         assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", BudgetDto("workflow", "review")).status)
         assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", BudgetDto("workflow", "ghost")).status)
         assertEquals(listOf(nightly), server.budgets().items, "Removed; a removal never asks for the workflow")
+        assertEquals(listOf(BudgetDto("workflow", "review", 5.0)), server.budgets("admin-b").items)
+
+        // A deleted workflow's budget goes with it, both windows, and its alerts: org B's of the same id stays.
+        val both = BudgetDto("workflow", "nightly", usdPerMonth = 9.0, usdPerDay = 0.5, hardStop = false)
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", both).status)
+        assertEquals(listOf(both), server.budgets().items, "Listed whole, both windows")
+        server.koin.get<WorkflowRemovals>().removed(orgA, "nightly")
+        server.koin.get<WorkflowRemovals>().removed(orgA, "review")
+        assertEquals(emptyList(), server.budgets().items)
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member, "nightly"), "Its cached decision too")
+        val alertsLeft = Statement.create("SELECT COUNT(*) AS n FROM budgets_alerts WHERE workflow_id IS NOT NULL")
+        assertEquals(0L, server.driver.fetchInOrg(orgA, alertsLeft).getOrThrow().first().get("n").asLong())
         assertEquals(listOf(BudgetDto("workflow", "review", 5.0)), server.budgets("admin-b").items)
     }
 
