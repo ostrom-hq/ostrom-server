@@ -79,9 +79,11 @@ class RegisteredSessionsPostgresTest {
 
             reconcile(fresh())
             assertEquals(ExecutionStatus.PENDING, driver.executionStatus(fresh()))
+            val silent = server.beat(b.id, b.token).body<RegisteredRunnerHeartbeatResponse>()
+            assertEquals(emptyList(), silent.executions, "A runner that reports nothing runs no session")
 
             // The first runner to ask takes it, with a token of its own and the plan the server computes.
-            val taken = server.beat(a.id, a.token)
+            val taken = server.beat(a.id, a.token, RegisteredRunnerHeartbeatRequest())
             assertEquals("no-store", taken.headers[HttpHeaders.CacheControl])
             val work = taken.body<RegisteredRunnerHeartbeatResponse>()
             val plan = work.executions.single().plan!!
@@ -195,7 +197,7 @@ class RegisteredSessionsPostgresTest {
     private suspend fun TestServer.work(
         id: String,
         key: String,
-        report: RegisteredRunnerHeartbeatRequest? = null,
+        report: RegisteredRunnerHeartbeatRequest = RegisteredRunnerHeartbeatRequest(),
     ): RegisteredRunnerHeartbeatResponse {
         val response = beat(id, key, report)
         assertEquals(HttpStatusCode.OK, response.status)

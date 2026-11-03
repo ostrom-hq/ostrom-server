@@ -33,7 +33,8 @@ class RunnersApi {
 }
 
 /**
- * What a registered runner reports at its heartbeat, as the contract's; a runner that runs no session sends no body.
+ * What a registered runner reports at its heartbeat, as the contract's; a runner that runs no session sends no body
+ * and is given none.
  *
  * @property executions The executions it has.
  * @property workspaces The sessions whose workspace it holds.

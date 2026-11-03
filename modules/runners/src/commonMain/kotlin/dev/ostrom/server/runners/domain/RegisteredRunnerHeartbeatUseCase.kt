@@ -16,14 +16,15 @@ interface RegisteredRunnerHeartbeatUseCase {
      *
      * @param id The runner the request names.
      * @param key The key it presented.
-     * @param report What the runner runs and keeps; nothing from a runner that does not run sessions.
+     * @param report What the runner runs and keeps; null from a runner that does not run sessions, which is then given
+     *   none.
      *
      * @return What it must hold: the executions to run, each plan handed over once, and the workspaces to keep.
      *
      * @throws RunnerUnauthenticatedException When no runner has that id or the key is not its own; both answer the
      *   same, so neither the runner's existence nor its organization leaks.
      */
-    suspend operator fun invoke(id: Uuid, key: String, report: MachineReport = MachineReport()): MachineWork
+    suspend operator fun invoke(id: Uuid, key: String, report: MachineReport? = null): MachineWork
 }
 
 /**
@@ -49,7 +50,7 @@ class RegisteredRunnerHeartbeatUseCaseImpl(
     private val sessions: CloudSessionsRepository,
     private val planner: ExecutionPlanner,
 ) : RegisteredRunnerHeartbeatUseCase {
-    override suspend fun invoke(id: Uuid, key: String, report: MachineReport): MachineWork {
+    override suspend fun invoke(id: Uuid, key: String, report: MachineReport?): MachineWork {
         val hash = tokens.hash(key)
         val stored = repository.keyOf(id)
         val matches = constantTimeEquals(hash, if (stored == null) NO_KEY_HASH else stored.keyHash)
@@ -57,6 +58,7 @@ class RegisteredRunnerHeartbeatUseCaseImpl(
         if (stored == null || !matches || !repository.touch(stored.orgId, id, hash, now)) {
             throw RunnerUnauthenticatedException()
         }
+        if (report == null) return MachineWork(emptyList(), emptyList())
         val held = assignments.exchange(stored.orgId, id, report)
         // An execution not handed over yet is left out until its handover succeeds.
         val executions = held.filter { !it.stopped }.mapNotNull { assignment ->

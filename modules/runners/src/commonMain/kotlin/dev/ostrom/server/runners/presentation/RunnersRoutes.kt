@@ -68,12 +68,12 @@ fun Route.runnersRoutes(dependencies: RunnersRoutesDependencies) = with(dependen
         }
     }
     // Authenticated by the runner's own key, not a member's credential: an unknown id, a malformed one or a wrong key
-    // all answer the same 401. The report is optional: a runner that runs no session sends no body.
+    // all answer the same 401. The report is optional: a runner that runs no session sends no body, and is given none.
     post<RunnersApi.Id.Heartbeat> { params ->
         val key = call.runnerToken()
         val id = Uuid.parseOrNull(params.parent.id) ?: throw RunnerUnauthenticatedException()
         val json = call.request.contentType().match(ContentType.Application.Json)
-        val report = if (json) call.receive<RegisteredRunnerHeartbeatRequest>().toReport() else MachineReport()
+        val report = if (json) call.receive<RegisteredRunnerHeartbeatRequest>().toReport() else null
         val work = heartbeat(id, key, report)
         // A plan holds a runner token.
         call.response.header(HttpHeaders.CacheControl, "no-store")
