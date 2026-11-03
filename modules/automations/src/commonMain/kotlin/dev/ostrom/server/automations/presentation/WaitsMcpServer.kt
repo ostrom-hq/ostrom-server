@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.automations.presentation
 
+import dev.ostrom.server.automations.domain.AgentAssigneeRefusedException
 import dev.ostrom.server.automations.domain.AskWait
 import dev.ostrom.server.automations.domain.Wait
 import dev.ostrom.server.automations.domain.WaitAction
@@ -102,14 +103,19 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
     private suspend fun ask(bound: Bound, arguments: AskArguments): String {
         val question = WaitSpec(arguments.title, arguments.body, arguments.fields, arguments.actions, arguments.refs)
         val request = AskWait(question, bound.binding.session, bound.binding.run, arguments.assignee)
-        val wait = dependencies.ask.ask(bound.callerFor(WAITS_ASK), request, null).wait
+        val caller = bound.callerFor(WAITS_ASK)
+        if (caller.agent && arguments.assignee != null && arguments.assignee != caller.memberId) {
+            throw AgentAssigneeRefusedException()
+        }
+        val wait = dependencies.ask.ask(caller, request, null).wait
         return "Asked: wait ${wait.id} is open, for member ${wait.assignee}. End your turn now: the answer comes " +
             "back to this session when the member gives it, and get_wait reads it."
     }
 
     private suspend fun list(bound: Bound, arguments: ListArguments): String {
         val query = WaitQuery(status = arguments.status, sessionId = bound.binding.session, runId = bound.binding.run)
-        val waits = dependencies.read.list(bound.callerFor(WAITS_READ), query).items
+        val caller = bound.callerFor(WAITS_READ)
+        val waits = dependencies.read.list(caller, query).items.filter { it.askedBy(caller) }
         if (waits.isEmpty()) return "No waits."
         return waits.joinToString("\n") { "${it.id}  ${it.status.wire}  ${it.question.title}" }
     }
@@ -120,11 +126,19 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
         return "Cancelled wait ${wait.id}."
     }
 
-    /** A wait of this agent's session: a wait of another session is not this agent's to read or cancel. */
+    /**
+     * A wait of this agent's session: a wait of another session is not this agent's to read or cancel, nor, for an
+     * agent token, a wait someone else asked of its person.
+     */
     private suspend fun ownWait(bound: Bound, raw: String, scope: String): Wait {
-        val wait = dependencies.read.get(bound.callerFor(scope), waitId(raw))
-        return wait.takeIf { it.sessionId == bound.binding.session } ?: throw WaitNotFoundException()
+        val caller = bound.callerFor(scope)
+        val wait = dependencies.read.get(caller, waitId(raw))
+        return wait.takeIf { it.sessionId == bound.binding.session && it.askedBy(caller) }
+            ?: throw WaitNotFoundException()
     }
+
+    /** Whether [caller] may see this wait here: any it may read, or for an agent token only those its person asked. */
+    private fun Wait.askedBy(caller: WaitCaller): Boolean = !caller.agent || createdBy == caller.memberId
 
     private fun describe(wait: Wait): String = JSON.encodeToString(WaitResponse.serializer(), wait.toResponse())
 
