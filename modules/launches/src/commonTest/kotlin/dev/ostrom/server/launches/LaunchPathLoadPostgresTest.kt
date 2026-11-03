@@ -212,32 +212,19 @@ class LaunchPathLoadPostgresTest {
 
     @Test
     fun aHundredLaunchesAtOnceInOneOrganizationAllAnswerAndEnd() = benchTest(modules, overrides) { server ->
-        val team = server.team("bea", CONCURRENT)
+        // 100 people for the rounds, and a few who never called for the paths alone (no cache of theirs is warm).
+        val team = server.team("bea", CONCURRENT + ALONE_PATHS)
         server.release(team.org)
         server.grafana(team)
         val deadlocksBefore = server.deadlocks()
         val packages = server.koin.get<CompiledPackages>()
         val compiledBefore = packages.compilations
-        // The budget is judged on a deployment's pool, by perf.yml on the median of 3 rounds; the test's own pool of 4
-        // is published as a stress figure.
-        val deployed = List(if (perfBudgets) PERF_ROUNDS else 1) {
-            Round("on a pool of $SERVING_POOL connections, a deployment's default, round ${it + 1}", (it + 1) * ROUND)
-        }
-        val stress = Round("on the test's pool of $TEST_POOL connections (stress)", 0)
-        // Timed alone on the server: no other test process's bench times or loads it meanwhile (exclusively).
-        val contended = server.database.exclusively {
-            server.database.withRole(poolSize = SERVING_POOL) { role, pool ->
-                server.database.superuser.execute("GRANT ${server.database.servingRole} TO $role").getOrThrow()
-                deployed.forEach { round -> server.driver.through(pool) { server.hundredPaths(team, round) } }
-            }
-            server.hundredPaths(team, stress)
-            server.contendedLaunches(team)
-        }
+        val (deployed, stress, contended) = server.rounds(team)
         val compilations = packages.compilations - compiledBefore
         // A few more whole paths, alone on the server: the statements of each step, the fewest of the recordings (a
         // background job's statement may fall into one).
         val alone = List(ALONE_PATHS) { n ->
-            Calls(server.driver).also { server.wholePath(team.people[n], ALONE + n, it) }
+            Calls(server.driver).also { server.wholePath(team.people[CONCURRENT + n], ALONE + n, it) }
         }
         val trips = alone.first().trips().keys.associateWith { step -> alone.minOf { it.trips().getValue(step) } }
         val budgeted = trips.keys.associateWith { step ->
@@ -273,10 +260,29 @@ class LaunchPathLoadPostgresTest {
         assertEquals(0, stillActing, report)
         assertTrue(compilations <= 1, "The same sources are compiled once, not at every launch\n$report")
         // In milliseconds, in perf.yml only (OSTROM_PERF_BUDGETS): a shared CI runner's times are no verdict.
-        if (perfBudgets) {
-            val over = budgeted.filterValues { it > STEP_BUDGET }
-            assertTrue(over.isEmpty(), "Each step's p95 under $STEP_BUDGET, $SERVING_POOL connections: $over\n$report")
+        val over = budgeted.filterValues { it > STEP_BUDGET }
+        assertTrue(!perfBudgets || over.isEmpty(), "Each step's p95 under $STEP_BUDGET: $over\n$report")
+    }
+
+    /**
+     * The rounds of 100 launches, timed alone on the server (exclusively: no other test process's bench times or loads
+     * it meanwhile): on a deployment's pool, where perf.yml judges the budget on the median of 3; on the test's own
+     * pool of 4, a stress figure; then the launch's transaction alone, contended.
+     */
+    private suspend fun TestServer.rounds(team: Team): Triple<List<Round>, Round, List<Duration>> {
+        val deployed = List(if (perfBudgets) PERF_ROUNDS else 1) {
+            Round("on a pool of $SERVING_POOL connections, a deployment's default, round ${it + 1}", (it + 1) * ROUND)
         }
+        val stress = Round("on the test's pool of $TEST_POOL connections (stress)", 0)
+        val contended = database.exclusively {
+            database.withRole(poolSize = SERVING_POOL) { role, pool ->
+                database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
+                deployed.forEach { round -> driver.through(pool) { hundredPaths(team, round) } }
+            }
+            hundredPaths(team, stress)
+            contendedLaunches(team)
+        }
+        return Triple(deployed, stress, contended)
     }
 
     @Test
@@ -324,8 +330,9 @@ class LaunchPathLoadPostgresTest {
         val started = TimeSource.Monotonic.markNow()
         val ended = withTimeoutOrNull(CONCURRENCY_BUDGET) {
             coroutineScope {
-                team.people.mapIndexed { n, person -> async { wholePath(person, round.first + n, round.calls) } }
-                    .awaitAll()
+                team.people.take(CONCURRENT).mapIndexed { n, person ->
+                    async { wholePath(person, round.first + n, round.calls) }
+                }.awaitAll()
             }
         }
         round.finished = ended.orEmpty().filterNotNull()
@@ -442,7 +449,7 @@ class LaunchPathLoadPostgresTest {
             database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
             val launches = PostgresLaunchesRepository(pool)
             coroutineScope {
-                team.people.map { person ->
+                team.people.take(CONCURRENT).map { person ->
                     async {
                         val start = TimeSource.Monotonic.markNow()
                         val refused = launches.create(stored(team.org.id, person.userId), LaunchLimit.DEFAULT)
@@ -710,7 +717,7 @@ class LaunchPathLoadPostgresTest {
             "GET /mcp/servers?mine" to 16,
             "POST /sessions" to 21,
             "GET /gates/catalog/signed" to 14,
-            "GET /budgets/me" to 20,
+            "GET /budgets/me" to 25,
             "POST /mcp/{server} (initialize)" to 15,
             "POST /gates (governed)" to 28,
             "POST /sessions/{id}/end" to 56,
