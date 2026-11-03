@@ -23,7 +23,11 @@ import kotlin.uuid.Uuid
  */
 fun Route.receiptsRoutes(dependencies: ReceiptsRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
     get<ReceiptsApi.Keys> {
-        call.respond(ReceiptKeysResponse(listKeys().map { PublicKeyResponse(it.kid, it.algorithm, it.publicKeyPem) }))
+        val keys = listKeys().map { key ->
+            val rotation = key.rotation?.let { KeyRotationResponse(it.kid, it.signature) }
+            PublicKeyResponse(key.kid, key.algorithm, key.publicKeyPem, rotation)
+        }
+        call.respond(ReceiptKeysResponse(keys))
     }
     authenticated {
         throttledReads(throttle) {

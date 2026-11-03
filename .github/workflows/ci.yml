@@ -2,6 +2,8 @@
 # CONVENTIONS section 11). Pull requests and main, Linux only. Not on version tags: releases are built by the release
 # workflow without these caches, which a tag build must never restore (zizmor cache-poisoning).
 name: Build
+# A run against an ostrom-core branch says so, for squash.sh to find before it squashes a core PR that touches an answer.
+run-name: ${{ inputs.core_ref && format('Build against ostrom-core {0}', inputs.core_ref) || '' }}
 on:
   push:
     branches: [main]
@@ -15,6 +17,12 @@ on:
         description: Also link the linuxArm64 release binary
         type: boolean
         default: false
+      # A core PR that touches an answer (schema, status, enum) is squashed only after this server's strict contract
+      # test ran green against it: core#96 turned every server PR red with three drifts (JOURNAL 03/11 15:1x).
+      core_ref:
+        description: The ostrom-core commit (full SHA) whose contract the tests check, instead of main
+        type: string
+        default: ''
 env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
@@ -22,7 +30,7 @@ permissions:
   packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
 # One run per workflow and ref; a new push cancels the previous run, except on main (org CI rules, JOURNAL 03:10).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.core_ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   # The build in three jobs side by side (the single 40-minute job timed out on #135, with every test green), ci-e2e
@@ -83,6 +91,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
+          ref: ${{ inputs.core_ref }}
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: contract-core
           persist-credentials: false
@@ -132,6 +141,14 @@ jobs:
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
+      # Every served operation that answers JSON was seen answering by a test, so ContractObserver checked it against
+      # the contract (or contract/unobserved-operations.txt says why not); prints the drifts the tests met.
+      - name: Every served operation's answer was checked against the contract
+        if: success() || failure()
+        run: |
+          python3 scripts/check-contract-coverage.py --self-test
+          python3 scripts/check-contract-coverage.py "$RUNNER_TEMP/openapi.json" contract/unobserved-operations.txt \
+            testing/src/commonMain/kotlin/dev/ostrom/server/testing/KnownDrifts.kt .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
