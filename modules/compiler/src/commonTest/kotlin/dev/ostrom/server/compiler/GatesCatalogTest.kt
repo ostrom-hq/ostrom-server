@@ -18,7 +18,7 @@ class GatesCatalogTest {
 
     @Test
     fun theShortNamesOfARepositoryAreItsTailOfThreeLettersOrMore() {
-        assertEquals(listOf("controlresell-core", "core"), GatesCatalog.aliases("ControlResell-core"))
+        assertEquals(listOf("acme-core", "core"), GatesCatalog.aliases("Acme-core"))
         assertEquals(listOf("api"), GatesCatalog.aliases("api"))
         assertEquals(listOf("ab-cd"), GatesCatalog.aliases("ab-cd"))
         assertTrue(GatesCatalog.mentions("ship core now", "core"))
