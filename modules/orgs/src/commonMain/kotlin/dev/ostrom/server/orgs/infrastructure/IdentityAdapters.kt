@@ -48,11 +48,12 @@ class IdentityPeople(private val users: UsersRepository) : People {
  */
 class IdentityOrgAudit(private val log: AuditLog) : OrgAudit {
     override suspend fun record(event: OrgEvent) {
-        log.record(
-            AuditEntry(event.orgId, event.actorId, event.action, event.targetType, event.targetId, event.details),
-        )
+        log.record(event.toAuditEntry())
     }
 }
+
+/** The entry of the identity module's audit log that tells of this event. */
+internal fun OrgEvent.toAuditEntry() = AuditEntry(orgId, actorId, action, targetType, targetId, details)
 
 /**
  * [InvitationTokens] on the identity module's secret generator and hasher (256-bit random, SHA-256

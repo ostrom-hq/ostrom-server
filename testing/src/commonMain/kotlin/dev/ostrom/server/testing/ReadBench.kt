@@ -35,10 +35,11 @@ private const val EXPLAIN = "EXPLAIN (ANALYZE, BUFFERS) "
 /**
  * Measures a read route of this test server: [WARM_UP_CALLS] calls first (each must succeed); the median of
  * [HTTP_CALLS] whole calls one at a time; the statements of one call (the fewest of [RECORDINGS] recordings, so that a
- * background job running meanwhile is not counted), replayed under `EXPLAIN (ANALYZE, BUFFERS)` as the serving role;
- * then the database time of a call: its statements replayed by [CONCURRENT_CALLS] callers at once on a pool of as
- * many connections ([CALLS_EACH] replays each), every transaction of the call replayed as one and rolled back, and
- * the planning and execution times PostgreSQL reports for its queries added up.
+ * background job running meanwhile is not counted), replayed under `EXPLAIN (ANALYZE, BUFFERS)` as the serving role
+ * ([TRIALS] times, the plans of the median time kept); then the database time of a call: its statements replayed by
+ * [CONCURRENT_CALLS] callers at once on a pool of as many connections ([CALLS_EACH] replays each), every transaction
+ * of the call replayed as one and rolled back, and the planning and execution times PostgreSQL reports for its
+ * queries added up, timed [TRIALS] times and the median trial kept ([medianTrial]).
  *
  * The time is the database's own, not the test's: the in-process test server serves its calls one after another, and
  * a client clock around 20 concurrent replays on a CI runner of a few cores measures the decoding and the scheduling
@@ -58,17 +59,21 @@ suspend fun TestServer.measureRead(name: String, call: suspend HttpClient.() -> 
     repeat(WARM_UP_CALLS) { checked() }
     val http = List(HTTP_CALLS) { timed { checked() } }.sorted()[HTTP_CALLS / 2]
     val statements = (1..RECORDINGS).map { driver.record(checked) }.minBy { it.size }
-    val plans = database.driver.replay(statements, explain = true)
+    val plans = List(TRIALS) { database.driver.replay(statements, explain = true) }.sortedBy(::databaseTime)[TRIALS / 2]
     val latencies = database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
         database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
         val callers = 1..CONCURRENT_CALLS
         // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.
         coroutineScope { callers.map { async { pool.replay(statements, explain = true) } }.awaitAll() }
-        coroutineScope {
-            callers.map {
-                async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true)) } }
-            }.awaitAll().flatten().sorted()
-        }
+        medianTrial(
+            List(TRIALS) {
+                coroutineScope {
+                    callers.map {
+                        async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true)) } }
+                    }.awaitAll().flatten()
+                }
+            },
+        )
     }
     return ReadMeasure(name, statements, plans, latencies, http)
 }

@@ -83,7 +83,9 @@ class RegisteredSessionsPostgresTest {
             suspend fun fresh() = sessions.getById(created.id)!!
 
             reconcile(fresh())
-            assertEquals(ExecutionStatus.PENDING, driver.executionStatus(fresh()))
+            assertEquals(ExecutionStatus.QUEUED, driver.executionStatus(fresh()))
+            reconcile(fresh())
+            assertEquals("queued", fresh().phase, "Waiting for a machine")
             val silent = server.beat(b.id, b.token).body<RegisteredRunnerHeartbeatResponse>()
             assertEquals(emptyList(), silent.executions, "A runner that reports nothing runs no session")
 
@@ -136,6 +138,38 @@ class RegisteredSessionsPostgresTest {
             reconcile(fresh())
             assertEquals(SessionState.TERMINATED, fresh().state)
             assertEquals(ExecutionStatus.MISSING, driver.executionStatus(fresh()))
+        }
+
+    /**
+     * Placement (PERF-RUNNERS, case 2): 50 sessions asked at once over 10 machines that beat in turn. Each heartbeat
+     * takes one waiting execution: all are taken in 5 rounds, 5 per machine, none lost; at the runner's 5 s the last
+     * waits 25 s, at its default 20 s, 100 s.
+     */
+    @Test
+    fun fiftySessionsSpreadEvenlyOverTenMachinesOnePerHeartbeat() =
+        serverTest(listOf(RunnersModule), overrides) { server ->
+            val sessions = server.koin.get<CloudSessionsRepository>()
+            val reconcile = server.koin.get<ReconcileCloudSessionUseCase>()
+            val machines = List(MACHINES) { server.register("dana", "machine-$it") }
+            val asked = List(ASKED) { session().also { assertTrue(sessions.createWithinCap(it, ASKED)) } }
+            asked.forEach { reconcile(sessions.getById(it.id)!!) }
+
+            val takenIn = mutableMapOf<String, Int>()
+            var round = 0
+            while (takenIn.size < ASKED && round < ASKED) {
+                round++
+                for (machine in machines.shuffled()) {
+                    val work = server.work(machine.id, machine.token)
+                    work.executions.forEach { takenIn.getOrPut(it.sessionId) { round } }
+                }
+            }
+            assertEquals(ASKED / MACHINES, round, "Rounds of heartbeats until every session is taken")
+            val held = machines.map { server.work(it.id, it.token).executions.size }
+            assertEquals(List(MACHINES) { ASKED / MACHINES }, held, "Spread evenly")
+            assertEquals(asked.map { it.id.toString() }.toSet(), takenIn.keys, "None lost")
+            val rounds = takenIn.values.sorted()
+            val (p50, p95) = rounds[ASKED / 2] to rounds[ASKED * 95 / 100 - 1]
+            println("placement: heartbeats until taken p50 $p50, p95 $p95; held per machine $held")
         }
 
     @Test
@@ -260,6 +294,8 @@ class RegisteredSessionsPostgresTest {
     private fun created() = Uuid.random().toString()
 
     private companion object {
+        const val MACHINES = 10
+        const val ASKED = 50
         const val RACERS = 10
         const val WAITING = 3
     }

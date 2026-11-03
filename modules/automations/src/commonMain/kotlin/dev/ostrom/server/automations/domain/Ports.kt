@@ -14,6 +14,7 @@ import kotlin.uuid.Uuid
  * @property status Only those in this state, if set.
  * @property sessionId Only those of this session, if set.
  * @property runId Only those of this run, if set.
+ * @property sessionIds Only those of one of these sessions, if set.
  */
 data class WaitFilter(
     val orgId: Uuid,
@@ -23,6 +24,7 @@ data class WaitFilter(
     val status: WaitStatus? = null,
     val sessionId: String? = null,
     val runId: String? = null,
+    val sessionIds: List<String>? = null,
 )
 
 /** Where waits are stored. */
@@ -31,9 +33,11 @@ interface WaitsRepository {
      * Stores a new wait, unless [maxOpen] waits of the same scope (its session, or its asker's waits without a
      * session) are open already.
      *
+     * @param sessions The sessions whose open waits count with the wait's own session: an agent's are the segments its
+     *   launch opened, so that ending and reopening its session does not open [maxOpen] more.
      * @return How it went; nothing is stored unless [CreateOutcome.CREATED].
      */
-    suspend fun createWithinLimit(wait: Wait, maxOpen: Int): CreateOutcome
+    suspend fun createWithinLimit(wait: Wait, maxOpen: Int, sessions: List<String> = emptyList()): CreateOutcome
 
     /** The wait an asker created with an idempotency key, if any. */
     suspend fun findByIdempotencyKey(orgId: Uuid, createdBy: String, key: String): Wait?

@@ -24,6 +24,7 @@ import dev.ostrom.server.orgs.domain.Invitation
 import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.runners.domain.AgentKind
 import dev.ostrom.server.runners.domain.CloudSession
@@ -75,7 +76,9 @@ class LaunchesPostgresTest {
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** A person, a member of a new organization, and a CLI token of theirs bound to it. */
-    private class Person(val user: User, val org: Org, val memberId: Uuid, val cliToken: String)
+    private class Person(val user: User, val org: Org, val memberId: Uuid, val cliToken: String) {
+        fun deleted() = OrgEvent(org.id, user.id, "org.deleted", "org", org.id.toString())
+    }
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
@@ -221,7 +224,7 @@ class LaunchesPostgresTest {
             val ada = server.person("ada")
             val running = server.launch(ada)
             assertEquals(HttpStatusCode.OK, server.call(running.agentToken, "/api/v1/sessions", SESSION).status)
-            server.koin.get<OrgsRepository>().delete(ada.org.id, now)
+            server.koin.get<OrgsRepository>().delete(ada.org.id, now, ada.deleted())
             val stopped = server.call(running.agentToken, "/api/v1/sessions/s-1/alive", "{}")
             assertEquals(HttpStatusCode.Forbidden, stopped.status, stopped.bodyAsText())
             val orphan = server.call(ada.cliToken, "/api/v1/launches", LAUNCH)

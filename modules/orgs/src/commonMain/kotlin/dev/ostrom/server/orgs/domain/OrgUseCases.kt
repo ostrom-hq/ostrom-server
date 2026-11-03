@@ -216,12 +216,13 @@ class UpdateOrgUseCaseImpl(
     private val audit: OrgAudit,
 ) : UpdateOrgUseCase {
     override suspend fun invoke(orgId: Uuid, userId: Uuid, change: OrgChange): Membership {
-        val name = change.name?.let(::validOrgName)
-        val timeZone = change.timeZone?.let(::validTimeZone)
+        // The role first: a member is refused whatever they send, never told what was wrong with it.
         val caller = requireMembership(orgs, members, orgId, userId)
         ensure(caller.member.role in MANAGER_ROLES) {
             NotAllowedException("Only an owner or an admin can change the organization.")
         }
+        val name = change.name?.let(::validOrgName)
+        val timeZone = change.timeZone?.let(::validTimeZone)
         val org = caller.org
         ensure(change.slug == null || change.slug == org.slug) {
             InvalidOrgRequestException(
@@ -277,17 +278,15 @@ interface DeleteOrgUseCase {
 }
 
 /**
- * [DeleteOrgUseCase].
+ * [DeleteOrgUseCase]; the deletion records its own event ([OrgsRepository.delete]).
  *
  * @param orgs The organizations.
  * @param members The members.
- * @param audit The audit log.
  * @param clock The clock.
  */
 class DeleteOrgUseCaseImpl(
     private val orgs: OrgsRepository,
     private val members: MembersRepository,
-    private val audit: OrgAudit,
     private val clock: Clock,
 ) : DeleteOrgUseCase {
     override suspend fun invoke(
@@ -308,19 +307,17 @@ class DeleteOrgUseCaseImpl(
             OrgStepUpRequiredException()
         }
         val purgeAfter = now + DELETION_GRACE
-        // Recorded first: the deletion removes the members, and the event must exist even if the
-        // deletion fails.
-        audit.record(
-            OrgEvent(
-                orgId,
-                userId,
-                "org.deleted",
-                "org",
-                orgId.toString(),
-                mapOf("slug" to caller.org.slug, "purge_after" to purgeAfter.toString()),
-            )
+        // Recorded by the deletion, in its transaction: an event only for a deletion that happened,
+        // and one only when two run at once.
+        val event = OrgEvent(
+            orgId,
+            userId,
+            "org.deleted",
+            "org",
+            orgId.toString(),
+            mapOf("slug" to caller.org.slug, "purge_after" to purgeAfter.toString()),
         )
-        orgs.delete(orgId, now, purgeAfter)
+        orgs.delete(orgId, now, event, purgeAfter)
     }
 }
 

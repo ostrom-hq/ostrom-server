@@ -65,7 +65,9 @@ class AuditLogImpl(
     private val hasher: SecretHasher,
     private val clock: Clock,
 ) : AuditLog {
-    override suspend fun record(entry: AuditEntry): AuditEvent = events.append(entry.orgId) { previousHash, sequence ->
+    override suspend fun record(entry: AuditEntry): AuditEvent = events.append(entry.orgId, sign(entry))
+
+    override fun sign(entry: AuditEntry): suspend (String?, Long) -> AuditEvent = { previousHash, sequence ->
         val id = Uuid.random()
         val occurredAt = clock.nowMillis()
         val canonical = auditCanonicalForm(id, sequence, entry, occurredAt, previousHash)

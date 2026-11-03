@@ -52,6 +52,13 @@ env:
 jobs:
   journey:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    # 6.2 twice: the server starting cloud sessions on this runner's Docker itself (`docker`), and on a machine of the
+    # organisation that the journey registers and starts (`registered`, `ostrom-runner machine`), placed on it.
+    name: journey (${{ matrix.driver }} cloud sessions)
+    strategy:
+      fail-fast: false
+      matrix:
+        driver: [docker, registered]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -184,6 +191,8 @@ jobs:
       # session's containers reach the server, on the host network, through host.docker.internal (the driver adds it).
       # Their settings go to the server alone (runners.env), not to the seed run that shares server.env.
       - name: The cloud sessions' runtime (this runner's Docker, the session image by digest)
+        env:
+          DRIVER: ${{ matrix.driver }}
         run: |
           docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
           session_image=$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$RUNNER_IMAGE")
@@ -192,14 +201,16 @@ jobs:
             -e CONTAINERS=1 -e VOLUMES=1 -e IMAGES=1 -e POST=1 -e ALLOW_START=1 -e ALLOW_STOP=1 \
             -e INFO=0 -e NETWORKS=0 -e EXEC=0 \
             docker.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+          # registered: the server only plans; the journey's machine creates the containers through the same proxy
           {
-            echo "OSTROM_RUNNERS_DRIVER=docker"
-            echo "OSTROM_RUNNERS_DOCKER_API_URL=http://127.0.0.1:2375"
+            echo "OSTROM_RUNNERS_DRIVER=$DRIVER"
+            [ "$DRIVER" = docker ] && echo "OSTROM_RUNNERS_DOCKER_API_URL=http://127.0.0.1:2375"
             echo "OSTROM_RUNNERS_SERVER_URL=http://host.docker.internal:4600"
             echo "OSTROM_RUNNERS_IMAGE=$session_image"
             echo "OSTROM_RUNNERS_ALLOWED_ORGS=*"
           } > "$RUNNER_TEMP/runners.env"
-          echo "- cloud session: \`$session_image\`, on this runner's Docker" >> "$GITHUB_STEP_SUMMARY"
+          echo "SESSION_IMAGE=$session_image" >> "$GITHUB_ENV"
+          echo "- cloud session: \`$session_image\`, driver \`$DRIVER\`, this runner's Docker" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
@@ -267,11 +278,16 @@ jobs:
         working-directory: cli
         env:
           IMAGE: ${{ steps.server.outputs.image }}
+          DRIVER: ${{ matrix.driver }}
         # 6.2 runs with --cloud-sessions, which a CLI ref older than ostrom-cli's e2e/cloud.py does not know: said
         run: |
           cloud=()
-          if grep -q -e '"--cloud-sessions"' e2e/journey.py; then
+          if [ "$DRIVER" = registered ] && ! grep -q -e '"--cloud-machine-image"' e2e/journey.py; then
+            echo "- 6.2 on a registered runner: not played, ostrom-cli $CLI_REF has no --cloud-machine-image" \
+              >> "$GITHUB_STEP_SUMMARY"
+          elif grep -q -e '"--cloud-sessions"' e2e/journey.py; then
             cloud=(--cloud-sessions)
+            [ "$DRIVER" = registered ] && cloud+=(--cloud-machine-image "$SESSION_IMAGE")
           else
             echo "- 6.2 cloud sessions: not played, ostrom-cli $CLI_REF has no --cloud-sessions" >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -303,7 +319,8 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: cli-journey-report
+          # the docker leg keeps the report's historical name
+          name: cli-journey-report${{ matrix.driver == 'registered' && '-registered' || '' }}
           path: ${{ runner.temp }}/journey.json
           if-no-files-found: ignore
           retention-days: 7
