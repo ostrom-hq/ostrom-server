@@ -38,14 +38,7 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrot
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.asking)
             call.respond(ask(actor, call.receive<GateAskRequest>().toAskGate()).toResponse(actor))
         }
-        // Audit A6: the hook refused on the workstation and says so after the fact; the refusal stands whatever
-        // this answers.
-        post<GatesApi.LocalDenials> {
-            val principal = call.requirePrincipal()
-            val actor = actors.actorOf(principal, GateScopes.asking)
-            localDenial(actor, principal, call.receive<GateLocalDenial>().toLocalDenial())
-            call.respond(HttpStatusCode.Accepted)
-        }
+        post<GatesApi.LocalDenials> { respondLocalDenial(dependencies) }
         // A hook waits here for its answer, at most 30 s, instead of asking again every second. Its waits are counted
         // apart from the reads: an agent waiting on many gates keeps its reads (AUDIT-SECU-LECTURES M1).
         throttledWaits(throttle) {
@@ -102,6 +95,14 @@ private suspend fun RoutingContext.respondUse(dependencies: GatesRoutesDependenc
     val gateId = id.toUuid()
     dependencies.use(actor, gateId, move)
     call.respond(dependencies.gate(actor, gateId).toResponse(actor))
+}
+
+// Audit A6: the hook refused on the workstation and says so after the fact; the refusal stands whatever this answers.
+private suspend fun RoutingContext.respondLocalDenial(dependencies: GatesRoutesDependencies) {
+    val principal = call.requirePrincipal()
+    val actor = dependencies.actors.actorOf(principal, GateScopes.asking)
+    dependencies.localDenial(actor, principal, call.receive<GateLocalDenial>().toLocalDenial())
+    call.respond(HttpStatusCode.Accepted)
 }
 
 // The scope first: a credential that may not use the route learns nothing about its organization.
