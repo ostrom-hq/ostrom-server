@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalNativeApi::class)
 
 package dev.ostrom.server.app
 
@@ -21,6 +21,9 @@ import platform.posix.fopen
 import platform.posix.opendir
 import platform.posix.readdir
 import platform.posix.usleep
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.CpuArchitecture
+import kotlin.native.Platform
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -37,13 +40,17 @@ import kotlin.test.assertTrue
 class StoppedApplicationsTest {
     @Test
     fun aStoppedApplicationLeavesNoSelectorLoopBehind() {
-        val before = selecting() ?: return // No /proc: macOS.
+        // Settled first: the loops of a test stopped just before in this process may still be leaving.
+        val before = settled() ?: return // No /proc (macOS), or an architecture without its pselect6 below.
         repeat(APPLICATIONS) { application ->
             serverTest(serverModules()) { server ->
                 // Every client of the application, built as they are on first use.
                 server.koin.getAll<HttpClient>()
                 server.koin.get<StripeGateway>()
                 assertEquals(HttpStatusCode.OK, server.client.get("/health").status)
+                // The control: a count that cannot see the running loops would pass on any leak.
+                val running = selecting()!!
+                assertTrue(running > before, "$running threads in a select while application ${application + 1} runs")
             }
             // A closed selector leaves its loop at its next wake-up.
             var left = selecting()!!
@@ -78,6 +85,7 @@ class StoppedApplicationsTest {
      * passed on the leak, #344).
      */
     private fun selecting(): Int? {
+        val pselect6 = PSELECT6[Platform.cpuArchitecture] ?: return null
         val dir = opendir("/proc/self/task") ?: return null
         val tids = mutableListOf<String>()
         try {
@@ -90,7 +98,19 @@ class StoppedApplicationsTest {
             closedir(dir)
         }
         return tids.filterNot { it.startsWith(".") }
-            .count { readFile("/proc/self/task/$it/syscall")?.substringBefore(' ') == PSELECT6 }
+            .count { readFile("/proc/self/task/$it/syscall")?.substringBefore(' ') == pselect6 }
+    }
+
+    /** [selecting] once two reads a tenth of a second apart agree. */
+    private fun settled(): Int? {
+        var count = selecting() ?: return null
+        repeat(SETTLE_TURNS) {
+            usleep(SETTLE_MICROS)
+            val next = selecting()!!
+            if (next == count) return count
+            count = next
+        }
+        return count
     }
 
     private fun readFile(path: String): String? {
@@ -111,6 +131,8 @@ class StoppedApplicationsTest {
         const val SETTLE_TURNS = 50
         const val SETTLE_MICROS = 100_000u
         const val BUFFER = 4096
-        const val PSELECT6 = "270" // x86_64, the CI's architecture.
+
+        /** The number of `pselect6` per architecture, as `syscall` writes it. */
+        val PSELECT6 = mapOf(CpuArchitecture.X64 to "270", CpuArchitecture.ARM64 to "72")
     }
 }
