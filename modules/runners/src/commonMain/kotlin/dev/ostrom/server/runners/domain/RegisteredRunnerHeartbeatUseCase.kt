@@ -68,7 +68,7 @@ class RegisteredRunnerHeartbeatUseCaseImpl(
                     ?.let { AssignedExecution(assignment.sessionId, assignment.epoch, it) }
             }
         }
-        val workspaces = held.filter { !it.dropped }.map { it.sessionId }.distinct()
+        val workspaces = held.filter { !it.dropped && !it.superseded }.map { it.sessionId }.distinct()
         return MachineWork(executions, workspaces)
     }
 

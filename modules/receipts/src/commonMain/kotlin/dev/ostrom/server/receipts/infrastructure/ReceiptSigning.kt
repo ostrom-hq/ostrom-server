@@ -7,6 +7,7 @@ import dev.ostrom.core.receipts.SignatureField
 import dev.ostrom.server.instance.domain.ListSigningKeysUseCase
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.receipts.domain.models.ReceiptKey
+import dev.ostrom.server.receipts.domain.models.ReceiptKeyRotation
 import dev.ostrom.server.receipts.domain.services.ReceiptBodySigner
 import dev.ostrom.server.receipts.domain.services.TrustedReceiptKeys
 import kotlinx.serialization.json.JsonObject
@@ -39,5 +40,8 @@ class InstanceReceiptSigner(private val signer: InstanceSigner) : ReceiptBodySig
  */
 class InstanceTrustedReceiptKeys(private val listSigningKeys: ListSigningKeysUseCase) : TrustedReceiptKeys {
     override suspend fun keys(): List<ReceiptKey> =
-        listSigningKeys().map { ReceiptKey(it.keyId, it.algorithm, it.publicKeyPem) }
+        listSigningKeys().map { key ->
+            val rotation = key.rotation?.let { ReceiptKeyRotation(it.keyId, it.signature) }
+            ReceiptKey(key.keyId, key.algorithm, key.publicKeyPem, rotation)
+        }
 }

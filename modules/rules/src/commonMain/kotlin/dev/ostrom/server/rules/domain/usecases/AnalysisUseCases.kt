@@ -9,6 +9,7 @@ import dev.ostrom.server.rules.domain.models.AnalysisBusyException
 import dev.ostrom.server.rules.domain.models.AnalysisFailure
 import dev.ostrom.server.rules.domain.models.AnalysisKind
 import dev.ostrom.server.rules.domain.models.AnalysisRun
+import dev.ostrom.server.rules.domain.models.AnalysisTooSoonException
 import dev.ostrom.server.rules.domain.models.Decider
 import dev.ostrom.server.rules.domain.models.Rule
 import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
@@ -21,6 +22,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
 /** Starts an analysis or a replay of the organization (prototype `POST /api/analysis/start`, `/api/replay/start`). */
@@ -60,6 +62,10 @@ class StartAnalysisUseCaseImpl(
             val current = lock(kind)
             // A run the engine stopped reporting on (a restart, a crash) holds nobody back past STALE.
             if (current != null && current.running && now - current.updatedAt < STALE) throw AnalysisBusyException()
+            // One replay a minute per organization: each holds the server's only replay lane while it runs.
+            if (kind == AnalysisKind.REPLAY && current?.phase == AnalysisRun.READY && now - current.startedAt < GAP) {
+                throw AnalysisTooSoonException()
+            }
             AnalysisRun(
                 orgId = decider.orgId,
                 kind = kind,
@@ -107,6 +113,9 @@ class StartAnalysisUseCaseImpl(
 
 // Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
 private val STALE = 1.hours
+
+// The least time between two replays of one organization.
+private val GAP = 1.minutes
 
 /**
  * The analysis as the console shows it.

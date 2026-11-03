@@ -262,7 +262,8 @@ jobs:
           # scenarios' addresses come through the trusted local proxy, Stripe is stripe-mock, and the providers' token
           # endpoint and APIs behind the gateway are the fake provider a scenario starts on port 4620 (BUDGET-002,
           # SHARE-*), GitHub and the GitHub App are the fakes the scenarios start on 4610 and 4700, and the read limits
-          # (#181) are those of a bench, wired as in ostrom-e2e's ci.yml.
+          # (#181) are those of a bench, wired as in ostrom-e2e's ci.yml. Expo's push service is the fake one a scenario
+          # starts on port 4621 (NOTIFY-*): the approvers' pushes are read there, never sent to a phone.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -293,6 +294,7 @@ jobs:
           OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
           OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_e2e
           OSTROM_ARTIFACTS_CONTENT_ORIGIN=http://localhost:4601
+          OSTROM_EXPO_PUSH_URL=http://127.0.0.1:4621/--/api/v2/push/send
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           # The bench's GitHub App gets a key made for this run, written straight to the env file: never to $GITHUB_ENV,
@@ -335,6 +337,8 @@ jobs:
           OSTROM_E2E_TEAMCODE_PASSWORD: teamcode-ro
           OSTROM_E2E_TEAMCODE_KEY_FILE: ${{ env.TEAMCODE == 'true' && format('{0}/helm/compose/demo/teamcode/key.txt', github.workspace) || '' }}
           OSTROM_E2E_DATABASE_ADMIN_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom
+          # The fake Expo push service the notification scenarios start, where the server's pushes go (step above).
+          OSTROM_E2E_FAKE_EXPO_PORT: "4621"
           # E2E-SWEEP's contract (step « The server image »).
           OSTROM_E2E_SERVED_ROUTES: ${{ runner.temp }}/served-routes.txt
           OSTROM_E2E_OPENAPI: ${{ runner.temp }}/openapi.json
@@ -409,6 +413,50 @@ jobs:
           k6 run --summary-export "$RUNNER_TEMP/smoke-summary.json" load/smoke.js || rc=$?
           k6 run --summary-export "$RUNNER_TEMP/race-summary.json" load/race.js || rc=$?
           exit "$rc"
+      # E2E-LOAD-012 (the 13:5x P1: 100 requests without a credential killed the server at 512Mi). The container must
+      # neither stop nor be OOM-killed, and its memory peak (its cgroup's memory.peak, the whole run) must stay under
+      # the chart's limit. BURST_GUARD is "warn" until ostrom-server#266 merges, then "block".
+      - name: Burst guard (100 requests without a credential, then 100 authenticated; container and memory)
+        if: env.CALLED == 'true' && !cancelled() && steps.loadsetup.outputs.ready == 'true'
+        working-directory: e2e
+        env:
+          OSTROM_URL: http://127.0.0.1:4600
+          MEMORY_LIMIT_MIB: 512 # the server's resources.limits.memory in ostrom-helm (helm#41)
+          BURST_GUARD: warn
+        run: |
+          if [ ! -f load/burst.js ]; then echo "::warning::load/burst.js is not in this ostrom-e2e checkout"; exit 0; fi
+          problems=""
+          note() { problems="${problems}$1
+          "; }
+          id=$(docker inspect -f '{{.Id}}' ostrom-server)
+          restarts=$(docker inspect -f '{{.RestartCount}}' ostrom-server)
+          k6 run --summary-export "$RUNNER_TEMP/burst-summary.json" load/burst.js \
+            || note "a threshold of load/burst.js was crossed (100 × 401 then 100 × 200, nothing else)"
+          state=$(docker inspect -f '{{.State.Running}} {{.State.OOMKilled}} {{.RestartCount}}' ostrom-server 2>/dev/null \
+            || echo "gone")
+          echo "container: running, OOM-killed, restarts = $state"
+          [ "$state" = "true false $restarts" ] || note "the server container stopped, restarted or was OOM-killed: $state"
+          curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 || note "/ready does not answer after the bursts"
+          cgroup=$(find /sys/fs/cgroup -maxdepth 3 -type d -name "*$id*" 2>/dev/null | head -n 1)
+          if [ -n "$cgroup" ] && [ -r "$cgroup/memory.peak" ]; then
+            peak=$(( $(cat "$cgroup/memory.peak") / 1048576 ))
+            echo "memory peak of the container: $peak MiB (limit $MEMORY_LIMIT_MIB MiB)"
+            [ "$peak" -le "$MEMORY_LIMIT_MIB" ] \
+              || note "the container's memory peak, $peak MiB, is above the chart's limit of $MEMORY_LIMIT_MIB MiB"
+          else
+            peak="unknown"
+            echo "::warning::no memory.peak for the container (cgroup ${cgroup:-not found})"
+          fi
+          {
+            echo "### Burst guard ($BURST_GUARD)"
+            echo "- container (running, OOM-killed, restarts): \`$state\`; memory peak: $peak MiB, limit $MEMORY_LIMIT_MIB MiB"
+            [ -z "$problems" ] && echo "- nothing crossed"
+            printf '%s' "$problems" | sed '/^ *$/d; s/^ */- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ -z "$problems" ] && exit 0
+          level=warning; [ "$BURST_GUARD" = "block" ] && level=error
+          printf '%s' "$problems" | sed '/^ *$/d; s/^ *//' | while IFS= read -r line; do echo "::$level::burst guard: $line"; done
+          [ "$level" = "warning" ] || exit 1
       - name: Server logs
         if: always()
         run: docker logs ostrom-server 2>&1 | tail -n 300 || true

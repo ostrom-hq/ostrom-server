@@ -94,6 +94,7 @@ import dev.ostrom.server.identity.domain.StartWebSessionUseCase
 import dev.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import dev.ostrom.server.identity.domain.UnlockMobileAppUseCase
 import dev.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
+import dev.ostrom.server.identity.domain.LinkedIdentities
 import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
@@ -123,6 +124,7 @@ import dev.ostrom.server.identity.infrastructure.ServiceKeysRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import dev.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
+import dev.ostrom.server.identity.infrastructure.LinkedIdentitiesImpl
 import dev.ostrom.server.identity.infrastructure.UsersRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.WebSessionsRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.closeHttpClient
@@ -148,11 +150,19 @@ import dev.ostrom.server.kernel.auth.ServiceKeyAudit
 import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -181,6 +191,7 @@ object IdentityModule : ServerModule {
         single<RateLimiter> { InMemoryRateLimiter(get()) }
 
         single<UsersRepository> { UsersRepositoryImpl(get()) }
+        single<LinkedIdentities> { LinkedIdentitiesImpl(get()) }
         single<WebSessionsRepository> { WebSessionsRepositoryImpl(get()) }
         single<ApiTokensRepository> { ApiTokensRepositoryImpl(get()) }
         single<ServiceKeysRepository> { ServiceKeysRepositoryImpl(get()) }
@@ -275,6 +286,29 @@ object IdentityModule : ServerModule {
     }
 
     override val migrations: List<SchemaMigration> = IdentityMigrations
+
+    /** How long an agent token is kept once expired: it no longer acts, and nothing reads it after its launch. */
+    val AGENT_TOKEN_RETENTION: Duration = 7.days
+
+    // Every hour, the agent tokens expired more than AGENT_TOKEN_RETENTION ago are deleted: one per launch, they were
+    // kept for ever. A failed purge is logged and tried again the next hour; it never stops the server.
+    override fun start(scope: CoroutineScope, koin: Koin) {
+        val tokens = koin.get<ApiTokensRepository>()
+        val clock = koin.get<Clock>()
+        val logger = koin.get<Logger>()
+        scope.launch {
+            while (true) {
+                try {
+                    tokens.purgeAgentTokens(clock.now() - AGENT_TOKEN_RETENTION)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    logger.warn("agent token purge failed", mapOf("error" to error::class.simpleName))
+                }
+                delay(1.hours)
+            }
+        }
+    }
 
     override fun routes(route: Route, koin: Koin) {
         route.noStoreOnIdentityRoutes()

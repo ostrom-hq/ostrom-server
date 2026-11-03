@@ -37,6 +37,7 @@ import kotlin.uuid.Uuid
  * @property pullRequest The pull request number of a merge.
  * @property diff The diff a push sends.
  * @property via The path.
+ * @property unlinkedAuthor The GitHub account id of a pull request's author linked to no Ostrom person ([Gate]).
  */
 data class AskGate(
     val sessionId: String?,
@@ -51,6 +52,7 @@ data class AskGate(
     val pullRequest: Int?,
     val diff: String?,
     val via: AskedVia,
+    val unlinkedAuthor: Long? = null,
 )
 
 /** Turns what a hook asks into a gate: resolves the gate node, the pull request and what is shown, then opens it. */
@@ -110,6 +112,8 @@ class AskGateUseCaseImpl(
                 label = if (node == null) actionClass else node.name,
                 evidence = evidenceOf(node, subject, asker, ask.sessionId, ask.diff?.take(MAX_DIFF)),
                 redirected = GateCommands.redirected(command),
+                // Only the GitHub check knows a pull request's author: a hook never names one.
+                unlinkedAuthor = ask.unlinkedAuthor.takeIf { actor.kind == ActorKind.SERVICE },
             ),
         )
     }

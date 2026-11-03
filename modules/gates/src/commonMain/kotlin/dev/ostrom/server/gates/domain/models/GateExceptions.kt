@@ -39,6 +39,17 @@ class SelfApprovalRefusedException(val others: List<String>) : OstromException(
     "self_approval_refused",
 )
 
+/**
+ * A yes on a pull request whose author linked no GitHub account in Ostrom, from an approver who linked none either
+ * (Q-GATES-G1): under the `never` policy, only a GitHub account other than the author's says yes.
+ */
+class GitHubLinkRequiredException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This pull request's author has no GitHub account linked in Ostrom: link your own GitHub account in My account " +
+        "to approve it.",
+    "github_link_required",
+)
+
 /** The gate or request was already answered: a yes is given once. */
 class GateAlreadyDecidedException :
     OstromException(ErrorKind.CONFLICT, "This gate was already answered.", "approval_closed")

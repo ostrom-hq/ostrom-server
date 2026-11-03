@@ -58,6 +58,7 @@ import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
+import dev.ostrom.server.testing.Contract
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -304,9 +305,9 @@ class CompilerPostgresTest {
         assertEquals(1, server.call("user:a:dev", "/api/v1/workflows?repo=acme-api").body<WorkflowsPage>().items.size)
         assertEquals(HttpStatusCode.OK, server.call("user:a:dev", "/api/v1/workflows/release").status)
 
-        val decisions = server.koin.get<CompilerRepository>().decisions(orgA)
-        assertEquals(listOf("dev", "lead"), decisions.map { it.by })
-        val receipt = server.koin.get<GetReceiptUseCase>()(orgA, assertNotNull(decisions.last().receiptId))
+        val decisions = server.koin.get<CompilerRepository>().lastDecisions(orgA)
+        assertEquals(listOf("lead"), decisions.map { it.by }, "The last decision on release, not dev's before it")
+        val receipt = server.koin.get<GetReceiptUseCase>()(orgA, assertNotNull(decisions.single().receiptId))
         assertEquals("workflow", receipt.getValue("subject").jsonObject.getValue("kind").jsonPrimitive.content)
         val answer = receipt.getValue("decisions").jsonArray.single().jsonObject
         assertEquals("accept", answer.getValue("result").jsonPrimitive.content)
@@ -428,7 +429,10 @@ class CompilerPostgresTest {
         assertNull(deleting.after)
         assertNull(change.apply(orgA, delete, lead))
         assertEquals(HttpStatusCode.NotFound, server.call("user:a:lead", path).status)
-        val by = server.koin.get<CompilerRepository>().decisions(orgA).map { it.by }
+        val by = server.database.superuser.fetchAll(
+            "SELECT decided_by FROM compiler_decisions WHERE org_id = '0000000a-0000-0000-0000-000000000000' " +
+                "ORDER BY decided_at, id",
+        ).getOrThrow().map { it.get("decided_by").asString() }
         assertEquals(listOf("lead", lead.member.memberId.toString()), by.take(2), "By the gates, else the member")
 
         // An invalid workflow is refused when it is asked, not when an owner confirms it.
@@ -505,6 +509,8 @@ class CompilerPostgresTest {
         assertTrue(revoked.revoked)
         assertFalse(revoked.pinned)
         assertEquals("leaked", revoked.revokeReason)
+        val listedRevoked = server.call("user:a:lead", "/api/v1/packages?repo=acme-api").body<PackagesPage>()
+        assertEquals(revoked, listedRevoked.items.single(), "The list reads the revocation the package keeps")
         val restorePath = "/api/v1/packages/${envelope.digest}/restore"
         val restored = server.call("user:a:lead", restorePath, "POST").body<PackageSummary>()
         assertFalse(restored.revoked)
@@ -513,9 +519,19 @@ class CompilerPostgresTest {
         val audit = server.call("user:a:lead", "/api/v1/packages/audit?limit=500").body<AuditPage>().items
         val events = listOf("package.restored", "package.revoked", "package.pinned", "package.compiled")
         assertEquals(events, audit.map { it.event })
+        // `AuditEvent.meta` of the contract: every value a string, the counts of a compiled package included.
+        val compiled = audit.last().meta
+        assertTrue(compiled.getValue("workflows").all { it.isDigit() }, compiled.toString())
         assertEquals(1, server.call("user:a:lead", "/api/v1/packages/audit?limit=1").body<AuditPage>().items.size)
         assertEquals(4, server.call("user:a:lead", "/api/v1/packages/audit").body<AuditPage>().items.size)
         assertTrue(server.call("user:b:lead", "/api/v1/packages/audit").body<AuditPage>().items.isEmpty())
+        // After the audit, which it adds to: the organization's package, pinned under `*`, listed as its status says.
+        val organization = server.call("agent:a:l1", "/api/v1/packages/current").body<PackageEnvelope>()
+        val listedOrganization = server.call("user:a:lead", "/api/v1/packages").body<PackagesPage>().items
+            .single { it.repo == null }
+        val organizationStatus = "/api/v1/packages/${organization.contentDigest}/status"
+        assertEquals(server.call("user:a:x", organizationStatus).body<PackageSummary>(), listedOrganization)
+        assertEquals(organization.pinned, listedOrganization.pinned)
 
         val preview = server.call("user:a:lead", "/api/v1/packages/preview", "POST", PreviewRequest("acme-api"))
             .body<JsonObject>()
@@ -544,7 +560,7 @@ class CompilerPostgresTest {
         val catalog = server.call("agent:a:l1", "/api/v1/gates/catalog?repo=acme-api").body<JsonObject>()
         assertEquals("closed", catalog.getValue("failMode").jsonPrimitive.content)
         // The real answer, one gated action and ungated ones, against ostrom-core main's contract (WEB-PARCOURS 3344).
-        val contract = ContractSchema.fromEnvironment()
+        val contract = Contract.from(EnvironmentConfigSource())?.schema
         contract?.assertMatches("GateCatalog", catalog)
         val push = catalog.getValue("actions").jsonArray.map { it.jsonObject }
             .first { it.getValue("class").jsonPrimitive.content == "push-main" }
@@ -613,9 +629,14 @@ class CompilerPostgresTest {
         assertNull(repository.harness(orgA, "acme-api", "d"))
         assertNull(repository.harness(orgB, null, "d"))
 
-        val decision = DecisionDoc("dec_1", "workflow", "w", "lead", "2026-10-30T08:00:00.000Z", null)
+        val decision = DecisionDoc("dec_1", "workflow", "decided", "lead", "2026-10-30T08:00:00.000Z", null)
         repository.addDecision(orgA, decision)
-        assertEquals(listOf(decision), repository.decisions(orgA))
+        assertEquals(emptyList(), repository.lastDecisions(orgA), "A decision on no existing workflow is not cited")
+        server.database.superuser.execute(
+            "INSERT INTO compiler_workflows (org_id, id, doc, version, updated_by, updated_at, created_at) " +
+                "VALUES ('0000000a-0000-0000-0000-000000000000', 'decided', '{}', 1, 'lead', now(), now())",
+        ).getOrThrow()
+        assertEquals(listOf(decision), repository.lastDecisions(orgA))
 
         val meta = JsonObject(mapOf("repo" to JsonPrimitive("acme-api")))
         val line = PackageAudit("aud_1", "2026-10-30T08:00:00.000Z", "package.pinned", "lead", "p1", meta)
@@ -674,5 +695,45 @@ class CompilerPostgresTest {
             )
         }
         assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
+    }
+
+    // Every read of the workflows is bounded: the organization keeps at most 1000, so none is ever cut from a list.
+    @Test
+    fun anOrganizationKeepsAtMostAThousandWorkflows() = compilerTest { server ->
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", release()).status)
+        // 999 copies of it: the organization's 1000th workflow.
+        server.database.superuser.execute(
+            """
+            INSERT INTO compiler_workflows (org_id, id, doc, version, updated_by, updated_at, created_at)
+            SELECT org_id, 'copy' || g, CAST(jsonb_set(CAST(doc AS JSONB), '{id}', to_jsonb('copy' || g)) AS TEXT),
+                version, updated_by, updated_at, created_at + g * interval '1 second'
+            FROM compiler_workflows, generate_series(1, 999) g WHERE id = 'release'
+            """.trimIndent(),
+        ).getOrThrow()
+
+        val refused = server.call("user:a:lead", "/api/v1/workflows", "POST", apiDeploys())
+        assertEquals(HttpStatusCode.Conflict, refused.status)
+        assertTrue(refused.bodyAsText().contains("workflow_limit"), refused.bodyAsText())
+        assertEquals(1000, server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>().items.size)
+        // Another organization has its own 1000.
+        assertEquals(HttpStatusCode.Created, server.call("user:b:lead", "/api/v1/workflows", "POST", release()).status)
+    }
+
+    // A package cites the last decision of each workflow, however many decisions the organization took before it.
+    @Test
+    fun theLastDecisionOfAWorkflowIsReadAfterAThousandOlderOnes() = compilerTest { server ->
+        server.database.superuser.execute(
+            """
+            INSERT INTO compiler_decisions (org_id, id, subject_kind, subject_id, decided_by, decided_at)
+            SELECT '0000000a-0000-0000-0000-000000000000', 'dec_old_' || g, 'workflow', 'release', 'old',
+                '2020-01-01T00' || chr(58) || '00' || chr(58) || lpad(CAST(g % 60 AS TEXT), 2, '0') || '.000Z'
+            FROM generate_series(1, 1000) g
+            """.trimIndent(),
+        ).getOrThrow()
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", release()).status)
+
+        val last = server.koin.get<CompilerRepository>().lastDecisions(orgA).single()
+        assertEquals("release", last.subjectId)
+        assertEquals("lead", last.by)
     }
 }

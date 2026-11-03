@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.signing
 
+import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.platform.createPrivateFile
 import dev.whyoleg.cryptography.CryptographyProvider
 import dev.whyoleg.cryptography.algorithms.EdDSA
@@ -52,6 +53,8 @@ class Ed25519InstanceSigner private constructor(
          * @param path The PEM file.
          *
          * @return The signer.
+         *
+         * @throws InvalidConfigException When the file is not an Ed25519 private key.
          */
         suspend fun loadOrCreate(path: String): Ed25519InstanceSigner = loadOrCreate(path, ::createPrivateFile)
 
@@ -69,10 +72,38 @@ class Ed25519InstanceSigner private constructor(
                 // False when another process created the key first: use its key, never a second one.
                 if (create(path, pem)) return signer
             }
-            val pem = SystemFileSystem.source(file).buffered().use { it.readString() }
-            val privateKey = edDsa.privateKeyDecoder(EdDSA.Curve.Ed25519)
-                .decodeFromByteArray(EdDSA.PrivateKey.Format.PEM, pem.encodeToByteArray())
+            return read(file)
+        }
+
+        /**
+         * Reads an existing key from a PEM file, never creating one: the previous key of a receipt key rotation
+         * (docs/receipt-key-rotation.md), which must be the key the instance signed with before.
+         *
+         * @param path The PEM file.
+         *
+         * @return The signer.
+         *
+         * @throws InvalidConfigException When the file does not exist, or is not an Ed25519 private key.
+         */
+        suspend fun load(path: String): Ed25519InstanceSigner {
+            val file = Path(path)
+            if (!SystemFileSystem.exists(file)) throw InvalidConfigException("Signing key file $path does not exist.")
+            return read(file)
+        }
+
+        private suspend fun read(file: Path): Ed25519InstanceSigner {
+            val privateKey = decode(file)
             return of(privateKey, privateKey.getPublicKey())
+        }
+
+        // Whatever the library or the file system says, the start stops on a configuration error that names the file.
+        private fun decode(file: Path): EdDSA.PrivateKey = try {
+            val pem = SystemFileSystem.source(file).buffered().use { it.readString() }
+            edDsa.privateKeyDecoder(EdDSA.Curve.Ed25519)
+                .decodeFromByteArrayBlocking(EdDSA.PrivateKey.Format.PEM, pem.encodeToByteArray())
+            // not coroutine-reachable: nothing in this block suspends, no cancellation passes through it.
+        } catch (error: Exception) {
+            throw InvalidConfigException("Signing key file $file is not an Ed25519 private key in PKCS#8 PEM.", error)
         }
 
         private suspend fun of(privateKey: EdDSA.PrivateKey, publicKey: EdDSA.PublicKey): Ed25519InstanceSigner {

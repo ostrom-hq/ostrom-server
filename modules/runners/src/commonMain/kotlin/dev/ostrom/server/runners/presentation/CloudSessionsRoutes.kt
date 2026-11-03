@@ -147,4 +147,5 @@ fun CloudSession.toResponse() = CloudSessionResponse(
     lastActivityAt = lastActivityAt?.toString(),
     pausedAt = pausedAt?.toString(),
     endedAt = terminatedAt?.toString(),
+    runnerId = runnerId?.toString(),
 )
