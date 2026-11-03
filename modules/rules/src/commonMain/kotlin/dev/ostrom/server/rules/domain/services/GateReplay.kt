@@ -64,7 +64,8 @@ object GateReplay {
     fun prepare(rules: List<Rule>): List<ReplayedRule> = rules.mapNotNull { rule ->
         rule.gate?.let { gate ->
             val approvers = gate.approvers.map { it to it.lowercase() }
-            ReplayedRule(rule, gate, gate.actions.map { ReplayedAction(it, compiled(it)) }, approvers)
+            val actions = gate.actions.map { ReplayedAction(it, compiled(it), it.repos.map(String::lowercase)) }
+            ReplayedRule(rule, gate, actions, approvers, rule.scope.map(String::lowercase))
         }
     }
 
@@ -76,15 +77,36 @@ object GateReplay {
      * @param policy The organization's self-approval policy.
      * @return The item: what happened, what the rules would have done, and why.
      */
-    fun replay(gate: Gate, rules: List<ReplayedRule>, policy: SelfApprovalPolicy): JsonObject {
+    fun replay(gate: Gate, rules: List<ReplayedRule>, policy: SelfApprovalPolicy): JsonObject =
+        replayAll(listOf(gate), rules, policy).single()
+
+    /**
+     * Replays the rules on actions, in their order. The rules that cover an action depend only on its repository,
+     * class and command: they are found once for each such subject, not once per action (a replay holds up to 1 000
+     * actions, most of them alike).
+     *
+     * @param gates The actions, as their gates recorded them.
+     * @param rules The prepared rules.
+     * @param policy The organization's self-approval policy.
+     * @return One item per action.
+     */
+    fun replayAll(gates: List<Gate>, rules: List<ReplayedRule>, policy: SelfApprovalPolicy): List<JsonObject> {
+        val coverages = HashMap<Triple<String?, String, String>, Coverage>()
+        return gates.map { gate ->
+            val subject = gate.subject
+            val coverage = coverages.getOrPut(Triple(subject.repo, subject.actionClass, subject.command)) {
+                Coverage(Target(subject), rules)
+            }
+            item(gate, coverage, policy)
+        }
+    }
+
+    private fun item(gate: Gate, coverage: Coverage, policy: SelfApprovalPolicy): JsonObject {
         val subject = gate.subject
-        val covering = rules.filter { covers(it.rule.scope, subject.repo) && it.actions.any { a -> a.covers(subject) } }
-        // By lowered name, the first spelling kept: computed once per rule, a replay meets each rule 1 000 times.
-        val byKey = LinkedHashMap<String, String>()
-        covering.forEach { rule -> rule.approverKeys.forEach { (name, key) -> byKey.getOrPut(key) { name } } }
-        val approvers = byKey.values.toList()
+        val covering = coverage.rules
+        val approvers = coverage.approvers.values.toList()
         val askers = gate.askedBy.map { it.lowercase() }.toSet()
-        val others = byKey.filterKeys { it !in askers }.values.toList()
+        val others = coverage.approvers.filterKeys { it !in askers }.values.toList()
         val alone = policy == SelfApprovalPolicy.SOLE_APPROVER && approvers.size == 1
         val may = if (alone) approvers else others
         val outcome = when {
@@ -153,13 +175,24 @@ object GateReplay {
         return pull ?: push
     }
 
-    // A rule scoped to repositories or paths covers an action in one of them; unscoped, every action.
-    private fun covers(scope: List<String>, repo: String?): Boolean {
-        val full = repo.orEmpty().lowercase()
+    // The rules covering one subject, and their approvers by lowered name, the first spelling kept.
+    private class Coverage(target: Target, all: List<ReplayedRule>) {
+        val rules = all.filter { it.covers(target) }
+        val approvers = LinkedHashMap<String, String>().also { byKey ->
+            rules.forEach { rule -> rule.approverKeys.forEach { (name, key) -> byKey.getOrPut(key) { name } } }
+        }
+    }
+
+    // A subject's names, lowered once: `owner/name`, the short name and, as the catalogue names a repository, the
+    // aliases of both.
+    internal class Target(subject: GateSubject) {
+        val full = subject.repo.orEmpty().lowercase()
         val short = full.substringAfterLast('/')
-        return scope.isEmpty() || (full.isNotEmpty() && scope.any { entry ->
-            entry.lowercase().let { it == full || it == short || it.startsWith("$short/") }
-        })
+        val shortDir = "$short/"
+        val names: Set<String> = listOfNotNull(subject.repo, subject.repo?.substringAfterLast('/'))
+            .flatMap { GatesCatalog.aliases(it) + it.lowercase() }.toSet()
+        val actionClass = subject.actionClass
+        val command = subject.command
     }
 
     private fun compiled(action: RuleGateAction): List<Regex> = action.patterns.mapNotNull { pattern ->
@@ -182,19 +215,31 @@ object GateReplay {
         internal val actions: List<ReplayedAction>,
         // Each approver with its lowered name, the key two spellings of one person share.
         internal val approverKeys: List<Pair<String, String>>,
-    )
+        private val scope: List<String>,
+    ) {
+        // Scoped to repositories or paths, it covers an action in one of them; unscoped, every action.
+        internal fun covers(target: Target): Boolean {
+            val inScope = scope.isEmpty() || (target.full.isNotEmpty() && scope.any {
+                it == target.full || it == target.short || it.startsWith(target.shortDir)
+            })
+            return inScope && actions.any { it.covers(target) }
+        }
+    }
 
     /**
      * A gate's action, its patterns compiled.
      *
      * @property action The action.
      */
-    class ReplayedAction internal constructor(val action: RuleGateAction, private val patterns: List<Regex>) {
-        internal fun covers(subject: GateSubject): Boolean {
-            // The catalogue names a repository by its short name or an alias of it; the history by `owner/name`.
-            val names = listOf(subject.repo, subject.repo?.substringAfterLast('/'))
-            val inRepo = names.any { GatesCatalog.covers(action.repos, it) }
-            val same = action.cls == subject.actionClass || patterns.any { it.containsMatchIn(subject.command) }
+    class ReplayedAction internal constructor(
+        val action: RuleGateAction,
+        private val patterns: List<Regex>,
+        private val repos: List<String>,
+    ) {
+        // The catalogue names a repository by its short name or an alias of it; the history by `owner/name`.
+        internal fun covers(target: Target): Boolean {
+            val inRepo = repos.isEmpty() || repos.any { it in target.names }
+            val same = action.cls == target.actionClass || patterns.any { it.containsMatchIn(target.command) }
             return inRepo && same
         }
     }

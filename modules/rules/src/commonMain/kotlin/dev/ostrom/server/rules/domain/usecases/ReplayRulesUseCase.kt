@@ -57,7 +57,7 @@ class ReplayRulesUseCaseImpl(
         val policy = rules.selfApproval(run.orgId) ?: SelfApprovalPolicy.DEFAULT
         val actions = history.recent(run.orgId, clock.now() - REPLAY_WINDOW, MAX_ACTIONS)
         runs.advance(run, REPLAY, HALF)
-        runs.advance(run, AnalysisRun.READY, 1.0, actions.map { GateReplay.replay(it, replayed, policy) })
+        runs.advance(run, AnalysisRun.READY, 1.0, GateReplay.replayAll(actions, replayed, policy))
     }
 
     /** The bounds and words of a replay. */

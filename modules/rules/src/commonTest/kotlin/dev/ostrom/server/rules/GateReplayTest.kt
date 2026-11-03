@@ -170,4 +170,15 @@ class GateReplayTest {
         assertEquals("1", item.text("approverCount"))
         assertEquals("0", replay(action(), emptyList()).text("ruleCount"))
     }
+
+    @Test
+    fun alikeActionsShareTheirRulesButEachKeepsItsIdAndItsAsker() {
+        val rules = GateReplay.prepare(listOf(gated(approvers = listOf("bob"))))
+        val byLyes = action()
+        val byBob = action(askedBy = listOf("bob"))
+        val merge = action(subject = push(cls = "merge"))
+        val items = GateReplay.replayAll(listOf(byLyes, byBob, merge), rules, SelfApprovalPolicy.NEVER)
+        assertEquals(listOf(byLyes, byBob, merge).map { it.id.toString() }, items.map { it.text("gateId") })
+        assertEquals(listOf(GateReplay.ASKED, GateReplay.BLOCKED, GateReplay.PASSED), items.map { it.text("outcome") })
+    }
 }

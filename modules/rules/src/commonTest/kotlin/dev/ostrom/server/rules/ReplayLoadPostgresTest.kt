@@ -13,6 +13,7 @@ import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.fakes.ReplayFixtures.action
 import dev.ostrom.server.rules.fakes.ReplayFixtures.gated
+import dev.ostrom.server.rules.fakes.ReplayFixtures.push
 import dev.ostrom.server.rules.fakes.RulesCallers
 import dev.ostrom.server.rules.fakes.RulesCallers.orgA
 import dev.ostrom.server.rules.fakes.RulesCallers.orgB
@@ -112,7 +113,9 @@ class ReplayLoadPostgresTest {
         (recent + old).chunked(CHUNK).forEach { chunk ->
             gates.transaction {
                 chunk.forEach { ago ->
-                    insertGate(action().copy(key = "k-$ago", createdAt = RulesFixtures.epoch - ago))
+                    // A command of its own: no two actions share their rules' coverage, the worst case.
+                    val subject = push(command = "git push origin main # $ago")
+                    insertGate(action(subject = subject).copy(key = "k-$ago", createdAt = RulesFixtures.epoch - ago))
                 }
             }
         }
