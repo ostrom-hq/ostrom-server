@@ -162,6 +162,17 @@ interface GateNodeResolver {
      * @return True when at least one gate is enforced.
      */
     suspend fun enforcesAny(orgId: Uuid, repo: String?): Boolean = false
+
+    /**
+     * Names the policy the sessions of a repository run under, so that an answer read from it (like [enforcesAny]) is
+     * kept for as long as the name is the same and never on a timer: the digest of the pinned package, which a new
+     * package changes. By default none: nothing can be kept.
+     *
+     * @param orgId The organization.
+     * @param repo The repository, or null outside one.
+     * @return The stamp, or null when there is no pinned package.
+     */
+    suspend fun policyStamp(orgId: Uuid, repo: String?): String? = null
 }
 
 /** Reads pull requests from GitHub (integrations-github), never from a ref the agent can move. */

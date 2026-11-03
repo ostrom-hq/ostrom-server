@@ -2,6 +2,7 @@
 package dev.ostrom.server.compiler.infrastructure
 
 import dev.ostrom.server.compiler.domain.models.CatalogGate
+import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.usecases.GatesCatalogUseCase
 import dev.ostrom.server.gates.domain.models.GateNode
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -11,9 +12,13 @@ import kotlin.uuid.Uuid
  * The gate of an action for the gates module: the catalogue's gate for the action class, the one the session package
  * compiled into its hooks (`ostrom/gates.json`), so the hook and the server never disagree.
  *
+ * @param pins The compiler's storage, fetched at the first call, which holds the pinned package of a repository.
  * @param catalog The gates catalogue, fetched at the first call.
  */
-class CatalogGateNodes(private val catalog: () -> GatesCatalogUseCase) : GateNodeResolver {
+class CatalogGateNodes(
+    private val pins: (() -> CompilerRepository)? = null,
+    private val catalog: () -> GatesCatalogUseCase,
+) : GateNodeResolver {
     override suspend fun resolve(orgId: Uuid, repo: String?, actionClass: String): GateNode? =
         resolver(orgId, repo)(actionClass)
 
@@ -28,6 +33,9 @@ class CatalogGateNodes(private val catalog: () -> GatesCatalogUseCase) : GateNod
 
     override suspend fun enforcesAny(orgId: Uuid, repo: String?): Boolean =
         catalog()(orgId, repo).any { it.gate?.enforce == true }
+
+    override suspend fun policyStamp(orgId: Uuid, repo: String?): String? =
+        pins?.invoke()?.pin(orgId, repo)?.contentDigest
 
     private fun CatalogGate.toNode(): GateNode = GateNode(
         workflowId = workflowId,
