@@ -42,7 +42,13 @@ class RunsGateCheckProofsTest {
         }
     }
 
-    private suspend fun ran(id: String, exit: Int?, attestation: CheckAttestation, node: String = "tests") =
+    private suspend fun ran(
+        id: String,
+        exit: Int?,
+        attestation: CheckAttestation,
+        node: String = "tests",
+        tampered: Boolean? = null,
+    ) =
         runs.addCheck(
             ORG,
             CheckRun(
@@ -55,6 +61,7 @@ class RunsGateCheckProofsTest {
                 mode = PackageMode.ENFORCE,
                 exit = exit,
                 dev = "ada",
+                tampered = tampered,
             ),
             attestation,
         )
@@ -77,6 +84,14 @@ class RunsGateCheckProofsTest {
         assertEquals(GateCheckProof(CheckAttestation.ISOLATED_RUNNER, false), proofs.of(ORG, "s-1", push, "tests"))
         ran("chk_3", exit = null, CheckAttestation.WORKSTATION_DECLARED)
         assertEquals(GateCheckProof(CheckAttestation.WORKSTATION_DECLARED, false), proofs.of(ORG, "s-1", push, "tests"))
+    }
+
+    @Test
+    fun aRunOfAnotherScriptThanThePackagesNeverPasses() = runTest {
+        ran("chk_1", exit = 0, CheckAttestation.WORKSTATION_DECLARED, tampered = true)
+        assertEquals(GateCheckProof(CheckAttestation.WORKSTATION_DECLARED, false), proofs.of(ORG, "s-1", push, "tests"))
+        ran("chk_2", exit = 0, CheckAttestation.WORKSTATION_DECLARED, tampered = false)
+        assertEquals(GateCheckProof(CheckAttestation.WORKSTATION_DECLARED, true), proofs.of(ORG, "s-1", push, "tests"))
     }
 
     @Test

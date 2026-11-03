@@ -235,15 +235,16 @@ class CredentialAuthenticatorTest {
 
     @Test
     fun aServiceKeyActsAsItselfInItsOrganizationNeverAsItsCreator() = runTest {
-        val key = token("oss_k", TokenKind.SERVICE, setOf("cloud:write", "gates:answer"), expiresIn = null, org = orgId)
+        val stored = setOf("rules:read", "cloud:write", "gates:answer")
+        val key = token("oss_k", TokenKind.SERVICE, stored, expiresIn = null, org = orgId)
         val corrupt = token("oss_x", TokenKind.SERVICE, org = null)
 
         assertEquals(
             AuthenticatedPrincipal(
-                key.id.toString(), PrincipalKind.SERVICE, setOf("cloud:write"), key.id.toString(), orgId.toString(),
+                key.id.toString(), PrincipalKind.SERVICE, setOf("rules:read"), key.id.toString(), orgId.toString(),
             ),
             authenticator.authenticate("oss_k"),
-            "Never a gate's yes, whatever its row says (S2-04)",
+            "Only what a CI calls, never a gate's yes, whatever its row says (S2-04)",
         )
         assertEquals(null, authenticator.authenticate("oss_x")?.orgId, "A row without organization binds to none")
         assertEquals(corrupt.id.toString(), authenticator.authenticate("oss_x")?.subjectId)
