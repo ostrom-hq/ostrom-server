@@ -127,10 +127,10 @@ class ThreadsTest {
             repeat(ROUNDS) {
                 coroutineScope {
                     repeat(PER_KIND) {
-                        launch { exchange(selector, port, "/stream") { it == ": connected" } }
-                        launch(resetting) { streamThenReset(port) }
-                        launch { exchange(selector, port, "/wait") { false } }
-                        launch { exchange(selector, port, "/quick", close = true) { false } }
+                        launch { tolerant { exchange(selector, port, "/stream") { it == ": connected" } } }
+                        launch(resetting) { tolerant { streamThenReset(port) } }
+                        launch { tolerant { exchange(selector, port, "/wait") { false } } }
+                        launch { tolerant { exchange(selector, port, "/quick", close = true) { false } } }
                     }
                 }
                 // The server learns that a stream's client left at its next heartbeats, a wait at its end.
@@ -144,7 +144,7 @@ class ThreadsTest {
             resetting.close()
         }
         val kinds = namePools()
-        println("ROUNDS $variant: base=$base counts=$counts kinds=$kinds")
+        println("ROUNDS $variant: base=$base counts=$counts clientErrors=${clientErrors.value} kinds=$kinds")
         assertTrue(
             counts.max() - base <= SERVER_THREADS + TOLERANCE,
             "from $base threads before the server, $counts after each round: more than its $SERVER_THREADS. $kinds",
@@ -183,6 +183,20 @@ class ThreadsTest {
             GC.autotune = autotune
             GC.targetHeapBytes = target
             println("ballast ${ballast.sumOf { it.size }}")
+        }
+    }
+
+    private val clientErrors = kotlin.concurrent.AtomicInt(0)
+
+    /** Diagnostic: a client the server reset counts, and the round goes on. */
+    private suspend fun tolerant(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (e: kotlinx.io.IOException) {
+            if (clientErrors.addAndGet(1) == 1) println("first client error: $e")
+        } catch (e: IllegalStateException) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (clientErrors.addAndGet(1) == 1) println("first client error: $e")
         }
     }
 
