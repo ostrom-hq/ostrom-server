@@ -8,14 +8,17 @@ import dev.ostrom.server.launches.domain.models.InvalidLaunchException
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.models.LaunchRateLimitedException
 import dev.ostrom.server.launches.domain.models.LaunchRefusedException
+import dev.ostrom.server.launches.domain.models.LaunchWorkflowNotFoundException
 import dev.ostrom.server.launches.domain.models.NewLaunch
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.fakes.ADA
 import dev.ostrom.server.launches.fakes.FakeModelRules
+import dev.ostrom.server.launches.fakes.FakeWorkflows
 import dev.ostrom.server.launches.fakes.FixedClock
 import dev.ostrom.server.launches.fakes.InMemoryLaunches
 import dev.ostrom.server.launches.fakes.ORG
+import dev.ostrom.server.launches.fakes.OTHER_ORG
 import dev.ostrom.server.launches.fakes.RecordingTokens
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -103,5 +106,49 @@ class CreateLaunchTest {
         assertEquals("gpt-5 is not on the allowlist.", model.message)
         assertTrue(launches.launches.isEmpty())
         assertTrue(tokens.issued.isEmpty())
+    }
+
+    private fun playing(workflows: FakeWorkflows) =
+        CreateLaunchUseCaseImpl(launches, LaunchPolicy(FakeModelRules()), tokens, clock, workflows = workflows)
+
+    @Test
+    fun aLaunchNamesTheWorkflowItPlaysAndKeepsIt() = runTest {
+        val workflows = FakeWorkflows(mapOf((ORG to "review") to "Review"))
+        val create = playing(workflows)
+        val launch = create(ADA, NewLaunch("acme/api", "claude-code", null, workflowId = "review")).launch
+        assertEquals("review", launch.workflowId)
+        assertEquals(listOf("review"), launches.launches.map { it.workflowId })
+        assertEquals(listOf(ORG to "review"), workflows.asked, "Read in the launcher's organization")
+        assertNull(create(ADA, NewLaunch(null, "codex", null)).launch.workflowId, "Without one, none")
+    }
+
+    @Test
+    fun aWorkflowOfNoneOrOfAnotherOrganizationIsNotFoundAndNothingIsLaunched() = runTest {
+        val workflows = FakeWorkflows(mapOf((OTHER_ORG to "review") to "Review"))
+        val create = playing(workflows)
+        val other = assertFailsWith<LaunchWorkflowNotFoundException> {
+            create(ADA, NewLaunch(null, "codex", null, workflowId = "review"))
+        }
+        assertEquals(ErrorKind.NOT_FOUND, other.kind)
+        assertEquals("Workflow not found.", other.message)
+        assertFailsWith<LaunchWorkflowNotFoundException> {
+            this@CreateLaunchTest.create(ADA, NewLaunch(null, "codex", null, workflowId = "review"))
+        }
+        assertTrue(launches.launches.isEmpty())
+        assertTrue(tokens.issued.isEmpty())
+    }
+
+    @Test
+    fun aMalformedWorkflowIdIsRefusedBeforeAnyLookup() = runTest {
+        val workflows = FakeWorkflows(emptyMap())
+        val create = playing(workflows)
+        for (id in listOf("", "w".repeat(CreateLaunchUseCaseImpl.MAX_WORKFLOW_ID + 1), "re\nview")) {
+            val refused = assertFailsWith<InvalidLaunchException> {
+                create(ADA, NewLaunch(null, "codex", null, workflowId = id))
+            }
+            assertEquals("workflowId: 1 to 200 characters, without control characters.", refused.message)
+        }
+        assertEquals(emptyList(), workflows.asked)
+        assertTrue(launches.launches.isEmpty())
     }
 }

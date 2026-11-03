@@ -67,6 +67,9 @@ class ReceiptsGateSigner(
                 },
             )
             put("initiator", gate.askedBy.firstOrNull() ?: "agent")
+            // The launch and the session that asked first, as the subject's preimage names its first session.
+            gate.launchIds.firstOrNull()?.let { put("launchId", it) }
+            gate.sessionIds.firstOrNull()?.let { put("sessionId", it) }
             put("agent", agentOf(gate))
             put("rules", receiptRulesJson(rules.rulesFor(gate.orgId, gate.subject.repo)))
             put("decisions", JsonArray(listOf(decision)))

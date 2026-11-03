@@ -69,7 +69,8 @@ class PostgresLaunchesRepository(
                 .nullable("model", launch.model)
                 .bind("created_at", launch.createdAt)
                 .bind("expires_at", launch.expiresAt)
-                .cloud(launch.cloudSessionId),
+                .cloud(launch.cloudSessionId)
+                .nullable("workflow_id", launch.workflowId),
         ).getOrThrow()
     }
 
@@ -104,13 +105,14 @@ class PostgresLaunchesRepository(
         createdAt = get("created_at").asInstant(),
         expiresAt = get("expires_at").asInstant(),
         cloudSessionId = get("cloud_session_id").asUuidOrNull(),
+        workflowId = get("workflow_id").asStringOrNull(),
     )
 
     /** The SQL of the repository, also read by the query plans test. */
     companion object {
         private val COLUMN_NAMES = listOf(
             "org_id", "id", "user_id", "dev", "repo", "agent", "model", "created_at", "expires_at",
-            "cloud_session_id",
+            "cloud_session_id", "workflow_id",
         )
         private val COLUMNS = COLUMN_NAMES.joinToString(", ")
         private val VALUES = COLUMN_NAMES.joinToString(", ") { ":$it" }
