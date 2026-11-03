@@ -22,6 +22,7 @@ class ContractOperationsTest {
                 "getThing",
                 "DELETE /api/v1/things/{id}",
                 "exportThings",
+                "streamThings",
                 "failing",
                 "bare",
             ),
@@ -29,7 +30,7 @@ class ContractOperationsTest {
             "The path's parameters are not an operation; an operation without an id is named by its route",
         )
         assertEquals(
-            listOf("listThings", "createThing", "getThing", "exportThings", "bare"),
+            listOf("listThings", "createThing", "getThing", "exportThings", "streamThings", "bare"),
             operations.served.map { it.id },
         )
         val list = operations.all.first { it.id == "listThings" }

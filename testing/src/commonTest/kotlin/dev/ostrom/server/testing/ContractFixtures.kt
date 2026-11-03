@@ -63,6 +63,22 @@ object ContractFixtures {
                 }
               }
             },
+            "/api/v1/things/stream": {
+              "get": {
+                "operationId": "streamThings", "x-ostrom-status": "served",
+                "responses": {
+                  "200": {
+                    "content": {
+                      "text/event-stream": {
+                        "schema": {"type": "string"},
+                        "x-ostrom-event-data": {"$R": "#/components/schemas/Thing"},
+                        "x-ostrom-event-done": "[DONE]"
+                      }
+                    }
+                  }
+                }
+              }
+            },
             "/api/v1/errors": {
               "get": {"operationId": "failing", "responses": {"400": {"$R": "#/components/responses/Error"}}}
             },

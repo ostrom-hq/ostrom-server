@@ -5,8 +5,10 @@ import dev.ostrom.server.kernel.config.MapConfigSource
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.content.TextContent
 import io.ktor.server.application.install
 import io.ktor.server.response.respond
@@ -19,6 +21,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
@@ -34,16 +37,11 @@ import kotlin.test.assertTrue
 
 /** [ContractObserver] checks every answer of a server against the contract, and [Contract.from] finds the contract. */
 class ContractObserverTest {
-    private val json = ContentType.Application.Json
-
     // A server whose answers follow the small contract of ContractFixtures, or not, one way per route.
     private fun ApplicationTestBuilder.things(observer: ContractObserver) = application {
         install(observer.plugin)
         routing {
-            get("/api/v1/things") {
-                call.response.status(HttpStatusCode.OK)
-                call.respondText("""{"items": [{"id": "a"}]}""", json)
-            }
+            get("/api/v1/things") { list(call) }
             get("/api/v1/things/{id}") {
                 when (call.parameters["id"]) {
                     "a" -> call.respondText("""{"id": "a"}""", json)
@@ -66,16 +64,11 @@ class ContractObserverTest {
                 }
             }
             get("/api/v1/things/export") { export(call) }
-            delete("/api/v1/things/{id}") { call.respondText("""{"x": 1}""", json) }
+            get("/api/v1/things/stream") { stream(call) }
+            delete("/api/v1/things/{id}") { remove(call) }
+            get("/streamed/elsewhere") { call.respondBytesWriter(json) { writeStringUtf8("""{"x": 1}""") } }
             get("/health") { call.respondText("""{"x": 1}""", json) }
         }
-    }
-
-    // The export: a CSV, or a 404 in plain text or in JSON, which the contract both declares.
-    private suspend fun export(call: RoutingCall) = when (call.request.queryParameters["as"]) {
-        "missing" -> call.respondText("Not found", status = HttpStatusCode.NotFound)
-        "missing-json" -> call.respondText("""{"error": {}}""", json, HttpStatusCode.NotFound)
-        else -> call.respondBytesWriter(ContentType.Text.CSV) { writeStringUtf8("a") }
     }
 
     private fun report(directory: Path): String = SystemFileSystem.list(directory).single().let { file ->
@@ -129,11 +122,36 @@ class ContractObserverTest {
     }
 
     @Test
+    fun aStreamedAnswerIsReadToItsEndAndEachEventChecked() = testApplication {
+        val reports = ContractFixtures.directory()
+        val observer = ContractObserver(ContractFixtures.contract, emptySet(), reports.toString())
+        things(observer)
+        assertEquals("data: [DONE]", client.get("/api/v1/things/stream").bodyAsText().lines().dropLast(2).last())
+        assertEquals("""{"items": [{"id": "a"}]}""", client.get("/api/v1/things?as=streamed").bodyAsText())
+        client.get("/api/v1/things/stream?as=drift")
+        client.delete("/api/v1/things/a?as=streamed")
+        client.get("/streamed/elsewhere")
+
+        val failure = assertFailsWith<AssertionError> { observer.finish() }.message.orEmpty()
+        val expected = listOf(
+            "streamThings 200 $.id MISSING",
+            "streamThings 200 $.name UNDECLARED",
+            "streamThings 200 $ BODY",
+        )
+        assertEquals(expected, failure.lines().drop(1).map { it.substringBefore("  (") }, failure)
+        assertTrue("a data: that is not JSON" in failure, failure)
+        val seen = report(reports).lines().filter { it.startsWith("seen") }
+        assertEquals(listOf("seen listThings"), seen, "A JSON answer written as it goes is read to its end")
+    }
+
+    @Test
     fun withoutAContractNothingIsWatchedNorWritten() = testApplication {
         val reports = ContractFixtures.directory()
         val observer = ContractObserver(null, emptySet(), reports.toString())
         things(observer)
         client.get("/api/v1/things/drift")
+        client.get("/api/v1/things/stream?as=drift")
+        client.get("/api/v1/things?as=streamed")
         observer.finish()
         assertTrue(SystemFileSystem.list(reports).isEmpty())
         ContractObserver(null).finish()
@@ -153,4 +171,44 @@ class ContractObserverTest {
         val other = Contract.from(MapConfigSource(mapOf("OSTROM_CONTRACT_OPENAPI" to ContractFixtures.file())))
         assertTrue(other !== first, "Another file is read")
     }
+}
+
+private val json = ContentType.Application.Json
+
+// The list, in one piece (its status set on the response, not the content) or written as it goes (a
+// WriteChannelContent).
+private suspend fun list(call: RoutingCall) = when (call.request.queryParameters["as"]) {
+    "streamed" -> call.respondBytesWriter(json) { writeStringUtf8("""{"items": [{"id": "a"}]}""") }
+    else -> {
+        call.response.status(HttpStatusCode.OK)
+        call.respondText("""{"items": [{"id": "a"}]}""", json)
+    }
+}
+
+// A planned operation, in one piece or written as it goes: neither is checked.
+private suspend fun remove(call: RoutingCall) = when (call.request.queryParameters["as"]) {
+    "streamed" -> call.respondBytesWriter(json) { writeStringUtf8("""{"x": 1}""") }
+    else -> call.respondText("""{"x": 1}""", json)
+}
+
+// Server-sent events from a channel (a ReadChannelContent): each `data:` follows Thing, or not.
+private suspend fun stream(call: RoutingCall) {
+    val events = when (call.request.queryParameters["as"]) {
+        "drift" -> "data: {\"name\": 1}\n\ndata: oops\n\n"
+        else -> "event: thing\ndata: {\"id\": \"a\"}\n\n: heartbeat\n\ndata: [DONE]\n\n"
+    }
+    call.respond(
+        object : OutgoingContent.ReadChannelContent() {
+            override val contentType = ContentType.Text.EventStream
+
+            override fun readFrom() = ByteReadChannel(events)
+        },
+    )
+}
+
+// The export: a CSV, or a 404 in plain text or in JSON, which the contract both declares.
+private suspend fun export(call: RoutingCall) = when (call.request.queryParameters["as"]) {
+    "missing" -> call.respondText("Not found", status = HttpStatusCode.NotFound)
+    "missing-json" -> call.respondText("""{"error": {}}""", json, HttpStatusCode.NotFound)
+    else -> call.respondBytesWriter(ContentType.Text.CSV) { writeStringUtf8("a") }
 }
