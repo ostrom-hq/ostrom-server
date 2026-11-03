@@ -6,6 +6,7 @@ import dev.ostrom.core.api.models.RunStatus
 import dev.ostrom.core.api.models.WorkflowNode
 import dev.ostrom.core.api.models.WorkflowNodeKind
 import dev.ostrom.core.api.models.WorkflowRun
+import dev.ostrom.server.compiler.domain.services.NodeConditions
 import dev.ostrom.server.workflowruns.domain.models.RunChange
 import dev.ostrom.server.workflowruns.domain.models.RunRef
 import dev.ostrom.server.workflowruns.domain.services.AgentState
@@ -95,7 +96,7 @@ interface NodePlayer {
 }
 
 /**
- * The players of the node kinds the server plays: `trigger`, `agent`, `gate`, `wait` and `workflow`.
+ * The players of the node kinds the server plays: `trigger`, `agent`, `gate`, `wait`, `workflow` and `check`.
  *
  * @param agents The agent sessions.
  * @param gates The gates.
@@ -109,6 +110,7 @@ class NodePlayers(agents: RunAgents, gates: RunGates, waits: RunWaits, children:
         WorkflowNodeKind.GATE to GatePlayer(gates),
         WorkflowNodeKind.WAIT to WaitPlayer(waits),
         WorkflowNodeKind.WORKFLOW to ChildPlayer(children),
+        WorkflowNodeKind.CHECK to CheckPlayer,
     )
 
     /**
@@ -126,6 +128,21 @@ object TriggerPlayer : NodePlayer {
     override suspend fun play(visit: Visit): RunChange = visit.done(RunMoves.NEXT)
 
     // A trigger starts nothing.
+    override suspend fun stop(orgId: Uuid, run: WorkflowRun, visit: NodeVisit) = Unit
+}
+
+/**
+ * A check node: its condition, read on the visits before its own, ends the visit `true` or `false`; a condition that
+ * does not evaluate fails the visit, with the reason, and never chooses a branch.
+ */
+object CheckPlayer : NodePlayer {
+    override suspend fun play(visit: Visit): RunChange {
+        val verdict = NodeConditions.evaluate(visit.node.condition, visit.run.visits.dropLast(1))
+        val holds = verdict.holds
+        return if (holds == null) visit.failed("${verdict.reason}") else visit.done(holds.toString())
+    }
+
+    // A check starts nothing.
     override suspend fun stop(orgId: Uuid, run: WorkflowRun, visit: NodeVisit) = Unit
 }
 

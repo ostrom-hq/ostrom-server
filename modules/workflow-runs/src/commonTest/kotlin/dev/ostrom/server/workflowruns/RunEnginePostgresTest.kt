@@ -383,7 +383,7 @@ class RunEnginePostgresTest {
         val engine = server.engine()
         val failedAgent = server.queued(ada.org.id, RunGraph("a", listOf(AGENT)))
         val noApprover = server.queued(ada.org.id, RunGraph("g", listOf(WorkflowNode("g", WorkflowNodeKind.GATE, "G"))))
-        val check = server.queued(ada.org.id, RunGraph("c", listOf(WorkflowNode("c", WorkflowNodeKind.CHECK, "C"))))
+        val step = server.queued(ada.org.id, RunGraph("s", listOf(WorkflowNode("s", WorkflowNodeKind.STEP, "S"))))
         val legacy = server.queued(ada.org.id, RunGraph())
         // A run started before the server played runs has no graph at all.
         server.database.superuser.fetchAll(
@@ -399,7 +399,7 @@ class RunEnginePostgresTest {
         assertEquals("Node a: failed (The agent session failed to start.).", ended(failedAgent).failure)
         assertEquals(RunStatus.FAILED, ended(noApprover).status)
         assertTrue(ended(noApprover).visits.single().output.orEmpty().isNotEmpty())
-        assertEquals("Node c: failed (The server does not play check nodes yet.).", ended(check).failure)
+        assertEquals("Node s: failed (The server does not play step nodes yet.).", ended(step).failure)
         assertEquals(RunMoves.NOTHING_TO_PLAY, ended(legacy).failure)
         assertEquals(
             "Node a: failed (The person who started the run is no longer a member of the organization.).",

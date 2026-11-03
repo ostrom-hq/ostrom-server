@@ -201,8 +201,9 @@ class RunEngineTest {
     fun aCancelledRunEndsOnlyTheSessionOfAnAgentVisit() = runTest {
         val agent = visit(1, "a", WorkflowNodeKind.AGENT, RunMoves.FAILED, "cancelled")
         val gate = visit(1, "g", WorkflowNodeKind.GATE, RunMoves.FAILED, "cancelled")
-        // A node kind the server does not play started nothing; a trigger starts nothing.
+        // A node kind the server does not play started nothing; a trigger and a check start nothing.
         val check = visit(1, "c", WorkflowNodeKind.CHECK, RunMoves.FAILED, "cancelled")
+        val step = visit(1, "s", WorkflowNodeKind.STEP, RunMoves.FAILED, "cancelled")
         val trigger = visit(1, "t", WorkflowNodeKind.TRIGGER, RunMoves.FAILED, "cancelled")
         listOf(
             run("wfr_${"1".repeat(32)}", RunStatus.CANCELLED, listOf(agent)),
@@ -211,11 +212,12 @@ class RunEngineTest {
             run("wfr_${"4".repeat(32)}", RunStatus.SUCCEEDED, listOf(agent)),
             run("wfr_${"5".repeat(32)}", RunStatus.CANCELLED, listOf(check)),
             run("wfr_${"6".repeat(32)}", RunStatus.CANCELLED, listOf(trigger)),
+            run("wfr_${"7".repeat(32)}", RunStatus.CANCELLED, listOf(step)),
         ).forEach { stored(RunGraph(), it) }
 
         val next = runs.rows.keys.map { play.play(RunRef(ORG, it), OWNER) }
 
-        assertEquals(List(6) { null }, next)
+        assertEquals(List(7) { null }, next)
         assertEquals(listOf(sessionOf("wfr_${"1".repeat(32)}", 1)), agents.stopped)
     }
 
