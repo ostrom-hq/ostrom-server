@@ -7,8 +7,7 @@ import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.OrgRole
-import dev.ostrom.server.kernel.auth.auditGovernance
-import dev.ostrom.server.kernel.auth.governs
+import dev.ostrom.server.kernel.auth.confirmsByConsole
 import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -30,23 +29,20 @@ internal suspend fun CompilerRoutesDependencies.personOf(call: ApplicationCall, 
     actorOf(call, accepted).takeIf { it.kind == ActorKind.USER }
         ?: throw OstromException(ErrorKind.FORBIDDEN, "Only a person changes workflows and packages.")
 
-// Only a person's browser session decides (SECURITY-AUDIT S2-04): a token with `workflows:write` (the CLI's, which
-// an agent can read on the developer's machine) proposes a workflow, never accepts, edits an accepted one or deletes.
-// And only an owner or an admin (second audit H4): any other member, in the browser too, proposes. A workflow is also
-// decided with the token of `ostrom login --admin` ([governing] `harness:write`, S2-52 decision of 02/11/2026).
-internal fun ApplicationCall.decides(actor: GateActor, governing: String? = null): Boolean {
+// Only a person's browser session decides (SECURITY-AUDIT S2-04), and only an owner's or an admin's (second audit H4):
+// any other member, in the browser too, proposes.
+internal fun ApplicationCall.decides(actor: GateActor): Boolean {
     val principal = requirePrincipal()
-    val governs = GateScopes.ALL_USER in principal.scopes || governing != null && principal.governs(governing)
-    return governs && actor.role in MANAGERS
+    return !principal.confirmsByConsole && GateScopes.ALL_USER in principal.scopes && actor.role in MANAGERS
 }
 
-// Whether the actor decides workflows; a decision the elevated token makes (not a console session's) is recorded in
-// the audit log first.
-internal suspend fun ApplicationCall.decidesWorkflows(actor: GateActor): Boolean {
-    val decides = decides(actor, GovernanceScopes.HARNESS_WRITE)
-    val principal = requirePrincipal()
-    if (decides && GateScopes.ALL_USER !in principal.scopes) auditGovernance(principal, GovernanceScopes.HARNESS_WRITE)
-    return decides
+// A person's token (the CLI's, elevated by `ostrom login --admin` or not; an agent can read it on the developer's
+// machine) proposes a workflow at once; a decision it asks (accept, edit an accepted one, delete) is an owner's or an
+// admin's only, and waits for their confirmation on the console (audit CLI H1).
+internal fun ApplicationCall.holdsDecision(actor: GateActor, proposal: Boolean): Boolean {
+    if (!requirePrincipal().confirmsByConsole || proposal) return false
+    if (actor.role !in MANAGERS) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+    return true
 }
 
 // Revoking a package stops every session that runs it: an owner or an admin, with any of their credentials, so a
@@ -65,14 +61,14 @@ private val MANAGERS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 internal const val MANAGES = "Only an owner or an admin revokes a package."
 internal const val RESTORES = "Only an owner or an admin signed in to the console restores a package."
 
+internal fun proposed(document: JsonObject): Boolean = (document["status"] as? JsonPrimitive)?.content == "proposed"
+
 internal fun onlyProposed(document: JsonObject) {
-    val status = (document["status"] as? JsonPrimitive)?.content
-    if (status != "proposed") throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+    if (!proposed(document)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
 }
 
 internal const val DECIDES =
-    "Only an owner or an admin signed in to the console, or with ostrom login --admin, accepts, edits or deletes a " +
-        "workflow."
+    "Only an owner or an admin accepts, edits or deletes a workflow, signed in to the console or confirming there."
 
 /** The scopes the compiler routes require; a user's browser session (`user:*`) holds them all. */
 object CompilerScopes {

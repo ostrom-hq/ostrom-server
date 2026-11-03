@@ -11,7 +11,6 @@ import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.repositories.RulesTransaction
 import dev.ostrom.server.rules.domain.services.RuleDocuments
 import dev.ostrom.server.rules.domain.services.SelfApprovalValues
-import dev.ostrom.server.rules.domain.usecases.ListRulesUseCase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -32,14 +31,17 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
             tx.fetchAll(rulesStatement(orgId, query, limit)).getOrThrow().map { it.toRule() }
         }
 
-    override suspend fun gatedRules(orgId: Uuid): List<Rule> = driver.withOrganization(orgId) { tx ->
-        tx.fetchAll(
-            Statement.create(
-                "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org AND gate IS NOT NULL " +
-                    "AND status <> 'rejected' ORDER BY id LIMIT :limit",
-            ).bind("org", orgId).bind("limit", ListRulesUseCase.MAX_RULES),
-        ).getOrThrow().map { it.toRule() }
-    }
+    override suspend fun rulesById(orgId: Uuid, after: String?, limit: Int): List<Rule> =
+        driver.withOrganization(orgId) { tx ->
+            val statement = pageStatement(orgId, rulesByIdSql(after != null), after, limit)
+            tx.fetchAll(statement).getOrThrow().map { it.toRule() }
+        }
+
+    override suspend fun gatedRules(orgId: Uuid, after: String?, limit: Int): List<Rule> =
+        driver.withOrganization(orgId) { tx ->
+            val statement = pageStatement(orgId, gatedRulesSql(after != null), after, limit)
+            tx.fetchAll(statement).getOrThrow().map { it.toRule() }
+        }
 
     override suspend fun lastRuleDecisions(orgId: Uuid): List<Decision> = driver.withOrganization(orgId) { tx ->
         tx.fetchAll(
@@ -227,6 +229,34 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
                 if (query.after != null) append(" AND (rule_group, id) > (:after_group, :after_id)")
             }
             return "SELECT $RULE_COLUMNS FROM rules_rules WHERE $filters ORDER BY rule_group, id LIMIT :limit"
+        }
+
+        /**
+         * The SQL of a page of every rule, by id, on the primary key: parameters `org`, `limit`, and `after` when
+         * [after].
+         *
+         * @param after Whether the page starts after an id.
+         * @return The SQL.
+         */
+        fun rulesByIdSql(after: Boolean): String = "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org" +
+            (if (after) " AND id > :after" else "") + " ORDER BY id LIMIT :limit"
+
+        /**
+         * The SQL of a page of the gated rules, by id, on the partial index `rules_rules_gated`: parameters `org`,
+         * `limit`, and `after` when [after].
+         *
+         * @param after Whether the page starts after an id.
+         * @return The SQL.
+         */
+        fun gatedRulesSql(after: Boolean): String = "SELECT $RULE_COLUMNS FROM rules_rules WHERE org_id = :org " +
+            "AND gate IS NOT NULL AND status <> 'rejected'" + (if (after) " AND id > :after" else "") +
+            " ORDER BY id LIMIT :limit"
+
+        private fun pageStatement(orgId: Uuid, sql: String, after: String?, limit: Int): Statement {
+            val statement = Statement.create(sql).bind("org", orgId).bind("limit", limit)
+            // A named parameter is bound only when the SQL names it: sqlx4k refuses an unknown one.
+            after?.let { statement.bind("after", it) }
+            return statement
         }
 
         // An empty scope covers every repository; otherwise one entry is the repository or a path under it. No `::`

@@ -25,6 +25,7 @@ import io.ktor.server.routing.Route
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -109,7 +110,10 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
     post<WorkflowsApi> {
         val actor = personOf(call, CompilerScopes.writingWorkflows)
         val body = call.receive<JsonObject>()
-        if (!call.decidesWorkflows(actor)) onlyProposed(body)
+        if (call.holdsDecision(actor, proposed(body))) {
+            return@post call.hold(actor, WorkflowWrites.CREATE, CompilerGovernanceChange.payload(null, body))
+        }
+        if (!call.decides(actor)) onlyProposed(body)
         val saved = workflows.save(actor.orgId, body, null, actor.id, create = true)
         call.respond(HttpStatusCode.Created, documentOf(saved))
     }
@@ -123,16 +127,23 @@ private fun Route.workflowsRoutes(dependencies: CompilerRoutesDependencies) = wi
         if (id != params.id) {
             throw OstromException(ErrorKind.INVALID_REQUEST, "The workflow's id is not the path's.")
         }
-        if (!call.decidesWorkflows(actor)) {
-            onlyProposed(body.workflow)
-            onlyProposed(workflows.get(actor.orgId, params.id).doc.raw)
+        if (!call.decides(actor)) {
+            val proposal = proposed(body.workflow) && proposed(workflows.get(actor.orgId, params.id).doc.raw)
+            if (call.holdsDecision(actor, proposal)) {
+                val payload = CompilerGovernanceChange.payload(params.id, OstromJson.encodeToJsonElement(body))
+                return@put call.hold(actor, WorkflowWrites.SAVE, payload)
+            }
+            if (!proposal) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
         }
         val saved = workflows.save(actor.orgId, body.workflow, body.expectedVersion, actor.id, create = false)
         call.respond(documentOf(saved))
     }
     delete<WorkflowsApi.Id> { params ->
         val actor = personOf(call, CompilerScopes.writingWorkflows)
-        if (!call.decidesWorkflows(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
+        if (call.holdsDecision(actor, proposal = false)) {
+            return@delete call.hold(actor, WorkflowWrites.DELETE, CompilerGovernanceChange.payload(params.id, null))
+        }
+        if (!call.decides(actor)) throw OstromException(ErrorKind.FORBIDDEN, DECIDES)
         workflows.delete(actor.orgId, params.id)
         call.respond(HttpStatusCode.NoContent)
     }
@@ -169,8 +180,15 @@ private fun statusOf(value: String): WorkflowStatus =
         ?: throw OstromException(ErrorKind.INVALID_REQUEST, "Unknown workflow status.")
 
 // The document as saved, with its version, author and date: `version` is what a save sends back as `expectedVersion`.
-// An edge's `to` is written `null` when the document left it out (an edge that ends the run): the contract requires it.
-private fun documentOf(stored: StoredWorkflow): JsonObject = JsonObject(
+/**
+ * A stored workflow as the routes show it.
+ *
+ * @param stored The workflow.
+ *
+ * @return Its document, with its version and last change; an edge's `to` is written `null` when the document left it
+ *   out (an edge that ends the run), as the contract requires.
+ */
+internal fun documentOf(stored: StoredWorkflow): JsonObject = JsonObject(
     stored.doc.raw.withNulls("edges.*.to").jsonObject + mapOf(
         "version" to JsonPrimitive(stored.version),
         "updatedBy" to JsonPrimitive(stored.updatedBy),

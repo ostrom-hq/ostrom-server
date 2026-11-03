@@ -18,6 +18,8 @@ kotlin {
             implementation(project(":modules:orgs"))
             // The analysis of the rules reads the repositories through the installation: its RepositoryReader port.
             implementation(project(":modules:rules"))
+            // Who a pull request's author is in Ostrom: the person whose account is linked to that GitHub user.
+            implementation(project(":modules:identity"))
             // RS256 for the App's JWT, HMAC-SHA256 for the webhook signature (OpenSSL, linked by the kernel).
             implementation(libs.cryptography.core)
             // Outbound HTTPS to GitHub: Curl on Linux, Darwin on macOS (CIO has no TLS on Kotlin/Native).
