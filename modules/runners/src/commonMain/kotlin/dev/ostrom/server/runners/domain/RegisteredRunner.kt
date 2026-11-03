@@ -17,8 +17,8 @@ import kotlin.uuid.Uuid
  * @property registeredBy The member who registered it.
  * @property createdAt When it was registered.
  * @property lastSeenAt Its last sign of life, null before the first one.
- * @property capacity The sessions it runs at once at most, from its last heartbeat; null when it declared none (a runner
- *   older than the capacity, given no limit) or sent no report.
+ * @property capacity The sessions it runs at once at most, from its last heartbeat; null when it declared none (an
+ *   older runner, given no limit) or sent no report.
  */
 data class RegisteredRunner(
     val id: Uuid,
