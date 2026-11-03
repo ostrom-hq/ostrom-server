@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.AuditedBudgetAlerts
 import dev.ostrom.server.budgets.domain.BudgetAlerts
 import dev.ostrom.server.budgets.domain.BudgetDecisionCache
 import dev.ostrom.server.budgets.domain.BudgetGuard
@@ -25,6 +26,7 @@ import dev.ostrom.server.budgets.infrastructure.BudgetsRepositoryImpl
 import dev.ostrom.server.budgets.presentation.BudgetsRoutesDependencies
 import dev.ostrom.server.budgets.presentation.budgetsRoutes
 import dev.ostrom.server.gateway.domain.SpendGuard
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -37,9 +39,9 @@ import org.koin.dsl.binds
 import org.koin.dsl.module
 
 /**
- * The budgets module: monthly limits per org and per member, and the gateway's [SpendGuard] ([LedgerSpendGuard]),
- * asked before each model call. It reads the spend from the usage module's `SpendReader` and admits calls through its
- * `SpendAdmission`. It does not bind [BudgetAlerts]: the notifications
+ * The budgets module: daily and monthly limits per org and per member, that stop the calls or warn, and the gateway's
+ * [SpendGuard] ([LedgerSpendGuard]), asked before each model call. It reads the spend from the usage module's
+ * `SpendReader` and admits calls through its `SpendAdmission`. It does not bind [BudgetAlerts]: the notifications
  * module binds it (Koin refuses two bindings of one type), and until then alerts go to [NoBudgetAlerts].
  */
 object BudgetsModule : ServerModule {
@@ -48,7 +50,8 @@ object BudgetsModule : ServerModule {
     override val koinModule: Module = module {
         single<BudgetsRepository> { BudgetsRepositoryImpl(get()) }
         single {
-            BudgetGuardImpl(get(), get(), getOrNull<BudgetAlerts>() ?: NoBudgetAlerts(), get(), get())
+            val alerts = AuditedBudgetAlerts(getOrNull<BudgetAlerts>() ?: NoBudgetAlerts(), get<OrgAuditTrail>())
+            BudgetGuardImpl(get(), get(), alerts, get(), get())
         } binds arrayOf(BudgetGuard::class, BudgetDecisionCache::class)
         // The gateway asks it before each model call (GatewayModule falls back to allowing every call without it).
         single<SpendGuard> { LedgerSpendGuard(get(), get(), get(), get()) }
@@ -57,7 +60,7 @@ object BudgetsModule : ServerModule {
         single<PutMemberBudgetUseCase> { PutMemberBudgetUseCaseImpl(get(), get(), get()) }
         single<DeleteMemberBudgetUseCase> { DeleteMemberBudgetUseCaseImpl(get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
-        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get()) }
         single { BudgetsRoutesDependencies(callerResolver(), get(), get(), get(), get()) }
     }
 

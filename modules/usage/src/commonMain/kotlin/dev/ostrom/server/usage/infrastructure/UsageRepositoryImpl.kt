@@ -61,17 +61,14 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
             execute(
                 Statement.create(UsageQueries.DROP_EXPIRED_HOLDS).bind("org_id", hold.orgId).bind("now", window.now),
             ).getOrThrow()
-            val member = limits.memberMicros != null
-            val sums = Statement.create(UsageQueries.holdTotals(org = limits.orgMicros != null, member = member))
-                .bind("org_id", hold.orgId).bind("call_id", hold.callId)
-                .bind("since", window.since).bind("now", window.now)
-            if (member) sums.bind("member_id", hold.memberId)
-            val row = fetchAll(sums).getOrThrow().first()
+            val row = fetchAll(holdTotals(hold, limits, window)).getOrThrow().first()
             val totals = SpendTotals(
                 orgSpent = row.get("org_spent").asLong(),
                 orgHeld = row.get("org_held").asLong(),
                 memberSpent = row.get("member_spent").asLong(),
                 memberHeld = row.get("member_held").asLong(),
+                orgDaySpent = row.get("org_day_spent").asLong(),
+                memberDaySpent = row.get("member_day_spent").asLong(),
             )
             limits.admit(totals, hold.micros).also { admission ->
                 if (admission == Admission.Admitted) {
@@ -82,6 +79,21 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
                 }
             }
         }
+
+    /** The sums a call is admitted on, each bound only when a limit needs it. */
+    private fun holdTotals(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Statement {
+        val org = limits.orgMicros != null
+        val member = limits.memberMicros != null
+        val daily = limits.daily
+        val orgDay = daily?.orgMicros != null
+        val memberDay = daily?.memberMicros != null
+        val sums = Statement.create(UsageQueries.holdTotals(org, member, orgDay, memberDay))
+            .bind("org_id", hold.orgId).bind("call_id", hold.callId).bind("now", window.now)
+        if (org || member) sums.bind("since", window.since)
+        if (daily != null) sums.bind("day_since", daily.since)
+        if (member || memberDay) sums.bind("member_id", hold.memberId)
+        return sums
+    }
 
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long {
         val statement = Statement.create(UsageQueries.spent(member = memberId != null))

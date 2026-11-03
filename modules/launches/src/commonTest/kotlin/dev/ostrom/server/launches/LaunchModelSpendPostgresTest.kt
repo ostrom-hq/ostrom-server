@@ -2,8 +2,9 @@
 package dev.ostrom.server.launches
 
 import dev.ostrom.server.budgets.BudgetsModule
+import dev.ostrom.server.budgets.domain.BudgetLimit
+import dev.ostrom.server.budgets.domain.BudgetTarget
 import dev.ostrom.server.budgets.domain.BudgetsRepository
-import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.budgets.presentation.MyBudgetResponse
 import dev.ostrom.server.gateway.GatewayModule
 import dev.ostrom.server.identity.domain.ApiToken
@@ -216,7 +217,7 @@ class LaunchModelSpendPostgresTest {
         with(server) {
             val ada = owner("ada")
             // Each call of the fake Anthropic costs 7 200 µ$ (1 200 in, 300 read from the cache, 42 out).
-            koin.get<BudgetsRepository>().putSharedLimit(ada.orgId, SharedLimit.ORG, 8_000, now)
+            koin.get<BudgetsRepository>().replaceLimits(ada.orgId, BudgetTarget.Org, listOf(BudgetLimit(8_000)), now)
             val created = send(ada.cliToken, "/api/v1/launches", """{"repo":"acme/api","agent":"claude-code"}""")
             val launch = created.body<LaunchResponse>()
             val agent = launch.agentToken

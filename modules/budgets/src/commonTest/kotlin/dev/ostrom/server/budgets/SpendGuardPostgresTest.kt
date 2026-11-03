@@ -2,9 +2,10 @@
 package dev.ostrom.server.budgets
 
 import dev.ostrom.server.budgets.domain.BudgetDecisionCache
+import dev.ostrom.server.budgets.domain.BudgetLimit
+import dev.ostrom.server.budgets.domain.BudgetTarget
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.LedgerSpendGuard
-import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.budgets.presentation.BudgetDto
 import dev.ostrom.server.gateway.domain.SpendDecision
 import dev.ostrom.server.gateway.domain.SpendGuard
@@ -72,7 +73,8 @@ class SpendGuardPostgresTest {
     fun theLimitHoldsToTheMicroUnderTwentyCallsAtOnce() = serverTest(modules, overrides) { server ->
         assertIs<LedgerSpendGuard>(server.koin.get<SpendGuard>())
         assertEquals(SpendDecision.Allowed, server.koin.get<SpendGuard>().check(request(1_000_000)), "No limit yet")
-        server.koin.get<BudgetsRepository>().putSharedLimit(TestCallers.orgA, SharedLimit.ORG, 10_000, clock.now())
+        val limit = listOf(BudgetLimit(10_000))
+        server.koin.get<BudgetsRepository>().replaceLimits(TestCallers.orgA, BudgetTarget.Org, limit, clock.now())
         // As the limit's use cases do: the cached "no limit" is forgotten at once on this replica.
         server.koin.get<BudgetDecisionCache>().invalidate(TestCallers.orgA)
 

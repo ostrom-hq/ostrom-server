@@ -36,25 +36,31 @@ internal object UsageQueries {
     const val DROP_HOLD: String = "DELETE FROM usage_holds WHERE call_id = :call_id"
 
     /**
-     * What is spent since `:since` and held by the other calls at `:now` (`:org_id`, `:call_id`), for the org if [org]
-     * and for `:member_id` if [member]; 0 for a side not asked.
+     * What is spent since `:since` (the month) and since `:day_since` (the day), and held by the other calls at `:now`
+     * (`:org_id`, `:call_id`), for the org and for `:member_id`; 0 for a sum not asked. The holds are read for a side
+     * with a monthly or a daily limit: a call in flight counts against both.
      *
-     * @param org Whether the org's sums are read.
-     * @param member Whether the member's sums are read.
+     * @param org Whether the org's monthly sum is read.
+     * @param member Whether the member's monthly sum is read.
+     * @param orgDay Whether the org's daily sum is read.
+     * @param memberDay Whether the member's daily sum is read.
      */
-    fun holdTotals(org: Boolean, member: Boolean): String {
+    fun holdTotals(org: Boolean, member: Boolean, orgDay: Boolean, memberDay: Boolean): String {
         val held = "SELECT SUM(micros) FROM usage_holds WHERE org_id = :org_id AND expires_at > :now " +
             "AND call_id <> :call_id"
-        val orgSums = listOf(spentSum("FROM usage_events WHERE org_id = :org_id AND at >= :since"), held)
-        val memberSums = listOf(
-            spentSum("FROM usage_events WHERE org_id = :org_id AND at >= :since AND member_id = :member_id"),
-            "$held AND member_id = :member_id",
+        val events = "FROM usage_events WHERE org_id = :org_id"
+        val mine = " AND member_id = :member_id"
+        val columns = listOf(
+            Triple("org_spent", org, spentSum("$events AND at >= :since")),
+            Triple("org_held", org || orgDay, held),
+            Triple("member_spent", member, spentSum("$events AND at >= :since$mine")),
+            Triple("member_held", member || memberDay, "$held$mine"),
+            Triple("org_day_spent", orgDay, spentSum("$events AND at >= :day_since")),
+            Triple("member_day_spent", memberDay, spentSum("$events AND at >= :day_since$mine")),
         )
-        fun columns(read: Boolean, sums: List<String>, prefix: String) =
-            sums.zip(listOf("spent", "held")).joinToString(", ") { (sum, name) ->
-                (if (read) "CAST(COALESCE(($sum), 0) AS BIGINT)" else "CAST(0 AS BIGINT)") + " AS ${prefix}_$name"
-            }
-        return "SELECT ${columns(org, orgSums, "org")}, ${columns(member, memberSums, "member")}"
+        return "SELECT " + columns.joinToString(", ") { (name, read, sum) ->
+            (if (read) "CAST(COALESCE(($sum), 0) AS BIGINT)" else "CAST(0 AS BIGINT)") + " AS $name"
+        }
     }
 
     private fun spentSum(from: String) = "SELECT SUM(cost_micros) $from"

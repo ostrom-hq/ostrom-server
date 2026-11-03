@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.BudgetAction
 import dev.ostrom.server.budgets.domain.BudgetAlert
 import dev.ostrom.server.budgets.domain.BudgetAlerts
 import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetGuard
+import dev.ostrom.server.budgets.domain.BudgetLimit
+import dev.ostrom.server.budgets.domain.BudgetPeriod
 import dev.ostrom.server.budgets.domain.BudgetScope
+import dev.ostrom.server.budgets.domain.BudgetTarget
+import dev.ostrom.server.budgets.domain.BudgetWindow
 import dev.ostrom.server.budgets.domain.BudgetsRepository
-import dev.ostrom.server.budgets.domain.SharedLimit
+import dev.ostrom.server.budgets.domain.ExceededBudget
 import dev.ostrom.server.budgets.presentation.BudgetDto
 import dev.ostrom.server.budgets.presentation.BudgetsPage
 import dev.ostrom.server.budgets.presentation.MyBudgetResponse
@@ -102,7 +107,8 @@ class BudgetsPostgresTest {
         },
     ) { server ->
         val repository = server.koin.get<BudgetsRepository>()
-        repository.putSharedLimit(TestCallers.orgA, SharedLimit.DEFAULT_MEMBER, 500_000, TestCallers.epoch)
+        val half = listOf(BudgetLimit(500_000))
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.DefaultMember, half, TestCallers.epoch)
         repository.putMemberLimit(TestCallers.orgA, member, 2_000_000, TestCallers.epoch)
         assertEquals(2_000_000, repository.limits(TestCallers.orgA, member).memberLimitMicros, "The override wins")
         server.spend(1_900_000, member)
@@ -351,15 +357,51 @@ class BudgetsPostgresTest {
     }
 
     @Test
-    fun oneOrgWideLimitIsWrittenWithoutTheOther() = serverTest(modules, overrides) { server ->
+    fun theLimitsReachedAreThoseTheGuardSawThatStillHoldInTheirOrgOnly() = serverTest(modules, overrides) { server ->
+        val repository = server.koin.get<BudgetsRepository>()
+        val at = TestCallers.epoch
+        val warn = BudgetLimit(1_000_000, BudgetWindow.DAY, BudgetAction.WARN)
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.DefaultMember, listOf(warn), at)
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.Org, listOf(BudgetLimit(1_000_000)), at)
+        server.spend(1_000_000, member)
+        server.koin.get<BudgetGuard>().check(TestCallers.orgA, member)
+
+        val day = BudgetPeriod.day(at).start
+        suspend fun exceeded(memberId: Uuid?, max: Int = 10, org: Uuid = TestCallers.orgA) =
+            repository.exceeded(org, memberId, day, TestCallers.monthStart, max)
+        val org = ExceededBudget(BudgetScope.ORG, null, BudgetLimit(1_000_000), at)
+        val mine = ExceededBudget(BudgetScope.MEMBER, member, warn, at)
+        assertEquals(listOf(org, mine), exceeded(null), "The org's first")
+        assertEquals(listOf(mine), exceeded(member))
+        assertEquals(listOf(org), exceeded(null, max = 1))
+        assertEquals(emptyList(), exceeded(null, org = TestCallers.orgB), "Another org sees none")
+        val tomorrow = repository.exceeded(TestCallers.orgA, null, day + 1.days, TestCallers.monthStart, 10)
+        assertEquals(listOf(org), tomorrow, "Tomorrow, today's are past; the month's still holds")
+
+        // Limits of their own replace the default: its alert no longer holds for the member.
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.Member(member), listOf(BudgetLimit(5_000_000)), at)
+        assertEquals(listOf(org), exceeded(null))
+    }
+
+    @Test
+    fun oneSubjectsLimitsAreReplacedWholeWithoutTheOthers() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<BudgetsRepository>()
         repository.putOrgLimits(TestCallers.orgA, 5_000, 1_000, TestCallers.epoch)
 
-        repository.putSharedLimit(TestCallers.orgA, SharedLimit.ORG, 7_000, TestCallers.epoch)
-        repository.putSharedLimit(TestCallers.orgA, SharedLimit.DEFAULT_MEMBER, null, TestCallers.epoch)
+        val org = listOf(BudgetLimit(7_000), BudgetLimit(300, BudgetWindow.DAY, BudgetAction.WARN))
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.Org, org, TestCallers.epoch)
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.DefaultMember, emptyList(), TestCallers.epoch)
 
         val settings = repository.settings(TestCallers.orgA, maxOverrides = 0)
-        assertEquals(7_000L to null, settings.orgLimitMicros to settings.defaultMemberLimitMicros)
+        assertEquals(org to emptyList(), settings.org to settings.defaultMember)
+        assertEquals(org, repository.limits(TestCallers.orgA, member).org, "The month's before the day's")
+
+        // A monthly write of the older routes stops again, and leaves the day as it is.
+        repository.putOrgLimits(TestCallers.orgA, 8_000, null, TestCallers.epoch)
+        val day = org.last()
+        assertEquals(listOf(BudgetLimit(8_000), day), repository.limits(TestCallers.orgA, member).org)
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.Org, listOf(day), TestCallers.epoch)
+        assertEquals(listOf(day), repository.settings(TestCallers.orgA, maxOverrides = 0).org)
     }
 
     @Test

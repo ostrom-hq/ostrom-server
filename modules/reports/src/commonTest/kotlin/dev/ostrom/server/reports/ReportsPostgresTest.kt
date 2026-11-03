@@ -2,9 +2,9 @@
 package dev.ostrom.server.reports
 
 import dev.ostrom.server.budgets.BudgetsModule
-import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.budgets.domain.BudgetGuard
 import dev.ostrom.server.budgets.domain.BudgetsRepository
+import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.instance.InstanceModule

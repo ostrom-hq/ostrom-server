@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets
 
+import dev.ostrom.server.budgets.domain.BudgetAction
 import dev.ostrom.server.budgets.domain.BudgetAlert
 import dev.ostrom.server.budgets.domain.BudgetDecision
 import dev.ostrom.server.budgets.domain.BudgetGuard
+import dev.ostrom.server.budgets.domain.BudgetLimit
 import dev.ostrom.server.budgets.domain.BudgetPeriod
 import dev.ostrom.server.budgets.domain.BudgetRules
 import dev.ostrom.server.budgets.domain.BudgetScope
 import dev.ostrom.server.budgets.domain.BudgetTarget
+import dev.ostrom.server.budgets.domain.BudgetWindow
 import dev.ostrom.server.budgets.domain.DeleteMemberBudgetUseCaseImpl
 import dev.ostrom.server.budgets.domain.GetBudgetsUseCaseImpl
 import dev.ostrom.server.budgets.domain.GetMyBudgetUseCaseImpl
@@ -158,22 +161,47 @@ class BudgetUseCasesTest {
     }
 
     @Test
-    fun settingOneOrgWideLimitLeavesTheOtherAsAnotherAdminJustSetIt() = runTest {
-        val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets, putMember, deleteMember)
+    fun aSubjectsLimitsListAsOneBudgetThatStopsOnlyIfTheyAllDo() = runTest {
+        val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets)
+        val day = BudgetLimit(2_000_000, BudgetWindow.DAY)
+        set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(10_000_000), day))
+        set(TestCallers.adminA, BudgetTarget.DefaultMember, listOf(day.copy(action = BudgetAction.WARN)))
+        val warns = listOf(BudgetLimit(1, action = BudgetAction.WARN))
+        val page = set(TestCallers.adminA, BudgetTarget.Member(member), warns).toPage()
+        assertEquals(
+            listOf(
+                BudgetDto("organization", usdPerMonth = 10.0, usdPerDay = 2.0),
+                BudgetDto("member", usdPerDay = 2.0, hardStop = false),
+                BudgetDto("member", member.toString(), usdPerMonth = 1e-6, hardStop = false),
+            ),
+            page.items,
+        )
+    }
+
+    @Test
+    fun settingOneSubjectsLimitsLeavesTheOthersAsAnotherAdminJustSetThem() = runTest {
+        val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets)
         repository.defaultLimits[TestCallers.orgA] = 5_000_000
-        assertEquals(7_000_000, set(TestCallers.adminA, BudgetTarget.Org, 7_000_000).settings.orgLimitMicros)
+        val org = set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(7_000_000)))
+        assertEquals(7_000_000, org.settings.orgLimitMicros)
         assertEquals(5_000_000, repository.defaultLimits[TestCallers.orgA], "Never read and written back")
         repository.orgLimits[TestCallers.orgA] = 9_000_000
-        assertEquals(null, set(TestCallers.adminA, BudgetTarget.DefaultMember, null).settings.defaultMemberLimitMicros)
+        val removed = set(TestCallers.adminA, BudgetTarget.DefaultMember, emptyList())
+        assertEquals(emptyList(), removed.settings.defaultMember)
         assertEquals(9_000_000, repository.orgLimits[TestCallers.orgA])
         assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated)
-        assertFailsWith<InvalidBudgetException> { set(TestCallers.adminA, BudgetTarget.Org, -1) }
-        assertFailsWith<AdminRequiredException> { set(TestCallers.memberA, BudgetTarget.Org, 1) }
-        set(TestCallers.adminA, BudgetTarget.Member(member), 3)
+        assertFailsWith<InvalidBudgetException> { set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(-1))) }
+        assertFailsWith<AdminRequiredException> { set(TestCallers.memberA, BudgetTarget.Org, listOf(BudgetLimit(1))) }
+
+        val daily = BudgetLimit(2, BudgetWindow.DAY, BudgetAction.WARN)
+        set(TestCallers.adminA, BudgetTarget.Member(member), listOf(BudgetLimit(3), daily))
         assertEquals(3, repository.memberLimits[TestCallers.orgA to member]?.limitMicros)
-        set(TestCallers.adminA, BudgetTarget.Member(member), null)
-        set(TestCallers.adminA, BudgetTarget.Member(member), null)
-        assertEquals(null, repository.memberLimits[TestCallers.orgA to member], "Removing an absent one is a no-op")
+        assertEquals(listOf(daily), repository.otherLimits[TestCallers.orgA to BudgetTarget.Member(member)])
+        set(TestCallers.adminA, BudgetTarget.Member(member), listOf(daily))
+        assertEquals(null, repository.memberLimits[TestCallers.orgA to member], "Replaced whole: no more monthly limit")
+        set(TestCallers.adminA, BudgetTarget.Member(member), emptyList())
+        set(TestCallers.adminA, BudgetTarget.Member(member), emptyList())
+        assertEquals(null, repository.otherLimits[TestCallers.orgA to BudgetTarget.Member(member)], "Removing twice")
     }
 
     @Test
