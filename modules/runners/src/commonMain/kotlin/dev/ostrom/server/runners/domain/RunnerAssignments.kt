@@ -134,10 +134,12 @@ enum class MachineExecutionState(val wire: String) {
  *
  * @property executions The executions it has, by session and epoch.
  * @property workspaces The sessions whose workspace it holds.
+ * @property capacity The sessions it runs at once at most; null for no limit.
  */
 data class MachineReport(
     val executions: Map<Pair<Uuid, Long>, MachineExecutionState> = emptyMap(),
     val workspaces: Set<Uuid> = emptySet(),
+    val capacity: Int? = null,
 )
 
 /**

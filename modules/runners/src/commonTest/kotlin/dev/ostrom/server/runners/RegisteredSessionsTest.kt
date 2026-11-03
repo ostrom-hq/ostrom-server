@@ -42,9 +42,10 @@ class RegisteredSessionsTest {
     private val runners = InMemoryRegisteredRunners()
     private val tokens = FakeRunnerTokens()
     private val sessions = InMemoryCloudSessionsRepository()
-    private val assignments = InMemoryRunnerAssignments { id ->
-        runners.runners.firstOrNull { it.id == id }?.lastSeenAt
-    }
+    private val assignments = InMemoryRunnerAssignments(
+        { id -> runners.runners.firstOrNull { it.id == id }?.lastSeenAt },
+        { id -> runners.runners.firstOrNull { it.id == id }?.capacity },
+    )
     private val driver = RegisteredRuntimeDriver(assignments, clock)
     private val register = RegisterRunnerUseCaseImpl(runners, tokens, clock)
     private val heartbeat = RegisteredRunnerHeartbeatUseCaseImpl(
@@ -242,6 +243,46 @@ class RegisteredSessionsTest {
         // Then two lost in a row: the next one could come at +110 s at the earliest.
         clock.now = recorded + 91.seconds
         assertEquals(ExecutionStatus.HOST_LOST, driver.executionStatus(session))
+    }
+
+    @Test
+    fun aMachineNeverTakesMoreSessionsThanItsCapacityAndAStoppedOneFreesItsPlace() = runTest {
+        val a = runner("a")
+        val b = runner("b")
+        val c = runner("c")
+        val waiting = List(4) { starting() }
+
+        repeat(3) { beat(a, MachineReport(capacity = 2)) }
+        assertEquals(2, beat(a, MachineReport(capacity = 2)).executions.size, "Full at 2")
+        assertEquals(emptyList(), beat(c, MachineReport(capacity = 0)).executions, "A machine at 0 takes nothing")
+        assertEquals(1, beat(b, MachineReport(capacity = 1)).executions.size)
+        assertEquals(1, beat(b, MachineReport(capacity = 1)).executions.size, "Full at 1: the fourth waits")
+        val held = beat(a, MachineReport(capacity = 2)).executions.map { it.sessionId }
+        val onB = beat(b, MachineReport(capacity = 1)).executions.map { it.sessionId }
+        val fourth = (waiting.map { it.id } - held.toSet() - onB.toSet()).single()
+
+        // One of a's sessions stops: a takes the one that waited.
+        driver.stopExecutions(waiting.first { it.id == held.first() })
+        val after = beat(a, MachineReport(capacity = 2)).executions.map { it.sessionId }.toSet()
+        assertEquals(setOf(held.last(), fourth), after)
+    }
+
+    @Test
+    fun aResumeGoesBackToItsMachineOnlyWhileItHasRoom() = runTest {
+        val a = runner("a")
+        val b = runner("b")
+        val paused = starting()
+        beat(a, MachineReport(capacity = 1))
+        driver.stopExecutions(paused)
+        val other = starting()
+        assertEquals(listOf(other.id), beat(a, MachineReport(capacity = 1)).executions.map { it.sessionId })
+
+        // a is online but full: the resume waits for any machine, and b takes it.
+        val resumed = sessions.sessions.getValue(paused.id).copy(epoch = 2, state = SessionState.RESUMING)
+        sessions.put(resumed)
+        driver.startExecution(resumed.executionSpec("reconciler"))
+        assertEquals(listOf(other.id), beat(a, MachineReport(capacity = 1)).executions.map { it.sessionId })
+        assertEquals(listOf(paused.id to 2L), beat(b).executions.map { it.sessionId to it.epoch })
     }
 
     @Test

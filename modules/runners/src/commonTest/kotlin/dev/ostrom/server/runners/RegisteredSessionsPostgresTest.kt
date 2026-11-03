@@ -156,6 +156,31 @@ class RegisteredSessionsPostgresTest {
         assertEquals(listOf(created.id.toString()), server.work(danas.id, danas.token).workspaces)
     }
 
+    /** PERF-RUNNERS, case 2: 12 sessions on 2 machines of 5 places: 10 run, 2 wait, none lost, and the queue moves. */
+    @Test
+    fun machinesTakeNoMoreThanTheirCapacityAndTheRestWaits() = serverTest(listOf(RunnersModule), overrides) { server ->
+        val sessions = server.koin.get<CloudSessionsRepository>()
+        val reconcile = server.koin.get<ReconcileCloudSessionUseCase>()
+        val machines = List(2) { server.register("dana", "machine-$it") }
+        val asked = List(12) { session().also { assertTrue(sessions.createWithinCap(it, 12)) } }
+        asked.forEach { reconcile(sessions.getById(it.id)!!) }
+        val five = RegisteredRunnerHeartbeatRequest(capacity = 5)
+
+        repeat(6) { machines.forEach { server.work(it.id, it.token, five) } }
+        val held = machines.map { m -> server.work(m.id, m.token, five).executions.map { it.sessionId } }
+        assertEquals(listOf(5, 5), held.map { it.size }, "Never more than 5 each")
+        val waiting = asked.map { it.id.toString() } - held.flatten().toSet()
+        assertEquals(2, waiting.size, "Two wait, none lost")
+
+        // One ends: its machine takes one that waited at its next heartbeat.
+        val ended = held.first().first()
+        sessions.setDesiredState(ORG_A, Uuid.parse(ended), DesiredState.TERMINATED, clock.now)
+        reconcile(sessions.getById(Uuid.parse(ended))!!)
+        val next = server.work(machines.first().id, machines.first().token, five).executions.map { it.sessionId }
+        assertEquals(5, next.size)
+        assertTrue(ended !in next && next.any { it in waiting }, "The queue moves: $next")
+    }
+
     @Test
     fun aMalformedReportIsABadRequest() = serverTest(listOf(RunnersModule), overrides) { server ->
         val a = server.register("dana", "machine-a")
@@ -164,9 +189,15 @@ class RegisteredSessionsPostgresTest {
             RegisteredRunnerHeartbeatRequest(listOf(ReportedExecutionDto(created(), 1, "missing"))),
             RegisteredRunnerHeartbeatRequest(listOf(ReportedExecutionDto(created(), 1, "exited"))),
             RegisteredRunnerHeartbeatRequest(workspaces = listOf("not-a-uuid")),
+            RegisteredRunnerHeartbeatRequest(capacity = -1),
+            RegisteredRunnerHeartbeatRequest(capacity = 257),
         )
         for (report in reports) assertEquals(HttpStatusCode.BadRequest, server.beat(a.id, a.token, report).status)
         assertEquals(HttpStatusCode.OK, server.beat(a.id, a.token, RegisteredRunnerHeartbeatRequest()).status)
+        for (capacity in listOf(0, 256)) {
+            val accepted = server.beat(a.id, a.token, RegisteredRunnerHeartbeatRequest(capacity = capacity))
+            assertEquals(HttpStatusCode.OK, accepted.status)
+        }
     }
 
     private fun created() = Uuid.random().toString()
