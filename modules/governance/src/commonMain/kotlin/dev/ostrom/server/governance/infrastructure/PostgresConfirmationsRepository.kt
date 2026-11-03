@@ -171,10 +171,12 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
             "error_message = :error_message WHERE org_id = :org_id AND id = :id AND status = 'pending' " +
             "AND expires_at > :at"
 
-        private const val SETTLE_RESULT =
+        /** Keeps what a confirmed write returned, by its key. */
+        const val SETTLE_RESULT: String =
             "UPDATE governance_confirmations SET result_json = :result WHERE org_id = :org_id AND id = :id"
 
-        private const val SETTLE_ERROR = "UPDATE governance_confirmations SET status = 'failed', " +
+        /** Marks a confirmed write that failed, by its key. */
+        const val SETTLE_ERROR: String = "UPDATE governance_confirmations SET status = 'failed', " +
             "error_type = :error_type, error_message = :error_message WHERE org_id = :org_id AND id = :id"
 
         /** The sweep's read across organizations. */

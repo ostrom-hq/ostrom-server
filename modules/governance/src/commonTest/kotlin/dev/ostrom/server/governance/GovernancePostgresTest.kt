@@ -53,6 +53,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.koin.core.Koin
@@ -95,6 +96,7 @@ class GovernancePostgresTest {
         val role: OrgRole,
         val browser: Boolean,
         val age: Int = 0,
+        val tokenNamed: Boolean = true,
     )
 
     private val people = mapOf(
@@ -105,6 +107,8 @@ class GovernancePostgresTest {
         "mia-token" to Person("mia", orgA, OrgRole.MEMBER, browser = false),
         "bob-browser" to Person("bob", orgB, OrgRole.OWNER, browser = true),
         "bob-token" to Person("bob", orgB, OrgRole.OWNER, browser = false),
+        // A token the identity module does not name (no token id).
+        "bob-key" to Person("bob", orgB, OrgRole.OWNER, browser = false, tokenNamed = false),
     )
     private val users = mutableMapOf<String, String>()
 
@@ -144,7 +148,7 @@ class GovernancePostgresTest {
                         subjectOf(it.name),
                         PrincipalKind.USER,
                         if (it.browser) setOf("user:*") else GovernanceScopes.ALL,
-                        credentialId = token.takeUnless { _ -> it.browser },
+                        credentialId = token.takeUnless { _ -> it.browser || !it.tokenNamed },
                         channel = if (it.browser) PrincipalChannel.BROWSER else PrincipalChannel.API_TOKEN,
                         authenticatedAt = Time.now() - it.age.minutes,
                     )
@@ -278,6 +282,34 @@ class GovernancePostgresTest {
     }
 
     @Test
+    fun aChangeFromNothingIsShownAsNothingAndOneThatFailsOnTheServerIsKeptAsFailed() = governanceTest { server ->
+        // A setting never chosen, asked to be nothing, by a token without an id, of a person without a name.
+        change.current = null
+        val empty = server.client.put("/governed") {
+            bearerAuth("bob-key")
+            contentType(ContentType.Application.Json)
+            setBody(JsonObject(emptyMap()))
+        }
+        val id = empty.body<GovernanceConfirmationPending>().confirmationId
+        val shown = server.read("bob-browser", id).body<ConfirmationDto>()
+        assertEquals(JsonNull to JsonNull, shown.before to shown.after)
+        assertEquals(null to null, shown.requestedBy.login to shown.requestedBy.name)
+        assertEquals("confirmed", server.answer("bob-browser", id, "confirm").body<ConfirmationDto>().status)
+        assertNull(change.current)
+        val created = server.koin.get<AuditRepository>().list(orgB, null, null, 50).map { it.entry }
+            .first { it.targetId == id && it.action == "governance.confirmation.created" }
+        assertNull(created.details["token"], "No token to name")
+
+        // The write fails for a reason the server does not show: kept as failed, never read as written.
+        val crashing = server.ask("bob-token", "never").body<GovernanceConfirmationPending>().confirmationId
+        change.refuseApply = IllegalStateException("database")
+        assertEquals(HttpStatusCode.InternalServerError, server.answer("bob-browser", crashing, "confirm").status)
+        val failed = server.read("bob-browser", crashing).body<ConfirmationDto>()
+        assertEquals("failed" to "internal_error", failed.status to failed.error?.type)
+        assertNull(change.current)
+    }
+
+    @Test
     fun aMemberAsksNothingAndAnotherOrganizationSeesNothing() = governanceTest { server ->
         assertEquals(HttpStatusCode.Forbidden, server.ask("mia-token", "never").status)
         val id = server.ask("ada-token", "never").body<GovernanceConfirmationPending>().confirmationId
@@ -348,6 +380,12 @@ class GovernancePostgresTest {
             "an answer" to server.explain(PostgresConfirmationsRepository.ANSWER, analyze = false) {
                 bind("id", "gcf_x").bind("status", "confirmed").bind("by_user", "u").bind("by_member", Uuid.random())
                     .bind("at", now).bindNull("error_type", String::class).bindNull("error_message", String::class)
+            },
+            "a result" to server.explain(PostgresConfirmationsRepository.SETTLE_RESULT, analyze = false) {
+                bind("id", "gcf_x").bind("result", "null")
+            },
+            "a failure" to server.explain(PostgresConfirmationsRepository.SETTLE_ERROR, analyze = false) {
+                bind("id", "gcf_x").bind("error_type", "internal_error").bind("error_message", "m")
             },
         )
         val sweep = server.database.superuser.fetchAll(

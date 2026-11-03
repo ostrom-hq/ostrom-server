@@ -296,6 +296,7 @@ class RulesPostgresTest {
         val id = server.write().body<RuleDto>().id
         val rule = server.call("GET", "/api/v1/rules/$id", "admin-a").body<RuleDto>()
         val decided = server.decisions().items.size
+        val policyBefore = server.call("GET", "/api/v1/gates/policy", "admin-a").body<GatePolicyDto>()
         val held = server.koin.get<GovernanceConfirmations>() as HeldConfirmations
         // The elevated token, a CLI token, or a personal one: an agent on the developer's machine can present any.
         listOf("elevated-a", "policy-writer-a", "reader-a", "other-a").forEach { token ->
@@ -310,7 +311,7 @@ class RulesPostgresTest {
         assertEquals(1, server.call("GET", "/api/v1/rules", "admin-a").body<RulesPage>().items.size)
         assertEquals(decided, server.decisions().items.size, "No decision")
         val policy = server.call("GET", "/api/v1/gates/policy", "admin-a").body<GatePolicyDto>()
-        assertEquals(GatePolicyDto("sole-approver"), policy, "Unchanged")
+        assertEquals(policyBefore, policy, "Unchanged")
         val asked = held.held.take(governanceWrites(id).size).map {
             Triple(it.write.kind, "${it.method} ${it.path}", it.scope)
         }
@@ -442,7 +443,7 @@ class RulesPostgresTest {
         val unlinked = confirmer.copy(principal = confirmer.principal.copy(subjectId = "unlinked-a"))
         assertNull(change.apply(orgA, writes[4], unlinked))
         assertEquals(HttpStatusCode.NotFound, server.call("GET", "/api/v1/rules/$id", "admin-a").status)
-        val deletedBy = server.decisions().items.first().by
+        val deletedBy = server.decisions().items.single { it.action == "deleted" && it.subject.id == id }.by
         assertEquals(confirmer.member.memberId.toString(), deletedBy, "Named by the membership without a login")
     }
 

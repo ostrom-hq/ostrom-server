@@ -166,12 +166,10 @@ class AnswerConfirmationUseCaseImpl(
             else -> throw ConfirmationClosedException()
         }
     }
-
-    private companion object {
-        // What is kept when the write failed for a reason the server does not show (a 500 to the confirmer).
-        val UNMADE = ConfirmationError("internal_error", "The change failed on the server.")
-    }
 }
+
+// What is kept when the write failed for a reason the server does not show (a 500 to the confirmer).
+private val UNMADE = ConfirmationError("internal_error", "The change failed on the server.")
 
 // The step-up of a gate's yes (S2-54): a console sign-in less than 5 minutes old; WebAuthn comes after the go.
 private fun GovernanceConfirmer.requireFreshSignIn(now: Instant) {

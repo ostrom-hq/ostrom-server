@@ -133,6 +133,10 @@ class CompilerPostgresTest {
                     // A person's own token, outside the browser.
                     "pat" -> AuthenticatedPrincipal(token, PrincipalKind.USER, personalScopes)
                     "elevated" -> AuthenticatedPrincipal(token, PrincipalKind.USER, elevatedScopes)
+                    // The phone app's token: a person's, neither the console nor a token held for it.
+                    "mobile" -> AuthenticatedPrincipal(
+                        token, PrincipalKind.USER, personalScopes, channel = PrincipalChannel.MOBILE_APP,
+                    )
                     // A person signed in to the console: the session cookie, not a token.
                     "console" -> AuthenticatedPrincipal(
                         token, PrincipalKind.USER, setOf(GateScopes.ALL_USER), channel = PrincipalChannel.BROWSER,
@@ -336,6 +340,10 @@ class CompilerPostgresTest {
         val memberAsks = server.call("cli:a:member", "/api/v1/workflows", "POST", release())
         assertEquals(HttpStatusCode.Forbidden, memberAsks.status)
         assertTrue(memberAsks.bodyAsText().contains("Only an owner or an admin accepts"))
+        // The phone app proposes too, and decides nothing: an owner decides in the console.
+        val fromPhone = server.call("mobile:a:dev", "/api/v1/workflows", "POST", release())
+        assertEquals(HttpStatusCode.Forbidden, fromPhone.status)
+        assertTrue(fromPhone.bodyAsText().contains("Only an owner or an admin accepts"))
         val proposed = server.call("cli:a:dev", "/api/v1/workflows", "POST", release(WorkflowStatus.PROPOSED))
         assertEquals(HttpStatusCode.Created, proposed.status)
         val path = "/api/v1/workflows/release"

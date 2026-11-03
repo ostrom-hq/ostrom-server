@@ -63,7 +63,7 @@ val GovernanceMigrations: List<SchemaMigration> = listOf(
         END $$;
         GRANT USAGE ON SCHEMA public TO ostrom_router;
         CREATE POLICY governance_confirmations_router ON governance_confirmations TO ostrom_router
-            USING (true) WITH CHECK (false);
+            USING (current_user = 'ostrom_router') WITH CHECK (false);
         GRANT SELECT ON governance_confirmations TO ostrom_router;
         CREATE FUNCTION governance_expired_organizations(p_now TIMESTAMPTZ, p_limit INTEGER) RETURNS SETOF UUID
             LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$

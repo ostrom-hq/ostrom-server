@@ -55,7 +55,9 @@ class CompilerGovernanceChange(
     }
 
     override suspend fun apply(orgId: Uuid, write: GovernanceWrite, confirmer: GovernanceConfirmer): JsonElement? {
-        val by = actors.resolve(confirmer.principal)?.id ?: confirmer.member.memberId.toString()
+        // Signed by the gates' name of the confirmer, else by their membership.
+        val actor = actors.resolve(confirmer.principal)
+        val by = if (actor != null) actor.id else confirmer.member.memberId.toString()
         val payload = write.payload
         return when (write.kind) {
             WorkflowWrites.CREATE ->
@@ -71,7 +73,8 @@ class CompilerGovernanceChange(
         }
     }
 
-    private fun JsonObject.named(): String = (get("id") as? JsonPrimitive)?.content ?: "without an id"
+    // A checked workflow, or a saved one: it always has its id.
+    private fun JsonObject.named(): String = getValue("id").jsonPrimitive.content
 
     /** The payloads of the workflows' governance writes. */
     companion object {

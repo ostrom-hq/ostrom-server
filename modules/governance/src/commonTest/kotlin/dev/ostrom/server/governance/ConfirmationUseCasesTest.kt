@@ -130,7 +130,11 @@ class ConfirmationUseCasesTest {
         assertSame(first, open(request()), "Same person, same write")
         val other = open(request(to = "sole-approver"))
         assertTrue(other.id != first.id)
-        repeat(ConfirmationRules.MAX_WAITING - 2) { open(request(to = "v$it")) }
+        // The same write on another request is another change.
+        val elsewhere = open(request().copy(path = "/api/v1/gates/policy/other"))
+        val otherwise = open(request().copy(method = "PATCH"))
+        assertEquals(4, setOf(first.id, other.id, elsewhere.id, otherwise.id).size)
+        repeat(ConfirmationRules.MAX_WAITING - 4) { open(request(to = "v$it")) }
         val limited = assertFailsWith<ConfirmationLimitException> { open(request(to = "one-more")) }
         assertEquals(ErrorKind.RATE_LIMITED, limited.kind)
         assertEquals("confirmation_limit", limited.type)
@@ -309,6 +313,12 @@ class ConfirmationUseCasesTest {
         repository.loseNextAnswer = true
         repository.whileLosing = { clock.now = late.expiresAt }
         assertFailsWith<ConfirmationExpiredException> { refuse(browser("olga"), late.id) }
+        // A row is never deleted: one gone meanwhile is a server fault, never read as answered.
+        val gone = open(request(to = "gone"))
+        repository.loseNextAnswer = true
+        repository.whileLosing = { repository.rows.remove(gone.id) }
+        val fault = assertFailsWith<IllegalStateException> { refuse(browser("olga"), gone.id) }
+        assertEquals("A confirmation is never deleted.", fault.message)
     }
 
     @Test
