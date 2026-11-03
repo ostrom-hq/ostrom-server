@@ -12,6 +12,12 @@ object McpRules {
     /** The most tools listed per server and allowlisted per assignment. */
     const val MAX_TOOLS: Int = 256
 
+    /**
+     * Ostrom's own MCP server, which the relay of `ostrom claude` serves itself (the waits, `/mcp/ostrom`): an
+     * organization's server of that name would never be reached. Refused whatever its case and surrounding spaces.
+     */
+    const val OSTROM_SERVER: String = "ostrom"
+
     /** Names kept for the routes next to `POST /api/v1/mcp/{server}`. */
     val RESERVED_NAMES: Set<String> = setOf("servers", "settings", "calls", "usage")
 
@@ -66,6 +72,10 @@ object McpRules {
      * @throws InvalidMcpServerException On the first broken rule.
      */
     fun requireServer(server: McpServer) {
+        rule(
+            server.name.trim().lowercase() != OSTROM_SERVER,
+            "`$OSTROM_SERVER` is Ostrom's own MCP server, which every agent already has: choose another name.",
+        )
         rule(
             serverName.matches(server.name) && server.name !in RESERVED_NAMES,
             "A server name is 1 to 64 characters of a-z 0-9 . _ - and starts with a letter or digit (not `servers`).",
