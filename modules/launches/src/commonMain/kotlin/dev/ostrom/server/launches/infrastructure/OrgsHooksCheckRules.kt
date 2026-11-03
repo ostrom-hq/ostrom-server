@@ -38,13 +38,16 @@ class OrgsHooksCheckRules(
     )
 
     private suspend fun enforced(orgId: Uuid, repo: String?): Boolean {
-        val stamp = gates.policyStamp(orgId, repo) ?: return gates.enforcesAny(orgId, repo)
-        val key = Triple(orgId, repo, stamp)
-        lock.withLock { kept[key] }?.let { return it }
+        val stamp = gates.policyStamp(orgId, repo)
+        val key = stamp?.let { Triple(orgId, repo, it) }
+        val known = key?.let { lock.withLock { kept[it] } }
+        if (known != null) return known
         val answer = gates.enforcesAny(orgId, repo)
-        lock.withLock {
-            if (kept.size >= maxEntries) kept.clear()
-            kept[key] = answer
+        if (key != null) {
+            lock.withLock {
+                if (kept.size >= maxEntries) kept.clear()
+                kept[key] = answer
+            }
         }
         return answer
     }

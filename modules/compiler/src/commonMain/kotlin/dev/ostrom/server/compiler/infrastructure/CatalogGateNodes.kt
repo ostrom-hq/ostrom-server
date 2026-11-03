@@ -35,7 +35,7 @@ class CatalogGateNodes(
         catalog()(orgId, repo).any { it.gate?.enforce == true }
 
     override suspend fun policyStamp(orgId: Uuid, repo: String?): String? =
-        pins?.invoke()?.pin(orgId, repo)?.contentDigest
+        pins?.let { it().pin(orgId, repo)?.contentDigest }
 
     private fun CatalogGate.toNode(): GateNode = GateNode(
         workflowId = workflowId,

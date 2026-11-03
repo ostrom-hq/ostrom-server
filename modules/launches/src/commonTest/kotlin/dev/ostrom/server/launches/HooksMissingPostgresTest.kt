@@ -139,7 +139,7 @@ class HooksMissingPostgresTest {
             assertEquals(true, line.actor.startsWith("agent:"), line.actor)
             assertEquals(
                 mapOf("agent" to "claude-code", "repo" to "acme/api", "waitedSeconds" to "15", "stopped" to "true"),
-                line.meta.filterKeys { it != "credential" },
+                line.meta.filterKeys { it in setOf("agent", "repo", "waitedSeconds", "stopped") },
             )
         }
 

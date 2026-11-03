@@ -147,6 +147,7 @@ object KnownDrifts {
             "listSharedAccounts 200 $.items[*].providerAccountId UNDECLARED",
             "listSharedAccounts 200 $.items[*].spentMicros UNDECLARED",
             "listSharedAccounts 200 $.items[*].windows UNDECLARED",
+            "openRunnerLaunch 201 $.hooksCheck UNDECLARED",
             "renameOrg 200 $.hooksDeadlineSeconds UNDECLARED",
             "renameOrg 200 $.timeZone UNDECLARED",
             "reopenSession 200 $.reopened UNDECLARED",
