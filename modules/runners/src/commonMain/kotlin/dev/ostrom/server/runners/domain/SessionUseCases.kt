@@ -156,12 +156,17 @@ interface GetCloudSessionUseCase {
 }
 
 /**
- * [GetCloudSessionUseCase] on the repository.
+ * [GetCloudSessionUseCase] on the repository, the session named with the registered runner it runs on.
  *
  * @param repository The sessions.
+ * @param driver Where executions run: names the runner holding the current one.
  */
-class GetCloudSessionUseCaseImpl(private val repository: CloudSessionsRepository) : GetCloudSessionUseCase {
-    override suspend fun invoke(caller: Caller, id: Uuid): CloudSession = repository.ownedBy(caller, id)
+class GetCloudSessionUseCaseImpl(
+    private val repository: CloudSessionsRepository,
+    private val driver: RuntimeDriver,
+) : GetCloudSessionUseCase {
+    override suspend fun invoke(caller: Caller, id: Uuid): CloudSession =
+        repository.ownedBy(caller, id).let { it.copy(runnerId = driver.holder(it)) }
 }
 
 /**
