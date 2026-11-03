@@ -30,6 +30,7 @@ internal suspend fun Confirmation.toDto(people: ConfirmationPeople, now: Instant
     after = after ?: JsonNull,
     requestedBy = requestedBy.toDto(people),
     credential = credential.wire,
+    token = tokenId?.let { id -> tokenName?.let { ConfirmationTokenDto(id, it) } },
     createdAt = createdAt.toString(),
     expiresAt = expiresAt.toString(),
     answeredBy = answeredBy?.toDto(people),
