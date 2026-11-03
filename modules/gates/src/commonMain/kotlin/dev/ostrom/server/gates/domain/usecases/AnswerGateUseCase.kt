@@ -20,6 +20,7 @@ import dev.ostrom.server.gates.domain.models.SelfApprovalRefusedException
 import dev.ostrom.server.gates.domain.models.StepUp
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateChanges
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import kotlin.time.Clock
@@ -63,7 +64,9 @@ interface AnswerGateUseCase {
  * @param notifier Tells the other approvers, the GitHub check and the waiting hooks; it never throws.
  * @param clock The clock.
  * @param changes Wakes the reads waiting on the gate.
+ * @param gitHub The GitHub account each approver linked (Q-GATES-G1).
  */
+@Suppress("LongParameterList") // One port per owner: gates, policies, receipts, notifications, clock, GitHub.
 class AnswerGateUseCaseImpl(
     private val repository: GatesRepository,
     private val policies: GatePolicies,
@@ -71,6 +74,7 @@ class AnswerGateUseCaseImpl(
     private val notifier: GateNotifier,
     private val clock: Clock,
     private val changes: GateChanges,
+    private val gitHub: GateGitHubAccounts,
 ) : AnswerGateUseCase {
     override suspend fun invoke(
         actor: GateActor,
@@ -93,6 +97,10 @@ class AnswerGateUseCaseImpl(
             val selfApproved = when (verdict) {
                 is SelfApproval.Verdict.Refused -> throw SelfApprovalRefusedException(verdict.others)
                 is SelfApproval.Verdict.Allowed -> verdict.selfApproved
+            }
+            if (SelfApproval.needsLink(gate, answer, policy)) {
+                SelfApproval.linkRefusal(gate, requests.map { it.approverId }, person, gitHub.gitHubIdsOf(person))
+                    ?.let { throw it }
             }
             val now = clock.now()
             StepUp.check(answer, actor.authenticatedAt, now)
