@@ -125,4 +125,15 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
         REVOKE CREATE ON SCHEMA public FROM ostrom_router
         """.trimIndent(),
     ),
+    // The filters of `GET /sessions` (SessionsReadsBenchTest): by developer, by repository and the open ones, newest
+    // first, read the organization's recent sessions and kept those that matched (4 995 read for 5 kept).
+    SchemaMigration(
+        5,
+        "index_sessions_filters",
+        """
+        CREATE INDEX sessions_by_dev ON sessions_sessions (org_id, dev, started_at DESC, id DESC);
+        CREATE INDEX sessions_by_repo ON sessions_sessions (org_id, repo, started_at DESC, id DESC);
+        CREATE INDEX sessions_open ON sessions_sessions (org_id, started_at DESC, id DESC) WHERE ended_at IS NULL
+        """.trimIndent(),
+    ),
 )
