@@ -51,7 +51,8 @@ interface HandleWebhookUseCase {
 
 /**
  * [HandleWebhookUseCase]: a pull request opened, updated or reopened asks the gate of its merge (as the CI, for the
- * organization that installed the App, the author being who asks) and publishes `ostrom-gate` on its head; the same
+ * organization that installed the App, the author being who asks: the Ostrom person linked to their GitHub account,
+ * else their GitHub login) and publishes `ostrom-gate` on its head; the same
  * request as the agent's `gh pr merge` when the head, base and gate match (gates module, APPROBATION). An
  * installation created on GitHub records who installed it, which the install callback checks (AUDIT-SECU-2 M1); one
  * deleted is forgotten, linked or not. Each delivery is handled once (AUDIT-SECU-2 B3): a replay of a captured
@@ -63,6 +64,7 @@ interface HandleWebhookUseCase {
  * @param checks Publishes the check.
  * @param logger Logs a refused gate.
  * @param clock The clock.
+ * @param accounts Who a pull request's author is in Ostrom.
  */
 class HandleWebhookUseCaseImpl(
     private val repository: GitHubRepository,
@@ -71,6 +73,7 @@ class HandleWebhookUseCaseImpl(
     private val checks: GitHubGateChecks,
     private val logger: Logger,
     private val clock: Clock,
+    private val accounts: GitHubAccounts,
 ) : HandleWebhookUseCase {
     override suspend fun invoke(event: String?, delivery: String?, body: String): WebhookOutcome {
         val id = delivery?.takeIf { DELIVERY.matches(it) }
@@ -184,7 +187,7 @@ class HandleWebhookUseCaseImpl(
     private data class Ref(val ref: String)
 
     @Serializable
-    private data class Login(val login: String)
+    private data class Login(val login: String, val id: Long? = null)
 }
 
 // Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.
