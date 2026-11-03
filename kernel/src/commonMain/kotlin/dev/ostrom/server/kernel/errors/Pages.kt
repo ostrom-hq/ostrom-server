@@ -27,6 +27,22 @@ object Pages {
     }
 
     /**
+     * A page read after a cursor, refused when the cursor names nothing of this list: an unknown cursor reads no row,
+     * so an empty page is the one case to check, by [exists] (one read by key, only then).
+     *
+     * @param name The cursor's parameter, `after` or `before`.
+     * @param cursor The cursor, or null for the first page.
+     * @param page The page read.
+     * @param exists Whether the cursor names a row of this list, in this organization.
+     * @return [page].
+     * @throws InvalidPageException When the page is empty and the cursor names no row.
+     */
+    suspend fun <T> checked(name: String, cursor: Any?, page: List<T>, exists: suspend () -> Boolean): List<T> {
+        if (cursor != null && page.isEmpty() && !exists()) unknownCursor(name)
+        return page
+    }
+
+    /**
      * Refuses a cursor that names nothing this organization's pages give.
      *
      * @param name The cursor's parameter, `after` or `before`.

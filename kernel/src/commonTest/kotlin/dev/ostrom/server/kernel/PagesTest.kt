@@ -4,6 +4,7 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.kernel.errors.Pages
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -25,6 +26,19 @@ class PagesTest {
             assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
             assertEquals("limit is 1 to 100.", refused.message)
         }
+    }
+
+    @Test
+    fun aPageAfterACursorIsCheckedOnlyWhenItIsEmpty() = runTest {
+        var reads = 0
+        val known: suspend () -> Boolean = { reads++; true }
+        val unknown: suspend () -> Boolean = { reads++; false }
+        assertEquals(emptyList(), Pages.checked("after", null, emptyList<Int>(), unknown), "The first page")
+        assertEquals(listOf(1), Pages.checked("after", "x", listOf(1), unknown), "A page that follows its cursor")
+        assertEquals(0, reads, "No read when the page has rows or no cursor")
+        assertEquals(emptyList(), Pages.checked("after", "x", emptyList<Int>(), known), "The end of the list")
+        assertFailsWith<InvalidPageException> { Pages.checked("before", "x", emptyList<Int>(), unknown) }
+        assertEquals(2, reads)
     }
 
     @Test

@@ -120,8 +120,10 @@ class ListBoundsPostgresTest {
         val sent = driver.record { huge = read(ada, path, "limit=$HUGE") }
         val answer = checkNotNull(huge)
         val whole = sent.any { statement ->
+            // The size asked, or one more (the row that says another page follows); not a sentinel such as the
+            // audit's `Long.MAX_VALUE` for "no cursor".
             HUGE.toString() in statement.sql || statement.statement?.namedParametersValues.orEmpty().values.any {
-                (it as? Number)?.toLong()?.let { value -> value >= HUGE } == true
+                (it as? Number)?.toLong()?.let { value -> value == HUGE.toLong() || value == HUGE + 1L } == true
             }
         }
         if (answer.status.value >= SERVER_ERROR) f.broken += "$id limit=$HUGE: ${answer.status}"
@@ -255,7 +257,25 @@ class ListBoundsPostgresTest {
         /** The lists a minimal bootstrap cannot reach, with the status they answer. */
         val UNREACHED = mapOf<String, Int>()
 
-        /** The paged lists whose page of A holds nothing to replay in B. */
-        val WITHOUT_FOREIGN_CURSOR = setOf<String>()
+        /**
+         * The paged lists whose page of A is empty after the minimal bootstrap: nothing of A to replay in B. Their
+         * cursor names a row by its id (refused when B cannot see it, as the forged id above is) or is a position in
+         * time the contract accepts as such (activity, MCP calls, usage events: `before` an instant), which row-level
+         * security keeps to B's own rows.
+         */
+        val WITHOUT_FOREIGN_CURSOR = setOf(
+            "listActivity",
+            "listApprovals",
+            "listAutomationRuns",
+            "listChecks",
+            "listCloudSessions",
+            "listMcpCalls",
+            "listNotifications",
+            "listRepos",
+            "listSessions",
+            "listTeams",
+            "listUsageEvents",
+            "listWaits",
+        )
     }
 }
