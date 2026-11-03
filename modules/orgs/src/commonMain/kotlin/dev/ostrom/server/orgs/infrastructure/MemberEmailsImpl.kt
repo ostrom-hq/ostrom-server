@@ -16,7 +16,7 @@ import kotlin.uuid.Uuid
 class MemberEmailsImpl(private val members: MembersRepository, private val people: People) : MemberEmails {
     override suspend fun emailOf(orgId: Uuid, memberId: Uuid): String? {
         val member = members.findById(orgId, memberId) ?: return null
-        val email = people.get(member.userId)?.email ?: return null
-        return email.takeIf { it.lowercase() in people.verifiedEmails(member.userId) }
+        val email = people.get(member.userId)?.email
+        return email?.takeIf { it.lowercase() in people.verifiedEmails(member.userId) }
     }
 }

@@ -98,7 +98,8 @@ import org.koin.dsl.module
  *
  * Other modules use it through the interfaces it binds: [PrincipalOrgResolver] (through the
  * kernel's `requireOrgPrincipal`), [MemberDirectory] (who a wait may be asked of), [MemberLogins] (the
- * people a shared account is lent to, by login), [MemberEmails] (the address of the person who opens a Checkout), [CountMembersUseCase] for
+ * people a shared account is lent to, by login), [MemberEmails] (the address of the person who opens a
+ * Checkout), [CountMembersUseCase] for
  * per-seat billing. Until the billing
  * module binds its own [SeatPolicy] here, every organization has the free plan's limit
  * ([FreePlanSeats]).
