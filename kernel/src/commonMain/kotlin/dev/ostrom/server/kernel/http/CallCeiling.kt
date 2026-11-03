@@ -4,16 +4,14 @@
 package dev.ostrom.server.kernel.http
 
 import dev.ostrom.server.kernel.errors.ErrorKind
-import io.ktor.http.ContentType
+import dev.ostrom.server.kernel.errors.OstromException
 import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.Hook
 import io.ktor.server.application.call
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.response.header
-import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RouteSelector
 import io.ktor.server.routing.RouteSelectorEvaluation
@@ -84,7 +82,8 @@ fun interface CallPlace {
  * once under 512 MiB (CHARGE 41647341533), while 500 approvals, writes bounded by nothing, OOMKilled the server
  * (41644506470). Unset, the ceilings follow the container's limit, read again every 5 s: 150 ordinary calls under
  * 512 MiB, in proportion above and below, at least 16, and 256 without a limit; half the ordinary ceiling of held
- * calls, so that both kinds full stay near the 200 calls measured at 377 MiB; and 100 open connections per 512 MiB.
+ * calls, so that both kinds full stay near the 200 calls measured at 377 MiB; and as many open connections as
+ * ordinary calls, an idle connection costing little.
  *
  * @param settings The ceilings the instance sets.
  * @param limitBytes Reads the container's memory limit; null without one.
@@ -110,7 +109,7 @@ class CallsInProgress(
     fun ceiling(kind: CallKind): Int = when (kind) {
         CallKind.SERVED -> settings.served ?: ceilingUnder(currentLimit())
         CallKind.HELD -> settings.held ?: (ceiling(CallKind.SERVED) / HELD_SHARE).coerceAtLeast(1)
-        CallKind.OPEN -> settings.open ?: openCeilingUnder(currentLimit())
+        CallKind.OPEN -> settings.open ?: ceilingUnder(currentLimit())
         CallKind.FREE -> Int.MAX_VALUE
     }
 
@@ -204,8 +203,6 @@ class CallsInProgress(
 
         private const val MIB = 1024L * 1024
         private const val CALLS_UNDER_REFERENCE = 150L
-        private const val OPEN_UNDER_REFERENCE = 100L
-        private const val DEFAULT_OPEN_CEILING = 170
         private const val REFERENCE_MIB = 512L
         private const val MIN_CEILING = 16L
         private const val HELD_SHARE = 2
@@ -219,24 +216,17 @@ class CallsInProgress(
          *
          * @return The ceiling.
          */
-        fun ceilingUnder(limitBytes: Long?): Int = scaled(limitBytes, CALLS_UNDER_REFERENCE) ?: DEFAULT_CEILING
-
-        /**
-         * The ceiling of open connections under [limitBytes]: 100 per 512 MiB, at least 16, and 170 without a limit.
-         * With 150, the three kinds full at once peaked at 495 MiB under 512 MiB (CHARGE 41668930337).
-         *
-         * @param limitBytes The container's memory limit, null without one.
-         *
-         * @return The ceiling.
-         */
-        fun openCeilingUnder(limitBytes: Long?): Int =
-            scaled(limitBytes, OPEN_UNDER_REFERENCE) ?: DEFAULT_OPEN_CEILING
-
-        private fun scaled(limitBytes: Long?, underReference: Long): Int? = limitBytes?.let {
-            (it / MIB * underReference / REFERENCE_MIB).coerceIn(MIN_CEILING, Int.MAX_VALUE.toLong()).toInt()
-        }
+        fun ceilingUnder(limitBytes: Long?): Int = limitBytes?.let {
+            (it / MIB * CALLS_UNDER_REFERENCE / REFERENCE_MIB).coerceIn(MIN_CEILING, Int.MAX_VALUE.toLong()).toInt()
+        } ?: DEFAULT_CEILING
     }
 }
+
+/** A replica running as many calls as it holds: 503, with `Retry-After`. */
+class ServerBusyException : OstromException(
+    ErrorKind.UNAVAILABLE,
+    "This server is answering as many calls as it can hold. Retry in a moment.",
+)
 
 /** The server's counters, put on the application by [configureHttp] before the routes are built. */
 internal val callsInProgressKey = AttributeKey<CallsInProgress>("ostrom.calls.in.progress")
@@ -264,10 +254,7 @@ val CallCeiling = createRouteScopedPlugin("CallCeiling", ::CallCeilingConfig) {
             val place = calls.enter(kind)
             if (place == null) {
                 call.response.header(HttpHeaders.RetryAfter, RETRY_AFTER_SECONDS)
-                // Written as is, never through content negotiation: a stream's client asks `text/event-stream`, for
-                // which no converter exists, and the ApiError went out as a 406 (CHARGE 41672759077).
-                call.respondText(BUSY_BODY, ContentType.Application.Json, HttpStatusCode.ServiceUnavailable)
-                return@on
+                throw ServerBusyException()
             }
             try {
                 proceed()
@@ -279,16 +266,6 @@ val CallCeiling = createRouteScopedPlugin("CallCeiling", ::CallCeilingConfig) {
 }
 
 private const val RETRY_AFTER_SECONDS = "1"
-
-private val BUSY_BODY = OstromJson.encodeToString(
-    ApiError.serializer(),
-    ApiError(
-        ErrorDetail(
-            ErrorKind.UNAVAILABLE.type,
-            "This server is answering as many calls as it can hold. Retry in a moment.",
-        ),
-    ),
-)
 
 /**
  * Routes whose calls stay open (a wait, a WebSocket, a stream): counted under [CallKind.HELD], apart from the
@@ -341,10 +318,6 @@ private object AroundEveryPlugin : Hook<suspend (ApplicationCall, suspend () -> 
         pipeline: ApplicationCallPipeline,
         handler: suspend (ApplicationCall, suspend () -> Unit) -> Unit,
     ) {
-        pipeline.intercept(ApplicationCallPipeline.Plugins) {
-            handler(call) { proceed() }
-            // A handler that answered without proceeding (a refusal) ends the call here; after a proceed, all is done.
-            finish()
-        }
+        pipeline.intercept(ApplicationCallPipeline.Plugins) { handler(call) { proceed() } }
     }
 }
