@@ -8,6 +8,7 @@ import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
@@ -115,14 +116,20 @@ class RunnerAssignmentsRepositoryImpl(private val driver: Driver) : RunnerAssign
         delivered = get("delivered_at").asInstantOrNull() != null,
         stopped = get("stopped_at").asInstantOrNull() != null,
         dropped = get("dropped_at").asInstantOrNull() != null,
+        superseded = get("superseded").asBoolean(),
     )
 
     /** The statements, shared with the tests. */
     internal companion object {
-        /** An assignment with its runner's last heartbeat; a removed runner reads as never seen. */
+        /**
+         * An assignment with its runner's last heartbeat (a removed runner reads as never seen), and whether another
+         * runner took a later execution of its session.
+         */
         const val SELECT_SQL: String =
             "SELECT a.session_id, a.epoch, a.runner_id, a.state, a.delivered_at, a.stopped_at, a.dropped_at, " +
-                "r.last_seen_at FROM runners_assignments a LEFT JOIN runners_registered r " +
+                "r.last_seen_at, EXISTS (SELECT 1 FROM runners_assignments n WHERE n.session_id = a.session_id " +
+                "AND n.epoch > a.epoch AND n.runner_id IS NOT NULL AND n.runner_id <> a.runner_id) AS superseded " +
+                "FROM runners_assignments a LEFT JOIN runners_registered r " +
                 "ON r.org_id = a.org_id AND r.id = a.runner_id"
 
         /** A new execution, for the runner of the session's latest one while it is online, for anyone otherwise. */

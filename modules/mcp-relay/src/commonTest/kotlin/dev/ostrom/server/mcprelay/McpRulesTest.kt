@@ -8,6 +8,7 @@ import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import dev.ostrom.server.mcprelay.domain.McpRules
 import dev.ostrom.server.mcprelay.domain.McpServer
 import dev.ostrom.server.mcprelay.domain.McpTransport
+import dev.ostrom.server.mcprelay.domain.OstromMcpServers
 import dev.ostrom.server.mcprelay.domain.PolicyEffect
 import dev.ostrom.server.mcprelay.domain.StdioLauncher
 import dev.ostrom.server.mcprelay.domain.StdioSpec
@@ -54,6 +55,34 @@ class McpRulesTest {
         refused(http.copy(name = "Grafana"))
         refused(http.copy(name = "settings"))
         refused(http.copy(name = "a".repeat(65)))
+    }
+
+    @Test
+    fun ostromIsOstromsOwnServerWhateverItsCaseAndSpaces() {
+        // The relay of `ostrom claude` serves `ostrom` itself (the waits): an org server of that name is never reached.
+        val spellings = mapOf(
+            "ostrom" to "`ostrom` as `ostrom`",
+            "OSTROM" to "`ostrom` as `ostrom`",
+            " Ostrom " to "`ostrom` as `ostrom`",
+            "ostrom\t" to "`ostrom` as `ostrom`",
+            // Every session package declares it too, and the launcher labels `workflow` `ostrom-workflow`.
+            "ostrom-workflow" to "`ostrom-workflow` as `ostrom-workflow`",
+            "Ostrom-Workflow" to "`ostrom-workflow` as `ostrom-workflow`",
+            "workflow" to "`workflow` as `ostrom-workflow`",
+        )
+        for ((name, seen) in spellings) {
+            val refused = assertFailsWith<InvalidMcpServerException>(name) {
+                McpRules.requireServer(http.copy(name = name))
+            }
+            assertEquals(
+                "Agents would see $seen, Ostrom's own MCP server, which every agent already has: choose another name.",
+                refused.message,
+            )
+        }
+        for (name in listOf("ostrom-docs", "ostrom.workflow", "workflows", "docs")) {
+            McpRules.requireServer(http.copy(name = name))
+        }
+        assertEquals("ostrom-a_b", OstromMcpServers.labelOf("a.b"))
     }
 
     @Test
