@@ -64,9 +64,16 @@ interface GatesRepository {
      * @param approverId Only this approver's, or everyone's when null.
      * @param status Only this status, or any when null.
      * @param limit At most this many (bounded by the caller).
+     * @param before Only the requests older than this one, or from the newest when null.
      * @return The requests.
      */
-    suspend fun approvals(orgId: Uuid, approverId: String?, status: RequestStatus?, limit: Int): List<ApprovalView>
+    suspend fun approvals(
+        orgId: Uuid,
+        approverId: String?,
+        status: RequestStatus?,
+        limit: Int,
+        before: Uuid? = null,
+    ): List<ApprovalView>
 
     /**
      * Reads the approvers of several gates in one read (the yes queue shows a page of them).

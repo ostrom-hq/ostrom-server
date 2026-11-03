@@ -280,6 +280,17 @@ class GatesPostgresTest {
         assertEquals("Merge into main", opened.gate.gate?.label)
         val approvals = server.approvalsOf(opened)
         assertEquals(listOf("lyes", "rev-b", "rev-c"), approvals.map { it.requestedFrom }.sorted())
+        // Paged by `before`: a full page names its last as `next`, the end gives none, a cursor of nothing is a 400.
+        val first = server.call("user:a:rev-b", "/api/v1/approvals?limit=1").body<ApprovalsPage>()
+        val rest = server.call("user:a:rev-b", "/api/v1/approvals?before=${first.next}").body<ApprovalsPage>()
+        assertEquals(approvals.map { it.id }, (first.items + rest.items).map { it.id })
+        assertNull(rest.next)
+        val end = server.call("user:a:rev-b", "/api/v1/approvals?before=${rest.items.last().id}").body<ApprovalsPage>()
+        assertEquals(emptyList(), end.items)
+        for (cursor in listOf("nope", Uuid.random().toString())) {
+            val refused = server.call("user:a:rev-b", "/api/v1/approvals?before=$cursor")
+            assertEquals(HttpStatusCode.BadRequest, refused.status, cursor)
+        }
         val diff = dev.ostrom.server.gates.presentation.Evidence(
             "Diff (sent by the developer's machine, not checked by Ostrom)",
             "+ok",
@@ -527,6 +538,9 @@ class GatesPostgresTest {
         )
         assertEquals(HttpStatusCode.NotFound, server.move("agent:b:$session", opened, "consume").status)
         assertTrue(server.call("user:b:rev-b", "/api/v1/approvals").body<ApprovalsPage>().items.isEmpty())
+        // A's request as B's cursor names nothing of B's: a 400, never A's rows.
+        val foreign = server.call("user:b:rev-b", "/api/v1/approvals?before=${approval.id}")
+        assertEquals(HttpStatusCode.BadRequest, foreign.status)
         assertEquals(approval, server.call("user:a:rev-b", "/api/v1/approvals/${approval.id}").body<Approval>())
         val mine = server.call("user:a:rev-b", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>()
         assertEquals(1, mine.items.size)

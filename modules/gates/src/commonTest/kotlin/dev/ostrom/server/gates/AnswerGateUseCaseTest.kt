@@ -24,6 +24,7 @@ import dev.ostrom.server.gates.fakes.ciService
 import dev.ostrom.server.gates.fakes.device
 import dev.ostrom.server.gates.fakes.user
 import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.kernel.logging.LogLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -267,7 +268,9 @@ class AnswerGateUseCaseTest {
         val pending = RequestStatus.PENDING
 
         assertEquals(listOf(second.gate), bench.approvals(user("rev-b"), true, pending, 500).map { it.gate })
-        assertEquals(1, bench.approvals(user("rev-b"), true, pending, 0).size, "The limit is at least one")
+        assertFailsWith<InvalidPageException>("The limit is at least one") {
+            bench.approvals(user("rev-b"), true, pending, 0)
+        }
         assertEquals(1, bench.approvals(user("lyes"), true, pending, 10).size, "The closed request is not pending")
         // Second audit L4: "mine" is the caller's person, whatever its credential's id.
         val byPerson = GateActor("cred-7", ORG, ActorKind.USER, personId = "rev-b")
@@ -281,6 +284,14 @@ class AnswerGateUseCaseTest {
             bench.approvals(user("lyes"), true, RequestStatus.CLOSED, 10).map { it.request.status },
         )
         assertTrue(bench.approvals(user("rev-b").copy(orgId = OTHER_ORG), false, null, 10).isEmpty())
+        // `before`: the older ones; after the oldest, nothing; a request of no page of the organization, a 400.
+        val newest = bench.approvals(user("lyes"), false, null, 10)
+        val older = bench.approvals(user("lyes"), false, null, 10, newest.first().request.id)
+        assertEquals(newest.drop(1), older)
+        assertEquals(emptyList(), bench.approvals(user("lyes"), false, null, 10, newest.last().request.id))
+        assertFailsWith<InvalidPageException> { bench.approvals(user("lyes"), false, null, 10, Uuid.random()) }
+        val foreign = user("rev-b").copy(orgId = OTHER_ORG)
+        assertFailsWith<InvalidPageException> { bench.approvals(foreign, false, null, 10, newest.last().request.id) }
         assertFailsWith<OnlyPeopleAnswerException> { bench.approvals(device(), true, pending, 10) }
     }
 
