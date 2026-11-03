@@ -81,11 +81,12 @@ const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
 
 /**
  * The scopes of the phone app's token: what the app shows (the person, their organizations, the approvals and their
- * receipts, the usage) and does (answer a gate, register for push, set its notifications). Nothing of the console's
- * administration, no workflow write, no token management.
+ * receipts, the spending, the activity feed) and does (answer a gate, register for push, set its notifications).
+ * Nothing of the console's administration, no workflow write, no token management.
  */
 val MOBILE_SCOPES: Set<String> = setOf(
-    "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", NOTIFICATIONS_WRITE_SCOPE,
+    "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", "activity:read",
+    NOTIFICATIONS_WRITE_SCOPE,
 )
 
 /**
