@@ -21,6 +21,9 @@ on:
           Scenario files, space-separated, relative to ostrom-e2e
           (`scenarios/budget.e2e.ts scenarios/attestation.e2e.ts`); empty = every scenarios/*.e2e.ts.
         default: ""
+      cli_ref:
+        description: ostrom-cli ref whose binary `ostrom import teamcode` runs (built only when scenarios/import.e2e.ts runs)
+        default: main
       tests:
         description: >-
           Scenarios to run in those files, a test-name regular expression as vitest's -t reads it (`E2E-PARC-013`,
@@ -42,7 +45,8 @@ jobs:
     name: journey
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 30, plus the CLI's native build when scenarios/import.e2e.ts runs
+    timeout-minutes: 50
     permissions:
       contents: read
       packages: read
@@ -58,12 +62,24 @@ jobs:
         # latest, 2026-10-01 (as ostrom-e2e)
         image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78
         ports: ['12111:12111']
+      # The fake TeamCode team of E2E-TC-003/004 (ostrom-helm compose/demo/teamcode, the demo's MySQL 8.4), as on
+      # ostrom-e2e's bench.
+      teamcode-db:
+        image: mysql:8.4
+        env: { MYSQL_ROOT_PASSWORD: teamcode-root, MYSQL_DATABASE: teamcode }
+        ports: ['3307:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pteamcode-root" --health-interval 5s --health-timeout 5s --health-retries 30
     env:
       WANTED_IMAGE: ${{ inputs.server_image }}
       E2E_REF: ${{ inputs.e2e_ref || 'main' }}
       # A pull request that changes this file proves it on one scenario of the main journey (3.2, the gate of a rule).
       FILES: ${{ github.event_name == 'pull_request' && 'scenarios/parcours.e2e.ts' || inputs.files }}
       TESTS: ${{ github.event_name == 'pull_request' && 'E2E-PARC-013' || inputs.tests }}
+      # E2E-TC-003/004 (scenarios/import.e2e.ts) run the real `ostrom import teamcode`: the CLI is built and the fake
+      # TeamCode team loaded only when that file runs (named, or every file).
+      TEAMCODE: ${{ github.event_name != 'pull_request' && (inputs.files == '' || contains(inputs.files, 'import.e2e.ts')) }}
+      CLI_REF: ${{ inputs.cli_ref || 'main' }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,6 +94,77 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_E2E }}
           path: e2e
           persist-credentials: false
+      # The fake TeamCode team (helm#25): schema, rows, a read-only user as `ostrom import teamcode` reads with, and its
+      # key file (fake, public). Pinned as ostrom-e2e's ci.yml pins it: the scenarios name its accounts and tokens.
+      - if: env.TEAMCODE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ref: 4f03cd375d7309da4f58388a533f704f883a0d49
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          sparse-checkout: compose/demo/teamcode
+          persist-credentials: false
+      - name: Fake TeamCode team in MySQL (helm compose/demo/teamcode)
+        if: env.TEAMCODE == 'true'
+        env:
+          TEAMCODE_DIR: helm/compose/demo/teamcode
+        run: |
+          sql() { docker run --rm -i --network host -e MYSQL_PWD=teamcode-root mysql:8.4 mysql -h127.0.0.1 -P3307 -uroot "$@"; }
+          sql teamcode < "$TEAMCODE_DIR/01-schema.sql"
+          sql teamcode < "$TEAMCODE_DIR/02-seed.sql"
+          docker run --rm --network host -v "$PWD/$TEAMCODE_DIR:/teamcode:ro" -e MYSQL_HOST=127.0.0.1 -e MYSQL_TCP_PORT=3307 \
+            -e MYSQL_ROOT_PASSWORD=teamcode-root -e MYSQL_DATABASE=teamcode -e TEAMCODE_RO_PASSWORD=teamcode-ro \
+            mysql:8.4 sh /teamcode/03-readonly.sh
+          # `ostrom import teamcode` reads TeamCode with the mysql client on the PATH
+          command -v mysql || { sudo apt-get update -q && sudo apt-get install -yq mysql-client; }
+          MYSQL_PWD=teamcode-ro mysql -h127.0.0.1 -P3307 -uteamcode_ro teamcode -N -e "SELECT COUNT(*) FROM accounts WHERE team_id = 'default'"
+      # The CLI's linuxX64 release binary, with the ostrom-core it pins next to it (as cli-journey.yml).
+      - if: env.TEAMCODE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-cli
+          ref: ${{ env.CLI_REF }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CLI }}
+          path: cli
+          persist-credentials: false
+      - name: ostrom-core version the CLI pins
+        id: clicore
+        if: env.TEAMCODE == 'true'
+        run: echo "ref=$(tr -d '[:space:]' < cli/gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - if: env.TEAMCODE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.clicore.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: ostrom-core
+          persist-credentials: false
+      - if: env.TEAMCODE == 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - if: env.TEAMCODE == 'true'
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+      - if: env.TEAMCODE == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cli/gradle/libs.versions.toml') }}
+      - name: The CLI's linuxX64 release binary
+        id: cli
+        if: env.TEAMCODE == 'true'
+        working-directory: cli
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false
+        run: |
+          sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+          ./gradlew -Postrom.core.local=true :cli:linkReleaseExecutableLinuxX64
+          echo "bin=$PWD/cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe" >> "$GITHUB_OUTPUT"
+          echo "- CLI: ostrom-cli $(git rev-parse --short HEAD) ($CLI_REF), built here" >> "$GITHUB_STEP_SUMMARY"
       - name: The server image (the newest sha-<7> of main published, unless named)
         id: server
         env:
@@ -166,6 +253,13 @@ jobs:
           OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
           # The fake provider the scenarios start, where the server's gateway and sharing point (step above).
           OSTROM_E2E_FAKE_TOKENS_PORT: "4620"
+          # E2E-TC-003/004: the CLI, the fake TeamCode team, and the superuser of this throwaway database (to make an
+          # imported account wait for a reconnection and read the org's audit chain), as on ostrom-e2e's bench.
+          OSTROM_E2E_CLI_BIN: ${{ steps.cli.outputs.bin }}
+          OSTROM_E2E_TEAMCODE_DB: ${{ env.TEAMCODE == 'true' && 'mysql://teamcode_ro@127.0.0.1:3307/teamcode' || '' }}
+          OSTROM_E2E_TEAMCODE_PASSWORD: teamcode-ro
+          OSTROM_E2E_TEAMCODE_KEY_FILE: ${{ env.TEAMCODE == 'true' && format('{0}/helm/compose/demo/teamcode/key.txt', github.workspace) || '' }}
+          OSTROM_E2E_DATABASE_ADMIN_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom
         run: |
           pnpm install --frozen-lockfile
           # The files named, or every scenario file; a filter runs its scenarios only; the json report says which ran.
