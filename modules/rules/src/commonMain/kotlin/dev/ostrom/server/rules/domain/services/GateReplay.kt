@@ -107,14 +107,13 @@ object GateReplay {
 
     private fun item(gate: Gate, coverage: Coverage, policy: SelfApprovalPolicy): JsonObject {
         val subject = gate.subject
-        val covering = coverage.rules
         val approvers = coverage.approvers.values.toList()
         val askers = gate.askedBy.map { it.lowercase() }.toSet()
         val others = coverage.approvers.filterKeys { it !in askers }.values.toList()
         val alone = policy == SelfApprovalPolicy.SOLE_APPROVER && approvers.size == 1
         val may = if (alone) approvers else others
         val outcome = when {
-            covering.isEmpty() -> PASSED
+            coverage.count == 0 -> PASSED
             may.isEmpty() -> BLOCKED
             else -> ASKED
         }
@@ -131,13 +130,13 @@ object GateReplay {
             }
             put("outcome", outcome)
             putJsonArray("sessions") { gate.sessionIds.forEach { add(it) } }
-            put("ruleCount", covering.size)
+            put("ruleCount", coverage.count)
             putJsonArray("rules") {
-                covering.take(MAX_LISTED).forEach { addJsonObject { rule(it) } }
+                coverage.first.forEach { addJsonObject { rule(it) } }
             }
             put("approverCount", may.size)
             putJsonArray("approvers") { may.take(MAX_APPROVERS).forEach { add(it) } }
-            put("why", why(outcome, covering, may, approvers))
+            put("why", why(outcome, coverage, may, approvers))
             put("simulation", true)
         }
     }
@@ -149,24 +148,27 @@ object GateReplay {
         putJsonArray("approvers") { replayed.gate.approvers.take(MAX_NAMED).forEach { add(it) } }
     }
 
-    private fun why(outcome: String, covering: List<ReplayedRule>, may: List<String>, approvers: List<String>): String {
-        val named = names(covering, "; ") { "${it.rule.id}: ${cut(it.rule.statement, NAMED_STATEMENT)}" }
+    private fun why(outcome: String, coverage: Coverage, may: List<String>, approvers: List<String>): String {
+        val named = names(coverage.first, coverage.count, "; ") {
+            "${it.rule.id}: ${cut(it.rule.statement, NAMED_STATEMENT)}"
+        }
         return when (outcome) {
             PASSED -> "No replayed rule gates this action: it would have run without asking anything."
-            ASKED -> "It would have waited for a yes from ${names(may, ", ") { it }} ($named)."
+            ASKED -> "It would have waited for a yes from ${names(may, may.size, ", ") { it }} ($named)."
             else -> if (approvers.isEmpty()) {
                 "It would have been blocked: the gate names no approver ($named)."
             } else {
-                "It would have been blocked: only ${names(approvers, ", ") { it }}, who asked, may approve it, and " +
-                    "the organization refuses a yes on one's own action ($named)."
+                val only = names(approvers, approvers.size, ", ") { it }
+                "It would have been blocked: only $only, who asked, may approve it, and the organization refuses a " +
+                    "yes on one's own action ($named)."
             }
         }
     }
 
-    // The first MAX_NAMED, then how many more: only those named are written out.
-    private fun <T> names(all: List<T>, separator: String, name: (T) -> String): String {
-        val more = all.size - MAX_NAMED
-        val shown = all.take(MAX_NAMED).joinToString(separator, transform = name)
+    // The first MAX_NAMED of [count], then how many more: only those named are written out.
+    private fun <T> names(first: List<T>, count: Int, separator: String, name: (T) -> String): String {
+        val more = count - MAX_NAMED
+        val shown = first.take(MAX_NAMED).joinToString(separator, transform = name)
         return if (more > 0) "$shown$separator$more more" else shown
     }
 
@@ -179,11 +181,22 @@ object GateReplay {
         return pull ?: push
     }
 
-    // The rules covering one subject, and their approvers by lowered name, the first spelling kept.
+    // How many rules cover one subject, the first MAX_LISTED of them, and all their approvers by lowered name, the
+    // first spelling kept. Only what an item writes is held: a replay keeps one per distinct subject.
     private class Coverage(target: Target, all: List<ReplayedRule>) {
-        val rules = all.filter { it.covers(target) }
-        val approvers = LinkedHashMap<String, String>().also { byKey ->
-            rules.forEach { rule -> rule.approverKeys.forEach { (name, key) -> byKey.getOrPut(key) { name } } }
+        val first = ArrayList<ReplayedRule>(MAX_LISTED)
+        val approvers = LinkedHashMap<String, String>()
+        var count = 0
+            private set
+
+        init {
+            all.forEach { rule ->
+                if (rule.covers(target)) {
+                    count++
+                    if (first.size < MAX_LISTED) first += rule
+                    rule.approverKeys.forEach { (name, key) -> approvers.getOrPut(key) { name } }
+                }
+            }
         }
     }
 

@@ -98,9 +98,11 @@ class ReplayLoadPostgresTest {
             assertTrue(stored < MAX_STORED, "Items over ${mib(MAX_STORED.toLong())}:\n$report")
             assertTrue(took < MAX_DURATION, "Over $MAX_DURATION:\n$report")
             // A pod rests at about 112 Mi of its 256 (JOURNAL 03/11, relay leg of chart-load): a replay, one at a time
-            // on a server, leaves it 44 Mi for its requests.
+            // on a server, leaves it 44 Mi for its requests. Only the resident set says so: the JVM's heap in use
+            // counts its garbage until it collects (reported, not budgeted).
             val growth = memory.peak() - before
-            assertTrue(growth < MAX_GROWTH, "Resident memory up by over ${mib(MAX_GROWTH)}:\n$report")
+            val over = "Resident memory up by over ${mib(MAX_GROWTH)}:\n$report"
+            assertTrue(!residentSetMeasured || growth < MAX_GROWTH, over)
         }
 
     @Test
