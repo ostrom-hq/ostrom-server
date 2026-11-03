@@ -46,11 +46,8 @@ class RegisteredRuntimeDriver(
             assignment == null -> ExecutionStatus.MISSING
             assignment.runnerId == null -> ExecutionStatus.PENDING
             seenAt == null || seenAt < onlineSince(clock.now()) -> ExecutionStatus.HOST_LOST
-            else -> when (assignment.state) {
-                MachineExecutionState.RUNNING -> ExecutionStatus.RUNNING
-                MachineExecutionState.ENDED, MachineExecutionState.MISSING -> ExecutionStatus.ENDED
-                MachineExecutionState.PENDING, null -> ExecutionStatus.PENDING
-            }
+            // Pending, or not reported yet.
+            else -> STATUS_OF[assignment.state] ?: ExecutionStatus.PENDING
         }
     }
 
@@ -64,4 +61,16 @@ class RegisteredRuntimeDriver(
     }
 
     private fun onlineSince(now: Instant) = now - ReconcileCloudSessionUseCaseImpl.HEARTBEAT_LOSS
+
+    private companion object {
+        /**
+         * What the reconciler reads from a machine's report. A map rather than a `when`: an exhaustive `when` on a
+         * nullable enum compiles a default branch no test can reach.
+         */
+        val STATUS_OF = mapOf(
+            MachineExecutionState.RUNNING to ExecutionStatus.RUNNING,
+            MachineExecutionState.ENDED to ExecutionStatus.ENDED,
+            MachineExecutionState.MISSING to ExecutionStatus.ENDED,
+        )
+    }
 }
