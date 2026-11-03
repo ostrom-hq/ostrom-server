@@ -30,7 +30,6 @@ private const val WARM_UP_CALLS = 5
 private const val HTTP_CALLS = 20
 private const val CALLS_EACH = 10
 private const val RECORDINGS = 3
-private const val TRIALS = 3
 private const val EXPLAIN = "EXPLAIN (ANALYZE, BUFFERS) "
 
 /**

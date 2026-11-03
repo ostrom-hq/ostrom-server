@@ -51,6 +51,8 @@ class ReadBenchTest {
         val usual = List(19) { 2.milliseconds } + 30.milliseconds
         assertEquals(usual, medianTrial(listOf(loaded, usual.reversed(), fast)))
         assertEquals(fast, medianTrial(listOf(fast)))
+        assertFailsWith<IllegalArgumentException> { medianTrial(listOf(fast, usual)) }
+        assertFailsWith<IllegalArgumentException> { medianTrial(listOf(emptyList())) }
     }
 
     @Test

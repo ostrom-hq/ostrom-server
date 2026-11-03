@@ -42,7 +42,7 @@ class ReadMeasure(
         appendLine("== $name")
         appendLine(
             "queries per call: $queries (${statements.size} statements); database p50 $p50, p95 $p95 " +
-                "($calls calls, $CONCURRENT_CALLS concurrent, " +
+                "($calls calls, $CONCURRENT_CALLS concurrent, the median of $TRIALS trials, " +
                 "PostgreSQL's planning and execution time); " +
                 "whole call in process $http",
         )
@@ -51,6 +51,8 @@ class ReadMeasure(
     }
 }
 
+/** How many times [measureRead] times a route's concurrent replays; it keeps the median trial. */
+internal const val TRIALS = 3
 private const val P50 = 0.5
 private const val P95 = 0.95
 
@@ -59,10 +61,11 @@ private const val P95 = 0.95
  * runner shared with the other modules' tests, one trial slowed by their load neither breaks the budget nor, as the
  * best one would, hides a slow route (orchestrator, 03/11/2026: a 73 ms p95 of OrgsReadsBenchTest on server#271).
  *
- * @param trials The database times of each trial.
+ * @param trials The database times of each trial: an odd number of them, none empty.
  * @return The median trial, sorted.
  */
 internal fun medianTrial(trials: List<List<Duration>>): List<Duration> {
+    require(trials.size % 2 == 1 && trials.none { it.isEmpty() }) { "An odd number of trials, none empty." }
     val sorted = trials.map { it.sorted() }.sortedBy { it[ceil(P95 * it.size).toInt() - 1] }
     return sorted[sorted.size / 2]
 }
