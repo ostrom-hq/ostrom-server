@@ -96,15 +96,16 @@ suspend fun WaitAgentResolver.agentWaitCallerOf(
 /**
  * The callers of one request to the waits MCP server, by scope. A person's credential or a key is the member the orgs
  * module resolves, with its waits scopes ([waitCallerOf]); an agent token is its launch's person
- * ([agentWaitCallerOf]), and names its session and no run: refused before any message is read, since no tool call can
- * succeed without them.
+ * ([agentWaitCallerOf]), in the session it names, and never names a run (refused before any message is read). An agent
+ * token may name no session yet: Claude Code connects its MCP servers at start-up, maybe before its SessionStart hook
+ * told the relay the session, so the handshake and the tools' list are answered and each tool names what is missing.
  *
  * @param principal The caller's principal.
  * @param binding The session and run the request names.
  *
- * @return The caller for a scope; it throws when refused.
+ * @return The caller for a scope; it throws when refused, [AgentSessionRequiredException] for an agent token that
+ *   names no session.
  *
- * @throws AgentSessionRequiredException When an agent token names no session.
  * @throws AgentRunRefusedException When an agent token names a run.
  */
 internal fun WaitsRoutesDependencies.mcpCallers(
@@ -112,9 +113,9 @@ internal fun WaitsRoutesDependencies.mcpCallers(
     binding: WaitsMcpApi,
 ): suspend (String) -> WaitCaller {
     if (principal.kind != PrincipalKind.AGENT) return { scope -> orgResolver.waitCallerOf(principal, scope) }
-    val session = binding.session ?: throw AgentSessionRequiredException()
     if (binding.run != null) throw AgentRunRefusedException()
-    return { scope -> agents.agentWaitCallerOf(principal, session, scope) }
+    val session = binding.session
+    return { scope -> agents.agentWaitCallerOf(principal, session ?: throw AgentSessionRequiredException(), scope) }
 }
 
 /** A wait id of a path; a malformed one names no wait. */
