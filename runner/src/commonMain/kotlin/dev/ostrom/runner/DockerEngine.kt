@@ -23,6 +23,13 @@ import kotlin.uuid.Uuid
 /** The machine's Docker Engine, as a registered runner uses it: only the objects labelled as this runner's. */
 interface DockerEngine {
     /**
+     * Reads the machine's processors and memory, as the engine sees them.
+     *
+     * @return Them.
+     */
+    suspend fun info(): EngineInfo
+
+    /**
      * Lists this runner's containers.
      *
      * @return Them, whatever their state.
@@ -77,6 +84,14 @@ interface DockerEngine {
 data class HeldContainer(val id: String, val name: String, val sessionId: Uuid, val epoch: Long, val state: String)
 
 /**
+ * The machine's processors and memory.
+ *
+ * @property cpus Its processors (`NCPU`).
+ * @property memoryBytes Its memory (`MemTotal`).
+ */
+data class EngineInfo(val cpus: Int, val memoryBytes: Long)
+
+/**
  * A volume of this runner.
  *
  * @property name Its name.
@@ -95,6 +110,13 @@ data class HeldVolume(val name: String, val sessionId: Uuid)
 class HttpDockerEngine(private val client: HttpClient, apiUrl: String, runnerId: Uuid) : DockerEngine {
     private val base = apiUrl.trimEnd('/')
     private val mine = """{"label":["${PlanGuard.RUNNER_LABEL}=$runnerId"]}"""
+
+    override suspend fun info(): EngineInfo {
+        val read = call(HttpMethod.Get, "/info")
+        read.requireSuccess("read the engine")
+        val info = LISTING.decodeFromString(ListedInfo.serializer(), read.bodyAsText())
+        return EngineInfo(info.cpus, info.memory)
+    }
 
     override suspend fun containers(): List<HeldContainer> {
         val listed = call(HttpMethod.Get, "/containers/json", parameters = mapOf("all" to "true", "filters" to mine))
@@ -236,6 +258,9 @@ private class ListedContainer(
 )
 
 /** The answer of `GET /volumes`. */
+@Serializable
+private class ListedInfo(@SerialName("NCPU") val cpus: Int, @SerialName("MemTotal") val memory: Long)
+
 @Serializable
 private class ListedVolumes(@SerialName("Volumes") val volumes: List<ListedVolume>? = null)
 

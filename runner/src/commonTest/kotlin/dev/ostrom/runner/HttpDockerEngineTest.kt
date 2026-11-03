@@ -147,6 +147,14 @@ class HttpDockerEngineTest {
     }
 
     @Test
+    fun theMachinesProcessorsAndMemoryAreReadFromTheEngine() = runTest {
+        answers["GET /info"] = HttpStatusCode.OK to """{"NCPU":8,"MemTotal":34359738368,"Name":"m"}"""
+        assertEquals(EngineInfo(8, 34_359_738_368), docker.info())
+        answers["GET /info"] = HttpStatusCode.InternalServerError to "{}"
+        assertFailsWith<DockerApiException> { docker.info() }
+    }
+
+    @Test
     fun aVolumeIsCreatedFromItsBody() = runTest {
         val volume = PlannedObject("ostrom-ws-$hex", buildJsonObject { put("Name", "ostrom-ws-$hex") })
         docker.createVolume(volume)
