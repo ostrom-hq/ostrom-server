@@ -29,6 +29,8 @@ class StripeMockTest {
         }
         val gateway = StripeGatewayImpl(HttpClient(), StripeConfig("sk_test_123", url))
         val customer = gateway.createCustomer(Uuid.random(), "Acme", "a@acme.dev")
+        gateway.updateCustomerEmail(customer, "billing@acme.dev")
+        gateway.customerEmail(customer)
         val price = gateway.priceId("ostrom_team_monthly")
         val checkout = gateway.createCheckoutSession(
             CheckoutRequest(Uuid.random(), customer, price, 2, "https://a/s", "https://a/c")

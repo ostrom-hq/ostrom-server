@@ -26,6 +26,7 @@ import dev.ostrom.server.billing.domain.SubscriptionStatus
 import dev.ostrom.server.billing.domain.SyncSubscriptionUseCaseImpl
 import dev.ostrom.server.billing.fakes.FakeBillingRepository
 import dev.ostrom.server.billing.fakes.FakeLicenseProvider
+import dev.ostrom.server.billing.fakes.FakeMemberEmails
 import dev.ostrom.server.billing.fakes.FakeNotifier
 import dev.ostrom.server.billing.fakes.FakeStripeGateway
 import dev.ostrom.server.billing.fakes.FixedClock
@@ -50,7 +51,11 @@ internal class World(stripeEnabled: Boolean = true) {
     val settings = BillingSettings(stripeEnabled, "https://app.ostrom.run/")
     val limits = GetPlanLimitsUseCaseImpl(repository, license, settings, clock)
     val overview = GetBillingOverviewUseCaseImpl(repository, limits, settings, clock)
-    val checkout = StartCheckoutUseCaseImpl(repository, stripe, settings, clock)
+    val emails = FakeMemberEmails()
+    val emailFailures = mutableListOf<String>()
+    val checkout = StartCheckoutUseCaseImpl(repository, stripe, settings, clock, emails) { customer, error ->
+        emailFailures += "$customer ${error::class.simpleName}"
+    }
     val portal = OpenCustomerPortalUseCaseImpl(repository, stripe, settings)
     val unknownPrices = mutableListOf<Pair<String, String?>>()
     val sync = SyncSubscriptionUseCaseImpl(repository, stripe, clock) { id, key -> unknownPrices += id to key }

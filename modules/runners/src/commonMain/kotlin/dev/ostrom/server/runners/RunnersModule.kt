@@ -140,7 +140,7 @@ object RunnersModule : ServerModule {
         single {
             val config = get<RunnersConfig>()
             val runtime = RunnerRuntime(config.runtimeLabel, config.runnerImage)
-            RunnersRoutesDependencies(get(), runtime, get(), get(), get(), get(), get())
+            RunnersRoutesDependencies(get(), runtime, get(), get(), get(), get(), get(), get())
         }
         single { TerminalRelay() }
         single<TerminalTickets> { InMemoryTerminalTickets(get(), get()) }
