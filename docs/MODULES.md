@@ -2,8 +2,8 @@
 
 Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches`, `gates`, `receipts`, `compiler`,
 `workflow-runs`, `mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`,
-`integrations-github`, `integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already
-exists as an empty skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its
+`integrations-github`, `integrations-slack`, `sharing`, `notifications`) is a Gradle module under `modules/<name>/`.
+Each one already exists as an empty skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its
 single line in `app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference
 example: copy its shape.
 
