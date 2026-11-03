@@ -675,4 +675,45 @@ class CompilerPostgresTest {
         }
         assertEquals(0L, forged.getOrThrow(), "Org B can neither see nor write org A's rows")
     }
+
+    // Every read of the workflows is bounded: the organization keeps at most 1000, so none is ever cut from a list.
+    @Test
+    fun anOrganizationKeepsAtMostAThousandWorkflows() = compilerTest { server ->
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", release()).status)
+        // 999 copies of it: the organization's 1000th workflow.
+        server.database.superuser.execute(
+            """
+            INSERT INTO compiler_workflows (org_id, id, doc, version, updated_by, updated_at, created_at)
+            SELECT org_id, 'copy' || g, CAST(jsonb_set(CAST(doc AS JSONB), '{id}', to_jsonb('copy' || g)) AS TEXT),
+                version, updated_by, updated_at, created_at + g * interval '1 second'
+            FROM compiler_workflows, generate_series(1, 999) g WHERE id = 'release'
+            """.trimIndent(),
+        ).getOrThrow()
+
+        val refused = server.call("user:a:lead", "/api/v1/workflows", "POST", apiDeploys())
+        assertEquals(HttpStatusCode.Conflict, refused.status)
+        assertTrue(refused.bodyAsText().contains("workflow_limit"), refused.bodyAsText())
+        assertEquals(1000, server.call("user:a:lead", "/api/v1/workflows").body<WorkflowsPage>().items.size)
+        // Another organization has its own 1000.
+        assertEquals(HttpStatusCode.Created, server.call("user:b:lead", "/api/v1/workflows", "POST", release()).status)
+    }
+
+    // A package cites the last decision of each workflow, however many decisions the organization took before it.
+    @Test
+    fun theLastDecisionOfAWorkflowIsReadAfterAThousandOlderOnes() = compilerTest { server ->
+        server.database.superuser.execute(
+            """
+            INSERT INTO compiler_decisions (org_id, id, subject_kind, subject_id, decided_by, decided_at)
+            SELECT '0000000a-0000-0000-0000-000000000000', 'dec_old_' || g, 'workflow', 'release', 'old',
+                '2020-01-01T00' || chr(58) || '00' || chr(58) || lpad(CAST(g % 60 AS TEXT), 2, '0') || '.000Z'
+            FROM generate_series(1, 1000) g
+            """.trimIndent(),
+        ).getOrThrow()
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", release()).status)
+
+        val last = server.koin.get<CompilerRepository>().decisions(orgA)
+            .filter { it.subjectId == "release" }
+            .maxBy { it.at }
+        assertEquals("lead", last.by)
+    }
 }
