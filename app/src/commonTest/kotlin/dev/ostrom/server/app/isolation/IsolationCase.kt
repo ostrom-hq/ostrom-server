@@ -59,8 +59,12 @@ internal sealed interface Case {
 /** Shorthands for the registry. */
 internal fun of(seed: Seed): Param = Param.Of(seed)
 
-internal fun target(vararg params: Pair<String, Seed>, body: String? = null, admin: Boolean = false): Case =
-    Case.Target(params.associate { (name, seed) -> name to of(seed) }, body, admin)
+internal fun target(
+    vararg params: Pair<String, Seed>,
+    body: String? = null,
+    admin: Boolean = false,
+    rpc: Boolean = false,
+): Case = Case.Target(params.associate { (name, seed) -> name to of(seed) }, body, admin, rpc = rpc)
 
 /**
  * A value of the same shape as [value], for the twin request: the prefix up to the last `_` or `:` is kept (`rule_`,
