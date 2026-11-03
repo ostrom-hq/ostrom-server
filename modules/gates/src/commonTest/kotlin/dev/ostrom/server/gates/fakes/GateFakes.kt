@@ -12,6 +12,7 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.repositories.GatesTransaction
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GateCheckNeed
 import dev.ostrom.server.gates.domain.services.GateCheckNeeds
 import dev.ostrom.server.gates.domain.services.GateCheckProof
@@ -165,6 +166,13 @@ class InMemoryGatesRepository : GatesRepository {
 /** The preimage itself stands for its digest: equal texts, equal digests. */
 class IdentityDigester : GateDigester {
     override fun digest(text: String): String = text
+}
+
+/** The GitHub accounts people linked, by Ostrom login. */
+class FakeGitHubAccounts : GateGitHubAccounts {
+    val ids = mutableMapOf<String, Long>()
+
+    override suspend fun gitHubIdOf(login: String): Long? = ids[login]
 }
 
 class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT) : GatePolicies {

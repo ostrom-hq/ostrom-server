@@ -11,6 +11,7 @@ import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.Viewer
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GatePolicies
 
 /** The yes queue of a person, as the console and the app open on it. */
@@ -32,10 +33,12 @@ interface GetApprovalQueueUseCase {
  *
  * @param repository The gates.
  * @param policies The organization's self-approval setting.
+ * @param gitHub The GitHub account the reader linked (Q-GATES-G1).
  */
 class GetApprovalQueueUseCaseImpl(
     private val repository: GatesRepository,
     private val policies: GatePolicies,
+    private val gitHub: GateGitHubAccounts,
 ) : GetApprovalQueueUseCase {
     override suspend fun invoke(actor: GateActor, viewer: Viewer): ApprovalInbox {
         // S2-15: the queue is the credential's person's, never its id's.

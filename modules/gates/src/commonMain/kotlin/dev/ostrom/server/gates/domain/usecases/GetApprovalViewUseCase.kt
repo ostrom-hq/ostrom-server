@@ -9,6 +9,7 @@ import dev.ostrom.server.gates.domain.models.GateNotFoundException
 import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import dev.ostrom.server.gates.domain.models.Viewer
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import kotlin.uuid.Uuid
 
@@ -33,10 +34,12 @@ interface GetApprovalViewUseCase {
  *
  * @param repository The gates.
  * @param policies The organization's self-approval setting.
+ * @param gitHub The GitHub account the reader linked (Q-GATES-G1).
  */
 class GetApprovalViewUseCaseImpl(
     private val repository: GatesRepository,
     private val policies: GatePolicies,
+    private val gitHub: GateGitHubAccounts,
 ) : GetApprovalViewUseCase {
     override suspend fun invoke(actor: GateActor, viewer: Viewer, approvalId: Uuid): ApprovalScreen {
         // S2-15: a yes is signed as the credential's person, never as its id.
