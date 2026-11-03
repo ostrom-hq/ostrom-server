@@ -92,7 +92,7 @@ private val CROSS_ORGANIZATION_SQL: String =
  * The most people a prefix may name for the search to read their memberships by key; beyond, it walks the team in
  * order, where such a prefix matches often and fills a page early.
  */
-private const val MEMBER_SEARCH_CANDIDATES = 1000
+private const val MEMBER_SEARCH_CANDIDATES = 500
 
 /** The member search's signature, for its handover to `ostrom_member_search`. */
 private const val MEMBER_SEARCH_FUNCTION = "orgs_search_members(UUID, TEXT, UUID, INTEGER)"
@@ -105,15 +105,16 @@ private const val MEMBER_SEARCH_FUNCTION = "orgs_search_members(UUID, TEXT, UUID
  * `orgs_members` bound to the session's organization, `SELECT` on three columns of `identity_users`: `id`, `login`,
  * `display_name`) joins them. It refuses an organization that is not the session's (`ostrom.org_id`), escapes the
  * prefix's own wildcards, and returns only member ids, in the members' order, after a member, at most a page. Only
- * `ostrom_tenant` may run it. It first reads, by the `text_pattern_ops` indexes, up to 1 001 people the prefix names:
- * a rare prefix then reads their memberships by key, a common one walks the team in order and stops at the page (left
- * to choose, the planner walked the team for `user0-4`: CI run 41695887597, p95 64 ms; OrgsReadsBenchTest).
+ * `ostrom_tenant` may run it. It first reads, from the `text_pattern_ops` indexes alone (they carry `id`), up to 501
+ * people the prefix names: a rare prefix then reads their memberships by key, a common one walks the team in order and
+ * stops at the page (left to choose, the planner walked the team for `user0-4`: CI run 41695887597, p95 64 ms; with
+ * 1 001 read from the table, `q=u` spent 5 ms choosing: run 41702166113; OrgsReadsBenchTest).
  */
 private val MEMBER_SEARCH_SQL: String =
     """
     CREATE INDEX orgs_members_by_join ON orgs_members (org_id, joined_at, id);
-    CREATE INDEX identity_users_login_prefix ON identity_users (lower(login) text_pattern_ops);
-    CREATE INDEX identity_users_name_prefix ON identity_users (lower(display_name) text_pattern_ops);
+    CREATE INDEX identity_users_login_prefix ON identity_users (lower(login) text_pattern_ops) INCLUDE (id);
+    CREATE INDEX identity_users_name_prefix ON identity_users (lower(display_name) text_pattern_ops) INCLUDE (id);
     DO $$ BEGIN
         CREATE ROLE ostrom_member_search NOLOGIN NOSUPERUSER NOBYPASSRLS;
     EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;

@@ -188,16 +188,16 @@ class OrgsReadsBenchTest {
     }
 
     // The bench's EXPLAIN shows the function call only: its two steps, planned with each prefix as its
-    // `EXECUTE … USING` plans them, must read neither table whole either. A rare prefix (at most 1 000 people) reads
+    // `EXECUTE … USING` plans them, must read neither table whole either. A rare prefix (at most 500 people) reads
     // their memberships by key, a common one walks the team in order.
     private suspend fun TestServer.explainSearch() {
         val org = "CAST(md5('org0') AS uuid)"
         for ((q, rare) in listOf("u" to false, "user0-4" to true, "user0-4999" to true)) {
             val named = "lower(u.login) LIKE '$q%' OR lower(u.display_name) LIKE '$q%'"
             val people = "SELECT c.id FROM ((SELECT u.id FROM identity_users u WHERE lower(u.login) LIKE '$q%' " +
-                "ORDER BY lower(u.login) USING ~<~ LIMIT 1001) UNION (SELECT u.id FROM identity_users u " +
-                "WHERE lower(u.display_name) LIKE '$q%' ORDER BY lower(u.display_name) USING ~<~ LIMIT 1001)) c " +
-                "LIMIT 1001"
+                "ORDER BY lower(u.login) USING ~<~ LIMIT 501) UNION (SELECT u.id FROM identity_users u " +
+                "WHERE lower(u.display_name) LIKE '$q%' ORDER BY lower(u.display_name) USING ~<~ LIMIT 501)) c " +
+                "LIMIT 501"
             val page = if (rare) {
                 "SELECT m.id FROM orgs_members m WHERE m.org_id = $org AND m.user_id = ANY (ARRAY($people)) " +
                     "ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}"
