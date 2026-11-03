@@ -42,7 +42,7 @@ class ApproverNotificationsChannel(
             val approver = approvers.reach(gate.orgId, request.approverId) ?: continue
             if (approver.pushes) {
                 devices.ofMember(gate.orgId, approver.memberId).filter { reachable(approver, it) }
-                    .forEach { add(Notice.Push(gate.id, listOf(notices.push(gate, request, it)))) }
+                    .forEach { add(Notice.Push(gate.id, listOf(notices.push(request, it)))) }
             }
             val email = approver.email
             if (mailing && email != null) add(Notice.Email(gate.id, notices.email(gate, request, email)))

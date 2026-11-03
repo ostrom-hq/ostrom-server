@@ -67,7 +67,7 @@ class ApproverNotificationsChannelTest {
         val sent = push.calls.flatten()
         val phones = setOf(first.pushToken, second.pushToken)
         assertEquals(phones, sent.map { it.to }.toSet(), "Live phones of the org only")
-        assertTrue(notices.push(gate, request, first) in sent)
+        assertTrue(notices.push(request, first) in sent)
         assertEquals(listOf(notices.email(gate, request, "bob@example.com")), mail.calls)
         assertEquals(listOf(org to "BOB"), approvers.asked)
     }

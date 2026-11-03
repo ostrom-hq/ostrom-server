@@ -3,6 +3,8 @@ package dev.ostrom.server.notifications
 
 import dev.ostrom.server.notifications.domain.ApprovalNotices
 import dev.ostrom.server.notifications.domain.MAX_NOTICE_TEXT
+import dev.ostrom.server.notifications.domain.PUSH_BODY
+import dev.ostrom.server.notifications.domain.PUSH_TITLE
 import dev.ostrom.server.notifications.domain.PushDevice
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -24,11 +26,13 @@ class ApprovalNoticesTest {
         val gate = sampleGate(org, askedBy = listOf("ana", "eli"))
         val request = sampleRequest(gate, "bob")
 
-        val push = notices.push(gate, request, phone("ExponentPushToken[bob-phone-1]"))
+        val push = notices.push(request, phone("ExponentPushToken[bob-phone-1]"))
 
         assertEquals("ExponentPushToken[bob-phone-1]", push.to)
-        assertEquals("ana, eli asks for your yes", push.title)
-        assertEquals("Push to main · acme/app", push.body)
+        assertEquals(PUSH_TITLE, push.title)
+        assertEquals(PUSH_BODY, push.body)
+        val shown = push.title + push.body
+        listOf("ana", "eli", "Push to main", "acme/app").forEach { assertFalse(shown.contains(it), "$it on a lock screen") }
         assertEquals(mapOf("kind" to "approval", "approvalId" to request.id.toString()), push.data)
     }
 

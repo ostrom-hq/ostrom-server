@@ -32,6 +32,7 @@ import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.notifications.domain.NotificationOutbox
+import dev.ostrom.server.notifications.domain.PUSH_TITLE
 import dev.ostrom.server.notifications.domain.PushDevicesRepository
 import dev.ostrom.server.notifications.domain.PushSender
 import dev.ostrom.server.notifications.presentation.PushDeviceDto
@@ -203,7 +204,7 @@ class ApprovalNotificationsPostgresTest {
                 val sent = withTimeout(10.seconds) { push.delivered.receive() }
                 assertEquals(listOf(PHONE_A), sent.map { it.to }, "The live phone of the gate's organization only")
                 assertEquals(mapOf("kind" to "approval", "approvalId" to request.id.toString()), sent.single().data)
-                assertEquals("ana asks for your yes", sent.single().title)
+                assertEquals(PUSH_TITLE, sent.single().title)
                 val email = withTimeout(10.seconds) { mail.delivered.receive() }
                 assertEquals("bob-s@example.com", email.to)
                 assertTrue(email.text.contains("/yes/${request.id}"), email.text)

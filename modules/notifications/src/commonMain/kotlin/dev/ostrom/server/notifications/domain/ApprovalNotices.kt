@@ -35,16 +35,16 @@ class ApprovalNotices(private val webOrigin: String) {
     fun link(request: ApprovalRequest): String = "$webOrigin/yes/${request.id}"
 
     /**
-     * @param gate The gate.
      * @param request The approver's request.
      * @param device The approver's phone.
      *
-     * @return The push, which opens the request in the app.
+     * @return The push, which opens the request in the app. Its text is the same for every request: a lock screen
+     *   shows it to whoever holds the phone, so it names neither the asker, nor the label, nor the repository.
      */
-    fun push(gate: Gate, request: ApprovalRequest, device: PushDevice): PushMessage = PushMessage(
+    fun push(request: ApprovalRequest, device: PushDevice): PushMessage = PushMessage(
         to = device.pushToken,
-        title = title(gate),
-        body = body(gate),
+        title = PUSH_TITLE,
+        body = PUSH_BODY,
         data = mapOf("kind" to "approval", "approvalId" to request.id.toString()),
     )
 
@@ -82,6 +82,10 @@ class ApprovalNotices(private val webOrigin: String) {
         return Mail(to, headline, html, text)
     }
 }
+
+/** What every push says: nothing about the request, which the approver reads in the app after proving who they are. */
+internal const val PUSH_TITLE = "A request waits for your yes"
+internal const val PUSH_BODY = "Open Ostrom to read it."
 
 /** The longest title or text of a notification: a phone shows two lines. */
 internal const val MAX_NOTICE_TEXT = 120

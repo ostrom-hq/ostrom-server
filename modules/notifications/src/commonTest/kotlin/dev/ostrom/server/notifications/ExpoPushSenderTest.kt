@@ -56,7 +56,7 @@ class ExpoPushSenderTest {
         assertEquals(
             Json.parseToJsonElement(
                 """[{"to":"ExponentPushToken[bob-phone-1]","title":"ana asks for your yes",""" +
-                    """"body":"Push to main · acme/app","sound":"default",""" +
+                    """"body":"Push to main · acme/app","sound":"default","channelId":"approvals",""" +
                     """"data":{"kind":"approval","approvalId":"a1"}}]""",
             ),
             body(request),
