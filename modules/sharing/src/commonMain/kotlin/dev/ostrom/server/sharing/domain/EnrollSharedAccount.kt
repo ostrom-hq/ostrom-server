@@ -54,21 +54,25 @@ interface EnrollSharedAccountUseCase {
 /**
  * [EnrollSharedAccountUseCase]: shares the account through [share], with the secret's token (spaces and line breaks
  * around it trimmed) as a long-lived token, never renewed, of unknown expiry. The secret names the account: enrolling
- * the same secret again replaces its token and keeps its limits, like sharing an account again.
+ * the same secret again replaces its token, and the form's sharing (`sharedWith`, daily allocation) replaces the one
+ * sharing again kept, through [update] (admins and its owner only).
  *
  * @param secrets Reads the secret.
  * @param names Reads the members it is lent to.
  * @param share Shares it.
+ * @param update Applies the form's sharing to an account enrolled again.
  */
 class EnrollSharedAccountUseCaseImpl(
     private val secrets: CredentialSecrets,
     private val names: MemberNames,
     private val share: ShareAccountUseCase,
+    private val update: UpdateSharedAccountUseCase,
 ) : EnrollSharedAccountUseCase {
     override suspend fun invoke(caller: Caller, payload: EnrollAccountPayload): SharedAccount {
         val members = names.ids(caller.orgId, payload.sharedWith)
         val secret = secrets.read(caller, payload.credentialSecret) ?: throw SecretNotFoundException()
-        return share(
+        val daily = payload.dailyBudgetMicros
+        val account = share(
             caller,
             ShareAccountPayload(
                 provider = payload.provider,
@@ -78,8 +82,15 @@ class EnrollSharedAccountUseCaseImpl(
                 accessToken = secret.value.trim(),
                 refreshToken = "",
                 expiresAt = Instant.DISTANT_FUTURE,
-                limits = AccountLimits(dailyBudgetMicros = payload.dailyBudgetMicros, allowedMembers = members),
+                limits = AccountLimits(dailyBudgetMicros = daily, allowedMembers = members),
             ),
         )
+        val kept = account.limits
+        if (kept.allowedMembers == members && kept.dailyBudgetMicros == daily) return account
+        val sharing = UpdateAccountPayload(
+            limits = { it.copy(allowedMembers = members, dailyBudgetMicros = daily) },
+            ifVersion = account.version,
+        )
+        return update(caller, account.id, sharing)
     }
 }

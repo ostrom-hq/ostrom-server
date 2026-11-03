@@ -28,6 +28,7 @@ import io.ktor.server.routing.Route
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlin.math.roundToLong
@@ -52,7 +53,7 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
             // The contract's body names a secret; without one, the tokens' body (imports, end-to-end tests).
             val body = call.receive<JsonObject>()
-            val account = if ("credentialSecret" in body) {
+            val account = if (body["credentialSecret"].let { it != null && it !is JsonNull }) {
                 enroll(caller, body.decoded(EnrollSharedAccountRequest.serializer()).toPayload())
             } else {
                 share(caller, body.decoded(ShareAccountRequest.serializer()).toPayload())
@@ -116,10 +117,10 @@ private fun <T> JsonObject.decoded(serializer: KSerializer<T>): T = try {
     throw BadRequestException("Malformed body.", error)
 }
 
-/** USD millionths of [usd], at most [MAX_DAILY_USD]. */
+/** USD millionths of [usd], more than 0 and at most [MAX_DAILY_USD] (0 would close the account for good). */
 private fun usdToMicros(usd: Double): Long {
-    if (!(usd >= 0.0 && usd <= MAX_DAILY_USD)) {
-        throw InvalidAccountException("dailyAllocationUsd is 0 to ${MAX_DAILY_USD.toLong()}.")
+    if (!(usd > 0.0 && usd <= MAX_DAILY_USD)) {
+        throw InvalidAccountException("dailyAllocationUsd is more than 0, at most ${MAX_DAILY_USD.toLong()}.")
     }
     return (usd * MICROS_PER_USD).roundToLong()
 }
@@ -135,7 +136,7 @@ private fun AccountLimits.patchedBy(patch: JsonObject): AccountLimits {
     } catch (_: SerializationException) {
         throw InvalidAccountException(
             "limits holds maxConcurrent, utilizationCeiling, monthlyBudgetMicros, " +
-                "allowedMembers.",
+                "allowedMembers, dailyBudgetMicros.",
         )
     }
     return dto.toDomain()
@@ -158,7 +159,8 @@ private fun ShareAccountRequest.toPayload() = ShareAccountPayload(
     email = email,
     providerAccountId = providerAccountId,
     accessToken = accessToken,
-    refreshToken = refreshToken,
+    // Only an enrolled secret holds a long-lived token: the tokens' body always carries a refresh token.
+    refreshToken = refreshToken.ifEmpty { throw InvalidAccountException("The tokens are malformed.") },
     expiresAt = try {
         Instant.parse(expiresAt)
     } catch (_: IllegalArgumentException) {

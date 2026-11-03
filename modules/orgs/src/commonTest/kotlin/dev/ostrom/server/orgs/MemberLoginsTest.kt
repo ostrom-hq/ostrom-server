@@ -53,6 +53,7 @@ class MemberLoginsTest {
             "A member without a person and another organization's member are absent",
         )
         assertEquals(emptyMap(), logins.loginsOf(acme, emptyList()))
+        assertEquals(emptyMap(), logins.idsOf(acme, emptyList()))
     }
 
     @Test

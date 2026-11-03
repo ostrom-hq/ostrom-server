@@ -49,6 +49,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -304,6 +305,7 @@ class SharingEnrollPostgresTest {
                     enrollment("NO_SUCH") to HttpStatusCode.NotFound,
                     enrollment(provider = "gemini") to HttpStatusCode.BadRequest,
                     enrollment(daily = -1.0) to HttpStatusCode.BadRequest,
+                    enrollment(daily = 0.0) to HttpStatusCode.BadRequest,
                 )
                 for ((body, status) in refusals) {
                     assertEquals(status, send("POST", "kira", base, body).status, body.toString())
@@ -319,6 +321,20 @@ class SharingEnrollPostgresTest {
                     put("label", "x")
                 }
                 assertEquals(HttpStatusCode.BadRequest, send("POST", "kira", base, neither).status)
+
+                // A null credentialSecret is the tokens' body, which always carries a refresh token.
+                val tokens = buildJsonObject {
+                    put("provider", "claude")
+                    put("label", "Liam Max")
+                    put("credentialSecret", JsonNull)
+                    put("providerAccountId", "acct-liam")
+                    put("accessToken", "a".repeat(10))
+                    put("refreshToken", "b".repeat(10))
+                    put("expiresAt", "2099-01-01T00:00:00Z")
+                }
+                val noRefresh = JsonObject(tokens + ("refreshToken" to JsonPrimitive("")))
+                assertEquals(HttpStatusCode.BadRequest, send("POST", "liam", base, noRefresh).status)
+                assertEquals(HttpStatusCode.Created, send("POST", "liam", base, tokens).status)
 
                 // Milo names Kira's organization: nothing, not even its accounts' existence.
                 val id = codex.text("id")

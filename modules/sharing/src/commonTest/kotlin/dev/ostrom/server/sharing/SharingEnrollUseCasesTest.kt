@@ -89,7 +89,8 @@ class SharingEnrollUseCasesTest {
         override suspend fun byName(orgId: Uuid, names: Collection<String>): Map<String, SecretValue> = emptyMap()
     }
     private val secrets = SecretsCredentialSecrets(find, reveal)
-    private val enroll = EnrollSharedAccountUseCaseImpl(secrets, names, share)
+    private val enroll =
+        EnrollSharedAccountUseCaseImpl(secrets, names, share, UpdateSharedAccountUseCaseImpl(repository, names))
 
     @Test
     fun anAdminLendsTheOrganizationsSecretAndAMemberOnlyTheirOwn() = runTest {
@@ -117,10 +118,15 @@ class SharingEnrollUseCasesTest {
         assertEquals("", stored?.refreshToken)
         assertEquals(Instant.DISTANT_FUTURE, stored?.expiresAt)
 
-        // Enrolled again: the same account, its limits kept.
+        // Enrolled again: the same account, the form's sharing replacing the one kept; the same form changes nothing.
         val again = enroll(Sharing.adminA, payload.copy(sharedWith = emptyList(), dailyBudgetMicros = null))
         assertEquals(account.id, again.id)
-        assertEquals(setOf(Sharing.memberA.memberId), again.limits.allowedMembers)
+        assertNull(again.limits.allowedMembers)
+        assertNull(again.limits.dailyBudgetMicros)
+        val same = enroll(Sharing.adminA, payload.copy(sharedWith = emptyList(), dailyBudgetMicros = null))
+        assertEquals(again.version + 1, same.version, "Shared again once, nothing else written")
+        val daily = enroll(Sharing.adminA, payload.copy(sharedWith = emptyList()))
+        assertEquals(25_000_000, daily.limits.dailyBudgetMicros)
 
         assertFailsWith<SecretNotFoundException> { enroll(Sharing.memberA, payload.copy(sharedWith = emptyList())) }
         assertFailsWith<InvalidAccountException> { enroll(Sharing.adminA, payload.copy(sharedWith = listOf("zed"))) }
@@ -182,6 +188,9 @@ class SharingEnrollUseCasesTest {
         assertEquals(AccountStatus.RECONNECT_REQUIRED, repository.get(Sharing.orgA, account.id)?.status)
         assertFailsWith<InvalidAccountException> {
             SharingRules.requireLimits(AccountLimits(dailyBudgetMicros = -1))
+        }
+        assertFailsWith<InvalidAccountException>("0 would close it for good") {
+            SharingRules.requireLimits(AccountLimits(dailyBudgetMicros = 0))
         }
     }
 

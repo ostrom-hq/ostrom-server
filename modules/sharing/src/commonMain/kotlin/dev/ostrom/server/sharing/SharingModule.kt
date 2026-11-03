@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.sharing
 
-import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.auth.MemberLogins
+import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -81,7 +81,7 @@ object SharingModule : ServerModule {
         single<UpdateSharedAccountUseCase> { UpdateSharedAccountUseCaseImpl(get(), get()) }
         single<ViewSharedAccountUseCase> { ViewSharedAccountUseCaseImpl(get()) }
         single<CredentialSecrets> { SecretsCredentialSecrets(get(), get()) }
-        single<EnrollSharedAccountUseCase> { EnrollSharedAccountUseCaseImpl(get(), get(), get()) }
+        single<EnrollSharedAccountUseCase> { EnrollSharedAccountUseCaseImpl(get(), get(), get(), get()) }
         single<RemoveSharedAccountUseCase> { RemoveSharedAccountUseCaseImpl(get()) }
         single {
             SharingRoutesDependencies(
