@@ -9,6 +9,7 @@ import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.config.ServerConfig
 import dev.ostrom.server.kernel.config.parseConfigFile
 import dev.ostrom.server.kernel.config.readConfigFile
+import dev.ostrom.server.kernel.http.CallCeilingSettings
 import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.network.TrustedProxies
@@ -278,6 +279,23 @@ class ConfigTest {
             "OSTROM_READS_IN_FLIGHT" to "1001",
             "OSTROM_READS_IN_FLIGHT" to "many",
             "OSTROM_READ_WAITS_IN_FLIGHT" to "0",
+        )
+        for (wrong in wrongs) {
+            assertFailsWith<InvalidConfigException>(wrong.toString()) {
+                ServerConfig.from(MapConfigSource(database + wrong))
+            }
+        }
+    }
+
+    @Test
+    fun readsTheCallCeilingsWithinTheirBounds() {
+        assertEquals(CallCeilingSettings(), ServerConfig.from(MapConfigSource(database)).callCeilings)
+        val set = mapOf("OSTROM_MAX_CALLS_IN_PROGRESS" to "1", "OSTROM_MAX_HELD_CALLS" to "100000")
+        assertEquals(CallCeilingSettings(1, 100_000), ServerConfig.from(MapConfigSource(database + set)).callCeilings)
+        val wrongs = listOf(
+            "OSTROM_MAX_CALLS_IN_PROGRESS" to "0",
+            "OSTROM_MAX_CALLS_IN_PROGRESS" to "many",
+            "OSTROM_MAX_HELD_CALLS" to "100001",
         )
         for (wrong in wrongs) {
             assertFailsWith<InvalidConfigException>(wrong.toString()) {

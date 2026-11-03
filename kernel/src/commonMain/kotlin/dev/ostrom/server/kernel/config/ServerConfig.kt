@@ -2,6 +2,7 @@
 package dev.ostrom.server.kernel.config
 
 import dev.ostrom.core.telemetry.TelemetrySettings
+import dev.ostrom.server.kernel.http.CallCeilingSettings
 import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.network.TrustedProxies
@@ -29,6 +30,8 @@ import kotlin.time.Duration.Companion.seconds
  *   period to close the pool and the workers.
  * @property readLimits How much one subject may read of the costly routes (`OSTROM_READS_PER_MINUTE`,
  *   `OSTROM_READS_IN_FLIGHT`, `OSTROM_READ_WAITS_IN_FLIGHT`).
+ * @property callCeilings The calls one replica runs at once (`OSTROM_MAX_CALLS_IN_PROGRESS`, `OSTROM_MAX_HELD_CALLS`),
+ *   derived from the container's memory limit when unset.
  */
 data class ServerConfig(
     val host: String,
@@ -42,6 +45,7 @@ data class ServerConfig(
     val drainDelay: Duration = DEFAULT_DRAIN_DELAY_SECONDS.seconds,
     val readLimits: ReadLimits =
         ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT, ReadLimits.DEFAULT_WAITS_IN_FLIGHT),
+    val callCeilings: CallCeilingSettings = CallCeilingSettings(),
 ) {
     /** Reading the configuration. */
     companion object {
@@ -97,7 +101,20 @@ data class ServerConfig(
                 0..MAX_DRAIN_DELAY_SECONDS,
             ).seconds,
             readLimits = readLimits(source),
+            callCeilings = callCeilings(source),
         )
+
+        /**
+         * The ceilings of the calls one replica runs at once: `OSTROM_MAX_CALLS_IN_PROGRESS` and
+         * `OSTROM_MAX_HELD_CALLS`, 1 to 100 000 each, unset to derive them from the container's memory limit.
+         *
+         * @param source Where values are read from.
+         *
+         * @return The ceilings set.
+         *
+         * @throws InvalidConfigException When a value is not an integer in its range.
+         */
+        fun callCeilings(source: ConfigSource): CallCeilingSettings = CallCeilingSettings()
 
         /**
          * The read limits of the costly routes (AUDIT-SECU-LECTURES M1), per subject and per replica:
