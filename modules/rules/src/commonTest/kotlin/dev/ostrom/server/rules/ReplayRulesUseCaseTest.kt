@@ -74,6 +74,18 @@ class ReplayRulesUseCaseTest {
     }
 
     @Test
+    fun aGatedRulePastTheThousandthIsReplayedToo() = runTest {
+        // 1 500 gated rules: only rule 1 400 gates the deploy, so the deploy is asked only if it is read.
+        (1..1_500).forEach { n ->
+            val id = "rule_${n.toString().padStart(4, '0')}"
+            rules.rules[org to id] = gated(id = id, cls = if (n == 1_400) "deploy" else "publish")
+        }
+        replay()
+        val deploy = recorded()?.items.orEmpty().single { it.getValue("actionClass").jsonPrimitive.content == "deploy" }
+        assertEquals(GateReplay.ASKED, deploy.outcome(), "Rule 1 400 counts")
+    }
+
+    @Test
     fun theOrganizationsSelfApprovalPolicyDecidesWhetherTheAskerMaySayYes() = runTest {
         rules.rules[org to "rule_self"] = gated(id = "rule_self", approvers = listOf("lyes"))
         replay()
