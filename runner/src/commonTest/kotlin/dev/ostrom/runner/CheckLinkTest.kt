@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+package dev.ostrom.runner
+
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.readByteArray
+import io.ktor.utils.io.writeByteArray
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+
+/** A connection whose two ends the test holds: [fromPeer] is what the holder reads, [toPeer] what it writes. */
+internal class LinkPipe : AgentConnection {
+    val fromPeer = ByteChannel()
+    val toPeer = ByteChannel()
+    var closed = false
+    override val input: ByteReadChannel = fromPeer
+    override val output: ByteWriteChannel = toPeer
+
+    override fun close() {
+        closed = true
+    }
+}
+
+class CheckLinkTest {
+    @Test
+    fun aCheckRunsOnANewConnectionThatOpensWithTheRunnersNonce() = runTest {
+        val link = CheckLink()
+        val linked = LinkPipe()
+        link.accept(linked)
+        val started = async { link.start("npm test", mapOf("CI" to "1"), "/workspace") }
+        // The check host reads the nonce on the link, then opens the check's connection with it.
+        val nonce = linked.toPeer.readByteArray(NONCE_LENGTH).decodeToString()
+        val check = LinkPipe()
+        check.fromPeer.writeByteArray(nonce.encodeToByteArray())
+        check.fromPeer.flush()
+        link.accept(check)
+        val terminal = started.await()
+        assertEquals(AgentFrame.Start("npm test", mapOf("CI" to "1"), "/workspace"), AgentFrames.read(check.toPeer))
+        AgentFrames.write(check.fromPeer, AgentFrame.Exit(0))
+        assertNull(terminal.read())
+        assertEquals(0, terminal.exitCode)
+        assertFalse(linked.closed, "The link stays open for the next check.")
+        // The nonce served once: the same one again is nobody's.
+        val replay = LinkPipe()
+        replay.fromPeer.writeByteArray(nonce.encodeToByteArray())
+        replay.fromPeer.flush()
+        link.accept(replay)
+        assertTrue(replay.closed)
+    }
+
+    @Test
+    fun aConnectionWithoutANonceTheRunnerAskedForIsClosed() = runTest {
+        val link = CheckLink(answer = 1.seconds)
+        link.accept(LinkPipe())
+        val unknown = opening("0123456789abcdef0123456789abcdef".encodeToByteArray())
+        val silent = LinkPipe()
+        val ended = opening(ByteArray(0), close = true)
+        val short = opening("0123".encodeToByteArray(), close = true)
+        val partial = opening("0123".encodeToByteArray())
+        val all = listOf(unknown, silent, ended, short, partial)
+        all.forEach { link.accept(it) }
+        all.forEach { assertTrue(it.closed) }
+    }
+
+    @Test
+    fun aCheckFailsAsUnreachableWithoutTheLinkOrWithoutAnAnswer() = runTest {
+        val unlinked = CheckLink(wait = 1.seconds)
+        assertFailsWith<CheckHostUnreachableException> { unlinked.start("true", emptyMap(), "/workspace") }
+        val silent = CheckLink(answer = 1.seconds)
+        val linked = LinkPipe()
+        silent.accept(linked)
+        assertFailsWith<CheckHostUnreachableException> { silent.start("true", emptyMap(), "/workspace") }
+        // The connection that comes too late is nobody's.
+        val late = opening(linked.toPeer.readByteArray(NONCE_LENGTH))
+        silent.accept(late)
+        assertTrue(late.closed)
+    }
+
+    @Test
+    fun aConnectionIsHandedToTheCheckStillWaitingForItOnly() {
+        val waiting = CompletableDeferred<AgentConnection>()
+        val taken = LinkPipe()
+        CheckLink.hand(waiting, taken)
+        assertFalse(taken.closed)
+        val second = LinkPipe()
+        CheckLink.hand(waiting, second)
+        val unasked = LinkPipe()
+        CheckLink.hand(null, unasked)
+        assertTrue(second.closed)
+        assertTrue(unasked.closed)
+    }
+
+    @Test
+    fun aConnectionThatCameAfterTheCheckGaveUpIsClosed() {
+        val late = LinkPipe()
+        CheckLink.settle(CompletableDeferred(late), null)
+        assertTrue(late.closed)
+        val used = LinkPipe()
+        CheckLink.settle(CompletableDeferred(used), used)
+        assertFalse(used.closed)
+        val never = CompletableDeferred<AgentConnection>()
+        CheckLink.settle(never, null)
+        assertTrue(never.isCompleted)
+    }
+
+    @Test
+    fun aNonceIsThirtyTwoLowercaseHexadecimalCharacters() = runTest {
+        assertEquals(VALID, CheckNonces.read(channel(VALID)))
+        for (bad in listOf("-", "Z", "z")) {
+            assertNull(CheckNonces.read(channel(bad + VALID.drop(1))), bad)
+        }
+        assertNull(CheckNonces.read(ByteReadChannel.Empty))
+        assertNull(CheckNonces.read(channel("0123")))
+    }
+
+    private suspend fun opening(bytes: ByteArray, close: Boolean = false): LinkPipe = LinkPipe().apply {
+        fromPeer.writeByteArray(bytes)
+        fromPeer.flush()
+        if (close) fromPeer.flushAndClose()
+    }
+
+    private fun channel(text: String): ByteReadChannel = ByteReadChannel(text.encodeToByteArray())
+
+    private companion object {
+        const val NONCE_LENGTH = 32
+        const val VALID = "0123456789abcdef0123456789abcdef"
+    }
+}
+
+class CheckHostTest {
+    @Test
+    fun theCheckHostRunsEachCheckOnItsOwnConnectionOpenedWithTheNonce() = runTest {
+        val link = LinkPipe()
+        val connections = mutableListOf<LinkPipe>()
+        val logs = mutableListOf<String>()
+        var attempts = 0
+        val host = CheckHost(
+            AgentHost(RecordingStarter(ScriptedTerminal())),
+            {
+                attempts++
+                if (attempts == 2) error("refused")
+                // A connection on which the runner never starts anything: the host serves it and moves on.
+                LinkPipe().also { it.fromPeer.flushAndClose() }.also { connections += it }
+            },
+            { logs += it },
+        )
+        for (nonce in listOf(FIRST, SECOND, THIRD)) link.fromPeer.writeByteArray(nonce.encodeToByteArray())
+        link.fromPeer.flushAndClose()
+        host.serve(link)
+        assertEquals(listOf(FIRST, THIRD), connections.map { it.toPeer.readByteArray(32).decodeToString() })
+        assertTrue(connections.all { it.closed })
+        assertEquals(listOf("check connection failed: IllegalStateException"), logs)
+    }
+
+    @Test
+    fun theCheckHostLetsACancellationThrough() = runTest {
+        val link = LinkPipe()
+        link.fromPeer.writeByteArray(FIRST.encodeToByteArray())
+        link.fromPeer.flushAndClose()
+        val stopped: suspend () -> AgentConnection = { throw CancellationException("stop") }
+        val host = CheckHost(AgentHost(RecordingStarter(ScriptedTerminal())), stopped) {}
+        assertFailsWith<CancellationException> { host.serve(link) }
+    }
+
+    private companion object {
+        const val FIRST = "11111111111111111111111111111111"
+        const val SECOND = "22222222222222222222222222222222"
+        const val THIRD = "33333333333333333333333333333333"
+    }
+}
+
+class CheckTerminalsTest {
+    private class Homes : CheckHomes {
+        val made = mutableListOf<String>()
+        val released = mutableListOf<String>()
+
+        override fun create(): String = "/tmp/check-${made.size + 1}".also { made += it }
+
+        override fun release(home: String) {
+            released += home
+        }
+    }
+
+    @Test
+    fun eachCheckHasANewHomeReleasedWhenItEnds() = runTest {
+        val homes = Homes()
+        val terminal = ScriptedTerminal()
+        val starter = RecordingStarter(terminal)
+        val checks = CheckTerminals(starter, homes)
+        val first = checks.start("true", mapOf("HOME" to "/tmp", "TMPDIR" to "/tmp", "CI" to "1"), "/workspace")
+        assertEquals(mapOf("HOME" to "/tmp/check-1", "TMPDIR" to "/tmp/check-1", "CI" to "1"), starter.starts[0].second)
+        assertTrue(homes.released.isEmpty())
+        first.close()
+        assertTrue(terminal.closed)
+        assertEquals(listOf("/tmp/check-1"), homes.released)
+        checks.start("true", emptyMap(), "/workspace").close()
+        assertEquals("/tmp/check-2", starter.starts[1].second["HOME"])
+        assertEquals(listOf("/tmp/check-1", "/tmp/check-2"), homes.released)
+    }
+
+    @Test
+    fun aCheckThatDoesNotStartReleasesItsHome() = runTest {
+        val homes = Homes()
+        val failing = object : TerminalStarter {
+            override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
+                error("no shell")
+        }
+        assertFailsWith<IllegalStateException> { CheckTerminals(failing, homes).start("true", emptyMap(), "/w") }
+        assertEquals(listOf("/tmp/check-1"), homes.released)
+    }
+}

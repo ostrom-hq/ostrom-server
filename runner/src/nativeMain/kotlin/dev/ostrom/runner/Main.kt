@@ -5,13 +5,28 @@ package dev.ostrom.runner
 
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.convert
+import kotlinx.cinterop.cstr
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import platform.posix.getuid
+import platform.posix.lstat
+import platform.posix.stat
+import dev.ostrom.runner.pty.ostrom_check_host_harden
+import dev.ostrom.runner.pty.ostrom_check_host_sweep
 import kotlinx.cinterop.staticCFunction
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.network.selector.SelectorManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.cinterop.toKString
@@ -24,6 +39,8 @@ import platform.posix.SIGTERM
 import platform.posix._exit
 import platform.posix.chmod
 import platform.posix.getenv
+import platform.posix.mkdtemp
+import platform.posix.system
 import platform.posix.signal
 import platform.posix.fflush
 import platform.posix.fprintf
@@ -44,7 +61,7 @@ fun main(args: Array<String>) {
     if (args.firstOrNull() == "check-host") {
         val checkSocket = environment["OSTROM_CHECK_HOST_SOCKET"]?.takeIf { it.isNotBlank() }
             ?: RunnerConfig.DEFAULT_CHECK_HOST_SOCKET
-        host(checkSocket, AgentHost(PtyTerminal.Pipes))
+        checkHost(checkSocket)
     }
     val config = try {
         RunnerConfig.from(environment) { path ->
@@ -65,11 +82,14 @@ fun main(args: Array<String>) {
             val selector = SelectorManager(Dispatchers.IO)
             val terminals = RemoteTerminalStarter({ AgentSocket.connect(selector, socket) })
             val server = HttpServerApi(client, config, this)
-            val checkHost = RemoteTerminalStarter(
-                { AgentSocket.connect(selector, config.checkHostSocket) },
-                attempts = CHECK_HOST_ATTEMPTS,
-            )
-            val checks = RunnerChecks(checkHost, server, config.workspace, environment, Clock.System)
+            // The runner listens for the check host (R4): the side of the checks it trusts is its own uid.
+            lateinit var link: CheckLink
+            val listener = LinkListener(this, config.checkHostSocket) { ready ->
+                AgentSocket.accept(selector, config.checkHostSocket, "check link", ::log, ready) { link.accept(it) }
+            }
+            link = CheckLink(before = listener::heal)
+            listener.start()
+            val checks = RunnerChecks(link, server, config.workspace, environment, Clock.System)
             // The agent's uid reaches the checks' socket: the directory is the agent socket's, mounted by both.
             val checksJob = launch {
                 ChecksSocket.serve(selector, config.checksSocket, checks::run, ::log) { chmod(it, OPEN_MODE.convert()) }
@@ -78,6 +98,7 @@ fun main(args: Array<String>) {
                 Runner(config, server, terminals, environment, Clock.System, ::log).run()
             } finally {
                 checksJob.cancel()
+                listener.stop()
                 selector.close()
             }
         } finally {
@@ -86,6 +107,106 @@ fun main(args: Array<String>) {
     }
     log("exiting with $code")
     exitProcess(code)
+}
+
+/**
+ * The runner's listening socket for the check host, kept its own (R4). The directory is the check host's too: a script
+ * may remove the socket and listen at its path. Before each check the runner makes sure the path is still the socket
+ * it bound (its uid, its inode), and binds again otherwise; the check host's process behind the impostor is killed
+ * after the check that started it.
+ *
+ * @param scope Where the listener runs.
+ * @param path The socket's path.
+ * @param listen Listens on [path], calling its argument once bound.
+ */
+private class LinkListener(
+    private val scope: CoroutineScope,
+    private val path: String,
+    private val listen: suspend (ready: (String) -> Unit) -> Unit,
+) {
+    private var job: Job? = null
+    private var bound: ULong? = null
+
+    /** Starts listening; returns once the socket is bound. */
+    suspend fun start() {
+        val ready = CompletableDeferred<Unit>()
+        job = scope.launch {
+            listen { socket ->
+                chmod(socket, OPEN_MODE.convert())
+                bound = ownInode(socket)
+                ready.complete(Unit)
+            }
+        }
+        ready.await()
+    }
+
+    /** Binds again when the path is no longer the socket this runner bound. */
+    suspend fun heal() {
+        val current = ownInode(path)
+        if (current != null && current == bound) return
+        log("the check link socket was replaced: listening again")
+        job?.cancelAndJoin()
+        start()
+    }
+
+    /** Stops listening. */
+    fun stop() {
+        job?.cancel()
+    }
+
+    /** The inode at [socket] when it is a file of this process's uid, else null. */
+    private fun ownInode(socket: String): ULong? = memScoped {
+        val status = alloc<stat>()
+        if (lstat(socket, status.ptr) != 0 || status.st_uid != getuid()) null else status.st_ino.convert()
+    }
+}
+
+/**
+ * The check host (R4): the pid 1 of its container, under the scripts' uid. It stops being dumpable, links to the
+ * runner, then runs the checks the runner asks for one after the other, each in a new home, killing what each left
+ * behind. When the link ends it exits: the runner accepts no second link, so later checks fail rather than reach
+ * another process.
+ */
+private fun checkHost(socket: String): Nothing {
+    signal(SIGTERM, staticCFunction<Int, Unit> { _exit(0) })
+    if (ostrom_check_host_harden() != 0) log("the check host could not stop being dumpable")
+    runBlocking {
+        val selector = SelectorManager(Dispatchers.IO)
+        val connect = suspend { AgentSocket.connect(selector, socket) }
+        val link = linkToRunner(connect)
+        log("check host linked to the runner")
+        CheckHost(AgentHost(CheckTerminals(PtyTerminal.Pipes, NativeCheckHomes)), connect, ::log).serve(link)
+    }
+    log("the runner closed the check link")
+    exitProcess(EXIT_LINK_CLOSED)
+}
+
+/** The first connection to the runner, retried while it starts. */
+private suspend fun linkToRunner(connect: suspend () -> AgentConnection): AgentConnection {
+    repeat(LINK_ATTEMPTS - 1) {
+        try {
+            return connect()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            delay(LINK_RETRY_MILLIS)
+        }
+    }
+    return connect()
+}
+
+/** The checks' homes, under /tmp; a release kills every other process of the uid first (pid 1 only). */
+private object NativeCheckHomes : CheckHomes {
+    override fun create(): String = memScoped {
+        val template = "/tmp/check-XXXXXX".cstr.getPointer(this)
+        mkdtemp(template)?.toKString() ?: error("no home for the check")
+    }
+
+    override fun release(home: String) {
+        if (ostrom_check_host_sweep() != 0) log("the check host could not kill what the check left behind")
+        // The path is mkdtemp's: /tmp/check- and six letters or digits, nothing to quote.
+        if (system("rm -rf -- $home") != 0) log("the check host could not remove a check's home")
+    }
 }
 
 /** A host (agent or checks): serves the runner's terminals on [socket], until the pod stops it (SIGTERM). */
@@ -129,8 +250,12 @@ private const val SOCKET_MODE = 0x1B0
 /** rw for all (0666): the checks' socket, in a directory only the agent's and the runner's containers mount. */
 private const val OPEN_MODE = 0x1B6
 
-/** The check host starts with the session: a check waits for it a few seconds at most. */
-private const val CHECK_HOST_ATTEMPTS = 20
+/** The check host links to the runner as the session starts: it tries for a minute. */
+private const val LINK_ATTEMPTS = 120
+private const val LINK_RETRY_MILLIS = 500L
+
+/** The check host's exit once the runner closed the link. */
+private const val EXIT_LINK_CLOSED = 3
 
 /** The exit code of a bad configuration (1 is an execution the server ended). */
 private const val EXIT_BAD_CONFIGURATION = 2

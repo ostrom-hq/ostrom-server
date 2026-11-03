@@ -16,8 +16,13 @@ three times, as three containers; each pair shares at most one socket directory:
   shell (`OSTROM_LAUNCH_REFUSED`).
 - **The check host** (`ostrom-runner check-host`, UID 1000, a container of its own). It mounts the workspace and runs
   the hooks' checks the runner sends it, without a terminal (`/bin/sh -c`, stdin from `/dev/null`, stdout and stderr
-  on one pipe), and reports each exit code. Its socket `/run/ostrom-check/check.sock` (`OSTROM_CHECK_HOST_SOCKET`) is
-  on a volume only the runner's container also mounts. It never has the runner token.
+  on one pipe), and reports each exit code. The runner listens on `/run/ostrom-check/check.sock`
+  (`OSTROM_CHECK_HOST_SOCKET`), on a volume only the runner's container also mounts, and the check host links to it
+  as it starts: the runner accepts that one link, then for each check a connection that opens with the nonce it sent
+  over the link. The check host is the pid 1 of its container and not dumpable; after each check it kills every other
+  process of its uid and removes the check's home (`HOME` and `TMPDIR`, new for each check), and a script inherits none
+  of its descriptors. Checks run one at a time. Before each, the runner binds its socket again if a script replaced it.
+  It never has the runner token.
 
 On Kubernetes the agent host is a native sidecar of the session pod (an init container with `restartPolicy: Always`,
 **Kubernetes 1.29 or later**), so the pod ends when the runner ends. The token and the first message reach the
