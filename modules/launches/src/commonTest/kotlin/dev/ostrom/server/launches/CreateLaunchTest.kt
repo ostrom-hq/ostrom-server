@@ -4,6 +4,7 @@ package dev.ostrom.server.launches
 import dev.ostrom.server.identity.domain.MAX_AGENT_TOKEN_LIFETIME
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.launches.domain.models.HooksCheck
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.models.LaunchRateLimitedException
@@ -12,6 +13,7 @@ import dev.ostrom.server.launches.domain.models.NewLaunch
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.fakes.ADA
+import dev.ostrom.server.launches.fakes.FakeHooksCheckRules
 import dev.ostrom.server.launches.fakes.FakeModelRules
 import dev.ostrom.server.launches.fakes.FixedClock
 import dev.ostrom.server.launches.fakes.InMemoryLaunches
@@ -26,16 +28,19 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 class CreateLaunchTest {
     private val clock = FixedClock()
     private val launches = InMemoryLaunches()
     private val tokens = RecordingTokens()
+    private val hooks = FakeHooksCheckRules()
     private val create = CreateLaunchUseCaseImpl(
         launches,
         LaunchPolicy(FakeModelRules(mapOf("gpt-5" to "gpt-5 is not on the allowlist."))),
         tokens,
         clock,
+        hooks,
     )
 
     @Test
@@ -55,6 +60,25 @@ class CreateLaunchTest {
         assertEquals(listOf(launch), launches.launches)
         assertEquals(listOf(Triple(ADA, launch.id, CreateLaunchUseCaseImpl.LIFETIME)), tokens.issued)
         assertEquals("osa_${launch.id}", created.agentToken)
+    }
+
+    @Test
+    fun theLaunchTellsTheCliWhenToCheckItsHooksAndWhetherToStopTheAgent() = runTest {
+        val first = create(ADA, NewLaunch("acme/api", "claude-code", null))
+        assertEquals(HooksCheck(15, false), first.hooksCheck, "What the rules say: 15 seconds, no gate to hold")
+        hooks.afterSeconds = 40
+        hooks.stopAgent = true
+        val second = create(ADA, NewLaunch(null, "codex", null))
+        assertEquals(HooksCheck(40, true), second.hooksCheck)
+        assertEquals(listOf<Pair<Uuid, String?>>(ORG to "acme/api", ORG to null), hooks.asked)
+    }
+
+    @Test
+    fun aRefusedLaunchReadsNoHooksRule() = runTest {
+        launches.refusal = 90.seconds
+        assertFailsWith<LaunchRateLimitedException> { create(ADA, NewLaunch("acme/api", "codex", null)) }
+        assertFailsWith<LaunchRefusedException> { create(ADA, NewLaunch("acme/api", "codex", "gpt-5")) }
+        assertEquals(emptyList(), hooks.asked)
     }
 
     @Test

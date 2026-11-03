@@ -71,10 +71,14 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
     /** How many times [update] wrote. */
     var updates = 0
 
-    override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
+    override suspend fun update(id: Uuid, name: String?, timeZone: String?, hooksDeadlineSeconds: Int?) {
         updates++
         val org = store.orgs.getValue(id)
-        store.orgs[id] = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
+        store.orgs[id] = org.copy(
+            name = name ?: org.name,
+            timeZone = timeZone ?: org.timeZone,
+            hooksDeadlineSeconds = hooksDeadlineSeconds ?: org.hooksDeadlineSeconds,
+        )
     }
 
     override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {

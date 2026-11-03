@@ -47,4 +47,27 @@ class CatalogGateNodesTest {
         assertEquals("g-main", nodes.resolve(org, null, "push-main")?.nodeId)
         assertEquals(listOf<String?>(null), compiled)
     }
+
+    @Test
+    fun anEnforcedGateInTheCatalogueMeansTheOrganizationEnforcesOne() = runTest {
+        assertEquals(true, nodes.enforcesAny(org, "acme/api"))
+        assertEquals(listOf<String?>("acme/api"), compiled, "One read of the catalogue")
+    }
+
+    @Test
+    fun aCatalogueWithOnlyProposedOrNoGatesEnforcesNone() = runTest {
+        val proposed = main.copy(status = "proposed", enforce = false)
+        val entry = CatalogEntry(ActionClass("push-main", "Push", emptyList(), emptyList(), emptyList()), proposed)
+        val ungated = CatalogEntry(ActionClass("git.push", "Any push", emptyList(), emptyList(), emptyList()), null)
+        val of = { entries: List<CatalogEntry> ->
+            CatalogGateNodes {
+                object : GatesCatalogUseCase {
+                    override suspend fun invoke(orgId: Uuid, repo: String?): List<CatalogEntry> = entries
+                }
+            }
+        }
+        assertEquals(false, of(listOf(entry, ungated)).enforcesAny(org, null), "Only a proposed gate")
+        assertEquals(false, of(listOf(ungated)).enforcesAny(org, null), "A class without a gate")
+        assertEquals(false, of(emptyList()).enforcesAny(org, null), "An empty catalogue")
+    }
 }
