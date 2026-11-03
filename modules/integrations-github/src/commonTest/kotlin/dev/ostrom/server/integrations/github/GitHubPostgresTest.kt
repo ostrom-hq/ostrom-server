@@ -13,6 +13,7 @@ import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
 import dev.ostrom.server.gates.presentation.ApprovalAnswer
 import dev.ostrom.server.gates.presentation.ApprovalsPage
 import dev.ostrom.server.gates.presentation.GateScopes
+import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.integrations.github.domain.GateCheck
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
@@ -146,6 +147,8 @@ class GitHubPostgresTest {
         single<GitHubApi> { github }
         // Seals an App the manifest flow would create (none in these tests: the environment names one).
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
+        // The identity module's users: the GitHub user 7 signed in to Ostrom as dev.
+        single<UsersRepository> { LinkedGitHubUsers(mapOf(7L to "dev")) }
         // The orgs module's lookup: acme is org A, globex org B, by short name or id.
         single<FindOrgUseCase> {
             object : FindOrgUseCase {
@@ -263,6 +266,24 @@ class GitHubPostgresTest {
         assertEquals(100L, approved.third, "The same check run turns green")
     }
 
+
+    // G1: an author whose GitHub login is not their Ostrom one (dev opened their account by e-mail, then linked
+    // GitHub) is still the author: the check waits for the other approver, and the author's yes is refused.
+    @Test
+    fun anAuthorCannotApproveTheirOwnPullRequestUnderTheirOstromLogin() = gitHubTest { server ->
+        assertEquals(INSTALLED, server.install("user:a:owner", 42))
+        val byDev = opened.replace(""""user":{"login":"dev"}""", """"user":{"login":"dev-on-github","id":7}""")
+        assertEquals(HttpStatusCode.NoContent, server.deliver("pull_request", byDev).status)
+        assertEquals("Waiting for a yes from lead", github.published.last().second.title)
+        val approval = server.get("user:a:dev", "/api/v1/approvals?limit=100").body<ApprovalsPage>().items
+            .first { it.requestedFrom == "dev" }
+        val answered = server.client.post("/api/v1/approvals/${approval.id}/answer") {
+            header(HttpHeaders.Authorization, "Bearer user:a:dev")
+            contentType(ContentType.Application.Json)
+            setBody(AnswerApprovalRequest(ApprovalAnswer.APPROVE, approval.shownDigest))
+        }
+        assertEquals(HttpStatusCode.Forbidden, answered.status)
+    }
     @Test
     fun withoutItsNameTheAppHasNoPageToLinkTo() = run {
         slug = null
