@@ -133,7 +133,7 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
         private const val MIN_ALIAS = 3
 
         /**
-         * The short names of a repository: `controlresell-core` → `controlresell-core`, `core`.
+         * The short names of a repository: `acme-core` → `acme-core`, `core`.
          *
          * @param repo The repository.
          * @return Its names of three characters or more.

@@ -3,7 +3,6 @@ package dev.ostrom.server.rules.domain.usecases
 
 import dev.ostrom.core.receipts.Digests
 import dev.ostrom.server.kernel.logging.Logger
-import dev.ostrom.server.rules.domain.models.AnalysisFailure
 import dev.ostrom.server.rules.domain.models.AnalysisRun
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.RepositoryReadException
@@ -20,9 +19,6 @@ import dev.ostrom.server.rules.domain.services.RepositoryFacts
 import dev.ostrom.server.rules.domain.services.RepositoryReader
 import dev.ostrom.server.rules.domain.services.RuleChecks
 import dev.ostrom.server.rules.domain.services.RuleInference
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
@@ -61,42 +57,32 @@ interface AnalyzeOrganizationUseCase {
  * @param clock The time.
  */
 class AnalyzeOrganizationUseCaseImpl(
-    private val analyses: AnalysisRepository,
+    analyses: AnalysisRepository,
     private val rules: RulesRepository,
     private val reader: RepositoryReader,
     private val logger: Logger,
     private val clock: Clock,
 ) : AnalyzeOrganizationUseCase {
+    private val runs = RunRecorder(analyses, clock, logger)
+
     override suspend fun invoke(run: AnalysisRun, repos: List<RepositoryRef>) {
-        try {
-            analyse(run, repos)
-        } catch (_: SupersededRunException) {
-            // A newer run took the organization's analysis over (this one stalled past the hour): it owns the state.
-            logger.debug("analysis run superseded", mapOf("run_id" to run.id))
-        } catch (error: CancellationException) {
-            // The server stops: the run says so rather than staying "running" until it goes stale.
-            withContext(NonCancellable) { fail(run, ENGINE, STOPPED) }
-            throw error
-        } catch (error: Exception) {
-            logger.error("analysis failed", mapOf("run_id" to run.id), error)
-            fail(run, ENGINE, BROKE)
-        }
+        runs.execute(run, "analysis") { analyse(run, repos) }
     }
 
     private suspend fun analyse(run: AnalysisRun, repos: List<RepositoryRef>) {
         val selected = repos.filterNot { it.archived }
             .sortedWith(compareByDescending<RepositoryRef> { it.pushedAt.orEmpty() }.thenBy { it.name })
             .take(MAX_REPOS)
-        if (selected.isEmpty()) return fail(run, GITHUB, ARCHIVED)
+        if (selected.isEmpty()) return runs.fail(run, GITHUB, ARCHIVED)
         val snapshots = mutableListOf<RepositorySnapshot>()
         selected.forEachIndexed { index, repo ->
-            advance(run, READ, READ_SHARE * index / selected.size)
+            runs.advance(run, READ, READ_SHARE * index / selected.size)
             read(run, repo)?.let { snapshots += it }
         }
-        if (snapshots.isEmpty()) return fail(run, GITHUB, UNREAD)
-        advance(run, PROPOSE, READ_SHARE)
+        if (snapshots.isEmpty()) return runs.fail(run, GITHUB, UNREAD)
+        runs.advance(run, PROPOSE, READ_SHARE)
         propose(run, snapshots.flatMap(RuleInference::infer))
-        advance(run, AnalysisRun.READY, 1.0, snapshots.map(::item))
+        runs.advance(run, AnalysisRun.READY, 1.0, snapshots.map(::item))
     }
 
     // One repository that cannot be read (a permission, a timeout) is left out; the others are still analysed.
@@ -167,34 +153,6 @@ class AnalyzeOrganizationUseCaseImpl(
         putJsonArray("owners") { RepositoryContext(snapshot).defaultOwners.forEach { add(it.removePrefix("@")) } }
     }
 
-    private suspend fun advance(run: AnalysisRun, phase: String, progress: Double, items: List<JsonObject>? = null) {
-        val at = clock.now()
-        val ours = analyses.transaction(run.orgId) {
-            val current = lock(run.kind)
-            if (current == null || current.id != run.id) return@transaction false
-            put(current.copy(phase = phase, progress = progress, updatedAt = at, items = items ?: current.items))
-            true
-        }
-        if (!ours) throw SupersededRunException()
-    }
-
-    // The last results stay: a failed run erases nothing.
-    private suspend fun fail(run: AnalysisRun, stage: String, reason: String) {
-        val at = clock.now()
-        analyses.transaction(run.orgId) {
-            val current = lock(run.kind)
-            if (current != null && current.id == run.id) {
-                put(
-                    current.copy(
-                        phase = AnalysisRun.FAILED,
-                        failure = AnalysisFailure(stage, reason, at, run.kind.retryPath),
-                        updatedAt = at,
-                    ),
-                )
-            }
-        }
-    }
-
     private fun learnedId(key: String): String = PREFIX + Digests.sha256Hex(key.encodeToByteArray()).take(ID_HEX)
 
     /** The bounds and words of an analysis. */
@@ -222,15 +180,9 @@ class AnalyzeOrganizationUseCaseImpl(
 
         private const val ID_HEX = 24
         private const val READ_SHARE = 0.9
-        private const val ENGINE = "engine"
         private const val GITHUB = "github"
         private const val ARCHIVED = "Every repository the GitHub App sees is archived: there is nothing to analyse."
         private const val UNREAD = "Ostrom could not read any repository of the organization on GitHub; see the " +
             "server log, then start the analysis again."
-        private const val STOPPED = "The server stopped during the analysis; start it again."
-        private const val BROKE = "The analysis stopped on an unexpected error; see the server log."
     }
 }
-
-// A newer run replaced this one: it stops without writing.
-private class SupersededRunException : Exception("The analysis run was superseded.")
