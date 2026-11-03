@@ -58,17 +58,56 @@ internal const val DAILY_TOTALS_OF_THE_LEDGER: String =
         "SELECT org_id, CAST(at AT TIME ZONE 'UTC' AS DATE), member_id, session_id, launch_id, SUM(cost_micros) " +
         "FROM usage_events WHERE cost_micros > 0 GROUP BY 1, 2, 3, 4, 5"
 
+/** The key of a daily total, in the order every writer locks the totals: two writers never wait on each other. */
+private const val DAILY_KEY = "org_id, day, member_id, session_id, launch_id"
+
+/** The calls of a transition table added up by [DAILY_KEY], in its order. */
+private fun dailySums(calls: String) =
+    "SELECT c.org_id, CAST(c.at AT TIME ZONE 'UTC' AS DATE) AS day, c.member_id, c.session_id, c.launch_id, " +
+        "SUM(c.cost_micros) AS cost_micros FROM $calls c WHERE c.cost_micros > 0 GROUP BY 1, 2, 3, 4, 5 " +
+        "ORDER BY 1, 2, 3, 4, 5"
+
+/** Adds the calls of a transition table to their totals. */
+private fun addCalls(calls: String) =
+    "INSERT INTO usage_daily AS d ($DAILY_KEY, cost_micros) ${dailySums(calls)} ON CONFLICT ($DAILY_KEY) " +
+        "DO UPDATE SET cost_micros = d.cost_micros + EXCLUDED.cost_micros;"
+
+/** Takes the calls of a transition table from their totals, locked in key order first, and drops a total at zero. */
+private fun removeCalls(calls: String): String {
+    val same = "d.org_id = o.org_id AND d.day = o.day AND d.member_id IS NOT DISTINCT FROM o.member_id AND " +
+        "d.session_id IS NOT DISTINCT FROM o.session_id AND d.launch_id IS NOT DISTINCT FROM o.launch_id"
+    return "PERFORM 1 FROM usage_daily d JOIN (${dailySums(calls)}) o ON $same " +
+        "ORDER BY d.org_id, d.day, d.member_id, d.session_id, d.launch_id FOR UPDATE OF d; " +
+        "UPDATE usage_daily d SET cost_micros = d.cost_micros - o.cost_micros FROM (${dailySums(calls)}) o " +
+        "WHERE $same; " +
+        "DELETE FROM usage_daily d USING (${dailySums(calls)}) o WHERE $same AND d.cost_micros <= 0;"
+}
+
+/** A trigger function of the totals, run as `ostrom_router` whoever writes the ledger. */
+private fun dailyFunction(name: String, body: String) = """
+    CREATE FUNCTION $name() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+    BEGIN
+        $body
+        RETURN NULL;
+    END $$;
+""".trimIndent()
+
+/** The trigger functions of version 7, handed to `ostrom_router`. */
+private val DAILY_FUNCTIONS = listOf("usage_daily_add", "usage_daily_remove", "usage_daily_change", "usage_daily_clear")
+
 /**
  * Version 7: the daily totals of the ledger, by organization, UTC day, member, session and launch, for the calls that
  * cost something (`cost_micros > 0`), which the spending report reads instead of adding up a month of calls
- * (ReportsQueries.spending). Two statement triggers keep them in the transaction of every write of the ledger, whatever
- * the path: an insert adds its calls, a delete (the retention purge, run by `ostrom_router`) takes them away and
- * drops a total that reaches zero. They run with the rights of the writer: the organization's role through its
- * policy, the router through its own. The table is locked while the totals of the existing ledger are written, so
- * that no call is written meanwhile, and the ledger's policy is lifted from the owner for that one statement, as
- * gates' version 3 does.
+ * (ReportsQueries.spending). Statement triggers keep them in the transaction of every write of the ledger, whatever
+ * the role that writes: an insert adds its calls, a delete (the retention purge among others) takes them away, an
+ * update does both, a truncate empties them. Their functions run as `ostrom_router` (`SECURITY DEFINER`, the module's
+ * pattern since version 4), the only role that writes the totals: an organization reads its own and changes none.
+ * Every writer locks the totals in key order, so two never deadlock; calls of one session and day wait for each
+ * other's commit on their total. The ledger is locked against writes while the totals of the calls recorded before
+ * are written, by the router, which reads every organization's calls inside its role; writes wait meanwhile.
  */
-private val DAILY_TOTALS_SQL: String =
+private val DAILY_TOTALS_SQL: String = listOf(
     """
     LOCK TABLE usage_events IN SHARE ROW EXCLUSIVE MODE;
     CREATE TABLE usage_daily (
@@ -79,50 +118,40 @@ private val DAILY_TOTALS_SQL: String =
         launch_id TEXT,
         cost_micros BIGINT NOT NULL
     );
-    CREATE UNIQUE INDEX usage_daily_key ON usage_daily (org_id, day, member_id, session_id, launch_id)
-        NULLS NOT DISTINCT;
-    CREATE FUNCTION usage_daily_add() RETURNS trigger
-        LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
-    BEGIN
-        INSERT INTO usage_daily AS d (org_id, day, member_id, session_id, launch_id, cost_micros)
-            SELECT n.org_id, CAST(n.at AT TIME ZONE 'UTC' AS DATE), n.member_id, n.session_id, n.launch_id,
-                SUM(n.cost_micros)
-            FROM usage_events_added n WHERE n.cost_micros > 0
-            GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 3, 4, 5
-            ON CONFLICT (org_id, day, member_id, session_id, launch_id)
-                DO UPDATE SET cost_micros = d.cost_micros + EXCLUDED.cost_micros;
-        RETURN NULL;
-    END $$;
-    CREATE FUNCTION usage_daily_remove() RETURNS trigger
-        LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
-    BEGIN
-        UPDATE usage_daily d SET cost_micros = d.cost_micros - o.cost_micros
-            FROM (
-                SELECT r.org_id, CAST(r.at AT TIME ZONE 'UTC' AS DATE) AS day, r.member_id, r.session_id, r.launch_id,
-                    SUM(r.cost_micros) AS cost_micros
-                FROM usage_events_removed r WHERE r.cost_micros > 0
-                GROUP BY 1, 2, 3, 4, 5
-            ) o
-            WHERE d.org_id = o.org_id AND d.day = o.day AND d.member_id IS NOT DISTINCT FROM o.member_id
-                AND d.session_id IS NOT DISTINCT FROM o.session_id AND d.launch_id IS NOT DISTINCT FROM o.launch_id;
-        DELETE FROM usage_daily d WHERE d.cost_micros <= 0 AND (d.org_id, d.day) IN (
-            SELECT r.org_id, CAST(r.at AT TIME ZONE 'UTC' AS DATE) FROM usage_events_removed r
-        );
-        RETURN NULL;
-    END $$;
+    CREATE UNIQUE INDEX usage_daily_key ON usage_daily ($DAILY_KEY) NULLS NOT DISTINCT;
+    ALTER TABLE usage_daily ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE usage_daily FORCE ROW LEVEL SECURITY;
+    CREATE POLICY usage_daily_tenant ON usage_daily FOR SELECT
+        USING (org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID));
+    GRANT SELECT ON usage_daily TO ostrom_tenant;
+    CREATE POLICY usage_daily_router ON usage_daily FOR ALL TO ostrom_router
+        USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
+    GRANT SELECT, INSERT, UPDATE, DELETE ON usage_daily TO ostrom_router;
+    """.trimIndent(),
+    dailyFunction("usage_daily_add", addCalls("usage_events_added")),
+    dailyFunction("usage_daily_remove", removeCalls("usage_events_removed")),
+    dailyFunction("usage_daily_change", removeCalls("usage_events_removed") + " " + addCalls("usage_events_added")),
+    dailyFunction("usage_daily_clear", "DELETE FROM usage_daily;"),
+    "GRANT CREATE ON SCHEMA public TO ostrom_router;",
+    DAILY_FUNCTIONS.joinToString("\n") {
+        "REVOKE EXECUTE ON FUNCTION $it() FROM PUBLIC; ALTER FUNCTION $it() OWNER TO ostrom_router;"
+    },
+    "REVOKE CREATE ON SCHEMA public FROM ostrom_router;",
+    """
     CREATE TRIGGER usage_daily_add AFTER INSERT ON usage_events
         REFERENCING NEW TABLE AS usage_events_added FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_add();
     CREATE TRIGGER usage_daily_remove AFTER DELETE ON usage_events
         REFERENCING OLD TABLE AS usage_events_removed FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_remove();
-    ALTER TABLE usage_events NO FORCE ROW LEVEL SECURITY;
+    CREATE TRIGGER usage_daily_change AFTER UPDATE ON usage_events
+        REFERENCING OLD TABLE AS usage_events_removed NEW TABLE AS usage_events_added
+        FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_change();
+    CREATE TRIGGER usage_daily_clear AFTER TRUNCATE ON usage_events
+        FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_clear();
+    SET LOCAL ROLE ostrom_router;
     $DAILY_TOTALS_OF_THE_LEDGER;
-    ALTER TABLE usage_events FORCE ROW LEVEL SECURITY;
-    ${tenantTableSql("usage_daily")}
-    CREATE POLICY usage_daily_router ON usage_daily FOR ALL TO ostrom_router
-        USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
-    GRANT SELECT, UPDATE, DELETE ON usage_daily TO ostrom_router
-    """
-        .trimIndent()
+    RESET ROLE
+    """.trimIndent(),
+).joinToString("\n")
 
 /**
  * The schema of the usage module; its tables start with `usage_`. The spend indexes include `cost_micros` so that the

@@ -9,7 +9,9 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.reports.domain.dayOf
 import dev.ostrom.server.reports.domain.startOf
+import dev.ostrom.server.reports.infrastructure.ReportsQueries
 import dev.ostrom.server.reports.infrastructure.SpendingRanges
 import dev.ostrom.server.reports.infrastructure.spendingStatement
 import dev.ostrom.server.secrets.SecretsModule
@@ -30,8 +32,8 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
 /**
- * The spending report read from the daily totals (`usage_daily`) gives, line for line, what it gave when it added up
- * the calls of the window (the query before the totals, [CALLS_ALONE]), on one ledger: two members and nobody, a
+ * The spending report read from the daily totals (`usage_daily`) gives, line for line, what it gives when it adds up
+ * every call of the window (the same query with no whole day), on one ledger: two members and nobody, a
  * session, a launch through the gateway, spending outside any session, calls that cost nothing, a call after the end
  * of the window, over 40 days; for the month, the week, today alone, a window that starts and one that ends inside a
  * day, the organization and one member; and again after calls are deleted and the retention purge has run.
@@ -84,10 +86,11 @@ class ReportsDailyTotalsPostgresTest {
         for ((name, window) in windows) {
             for (member in listOf(null, MIA.memberId)) {
                 val (from, to) = window
-                val before = Statement.create(CALLS_ALONE.replace(MINE_MARK, if (member == null) "" else MINE))
-                    .bind("org_id", ORG_A).bind("from", from).bind("to", to)
-                member?.let { before.bind("member_id", it) }
-                val expected = rows(before)
+                // The same query with no whole day: every hour of the window added up from the calls.
+                val calls = Statement.create(ReportsQueries.spending(member = member != null)).bind("org_id", ORG_A)
+                member?.let { calls.bind("member_id", it) }
+                val end = dayOf(to)
+                val expected = rows(SpendingRanges(end to end, from to to, to to to).bindTo(calls))
                 assertTrue(expected.isNotEmpty(), "$step, $name: the window has spending")
                 assertEquals(expected, rows(spendingStatement(ORG_A, member, from, to)), "$step, $name, $member")
             }
@@ -134,47 +137,5 @@ class ReportsDailyTotalsPostgresTest {
             SpendingRanges.of(noon, noon + 1.hours),
             "Inside one day: all hours",
         )
-    }
-
-    private companion object {
-        const val MINE_MARK = "/* mine */"
-        const val MINE = " AND e.member_id = :member_id"
-
-        /** The spending query of #216, which added up the calls of the window: the reference of the totals. */
-        const val CALLS_ALONE = """
-            WITH calls AS (
-                SELECT e.org_id, e.member_id, e.session_id, e.launch_id,
-                    CAST(e.at AT TIME ZONE 'UTC' AS DATE) AS day, SUM(e.cost_micros) AS cost_micros
-                FROM usage_events e
-                WHERE e.org_id = :org_id AND e.at >= :from AND e.at < :to AND e.cost_micros > 0 /* mine */
-                GROUP BY e.org_id, e.member_id, e.session_id, e.launch_id, CAST(e.at AT TIME ZONE 'UTC' AS DATE)
-            ),
-            spent AS (
-                SELECT c.member_id, COALESCE(s.id, l.id) AS spent_in, c.cost_micros, c.day,
-                    COALESCE(s.agent, l.agent) AS agent, COALESCE(s.repo, l.repo) AS repo, u.login
-                FROM calls c
-                LEFT JOIN sessions_sessions s ON s.org_id = c.org_id AND s.id = c.session_id
-                LEFT JOIN LATERAL (
-                    SELECT f.id, f.agent, f.repo FROM sessions_sessions f
-                    WHERE s.id IS NULL AND f.org_id = c.org_id AND f.launch_id = c.launch_id
-                    ORDER BY f.segment LIMIT 1
-                ) l ON TRUE
-                LEFT JOIN orgs_members m ON m.org_id = c.org_id AND m.id = c.member_id
-                LEFT JOIN identity_users u ON u.id = m.user_id
-            )
-            SELECT 'agent' AS dim, COALESCE(agent, '') AS group_key, COALESCE(agent, '') AS label,
-                CAST(SUM(cost_micros) AS BIGINT) AS micros, COUNT(DISTINCT spent_in) AS sessions
-                FROM spent GROUP BY agent
-            UNION ALL
-            SELECT 'repo', COALESCE(repo, ''), COALESCE(repo, ''), CAST(SUM(cost_micros) AS BIGINT),
-                COUNT(DISTINCT spent_in) FROM spent GROUP BY repo
-            UNION ALL
-            SELECT 'person', COALESCE(CAST(member_id AS TEXT), ''),
-                COALESCE(MIN(login), CAST(member_id AS TEXT), ''), CAST(SUM(cost_micros) AS BIGINT),
-                COUNT(DISTINCT spent_in) FROM spent GROUP BY member_id
-            UNION ALL
-            SELECT 'day', to_char(day, 'YYYY-MM-DD'), '', CAST(SUM(cost_micros) AS BIGINT), 0
-                FROM spent GROUP BY 2
-        """
     }
 }

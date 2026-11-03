@@ -16,6 +16,7 @@ import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -24,8 +25,9 @@ import kotlin.time.Duration.Companion.minutes
 /**
  * Real PostgreSQL: the daily totals (`usage_daily`, version 7) are the ledger's, added up by organization, UTC day,
  * member, session and launch, after every write of the ledger: a batch, a call settled, a delete under the
- * organization's policy, the retention purge of the router; and the totals version 7 writes from an existing ledger
- * are the same. A total is never zero, and an organization reads only its own.
+ * organization's policy, the retention purge of the router, an update and a truncate by another role; and the totals
+ * version 7 writes from an existing ledger are the same. A total is never zero, and an organization reads only its
+ * own and writes none.
  */
 class UsageDailyTotalsPostgresTest {
     private val clock = TestClock()
@@ -95,14 +97,27 @@ class UsageDailyTotalsPostgresTest {
         ).getOrThrow().first().get("n").asLong()
         assertEquals(0L, zero, "A total that reaches zero is dropped")
 
-        server.database.superuser.execute("DELETE FROM usage_daily").getOrThrow()
-        server.database.superuser.execute(DAILY_TOTALS_OF_THE_LEDGER).getOrThrow()
+        val owner = server.database.superuser
+        owner.execute("UPDATE usage_events SET cost_micros = cost_micros + 3, session_id = 'moved' " +
+            "WHERE cost_micros % 2 = 1").getOrThrow()
+        server.assertTotalsAreTheLedgers("an update by another role than the organization's")
+
+        owner.execute("DELETE FROM usage_daily").getOrThrow()
+        owner.execute(DAILY_TOTALS_OF_THE_LEDGER).getOrThrow()
         server.assertTotalsAreTheLedgers("the totals version 7 writes from the ledger")
 
+        assertFails("An organization never writes its totals") {
+            server.driver.executeInOrg(TestCallers.orgA, Statement.create("UPDATE usage_daily SET cost_micros = 1"))
+                .getOrThrow()
+        }
         val seenByB = server.driver.fetchInOrg(
             TestCallers.orgB,
             Statement.create("SELECT COUNT(*) AS n FROM usage_daily"),
         ).getOrThrow().first().get("n").asLong()
         assertEquals(1L, seenByB, "An organization reads only its own totals")
+
+        owner.execute("TRUNCATE usage_events").getOrThrow()
+        val left = owner.fetchAll(Statement.create("SELECT COUNT(*) AS n FROM usage_daily")).getOrThrow()
+        assertEquals(0L, left.first().get("n").asLong(), "A truncated ledger has no totals")
     }
 }
