@@ -26,6 +26,8 @@ import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 /** How a call counts against the replica's ceilings ([CallsInProgress]). */
 enum class CallKind {
@@ -67,18 +69,25 @@ fun interface CallPlace {
 
 /**
  * The calls this replica runs at once, per [CallKind], each under its ceiling; past it, a call waits in line for
- * [CallCeilingSettings.queueWait], then is refused. A call costs memory while it runs, and up to 1 MiB more past
- * about 100 at once: the reads, already bounded, held 500 at once under 512 MiB (CHARGE 41647341533), while 500
- * approvals, writes bounded by nothing, OOMKilled the server (41644506470). Unset, a ceiling follows the container's
- * limit, read at every call so that a new limit applies at once: 150 calls under 512 MiB, in proportion above and
- * below, at least 16, and 256 without a limit.
+ * [CallCeilingSettings.queueWait], then is refused, and at once when as many calls as the ceiling already wait. A call
+ * costs memory while it runs, and up to 1 MiB more past about 100 at once: the reads, already bounded, held 500 at
+ * once under 512 MiB (CHARGE 41647341533), while 500 approvals, writes bounded by nothing, OOMKilled the server
+ * (41644506470). Unset, the ceilings follow the container's limit, read again every 5 s: 150 ordinary calls under
+ * 512 MiB, in proportion above and below, at least 16, and 256 without a limit; half as many held calls, so that both
+ * kinds full stay near the 200 calls measured at 377 MiB.
  *
  * @param settings The ceilings the instance sets.
  * @param limitBytes Reads the container's memory limit; null without one.
+ * @param time Measures when the limit was last read.
  */
-class CallsInProgress(private val settings: CallCeilingSettings, private val limitBytes: () -> Long?) {
+class CallsInProgress(
+    private val settings: CallCeilingSettings,
+    private val limitBytes: () -> Long?,
+    private val time: TimeSource = TimeSource.Monotonic,
+) {
     private val served = Places()
     private val held = Places()
+    private val limit = AtomicReference(LimitReading(null, null))
 
     /**
      * The ceiling of [kind] now.
@@ -88,9 +97,21 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
      * @return The most calls of [kind] at once.
      */
     fun ceiling(kind: CallKind): Int = when (kind) {
-        CallKind.SERVED -> settings.served ?: ceilingUnder(limitBytes())
-        CallKind.HELD -> settings.held ?: ceilingUnder(limitBytes())
+        CallKind.SERVED -> settings.served ?: ceilingUnder(currentLimit())
+        CallKind.HELD -> settings.held ?: (ceilingUnder(currentLimit()) / HELD_SHARE * HELD_SHARE)
         CallKind.FREE -> Int.MAX_VALUE
+    }
+
+    /**
+     * The container's limit, read again at most every [LIMIT_EVERY]: a read on every call would cost the file's system
+     * calls to each request. A read that fails keeps the last limit, so that a ceiling never jumps on a passing error.
+     */
+    private fun currentLimit(): Long? {
+        val last = limit.load()
+        if (last.at != null && last.at.elapsedNow() < LIMIT_EVERY * 0) return last.bytes
+        val bytes = limitBytes()
+        limit.store(LimitReading(bytes, time.markNow()))
+        return bytes
     }
 
     /**
@@ -126,12 +147,14 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
      */
     private class Places {
         val running = AtomicLong(0)
+        private val waiting = AtomicLong(0)
         // No ceiling is 0: the first call starts the first real line.
         private val line = AtomicReference(Line(0, Semaphore(1)))
 
+        /** Past [ceiling] calls already in line, a call is refused at once: the line holds memory too. */
         suspend fun enter(ceiling: Int, wait: Duration): CallPlace? {
             val semaphore = lineOf(ceiling).semaphore
-            val taken = semaphore.tryAcquire() || withTimeoutOrNull(wait) { semaphore.acquire() } != null
+            val taken = semaphore.tryAcquire() || waitInLine(semaphore, ceiling, wait)
             return if (taken) {
                 running.incrementAndFetch()
                 CallPlace {
@@ -141,6 +164,12 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
             } else {
                 null
             }
+        }
+
+        private suspend fun waitInLine(semaphore: Semaphore, ceiling: Int, wait: Duration): Boolean = try {
+            waiting.incrementAndFetch() <= ceiling * 1_000 && withTimeoutOrNull(wait) { semaphore.acquire() } != null
+        } finally {
+            waiting.decrementAndFetch()
         }
 
         // Two calls that see a new ceiling at once may each start a line: the call on the line that is not kept still
@@ -153,6 +182,8 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
 
     private class Line(val ceiling: Int, val semaphore: Semaphore)
 
+    private class LimitReading(val bytes: Long?, val at: TimeMark?)
+
     /** The ceilings a limit gives. */
     companion object {
         /** Without a container limit. */
@@ -162,6 +193,8 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
         private const val CALLS_UNDER_REFERENCE = 150L
         private const val REFERENCE_MIB = 512L
         private const val MIN_CEILING = 16L
+        private const val HELD_SHARE = 2
+        private val LIMIT_EVERY = 5.seconds
         private val NO_PLACE = CallPlace {}
 
         /**

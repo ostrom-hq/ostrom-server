@@ -48,6 +48,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TestTimeSource
 
 /** P1 memory: a replica runs at most so many calls at once, from its container's limit, and refuses the next ones. */
 class CallCeilingTest {
@@ -64,17 +65,43 @@ class CallCeilingTest {
     }
 
     @Test
-    fun theCeilingIsComputedAgainWhenTheLimitChanges() {
+    fun theCeilingIsComputedAgainWhenTheLimitChangesAndHeldCallsGetHalf() {
         var limit: Long? = 512 * mib
-        val calls = CallsInProgress(CallCeilingSettings()) { limit }
+        val time = TestTimeSource()
+        val calls = CallsInProgress(CallCeilingSettings(), { limit }, time)
         assertEquals(150, calls.ceiling(CallKind.SERVED))
-        assertEquals(150, calls.ceiling(CallKind.HELD))
+        assertEquals(75, calls.ceiling(CallKind.HELD), "both kinds full stay near the 200 calls measured at 377 MiB")
         limit = 1024 * mib
+        time += 5.seconds
         assertEquals(300, calls.ceiling(CallKind.SERVED))
-        assertEquals(300, calls.ceiling(CallKind.HELD))
-        limit = null
-        assertEquals(CallsInProgress.DEFAULT_CEILING, calls.ceiling(CallKind.SERVED))
+        assertEquals(150, calls.ceiling(CallKind.HELD))
         assertEquals(Int.MAX_VALUE, calls.ceiling(CallKind.FREE))
+    }
+
+    @Test
+    fun theLimitIsReadAgainEveryFiveSecondsAndAFailedReadKeepsTheLast() {
+        var reads = 0
+        var limit: Long? = 512 * mib
+        val time = TestTimeSource()
+        val calls = CallsInProgress(CallCeilingSettings(), { reads++; limit }, time)
+        repeat(3) { assertEquals(150, calls.ceiling(CallKind.SERVED)) }
+        assertEquals(1, reads, "not a read per call")
+        limit = 1024 * mib
+        time += 4.seconds
+        assertEquals(150, calls.ceiling(CallKind.SERVED), "the last read still holds")
+        time += 1.seconds
+        assertEquals(300, calls.ceiling(CallKind.SERVED))
+        limit = null
+        time += 5.seconds
+        assertEquals(300, calls.ceiling(CallKind.SERVED), "a failed read never makes the ceiling jump")
+        assertEquals(3, reads)
+    }
+
+    @Test
+    fun withoutALimitTheCeilingsAreTheDefault() {
+        val calls = CallsInProgress(CallCeilingSettings()) { null }
+        assertEquals(CallsInProgress.DEFAULT_CEILING, calls.ceiling(CallKind.SERVED))
+        assertEquals(CallsInProgress.DEFAULT_CEILING / 2, calls.ceiling(CallKind.HELD))
     }
 
     @Test
@@ -116,12 +143,27 @@ class CallCeilingTest {
     }
 
     @Test
+    fun aFullLineRefusesTheNextCallAtOnce() = runTest {
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, queueWait = 2.seconds)) { null }
+        val first = assertNotNull(calls.enter(CallKind.SERVED))
+        val waiting = async { calls.enter(CallKind.SERVED) }
+        advanceTimeBy(1.seconds)
+        val start = testScheduler.currentTime
+        assertNull(calls.enter(CallKind.SERVED), "as many calls wait as the ceiling: no more join the line")
+        assertEquals(0, testScheduler.currentTime - start, "refused at once, without waiting")
+        first.leave()
+        assertNotNull(waiting.await()).leave()
+    }
+
+    @Test
     fun aNewLimitAdmitsCallsUnderItsNewCeiling() = runTest {
         var limit = 32 * mib
-        val calls = CallsInProgress(CallCeilingSettings(queueWait = ZERO)) { limit }
+        val time = TestTimeSource()
+        val calls = CallsInProgress(CallCeilingSettings(queueWait = ZERO), { limit }, time)
         repeat(16) { assertNotNull(calls.enter(CallKind.SERVED)) }
         assertNull(calls.enter(CallKind.SERVED), "16 under 32 MiB")
         limit = 1024 * mib
+        time += 5.seconds
         assertNotNull(calls.enter(CallKind.SERVED), "300 under 1 GiB")
     }
 
