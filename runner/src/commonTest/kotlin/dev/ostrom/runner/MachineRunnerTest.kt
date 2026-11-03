@@ -57,12 +57,21 @@ class MachineRunnerTest {
             "OSTROM_DOCKER_API_URL" to "http://127.0.0.1:2375/",
         )
         val plain = MachineConfig.from(env) { error("no file") }
-        assertEquals(MachineDocker("http://127.0.0.1:2375", null, null), plain.docker)
+        assertEquals(MachineDocker("http://127.0.0.1:2375", null, null, null), plain.docker)
         assertTrue("docker=MachineDocker(apiUrl=http://127.0.0.1:2375" in plain.toString())
         val placed = MachineConfig.from(
             env + ("OSTROM_DOCKER_NETWORK" to "sessions") + ("OSTROM_RUNNER_SESSION_IMAGE" to "img:1"),
         ) { error("no file") }
-        assertEquals(MachineDocker("http://127.0.0.1:2375", "sessions", "img:1"), placed.docker)
+        assertEquals(MachineDocker("http://127.0.0.1:2375", "sessions", "img:1", null), placed.docker)
+        for (max in listOf(0, 256)) {
+            val capped = MachineConfig.from(env + ("OSTROM_RUNNER_MAX_SESSIONS" to "$max")) { error("no file") }
+            assertEquals(max, capped.docker?.maxSessions)
+        }
+        for (max in listOf("-1", "257", "two")) {
+            assertFailsWith<IllegalArgumentException> {
+                MachineConfig.from(env + ("OSTROM_RUNNER_MAX_SESSIONS" to max)) { error("no file") }
+            }
+        }
         assertEquals(null, MachineConfig.from(env + ("OSTROM_DOCKER_API_URL" to " ")) { error("no file") }.docker)
         val remote = MachineConfig.from(env + ("OSTROM_DOCKER_API_URL" to "https://docker.lan")) { error("no file") }
         assertEquals("https://docker.lan", remote.docker?.apiUrl)
@@ -171,12 +180,14 @@ class MachineRunnerTest {
             )
         }
         val api = HttpMachineApi(HttpClient(engine) { expectSuccess = false }, MachineConfig("http://s", id, key))
-        val work = api.heartbeat(MachineReport(listOf(ReportedExecution("s", 2, "running")), listOf("s")))
+        val work = api.heartbeat(MachineReport(listOf(ReportedExecution("s", 2, "running")), listOf("s"), 3))
         assertEquals(MachineWork(listOf(AssignedExecution("s", 2)), listOf("s")), work)
         assertEquals(
-            """{"executions":[{"sessionId":"s","epoch":2,"state":"running"}],"workspaces":["s"]}""",
+            """{"executions":[{"sessionId":"s","epoch":2,"state":"running"}],"workspaces":["s"],"capacity":3}""",
             sent,
         )
+        api.heartbeat(MachineReport(emptyList(), emptyList(), null))
+        assertEquals("""{"executions":[],"workspaces":[]}""", sent, "An unknown capacity is left out")
     }
 
     @Test
@@ -193,12 +204,12 @@ class MachineRunnerTest {
                 return answer()
             }
         }
-        val sessions = MachineSessions(docker, PlanGuard(id, null, null)) { lines += it }
+        val sessions = MachineSessions(docker, PlanGuard(id, null, null), null) { lines += it }
         val machine = MachineRunner(api, 10.seconds, { lines += it }, sessions)
         val code = async { machine.run() }
 
         runCurrent()
-        assertEquals(MachineReport(emptyList(), emptyList()), reports.single())
+        assertEquals(MachineReport(emptyList(), emptyList(), 1), reports.single())
         assertEquals(3, docker.containers.size, "Applied after the beat, in the background")
 
         answer = { MachineWork(listOf(AssignedExecution(session.toString(), 1))) }
@@ -210,7 +221,7 @@ class MachineRunnerTest {
         val engineDown = object : DockerEngine by docker {
             override suspend fun containers(): List<HeldContainer> = error("socket closed")
         }
-        val unread = MachineSessions(engineDown, PlanGuard(id, null, null)) {}
+        val unread = MachineSessions(engineDown, PlanGuard(id, null, null), null) {}
         val blind = MachineRunner(api, 10.seconds, { lines += it }, unread)
         val blindCode = async { blind.run() }
         runCurrent()
@@ -241,7 +252,7 @@ class MachineRunnerTest {
             override suspend fun containers(): List<HeldContainer> = throw CancellationException("stop")
         }
         assertFailsWith<CancellationException> {
-            MachineRunner(api, 10.seconds, {}, MachineSessions(reading, PlanGuard(id, null, null)) {}).run()
+            MachineRunner(api, 10.seconds, {}, MachineSessions(reading, PlanGuard(id, null, null), null) {}).run()
         }
         var reads = 0
         val applying = object : DockerEngine by FakeDockerEngine() {
@@ -250,7 +261,7 @@ class MachineRunnerTest {
                 if (reads++ == 0) emptyList() else throw CancellationException("stop")
         }
         val stopped = async {
-            MachineRunner(api, 10.seconds, {}, MachineSessions(applying, PlanGuard(id, null, null)) {}).run()
+            MachineRunner(api, 10.seconds, {}, MachineSessions(applying, PlanGuard(id, null, null), null) {}).run()
         }
         runCurrent()
         stopped.cancel()

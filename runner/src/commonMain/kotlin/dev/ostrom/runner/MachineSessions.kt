@@ -16,13 +16,20 @@ import kotlin.uuid.Uuid
  *
  * @param engine The machine's engine, confined to this runner's objects.
  * @param guard What the machine accepts to create.
+ * @param maxSessions The sessions it runs at once at most (`OSTROM_RUNNER_MAX_SESSIONS`); when null, what the machine
+ *   holds, read once from the engine: 2 processors and 4.5 GiB a session (its agent's 4 GiB and its runner's 256 MiB,
+ *   with room to spare), one at least. An engine that does not show them (a socket proxy with `INFO=0`) leaves the
+ *   capacity unknown: no limit, said once in the log.
  * @param log Writes a line to the process's log (never a token).
  */
 class MachineSessions(
     private val engine: DockerEngine,
     private val guard: PlanGuard,
+    private val maxSessions: Int?,
     private val log: (String) -> Unit,
 ) {
+    private var capacity: Int? = maxSessions
+    private var capacityKnown = maxSessions != null
     private val mutex = Mutex()
     private val plans = mutableMapOf<Execution, ExecutionPlan>()
 
@@ -47,7 +54,20 @@ class MachineSessions(
                 ReportedExecution(execution.sessionId.toString(), execution.epoch, state)
             },
             engine.volumes().map { it.sessionId.toString() }.distinct(),
+            if (capacityKnown) capacity else readCapacity(),
         )
+    }
+
+    private suspend fun readCapacity(): Int? {
+        val read = try {
+            capacityOf(engine.info())
+        } catch (refused: DockerApiException) {
+            log("${refused.message} No capacity declared: set OSTROM_RUNNER_MAX_SESSIONS.")
+            null
+        }
+        capacity = read
+        capacityKnown = true
+        return read
     }
 
     /**
@@ -112,6 +132,16 @@ class MachineSessions(
     /** Constants and readers of the enclosing type. */
     private companion object {
         const val PENDING = "pending"
+
+        /** The processors a session takes at most (its agent's limit). */
+        const val SESSION_CPUS = 2
+
+        /** The memory a session takes at most, 4.5 GiB: its agent's 4 GiB, its runner's 256 MiB, and room. */
+        const val SESSION_MEMORY_BYTES = 9L shl 29
+
+        /** The sessions a machine holds, one at least. */
+        fun capacityOf(info: EngineInfo): Int =
+            maxOf(1, minOf(info.cpus / SESSION_CPUS, (info.memoryBytes / SESSION_MEMORY_BYTES).toInt()))
 
         /** The engine's container state, as the server reads it. */
         fun stateOf(state: String?): String = when (state) {

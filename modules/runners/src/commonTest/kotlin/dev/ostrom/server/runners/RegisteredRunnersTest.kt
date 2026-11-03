@@ -288,10 +288,12 @@ internal class InMemoryRegisteredRunners : RegisteredRunnersRepository {
     override suspend fun keyOf(id: Uuid): RegisteredRunnerKey? =
         runners.firstOrNull { it.id == id }?.let { RegisteredRunnerKey(it.orgId, it.keyHash) }
 
-    override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant): Boolean {
+    override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant, capacity: Int?): Boolean {
         beforeTouch()
         val i = runners.indexOfFirst { it.orgId == orgId && it.id == id && it.keyHash == keyHash }
-        if (i >= 0) runners[i] = runners[i].copy(lastSeenAt = maxOf(runners[i].lastSeenAt ?: at, at))
+        if (i >= 0) {
+            runners[i] = runners[i].copy(lastSeenAt = maxOf(runners[i].lastSeenAt ?: at, at), capacity = capacity)
+        }
         return i >= 0
     }
 }
