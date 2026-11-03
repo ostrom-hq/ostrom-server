@@ -77,6 +77,10 @@ internal class IsolationMatrix(
     /** What the matrix found, one line each, readable in the CI log. */
     val findings = mutableListOf<String>()
 
+    // Each of B's values has one lookalike for the whole matrix: a creation with a lookalike (a session named by the
+    // caller) makes the twin world that a later twin request finds, as a creation with B's value makes A's own.
+    private val twins = mutableMapOf<String, String>()
+
     /** How many requests the matrix sent. */
     var requests = 0
         private set
@@ -138,7 +142,7 @@ internal class IsolationMatrix(
         val where = "$route [${credential.name}${if (header) ", Ostrom-Org: B" else ""}]"
         when {
             answer.status == NO_ANSWER || other.status == NO_ANSWER -> findings += "$where: no answer in $CALL_TIMEOUT"
-            strict && answer.differsFrom(other, own.sent, twin.sent) ->
+            strict && !case.exclusive && answer.differsFrom(other, own.sent, twin.sent) ->
                 findings += "$where: B's value answers ${answer.describe()}, a lookalike ${other.describe()}"
             !strict && answer.succeeded -> findings += "$where: B's value answers ${answer.describe()}"
         }
@@ -176,7 +180,7 @@ internal class IsolationMatrix(
      */
     internal fun resolve(route: String, case: Case.Target, twin: Boolean = false, header: Boolean = false):
         Resolved? {
-        val filler = Filler(values, twin)
+        val filler = Filler(values, twins.takeIf { twin })
         val placeholder = { name: String -> Param.Of(Seed.valueOf(name)) }
         val query = case.query?.let { "?" + filler.fill(it, PLACEHOLDER, placeholder) }.orEmpty()
         val path = filler.fill(route.substringAfter(' '), PARAMETER) { case.params[it] } + query
@@ -194,7 +198,8 @@ internal class IsolationMatrix(
             credential.apply(this)
             resolved.org?.let { header(ORG_HEADER, it) }
             resolved.case.host?.let { header(HttpHeaders.Host, it) }
-            resolved.body?.let {
+            // A write without a body of its case still sends JSON: the server reads the body before the resource.
+            (resolved.body ?: "{}".takeIf { !route.startsWith("GET ") })?.let {
                 contentType(ContentType.Application.Json)
                 setBody(it)
             }
@@ -231,11 +236,12 @@ internal class IsolationMatrix(
     private fun JsonObject.toolText(): String? =
         ((get("content") as? JsonArray)?.firstOrNull() as? JsonObject)?.text("text")
 
-    private fun Answer.describe(): String = "$status${type?.let { " $it" }.orEmpty()}"
+    private fun Answer.describe(): String =
+        "$status${type?.let { " $it" }.orEmpty()}${message?.let { " \"${it.take(MESSAGE_SHOWN)}\"" }.orEmpty()}"
 
-    // Fills one request's path or body: a value named twice gets the same lookalike, a fresh one is drawn each time.
-    private class Filler(private val values: Map<Seed, String>, private val twin: Boolean) {
-        private val drawn = mutableMapOf<String, String>()
+    // Fills one request's path or body with B's values, or with their lookalikes drawn once in [twins] when given; a
+    // fresh value is drawn each time.
+    private class Filler(private val values: Map<Seed, String>, private val twins: MutableMap<String, String>?) {
         val sent = mutableSetOf<String>()
         var complete = true
             private set
@@ -244,7 +250,7 @@ internal class IsolationMatrix(
             null -> null
             is Param.Fixed -> param.value
             is Param.Fresh -> Uuid.random().toString()
-            is Param.Of -> values[param.seed]?.let { if (twin) drawn.getOrPut(it) { lookalike(it) } else it }
+            is Param.Of -> values[param.seed]?.let { value -> twins?.getOrPut(value) { lookalike(value) } ?: value }
                 ?.also { sent += it }
         }
 
@@ -264,6 +270,9 @@ internal class IsolationMatrix(
 
         /** How long a call may take: a stream or a hung route must not stop the matrix. */
         val CALL_TIMEOUT = 10.seconds
+
+        /** How much of an error message a finding shows. */
+        const val MESSAGE_SHOWN = 100
 
         /** The status of a call that did not answer in [CALL_TIMEOUT]. */
         const val NO_ANSWER = -1

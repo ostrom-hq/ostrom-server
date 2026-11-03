@@ -35,6 +35,8 @@ internal sealed interface Case {
      * @property query The query string the route needs, without its `?`.
      * @property stream Whether a success is a stream that does not end (server-sent events): its body is not read.
      * @property rpc Whether the route speaks JSON-RPC (MCP): a refusal is an `error` or an `isError` result in a 200.
+     * @property exclusive Whether the route runs one job at a time for the organization: the second call answers a
+     *   conflict whatever it names, so B's value and its lookalike are not compared (leaks still are).
      */
     data class Target(
         val params: Map<String, Param> = emptyMap(),
@@ -44,6 +46,7 @@ internal sealed interface Case {
         val query: String? = null,
         val stream: Boolean = false,
         val rpc: Boolean = false,
+        val exclusive: Boolean = false,
     ) : Case
 
     /**

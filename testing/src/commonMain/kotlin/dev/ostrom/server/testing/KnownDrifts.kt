@@ -16,6 +16,7 @@ object KnownDrifts {
     private const val STRIPE = "Contract: ignored_unknown_org is missing from the webhook outcome's enum."
     private const val JSON_RPC = "Contract: the MCP relay refuses with a JSON-RPC error, the contract says ApiError."
     private const val RECEIPT = "The approval's receipt lacks properties the contract requires."
+    private const val ISOLATION = "Met by the isolation matrix (#247), which calls every route as every credential."
     private const val PROPERTY = "Contract: the server sends this property, the contract does not declare it."
 
     /** Each drift's key ([Drift.key]) and why it waits. */
@@ -104,6 +105,13 @@ object KnownDrifts {
             "answerApproval 200 $.receipt.rules MISSING",
             "answerApproval 200 $.receipt.signature MISSING",
             "answerApproval 200 $.receipt.subject MISSING",
+        ),
+        waiting(
+            ISOLATION,
+            "attachCloudTerminal 404 $ BODY",
+            "attachRunnerTerminal 400 $ STATUS",
+            "listPackageAudit 200 $.items[*].meta.repo TYPE",
+            "startGithubAppInstall 503 $ STATUS",
         ),
         waiting(
             PROPERTY,

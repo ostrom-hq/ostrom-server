@@ -38,6 +38,8 @@ private const val SIGNED = "a webhook signed with the provider's secret: unsigne
 /** The content origin's host in the matrix (OSTROM_ARTIFACTS_CONTENT_ORIGIN): the artifact pages are served there. */
 internal const val CONTENT_HOST = "artifacts.test"
 
+private const val LINK = "a link artifact is public by design: its unguessable slug is the capability " +
+    "(a team artifact's content, behind a ticket, is attacked on /a/)"
 private const val CAPABILITY = "the secret in the body is the capability: holding it is the right (invitation link)"
 
 /**
@@ -240,8 +242,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
         mapOf("id" to of(ARTIFACT), "ticket" to Param.Fresh, "..." to Param.Fixed("index.html")),
         host = CONTENT_HOST,
     ),
-    "GET /l/{slug}/{...}" to
-        Case.Target(mapOf("slug" to of(LINK_SLUG), "..." to Param.Fixed("index.html")), host = CONTENT_HOST),
+    "GET /l/{slug}/{...}" to Case.Exempt(LINK),
 
     // Automations and waits.
     "GET /api/v1/automations" to Case.Target(),
@@ -323,7 +324,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/analysis/start" to Case.Target(body = "{}", admin = true),
     "POST /api/v1/analysis/restart" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/analysis/replay" to Case.Target(),
-    "POST /api/v1/analysis/replay" to Case.Target(body = """{"ruleIds": ["{{RULE}}"]}"""),
+    "POST /api/v1/analysis/replay" to Case.Target(body = """{"ruleIds": ["{{RULE}}"]}""", exclusive = true),
     "POST /api/v1/import/teamcode" to Case.Target(body = "{}", admin = true),
 
     // Workflows and packages (compiler).
