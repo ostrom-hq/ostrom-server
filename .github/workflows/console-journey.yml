@@ -8,6 +8,12 @@ name: Console journeys
 # reason, and the same shape, as cli-journey.yml. On demand, and, off the org's one-`ci`-job rule on purpose (as
 # demo-stack.yml), on a pull request only when the pull request changes this file.
 on:
+  # Each hour, the console of ostrom-web main against the newest server image, with the journeys a console change
+  # breaks first: sign-in, /auth/me in the top bar, a gate and its yes. ostrom-web's own CI runs every journey once its
+  # token may pull the server image (package Actions access); until then, this is what sees a console regression on
+  # its main (ostrom-web#78 was found by hand).
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       server_image:
@@ -86,7 +92,8 @@ jobs:
       # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch or a
       # call from ostrom-web runs what it names, or all of e2e-real.
       SPECS: >-
-        ${{ github.event_name == 'pull_request' && github.repository == 'ostrom-hq/ostrom-server' && 'me.spec.ts' ||
+        ${{ github.event_name == 'schedule' && 'me.spec.ts signin.spec.ts gates.spec.ts' ||
+        github.event_name == 'pull_request' && github.repository == 'ostrom-hq/ostrom-server' && 'me.spec.ts' ||
         inputs.specs }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.

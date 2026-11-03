@@ -2,6 +2,7 @@
 package dev.ostrom.server.launches.presentation
 
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireScope
 import dev.ostrom.server.launches.domain.models.CreatedLaunch
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
@@ -15,6 +16,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
+import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.header
@@ -23,8 +25,9 @@ import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
 
 /**
- * The launches routes of the contract. Both are a person's, through the CLI (its device token holds `sessions:write`)
- * or the console: an agent token never creates a launch nor reads the policy. The person and the organization always
+ * The launches routes of the contract. Reading the policy and creating a launch are a person's, through the CLI (its
+ * device token holds `sessions:write`) or the console: an agent token never creates a launch nor reads the policy. It
+ * only ends its own launch, when `ostrom <agent>` ends. The person and the organization always
  * come from the credential. The runner of a cloud session opens its session's launch with its runner token instead.
  *
  * @param dependencies The use cases.
@@ -40,6 +43,12 @@ fun Route.launchesRoutes(dependencies: LaunchesRoutesDependencies) = with(depend
             val body = call.receive<CreateLaunchRequest>()
             val created = call.retryAfter { createLaunch(launcher, NewLaunch(body.repo, body.agent, body.model)) }
             call.respond(HttpStatusCode.Created, created.toResponse())
+        }
+        // The end of `ostrom <agent>` (AUDIT-SECU-RUNNER-2 R2b): only the launch's own agent token ends it. Only an
+        // agent token's actor names a launch; a person, a device or a service key names none.
+        delete<LaunchApi> { params ->
+            endLaunch(actors.resolve(call.requirePrincipal())?.launchId, params.launchId)
+            call.respond(HttpStatusCode.NoContent)
         }
     }
     // The runner channel: the execution's runner token, checked before the body is read (S2-46), never a member's.
