@@ -84,6 +84,7 @@ sealed interface LeaseResult {
  * @param groups The accounts lent to the member through their groups: an account that does not name the member serves
  *   them when one of their groups, where they are not paused, holds it.
  */
+@Suppress("LongParameterList") // One port per owner: accounts, windows, tokens, headers, spend, time, groups.
 class SharedAccountPool(
     private val accounts: SharedAccountRepository,
     private val windows: QuotaWindowRepository,
