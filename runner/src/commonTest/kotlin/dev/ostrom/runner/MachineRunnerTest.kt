@@ -305,7 +305,7 @@ class MachineRunnerTest {
     @Test
     fun aCancelledMachineStopsWhileReadingOrApplying() = runTest {
         val api = object : MachineApi {
-            override suspend fun heartbeat(report: MachineReport?) = MachineWork()
+            override suspend fun heartbeat(report: MachineReport?, wait: Duration) = MachineWork()
         }
         val reading = object : DockerEngine by FakeDockerEngine() {
             override suspend fun containers(): List<HeldContainer> = throw CancellationException("stop")
