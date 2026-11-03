@@ -50,9 +50,12 @@ class LocalDenialAuditPostgresTest {
         setBody(body)
     }
 
-    /** [login] signs in, creates their organization, and gets a token that starts sessions and asks gates. */
+    /**
+     * [login] signs in, creates their organization, and gets a token that starts sessions and asks gates. Each owner
+     * has their own e-mail domain: a second free team of one domain is refused.
+     */
     private suspend fun TestServer.owner(login: String, org: String): Pair<StartedSession, String> {
-        val email = "$login@example.com"
+        val email = "$login@${org.lowercase()}.test"
         val identity = VerifiedIdentity(IdentityProvider.GITHUB, login, email, true, login, login = login)
         val started = koin.get<StartWebSessionUseCase>()(koin.get<ResolveUserUseCase>()(identity).id)
         val created = client.post("/api/v1/orgs") {

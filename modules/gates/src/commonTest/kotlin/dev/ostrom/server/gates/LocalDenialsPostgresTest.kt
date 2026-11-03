@@ -2,8 +2,10 @@
 package dev.ostrom.server.gates
 
 import dev.ostrom.server.gates.domain.models.ActorKind
+import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.audit.OrgAuditRecord
@@ -83,6 +85,12 @@ class LocalDenialsPostgresTest {
             }
         }
         single<OrgAuditTrail> { OrgAuditTrail { audit += it } }
+        // The receipts module is not loaded: the routes' signer is never called here.
+        single<GateReceiptSigner> {
+            object : GateReceiptSigner {
+                override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
+            }
+        }
     }
 
     private fun deniedTest(block: suspend (TestServer) -> Unit) =
