@@ -8,8 +8,10 @@ import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Clock
+import kotlin.time.Duration
 
 /**
  * Writes a run's phases as the analysis or the replay goes, so the console follows it, and ends it: `ready`, or
@@ -26,15 +28,22 @@ internal class RunRecorder(
 ) {
     /**
      * Runs [work] for [run] to its end. A superseded run stops silently; a server that stops fails the run as stopped
-     * and goes on stopping; any other error fails it as broken.
+     * and goes on stopping; a run past its deadline fails as too long and gives its worker back (GitHub slow or
+     * rate-limited at every call would hold it for hours, and two workers serve every organization of the server);
+     * any other error fails it as broken. Each write is a transaction of its own: a run stopped half-way leaves the
+     * last results and the rules it had not proposed yet, never half of a write.
      *
      * @param run The run.
      * @param what `analysis` or `replay`, in the log and the reasons.
+     * @param deadline How long the run may take.
      * @param work The run's work.
      */
-    suspend fun execute(run: AnalysisRun, what: String, work: suspend () -> Unit) {
+    suspend fun execute(run: AnalysisRun, what: String, deadline: Duration, work: suspend () -> Unit) {
         try {
-            work()
+            if (withTimeoutOrNull(deadline) { work() } == null) {
+                logger.warn("$what run past its deadline", mapOf("run_id" to run.id))
+                fail(run, ENGINE, "The $what took longer than ${deadline.inWholeMinutes} minutes; start it again.")
+            }
         } catch (_: SupersededRunException) {
             // A newer run took the organization's run over: it owns the state.
             logger.debug("$what run superseded", mapOf("run_id" to run.id))
