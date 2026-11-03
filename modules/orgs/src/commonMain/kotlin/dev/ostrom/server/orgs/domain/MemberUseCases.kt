@@ -84,7 +84,7 @@ class ListMembersUseCaseImpl(
         val list = read.take(limit)
         val byId = people.getMany(list.map { it.userId }).associateBy { it.id }
         val items = list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
-        return MemberPage(items, list.lastOrNull()?.id?.takeIf { read.size > limit })
+        return MemberPage(items, if (read.size > limit) list.last().id else null)
     }
 }
 

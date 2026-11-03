@@ -233,7 +233,8 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
                 "SELECT $MEMBER_COLUMNS FROM orgs_members m WHERE m.org_id = :org$start " +
                     "ORDER BY m.joined_at, m.id LIMIT :limit",
             ).bind("org", orgId).bind("limit", limit)
-            fetchAll(after?.let { statement.bind("after", it) } ?: statement).getOrThrow().map { it.toMember() }
+            if (after != null) statement.bind("after", after)
+            fetchAll(statement).getOrThrow().map { it.toMember() }
         }
 
     override suspend fun count(orgId: Uuid): Int =
