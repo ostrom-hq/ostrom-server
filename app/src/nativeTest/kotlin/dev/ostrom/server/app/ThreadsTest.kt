@@ -55,13 +55,14 @@ class ThreadsTest {
      * CHARGE 41672759077: after a burst of streams and waits, the server went from 99 threads at the peak to 198 once
      * every client had gone, and its memory stayed up. Here a real CIO server takes rounds of streams and waits that
      * their clients cut, and of quick calls: past the first round, the threads must stop growing, so that a stream, a
-     * wait or a call cut by its client leaves no thread behind. The first round does grow them: CIO runs every
-     * connection on Dispatchers.IO, whose threads start on demand and never end (41679249042: 95, 95, 93, 93 threads
-     * over four rounds, Dispatchers.IO up to its 80th thread).
+     * wait or a call cut by its client leaves no thread behind. Nor may the first round grow them past the server's
+     * own pools: Ktor's CIO ran every connection on Dispatchers.IO, whose threads start on demand, up to 2048, and
+     * never end (41679249042: 95, 95, 93, 93 threads over four rounds, Dispatchers.IO up to its 80th thread; CHARGE
+     * 41690263233: 93 threads before a burst, 193 a minute after it).
      */
     @Test
     fun streamsAndWaitsCutByTheirClientsLeaveNoThreadBehind() = runBlocking {
-        if (threadCount() == null) return@runBlocking // No /proc: macOS.
+        val base = threadCount() ?: return@runBlocking // No /proc: macOS.
         val open = AtomicInt(0)
         val server = serverEngine(port = 0, host = LOOPBACK) {
             routing {
@@ -112,6 +113,10 @@ class ThreadsTest {
             server.stop(0, STOP_TIMEOUT_MILLIS)
         }
         val kinds = namePools()
+        assertTrue(
+            counts.max() - base <= SERVER_THREADS + TOLERANCE,
+            "from $base threads before the server, $counts after each round: more than its $SERVER_THREADS. $kinds",
+        )
         val growth = counts.last() - counts.first()
         assertTrue(
             growth <= TOLERANCE,
@@ -210,6 +215,9 @@ class ThreadsTest {
         const val ROUNDS = 4
         const val PER_KIND = 100
         const val TOLERANCE = 8
+
+        // The connections' pool (8 by default), and Dispatchers.Default, whose threads may start with the first call.
+        const val SERVER_THREADS = 8 + 4
         const val BUFFER = 4096
         const val NAMING_TURNS = 12
         const val IO_PARALLELISM = 64
