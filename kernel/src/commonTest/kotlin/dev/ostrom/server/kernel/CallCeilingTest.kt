@@ -11,6 +11,7 @@ import dev.ostrom.server.kernel.http.CallKind
 import dev.ostrom.server.kernel.http.CallsInProgress
 import dev.ostrom.server.kernel.http.configureHttp
 import dev.ostrom.server.kernel.http.heldCalls
+import dev.ostrom.server.kernel.http.openConnections
 import dev.ostrom.server.kernel.logging.JsonLogger
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
@@ -194,6 +195,7 @@ class CallCeilingTest {
         override val koinModule: Module = module {}
         val servedIn = CompletableDeferred<Unit>()
         val heldIn = CompletableDeferred<Unit>()
+        val openIn = CompletableDeferred<Unit>()
 
         override fun routes(route: Route, koin: Koin) {
             route.get("/probe/served") {
@@ -210,6 +212,13 @@ class CallCeilingTest {
                     call.respondText("held")
                 }
             }
+            route.openConnections {
+                get("/probe/open") {
+                    openIn.complete(Unit)
+                    release.await()
+                    call.respondText("open")
+                }
+            }
         }
     }
 
@@ -219,7 +228,7 @@ class CallCeilingTest {
     ) = testApplication {
         val release = CompletableDeferred<Unit>()
         val probe = Probe(release)
-        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = wait), { null })
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, open = 1, queueWait = wait), { null })
         val koin = koinApplication {
             modules(
                 module {
@@ -300,6 +309,21 @@ class CallCeilingTest {
             assertBusy(secondHeld, secondHeld.bodyAsText())
             release.complete(Unit)
             assertEquals("served", served.await())
+            assertEquals("held", held.await())
+        }
+    }
+
+    @Test
+    fun anOpenConnectionHasItsOwnCeilingApartFromTheHeldCalls() = ceilingTest { probe, release ->
+        coroutineScope {
+            val open = async { client.get("/probe/open").bodyAsText() }
+            probe.openIn.await()
+            val held = async { client.get("/probe/held").bodyAsText() }
+            probe.heldIn.await()
+            val secondOpen = client.get("/probe/open") { header(HttpHeaders.Accept, "text/event-stream") }
+            assertBusy(secondOpen, secondOpen.bodyAsText())
+            release.complete(Unit)
+            assertEquals("open", open.await())
             assertEquals("held", held.await())
         }
     }
