@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.connectPostgres
 import io.github.smyrgeorge.sqlx4k.Driver
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -93,11 +94,11 @@ class TestDatabase private constructor(
      * while it waits stops at once. Within [block] and its child coroutines, this database takes it again at once (a
      * bench's large pool inside its timing); another coroutine waits like another process.
      *
-     * CI's PostgreSQL service has `max_connections` 100 and Gradle runs the modules' tests in parallel, each test with
-     * pools of its own (up to 12 connections, [create]). Two read benches of 20 callers and the launch path's pool of 50
-     * at once ran out of connections (« sorry, too many clients already », on main and on pull requests, 03/11/2026),
-     * and two benches timing at once on the runner's few cores measured each other: a route's p95 went over its budget
-     * on a pull request that never touched it (ReportsReadsBenchTest, server#282).
+     * CI's PostgreSQL service has `max_connections` 100 and Gradle runs the modules' tests in parallel, each test
+     * with pools of its own (up to 12 connections, [create]). Two read benches of 20 callers and the launch path's
+     * pool of 50 at once ran out of connections (« sorry, too many clients already », on main and on pull requests,
+     * 03/11/2026), and two benches timing at once on the runner's few cores measured each other: a route's p95 went
+     * over its budget on a pull request that never touched it (ReportsReadsBenchTest, server#282).
      *
      * @param block What runs alone.
      * @return What [block] returns.
