@@ -73,12 +73,13 @@ class GatesRunGates(private val open: OpenGateUseCase, private val gates: GatesR
             ),
         )
     }
-
-    private companion object {
-        const val ENGINE = "workflow-engine"
-        const val ACTION_CLASS = "workflow_gate"
-        const val TOOL = "workflow"
-        const val MAX_LABEL = 200
-        val DECIDED_YES = setOf(GateStatus.APPROVED, GateStatus.RESERVED, GateStatus.CONSUMED)
-    }
 }
+
+// Who asks (the server's engine), what kind of action a gate node covers, and the longest label a gate takes.
+private const val ENGINE = "workflow-engine"
+private const val ACTION_CLASS = "workflow_gate"
+private const val TOOL = "workflow"
+private const val MAX_LABEL = 200
+
+// A yes, used or not: the gate node said its part once an approver said yes.
+private val DECIDED_YES = setOf(GateStatus.APPROVED, GateStatus.RESERVED, GateStatus.CONSUMED)

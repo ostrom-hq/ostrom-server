@@ -99,7 +99,7 @@ class CancelWorkflowRunUseCaseImpl(
 
     private fun cancelled(run: WorkflowRun, at: String): WorkflowRun {
         val visits = run.visits.map { visit ->
-            if (visit.status in OPEN) {
+            if (visit.status in UNDER_WAY) {
                 visit.copy(status = RunMoves.FAILED, outcome = CANCELLED, endedAt = at)
             } else {
                 visit
@@ -109,14 +109,14 @@ class CancelWorkflowRunUseCaseImpl(
     }
 
     private fun requireStarter(actor: GateActor) {
-        if (actor.kind != ActorKind.USER || actor.role !in STARTERS) throw CancelRunForbiddenException()
-    }
-
-    private companion object {
-        const val ATTEMPTS = 3
-        const val CANCELLED = "cancelled"
-        val STARTERS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
-        val ENDED = setOf(RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED)
-        val OPEN = setOf(RunMoves.RUNNING, RunMoves.WAITING)
+        if (actor.kind != ActorKind.USER || actor.role !in CANCELLERS) throw CancelRunForbiddenException()
     }
 }
+
+// How often a cancel reads the run again when the engine changed it meanwhile; who cancels; the runs already ended and
+// the visits still under way. Top-level, not in a private companion, whose lines Kover counts as partly missed.
+private const val ATTEMPTS = 3
+private const val CANCELLED = "cancelled"
+private val CANCELLERS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+private val ENDED = setOf(RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED)
+private val UNDER_WAY = setOf(RunMoves.RUNNING, RunMoves.WAITING)

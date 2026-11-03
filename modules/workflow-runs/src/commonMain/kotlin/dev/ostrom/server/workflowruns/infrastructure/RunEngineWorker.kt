@@ -41,8 +41,7 @@ class RunEngineWorker(
         logger.error("workflow runs engine pass failed", mapOf("error" to error::class.simpleName))
         0
     }
-
-    private companion object {
-        val INTERVAL: Duration = 2.seconds
-    }
 }
+
+// The pause after a pass that found nothing due.
+private val INTERVAL: Duration = 2.seconds
