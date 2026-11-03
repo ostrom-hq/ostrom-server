@@ -102,7 +102,8 @@ class UsageDailyTotalsPostgresTest {
             "WHERE cost_micros % 2 = 1").getOrThrow()
         server.assertTotalsAreTheLedgers("an update by another role than the organization's")
 
-        owner.execute("UPDATE usage_events SET cost_micros = 0 WHERE session_id = 'moved'").getOrThrow()
+        owner.execute("UPDATE usage_events SET cost_micros = 0 WHERE session_id = 'moved' " +
+            "AND org_id = CAST('${TestCallers.orgA}' AS uuid)").getOrThrow()
         server.assertTotalsAreTheLedgers("an update that brings calls to zero")
 
         // The backfill as version 7 runs it: by the router, under the ledger's forced policies.
