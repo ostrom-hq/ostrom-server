@@ -77,7 +77,8 @@ val ADMIN_TOKEN_LIFETIME: Duration = 8.hours
  * The reads the token of `ostrom login --admin` makes to write the governance, which the device's token lacks: the
  * model policy `ostrom policy set models` reads before it writes it again (it keeps the default and the members'
  * lists). Reads, not governance scopes: a personal token keeps them, and `ostrom login --admin` does not ask for them
- * (the browser shows the writes it approves).
+ * (the browser shows the writes it approves). Only a read of what [ADMIN_SCOPES] write belongs here: `inference:read`
+ * opens `GET /api/v1/policy/models` alone (the inference settings take `inference:admin`).
  */
 val ADMIN_READ_SCOPES: Set<String> = setOf("inference:read")
 

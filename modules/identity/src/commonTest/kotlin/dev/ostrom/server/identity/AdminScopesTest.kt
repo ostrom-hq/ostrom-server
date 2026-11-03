@@ -46,6 +46,8 @@ class AdminScopesTest {
         // a read, not a governance scope: a personal token still holds it, the device's token still does not
         assertEquals(setOf("inference:read"), grantedScopes(TokenKind.PERSONAL, setOf("inference:read")))
         assertTrue("inference:read" !in grantedScopes(TokenKind.CLI, ADMIN_TOKEN_SCOPES))
+        // reads only, which the browser does not show: never a write slipped in unseen
+        assertTrue(ADMIN_READ_SCOPES.all { it.endsWith(":read") } && (ADMIN_READ_SCOPES intersect ADMIN_SCOPES).isEmpty())
     }
 
     @Test
