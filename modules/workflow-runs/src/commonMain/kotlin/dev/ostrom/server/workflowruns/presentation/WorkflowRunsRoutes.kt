@@ -4,11 +4,13 @@ package dev.ostrom.server.workflowruns.presentation
 import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.api.models.ReportCheckRequest
+import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.admitServiceKey
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
@@ -25,6 +27,7 @@ import dev.ostrom.server.workflowruns.domain.usecases.WorkflowReceiptRequest
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -42,14 +45,16 @@ import kotlin.uuid.Uuid
  * launcher's hooks with the launch's agent token, or from the session's person; the lists are any member's, an agent
  * token's for its own session; a bundle is read by a person who reads receipts, or by the agent token of the
  * receipt's session's launch (`ostrom <agent>` keeps it at the end). Outside the contract, the runner of a cloud
- * session reports the checks it ran itself on `/api/v1/cloud/runner/checks`, with its runner token.
+ * session reports the checks it ran itself on `/api/v1/cloud/runner/checks`, with its runner token. A service key with
+ * `sessions:write` (the organization's CI) also reports a check and signs an ended session's receipt, in its own
+ * organization; it reads nothing here.
  *
  * @param dependencies The use cases.
  */
 fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = with(dependencies) {
     authenticated {
         post<ChecksApi> {
-            val actor = actorOf(call, SessionScopes.writing)
+            val actor = writerOf(call, "reportCheck")
             val run = reportCheck(actor, call.receive<ReportCheckRequest>())
             call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
         }
@@ -72,7 +77,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
             call.respond(NotificationsPage(items, nextOf(items.map { it.id }, query.limit)))
         }
         post<WorkflowReceiptApi> { params ->
-            val actor = actorOf(call, SessionScopes.writing)
+            val actor = writerOf(call, "signWorkflowReceipt")
             val body = call.receive<WorkflowReceiptRequestBody>()
             val request = WorkflowReceiptRequest(params.id, body.digest, body.agent, body.model)
             val signed = signWorkflowReceipt(actor, request)
@@ -96,6 +101,18 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
         call.respond(HttpStatusCode.Created, OstromJson.encodeToJsonElement(CheckRunAnswer, run))
     }
 }
+
+// The two writes a CI makes: a service key of the organization with `sessions:write` reports for any of its sessions,
+// in its own organization, each call audited in its name; anyone else as on every other write.
+private suspend fun WorkflowRunsRoutesDependencies.writerOf(call: ApplicationCall, operation: String): GateActor {
+    val principal = call.requirePrincipal()
+    val orgId = principal.admitServiceKey(serviceKeys, SERVICE_KEY_WRITES, operation, call.request.path())
+        ?: return actorOf(call, SessionScopes.writing)
+    return GateActor(principal.subjectId, orgId, ActorKind.SERVICE)
+}
+
+/** The scope a service key needs to report a check and sign a session's workflow receipt. */
+private const val SERVICE_KEY_WRITES = "sessions:write"
 
 // The scope first (SECURITY-AUDIT S2-03): a credential that may not use the route learns nothing about its org.
 private suspend fun WorkflowRunsRoutesDependencies.actorOf(call: ApplicationCall, accepted: Set<String>): GateActor {
