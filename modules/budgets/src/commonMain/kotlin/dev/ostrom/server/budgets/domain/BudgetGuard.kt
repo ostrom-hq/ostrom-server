@@ -105,7 +105,8 @@ class BudgetGuardImpl(
         val now = clock.now()
         val key = MemberKey(orgId, memberId)
         val (cached, readAt) = lock.withLock { decisions[key] to generation }
-        if (cached != null && cached.expiresAt > now) return cached.value
+        // RED, throwaway: the cache never hits, every check reads the limits.
+        if (cached != null && cached.expiresAt > now + cache.ttl) return cached.value
         val decision = evaluate(orgId, memberId, now, readAt)
         lock.withLock {
             if (generation == readAt) decisions.putBounded(key, Cached(decision, now + cache.ttl), now)
