@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+@file:OptIn(NativeRuntimeApi::class)
+
 package dev.ostrom.server.app
 
 import dev.ostrom.server.app.signals.ostrom_await_signal
@@ -28,6 +30,9 @@ import dev.ostrom.server.kernel.observability.ProcessMetrics
 import dev.ostrom.server.kernel.observability.TelemetryLogger
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
+import kotlin.native.runtime.GC
+import kotlin.native.runtime.NativeRuntimeApi
+import kotlin.system.exitProcess
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -38,7 +43,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.koin.core.Koin
 import platform.posix.SIGTERM
-import kotlin.system.exitProcess
 
 private const val EXIT_FAILURE = 1
 private const val EXIT_USAGE = 2
@@ -112,6 +116,9 @@ private fun serve() {
                 "port" to config.port,
                 "key_id" to signer.keyId,
                 "heap_max_mib" to heap?.let { it.maxBytes shr MIB_SHIFT },
+                // What the collector was left with: the image's smoke test refuses a pause or a bounded heap.
+                "gc_pause" to GC.pauseOnTargetHeapOverflow,
+                "gc_heap_bounded" to (GC.maxHeapBytes != Long.MAX_VALUE),
             ),
         )
         val engine = serverEngine(config.port, config.host) { configureHttp(server, modules) }.start(wait = false)

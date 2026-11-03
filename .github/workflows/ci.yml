@@ -339,7 +339,7 @@ jobs:
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL="$OWNER_URL" ostrom-server:ci
           expect 2 OSTROM_ALLOW_TEST_ACCOUNTS -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci \
             seed-test-account qa@ostrom.test
-          docker run -d --name ostrom --network host -e OSTROM_DATABASE_URL="$APP_URL" \
+          docker run -d --name ostrom --network host --memory 512m -e OSTROM_DATABASE_URL="$APP_URL" \
             -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 ostrom-server:ci
           for i in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done
           echo
@@ -350,6 +350,12 @@ jobs:
           docker logs ostrom
           docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"'
           docker logs ostrom 2>&1 | grep '"msg":"server stopped"'
+          # Under a container limit, the binary leaves the Kotlin/Native collector at its defaults: a heap budget (a
+          # target, a maximum, threads paused past the target) grew Dispatchers.IO round after round and OOMKilled the
+          # server at the third round of CHARGE's bench under 512 MiB (e2e 41693127618, server#266).
+          starting=$(docker logs ostrom 2>&1 | grep '"msg":"server starting"')
+          echo "$starting" | grep -q '"gc_pause":false' || { echo "the collector pauses threads: $starting"; exit 1; }
+          echo "$starting" | grep -q '"gc_heap_bounded":false' || { echo "the heap is bounded: $starting"; exit 1; }
           test "$(docker inspect -f '{{.State.ExitCode}}' ostrom)" -eq 0
       - name: Smoke test of the license check (an invalid key fails the start, without logging the key)
         env:
