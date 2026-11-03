@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.kernel.http.heldCalls
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
 import dev.ostrom.server.usage.domain.InvalidUsageEventException
@@ -68,15 +69,22 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
             val next = if (page.size == limit) page.last().toCursor() else null
             call.respond(UsageEventsPageResponse(page.map { it.toResponse() }, next))
         }
-        get<UsageApi.Live> {
-            val caller = call.requireCaller(callers, UsageScopes.READ)
-            call.response.header(HttpHeaders.CacheControl, "no-cache")
-            // nginx (the web image proxies /api/) buffers responses unless told not to: the events would arrive late.
-            call.response.header("X-Accel-Buffering", "no")
-            call.respondBytesWriter(ContentType.Text.EventStream) {
-                writeEventStream(heartbeat, liveLifetime) { onSubscribed ->
-                    watch(caller, onSubscribed).map {
-                        OstromJson.encodeToString(UsageEventResponse.serializer(), it.toResponse())
+    }
+    // The live stream stays open: a held call, counted apart from the server's other calls from before authentication
+    // on (P1 memory).
+    heldCalls {
+        authenticated {
+            get<UsageApi.Live> {
+                val caller = call.requireCaller(callers, UsageScopes.READ)
+                call.response.header(HttpHeaders.CacheControl, "no-cache")
+                // nginx (the web image proxies /api/) buffers responses unless told not to: the events would arrive
+                // late.
+                call.response.header("X-Accel-Buffering", "no")
+                call.respondBytesWriter(ContentType.Text.EventStream) {
+                    writeEventStream(heartbeat, liveLifetime) { onSubscribed ->
+                        watch(caller, onSubscribed).map {
+                            OstromJson.encodeToString(UsageEventResponse.serializer(), it.toResponse())
+                        }
                     }
                 }
             }

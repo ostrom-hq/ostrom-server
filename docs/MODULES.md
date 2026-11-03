@@ -210,6 +210,8 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_READS_PER_MINUTE` | `600` | 1 to 100 000: how many calls one subject (a person, a device, an agent, a service) makes per minute to the costly reads (sessions and their thread, activity, spending, receipts, the audit log, a gate and its wait, the approvals); past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_READS_IN_FLIGHT` | `16` | 1 to 1 000: how many of those reads one subject holds at once; past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_READ_WAITS_IN_FLIGHT` | `256` | 1 to 10 000: how many gate reads (`GET /gates/{id}`, whose `wait` holds the call up to 30 s) one subject holds at once, apart from the reads above; they count in `OSTROM_READS_PER_MINUTE` too. Past it, a 429 with `Retry-After`. Counted per replica |
+| `OSTROM_MAX_CALLS_IN_PROGRESS` | from the memory limit | 1 to 100 000: how many calls this replica runs at once. Past it, a 503 `unavailable` with `Retry-After: 1`, at once, before authentication. Unset, 150 per 512 MiB of container limit (at least 16; 256 without a limit), read again at every call. Held calls and `/health`, `/ready` are not counted |
+| `OSTROM_MAX_HELD_CALLS` | from the memory limit | 1 to 100 000: the same, apart, for the calls that stay open: gate and confirmation waits, terminal WebSockets, the live usage stream, inference calls |
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
 | `OSTROM_ALLOW_TEST_ACCOUNTS` | — | `true` lets `ostrom-server seed-test-account` run; never set in production |
@@ -240,7 +242,7 @@ environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, 
 ### Memory under the container limit
 
 The server reads its container's memory limit (cgroup v2 `memory.max`, else v1) and holds itself under it, with no
-key to set:
+key to set (the ceilings of calls can be set):
 
 - Calls run on `Dispatchers.Default`, one thread per core. Ktor's CIO runs them on `Dispatchers.IO`, whose threads (up
   to 64) start on demand and never end, each with memory of its own: a burst of 100 unauthenticated requests took the
@@ -250,7 +252,14 @@ key to set:
   burst adds its memory in a second or two and the collector gives it back 10 to 15 s later (chart-load 41639797095,
   from `/proc/<pid>/smaps`).
 
-Without a limit (a plain process), the heap keeps the runtime's own tuning.
+- Calls at once are bounded (`OSTROM_MAX_CALLS_IN_PROGRESS`): each costs memory while it runs, about 1 MiB more past
+  100 at once, so 500 approvals at once still OOMKilled the server under 512 MiB once the heap was bounded, where 200
+  peaked at 377 MiB (CHARGE 41644506470). Past 150 calls per 512 MiB, a call is told 503 with `Retry-After: 1` before
+  anything else runs. The calls that stay open (waits, WebSockets, streams) count apart under their own ceiling
+  (`OSTROM_MAX_HELD_CALLS`), so that they neither take the other calls' places nor escape a ceiling; `/health` and
+  `/ready` are never counted.
+
+Without a limit (a plain process), the heap keeps the runtime's own tuning and both ceilings are 256.
 
 ### Module `gateway`
 

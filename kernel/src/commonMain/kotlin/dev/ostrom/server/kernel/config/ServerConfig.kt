@@ -50,6 +50,7 @@ data class ServerConfig(
     /** Reading the configuration. */
     companion object {
         private const val DEFAULT_PORT = 8080
+        private const val MAX_CALL_CEILING = 100_000
         private const val MAX_PORT = 65535
         private const val DEFAULT_MAX_CONNECTIONS = 10
         private const val MAX_CONNECTIONS = 1000
@@ -114,7 +115,10 @@ data class ServerConfig(
          *
          * @throws InvalidConfigException When a value is not an integer in its range.
          */
-        fun callCeilings(source: ConfigSource): CallCeilingSettings = CallCeilingSettings()
+        fun callCeilings(source: ConfigSource): CallCeilingSettings = CallCeilingSettings(
+            served = source.optionalInt("OSTROM_MAX_CALLS_IN_PROGRESS", 1..MAX_CALL_CEILING),
+            held = source.optionalInt("OSTROM_MAX_HELD_CALLS", 1..MAX_CALL_CEILING),
+        )
 
         /**
          * The read limits of the costly routes (AUDIT-SECU-LECTURES M1), per subject and per replica:
@@ -193,8 +197,11 @@ data class ServerConfig(
                 ?: throw InvalidConfigException("OSTROM_LOG_LEVEL must be one of ${LogLevel.entries.joinToString()}.")
         }
 
-        private fun ConfigSource.int(key: String, default: Int, range: IntRange): Int {
-            val raw = this[key] ?: return default
+        private fun ConfigSource.int(key: String, default: Int, range: IntRange): Int =
+            optionalInt(key, range) ?: default
+
+        private fun ConfigSource.optionalInt(key: String, range: IntRange): Int? {
+            val raw = this[key] ?: return null
             val value = raw.toIntOrNull() ?: throw InvalidConfigException("$key must be an integer.")
             if (value !in range) throw InvalidConfigException("$key must be between ${range.first} and ${range.last}.")
             return value

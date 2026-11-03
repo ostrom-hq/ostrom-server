@@ -75,7 +75,12 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
      *
      * @return True when admitted; the caller then calls [leave] exactly once.
      */
-    fun tryEnter(kind: CallKind): Boolean = counterOf(kind)?.incrementAndFetch().let { true }
+    fun tryEnter(kind: CallKind): Boolean {
+        val counter = counterOf(kind) ?: return true
+        val admitted = counter.incrementAndFetch() <= ceiling(kind)
+        if (!admitted) counter.decrementAndFetch()
+        return admitted
+    }
 
     /**
      * Gives back the place of a call admitted by [tryEnter].
@@ -118,7 +123,9 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
          *
          * @return The ceiling.
          */
-        fun ceilingUnder(limitBytes: Long?): Int = DEFAULT_CEILING
+        fun ceilingUnder(limitBytes: Long?): Int = limitBytes?.let {
+            (it / MIB * CALLS_UNDER_REFERENCE / REFERENCE_MIB).coerceIn(MIN_CEILING, Int.MAX_VALUE.toLong()).toInt()
+        } ?: DEFAULT_CEILING
     }
 }
 

@@ -6,6 +6,7 @@ import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.ServerConfig
 import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.database.MigrationRunnerImpl
+import dev.ostrom.server.kernel.http.CallsInProgress
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
 import dev.ostrom.server.kernel.http.HealthCheck
 import dev.ostrom.server.kernel.http.ReadThrottle
@@ -13,6 +14,7 @@ import dev.ostrom.server.kernel.http.Readiness
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.network.TrustedProxies
 import dev.ostrom.server.kernel.observability.OstromMetrics
+import dev.ostrom.server.kernel.observability.ProcessMemory
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
 import org.koin.core.module.Module
@@ -55,6 +57,8 @@ fun kernelModule(
     single { Readiness() }
     // AUDIT-SECU-LECTURES M1: one limiter for every costly read route, validated at start like the proxies above.
     single { ReadThrottle(get(), ServerConfig.readLimits(config), ReadThrottle.MAX_SUBJECTS) }
+    // P1 memory: the calls this replica runs at once, under a ceiling taken from its container's limit.
+    single { CallsInProgress(ServerConfig.callCeilings(config), ProcessMemory::limitBytes) }
     single<MigrationRunner> { MigrationRunnerImpl(get(), get()) }
     single<HealthCheck>(named("database")) { DatabaseHealthCheck(get()) }
 }
