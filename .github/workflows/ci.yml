@@ -350,11 +350,12 @@ jobs:
           docker logs ostrom
           docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"'
           docker logs ostrom 2>&1 | grep '"msg":"server stopped"'
-          # Under a container limit, the binary leaves the Kotlin/Native collector at its defaults: a heap budget (a
-          # target, a maximum, threads paused past the target) grew Dispatchers.IO round after round and OOMKilled the
-          # server at the third round of CHARGE's bench under 512 MiB (e2e 41693127618, server#266).
+          # Under a container limit, the binary leaves the Kotlin/Native heap unbounded: a heap budget (a target and a
+          # maximum read from the limit) grew Dispatchers.IO round after round and OOMKilled the server at the third
+          # round of CHARGE's bench under 512 MiB (e2e 41693127618, server#266). The pause past the target is
+          # Kotlin/Native's default ("gc_pause":true without any setting, Build 41722339019), and the bisection's flat
+          # image ran with it: only the bound is checked.
           starting=$(docker logs ostrom 2>&1 | grep '"msg":"server starting"')
-          echo "$starting" | grep -q '"gc_pause":false' || { echo "the collector pauses threads: $starting"; exit 1; }
           echo "$starting" | grep -q '"gc_heap_bounded":false' || { echo "the heap is bounded: $starting"; exit 1; }
           test "$(docker inspect -f '{{.State.ExitCode}}' ostrom)" -eq 0
       - name: Smoke test of the license check (an invalid key fails the start, without logging the key)

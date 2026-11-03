@@ -111,7 +111,8 @@ private fun serve() {
                 "host" to config.host,
                 "port" to config.port,
                 "key_id" to signer.keyId,
-                // What the collector was left with: the image's smoke test refuses a pause or a bounded heap.
+                // What the collector was left with (the pause is Kotlin/Native's default): the image's smoke test
+                // refuses a bounded heap.
                 "gc_pause" to GC.pauseOnTargetHeapOverflow,
                 "gc_heap_bounded" to (GC.maxHeapBytes != Long.MAX_VALUE),
             ),
