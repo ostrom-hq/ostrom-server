@@ -157,7 +157,7 @@ class NotificationOutbox(
         } catch (error: Exception) {
             // The type only: a provider's message may quote what it was sent.
             // Push refusals carry our own words (Expo's status or ticket code), never a token: kept for the operator.
-            val reason = (error as? PushNotSentException)?.message?.let { mapOf("reason" to it) }.orEmpty()
+            val reason = (error as? PushNotSentException)?.let { mapOf("reason" to it.message) }.orEmpty()
             val failed = fields(attempt) + ("error" to error::class.simpleName) + reason
             val pause = retryDelays.getOrNull(attempt.number - 1)
             if (pause == null) {

@@ -55,6 +55,26 @@ class ApprovalNoticesTest {
     }
 
     @Test
+    fun aLabelWithLineBreaksReadsOnOneLineAndACutNeverSplitsASurrogatePair() {
+        val broken = sampleGate(org, label = "Push\nto\tmain", repo = null)
+        assertEquals("Push to main", notices.body(broken))
+
+        // 119 letters then a character outside the BMP (two UTF-16 units) straddling the cut at 120.
+        val pair = sampleGate(org, label = "x".repeat(MAX_NOTICE_TEXT - 1) + "\uD83D\uDE00tail", repo = null)
+        assertEquals("x".repeat(MAX_NOTICE_TEXT - 1) + "…", notices.body(pair))
+    }
+
+    @Test
+    fun theEmailOfAGateWithNeitherLabelNorRepositoryHasNoDanglingColon() {
+        val gate = sampleGate(org, label = "", repo = null)
+
+        val mail = notices.email(gate, sampleRequest(gate, "bob"), "bob@example.com")
+
+        assertEquals("ana asks for your yes", mail.subject)
+        assertTrue(mail.text.startsWith("ana asks for your yes.\n\nOpen the request"), mail.text)
+    }
+
+    @Test
     fun theEmailLinksToTheRequestInTheConsoleAndEscapesWhatTheGateSays() {
         val gate = sampleGate(org, label = "Deploy <prod> & \"main\" 'now'")
         val request = sampleRequest(gate, "bob")
