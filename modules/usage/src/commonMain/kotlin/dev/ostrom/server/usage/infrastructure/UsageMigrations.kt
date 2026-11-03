@@ -58,7 +58,7 @@ internal const val DAILY_TOTALS_OF_THE_LEDGER: String =
         "SELECT org_id, CAST(at AT TIME ZONE 'UTC' AS DATE), member_id, session_id, launch_id, SUM(cost_micros) " +
         "FROM usage_events WHERE cost_micros > 0 GROUP BY 1, 2, 3, 4, 5"
 
-/** The key of a daily total, in the order every writer locks the totals: two writers never deadlock. */
+/** The key of a daily total, in the order each statement locks the totals (see the migration's KDoc on deadlocks). */
 private const val DAILY_KEY = "org_id, day, member_id, session_id, launch_id"
 
 /** The calls of a transition table that cost something, by [DAILY_KEY], their cost signed. */
@@ -104,8 +104,10 @@ private val DAILY_FUNCTIONS = listOf("usage_daily_add", "usage_daily_remove", "u
  * update does both, a truncate empties them. Their functions run as `ostrom_router` (`SECURITY DEFINER`, the module's
  * pattern since version 4), the only role that writes the totals: an organization reads its own and changes none.
  * Every write, an update's old and new keys together, reaches the totals in one upsert in key order through their
- * unique index, so two writers never deadlock; calls of one session and day wait for each other's commit on their
- * total. The ledger is locked against writes while the totals of the calls recorded before are written, by the
+ * unique index, so two writers of one statement each never deadlock; calls of one session and day wait for each
+ * other's commit on their total. Two transactions that each write two keys in opposite statement orders could; no
+ * writer does today (each records or settles one call per transaction), and PostgreSQL would cancel one with 40P01.
+ * The ledger is locked against writes while the totals of the calls recorded before are written, by the
  * router, which reads every organization's calls inside its role: writes wait for one pass over the ledger, short on
  * the ledgers of today, and no call is counted twice or missed.
  */
