@@ -39,7 +39,8 @@ private const val EXPLAIN = "EXPLAIN (ANALYZE, BUFFERS) "
  * ([TRIALS] times, the plans of the median time kept); then the database time of a call: its statements replayed by
  * [CONCURRENT_CALLS] callers at once on a pool of as many connections ([CALLS_EACH] replays each), every transaction
  * of the call replayed as one and rolled back, and the planning and execution times PostgreSQL reports for its
- * queries added up, timed [TRIALS] times and the median trial kept ([medianTrial]).
+ * queries added up, timed [TRIALS] times and the median trial kept ([medianTrial]). The whole measure runs alone on the
+ * PostgreSQL server ([TestDatabase.exclusively]): the other test processes' benches wait, and wait for it.
  *
  * The time is the database's own, not the test's: the in-process test server serves its calls one after another, and
  * a client clock around 20 concurrent replays on a CI runner of a few cores measures the decoding and the scheduling
@@ -59,34 +60,38 @@ suspend fun TestServer.measureRead(
     name: String,
     writes: Boolean = false,
     call: suspend HttpClient.() -> HttpResponse,
-): ReadMeasure {
-    // Every call must succeed: a refused call (a 429 of the read limits) sends fewer statements and would be measured.
-    val checked: suspend () -> Unit = {
-        val response = client.call()
-        check(response.status.isSuccess()) { "$name answers ${response.status}: ${response.bodyAsText()}" }
+): ReadMeasure =
+    // Alone on the server: no other test process's bench warms up, times or opens its large pool meanwhile
+    // (TestDatabase.exclusively), so that two benches never measure each other.
+    database.exclusively {
+        // Every call must succeed: a refused call (a 429 of the read limits) sends fewer statements and would be
+        // measured.
+        val checked: suspend () -> Unit = {
+            val response = client.call()
+            check(response.status.isSuccess()) { "$name answers ${response.status}: ${response.bodyAsText()}" }
+        }
+        repeat(WARM_UP_CALLS) { checked() }
+        val http = List(HTTP_CALLS) { timed { checked() } }.sorted()[HTTP_CALLS / 2]
+        val statements = (1..RECORDINGS).map { driver.record(checked) }.minBy { it.size }
+        val plans = List(TRIALS) { database.driver.replay(statements, explain = true, writes) }
+            .sortedBy(::databaseTime)[TRIALS / 2]
+        val latencies = database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
+            database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
+            val callers = 1..CONCURRENT_CALLS
+            // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.
+            coroutineScope { callers.map { async { pool.replay(statements, explain = true, writes) } }.awaitAll() }
+            medianTrial(
+                List(TRIALS) {
+                    coroutineScope {
+                        callers.map {
+                            async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true, writes)) } }
+                        }.awaitAll().flatten()
+                    }
+                },
+            )
+        }
+        ReadMeasure(name, statements, plans, latencies, http)
     }
-    repeat(WARM_UP_CALLS) { checked() }
-    val http = List(HTTP_CALLS) { timed { checked() } }.sorted()[HTTP_CALLS / 2]
-    val statements = (1..RECORDINGS).map { driver.record(checked) }.minBy { it.size }
-    val plans = List(TRIALS) { database.driver.replay(statements, explain = true, writes) }
-        .sortedBy(::databaseTime)[TRIALS / 2]
-    val latencies = database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
-        database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
-        val callers = 1..CONCURRENT_CALLS
-        // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.
-        coroutineScope { callers.map { async { pool.replay(statements, explain = true, writes) } }.awaitAll() }
-        medianTrial(
-            List(TRIALS) {
-                coroutineScope {
-                    callers.map {
-                        async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true, writes)) } }
-                    }.awaitAll().flatten()
-                }
-            },
-        )
-    }
-    return ReadMeasure(name, statements, plans, latencies, http)
-}
 
 private val PLAN_TIME = Regex("^(Planning|Execution) Time: ([0-9.]+) ms$", RegexOption.MULTILINE)
 

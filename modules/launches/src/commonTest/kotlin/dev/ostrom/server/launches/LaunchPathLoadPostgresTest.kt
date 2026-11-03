@@ -88,7 +88,7 @@ import kotlin.uuid.Uuid
  *   callers, its queries and its plans, none of which scans a filled table;
  * - 100 launches at once in one organization, each person its own: the wall time of each route, every call answered,
  *   no deadlock, and every agent token refused once its launch ended; then the launch's own transaction (its advisory
- *   lock, its two counts and its insert) by 100 callers on a pool of 50, the contention the in-process server hides;
+ *   lock, its two counts and its insert) by 100 callers on a pool of 20, the contention the in-process server hides;
  * - 1 000 launches ended in two organizations: no agent token left active, and the rows each one leaves.
  */
 class LaunchPathLoadPostgresTest {
@@ -156,16 +156,17 @@ class LaunchPathLoadPostgresTest {
         server.release(team.org)
         val deadlocksBefore = server.deadlocks()
         val calls = Calls()
-        val started = TimeSource.Monotonic.markNow()
-        // Bounded: a call that waits for a connection it never gets is counted as unfinished, not waited for.
-        val ended = withTimeoutOrNull(CONCURRENCY_BUDGET) {
-            coroutineScope {
-                team.people.mapIndexed { n, person -> async { server.wholePath(person, n, calls) } }.awaitAll()
+        // Timed alone on the server: no other test process's bench times or loads it meanwhile (exclusively).
+        val (finished, wall, contended) = server.database.exclusively {
+            val started = TimeSource.Monotonic.markNow()
+            // Bounded: a call that waits for a connection it never gets is counted as unfinished, not waited for.
+            val ended = withTimeoutOrNull(CONCURRENCY_BUDGET) {
+                coroutineScope {
+                    team.people.mapIndexed { n, person -> async { server.wholePath(person, n, calls) } }.awaitAll()
+                }
             }
+            Triple(ended.orEmpty().filterNotNull(), started.elapsedNow(), server.contendedLaunches(team))
         }
-        val wall = started.elapsedNow()
-        val finished = ended.orEmpty().filterNotNull()
-        val contended = server.contendedLaunches(team)
         val deadlocks = server.deadlocks() - deadlocksBefore
         val active = server.activeAgentTokens(team.org.id)
         val stillActing = finished.count { launch ->
@@ -176,7 +177,8 @@ class LaunchPathLoadPostgresTest {
             appendLine("$CONCURRENT launches at once, one organization, one person each; in-process server, pool 4")
             appendLine("${finished.size} of $CONCURRENT paths whole in $wall (budget $CONCURRENCY_BUDGET)")
             append(calls.report())
-            appendLine(line("launch transaction, 100 callers, pool of 50 (advisory lock wait included)", contended))
+            val transaction = "launch transaction, 100 callers, pool of $CONTENDED_POOL (advisory lock wait included)"
+            appendLine(line(transaction, contended))
             appendLine("deadlocks: $deadlocks; agent tokens still active: $active")
             appendLine("ended agent tokens still accepted: $stillActing")
         }
@@ -282,7 +284,7 @@ class LaunchPathLoadPostgresTest {
         assertEquals(HttpStatusCode.NoContent, gone.status, gone.bodyAsText())
     }
 
-    // The launch's transaction alone, as 100 people of one organization launch at once: the repository on a pool of 50
+    // The launch's transaction alone, as 100 people of one organization launch at once: the repository on a pool of 20
     // connections of a role granted the serving role, so that the organization's advisory lock is really waited on.
     private suspend fun TestServer.contendedLaunches(team: Team): List<Duration> =
         database.withRole(poolSize = CONTENDED_POOL) { role, pool ->
@@ -526,7 +528,8 @@ class LaunchPathLoadPostgresTest {
         const val PEOPLE_FOR_ROUTES = 10
         const val MEASURED_CALLS = 30
         const val CONCURRENT = 100
-        const val CONTENDED_POOL = 50
+        // TestDatabase.LARGEST_POOL: 50 ran CI's PostgreSQL out of connections beside the other tests' pools.
+        const val CONTENDED_POOL = 20
         const val LEAK_PEOPLE = 50
         const val LAUNCHES_EACH = 10
         // Under the test pool's 4 connections: the leak test measures what is left, not the contention.

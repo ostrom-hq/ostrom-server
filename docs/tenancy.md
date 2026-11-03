@@ -91,7 +91,7 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `identity_token_by_hash(hash)` | identity | reads an API token by its hash, to authenticate it | `IdentityTenancyPostgresTest` |
 | `identity_token_touch(id, at)` | identity | notes an API token's last use | `IdentityTenancyPostgresTest` |
 | `identity_revoke_agent_session_tokens(session, at)` | identity | revokes the agent tokens of one agent session | `IdentityTenancyPostgresTest` |
-| `identity_purge_agent_tokens(before)` | identity | deletes the agent tokens expired before the date | `IdentityTenancyPostgresTest` |
+| `identity_purge_agent_tokens(before)` | identity | deletes the agent tokens expired before the date, never one expired less than 7 days ago; no date, an infinite or a future one is refused | `IdentityTenancyPostgresTest` |
 | `automations_route_org(id)` | automations | an automation's organization, for its webhook | `AutomationsRoutesTenancyPostgresTest` |
 | `automations_due_routes(now, limit)` | automations | claims the due crons of every organization (`FOR UPDATE SKIP LOCKED`) | `AutomationsPostgresTest` |
 | `automations_organizations()` | automations | the organizations that have automations, for the retention jobs | `AutomationsPostgresTest` |
@@ -99,7 +99,7 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `usage_purge(before, limit)` | usage | deletes one batch of events older than the retention | `UsagePostgresTest` |
 | `usage_daily_add()`, `usage_daily_remove()`, `usage_daily_change()`, `usage_daily_clear()` | usage | trigger functions of `usage_events` (no `EXECUTE` grant): keep the daily totals `usage_daily`, which an organization only reads, in the transaction of every write of the ledger | `UsageDailyTotalsPostgresTest` |
 | `mcp_relay_purge(before)` | mcp-relay | deletes the calls older than the retention | `McpRelayPostgresTest` |
-| `launches_purge(before)` | launches | deletes the launches expired before the date | `LaunchPurgeTest` |
+| `launches_purge(before)` | launches | deletes the launches expired before the date, never one expired less than 30 days ago; no date, an infinite or a future one is refused | `LaunchPurgeTest` |
 | `gates_pending_count()` | gates | counts the pending gates (sees `status` alone), for the `ostrom.gates.pending` gauge | `GatesPostgresTest` |
 | `sessions_active_count(since)` | sessions | counts the open sessions of every organization seen since, for `ostrom.sessions.active` | `SessionsPostgresTest` |
 | `artifacts_route_by_id(id)` | artifacts | an artifact's organization by its id, for the content origin | `ArtifactsRoutesTenancyPostgresTest` |
