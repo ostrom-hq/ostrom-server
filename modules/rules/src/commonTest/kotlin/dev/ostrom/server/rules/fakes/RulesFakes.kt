@@ -126,7 +126,11 @@ class FakeRulesRepository : RulesRepository {
 
     override suspend fun rules(orgId: Uuid, query: RuleQuery, limit: Int): List<Rule> {
         limits += limit
-        return rules.values.filter { it.orgId == orgId }.sortedBy { it.group + it.id }.take(limit)
+        val after = query.after
+        return rules.values.filter { it.orgId == orgId }
+            .sortedWith(compareBy<Rule>({ it.group }, { it.id }))
+            .filter { after == null || it.group > after.group || (it.group == after.group && it.id > after.id) }
+            .take(limit)
     }
 
     override suspend fun gatedRules(orgId: Uuid): List<Rule> = rules.values
