@@ -73,6 +73,12 @@ it holds and gets back what it must hold:
   containers and volumes the server no longer lists (a stopped or moved execution, a deleted workspace) and never
   touches anything else on the engine.
 
+A heartbeat with a report also asks the server to hold it up to 20 s for work (`?wait=20`): an execution queued for
+the organization is handed over within seconds, not at the next interval. The machine asks again at once after an
+answer held for the whole wait or one that hands an execution over, and after the interval otherwise, so a server that
+does not wait, or a machine without room, is heartbeated as before. A waiting heartbeat is allowed 30 s, its wait and
+the usual 10 s, so a lost one still stays inside the 90 s.
+
 When a machine stops heartbeating, the server gives its running sessions to another online runner of the
 organization after 90 s, as a new execution with a fresh workspace (the old one stays on the lost machine). A paused
 session resumes on the machine that holds its workspace while that machine is online. A machine whose engine cannot
