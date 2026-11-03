@@ -27,16 +27,39 @@ class AccountsApi {
 @Resource("/api/v1/capacity")
 class CapacityApi
 
-/** Per-account limits. */
+/** Per-account limits; [dailyBudgetMicros] is the contract's `dailyAllocationUsd` in USD millionths. */
 @Serializable
 data class AccountLimitsDto(
     val maxConcurrent: Int = 8,
     val utilizationCeiling: Double = 0.95,
     val monthlyBudgetMicros: Long? = null,
     val allowedMembers: List<String>? = null,
+    val dailyBudgetMicros: Long? = null,
 )
 
-/** Shares an account: tokens read by `ostrom accounts share` on the member's machine. */
+/**
+ * The contract's `enrollSharedAccount` body, the console's: the token is the value of the secret
+ * [credentialSecret] names, read on the server.
+ *
+ * @property provider `claude` or `codex`, or the vendor's name (`anthropic`, `openai`).
+ * @property label The name admins see.
+ * @property credentialSecret The secret holding the token: the caller's own, or the org's for an admin.
+ * @property sharedWith The members it is lent to, by login; empty for the whole org.
+ * @property dailyAllocationUsd What it may serve per UTC day, in USD, or null.
+ */
+@Serializable
+data class EnrollSharedAccountRequest(
+    val provider: String,
+    val label: String,
+    val credentialSecret: String,
+    val sharedWith: List<String> = emptyList(),
+    val dailyAllocationUsd: Double? = null,
+)
+
+/**
+ * Shares an account with its OAuth tokens, read on the member's machine (TeamCode's import, the end-to-end tests):
+ * the body `POST /api/v1/accounts` reads when it names no `credentialSecret`.
+ */
 @Serializable
 data class ShareAccountRequest(
     val provider: String,
@@ -60,6 +83,8 @@ data class UpdateAccountRequest(
     val sharedWith: List<String>? = null,
     /** The limits to change: a key present replaces the current value (`null` clears a budget), an absent one stays. */
     val limits: JsonObject? = null,
+    /** The new daily allocation, in USD (the contract's); `limits.dailyBudgetMicros: null` clears it. */
+    val dailyAllocationUsd: Double? = null,
 )
 
 /** A provider window. */
@@ -75,10 +100,13 @@ data class QuotaWindowDto(
  * An account (contract `SharedAccount`, with additions), tokens never included; identity fields only for admins and
  * its owner.
  *
- * @property owner The member who shared it (empty for another member's account).
- * @property sharedWith The members allowed to use it; empty for the whole org.
+ * @property owner The login of the member who shared it (its id if it has none; empty for another member's account).
+ * @property sharedWith The logins of the members allowed to use it (ids for members without one); empty for the whole
+ *   org.
  * @property paused Whether it is switched off.
  * @property status `ready`, `reconnect_required`, `disabled` or `wrong_account`.
+ * @property dailyAllocationUsd What it may serve per UTC day, in USD; absent when unlimited, and for another member's
+ *   account.
  */
 @Serializable
 data class SharedAccountResponse(
@@ -99,6 +127,7 @@ data class SharedAccountResponse(
     val inFlight: Int = 0,
     val spentMicros: Long = 0,
     val createdAt: String,
+    val dailyAllocationUsd: Double? = null,
 )
 
 /** The org's accounts. */

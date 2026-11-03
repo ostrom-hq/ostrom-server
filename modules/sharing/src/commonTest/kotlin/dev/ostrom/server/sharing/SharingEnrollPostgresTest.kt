@@ -247,6 +247,25 @@ class SharingEnrollPostgresTest {
             ).json()
             assertEquals(listOf("kira"), moved.logins("sharedWith"))
             assertEquals(10.5, moved.getValue("dailyAllocationUsd").jsonPrimitive.double)
+            val both = send(
+                "PATCH",
+                "kira",
+                path,
+                buildJsonObject {
+                    put("limits", buildJsonObject { put("maxConcurrent", 2) })
+                    put("dailyAllocationUsd", 1)
+                },
+            ).json()
+            assertEquals(1.0, both.getValue("dailyAllocationUsd").jsonPrimitive.double)
+            assertEquals("2", both.getValue("limits").jsonObject.text("maxConcurrent"))
+            val tooMuch = send("PATCH", "kira", path, buildJsonObject { put("dailyAllocationUsd", 2_000_000) })
+            assertEquals(HttpStatusCode.BadRequest, tooMuch.status)
+
+            // Liam sees a neutral account: neither its owner, nor to whom it is lent, nor its daily share.
+            val seen = send("GET", "liam", base).json().getValue("items").jsonArray.single().jsonObject
+            assertEquals("", seen.text("owner"))
+            assertEquals(listOf(), seen.logins("sharedWith"))
+            assertFalse("dailyAllocationUsd" in seen)
 
             assertEquals(HttpStatusCode.NoContent, send("DELETE", "kira", path).status)
             assertEquals(listOf(), send("GET", "kira", base).json().getValue("items").jsonArray.toList())

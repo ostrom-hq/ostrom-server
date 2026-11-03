@@ -2,6 +2,7 @@
 package dev.ostrom.server.sharing
 
 import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.auth.MemberLogins
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -9,9 +10,14 @@ import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
 import dev.ostrom.server.sharing.domain.AccountTokens
+import dev.ostrom.server.sharing.domain.CredentialSecrets
+import dev.ostrom.server.sharing.domain.EnrollSharedAccountUseCase
+import dev.ostrom.server.sharing.domain.EnrollSharedAccountUseCaseImpl
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCaseImpl
+import dev.ostrom.server.sharing.domain.MemberNames
 import dev.ostrom.server.sharing.domain.NoAccountSpendReader
+import dev.ostrom.server.sharing.domain.NoMemberLogins
 import dev.ostrom.server.sharing.domain.OAuthRefresher
 import dev.ostrom.server.sharing.domain.QuotaHeaderParser
 import dev.ostrom.server.sharing.domain.QuotaWindowRepository
@@ -23,9 +29,12 @@ import dev.ostrom.server.sharing.domain.SharedAccountPool
 import dev.ostrom.server.sharing.domain.SharedAccountRepository
 import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCaseImpl
+import dev.ostrom.server.sharing.domain.ViewSharedAccountUseCase
+import dev.ostrom.server.sharing.domain.ViewSharedAccountUseCaseImpl
 import dev.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import dev.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
 import dev.ostrom.server.sharing.infrastructure.QuotaWindowRepositoryImpl
+import dev.ostrom.server.sharing.infrastructure.SecretsCredentialSecrets
 import dev.ostrom.server.sharing.infrastructure.SharedAccountRepositoryImpl
 import dev.ostrom.server.sharing.infrastructure.SharingMigrations
 import dev.ostrom.server.sharing.presentation.SharingRoutesDependencies
@@ -65,12 +74,20 @@ object SharingModule : ServerModule {
         single { AccountTokens(get(), get(), get(), get(), get()) }
         single { SharedAccountPool(get(), get(), get(), get(), spend(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
-        single<ListSharedAccountsUseCase> { ListSharedAccountsUseCaseImpl(get(), get(), get(), spend(), get()) }
-        single<UpdateSharedAccountUseCase> { UpdateSharedAccountUseCaseImpl(get()) }
+        single { MemberNames(getOrNull<MemberLogins>() ?: NoMemberLogins) }
+        single<ListSharedAccountsUseCase> {
+            ListSharedAccountsUseCaseImpl(get(), get(), get(), spend(), get(), get())
+        }
+        single<UpdateSharedAccountUseCase> { UpdateSharedAccountUseCaseImpl(get(), get()) }
+        single<ViewSharedAccountUseCase> { ViewSharedAccountUseCaseImpl(get()) }
+        single<CredentialSecrets> { SecretsCredentialSecrets(get(), get()) }
+        single<EnrollSharedAccountUseCase> { EnrollSharedAccountUseCaseImpl(get(), get(), get()) }
         single<RemoveSharedAccountUseCase> { RemoveSharedAccountUseCaseImpl(get()) }
         single {
             SharingRoutesDependencies(
                 getOrNull<CallerResolver>() ?: OrgPrincipalCallerResolver(get()),
+                get(),
+                get(),
                 get(),
                 get(),
                 get(),
