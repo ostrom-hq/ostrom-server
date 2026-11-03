@@ -109,7 +109,9 @@ class CloseSessionUseCaseImpl(
                 else -> endedOf(session, endedAt, measured, end) to Told(endedAt, measured)
             }
         }
-        val draft = told?.let { draft(claimed, it.endedAt, it.end, gates, inForce) } ?: return claimed
+        // Not `told?.let { … } ?: return`: Kover counts the null of a draft that is never null.
+        if (told == null) return claimed
+        val draft = draft(claimed, told.endedAt, told.end, gates, inForce)
         val receiptId = (sign(orgId, draft, receiptIdOf(id)).getValue("id") as JsonPrimitive).content
         // The receipt's id is the segment's: another end that wrote it first wrote the same.
         return locked(orgId, id) { it.copy(receiptId = receiptId) to null }.first
