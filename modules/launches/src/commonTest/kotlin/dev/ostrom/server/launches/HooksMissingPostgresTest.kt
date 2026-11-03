@@ -16,7 +16,6 @@ import dev.ostrom.server.identity.presentation.OrgAuditPageResponse
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.launches.domain.models.HooksCheck
 import dev.ostrom.server.launches.domain.services.HooksCheckRules
-import dev.ostrom.server.launches.fakes.FixedClock
 import dev.ostrom.server.launches.infrastructure.OrgsHooksCheckRules
 import dev.ostrom.server.launches.presentation.HooksCheckResponse
 import dev.ostrom.server.launches.presentation.LaunchResponse
@@ -178,7 +177,7 @@ class HooksMissingPostgresTest {
 
                 override suspend fun enforcesAny(orgId: Uuid, repo: String?): Boolean = repo == "acme/api"
             }
-            val rules: HooksCheckRules = OrgsHooksCheckRules(orgs, enforcing, FixedClock())
+            val rules: HooksCheckRules = OrgsHooksCheckRules(orgs, enforcing)
 
             assertEquals(HooksCheck(15, true), rules.check(ada.org.id, "acme/api"))
             assertEquals(HooksCheck(15, false), rules.check(ada.org.id, null))

@@ -4,6 +4,7 @@ package dev.ostrom.server.compiler
 import dev.ostrom.server.compiler.domain.models.ActionClass
 import dev.ostrom.server.compiler.domain.models.CatalogEntry
 import dev.ostrom.server.compiler.domain.models.CatalogGate
+import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.usecases.GatesCatalogUseCase
 import dev.ostrom.server.compiler.infrastructure.CatalogGateNodes
 import dev.ostrom.server.gates.domain.models.GateNode
@@ -11,6 +12,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The gates of an ask, read from the catalogue: compiled once for every class the ask looks up. */
@@ -69,5 +71,16 @@ class CatalogGateNodesTest {
         assertEquals(false, of(listOf(entry, ungated)).enforcesAny(org, null), "Only a proposed gate")
         assertEquals(false, of(listOf(ungated)).enforcesAny(org, null), "A class without a gate")
         assertEquals(false, of(emptyList()).enforcesAny(org, null), "An empty catalogue")
+    }
+
+    @Test
+    fun theStampOfTheGatesIsTheDigestOfThePinnedPackage() = runTest {
+        val pins = MemoryCompilerRepository()
+        val withPins = CatalogGateNodes({ error("no catalogue read") }, { pins })
+        assertNull(withPins.policyStamp(org, "acme/api"), "No pinned package yet")
+        pins.pins[org to "acme/api"] = PackagePin("sha-1", "compiler (auto pin)", Instant.parse("2026-11-03T10:00:00Z"))
+        assertEquals("sha-1", withPins.policyStamp(org, "acme/api"))
+        assertNull(withPins.policyStamp(org, null), "Another repository")
+        assertNull(nodes.policyStamp(org, "acme/api"), "Without a repository of pins")
     }
 }
