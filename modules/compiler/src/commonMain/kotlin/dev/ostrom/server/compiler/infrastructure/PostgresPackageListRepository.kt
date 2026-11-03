@@ -11,6 +11,12 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
 
+// One repository's packages come in the order of `compiler_packages_by_repo`. The whole organization's are sorted after
+// a bitmap scan: in the "C" collation, the same order for ISO instants and hex digests, a fraction of the locale's cost
+// (CompilerReadsBenchTest: the sort of 1000 rows was most of the read).
+private const val INDEX_ORDER = " ORDER BY p.compiled_at DESC, p.content_digest"
+private const val WHOLE_ORDER = " ORDER BY p.compiled_at COLLATE \"C\" DESC, p.content_digest COLLATE \"C\""
+
 /**
  * [PackageListRepository] on PostgreSQL: the summary columns of `compiler_packages` and the pin of each, joined on
  * `compiler_pins` in one query (`compiler_packages_recent`, or `compiler_packages_by_repo` for one repository), never
@@ -25,8 +31,7 @@ class PostgresPackageListRepository(private val driver: Driver) : PackageListRep
                 "p.revoked_by, p.revoke_reason, pin.content_digest IS NOT NULL AS pinned FROM compiler_packages p " +
                 "LEFT JOIN compiler_pins pin ON pin.org_id = p.org_id AND pin.repo_key = COALESCE(p.repo, '*') " +
                 "AND pin.content_digest = p.content_digest WHERE p.org_id = :org" +
-                (if (repo == null) "" else " AND p.repo = :repo") +
-                " ORDER BY p.compiled_at DESC, p.content_digest LIMIT $MAX_ROWS",
+                (if (repo == null) WHOLE_ORDER else " AND p.repo = :repo$INDEX_ORDER") + " LIMIT $MAX_ROWS",
         ).bind("org", orgId)
         repo?.let { statement.bind("repo", it) }
         fetch(statement).map {
