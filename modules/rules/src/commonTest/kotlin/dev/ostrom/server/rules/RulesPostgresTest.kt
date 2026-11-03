@@ -4,13 +4,26 @@ package dev.ostrom.server.rules
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.instance.InstanceModule
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.GovernanceChange
+import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
+import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceConfirmer
+import dev.ostrom.server.kernel.auth.GovernanceWrite
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.PrincipalChannel
+import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.fakes.AuditRecorder
+import dev.ostrom.server.rules.fakes.HeldConfirmations
 import dev.ostrom.server.rules.fakes.RulesCallers
 import dev.ostrom.server.rules.fakes.RulesCallers.orgA
 import dev.ostrom.server.rules.fakes.RulesCallers.orgB
@@ -34,16 +47,23 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodeURLParameter
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
+import kotlin.uuid.Uuid
 
 /** The rules, decisions and policy routes on a real PostgreSQL and real HTTP: who may call them, and org isolation. */
 class RulesPostgresTest {
@@ -258,7 +278,7 @@ class RulesPostgresTest {
     fun onlyAnAdminInTheConsoleWritesAndOnlyAReaderOrMemberReads() = rulesTest { server ->
         val id = server.write().body<RuleDto>().id
         writes(id).forEach { (method, path, body) ->
-            listOf("member-a", "reader-a", "other-a", "agent-a", "device-a").forEach { token ->
+            listOf("member-a", "agent-a", "device-a").forEach { token ->
                 val status = server.call(method, path, token, body).status
                 assertEquals(HttpStatusCode.Forbidden, status, "$token $method $path")
             }
@@ -284,50 +304,167 @@ class RulesPostgresTest {
     }
 
     @Test
-    fun theTokenOfAnAdminLoginWritesEveryGovernanceRouteItsScopesNameAsASignedDecision() = rulesTest { server ->
-        val created = server.write("elevated-a")
-        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
-        val id = created.body<RuleDto>().id
-        assertEquals("lyes", created.body<RuleDto>().decidedBy, "Named like in the console")
-        writes(id).forEach { (method, path, body) ->
-            val expected = when {
-                method == "DELETE" -> HttpStatusCode.NoContent
-                path.endsWith("/rules") -> HttpStatusCode.Created
-                "/analysis/" in path -> HttpStatusCode.Accepted
-                else -> HttpStatusCode.OK
+    fun anAdminsTokenWritesNoGovernanceRouteButHoldsEachForTheConsole() = rulesTest { server ->
+        val id = server.write().body<RuleDto>().id
+        val rule = server.call("GET", "/api/v1/rules/$id", "admin-a").body<RuleDto>()
+        val decided = server.decisions().items.size
+        val policyBefore = server.call("GET", "/api/v1/gates/policy", "admin-a").body<GatePolicyDto>()
+        val held = server.koin.get<GovernanceConfirmations>() as HeldConfirmations
+        // The elevated token, a CLI token, or a personal one: an agent on the developer's machine can present any.
+        listOf("elevated-a", "policy-writer-a", "reader-a", "other-a").forEach { token ->
+            governanceWrites(id).forEach { (method, path, body) ->
+                val response = server.call(method, path, token, body)
+                assertEquals(HttpStatusCode.Accepted, response.status, "$token $method $path")
+                val pending = response.body<GovernanceConfirmationPending>()
+                assertEquals("http://localhost:5173/confirm/${pending.confirmationId}", pending.confirmUrl)
             }
-            assertEquals(expected, server.call(method, path, "elevated-a", body).status, "$method $path")
         }
-        assertTrue(server.decisions().items.isNotEmpty(), "Each write is a signed decision")
+        val orphan = server.call("POST", "/api/v1/rules", "elevated-stranger", NewRuleRequest("Ship", "Releases"))
+        assertEquals(HttpStatusCode.NotFound, orphan.status, "A token of no organization asks nothing")
+        assertEquals(rule, server.call("GET", "/api/v1/rules/$id", "admin-a").body<RuleDto>(), "Nothing written")
+        assertEquals(1, server.call("GET", "/api/v1/rules", "admin-a").body<RulesPage>().items.size)
+        assertEquals(decided, server.decisions().items.size, "No decision")
+        val policy = server.call("GET", "/api/v1/gates/policy", "admin-a").body<GatePolicyDto>()
+        assertEquals(policyBefore, policy, "Unchanged")
+        val asked = held.held.take(governanceWrites(id).size).map {
+            Triple(it.write.kind, "${it.method} ${it.path}", it.scope)
+        }
+        assertEquals(
+            listOf(
+                Triple("rules.create", "POST /api/v1/rules", "policy:write"),
+                Triple("rules.update", "PATCH /api/v1/rules/$id", "policy:write"),
+                Triple("rules.delete", "DELETE /api/v1/rules/$id", "policy:write"),
+                Triple("rules.bulk", "POST /api/v1/rules/bulk", "policy:write"),
+                Triple("gates.policy", "PUT /api/v1/gates/policy", "gates:policy"),
+            ),
+            asked,
+        )
+        assertTrue(held.held.all { it.orgId == RulesCallers.orgA })
+        val update = held.held[1].write.payload
+        val expected = buildJsonObject {
+            put("id", id)
+            put("body", buildJsonObject { put("status", "rejected") })
+        }
+        assertEquals(expected, update, "The path's id and the body, as asked")
+        // A member's token, or an agent or a device holding the scopes, asks for nothing.
+        writes(id).forEach { (method, path, body) ->
+            listOf("elevated-member-a", "governing-agent-a", "device-a").forEach { token ->
+                assertEquals(HttpStatusCode.Forbidden, server.call(method, path, token, body).status, "$token $path")
+            }
+        }
+        assertEquals(4 * governanceWrites(id).size, held.held.size)
+        // A malformed body is refused before anything is held.
+        val strength = buildJsonObject { put("strength", "x") }
+        val malformed = server.call("PATCH", "/api/v1/rules/$id", "elevated-a", strength)
+        assertEquals(HttpStatusCode.BadRequest, malformed.status)
+        assertEquals(4 * governanceWrites(id).size, held.held.size)
+    }
+
+    @Test
+    fun theTokenOfAnAdminLoginStartsTheAnalysisAtOnceAndEachUseIsInTheAuditLog() = rulesTest { server ->
+        val starts = writes("rule_1") - governanceWrites("rule_1").toSet()
+        starts.forEach { (method, path, body) ->
+            assertEquals(HttpStatusCode.Accepted, server.call(method, path, "elevated-a", body).status, path)
+        }
         val audited = (server.koin.get<GovernanceAudit>() as AuditRecorder).records
         assertEquals(
             listOf(
-                "POST /api/v1/rules policy:write",
-                "PATCH /api/v1/rules/$id policy:write",
-                "DELETE /api/v1/rules/$id policy:write",
-                "POST /api/v1/rules/bulk policy:write",
-                "PUT /api/v1/gates/policy gates:policy",
                 "POST /api/v1/analysis/start policy:write",
                 "POST /api/v1/analysis/restart policy:write",
                 "POST /api/v1/analysis/replay policy:write",
             ),
-            audited.drop(1),
-            "Each use of the elevated token is in the audit log, before the write",
+            audited,
+            "Each use of the elevated token is in the audit log, before the action",
         )
-        server.write()
-        assertEquals(9, audited.size, "The console's writes are only signed decisions")
-        val rule = server.write().body<RuleDto>().id
-        // Only the scope that names the route: policy:write decides rules, not the gate policy.
-        val patch = buildJsonObject { put("status", "rejected") }
-        assertEquals(HttpStatusCode.OK, server.call("PATCH", "/api/v1/rules/$rule", "policy-writer-a", patch).status)
-        val policy = server.call("PUT", "/api/v1/gates/policy", "policy-writer-a", GatePolicyDto("never"))
-        assertEquals(HttpStatusCode.Forbidden, policy.status)
-        // A member's elevated token, or an agent holding the scopes, decides nothing.
-        writes(rule).forEach { (method, path, body) ->
-            listOf("elevated-member-a", "governing-agent-a").forEach { token ->
-                assertEquals(HttpStatusCode.Forbidden, server.call(method, path, token, body).status, "$token $path")
-            }
+        assertEquals(HttpStatusCode.Accepted, server.call("POST", "/api/v1/analysis/start", "admin-a").status)
+        // Started in the name the gates know, else by the membership: without a login, or without a person.
+        for (token in listOf("nameless-a", "unlinked-a")) {
+            assertEquals(HttpStatusCode.Accepted, server.call("POST", "/api/v1/analysis/start", token).status, token)
         }
+        assertEquals(3, audited.size, "The console's starts are not recorded here")
+        val held = server.koin.get<GovernanceConfirmations>() as HeldConfirmations
+        assertTrue(held.held.isEmpty(), "Starting an analysis is not a held governance write")
+    }
+
+    private val gated = buildJsonObject {
+        put("status", "rejected")
+        put("gate", JsonNull)
+    }
+
+    // Each rules write asked with an admin's elevated token, held: create, edit, bulk, gate policy, delete.
+    private suspend fun TestServer.heldWrites(id: String): List<GovernanceWrite> {
+        val asks = listOf(
+            Route("POST", "/api/v1/rules", NewRuleRequest("Ship", "Releases")),
+            Route("PATCH", "/api/v1/rules/$id", gated),
+            Route("POST", "/api/v1/rules/bulk", BulkRulesRequest(listOf(id, "rule_gone"), "accepted")),
+            Route("PUT", "/api/v1/gates/policy", GatePolicyDto("never")),
+            Route("DELETE", "/api/v1/rules/$id"),
+        )
+        asks.forEach { (method, path, body) -> call(method, path, "elevated-a", body) }
+        return (koin.get<GovernanceConfirmations>() as HeldConfirmations).held.map { it.write }
+    }
+
+    @Test
+    fun aHeldRulesWriteShowsWhatItReplacesAndWhatItWrites() = rulesTest { server ->
+        val id = server.write().body<RuleDto>().id
+        val policy = server.call("GET", "/api/v1/gates/policy", "admin-a").body<GatePolicyDto>()
+        val change = server.koin.get<GovernanceChange>(named("rules"))
+        assertEquals(setOf("rules.create", "rules.update", "rules.delete", "rules.bulk", "gates.policy"), change.kinds)
+        val writes = server.heldWrites(id)
+        val previews = writes.map { change.preview(orgA, it) }
+        assertEquals("Create the rule \"Ship\"", previews[0].summary)
+        assertNull(previews[0].before)
+        val before = buildJsonObject {
+            put("status", "accepted")
+            put("gate", JsonNull)
+        }
+        assertEquals(before, previews[1].before, "Only what the patch changes")
+        assertEquals(gated, previews[1].after)
+        val brief = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("id", id)
+                    put("statement", "Ship")
+                    put("status", "accepted")
+                },
+            )
+        }
+        assertEquals(brief, previews[2].before, "An unknown rule is left out")
+        assertEquals(brief, previews[2].after)
+        assertEquals("Set 1 rules to accepted", previews[2].summary)
+        assertEquals(OstromJson.encodeToJsonElement(policy), previews[3].before)
+        assertEquals(buildJsonObject { put("selfApproval", "never") }, previews[3].after)
+        assertEquals("Delete the rule \"Ship\"", previews[4].summary)
+        assertNull(previews[4].after)
+        val tooMany = writes[2].copy(
+            payload = buildJsonObject {
+                put("body", OstromJson.encodeToJsonElement(BulkRulesRequest(List(201) { "r$it" }, "accepted")))
+            },
+        )
+        assertFailsWith<OstromException> { change.preview(orgA, tooMany) }
+    }
+
+    @Test
+    fun aConfirmedRulesWriteIsMadeAsTheConfirmersSignedDecision() = rulesTest { server ->
+        val id = server.write().body<RuleDto>().id
+        val change = server.koin.get<GovernanceChange>(named("rules"))
+        val writes = server.heldWrites(id)
+        val confirmer = GovernanceConfirmer(
+            AuthenticatedPrincipal("admin-a", PrincipalKind.USER, setOf("user:*"), channel = PrincipalChannel.BROWSER),
+            OrgPrincipal(orgA, Uuid.random(), OrgRole.ADMIN),
+        )
+        val rule = { made: JsonElement? -> OstromJson.decodeFromJsonElement(RuleDto.serializer(), checkNotNull(made)) }
+        assertEquals("lyes", rule(change.apply(orgA, writes[0], confirmer)).decidedBy)
+        assertEquals("rejected", rule(change.apply(orgA, writes[1], confirmer)).status)
+        // Without a login the gates know, the decision is the membership's.
+        val nameless = confirmer.copy(principal = confirmer.principal.copy(subjectId = "nameless-a"))
+        assertEquals(buildJsonObject { put("updated", 1) }, change.apply(orgA, writes[2], nameless))
+        assertEquals(buildJsonObject { put("selfApproval", "never") }, change.apply(orgA, writes[3], confirmer))
+        val unlinked = confirmer.copy(principal = confirmer.principal.copy(subjectId = "unlinked-a"))
+        assertNull(change.apply(orgA, writes[4], unlinked))
+        assertEquals(HttpStatusCode.NotFound, server.call("GET", "/api/v1/rules/$id", "admin-a").status)
+        val deletedBy = server.decisions().items.single { it.action == "deleted" && it.subject.id == id }.by
+        assertEquals(confirmer.member.memberId.toString(), deletedBy, "Named by the membership without a login")
     }
 
     private data class Route(val method: String, val path: String, val body: Any? = null)
@@ -351,6 +488,9 @@ class RulesPostgresTest {
         Route("POST", "/api/v1/analysis/restart"),
         Route("POST", "/api/v1/analysis/replay"),
     )
+
+    // The writes that change the governance, held when a token asks for them; the analysis starts are not.
+    private fun governanceWrites(id: String) = writes(id).filterNot { "/analysis/" in it.path }
 
     private val routes = reads("rule_1") + writes("rule_1")
 }

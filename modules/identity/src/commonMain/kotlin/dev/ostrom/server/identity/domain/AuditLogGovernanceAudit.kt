@@ -6,8 +6,9 @@ import dev.ostrom.server.kernel.auth.GovernanceAudit
 import kotlin.uuid.Uuid
 
 /**
- * [GovernanceAudit] on the signed audit log: each governance write of the token of `ostrom login --admin` is a
- * `governance.write` event of its organization's chain, by its person, naming the request, the scope and the token.
+ * [GovernanceAudit] on the signed audit log: each governed action of the token of `ostrom login --admin` that is not a
+ * held write (starting an analysis or a replay) is a `governance.write` event of its organization's chain, by its
+ * person, naming the request, the scope and the token. A held write is recorded by the governance module instead.
  *
  * @param audit The audit log.
  */
