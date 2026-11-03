@@ -509,6 +509,8 @@ class CompilerPostgresTest {
         assertTrue(revoked.revoked)
         assertFalse(revoked.pinned)
         assertEquals("leaked", revoked.revokeReason)
+        val listedRevoked = server.call("user:a:lead", "/api/v1/packages?repo=acme-api").body<PackagesPage>()
+        assertEquals(revoked, listedRevoked.items.single(), "The list reads the revocation the package keeps")
         val restorePath = "/api/v1/packages/${envelope.digest}/restore"
         val restored = server.call("user:a:lead", restorePath, "POST").body<PackageSummary>()
         assertFalse(restored.revoked)
@@ -523,6 +525,13 @@ class CompilerPostgresTest {
         assertEquals(1, server.call("user:a:lead", "/api/v1/packages/audit?limit=1").body<AuditPage>().items.size)
         assertEquals(4, server.call("user:a:lead", "/api/v1/packages/audit").body<AuditPage>().items.size)
         assertTrue(server.call("user:b:lead", "/api/v1/packages/audit").body<AuditPage>().items.isEmpty())
+        // After the audit, which it adds to: the organization's package, pinned under `*`, listed as its status says.
+        val organization = server.call("agent:a:l1", "/api/v1/packages/current").body<PackageEnvelope>()
+        val listedOrganization = server.call("user:a:lead", "/api/v1/packages").body<PackagesPage>().items
+            .single { it.repo == null }
+        val organizationStatus = "/api/v1/packages/${organization.contentDigest}/status"
+        assertEquals(server.call("user:a:x", organizationStatus).body<PackageSummary>(), listedOrganization)
+        assertEquals(organization.pinned, listedOrganization.pinned)
 
         val preview = server.call("user:a:lead", "/api/v1/packages/preview", "POST", PreviewRequest("acme-api"))
             .body<JsonObject>()
