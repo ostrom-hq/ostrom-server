@@ -8,7 +8,7 @@ import kotlin.time.Duration
  * What one read route costs on a filled database, measured by [measureRead].
  *
  * @property name The route and its case (`GET /api/v1/audit?action=…`).
- * @property statements The statements of one call, in order: their number is the queries per call.
+ * @property statements The statements of one call, in order, the role and the organization they set included.
  * @property plans The `EXPLAIN (ANALYZE, BUFFERS)` of each query among them, on the serving role with row-level
  *   security, in the organization the call set.
  * @property latencies The database time of one call, sorted: the planning and execution times PostgreSQL reports for
@@ -34,14 +34,15 @@ class ReadMeasure(
 
     private fun at(quantile: Double): Duration = latencies[ceil(quantile * latencies.size).toInt() - 1]
 
-    /** The queries one call sends. */
-    val queries: Int get() = statements.size
+    /** The queries one call sends: its statements but those that set the role or the organization or take a lock. */
+    val queries: Int get() = plans.size
 
     /** The measure as written to the report: the figures, then each query with its plan. */
     fun describe(): String = buildString {
         appendLine("== $name")
         appendLine(
-            "queries per call: $queries; database p50 $p50, p95 $p95 ($calls calls, $CONCURRENT_CALLS concurrent, " +
+            "queries per call: $queries (${statements.size} statements); database p50 $p50, p95 $p95 " +
+                "($calls calls, $CONCURRENT_CALLS concurrent, " +
                 "PostgreSQL's planning and execution time); " +
                 "whole call in process $http",
         )
