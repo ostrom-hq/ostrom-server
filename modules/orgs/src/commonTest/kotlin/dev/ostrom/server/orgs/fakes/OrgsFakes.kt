@@ -77,7 +77,11 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
         store.orgs[id] = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
     }
 
+    /** Whether [delete] fails, as a database that goes down in the middle of it. */
+    var deleteFails = false
+
     override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
+        check(!deleteFails) { "database down" }
         store.deleted += id
         store.purgeAfter[id] = purgeAfter
         store.orgs[id] = store.orgs.getValue(id).copy(freeClaim = null)

@@ -17,6 +17,7 @@ import dev.ostrom.server.orgs.domain.OrgChange
 import dev.ostrom.server.orgs.domain.OrgStepUpRequiredException
 import dev.ostrom.server.orgs.domain.SettleOrgDeletionsUseCase
 import dev.ostrom.server.orgs.domain.SettleOrgDeletionsUseCaseImpl
+import dev.ostrom.server.orgs.domain.SlugTakenException
 import dev.ostrom.server.orgs.domain.UpdateOrgUseCaseImpl
 import dev.ostrom.server.orgs.domain.validTimeZone
 import dev.ostrom.server.orgs.fakes.OrgsWorld
@@ -26,6 +27,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.days
@@ -138,6 +140,9 @@ class OrgSettingsUseCasesTest {
         assertFailsWith<InvalidOrgRequestException> { update(acme.org.id, ada.id, OrgChange(name = " ")) }
         assertFailsWith<InvalidOrgRequestException> { update(acme.org.id, ada.id, OrgChange(timeZone = "Mars/Base")) }
         assertFailsWith<NotAllowedException> { update(acme.org.id, bob.id, OrgChange(timeZone = "Europe/Paris")) }
+        // A member is refused whatever they send, never told what was wrong with it.
+        assertFailsWith<NotAllowedException> { update(acme.org.id, bob.id, OrgChange(timeZone = "Mars/Base")) }
+        assertFailsWith<NotAllowedException> { update(acme.org.id, bob.id, OrgChange(name = " ", slug = "other")) }
         assertEquals(acme.org, world.orgs.get(acme.org.id))
         assertEquals(0, world.orgs.updates)
     }
@@ -168,8 +173,21 @@ class OrgSettingsUseCasesTest {
             "org.deleted" to mapOf("slug" to "acme", "purge_after" to "2026-11-29T10:00:00Z"),
             world.audit.events.last(),
         )
-        // Its free claim is released: the same person can start a new free team, never under the same short name.
+        // Its free claim is released: the same person can start a new free team, not under the same short name
+        // while the deleted one may be restored.
         assertEquals("acme-again", create(ada.id, "Acme again", null).org.slug)
+    }
+
+    @Test
+    fun aDeletionThatFailsLeavesNoTraceInTheAuditLog() = runTest {
+        val ada = world.people.add("ada", null)
+        val acme = create(ada.id, "Acme", null)
+        world.orgs.deleteFails = true
+
+        assertFails { delete(acme.org.id, ada.id, "acme", world.clock.now) }
+
+        assertEquals(acme.org, world.orgs.get(acme.org.id), "Not deleted")
+        assertEquals(emptyList(), world.audit.events.filter { it.first == "org.deleted" }, "Nor said to be")
     }
 
     @Test
@@ -183,14 +201,17 @@ class OrgSettingsUseCasesTest {
         assertEquals(DeletionPass(0, 0, 0), settle(), "Told once")
         world.clock.now += 30.days - 1.seconds
         assertEquals(DeletionPass(0, 0, 0), settle(), "Kept for 30 days")
+        assertFailsWith<SlugTakenException>("Its short name stays taken, so that it can be restored") {
+            create(ada.id, "Acme", "acme")
+        }
         world.clock.now += 1.seconds
         assertEquals(DeletionPass(settled = 0, purged = 1, failed = 0), settle())
         assertEquals(DeletionPass(0, 0, 0), settle(), "Erased once")
 
         assertEquals(listOf("deleted $id", "purge $id"), listener.calls)
         val tombstone = world.store.orgs.getValue(id)
-        assertEquals(Triple("", "acme", "UTC"), Triple(tombstone.name, tombstone.slug, tombstone.timeZone))
-        assertEquals(true, world.orgs.slugTaken("acme"), "A link to it never leads to someone else")
+        assertEquals(Triple("", "~$id", "UTC"), Triple(tombstone.name, tombstone.slug, tombstone.timeZone))
+        assertEquals("acme", create(ada.id, "Acme", "acme").org.slug, "Erased, it gives its short name back")
     }
 
     @Test

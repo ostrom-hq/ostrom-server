@@ -91,6 +91,11 @@ class OrgsPostgresTest {
             null,
         )
 
+    private suspend fun TestServer.purgeAfter(id: Uuid): Instant =
+        database.superuser.fetchAll(
+            Statement.create("SELECT purge_after FROM orgs_organizations WHERE id = :id").bind("id", id),
+        ).getOrThrow().single().get("purge_after").asInstant()
+
     @Test
     @Suppress("LongMethod") // One organization's life through the repositories, read top to bottom.
     fun organizationsAreCreatedReadRenamedAndDeleted() =
@@ -126,6 +131,9 @@ class OrgsPostgresTest {
 
             invitations.create(link(acme, owner), "hash-1")
             orgs.delete(acme.id, now, now + 30.days)
+            // A second deletion, replayed or run at the same time, changes nothing: its 30 days do not start again.
+            orgs.delete(acme.id, now + 1.days, now + 31.days)
+            assertEquals(now + 30.days, server.purgeAfter(acme.id))
             assertNull(orgs.get(acme.id))
             assertNull(orgs.findBySlug("acme"))
             assertTrue(orgs.slugTaken("acme"), "A deleted organization keeps its short name")
