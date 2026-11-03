@@ -66,6 +66,7 @@ interface HandleWebhookUseCase {
  * @param clock The clock.
  * @param accounts Who a pull request's author is in Ostrom.
  */
+@Suppress("LongParameterList") // One port per owner: GitHub's records, the gates, the clock, the identity of authors.
 class HandleWebhookUseCaseImpl(
     private val repository: GitHubRepository,
     private val origins: GitHubOriginsRepository,
@@ -138,7 +139,10 @@ class HandleWebhookUseCaseImpl(
     }
 
     private suspend fun askFor(installation: GitHubInstallation, repo: String, pull: Pull): GateView? {
-        val actor = GateActor("github", installation.orgId, ActorKind.SERVICE, personId = pull.user.login)
+        // The author as their approvers are named: by their Ostrom login, never only their GitHub one, which may differ
+        // (an account opened by e-mail, a login taken): else they would say yes to their own merge (G1).
+        val author = pull.user.id?.let { accounts.loginOf(it) } ?: pull.user.login
+        val actor = GateActor("github", installation.orgId, ActorKind.SERVICE, personId = author)
         val asked = AskGate(
             sessionId = null,
             runId = null,
