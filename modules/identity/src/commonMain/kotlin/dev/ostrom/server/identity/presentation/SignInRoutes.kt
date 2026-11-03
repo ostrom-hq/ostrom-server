@@ -9,6 +9,7 @@ import dev.ostrom.server.identity.domain.IdentityTakenException
 import dev.ostrom.server.identity.domain.InvalidSignInStateException
 import dev.ostrom.server.identity.domain.LauncherLoginUseCase
 import dev.ostrom.server.identity.domain.MAGIC_LINK_LIFETIME
+import dev.ostrom.server.identity.domain.MobileCallback
 import dev.ostrom.server.identity.domain.OAUTH_STATE_LIFETIME
 import dev.ostrom.server.identity.domain.ProviderNotConfiguredException
 import dev.ostrom.server.identity.domain.ProviderRejectedException
@@ -21,7 +22,9 @@ import dev.ostrom.server.identity.domain.constantTimeEquals
 import dev.ostrom.server.identity.domain.mobileClientOf
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.errors.OstromException
+import io.ktor.http.ContentType
 import io.ktor.http.Cookie
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLBuilder
 import io.ktor.http.formUrlEncode
@@ -29,8 +32,10 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.origin
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
+import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 
 /** The cookie that binds an OAuth sign-in to the browser that started it. */
@@ -156,9 +161,10 @@ private fun Route.emailRoutes(dependencies: SignInRoutesDependencies) = with(dep
 }
 
 /**
- * Ends a sign-in the phone app started, when the provider's state is the one of the mobile cookie: the in-app browser
- * goes to the app's deep link with the code or the error. When the attempt is unknown (expired, used), the error goes
- * to [APP_REDIRECT_URI] without a state: the only deep link there is, so the in-app browser always closes.
+ * Ends a sign-in the phone app started, when the provider's state is the one of the mobile cookie: an error goes
+ * straight to the app's deep link; a code waits on a page the person taps to go back to the app ([confirmPage]). When
+ * the attempt is unknown (expired, used), the error goes to [APP_REDIRECT_URI] without a state: the only deep link
+ * there is, so the in-app browser always closes.
  *
  * @param params The callback's parameters.
  * @param completeMobile Completes the app's sign-in.
@@ -178,12 +184,28 @@ private suspend fun ApplicationCall.answeredTheApp(
         response.cookies.append(stateCookie("", 0, config, MOBILE_OAUTH_STATE_COOKIE))
         try {
             val back = completeMobile(params.parent.provider, state, mobileState, params.code, params.error)
-            respondRedirect(back.toUrl())
+            if (back.code == null) respondRedirect(back.toUrl()) else respondConfirmPage(back)
         } catch (error: OstromException) {
             respondRedirect(APP_REDIRECT_URI + "?" + listOf("error" to signInError(error)).formUrlEncode())
         }
     }
     return theApps
+}
+
+/**
+ * Answers the page that asks before a code goes back to the app ([confirmPage]): never framed, cached or referred.
+ *
+ * @param back The code and where it goes.
+ */
+private suspend fun ApplicationCall.respondConfirmPage(back: MobileCallback) {
+    response.header(
+        "Content-Security-Policy",
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    )
+    response.header("Referrer-Policy", "no-referrer")
+    // The page carries a one-time code: never kept by a cache.
+    response.header(HttpHeaders.CacheControl, "no-store")
+    respondText(back.confirmPage(), ContentType.Text.Html)
 }
 
 private fun stateCookie(value: String, maxAge: Int, config: IdentityConfig, name: String = OAUTH_STATE_COOKIE) = Cookie(

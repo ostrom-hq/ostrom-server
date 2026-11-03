@@ -148,6 +148,37 @@ fun MobileCallback.toUrl(): String {
 }
 
 /**
+ * The page a mobile sign-in ends on when it has a code: who signed in, and a link to the app that the person taps
+ * (AUDIT-SECU-APP-2 N1). A redirect would hand the code to whichever app claims `ostrom://` on the phone, for a sign-in
+ * someone else started with their own PKCE challenge and sent as a link; the page asks first. No script, no form:
+ * nothing leaves the page but on the tap.
+ *
+ * @return The HTML.
+ */
+fun MobileCallback.confirmPage(): String = """
+    <!doctype html>
+    <html lang="en">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Back to Ostrom</title>
+    <body style="font-family: system-ui; display: grid; place-items: center; min-height: 100vh; margin: 0;
+    padding: 0 16px">
+    <main style="max-width: 28rem">
+    <h1 style="font-size: 1.25rem">Sign in to the Ostrom app${login?.let { " as @" + htmlEscape(it) }.orEmpty()}?</h1>
+    <p>Continue only if you started this sign-in from the Ostrom app on this phone. If you did not, close this page:
+    someone else may be trying to sign in as you.</p>
+    <p><a href="${htmlEscape(toUrl())}" style="display: inline-block; padding: 12px 20px; border-radius: 8px;
+    background: #111; color: #fff; text-decoration: none">Back to Ostrom</a></p>
+    </main>
+    </body>
+    </html>
+""".trimIndent()
+
+// For text and attribute values between double quotes.
+private fun htmlEscape(text: String): String = text.replace("&", "&amp;").replace("\"", "&quot;")
+    .replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;")
+
+/**
  * The response body.
  *
  * @return The body.
