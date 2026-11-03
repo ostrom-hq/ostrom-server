@@ -87,26 +87,34 @@ class RepositoryContext(val snapshot: RepositorySnapshot) {
         )
 
         /**
-         * A name read from a repository (a path, a CODEOWNERS pattern or owner, a branch, a check), as a rule's text
-         * shows it. Everything a repository holds is untrusted, and a proposed rule's statement reaches the agents'
-         * harness before anyone decides it: the name stays on one line (each hidden character becomes U+FFFD), never
-         * closes the backticks around it (a backtick becomes a quote), and has at most [MAX_SHOWN] characters.
+         * A name read from a repository (a path, a CODEOWNERS pattern or owner, a branch, a check), cleaned for a
+         * rule's text or scope. Everything a repository holds is untrusted, and a proposed rule reaches the agents'
+         * harness before anyone decides it: the name stays on one line (each hidden character becomes U+FFFD) and
+         * never closes the backticks around it (a backtick becomes a quote). Not cut: a scope too long is refused.
+         *
+         * @param name The name.
+         * @return The cleaned name.
+         */
+        fun clean(name: String): String = buildString {
+            for (char in name) {
+                append(
+                    when {
+                        char == '`' -> '\''
+                        char.category in hidden -> '\uFFFD'
+                        else -> char
+                    },
+                )
+            }
+        }
+
+        /**
+         * A name read from a repository as a rule's text shows it: [clean], and cut past [MAX_SHOWN] characters.
          *
          * @param name The name.
          * @return The text.
          */
         fun shown(name: String): String {
-            val clean = buildString {
-                for (char in name) {
-                    append(
-                        when {
-                            char == '`' -> '\''
-                            char.category in hidden -> '\uFFFD'
-                            else -> char
-                        },
-                    )
-                }
-            }
+            val clean = clean(name)
             return if (clean.length > MAX_SHOWN) clean.take(MAX_SHOWN - 1) + "\u2026" else clean
         }
 

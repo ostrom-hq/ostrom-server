@@ -137,7 +137,7 @@ object RuleInference {
             statement = spec.statement(context.name, quoted(area.prefixes), yes),
             output = "gate",
             group = area.kind.group,
-            scope = area.prefixes.map { "${context.name}/${shown(it)}" },
+            scope = area.prefixes.map { "${context.name}/${RepositoryContext.clean(it)}" },
             sources = area.evidence.map { context.file(it, sourceKind) },
             why = spec.why(context.shownBranch) + omitted(area.omitted),
             strength = RuleStrength.REQUIRED,
