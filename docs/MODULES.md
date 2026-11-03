@@ -237,6 +237,21 @@ A module that needs its own keys reads them from the `ConfigSource` bound in Koi
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
 `serverTest`, give it values with `overrides = module { single<ConfigSource> { MapConfigSource(mapOf(…)) } }`.
 
+### Memory under the container limit
+
+The server reads its container's memory limit (cgroup v2 `memory.max`, else v1) and holds itself under it, with no
+key to set:
+
+- Calls run on `Dispatchers.Default`, one thread per core. Ktor's CIO runs them on `Dispatchers.IO`, whose threads (up
+  to 64) start on demand and never end, each with memory of its own: a burst of 100 unauthenticated requests took the
+  server from 63 to 121 threads and OOMKilled it under 512 MiB (CHARGE 41637506577).
+- The Kotlin heap is bounded: the collector starts at a quarter of the limit, its target grows to 45 % at most, and a
+  thread that allocates past the target waits for the collection (`heap_max_mib` in the "server starting" log). A
+  burst adds its memory in a second or two and the collector gives it back 10 to 15 s later (chart-load 41639797095,
+  from `/proc/<pid>/smaps`).
+
+Without a limit (a plain process), the heap keeps the runtime's own tuning.
+
 ### Module `gateway`
 
 The inference gateway reads these keys at start (a malformed URL stops the server). An instance key serves every org
