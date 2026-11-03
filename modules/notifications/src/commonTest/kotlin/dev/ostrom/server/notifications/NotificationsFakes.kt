@@ -20,6 +20,10 @@ class InMemoryPushDevicesRepository : PushDevicesRepository {
 
     override suspend fun delete(orgId: Uuid, memberId: Uuid, id: Uuid): Boolean =
         devices.removeAll { it.orgId == orgId && it.memberId == memberId && it.id == id }
+
+    override suspend fun deleteAll(orgId: Uuid) {
+        devices.removeAll { it.orgId == orgId }
+    }
 }
 
 /** A clock that says [now]. */

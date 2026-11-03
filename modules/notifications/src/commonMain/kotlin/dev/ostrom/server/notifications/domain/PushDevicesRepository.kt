@@ -27,4 +27,11 @@ interface PushDevicesRepository {
      * @return Whether it was the member's and is now removed.
      */
     suspend fun delete(orgId: Uuid, memberId: Uuid, id: Uuid): Boolean
+
+    /**
+     * Removes every phone of an organization: it was deleted, so nothing may be pushed for it any more.
+     *
+     * @param orgId The organization.
+     */
+    suspend fun deleteAll(orgId: Uuid)
 }

@@ -40,6 +40,12 @@ class PushDevicesRepositoryImpl(private val driver: Driver) : PushDevicesReposit
             .getOrThrow() > 0
     }
 
+    override suspend fun deleteAll(orgId: Uuid) {
+        driver.withOrganization(orgId) { tx ->
+            tx.execute(Statement.create(DELETE_ALL_SQL).bind("org_id", orgId)).getOrThrow()
+        }
+    }
+
     private companion object {
         fun ResultSet.Row.toDevice() = PushDevice(
             id = get("id").asUuid(),
@@ -72,3 +78,5 @@ internal const val KEEP_LATEST_SQL = "DELETE FROM notifications_push_devices WHE
 /** Removes one of a member's phones (`:org_id`, `:member_id`, `:id`). */
 internal const val DELETE_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +
     "AND member_id = :member_id AND id = :id"
+
+private const val DELETE_ALL_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id"

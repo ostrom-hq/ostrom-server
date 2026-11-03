@@ -7,6 +7,7 @@ import dev.ostrom.server.notifications.domain.MAX_PHONES
 import dev.ostrom.server.notifications.domain.PushDeviceNotFoundException
 import dev.ostrom.server.notifications.domain.PushRegistration
 import dev.ostrom.server.notifications.domain.RegisterPushDeviceUseCaseImpl
+import dev.ostrom.server.notifications.infrastructure.PushDevicesOrgDeletionListener
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -71,5 +72,18 @@ class PushDevicesUseCasesTest {
         remove(org, member, device.id)
         assertTrue(repository.devices.isEmpty())
         assertFailsWith<PushDeviceNotFoundException> { remove(org, member, device.id) }
+    }
+
+    @Test
+    fun aDeletedOrganizationsPhonesAreRemovedAtOnceAndAgainAtThePurge() = runTest {
+        val listener = PushDevicesOrgDeletionListener(repository)
+        val other = register(Uuid.random(), member, PushRegistration("ExpoPushToken[otherorg]", "expo", "ios", null))
+        register(org, member, PushRegistration("ExpoPushToken[deleted1]", "expo", "ios", null))
+
+        listener.deleted(org)
+        assertEquals(listOf(other), repository.devices)
+        register(org, member, PushRegistration("ExpoPushToken[deleted2]", "expo", "ios", null))
+        listener.purge(org)
+        assertEquals(listOf(other), repository.devices)
     }
 }

@@ -19,6 +19,7 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.ORG_HEADER
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.withOrganization
+import dev.ostrom.server.kernel.module.OrgDeletionListener
 import dev.ostrom.server.notifications.domain.PushDevice
 import dev.ostrom.server.notifications.domain.PushDevicesRepository
 import dev.ostrom.server.notifications.presentation.PushDeviceDto
@@ -42,6 +43,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import org.koin.core.qualifier.named
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -65,7 +67,7 @@ class PushDevicesPostgresTest {
     private val base = "/api/v1/push-devices"
 
     /** A person, the only member of a new organization: the phone app's token and their CLI token. */
-    private class Person(val orgId: Uuid, val memberId: Uuid, val phone: String, val cli: String)
+    private class Person(val userId: Uuid, val orgId: Uuid, val memberId: Uuid, val phone: String, val cli: String)
 
     private suspend fun TestServer.person(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
@@ -90,15 +92,20 @@ class PushDevicesPostgresTest {
             null, null,
         )
         koin.get<ApiTokensRepository>().create(token, hasher.hash(cli))
-        return Person(org.id, member.id, exchanged.body<MobileTokenResponse>().token, cli)
+        return Person(user.id, org.id, member.id, exchanged.body<MobileTokenResponse>().token, cli)
     }
 
-    private suspend fun TestServer.register(token: String?, body: PushDeviceRequest): HttpResponse =
-        client.post(base) {
-            token?.let(::bearerAuth)
-            contentType(ContentType.Application.Json)
-            setBody(body)
-        }
+    // Inline and reified: the body is serialized as its own type (a request, or raw JSON as a string).
+    private suspend inline fun <reified T> TestServer.register(
+        token: String?,
+        body: T,
+        org: Uuid? = null,
+    ): HttpResponse = client.post(base) {
+        token?.let(::bearerAuth)
+        org?.let { header(ORG_HEADER, it.toString()) }
+        contentType(ContentType.Application.Json)
+        setBody(body)
+    }
 
     private suspend fun TestServer.remove(token: String?, id: String, org: Uuid? = null): HttpResponse =
         client.delete("$base/$id") {
@@ -153,8 +160,25 @@ class PushDevicesPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, it.register(mia.cli, phone).status, "A CLI token never registers")
         assertEquals(HttpStatusCode.Forbidden, it.remove(mia.cli, Uuid.random().toString()).status)
         assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, phone.copy(provider = "fcm")).status)
+        val noToken = """{"provider":"expo","platform":"ios"}"""
+        assertEquals(HttpStatusCode.BadRequest, it.register(mia.phone, noToken).status, "A body without its token")
         assertEquals(HttpStatusCode.NotFound, it.remove(mia.phone, "not-a-device").status)
         assertEquals(0, it.phonesSeen(mia.orgId))
+    }
+
+    @Test
+    fun aPersonOfTwoOrganizationsNamesTheOneAndADeletedOrganizationForgetsItsPhones() = serverTest(modules) {
+        val mia = it.person("mia")
+        val second = Org(Uuid.random(), "mia-second", "mia second", null, null, now)
+        val membership = Member(Uuid.random(), second.id, mia.userId, OrgRole.MEMBER, now)
+        it.koin.get<OrgsRepository>().create(second, membership) { false }
+        val phone = PushDeviceRequest(PUSH_TOKEN, "expo", "ios")
+
+        assertEquals(HttpStatusCode.Conflict, it.register(mia.phone, phone).status, "Which organization?")
+        assertEquals(HttpStatusCode.Created, it.register(mia.phone, phone, second.id).status)
+        assertEquals(HttpStatusCode.Created, it.register(mia.phone, phone, mia.orgId).status, "One per organization")
+        it.koin.get<OrgDeletionListener>(named("notifications")).deleted(second.id)
+        assertEquals(0 to 1, it.phonesSeen(second.id) to it.phonesSeen(mia.orgId))
     }
 
     @Test
