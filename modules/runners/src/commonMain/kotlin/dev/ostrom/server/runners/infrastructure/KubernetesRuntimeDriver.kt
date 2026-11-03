@@ -35,8 +35,8 @@ import kotlin.uuid.Uuid
  * [RuntimeDriver] on a Kubernetes namespace, through its REST API (no client library: the surface is a handful of
  * calls, as in TeamCode's `KubernetesClusterPort`).
  *
- * Everything lives in [KubernetesSettings.namespace] (`ostrom` on ControlResell's production cluster, chosen by
- * Lyes): a workspace PersistentVolumeClaim per session, a Secret and a bare Pod (`restartPolicy: Never`) per
+ * Everything lives in [KubernetesSettings.namespace] (`ostrom` by default, a namespace of its own on a shared
+ * cluster): a workspace PersistentVolumeClaim per session, a Secret and a bare Pod (`restartPolicy: Never`) per
  * execution, and two NetworkPolicies shared by the session pods. The server's service account needs a namespaced
  * Role only (`deploy/runners-rbac.yaml`); it never reads or writes anything outside the namespace, and no
  * cluster-wide object (CRD, ClusterRole, PersistentVolume) is used.

@@ -384,7 +384,7 @@ class StripeEventsUsageAndLimitsTest {
         val error = assertFailsWith<PlanLimitException> { world.entitlements(world.org, Entitlement.AddPerson(5)) }
         assertEquals(
             "The Free plan includes 5 people and this organization has 5. " +
-                "Upgrade at https://app.ostrom.run/settings/billing.",
+                "Upgrade at https://app.ostrom.run/billing.",
             error.message,
         )
     }
@@ -398,7 +398,7 @@ class StripeEventsUsageAndLimitsTest {
         }
         assertEquals(
             "The Free plan runs 5 cloud agents at the same time and 5 are running. " +
-                "Wait for one to finish, or upgrade at https://app.ostrom.run/settings/billing.",
+                "Wait for one to finish, or upgrade at https://app.ostrom.run/billing.",
             error.message,
         )
     }
@@ -412,7 +412,7 @@ class StripeEventsUsageAndLimitsTest {
         }
         assertEquals(
             "This organization used the 300 cloud agent hours of its plan for this period (it renews on 2026-11-01). " +
-                "Upgrade at https://app.ostrom.run/settings/billing.",
+                "Upgrade at https://app.ostrom.run/billing.",
             error.message,
         )
     }
@@ -421,11 +421,11 @@ class StripeEventsUsageAndLimitsTest {
     fun ssoAndPoliciesNeedBusiness() = runTest {
         val world = World()
         assertEquals(
-            "Single sign-on is part of the Business plan. Upgrade at https://app.ostrom.run/settings/billing.",
+            "Single sign-on is part of the Business plan. Upgrade at https://app.ostrom.run/billing.",
             assertFailsWith<PlanLimitException> { world.entitlements(world.org, Entitlement.Sso) }.message,
         )
         assertEquals(
-            "Organization policies are part of the Business plan. Upgrade at https://app.ostrom.run/settings/billing.",
+            "Organization policies are part of the Business plan. Upgrade at https://app.ostrom.run/billing.",
             assertFailsWith<PlanLimitException> { world.entitlements(world.org, Entitlement.Policies) }.message,
         )
         world.subscribe(Plan.BUSINESS)

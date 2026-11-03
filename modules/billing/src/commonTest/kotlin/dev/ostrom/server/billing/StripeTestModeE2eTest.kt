@@ -151,8 +151,8 @@ class StripeTestModeE2eTest {
         assertEquals(false, gateway.getSubscription(subscriptionId).cancelAtPeriodEnd)
 
         // Checkout and portal sessions are accepted with automatic tax and tax ids.
-        val success = "https://app.ostrom.run/settings/billing?checkout=success"
-        val back = "https://app.ostrom.run/settings/billing"
+        val success = "https://app.ostrom.run/billing?checkout=success"
+        val back = "https://app.ostrom.run/billing"
         val teamMonthly = gateway.priceId("ostrom_team_monthly")
         val request = CheckoutRequest(Uuid.random(), paying, teamMonthly, null, success, back)
         val checkout = gateway.createCheckoutSession(request)

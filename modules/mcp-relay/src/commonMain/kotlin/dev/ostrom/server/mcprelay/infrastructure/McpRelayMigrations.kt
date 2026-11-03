@@ -137,4 +137,14 @@ val McpRelayMigrations: List<SchemaMigration> = listOf(
         sql = "ALTER TABLE mcp_relay_calls ADD COLUMN launch_id TEXT",
     ),
     SchemaMigration(version = 4, name = "retention_through_the_router", sql = RETENTION_THROUGH_THE_ROUTER_SQL),
+    // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+    // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+    SchemaMigration(
+        version = 5,
+        name = "mcp_relay_router_policies_inside_functions_only",
+        sql = """
+            ALTER POLICY mcp_relay_calls_router_read ON mcp_relay_calls USING (current_user = 'ostrom_router');
+            ALTER POLICY mcp_relay_calls_router_purge ON mcp_relay_calls USING (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
 )
