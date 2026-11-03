@@ -82,7 +82,9 @@ class TestDatabase private constructor(
         poolSize: Int = ROLE_POOL_SIZE,
         block: suspend (role: String, driver: Driver) -> T,
     ): T {
-        require(poolSize <= LARGEST_POOL) { "A pool of $poolSize: at most $LARGEST_POOL beside the other tests' pools." }
+        require(poolSize <= LARGEST_POOL) {
+            "A pool of $poolSize: at most $LARGEST_POOL beside the other tests' pools."
+        }
         return if (poolSize > ROLE_POOL_SIZE) {
             exclusively { connectedAsRole(bypassRowLevelSecurity, poolSize, block) }
         } else {
