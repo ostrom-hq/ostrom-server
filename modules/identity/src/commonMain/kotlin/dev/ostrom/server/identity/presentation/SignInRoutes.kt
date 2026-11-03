@@ -46,7 +46,7 @@ const val MOBILE_OAUTH_STATE_COOKIE = "ostrom_mobile_oauth_state"
  * The cookie that binds an e-mailed sign-in link to the browser that asked for it (web audit n°2 M4), as the OAuth
  * state does: the link is used only where this nonce is presented.
  */
-const val EMAIL_LINK_COOKIE = "ostrom_email_link"
+const val EMAIL_LINK_COOKIE = "ostrom_mail_link"
 
 private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
 
