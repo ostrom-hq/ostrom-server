@@ -13,20 +13,20 @@ internal object ReportsQueries {
      *
      * An event names its session by its id, or, for a model call through the gateway, by its launch (`launch_id`; its
      * `session_id` is then the launch's id too): the agent and the repository come from the session with that id, else
-     * from the first segment of that launch, one session only so that nothing counts twice. The first segments of the
-     * organization's launches are read once, sorted by their bytes (`COLLATE "C"`: the database's collation took 17
-     * of the 53 ms of an owner's month on a loaded runner, and grouping needs no language order), and hashed: no
-     * lookup per line. The launch is compared as the column itself, no expression: under row level security only a
-     * leakproof comparison reaches the index. A line's `sessions` counts the sessions its spending was found in: a
-     * launch counts once, a call outside any session never.
+     * from the first segment of that launch, one session only so that nothing counts twice. Only the launches the
+     * window spent in are read (`launches`), once each, and compared by their bytes (`COLLATE "C"`, for the sort of
+     * their first segment and for the join): the database's collation sorted the joined lines a second time and took
+     * a third of an owner's month (62.7 ms alone, server#310's run 41692583384). The launch is compared as the column
+     * itself, no expression: under row level security only a leakproof comparison reaches the index. A line's
+     * `sessions` counts the sessions its spending was found in: a launch counts once, a call outside any session never.
      *
      * The ledger is first added up by member, session, launch and day (`calls`), then joined: a session's calls are
      * joined once per day, not once per call. The whole days of the window come from the daily totals the usage module
      * keeps with the ledger (`usage_daily`); only the hours before the first whole day and after the last are added up
      * from the calls, so the result is the one of the calls alone (ReportsDailyTotalsPostgresTest), and a month reads
-     * a few thousand totals instead of every call (ReportsReadsBenchTest). The joined lines are added up in one pass
-     * for the four ways at once (grouping sets, by session for all but the days), then by way: each session is counted
-     * once per line without a sort.
+     * a few thousand totals instead of every call (ReportsReadsBenchTest). The days are added up from `calls` alone,
+     * without any join; the joined lines are added up in one pass for the three other ways at once (grouping sets, by
+     * session), then by way: each session is counted once per line without a sort.
      *
      * @param member Whether one member's spending only.
      * @return The statement.
@@ -47,34 +47,34 @@ internal object ReportsQueries {
                 UNION ALL${hours("head_from", "head_to")}
                 UNION ALL${hours("tail_from", "tail_to")}
             ),
+            launches AS (
+                SELECT DISTINCT ON (f.launch_id COLLATE "C") f.launch_id, f.id, f.agent, f.repo
+                FROM sessions_sessions f WHERE f.org_id = :org_id AND f.launch_id IN (SELECT launch_id FROM calls)
+                ORDER BY f.launch_id COLLATE "C", f.segment
+            ),
             spent AS (
-                SELECT agent, repo, member_id, day, spent_in, GROUPING(agent, repo, member_id, day) AS g,
+                SELECT agent, repo, member_id, spent_in, GROUPING(agent, repo, member_id) AS g,
                     MIN(login) AS login, SUM(cost_micros) AS cost_micros
                 FROM (
-                    SELECT c.member_id, COALESCE(s.id, l.id) AS spent_in, c.cost_micros, c.day,
+                    SELECT c.member_id, COALESCE(s.id, l.id) AS spent_in, c.cost_micros,
                         COALESCE(s.agent, l.agent) AS agent, COALESCE(s.repo, l.repo) AS repo, u.login
                     FROM calls c
                     LEFT JOIN sessions_sessions s ON s.org_id = c.org_id AND s.id = c.session_id
-                    LEFT JOIN (
-                        SELECT DISTINCT ON (f.launch_id COLLATE "C") f.launch_id, f.id, f.agent, f.repo
-                        FROM sessions_sessions f WHERE f.org_id = :org_id AND f.launch_id IS NOT NULL
-                        ORDER BY f.launch_id COLLATE "C", f.segment
-                    ) l ON s.id IS NULL AND l.launch_id = c.launch_id
+                    LEFT JOIN launches l ON s.id IS NULL AND l.launch_id = c.launch_id COLLATE "C"
                     LEFT JOIN orgs_members m ON m.org_id = c.org_id AND m.id = c.member_id
                     LEFT JOIN identity_users u ON u.id = m.user_id
                 ) x
-                GROUP BY GROUPING SETS ((agent, spent_in), (repo, spent_in), (member_id, spent_in), (day))
+                GROUP BY GROUPING SETS ((agent, spent_in), (repo, spent_in), (member_id, spent_in))
             )
-            SELECT CASE g WHEN $BY_AGENT THEN 'agent' WHEN $BY_REPO THEN 'repo' WHEN $BY_PERSON THEN 'person'
-                    ELSE 'day' END AS dim,
+            SELECT CASE g WHEN $BY_AGENT THEN 'agent' WHEN $BY_REPO THEN 'repo' ELSE 'person' END AS dim,
                 CASE g WHEN $BY_AGENT THEN COALESCE(agent, '') WHEN $BY_REPO THEN COALESCE(repo, '')
-                    WHEN $BY_PERSON THEN COALESCE(CAST(member_id AS TEXT), '') ELSE to_char(day, 'YYYY-MM-DD')
-                    END AS group_key,
+                    ELSE COALESCE(CAST(member_id AS TEXT), '') END AS group_key,
                 CASE g WHEN $BY_AGENT THEN COALESCE(agent, '') WHEN $BY_REPO THEN COALESCE(repo, '')
-                    WHEN $BY_PERSON THEN COALESCE(MIN(login), CAST(member_id AS TEXT), '') ELSE '' END AS label,
-                CAST(SUM(cost_micros) AS BIGINT) AS micros,
-                CASE WHEN g = $BY_DAY THEN 0 ELSE COUNT(spent_in) END AS sessions
-            FROM spent GROUP BY g, agent, repo, member_id, day
+                    ELSE COALESCE(MIN(login), CAST(member_id AS TEXT), '') END AS label,
+                CAST(SUM(cost_micros) AS BIGINT) AS micros, COUNT(spent_in) AS sessions
+            FROM spent GROUP BY g, agent, repo, member_id
+            UNION ALL
+            SELECT 'day', to_char(day, 'YYYY-MM-DD'), '', CAST(SUM(cost_micros) AS BIGINT), 0 FROM calls GROUP BY day
         """.trimIndent()
     }
 
@@ -150,11 +150,10 @@ internal object ReportsQueries {
     private const val GATE_REPO = "NULLIF(COALESCE(NULLIF(CAST(g.subject AS JSONB) ->> 'realRepo', ''), " +
         "CAST(g.subject AS JSONB) ->> 'repo'), '')"
 
-    // `GROUPING(agent, repo, member_id, day)` of each grouping set of the spending: a bit for each column left out.
-    private const val BY_AGENT = 7
-    private const val BY_REPO = 11
-    private const val BY_PERSON = 13
-    private const val BY_DAY = 14
+    // `GROUPING(agent, repo, member_id)` of the spending's grouping sets: a bit for each column left out (the third
+    // set, by person, is the one left).
+    private const val BY_AGENT = 3
+    private const val BY_REPO = 5
 
     // A person who decided, kept as a user's id, is shown by their login, and only if they are a member of the
     // organization: an id written anywhere else, or of a stranger, is shown as it is (never another org's login).
