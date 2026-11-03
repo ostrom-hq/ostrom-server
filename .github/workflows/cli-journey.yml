@@ -20,6 +20,9 @@ on:
       cli_ref:
         description: ostrom-cli ref whose binary and journey run
         default: main
+      runner_image:
+        description: Cloud session image the server starts on this runner's Docker (empty = latest)
+        default: ""
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths: [.github/workflows/cli-journey.yml]
@@ -54,6 +57,7 @@ jobs:
     env:
       CLI_REF: ${{ inputs.cli_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
+      RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -134,6 +138,26 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
           ./gradlew -Postrom.core.local=true :cli:linkReleaseExecutableLinuxX64
+      # Cloud sessions (line 6.2: ostrom claude --cloud and ostrom attach) on this runner's Docker, as in
+      # console-journey.yml: the Engine API through a socket proxy limited to what the driver calls, on loopback; the
+      # session's containers reach the server, on the host network, through host.docker.internal (the driver adds it).
+      # Their settings go to the server alone (runners.env), not to the seed run that shares server.env.
+      - name: The cloud sessions' runtime (this runner's Docker, the session image by digest)
+        run: |
+          docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
+          session_image=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
+          docker run -d --name docker-api -p 127.0.0.1:2375:2375 -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -e CONTAINERS=1 -e VOLUMES=1 -e IMAGES=1 -e POST=1 -e ALLOW_START=1 -e ALLOW_STOP=1 \
+            -e INFO=0 -e NETWORKS=0 -e EXEC=0 \
+            docker.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+          {
+            echo "OSTROM_RUNNERS_DRIVER=docker"
+            echo "OSTROM_RUNNERS_DOCKER_API_URL=http://127.0.0.1:2375"
+            echo "OSTROM_RUNNERS_SERVER_URL=http://host.docker.internal:4600"
+            echo "OSTROM_RUNNERS_IMAGE=$session_image"
+            echo "OSTROM_RUNNERS_ALLOWED_ORGS=*"
+          } > "$RUNNER_TEMP/runners.env"
+          echo "- cloud session: \`$session_image\`, on this runner's Docker" >> "$GITHUB_STEP_SUMMARY"
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
           IMAGE: ${{ steps.server.outputs.image }}
@@ -162,7 +186,7 @@ jobs:
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
-            --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
+            --env-file "$RUNNER_TEMP/server.env" --env-file "$RUNNER_TEMP/runners.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
       - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt)
@@ -172,6 +196,7 @@ jobs:
         run: >-
           python3 e2e/journey.py --binary cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe
           --server http://127.0.0.1:4600 --mail-dir "$RUNNER_TEMP/ostrom-mail" --report "$RUNNER_TEMP/journey.json"
+          $(grep -q -e '"--cloud-sessions"' e2e/journey.py && echo --cloud-sessions)
           --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
           $IMAGE seed-test-account"
       - name: Server logs
