@@ -32,7 +32,9 @@ class ApprovalNoticesTest {
         assertEquals(PUSH_TITLE, push.title)
         assertEquals(PUSH_BODY, push.body)
         val shown = push.title + push.body
-        listOf("ana", "eli", "Push to main", "acme/app").forEach { assertFalse(shown.contains(it), "$it on a lock screen") }
+        listOf("ana", "eli", "Push to main", "acme/app").forEach {
+            assertFalse(shown.contains(it), "$it on a lock screen")
+        }
         assertEquals(mapOf("kind" to "approval", "approvalId" to request.id.toString()), push.data)
     }
 
