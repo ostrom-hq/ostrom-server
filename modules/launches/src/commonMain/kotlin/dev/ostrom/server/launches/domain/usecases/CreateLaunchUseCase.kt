@@ -94,5 +94,8 @@ class CreateLaunchUseCaseImpl(
 
         /** The longest repository name. */
         const val MAX_REPO: Int = 200
+
+        /** The longest workflow id a launch names. */
+        const val MAX_WORKFLOW_ID: Int = 200
     }
 }
