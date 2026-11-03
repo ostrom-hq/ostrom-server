@@ -31,6 +31,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -86,10 +87,23 @@ class MobileRoutesPostgresTest {
         val callback = get("/api/v1/auth/github/callback?$query&state=$state") {
             header(HttpHeaders.Cookie, "$MOBILE_OAUTH_STATE_COOKIE=$state")
         }
-        assertEquals(HttpStatusCode.Found, callback.status)
         assertEquals("", callback.cookie(MOBILE_OAUTH_STATE_COOKIE)?.value, "The mobile state cookie is cleared")
         assertNull(callback.cookie(SESSION_COOKIE), "No browser session in the in-app browser")
-        return Url(assertNotNull(callback.headers[HttpHeaders.Location]))
+        if (error != null) {
+            // A refusal carries nothing worth taking: straight back to the app.
+            assertEquals(HttpStatusCode.Found, callback.status)
+            return Url(assertNotNull(callback.headers[HttpHeaders.Location]))
+        }
+        // A code goes back to the app only on the person's tap (AUDIT-SECU-APP-2 N1).
+        assertEquals(HttpStatusCode.OK, callback.status)
+        assertNull(callback.headers[HttpHeaders.Location], "A code is never redirected to the deep link unasked")
+        assertEquals(ContentType.Text.Html, callback.contentType()?.withoutParameters())
+        assertTrue("frame-ancestors 'none'" in assertNotNull(callback.headers["Content-Security-Policy"]))
+        assertEquals("no-store", callback.headers[HttpHeaders.CacheControl])
+        assertEquals("no-referrer", callback.headers["Referrer-Policy"])
+        val page = callback.bodyAsText()
+        val link = assertNotNull(Regex("href=\"(ostrom://[^\"]+)\"").find(page)).groupValues[1].replace("&amp;", "&")
+        return Url(link)
     }
 
     private suspend fun HttpClient.exchange(

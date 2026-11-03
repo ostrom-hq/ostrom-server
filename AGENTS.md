@@ -17,7 +17,9 @@ image the pull request builds: the isolation sweep, every scenario but the TeamC
 `ci` needs it. So a pull request that changes an answer, adds or removes a route, or changes a limit brings its e2e
 fix first: an ostrom-e2e pull request merged before it, as a contract change goes to ostrom-core first. A new route
 needs its sweep case in ostrom-e2e (`PARAM_KINDS` in `scenarios/sweep.e2e.ts`, and the resource organization A makes),
-or E2E-SWEEP-001 fails the server pull request.
+or E2E-SWEEP-001 fails the server pull request. After the race, a burst guard (E2E-LOAD-012, `load/burst.js`) sends 100 requests
+without a credential then 100 authenticated asks, and checks that the container neither stops nor is OOM-killed and
+that its memory peak stays under the chart's limit (512Mi): a warning until #266 merges, blocking after.
 
 ## The 15 rules that matter most
 
