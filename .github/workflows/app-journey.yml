@@ -268,6 +268,34 @@ jobs:
           sed -i 's/<application /<application android:usesCleartextTraffic="true" /' android/app/src/main/AndroidManifest.xml
           grep -q 'usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
           cd android && ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/journey.apk"
+      # The app's own sign-in, through Chrome, the server and the fake GitHub, in a build given no session
+      # (ostrom-app .maestro/real-browser/, AUDIT-SECU-APP-2 N1): the server's page that asks before a code goes back to
+      # the app. The emulator reaches the server and the fake GitHub on 127.0.0.1 (`adb reverse`), the address the
+      # server sends the browser to; skipped for an app ref without those flows.
+      - name: Build the Android app that signs in through the browser, given no session
+        if: hashFiles('app/.maestro/real-browser/*.yaml') != ''
+        working-directory: app
+        env:
+          EXPO_PUBLIC_OSTROM_REAL_E2E: "1"
+          EXPO_PUBLIC_OSTROM_E2E_SERVER: http://127.0.0.1:4600
+          EXPO_PUBLIC_OSTROM_E2E_SIGN_IN: browser
+          SESSION_TOKEN: ${{ steps.session.outputs.token }}
+        run: |
+          # The bundle is made again with these variables: Metro's cache and Gradle's up-to-date check would keep the
+          # first build's, which carries the session.
+          rm -rf "${TMPDIR:-/tmp}"/metro-* "${TMPDIR:-/tmp}"/haste-map-* node_modules/.cache
+          cd android
+          ./gradlew createBundleReleaseJsAndAssets --rerun -PreactNativeArchitectures=x86_64 --no-daemon
+          ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/browser.apk"
+          bundle="$RUNNER_TEMP/browser-bundle"
+          unzip -p "$RUNNER_TEMP/browser.apk" assets/index.android.bundle > "$bundle"
+          if grep -aqF "$SESSION_TOKEN" "$bundle"; then
+            echo "::error::The browser build carries the journey's session: it would skip the sign-in it must prove"
+            exit 1
+          fi
+          grep -aqF "http://127.0.0.1:4600" "$bundle" || { echo "::error::The browser build does not carry its server"; exit 1; }
       - name: Install Maestro (pinned)
         env:
           MAESTRO_VERSION: 2.12.0
@@ -290,8 +318,9 @@ jobs:
           disable-animations: true
           disk-size: 4096M
           script: |
-            adb install android/app/build/outputs/apk/release/app-release.apk
+            adb install "$RUNNER_TEMP/journey.apk"
             scripts/run-maestro.sh .maestro/real -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN" -e OSTROM_E2E_YES="$OSTROM_E2E_YES" -e OSTROM_E2E_NO="$OSTROM_E2E_NO" -e OSTROM_E2E_REPO="$OSTROM_E2E_REPO"
+            if [ -f "$RUNNER_TEMP/browser.apk" ]; then adb uninstall run.ostrom.app && adb reverse tcp:4600 tcp:4600 && adb reverse tcp:8080 tcp:8080 && adb install "$RUNNER_TEMP/browser.apk" && scripts/run-maestro.sh .maestro/real-browser -e OSTROM_E2E_LOGIN="$OSTROM_E2E_LOGIN"; fi
       - name: The server took the yes and the no, and signed both receipts
         # Read by the asker's token (gates:read, receipts:read): what the phone sent, as the server recorded it.
         env:
