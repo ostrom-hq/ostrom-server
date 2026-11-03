@@ -21,6 +21,7 @@ import dev.ostrom.server.runners.domain.CreateCloudSessionUseCase
 import dev.ostrom.server.runners.domain.CreateCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.DeleteRunnerUseCase
 import dev.ostrom.server.runners.domain.DeleteRunnerUseCaseImpl
+import dev.ostrom.server.runners.domain.ExecutionPlanner
 import dev.ostrom.server.runners.domain.FreeCloudPlanProvider
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCase
 import dev.ostrom.server.runners.domain.GetCloudSessionUseCaseImpl
@@ -45,6 +46,7 @@ import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RegisteredRunnersRepository
 import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
+import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerTokens
@@ -55,9 +57,12 @@ import dev.ostrom.server.runners.infrastructure.BillingCloudPlanProvider
 import dev.ostrom.server.runners.infrastructure.BillingCloudUsageMeter
 import dev.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import dev.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
+import dev.ostrom.server.runners.infrastructure.DockerExecutionPlan
 import dev.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
 import dev.ostrom.server.runners.infrastructure.ReconcilerWorker
 import dev.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
+import dev.ostrom.server.runners.infrastructure.RegisteredRuntimeDriver
+import dev.ostrom.server.runners.infrastructure.RunnerAssignmentsRepositoryImpl
 import dev.ostrom.server.runners.infrastructure.RunnerTokensImpl
 import dev.ostrom.server.runners.infrastructure.RunnersConfig
 import dev.ostrom.server.runners.infrastructure.RunnersMigrations
@@ -80,7 +85,8 @@ import org.koin.dsl.module
 
 /**
  * The runners module: cloud sessions. A member creates a session; the leased reconciler starts one pod per
- * execution (Kubernetes namespace `ostrom`, or a local Docker container), with a workspace volume that survives
+ * execution (Kubernetes namespace `ostrom`, a local Docker container, or a container on one of the organization's
+ * registered runners, `ostrom-runner machine`), with a workspace volume that survives
  * pauses; the runner in the pod reports through the runner channel; the free plan's guards pause idle, overlong or
  * over-budget sessions.
  */
@@ -102,7 +108,13 @@ object RunnersModule : ServerModule {
             val read = getOrNull<GetAgentUsageUseCase>()
             if (read == null) RepositoryCloudUsageMeter(get()) else BillingCloudUsageMeter(read, get())
         }
-        single<RuntimeDriver> { RuntimeDrivers.create(get()) }
+        single<RunnerAssignmentsRepository> { RunnerAssignmentsRepositoryImpl(get()) }
+        single<ExecutionPlanner> {
+            // The registered runner's own engine chooses the network; the server only says where it is reached.
+            val config = get<RunnersConfig>()
+            DockerExecutionPlan(null, config.serverUrl, config.runnerImage)
+        }
+        single<RuntimeDriver> { RuntimeDrivers.create(get(), { RegisteredRuntimeDriver(get(), get()) }) }
         single<CreateCloudSessionUseCase> {
             MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get()), get())
         }
@@ -122,7 +134,9 @@ object RunnersModule : ServerModule {
         single<ListRegisteredRunnersUseCase> { ListRegisteredRunnersUseCaseImpl(get(), get()) }
         single<RegisterRunnerUseCase> { RegisterRunnerUseCaseImpl(get(), get(), get()) }
         single<DeleteRunnerUseCase> { DeleteRunnerUseCaseImpl(get()) }
-        single<RegisteredRunnerHeartbeatUseCase> { RegisteredRunnerHeartbeatUseCaseImpl(get(), get(), get()) }
+        single<RegisteredRunnerHeartbeatUseCase> {
+            RegisteredRunnerHeartbeatUseCaseImpl(get(), get(), get(), get(), get(), get())
+        }
         single {
             val config = get<RunnersConfig>()
             val runtime = RunnerRuntime(config.runtimeLabel, config.runnerImage)

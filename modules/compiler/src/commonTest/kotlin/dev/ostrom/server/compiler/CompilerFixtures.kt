@@ -19,7 +19,10 @@ import dev.ostrom.server.compiler.domain.models.WorkflowDoc
 import dev.ostrom.server.compiler.domain.services.CompilerDocs
 import dev.ostrom.server.compiler.domain.services.HarnessStamp
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
+import dev.ostrom.server.compiler.domain.services.WorkflowRepos
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlin.time.Instant
 
@@ -84,6 +87,12 @@ internal fun action(cls: String, repos: List<String> = emptyList(), patterns: Li
 
 internal fun doc(workflow: Workflow): WorkflowDoc =
     CompilerDocs.workflow(PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject)
+
+// A workflow limited to some repositories (R6), as the console saves it.
+internal fun limited(workflow: Workflow, vararg repos: String): WorkflowDoc {
+    val field = WorkflowRepos.FIELD to JsonArray(repos.map { JsonPrimitive(it) })
+    return CompilerDocs.workflow(JsonObject(doc(workflow).raw + field))
+}
 
 @Suppress("LongParameterList") // A test fixture: one named argument with a default per field.
 internal fun rule(

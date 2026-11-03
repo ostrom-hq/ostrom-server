@@ -3,6 +3,7 @@ package dev.ostrom.server.runners.presentation
 
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * `GET /api/v1/runners` (ostrom-core's operation `listRunners`): the organization's registered runners, then the
@@ -32,12 +33,73 @@ class RunnersApi {
 }
 
 /**
- * The answer of a registered runner's heartbeat, as the contract's.
+ * What a registered runner reports at its heartbeat, as the contract's; a runner that runs no session sends no body
+ * and is given none.
  *
- * @property sessions The cloud sessions assigned to it.
+ * @property executions The executions it has.
+ * @property workspaces The sessions whose workspace it holds.
  */
 @Serializable
-data class RegisteredRunnerHeartbeatResponse(val sessions: List<CloudSessionResponse>)
+data class RegisteredRunnerHeartbeatRequest(
+    val executions: List<ReportedExecutionDto> = emptyList(),
+    val workspaces: List<String> = emptyList(),
+)
+
+/**
+ * One execution a registered runner has.
+ *
+ * @property sessionId The session.
+ * @property epoch The execution.
+ * @property state `pending`, `running` or `ended`: its runner container's state.
+ */
+@Serializable
+data class ReportedExecutionDto(val sessionId: String, val epoch: Long, val state: String)
+
+/**
+ * The answer of a registered runner's heartbeat, as the contract's: what it must hold. Anything else of its own, it
+ * stops and deletes.
+ *
+ * @property sessions The cloud sessions assigned to it: always empty, its executions are in [executions].
+ * @property executions The executions to run.
+ * @property workspaces The sessions whose workspace to keep.
+ */
+@Serializable
+data class RegisteredRunnerHeartbeatResponse(
+    val sessions: List<CloudSessionResponse>,
+    val executions: List<AssignedExecutionDto>,
+    val workspaces: List<String>,
+)
+
+/**
+ * One execution a registered runner must run.
+ *
+ * @property sessionId The session.
+ * @property epoch The execution.
+ * @property plan What to create on its Docker Engine, given once, at the handover.
+ */
+@Serializable
+data class AssignedExecutionDto(val sessionId: String, val epoch: Long, val plan: ExecutionPlanDto? = null)
+
+/**
+ * The Docker Engine objects of an execution, in creation order.
+ *
+ * @property volumes The session's volumes.
+ * @property containers The execution's containers; the last, the runner's, holds the runner token.
+ */
+@Serializable
+data class ExecutionPlanDto(val volumes: List<PlannedObjectDto>, val containers: List<PlannedObjectDto>)
+
+/**
+ * A volume or a container: its name and the Engine API's creation body.
+ *
+ * @property name Its name.
+ * @property body The creation body.
+ */
+@Serializable
+data class PlannedObjectDto(val name: String, val body: JsonObject) {
+    /** The body may hold the runner token: never printed. */
+    override fun toString(): String = "PlannedObjectDto(name=$name)"
+}
 
 /**
  * A runner, as the contract's `Runner`.

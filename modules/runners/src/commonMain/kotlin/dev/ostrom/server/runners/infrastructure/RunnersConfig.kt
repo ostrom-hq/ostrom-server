@@ -10,7 +10,8 @@ import kotlin.uuid.Uuid
  * The runners module's configuration (keys `OSTROM_RUNNERS_…`, docs/MODULES.md). It chooses infrastructure (which
  * runtime runs the pods and how a runner reaches the server), never a product behaviour.
  *
- * @property driver Where executions run.
+ * @property driver Where executions run: nowhere, a Kubernetes namespace, the server's Docker Engine, or the
+ *   organizations' registered runners.
  * @property serverUrl The URL runners use to reach the server (in-cluster service URL on Kubernetes).
  * @property runnerImage The image of the session pod: the runner, the agents and the `ostrom` CLI.
  * @property kubernetes The Kubernetes runtime's settings, when [driver] is `kubernetes`.
@@ -27,7 +28,7 @@ data class RunnersConfig(
     val allowedOrgs: AllowedOrgs = AllowedOrgs.NONE,
 ) {
     /** The runtimes. */
-    enum class DriverKind { NONE, KUBERNETES, DOCKER }
+    enum class DriverKind { NONE, KUBERNETES, DOCKER, REGISTERED }
 
     /** The runtime's name runners are labelled with (`kubernetes`, `docker`), null when cloud sessions are off. */
     val runtimeLabel: String? get() = if (driver == DriverKind.NONE) null else driver.name.lowercase()
@@ -95,7 +96,10 @@ data class RunnersConfig(
             null, "none" -> DriverKind.NONE
             "kubernetes" -> DriverKind.KUBERNETES
             "docker" -> DriverKind.DOCKER
-            else -> throw InvalidConfigException("OSTROM_RUNNERS_DRIVER must be none, kubernetes or docker, not $raw.")
+            "registered" -> DriverKind.REGISTERED
+            else -> throw InvalidConfigException(
+                "OSTROM_RUNNERS_DRIVER must be none, kubernetes, docker or registered, not $raw.",
+            )
         }
 
         private fun allowedOrgs(raw: String): AllowedOrgs {
