@@ -39,7 +39,7 @@ class ReadBenchTest {
     }
 
     @Test
-    fun aScanOrAnNPlusOneBreaksThePageButASlowRunnerOnlyPastTenTimes() {
+    fun aScanOrAnNPlusOneBreaksThePageButASlowRunnerOnlyPastTenTimes() = madeUpTimes {
         val plan = listOf("Seq Scan on big  (cost=0.00..1.00)")
         val scan = ReadMeasure("scan", emptyList(), plan, listOf(1.milliseconds), 3.milliseconds)
         val scanned = assertFailsWith<AssertionError> { scan.assertWithinBudget(setOf("big"), maxQueries = 1) }
@@ -56,7 +56,7 @@ class ReadBenchTest {
     }
 
     @Test
-    fun aReportIsHeldByItsShapeAndItsTimesOnlyPastTenTimes() {
+    fun aReportIsHeldByItsShapeAndItsTimesOnlyPastTenTimes() = madeUpTimes {
         val alone = { ms: Double -> listOf("Result\nPlanning Time: 0.000 ms\nExecution Time: $ms ms") }
         val loaded = listOf(REPORT_P95_CEILING * BLOCK_FACTOR)
         val report = ReadMeasure("report", emptyList(), alone(500.0), loaded, 3.milliseconds)
@@ -71,8 +71,8 @@ class ReadBenchTest {
     }
 
     @Test
-    fun aTimeIsWrittenWithItsBudgetAndFailsOnlyPastTenTimesIt() {
-        val file = Path(TIME_BUDGETS_FILE)
+    fun aTimeIsWrittenWithItsBudgetAndFailsOnlyPastTenTimesIt() = madeUpTimes {
+        val file = Path(timeBudgetsFile)
         val before = if (SystemFileSystem.exists(file)) read(file).lines().size else 1
         checkTime("a measure", 120.milliseconds, 50.milliseconds)
         assertEquals("a measure\t120.0\t50.0", read(file).lines()[before - 1])
@@ -85,6 +85,16 @@ class ReadBenchTest {
     }
 
     private fun read(file: Path): String = SystemFileSystem.source(file).buffered().use { it.readString() }
+
+    // The made-up times of these tests go to a file of their own, never to the module's budgets.tsv.
+    private fun madeUpTimes(block: () -> Unit) {
+        timeBudgetsFile = "build/reports/perf/made-up-budgets.tsv"
+        try {
+            block()
+        } finally {
+            timeBudgetsFile = TIME_BUDGETS_FILE
+        }
+    }
 
     @Test
     fun theMedianTrialIsKeptNotTheBestNorTheWorst() {

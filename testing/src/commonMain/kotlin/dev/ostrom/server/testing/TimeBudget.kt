@@ -21,6 +21,12 @@ const val TIME_BUDGETS_FILE = "build/reports/perf/budgets.tsv"
 private const val PERF_REPORTS = "build/reports/perf"
 
 /**
+ * Where [checkTime] writes, in [PERF_REPORTS]: the testing module's own tests of the checks write their made-up times
+ * elsewhere, so that none reaches a Build's summary nor the Perf workflow (its first run counted nine of them).
+ */
+internal var timeBudgetsFile: String = TIME_BUDGETS_FILE
+
+/**
  * Holds a time a test measured. A Build never fails on a time in milliseconds (orchestrator, JOURNAL 02:5x): a shared
  * runner under load slowed benches that no pull request had touched, twice in a row on main. The Build fails on what
  * cannot vary with the runner (the queries a call sends, the shape of their plans, the rows they read), and on a time
@@ -39,7 +45,7 @@ fun checkTime(name: String, measured: Duration, budget: Duration, details: () ->
         it.toDouble(DurationUnit.MILLISECONDS).toString()
     }
     SystemFileSystem.createDirectories(Path(PERF_REPORTS))
-    SystemFileSystem.sink(Path(TIME_BUDGETS_FILE), append = true).buffered().use { it.writeString(line) }
+    SystemFileSystem.sink(Path(timeBudgetsFile), append = true).buffered().use { it.writeString(line) }
     if (measured > budget * BLOCK_FACTOR) {
         fail("$name: $measured, over $BLOCK_FACTOR times its budget of $budget:\n${details()}")
     }
