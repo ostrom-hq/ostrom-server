@@ -202,7 +202,10 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
             // A named parameter is bound only when the SQL names it: sqlx4k refuses an unknown one.
             query.status?.let { statement.bind("status", it.value) }
             query.group?.let { statement.bind("group", it) }
-            query.repo?.lowercase()?.let { statement.bind("repo", it).bind("under", "$it/") }
+            query.repo?.let { repo ->
+                val name = repo.lowercase()
+                statement.bind("repo", name).bind("under", "$name/")
+            }
             query.after?.let { statement.bind("after_group", it.group).bind("after_id", it.id) }
             return statement
         }
