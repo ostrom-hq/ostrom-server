@@ -163,9 +163,11 @@ class InMemoryWaits : WaitsRepository {
             if (earlier.id != wait.id) waits[earlier.id] = earlier
             return CreateOutcome.DUPLICATE
         }
+        // A session's limit spans its segments, as the repository's.
+        val session = wait.sessionId?.let(::agentSessionOf)
         val open = waits.values.count {
-            it.orgId == wait.orgId && it.status == WaitStatus.OPEN && it.sessionId == wait.sessionId &&
-                (wait.sessionId != null || it.createdBy == wait.createdBy)
+            it.orgId == wait.orgId && it.status == WaitStatus.OPEN && it.sessionId?.let(::agentSessionOf) == session &&
+                (session != null || it.createdBy == wait.createdBy)
         }
         if (open >= maxOpen) return CreateOutcome.AT_LIMIT
         waits[wait.id] = wait

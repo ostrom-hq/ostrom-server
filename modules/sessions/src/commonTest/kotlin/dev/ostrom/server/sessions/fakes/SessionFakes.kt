@@ -58,8 +58,9 @@ class InMemorySessions : SessionsRepository {
 
     override suspend fun get(orgId: Uuid, id: String): Session? = rows[orgId to id]
 
-    override suspend fun last(orgId: Uuid, rootId: String): Session? =
-        rows.values.filter { it.orgId == orgId && it.rootId == rootId }.maxByOrNull { it.segment }
+    override suspend fun lastOf(orgId: Uuid, id: String): Session? = rows[orgId to id]?.let { named ->
+        rows.values.filter { it.orgId == orgId && it.rootId == named.rootId }.maxBy { it.segment }
+    }
 
     override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> =
         rows.values.filter { it.orgId == orgId && (query.launchId == null || it.launchId == query.launchId) }

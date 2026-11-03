@@ -38,9 +38,13 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
         select("id = :id", lock = false) { bind("id", id) }.firstOrNull()
     }
 
-    // The unique (org_id, root_id, segment) index serves it.
-    override suspend fun last(orgId: Uuid, rootId: String): Session? = scoped(orgId) {
-        select("root_id = :root ORDER BY segment DESC LIMIT 1", lock = false) { bind("root", rootId) }.firstOrNull()
+    // The primary key finds the named segment, the unique (org_id, root_id, segment) index the last one.
+    override suspend fun lastOf(orgId: Uuid, id: String): Session? = scoped(orgId) {
+        select(
+            "root_id = (SELECT root_id FROM sessions_sessions WHERE org_id = :org AND id = :id) " +
+                "ORDER BY segment DESC LIMIT 1",
+            lock = false,
+        ) { bind("id", id) }.firstOrNull()
     }
 
     override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> = scoped(orgId) {

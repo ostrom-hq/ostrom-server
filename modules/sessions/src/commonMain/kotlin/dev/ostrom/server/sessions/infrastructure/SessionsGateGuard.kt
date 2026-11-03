@@ -18,19 +18,14 @@ import kotlin.uuid.Uuid
  */
 class SessionsGateGuard(private val repository: SessionsRepository) : GateSessions {
     override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) {
-        ensureOpen(named(orgId, sessionId), launchId)
+        ensureOpen(repository.get(orgId, sessionId) ?: throw SessionNotFoundException(), launchId)
     }
 
     override suspend fun openSegment(orgId: Uuid, sessionId: String, launchId: String?): String {
-        val named = named(orgId, sessionId)
-        // The agent session's last segment: the named one when nothing came after it.
-        val last = listOfNotNull(repository.last(orgId, named.rootId), named).maxBy { it.segment }
+        val last = repository.lastOf(orgId, sessionId) ?: throw SessionNotFoundException()
         ensureOpen(last, launchId)
         return last.id
     }
-
-    private suspend fun named(orgId: Uuid, sessionId: String): Session =
-        repository.get(orgId, sessionId) ?: throw SessionNotFoundException()
 
     private fun ensureOpen(session: Session, launchId: String?) {
         if (launchId != null && session.launchId != launchId) throw NotYourSessionException()

@@ -132,6 +132,11 @@ class WaitsPostgresTest {
         assertEquals(listOf(reopened.id, first.id), listed)
         val other = repository.list(WaitFilter(ORG_A, agentSession = "s_10"), null, 10).map { it.id }
         assertEquals(listOf(longer.id), other)
+
+        // The open waits' limit spans the session's segments: a reopened session opens no more.
+        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s_1~r3"), 2))
+        assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = "s_1~r3"), 3))
+        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s_1"), 3))
     }
 
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)
