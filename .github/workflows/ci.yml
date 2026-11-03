@@ -204,9 +204,11 @@ jobs:
       - name: Two Gradle workers for the native builds
         if: ${{ !cancelled() }}
         run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
+      - name: gdb (throwaway diagnostic)
+        run: sudo apt-get install -y -q gdb >/dev/null
       - name: Native tests (linuxX64), with PostgreSQL
         if: ${{ !cancelled() }}
-        run: ./gradlew --continue linuxX64Test
+        run: ./gradlew --continue :app:linuxX64Test --tests '*AppsInARowDiagTest*'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
