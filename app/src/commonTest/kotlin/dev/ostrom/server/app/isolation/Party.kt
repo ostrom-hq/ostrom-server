@@ -7,6 +7,7 @@ import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.MOBILE_SCOPES
+import dev.ostrom.server.identity.domain.MobileTokensRepository
 import dev.ostrom.server.identity.domain.PERSONAL_TOKEN_SCOPES
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.SERVICE_KEY_SCOPES
@@ -153,6 +154,12 @@ internal suspend fun TestServer.token(owner: User, org: Org, kind: TokenKind, sc
         Uuid.random(), owner.id, org.id, kind.name.lowercase(), kind, scopes, secret.takeLast(4), null, now,
         now + 8.hours, null, null, authenticatedAt = now,
     )
-    koin.get<ApiTokensRepository>().create(row, koin.get<SecretHasher>().hash(secret))
+    val hasher = koin.get<SecretHasher>()
+    // The phone app's token is stored with the hash of its unlock key, as a mobile sign-in stores it.
+    if (kind == TokenKind.MOBILE) {
+        koin.get<MobileTokensRepository>().create(row, hasher.hash(secret), hasher.hash("unlock-$secret"))
+    } else {
+        koin.get<ApiTokensRepository>().create(row, hasher.hash(secret))
+    }
     return row.id to secret
 }

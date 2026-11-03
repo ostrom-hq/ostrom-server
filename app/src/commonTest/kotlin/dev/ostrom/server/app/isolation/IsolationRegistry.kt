@@ -210,6 +210,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "PUT /api/v1/mcp/settings" to Case.Target(body = "{}", admin = true),
     "GET /api/v1/mcp/calls" to Case.Target(),
     "GET /api/v1/mcp/usage" to Case.Target(),
+    "GET /api/v1/mcp/{server}" to target("server" to MCP_SERVER),
+    "DELETE /api/v1/mcp/{server}" to target("server" to MCP_SERVER),
     "POST /api/v1/mcp/{server}" to target(
         "server" to MCP_SERVER,
         body = """{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}""",
@@ -233,12 +235,12 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "PUT /api/v1/artifacts/{id}/members/{login}" to target("id" to ARTIFACT, "login" to MEMBER_ID),
     "DELETE /api/v1/artifacts/{id}/members/{login}" to target("id" to ARTIFACT, "login" to MEMBER_ID),
     "POST /api/v1/artifacts/{id}/tickets" to target("id" to ARTIFACT, body = "{}"),
-    "GET /a/{id}/{ticket}/{path}" to Case.Target(
-        mapOf("id" to of(ARTIFACT), "ticket" to Param.Fresh, "path" to Param.Fixed("index.html")),
+    "GET /a/{id}/{ticket}/{...}" to Case.Target(
+        mapOf("id" to of(ARTIFACT), "ticket" to Param.Fresh, "..." to Param.Fixed("index.html")),
         host = CONTENT_HOST,
     ),
-    "GET /l/{slug}/{path}" to
-        Case.Target(mapOf("slug" to of(LINK_SLUG), "path" to Param.Fixed("index.html")), host = CONTENT_HOST),
+    "GET /l/{slug}/{...}" to
+        Case.Target(mapOf("slug" to of(LINK_SLUG), "..." to Param.Fixed("index.html")), host = CONTENT_HOST),
 
     // Automations and waits.
     "GET /api/v1/automations" to Case.Target(),

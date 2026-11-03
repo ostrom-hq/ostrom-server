@@ -213,7 +213,8 @@ internal class IsolationMatrix(
     }
 
     private companion object {
-        val PARAMETER = Regex("""\{([A-Za-z0-9_]+)(?:\.\.\.)?\??}""")
+        // `{id}`, `{id?}`, and `{...}` for a tail (Ktor writes a tailcard without its name).
+        val PARAMETER = Regex("""\{([A-Za-z0-9_]+|\.\.\.)\??}""")
         val PLACEHOLDER = Regex("""\{\{([A-Z_]+)}}""")
 
         // Reads first, then deletions, updates and creations: a creation with B's name (an MCP server, a secret) makes
