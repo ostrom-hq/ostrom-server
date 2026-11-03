@@ -2,6 +2,7 @@
 package dev.ostrom.server.budgets
 
 import dev.ostrom.server.budgets.domain.BudgetAlerts
+import dev.ostrom.server.budgets.presentation.MyBudgetResponse
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
@@ -10,11 +11,15 @@ import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
 import dev.ostrom.server.usage.UsageModule
+import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
+import io.ktor.http.isSuccess
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /**
@@ -49,12 +54,16 @@ class BudgetsReadsBenchTest {
         orgs.forEach { fixtures.execute(usageOf(it)).getOrThrow() }
         fixtures.execute(
             "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) VALUES " +
-                "(CAST('${TestCallers.orgA}' AS uuid), NULL, 'ORG', 1000000000000, now()), " +
+                "(CAST('${TestCallers.orgA}' AS uuid), NULL, 'ORG', $LIMIT_MICROS, now()), " +
                 "(CAST('${TestCallers.orgA}' AS uuid), CAST('${TestCallers.memberA.memberId}' AS uuid), 'MEMBER', " +
-                "1000000000000, now())",
+                "$MEMBER_LIMIT_MICROS, now())",
         ).getOrThrow()
         fixtures.execute("VACUUM ANALYZE usage_events").getOrThrow()
 
+        // The member's own limit, not the organization's: the route reads both and the month's spending.
+        val response = server.client.get("/api/v1/budgets/me") { bearerAuth("member-a") }
+        assertTrue(response.status.isSuccess(), response.status.toString())
+        assertEquals(MEMBER_LIMIT_MICROS, response.body<MyBudgetResponse>().limitMicros)
         val measure = server.measureRead("GET /api/v1/budgets/me (organization and member limits)") {
             get("/api/v1/budgets/me") { bearerAuth("member-a") }
         }
@@ -65,5 +74,7 @@ class BudgetsReadsBenchTest {
     private companion object {
         const val ORGS = 10
         const val USAGE_PER_ORG = 100_000
+        const val LIMIT_MICROS = 1_000_000_000_000L
+        const val MEMBER_LIMIT_MICROS = LIMIT_MICROS / 2
     }
 }
