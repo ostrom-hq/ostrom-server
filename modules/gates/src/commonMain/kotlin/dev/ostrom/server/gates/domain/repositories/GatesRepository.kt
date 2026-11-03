@@ -150,7 +150,8 @@ interface GatesTransaction {
     suspend fun addAskers(gate: Gate)
 
     /**
-     * Replaces a gate.
+     * Replaces a gate. Its sessions are linked by [insertGate] and [addAskers] only: a session added to a gate goes
+     * through [addAskers] first, or [ofSession] does not find the gate.
      *
      * @param gate The gate as it is now.
      */
