@@ -89,11 +89,12 @@ jobs:
       WEB_REF: ${{ inputs.web_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
       RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
-      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch or a
-      # call from ostrom-web runs what it names, or all of e2e-real.
+      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main) and the cloud
+      # sessions on registered runners (line 6.2, ostrom-web#84); a dispatch or a call from ostrom-web runs what it
+      # names, or all of e2e-real.
       SPECS: >-
         ${{ github.event_name == 'schedule' && 'me.spec.ts signin.spec.ts gates.spec.ts' ||
-        github.event_name == 'pull_request' && github.repository == 'ostrom-hq/ostrom-server' && 'me.spec.ts' ||
+        github.event_name == 'pull_request' && github.repository == 'ostrom-hq/ostrom-server' && 'me.spec.ts cloud.spec.ts' ||
         inputs.specs }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
@@ -116,8 +117,9 @@ jobs:
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
-          # The oldest server the console's journeys need: /auth/me with Ostrom-Org (server#92).
-          MIN_SERVER: 067f7b2
+          # The oldest server the console's journeys need: cloud sessions on registered runners (server#223), which
+          # comes after /auth/me with Ostrom-Org (server#92).
+          MIN_SERVER: b091032
         run: |
           main=$(git -C server rev-parse origin/main)
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -145,7 +147,7 @@ jobs:
           git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
             || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
           git -C server merge-base --is-ancestor "$MIN_SERVER" "$revision" \
-            || { echo "::error::$image is ostrom-server@${revision:0:7}, older than $MIN_SERVER (server#92)"; exit 1; }
+            || { echo "::error::$image is ostrom-server@${revision:0:7}, older than $MIN_SERVER (server#223)"; exit 1; }
           # The database roles of the image's own commit, not of a main that may have moved past it.
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
           # The cloud sessions' image, by digest: the server starts it on this runner's Docker (line 6.2).
@@ -214,16 +216,17 @@ jobs:
             >> "$RUNNER_TEMP/server.env"
           rm "$RUNNER_TEMP/github-app.pem"
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
-          # Cloud sessions (line 6.2: launch and stop from /cloud) on this runner's Docker, as in demo-stack: the
-          # Engine API through a socket proxy limited to what the driver calls, on loopback. The session's containers
-          # reach the server, on the host network, through host.docker.internal (the driver adds it).
+          # Cloud sessions (line 6.2: launch, stop, and the loss of a machine, from /cloud) on registered runners:
+          # the journeys register them and start `ostrom-runner machine` containers on this runner's Docker
+          # (ostrom-web e2e-real/machines.ts), which reach the Engine API through a socket proxy limited to
+          # containers, volumes and images, on loopback. The server only plans; the session's containers reach it,
+          # on the host network, through host.docker.internal (the plan adds it).
           docker run -d --name docker-api -p 127.0.0.1:2375:2375 -v /var/run/docker.sock:/var/run/docker.sock:ro \
             -e CONTAINERS=1 -e VOLUMES=1 -e IMAGES=1 -e POST=1 -e ALLOW_START=1 -e ALLOW_STOP=1 \
             -e INFO=0 -e NETWORKS=0 -e EXEC=0 \
             docker.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
           {
-            echo "OSTROM_RUNNERS_DRIVER=docker"
-            echo "OSTROM_RUNNERS_DOCKER_API_URL=http://127.0.0.1:2375"
+            echo "OSTROM_RUNNERS_DRIVER=registered"
             echo "OSTROM_RUNNERS_SERVER_URL=http://host.docker.internal:4600"
             echo "OSTROM_RUNNERS_IMAGE=$SESSION_IMAGE"
             echo "OSTROM_RUNNERS_ALLOWED_ORGS=*"
@@ -256,6 +259,10 @@ jobs:
           OSTROM_E2E_GITHUB_PORT: '4700'
           OSTROM_E2E_GITHUB_WEBHOOK_SECRET: whsec_github_web_journey
           OSTROM_E2E_REQUIRE_ORGS: 'true'
+          # The machines the journeys start run the cloud sessions' image (machines.ts).
+          OSTROM_E2E_MACHINE_IMAGE: ${{ steps.server.outputs.runner }}
+          OSTROM_E2E_MACHINE_SERVER_URL: http://127.0.0.1:4600
+          OSTROM_E2E_MACHINE_DOCKER_API: http://127.0.0.1:2375
         # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.
         run: |
           set -f
@@ -266,6 +273,8 @@ jobs:
           docker logs ostrom-server 2>&1 | tail -n 300 || true
           echo "--- cloud session containers"
           docker ps -a --filter label=ostrom.run/session --format '{{.Names}} {{.Status}}' || true
+          echo "--- machines (registered runners) left"
+          docker ps -a --filter name=ostrom-machine --format '{{.Names}} {{.Status}}' || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
