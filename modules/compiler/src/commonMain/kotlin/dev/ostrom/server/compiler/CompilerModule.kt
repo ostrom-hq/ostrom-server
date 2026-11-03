@@ -2,6 +2,7 @@
 package dev.ostrom.server.compiler
 
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
+import dev.ostrom.server.compiler.domain.services.CompiledPackages
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.domain.services.HarnessReceiptSigner
 import dev.ostrom.server.compiler.domain.usecases.ApproversGraphUseCase
@@ -54,7 +55,8 @@ object CompilerModule : ServerModule {
         single { ReceiptsCompilerSigner(get()) }
         single<HarnessReceiptSigner> { get<ReceiptsCompilerSigner>() }
         single<WorkflowDecisionSigner> { get<ReceiptsCompilerSigner>() }
-        single<CompileSourcesUseCase> { CompileSourcesUseCaseImpl(get(), get(), get(), get()) }
+        single { CompiledPackages() }
+        single<CompileSourcesUseCase> { CompileSourcesUseCaseImpl(get(), get(), get(), get(), get()) }
         single<PublishPackageUseCase> { PublishPackageUseCaseImpl(get(), get(), get(), get(), get()) }
         single<PreviewPackageUseCase> { PreviewPackageUseCaseImpl(get()) }
         single<RevokePackageUseCase> { RevokePackageUseCaseImpl(get(), get()) }

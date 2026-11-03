@@ -41,6 +41,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -403,6 +406,32 @@ class BudgetsPostgresTest {
     }
 
     @Test
+    fun twoAdminsSettingOneSubjectAtOnceLeaveOneOfTheirBudgetsNeverAMix() = serverTest(modules, overrides) { server ->
+        val repository = server.koin.get<BudgetsRepository>()
+        val monthly = listOf(BudgetLimit(10_000_000))
+        val daily = listOf(BudgetLimit(5_000_000, BudgetWindow.DAY, BudgetAction.WARN))
+        val members = List(SUBJECTS) { Uuid.random() }
+        // Each subject starts with limits in both windows: the second writer's delete waits on the first one's rows.
+        val start = listOf(BudgetLimit(1), BudgetLimit(1, BudgetWindow.DAY))
+        for (each in members) {
+            repository.replaceLimits(TestCallers.orgA, BudgetTarget.Member(each), start, TestCallers.epoch)
+        }
+
+        coroutineScope {
+            members.flatMap { each ->
+                val target = BudgetTarget.Member(each)
+                listOf(monthly, daily).map {
+                    async { repository.replaceLimits(TestCallers.orgA, target, it, TestCallers.epoch) }
+                }
+            }.awaitAll()
+        }
+
+        val mixed = members.map { repository.limits(TestCallers.orgA, it).member.toSet() }
+            .filter { it != monthly.toSet() && it != daily.toSet() }
+        assertEquals(emptyList(), mixed, "Each subject keeps the limits of one of the two writes, whole")
+    }
+
+    @Test
     fun theOrgLimitsSurviveManyOverridesAndNoMemberIsCutBetweenWindows() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<BudgetsRepository>()
         repository.putOrgLimits(5_000, 1_000)
@@ -479,3 +508,6 @@ private suspend fun BudgetsRepository.putOrgLimits(org: Long, defaultMember: Lon
     replaceLimits(TestCallers.orgA, BudgetTarget.Org, listOf(BudgetLimit(org)), TestCallers.epoch)
     replaceLimits(TestCallers.orgA, BudgetTarget.DefaultMember, listOf(BudgetLimit(defaultMember)), TestCallers.epoch)
 }
+
+/** How many subjects two admins set at once: enough for the writes to overlap. */
+private const val SUBJECTS = 40
