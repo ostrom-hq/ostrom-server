@@ -13,6 +13,7 @@ import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.AccountStatus
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
+import dev.ostrom.server.sharing.domain.CivilCalendar
 import dev.ostrom.server.sharing.domain.EnrollAccountPayload
 import dev.ostrom.server.sharing.domain.EnrollSharedAccountUseCaseImpl
 import dev.ostrom.server.sharing.domain.InvalidAccountException
@@ -205,6 +206,14 @@ class SharingEnrollUseCasesTest {
         spent = 1_000
         val refused = assertIs<LeaseResult.Refused>(pool.lease(Sharing.orgA, Sharing.otherA.memberId, CLAUDE, null))
         assertEquals(today() + 1.days, refused.refusal.retryAt)
+    }
+
+    @Test
+    fun aDayStartsAtUtcMidnightBeforeTheEpochToo() {
+        val start = { seconds: Long -> CivilCalendar.dayStart(Instant.fromEpochSeconds(seconds)).epochSeconds }
+        assertEquals(DAY, start(DAY + 1))
+        assertEquals(-DAY, start(-1))
+        assertEquals(-DAY, start(-DAY))
     }
 
     private fun today() = Instant.fromEpochSeconds(clock.now().epochSeconds / DAY * DAY)

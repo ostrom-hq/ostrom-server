@@ -217,50 +217,10 @@ class SharingEnrollPostgresTest {
                 .getOrThrow().single().get("envelope").asString()
             assertFalse(token in stored, "Sealed at rest")
 
-            // Lent to liam alone, with the token of the secret, line break trimmed.
-            val pool = koin.get<SharedAccountPool>()
-            val lease = assertIs<LeaseResult.Leased>(pool.lease(org, liamMember, AccountProvider.CLAUDE, null)).lease
-            assertEquals(token, lease.credentials.accessToken)
-            lease.release()
-            assertIs<LeaseResult.Refused>(pool.lease(org, kiraMember, AccountProvider.CLAUDE, null))
+            leases(org, liamMember, kiraMember)
 
-            // Its daily share spent, it stops until the next UTC day.
-            spent = 25_000_000
-            val refused = assertIs<LeaseResult.Refused>(pool.lease(org, liamMember, AccountProvider.CLAUDE, null))
-            val tomorrow = Instant.fromEpochSeconds((Clock.System.now().epochSeconds / DAY + 1) * DAY)
-            assertEquals(tomorrow, refused.refusal.retryAt)
-            spent = 0
-
-            // Paused and resumed, lent to its owner by login, its daily share changed: the contract's PATCH.
             val path = "$base/$id"
-            val paused = send("PATCH", "kira", path, buildJsonObject { put("paused", true) })
-            assertEquals("true", paused.json().text("paused"))
-            val resumed = send("PATCH", "kira", path, buildJsonObject { put("paused", false) })
-            assertEquals("false", resumed.json().text("paused"))
-            val moved = send(
-                "PATCH",
-                "kira",
-                path,
-                buildJsonObject {
-                    put("sharedWith", JsonArray(listOf(JsonPrimitive("KIRA"))))
-                    put("dailyAllocationUsd", 10.5)
-                },
-            ).json()
-            assertEquals(listOf("kira"), moved.logins("sharedWith"))
-            assertEquals(10.5, moved.getValue("dailyAllocationUsd").jsonPrimitive.double)
-            val both = send(
-                "PATCH",
-                "kira",
-                path,
-                buildJsonObject {
-                    put("limits", buildJsonObject { put("maxConcurrent", 2) })
-                    put("dailyAllocationUsd", 1)
-                },
-            ).json()
-            assertEquals(1.0, both.getValue("dailyAllocationUsd").jsonPrimitive.double)
-            assertEquals("2", both.getValue("limits").jsonObject.text("maxConcurrent"))
-            val tooMuch = send("PATCH", "kira", path, buildJsonObject { put("dailyAllocationUsd", 2_000_000) })
-            assertEquals(HttpStatusCode.BadRequest, tooMuch.status)
+            patches(path)
 
             // Liam sees a neutral account: neither its owner, nor to whom it is lent, nor its daily share.
             val seen = send("GET", "liam", base).json().getValue("items").jsonArray.single().jsonObject
@@ -322,19 +282,7 @@ class SharingEnrollPostgresTest {
                 }
                 assertEquals(HttpStatusCode.BadRequest, send("POST", "kira", base, neither).status)
 
-                // A null credentialSecret is the tokens' body, which always carries a refresh token.
-                val tokens = buildJsonObject {
-                    put("provider", "claude")
-                    put("label", "Liam Max")
-                    put("credentialSecret", JsonNull)
-                    put("providerAccountId", "acct-liam")
-                    put("accessToken", "a".repeat(10))
-                    put("refreshToken", "b".repeat(10))
-                    put("expiresAt", "2099-01-01T00:00:00Z")
-                }
-                val noRefresh = JsonObject(tokens + ("refreshToken" to JsonPrimitive("")))
-                assertEquals(HttpStatusCode.BadRequest, send("POST", "liam", base, noRefresh).status)
-                assertEquals(HttpStatusCode.Created, send("POST", "liam", base, tokens).status)
+                sharesTokens()
 
                 // Milo names Kira's organization: nothing, not even its accounts' existence.
                 val id = codex.text("id")
@@ -344,6 +292,70 @@ class SharingEnrollPostgresTest {
                 assertTrue(send("GET", "kira", base).bodyAsText().contains(id))
             }
         }
+
+    /** Lent to liam alone, with the token of the secret, line break trimmed; its daily share spent, it stops. */
+    private suspend fun TestServer.leases(org: Uuid, liamMember: Uuid, kiraMember: Uuid) {
+        val pool = koin.get<SharedAccountPool>()
+        val lease = assertIs<LeaseResult.Leased>(pool.lease(org, liamMember, AccountProvider.CLAUDE, null)).lease
+        assertEquals(token, lease.credentials.accessToken)
+        lease.release()
+        assertIs<LeaseResult.Refused>(pool.lease(org, kiraMember, AccountProvider.CLAUDE, null))
+
+        // Its daily share spent, it stops until the next UTC day.
+        spent = 25_000_000
+        val refused = assertIs<LeaseResult.Refused>(pool.lease(org, liamMember, AccountProvider.CLAUDE, null))
+        val tomorrow = Instant.fromEpochSeconds((Clock.System.now().epochSeconds / DAY + 1) * DAY)
+        assertEquals(tomorrow, refused.refusal.retryAt)
+        spent = 0
+    }
+
+    /** Paused and resumed, lent to its owner by login, its daily share changed: the contract's PATCH. */
+    private suspend fun TestServer.patches(path: String) {
+        val paused = send("PATCH", "kira", path, buildJsonObject { put("paused", true) })
+        assertEquals("true", paused.json().text("paused"))
+        val resumed = send("PATCH", "kira", path, buildJsonObject { put("paused", false) })
+        assertEquals("false", resumed.json().text("paused"))
+        val moved = send(
+            "PATCH",
+            "kira",
+            path,
+            buildJsonObject {
+                put("sharedWith", JsonArray(listOf(JsonPrimitive("KIRA"))))
+                put("dailyAllocationUsd", 10.5)
+            },
+        ).json()
+        assertEquals(listOf("kira"), moved.logins("sharedWith"))
+        assertEquals(10.5, moved.getValue("dailyAllocationUsd").jsonPrimitive.double)
+        val both = send(
+            "PATCH",
+            "kira",
+            path,
+            buildJsonObject {
+                put("limits", buildJsonObject { put("maxConcurrent", 2) })
+                put("dailyAllocationUsd", 1)
+            },
+        ).json()
+        assertEquals(1.0, both.getValue("dailyAllocationUsd").jsonPrimitive.double)
+        assertEquals("2", both.getValue("limits").jsonObject.text("maxConcurrent"))
+        val tooMuch = send("PATCH", "kira", path, buildJsonObject { put("dailyAllocationUsd", 2_000_000) })
+        assertEquals(HttpStatusCode.BadRequest, tooMuch.status)
+    }
+
+    /** A null credentialSecret is the tokens' body, which always carries a refresh token. */
+    private suspend fun TestServer.sharesTokens() {
+        val tokens = buildJsonObject {
+            put("provider", "claude")
+            put("label", "Liam Max")
+            put("credentialSecret", JsonNull)
+            put("providerAccountId", "acct-liam")
+            put("accessToken", "a".repeat(10))
+            put("refreshToken", "b".repeat(10))
+            put("expiresAt", "2099-01-01T00:00:00Z")
+        }
+        val noRefresh = JsonObject(tokens + ("refreshToken" to JsonPrimitive("")))
+        assertEquals(HttpStatusCode.BadRequest, send("POST", "liam", base, noRefresh).status)
+        assertEquals(HttpStatusCode.Created, send("POST", "liam", base, tokens).status)
+    }
 
     private companion object {
         const val DAY = 86_400L

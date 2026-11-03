@@ -2,7 +2,6 @@
 package dev.ostrom.server.sharing.presentation
 
 import dev.ostrom.server.kernel.auth.authenticated
-import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
@@ -17,7 +16,6 @@ import dev.ostrom.server.sharing.domain.ShareAccountPayload
 import dev.ostrom.server.sharing.domain.SharedAccountView
 import dev.ostrom.server.sharing.domain.UpdateAccountPayload
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -25,13 +23,11 @@ import io.ktor.server.resources.patch
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import kotlin.math.roundToLong
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -108,25 +104,6 @@ private fun UpdateAccountRequest.limitsChange(): ((AccountLimits) -> AccountLimi
         }
     }
 }
-
-/** The body as [serializer] reads it; malformed, a 400 that never quotes it. */
-private fun <T> JsonObject.decoded(serializer: KSerializer<T>): T = try {
-    OstromJson.decodeFromJsonElement(serializer, this)
-} catch (error: IllegalArgumentException) {
-    // SerializationException is an IllegalArgumentException: a missing field, a wrong type.
-    throw BadRequestException("Malformed body.", error)
-}
-
-/** USD millionths of [usd], more than 0 and at most [MAX_DAILY_USD] (0 would close the account for good). */
-private fun usdToMicros(usd: Double): Long {
-    if (!(usd > 0.0 && usd <= MAX_DAILY_USD)) {
-        throw InvalidAccountException("dailyAllocationUsd is more than 0, at most ${MAX_DAILY_USD.toLong()}.")
-    }
-    return (usd * MICROS_PER_USD).roundToLong()
-}
-
-private const val MAX_DAILY_USD = 1_000_000.0
-private const val MICROS_PER_USD = 1_000_000.0
 
 /** These limits with the keys of [patch] replaced. */
 private fun AccountLimits.patchedBy(patch: JsonObject): AccountLimits {
