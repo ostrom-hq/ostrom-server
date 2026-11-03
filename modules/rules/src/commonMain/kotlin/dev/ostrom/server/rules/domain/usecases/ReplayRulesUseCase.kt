@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.rules.domain.models.AnalysisRun
 import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
+import dev.ostrom.server.rules.domain.services.EveryRule
 import dev.ostrom.server.rules.domain.services.GateReplay
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
@@ -52,7 +53,7 @@ class ReplayRulesUseCaseImpl(
 
     private suspend fun replay(run: AnalysisRun) {
         runs.advance(run, READ, 0.0)
-        val replayed = GateReplay.prepare(rules.gatedRules(run.orgId))
+        val replayed = GateReplay.prepare(EveryRule.gated(rules, run.orgId))
         if (replayed.isEmpty()) return runs.fail(run, ENGINE, NO_RULES)
         val policy = rules.selfApproval(run.orgId) ?: SelfApprovalPolicy.DEFAULT
         val actions = history.recent(run.orgId, clock.now() - REPLAY_WINDOW, MAX_ACTIONS)

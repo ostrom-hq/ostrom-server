@@ -8,6 +8,12 @@ name: Console journeys
 # reason, and the same shape, as cli-journey.yml. On demand, and, off the org's one-`ci`-job rule on purpose (as
 # demo-stack.yml), on a pull request only when the pull request changes this file.
 on:
+  # Each hour, the console of ostrom-web main against the newest server image, with the journeys a console change
+  # breaks first: sign-in, /auth/me in the top bar, a gate and its yes. ostrom-web's own CI runs every journey once its
+  # token may pull the server image (package Actions access); until then, this is what sees a console regression on
+  # its main (ostrom-web#78 was found by hand).
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       server_image:
@@ -25,6 +31,27 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths: [.github/workflows/console-journey.yml]
+  # ostrom-web calls the same journeys on each push to its main and each pull request (its real-journeys.yml): a
+  # console change that breaks a journey against the real server is seen there, not after the merge. The caller grants
+  # packages: read; its token must be allowed to read the server and runner images on GHCR.
+  workflow_call:
+    inputs:
+      server_image:
+        type: string
+        default: ""
+      runner_image:
+        type: string
+        default: ""
+      web_ref:
+        type: string
+        default: main
+      specs:
+        type: string
+        default: ""
+    secrets:
+      # Only while ostrom-web is private; a public console is read with the job's token.
+      DEPLOY_KEY_WEB:
+        required: false
 
 concurrency:
   # Each dispatch is its own run (it names its own image, console and journeys); a pull request's newer push cancels.
@@ -62,13 +89,19 @@ jobs:
       WEB_REF: ${{ inputs.web_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
       RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
-      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch runs
-      # what it names, or all of e2e-real.
-      SPECS: ${{ github.event_name == 'pull_request' && 'me.spec.ts' || inputs.specs }}
+      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch or a
+      # call from ostrom-web runs what it names, or all of e2e-real.
+      SPECS: >-
+        ${{ github.event_name == 'schedule' && 'me.spec.ts signin.spec.ts gates.spec.ts' ||
+        github.event_name == 'pull_request' && github.repository == 'ostrom-hq/ostrom-server' && 'me.spec.ts' ||
+        inputs.specs }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
+      # Called from ostrom-web, the default repository is the caller's: the server is named, at its main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ostrom-hq/ostrom-server
+          ref: ${{ github.repository == 'ostrom-hq/ostrom-server' && github.sha || 'main' }}
           path: server
           fetch-depth: 0
           persist-credentials: false
@@ -126,6 +159,9 @@ jobs:
             echo "- cloud session: \`$runner\`, on this runner's Docker"
             echo "- console: ostrom-web $(git -C web rev-parse --short HEAD) ($WEB_REF), built here without mocks"
           } >> "$GITHUB_STEP_SUMMARY"
+      # The GitHub App of the journeys: a key made for this run only. The server points at the fake GitHub the journeys
+      # start on fixed ports (ostrom-web e2e-real/fakeGithub.ts, as ostrom-e2e's src/fake-github.ts): 4610 for the
+      # sign-in with GitHub, 4700 for the App's installations and repositories. Nothing reaches the real GitHub.
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
           IMAGE: ${{ steps.server.outputs.image }}
@@ -155,10 +191,28 @@ jobs:
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_web_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
           OSTROM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+          OSTROM_GITHUB_WEB_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_API_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_CLIENT_ID=Iv1.webjourney
+          OSTROM_GITHUB_CLIENT_SECRET=web-journey-fake-github
+          OSTROM_GITHUB_API=http://127.0.0.1:4700
+          OSTROM_GITHUB_WEB=http://127.0.0.1:4700
+          OSTROM_GITHUB_APP_ID=1
+          OSTROM_GITHUB_APP_SLUG=ostrom-web-journey
+          OSTROM_GITHUB_APP_CLIENT_ID=Iv1.fake
+          OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
+          OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_web_journey
+          OSTROM_WEB_ORIGIN=http://localhost:4173
           OSTROM_READS_PER_MINUTE=6000
           OSTROM_READS_IN_FLIGHT=64
           OSTROM_READ_WAITS_IN_FLIGHT=256
           ENV
+          # The journeys' GitHub App gets a key made for this run, written straight to the env file: never to
+          # $GITHUB_ENV, whose values every later step prints. One line, its newlines as `\n`, as the server reads it.
+          openssl genrsa -traditional -out "$RUNNER_TEMP/github-app.pem" 2048
+          printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$(awk '{printf "%s\\n", $0}' "$RUNNER_TEMP/github-app.pem")" \
+            >> "$RUNNER_TEMP/server.env"
+          rm "$RUNNER_TEMP/github-app.pem"
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           # Cloud sessions (line 6.2: launch and stop from /cloud) on this runner's Docker, as in demo-stack: the
           # Engine API through a socket proxy limited to what the driver calls, on loopback. The session's containers
@@ -197,6 +251,10 @@ jobs:
         env:
           OSTROM_E2E_API_UPSTREAM: http://127.0.0.1:4600
           OSTROM_E2E_MAIL_DIR: ${{ runner.temp }}/ostrom-mail
+          # The fake GitHub the server points at (its env in the step "Start the server"): the journeys start it.
+          OSTROM_E2E_FAKE_GITHUB_PORT: '4610'
+          OSTROM_E2E_GITHUB_PORT: '4700'
+          OSTROM_E2E_GITHUB_WEBHOOK_SECRET: whsec_github_web_journey
           OSTROM_E2E_REQUIRE_ORGS: 'true'
         # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.
         run: |
