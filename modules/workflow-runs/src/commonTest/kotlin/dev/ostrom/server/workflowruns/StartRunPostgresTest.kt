@@ -16,6 +16,7 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.launches.LaunchesModule
 import dev.ostrom.server.orgs.OrgsModule
@@ -24,6 +25,9 @@ import dev.ostrom.server.runners.RunnersModule
 import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.workflowruns.domain.repositories.RunsQuery
+import dev.ostrom.server.workflowruns.infrastructure.StartedRunQueries
+import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -277,6 +281,34 @@ class StartRunPostgresTest {
         assertEquals(ofShip.drop(1), queuedOfShip)
     }
 
+    @Test
+    fun theRunQueriesUseTheirIndexes() = runsTest { server ->
+        server.workflow()
+        repeat(ROWS) { server.call("user:a:lead", RUNS, """{"inputs":{"branch":"b$it"}}""") }
+        // Statistics only: the serving role owns no table, the owner analyzes it.
+        server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
+        val any = "workflow_runs_started_"
+        val plans = listOf(
+            Triple("runs of the organization", StartedRunQueries.page(RunsQuery()), "workflow_runs_started_at"),
+            Triple("runs of a workflow", StartedRunQueries.page(RunsQuery(workflowId = SHIP)), any),
+            Triple("runs by status", StartedRunQueries.page(RunsQuery(status = RunStatus.QUEUED)), any),
+            Triple("runs before a cursor", StartedRunQueries.page(RunsQuery(before = "wfr_x")), "pkey"),
+        )
+        plans.forEach { (name, sql, index) ->
+            val plan = server.driver.withOrganization(orgA) { tx ->
+                tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
+                var explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", orgA)
+                    .bind("limit", PAGE)
+                if (":workflow_id" in sql) explain = explain.bind("workflow_id", SHIP)
+                if (":status" in sql) explain = explain.bind("status", "queued")
+                if (":before" in sql) explain = explain.bind("before", "wfr_x")
+                tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+            }
+            println("-- $name\n$plan")
+            assertTrue("Index" in plan && index in plan, "$name\n$plan")
+        }
+    }
+
     private fun roleOf(id: String): OrgRole = when (id) {
         "member" -> OrgRole.MEMBER
         "approver" -> OrgRole.APPROVER
@@ -290,6 +322,7 @@ class StartRunPostgresTest {
         const val READ = "workflows:read"
         const val WRITE = "workflows:write"
         const val PAGE = 50
+        const val ROWS = 30
         const val MAX_VALUE = 4096
         const val INPUTS = """[{"id":"branch","label":"Branch","required":true},""" +
             """{"id":"note","label":"Note","default":"none","maxLength":8}]"""
