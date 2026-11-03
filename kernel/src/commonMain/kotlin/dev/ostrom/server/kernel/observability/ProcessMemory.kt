@@ -18,7 +18,7 @@ object ProcessMemory {
      * @param text The first line of `memory.max` or `memory.limit_in_bytes`, or null when neither is readable.
      */
     internal fun parseLimit(text: String?): Long? =
-        text?.trim()?.toLongOrNull()?.takeIf { it in 1 until NO_LIMIT }
+        text?.let { it.trim().toLongOrNull() }?.takeIf { it in 1 until NO_LIMIT }
 
     /** cgroup v1 writes "no limit" as the largest page-aligned 63-bit value; 2^60 bytes is past any real limit. */
     private const val NO_LIMIT = 1L shl 60
