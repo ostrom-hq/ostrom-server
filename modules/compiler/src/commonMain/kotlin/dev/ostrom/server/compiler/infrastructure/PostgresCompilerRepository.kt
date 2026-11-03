@@ -57,14 +57,13 @@ class PostgresCompilerRepository(
         ).firstOrNull()?.toPackage()
     }
 
-    override suspend fun packages(orgId: Uuid, repo: String?): List<StoredPackage> = driver.inOrg(orgId) {
-        val statement = Statement.create(
-            "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org" +
-                (if (repo == null) "" else " AND repo = :repo") +
-                " ORDER BY compiled_at DESC, content_digest LIMIT $MAX_ROWS",
-        ).bind("org", orgId)
-        repo?.let { statement.bind("repo", it) }
-        fetch(statement).map { it.toPackage() }
+    override suspend fun packages(orgId: Uuid): List<StoredPackage> = driver.inOrg(orgId) {
+        fetch(
+            Statement.create(
+                "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org " +
+                    "ORDER BY compiled_at DESC, content_digest LIMIT $MAX_ROWS",
+            ).bind("org", orgId),
+        ).map { it.toPackage() }
     }
 
     override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage = driver.inOrg(orgId) {

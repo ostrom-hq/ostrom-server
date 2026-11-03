@@ -72,13 +72,11 @@ internal class MemoryCompilerRepository : CompilerRepository {
         packages.filterKeys { it.first == orgId }.values
             .firstOrNull { it.envelope.digest == digest || it.envelope.contentDigest == digest }
 
-    override suspend fun packages(orgId: Uuid, repo: String?): List<StoredPackage> =
-        packages.filterKeys { it.first == orgId }.values
-            .filter { repo == null || it.envelope.repo == repo }
-            .sortedByDescending { it.compiledAt }
+    override suspend fun packages(orgId: Uuid): List<StoredPackage> =
+        packages.filterKeys { it.first == orgId }.values.sortedByDescending { it.compiledAt }
 
     override suspend fun listPackages(orgId: Uuid, repo: String?): List<ListedPackage> =
-        packages(orgId, repo).map { stored ->
+        packages(orgId).filter { repo == null || it.envelope.repo == repo }.map { stored ->
             val envelope = stored.envelope
             ListedPackage(
                 envelope.version, envelope.digest, envelope.contentDigest, envelope.repo, stored.compiledAt,

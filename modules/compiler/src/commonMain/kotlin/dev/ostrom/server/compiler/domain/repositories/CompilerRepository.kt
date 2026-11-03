@@ -46,10 +46,9 @@ interface CompilerRepository : WorkflowsRepository, PackageListRepository {
      * Lists the packages, newest first.
      *
      * @param orgId The organization.
-     * @param repo Only those of this repository when not null.
      * @return The packages.
      */
-    suspend fun packages(orgId: Uuid, repo: String?): List<StoredPackage>
+    suspend fun packages(orgId: Uuid): List<StoredPackage>
 
     /**
      * Records a package; the first one recorded for a content digest wins.
