@@ -194,13 +194,17 @@ class OrgsReadsBenchTest {
         val org = "CAST(md5('org0') AS uuid)"
         for ((q, rare) in listOf("u" to false, "user0-4" to true, "user0-4999" to true)) {
             val named = "lower(u.login) LIKE '$q%' OR lower(u.display_name) LIKE '$q%'"
-            val people = "SELECT u.id FROM identity_users u WHERE $named LIMIT 1001"
+            val people = "SELECT c.id FROM ((SELECT u.id FROM identity_users u WHERE lower(u.login) LIKE '$q%' " +
+                "ORDER BY lower(u.login) USING ~<~ LIMIT 1001) UNION (SELECT u.id FROM identity_users u " +
+                "WHERE lower(u.display_name) LIKE '$q%' ORDER BY lower(u.display_name) USING ~<~ LIMIT 1001)) c " +
+                "LIMIT 1001"
             val page = if (rare) {
                 "SELECT m.id FROM orgs_members m WHERE m.org_id = $org AND m.user_id = ANY (ARRAY($people)) " +
                     "ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}"
             } else {
-                "SELECT m.id FROM orgs_members m JOIN identity_users u ON u.id = m.user_id " +
-                    "WHERE m.org_id = $org AND ($named) ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}"
+                "SELECT m.id FROM orgs_members m CROSS JOIN LATERAL (SELECT 1 FROM identity_users u " +
+                    "WHERE u.id = m.user_id AND ($named) LIMIT 1) p WHERE m.org_id = $org " +
+                    "ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}"
             }
             for ((step, sql) in listOf("people" to people, "page" to page)) {
                 val plan = database.superuser.fetchAll("EXPLAIN (ANALYZE, BUFFERS) $sql").getOrThrow()

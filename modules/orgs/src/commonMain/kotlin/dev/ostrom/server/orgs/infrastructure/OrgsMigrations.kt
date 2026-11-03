@@ -138,10 +138,14 @@ private val MEMBER_SEARCH_SQL: String =
         IF p_org IS DISTINCT FROM CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID) THEN
             RAISE EXCEPTION 'orgs_search_members: not the session''s organization' USING ERRCODE = '42501';
         END IF;
-        -- The people the prefix names, by its indexes, at most $MEMBER_SEARCH_CANDIDATES + 1.
-        EXECUTE 'SELECT ARRAY(SELECT u.id FROM identity_users u WHERE lower(u.login) LIKE $1 '
-            || 'OR lower(u.display_name) LIKE $1 LIMIT ' || ($MEMBER_SEARCH_CANDIDATES + 1) || ')'
-            INTO candidates USING pattern;
+        -- The people the prefix names, at most $MEMBER_SEARCH_CANDIDATES + 1: each index walked in its own order
+        -- (`USING ~<~`, text_pattern_ops) from the prefix, so a common prefix stops there too, never a table read.
+        EXECUTE 'SELECT ARRAY(SELECT c.id FROM ('
+            || '(SELECT u.id FROM identity_users u WHERE lower(u.login) LIKE $1 '
+            || 'ORDER BY lower(u.login) USING ~<~ LIMIT $2) UNION '
+            || '(SELECT u.id FROM identity_users u WHERE lower(u.display_name) LIKE $1 '
+            || 'ORDER BY lower(u.display_name) USING ~<~ LIMIT $2)) c LIMIT $2)'
+            INTO candidates USING pattern, $MEMBER_SEARCH_CANDIDATES + 1;
         IF cardinality(candidates) <= $MEMBER_SEARCH_CANDIDATES THEN
             -- A rare prefix: those people's memberships here, by the (org_id, user_id) key.
             RETURN QUERY SELECT m.id FROM orgs_members m
@@ -152,9 +156,9 @@ private val MEMBER_SEARCH_SQL: String =
         ELSE
             -- A common prefix: the team in order, each member's person by primary key, until the page is full.
             RETURN QUERY EXECUTE
-                'SELECT m.id FROM orgs_members m JOIN identity_users u ON u.id = m.user_id '
-                || 'WHERE m.org_id = $1 AND (lower(u.login) LIKE $2 OR lower(u.display_name) LIKE $2) '
-                || 'AND ($3 IS NULL OR (m.joined_at, m.id) > '
+                'SELECT m.id FROM orgs_members m CROSS JOIN LATERAL (SELECT 1 FROM identity_users u '
+                || 'WHERE u.id = m.user_id AND (lower(u.login) LIKE $2 OR lower(u.display_name) LIKE $2) LIMIT 1) p '
+                || 'WHERE m.org_id = $1 AND ($3 IS NULL OR (m.joined_at, m.id) > '
                 || '(SELECT a.joined_at, a.id FROM orgs_members a WHERE a.org_id = $1 AND a.id = $3)) '
                 || 'ORDER BY m.joined_at, m.id LIMIT $4'
                 USING p_org, pattern, p_after, p_limit;
