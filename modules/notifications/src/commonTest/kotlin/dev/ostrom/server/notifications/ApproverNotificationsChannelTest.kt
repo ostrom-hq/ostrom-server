@@ -62,9 +62,12 @@ class ApproverNotificationsChannelTest {
         channel().requested(gate, listOf(request))
         runCurrent()
 
-        val sent = push.calls.single()
-        assertEquals(listOf(first.pushToken, second.pushToken), sent.map { it.to }, "Live phones of the org only")
-        assertEquals(notices.push(gate, request, first), sent.first())
+        // One push per phone: a phone Expo refuses is tried again alone, never the approver's other phones.
+        assertEquals(listOf(1, 1), push.calls.map { it.size })
+        val sent = push.calls.flatten()
+        val phones = setOf(first.pushToken, second.pushToken)
+        assertEquals(phones, sent.map { it.to }.toSet(), "Live phones of the org only")
+        assertTrue(notices.push(gate, request, first) in sent)
         assertEquals(listOf(notices.email(gate, request, "bob@example.com")), mail.calls)
         assertEquals(listOf(org to "BOB"), approvers.asked)
     }
@@ -129,10 +132,13 @@ class ApproverNotificationsChannelTest {
         val gate = sampleGate(org)
         val channel = channel()
 
+        // Asked, then answered before the outbox got to it: nothing asks for a yes already given.
+        channel.requested(gate, listOf(sampleRequest(gate, "bob")))
         channel.decided(gate, listOf(sampleRequest(gate, "bob", RequestStatus.APPROVED)))
         runCurrent()
 
         assertEquals("notifications", channel.name)
         assertTrue(push.calls.isEmpty() && mail.calls.isEmpty())
+        assertTrue(approvers.asked.isEmpty(), "Not even read")
     }
 }

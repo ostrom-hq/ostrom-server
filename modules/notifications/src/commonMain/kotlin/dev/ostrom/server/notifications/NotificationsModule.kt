@@ -5,6 +5,7 @@ import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.identity.presentation.SignInConfig
 import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.database.SchemaMigration
+import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.OrgDeletionListener
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.notifications.domain.ApprovalNotices
@@ -28,6 +29,7 @@ import dev.ostrom.server.notifications.infrastructure.NotificationSettings
 import dev.ostrom.server.notifications.infrastructure.NotificationsMigrations
 import dev.ostrom.server.notifications.infrastructure.PushDevicesOrgDeletionListener
 import dev.ostrom.server.notifications.infrastructure.PushDevicesRepositoryImpl
+import dev.ostrom.server.notifications.infrastructure.startLevel
 import dev.ostrom.server.notifications.presentation.PushDevicesRoutesDependencies
 import dev.ostrom.server.notifications.presentation.pushDevicesRoutes
 import io.ktor.client.HttpClient
@@ -64,7 +66,7 @@ object NotificationsModule : ServerModule {
         single<OrgDeletionListener>(named("notifications")) { PushDevicesOrgDeletionListener(get()) }
         single<PersonOrganizations> { MemberOrganizations(get()) }
         // The identity module tells every bound listener after a sign-out.
-        single<SignOutListener>(named("notifications")) { PushDevicesSignOutListener(get(), get()) }
+        single<SignOutListener>(named("notifications")) { PushDevicesSignOutListener(get(), get(), get()) }
         single(HTTP) {
             HttpClient {
                 expectSuccess = false
@@ -103,6 +105,13 @@ object NotificationsModule : ServerModule {
     /** Sends the queued notifications until the server stops. */
     override fun start(scope: CoroutineScope, koin: Koin) {
         val outbox = koin.get<NotificationOutbox>()
+        val settings = koin.get<NotificationSettings>()
+        val mailing = koin.get<SignInConfig>().sendsMail()
+        koin.get<Logger>().log(
+            settings.startLevel(mailing),
+            "approval notifications started; e-mail links open OSTROM_WEB_ORIGIN",
+            mapOf("settings" to settings.toString(), "emails" to mailing),
+        )
         scope.launch { outbox.run() }
     }
 }

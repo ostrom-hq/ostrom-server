@@ -99,7 +99,11 @@ private const val UPSERT = "INSERT INTO notifications_push_devices ($COLUMNS) VA
     ":push_token, :provider, :platform, :locale, :created_at, :seen_at, :user_id, :credential_id, :browser) " +
     "ON CONFLICT (org_id, push_token) DO UPDATE SET member_id = EXCLUDED.member_id, provider = EXCLUDED.provider, " +
     "platform = EXCLUDED.platform, locale = EXCLUDED.locale, seen_at = EXCLUDED.seen_at, " +
-    "user_id = EXCLUDED.user_id, credential_id = EXCLUDED.credential_id, browser = EXCLUDED.browser RETURNING $COLUMNS"
+    // A registration without a credential (an older app, another kind of caller) keeps the one the phone had.
+    "user_id = COALESCE(EXCLUDED.user_id, notifications_push_devices.user_id), " +
+    "credential_id = COALESCE(EXCLUDED.credential_id, notifications_push_devices.credential_id), " +
+    "browser = CASE WHEN EXCLUDED.credential_id IS NULL THEN notifications_push_devices.browser " +
+    "ELSE EXCLUDED.browser END RETURNING $COLUMNS"
 
 /** Keeps a member's `:keep` most recently seen phones of the organization (`:org_id`, `:member_id`). */
 internal const val KEEP_LATEST_SQL = "DELETE FROM notifications_push_devices WHERE org_id = :org_id " +

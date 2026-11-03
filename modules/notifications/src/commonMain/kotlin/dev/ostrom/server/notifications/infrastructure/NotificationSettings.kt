@@ -2,6 +2,7 @@
 package dev.ostrom.server.notifications.infrastructure
 
 import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.logging.LogLevel
 
 /**
  * Where the notifications go, read once from the server's configuration.
@@ -40,3 +41,14 @@ data class NotificationSettings(
 
 private const val DEFAULT_EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 private const val DEFAULT_WEB_ORIGIN = "http://localhost:5173"
+
+/**
+ * How loud the start of the notifications is: a warning when the instance sends e-mails while `OSTROM_WEB_ORIGIN` is
+ * left to its default, whose links (`http://localhost:5173/yes/…`) open nothing for an approver.
+ *
+ * @param mailing Whether the instance sends e-mails.
+ *
+ * @return [LogLevel.WARN] then, [LogLevel.INFO] otherwise.
+ */
+internal fun NotificationSettings.startLevel(mailing: Boolean): LogLevel =
+    if (mailing && webOrigin == DEFAULT_WEB_ORIGIN) LogLevel.WARN else LogLevel.INFO

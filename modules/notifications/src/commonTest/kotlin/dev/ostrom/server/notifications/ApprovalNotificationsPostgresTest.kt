@@ -258,6 +258,22 @@ class ApprovalNotificationsPostgresTest {
         assertEquals(setOf(PHONE_A, PHONE_LEGACY), devices.ofMember(org, mine).map { it.pushToken }.toSet())
     }
 
+    @Test
+    fun aRegistrationWithoutCredentialKeepsThePhonesCredential() = serverTest(modules, overrides) { server ->
+        val bob = server.bob()
+        val org = server.orgOf(bob, "bob-again")
+        server.registerPhone(server.appToken(bob, CODE + "again"), org, PHONE_A)
+        val devices = server.koin.get<PushDevicesRepository>()
+        val mine = server.koin.get<OrgsRepository>().listOfUser(bob.id).single().member.id
+        val phone = devices.ofMember(org, mine).single()
+
+        devices.save(phone.copy(id = Uuid.random(), credential = null), keep = 10)
+
+        val again = devices.ofMember(org, mine).single()
+        assertEquals(phone.credential, again.credential, "Still told: an older app or another caller unbinds nothing")
+        assertEquals(phone.id, again.id)
+    }
+
     private companion object {
         const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
         const val CODE = "phone-code-0123456789abcdef0123456789abcdef-"

@@ -75,16 +75,27 @@ class ApprovalNotices(private val webOrigin: String) {
             </body>
             </html>
         """.trimIndent()
-        val text = "$title: $body.\n\nOpen the request: $link\n\n" +
+        // A gate with neither label nor repository has no body: the title alone, never a dangling colon.
+        val headline = if (body.isEmpty()) title else "$title: $body"
+        val text = "$headline.\n\nOpen the request: $link\n\n" +
             "You answer in Ostrom, after proving it is you. Nothing is approved from this e-mail."
-        return Mail(to, "$title: $body", html, text)
+        return Mail(to, headline, html, text)
     }
 }
 
 /** The longest title or text of a notification: a phone shows two lines. */
 internal const val MAX_NOTICE_TEXT = 120
 
-private fun clip(text: String) = if (text.length > MAX_NOTICE_TEXT) text.take(MAX_NOTICE_TEXT) + "…" else text
+/**
+ * One line of at most [MAX_NOTICE_TEXT] characters: line breaks and control characters (a label is the asker's text,
+ * and it goes into a mail's subject) become spaces, and a cut never splits a character in two (a surrogate pair).
+ */
+private fun clip(text: String): String {
+    val line = text.map { if (it.isISOControl()) ' ' else it }.joinToString("")
+    if (line.length <= MAX_NOTICE_TEXT) return line
+    val end = if (line[MAX_NOTICE_TEXT - 1].isHighSurrogate()) MAX_NOTICE_TEXT - 1 else MAX_NOTICE_TEXT
+    return line.take(end) + "…"
+}
 
 private fun escape(value: String): String = buildString {
     value.forEach {

@@ -29,21 +29,25 @@ class ApproverNotificationsChannel(
 ) : GateChannel {
     override val name: String = "notifications"
 
+    // Only queued here: the reads run in the outbox, never inside the gate's request nor its channel timeout.
     override suspend fun requested(gate: Gate, requests: List<ApprovalRequest>) {
+        outbox.offer(Notice.Plan(gate.id) { plan(gate, requests) })
+    }
+
+    // Once decided, nothing more about the gate: a notice still queued or retried would ask for a yes already given.
+    override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) = outbox.close(gate.id)
+
+    private suspend fun plan(gate: Gate, requests: List<ApprovalRequest>): List<Notice> = buildList {
         for (request in answerable(gate, requests)) {
             val approver = approvers.reach(gate.orgId, request.approverId) ?: continue
             if (approver.pushes) {
-                val phones = devices.ofMember(gate.orgId, approver.memberId).filter { reachable(approver, it) }
-                val messages = phones.map { notices.push(gate, request, it) }
-                if (messages.isNotEmpty()) outbox.offer(Notice.Push(gate.id, messages))
+                devices.ofMember(gate.orgId, approver.memberId).filter { reachable(approver, it) }
+                    .forEach { add(Notice.Push(gate.id, listOf(notices.push(gate, request, it)))) }
             }
             val email = approver.email
-            if (mailing && email != null) outbox.offer(Notice.Email(gate.id, notices.email(gate, request, email)))
+            if (mailing && email != null) add(Notice.Email(gate.id, notices.email(gate, request, email)))
         }
     }
-
-    // Nothing to tell once a gate is decided: the app reads the request's state when it opens it.
-    override suspend fun decided(gate: Gate, requests: List<ApprovalRequest>) = Unit
 
     private suspend fun reachable(approver: Approver, device: PushDevice): Boolean {
         val credential = device.credential ?: return false

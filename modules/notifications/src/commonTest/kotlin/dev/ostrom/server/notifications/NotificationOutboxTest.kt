@@ -2,20 +2,19 @@
 package dev.ostrom.server.notifications
 
 import dev.ostrom.server.identity.domain.Mail
-import dev.ostrom.server.identity.domain.MailSender
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.notifications.domain.Notice
 import dev.ostrom.server.notifications.domain.NotificationOutbox
 import dev.ostrom.server.notifications.domain.PushMessage
 import dev.ostrom.server.notifications.domain.PushSender
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
@@ -76,6 +75,7 @@ class NotificationOutboxTest {
                 "gate_id" to gate.toString(),
                 "attempt" to 1,
                 "error" to "PushNotSentException",
+                "reason" to "Expo refused (503).",
                 "retry_in" to "5s",
             ),
             warnings.first().third,
@@ -118,22 +118,108 @@ class NotificationOutboxTest {
     }
 
     @Test
-    fun aCancellationIsNeverTakenForAFailure() = runTest {
+    fun aCancellationIsNeverTakenForAFailureNorTriedAgain() = runTest {
+        var calls = 0
         val cancelling = object : PushSender {
-            override suspend fun send(messages: List<PushMessage>) = throw CancellationException("stop")
+            override suspend fun send(messages: List<PushMessage>) {
+                calls++
+                throw CancellationException("stop")
+            }
         }
-        val unused = object : MailSender {
-            override suspend fun send(mail: Mail) = error("unused")
-        }
-        val outbox = NotificationOutbox(cancelling, unused, logger)
-        outbox.offer(Notice.Push(gate, listOf(message)))
+        val email = RecordingMailSender()
+        val outbox = NotificationOutbox(cancelling, email, logger)
+        backgroundScope.launch { outbox.run() }
 
-        assertFailsWith<CancellationException> { outbox.run() }
+        outbox.offer(Notice.Push(gate, listOf(message)))
+        advanceTimeBy(15.minutes)
+        outbox.offer(Notice.Email(gate, mail))
+        runCurrent()
+
+        assertEquals(1, calls, "Not tried again")
+        assertEquals(listOf(mail), email.calls, "The other workers still send")
         assertTrue(logger.events.isEmpty(), "Not logged as a failure: ${logger.events}")
     }
 
     @Test
+    fun aProviderThatHangsHoldsOneWorkerOnlyAndTheOtherNoticesGo() = runTest {
+        val hanging = object : PushSender {
+            override suspend fun send(messages: List<PushMessage>) = awaitCancellation()
+        }
+        val email = RecordingMailSender()
+        val outbox = NotificationOutbox(hanging, email, logger)
+        backgroundScope.launch { outbox.run() }
+
+        repeat(3) { outbox.offer(Notice.Push(gate, listOf(message))) }
+        outbox.offer(Notice.Email(gate, mail))
+        runCurrent()
+
+        assertEquals(listOf(mail), email.calls, "Three pushes hang, the fourth worker sends the e-mail")
+    }
+
+    @Test
+    fun nothingMoreIsSentAboutADecidedGateNotEvenARetry() = runTest {
+        val push = RecordingPushSender(failures = 1)
+        val email = RecordingMailSender()
+        val outbox = NotificationOutbox(push, email, logger)
+        backgroundScope.launch { outbox.run() }
+        val decided = Uuid.random()
+
+        outbox.offer(Notice.Push(gate, listOf(message)))
+        runCurrent()
+        outbox.close(gate)
+        outbox.offer(Notice.Email(decided, mail))
+        outbox.close(decided)
+        advanceTimeBy(15.minutes)
+        runCurrent()
+
+        assertEquals(1, push.calls.size, "The retry of a decided gate is dropped")
+        assertTrue(email.calls.isEmpty(), "A notice queued before the decision is dropped")
+    }
+
+    @Test
+    fun onlyTheMostRecentDecidedGatesAreRemembered() = runTest {
+        val email = RecordingMailSender()
+        val outbox = NotificationOutbox(RecordingPushSender(), email, logger, capacity = 1)
+        backgroundScope.launch { outbox.run() }
+        val later = Uuid.random()
+
+        outbox.close(gate)
+        outbox.close(later)
+        outbox.offer(Notice.Email(gate, mail))
+        runCurrent()
+
+        assertEquals(listOf(mail), email.calls, "The older gate is forgotten: no retry of it is still waiting")
+    }
+
+    @Test
+    fun aPlanQueuesItsNoticesAndIsTriedAgainWhenItFails() = runTest {
+        val push = RecordingPushSender()
+        val email = RecordingMailSender()
+        val outbox = NotificationOutbox(push, email, logger)
+        backgroundScope.launch { outbox.run() }
+        var reads = 0
+
+        outbox.offer(
+            Notice.Plan(gate) {
+                if (reads++ == 0) error("database down")
+                listOf(Notice.Push(gate, listOf(message)), Notice.Email(gate, mail))
+            },
+        )
+        runCurrent()
+        assertTrue(push.calls.isEmpty())
+        advanceTimeBy(6.seconds)
+
+        assertEquals(listOf(listOf(message)), push.calls)
+        assertEquals(listOf(mail), email.calls)
+        val warning = logged(LogLevel.WARN).single().third
+        assertEquals("plan", warning["kind"])
+        assertEquals("IllegalStateException", warning["error"])
+        assertFalse("reason" in warning, "Only our own push refusals give their reason")
+    }
+
+    @Test
     fun eachNoticeSaysItsKind() {
+        assertEquals("plan", Notice.Plan(gate) { emptyList() }.kind)
         assertEquals("push", Notice.Push(gate, emptyList()).kind)
         assertEquals("email", Notice.Email(gate, mail).kind)
     }

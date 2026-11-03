@@ -2,11 +2,14 @@
 package dev.ostrom.server.notifications
 
 import dev.ostrom.server.kernel.config.ConfigSource
+import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.notifications.domain.PushMessage
 import dev.ostrom.server.notifications.domain.PushNotSentException
 import dev.ostrom.server.notifications.infrastructure.ExpoPushSender
 import dev.ostrom.server.notifications.infrastructure.MAX_BATCH
 import dev.ostrom.server.notifications.infrastructure.NotificationSettings
+import dev.ostrom.server.notifications.infrastructure.startLevel
+import dev.ostrom.server.notifications.infrastructure.ticketError
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -82,6 +85,46 @@ class ExpoPushSenderTest {
         val silent = assertFailsWith<PushNotSentException> { ExpoPushSender(down, url, null).send(listOf(message)) }
         assertEquals("Expo did not answer.", silent.message)
         assertFalse(silent.toString().contains("bob-phone"))
+    }
+
+    @Test
+    fun aTicketInErrorIsARefusalWithItsCode() = runTest {
+        val unregistered = HttpClient(
+            MockEngine {
+                respond(
+                    """{"data":[{"status":"error","message":"not a valid token",""" +
+                        """"details":{"error":"DeviceNotRegistered"}}]}""",
+                )
+            },
+        )
+        val error = assertFailsWith<PushNotSentException> {
+            ExpoPushSender(unregistered, url, null).send(listOf(message))
+        }
+        assertEquals("Expo refused a message (DeviceNotRegistered).", error.message)
+        assertFalse(error.toString().contains("bob-phone"))
+    }
+
+    @Test
+    fun ticketsAreReadForTheFirstErrorAndAnUnreadableAnswerIsNone() {
+        assertNull(ticketError("""{"data":[{"status":"ok","id":"t1"}]}"""))
+        assertNull(ticketError("{}"))
+        assertNull(ticketError("not json"))
+        assertNull(ticketError("""{"data":{"status":"error"}}"""), "A single ticket is never the answer to a list")
+        assertEquals("error", ticketError("""{"data":[{"status":"ok"},{"status":"error"}]}"""))
+        assertEquals("error", ticketError("""{"data":[{"status":"error","details":{}}]}"""))
+        assertEquals(
+            "MessageRateExceeded",
+            ticketError("""{"data":[{"status":"error","details":{"error":"MessageRateExceeded"}},{"status":"ok"}]}"""),
+        )
+    }
+
+    @Test
+    fun anInstanceThatMailsLinksToTheDefaultOriginWarnsAtStart() {
+        val default = NotificationSettings.from(config(emptyMap()))
+        val set = NotificationSettings.from(config(mapOf("OSTROM_WEB_ORIGIN" to "https://console.acme.test")))
+        assertEquals(LogLevel.WARN, default.startLevel(mailing = true))
+        assertEquals(LogLevel.INFO, default.startLevel(mailing = false))
+        assertEquals(LogLevel.INFO, set.startLevel(mailing = true))
     }
 
     @Test

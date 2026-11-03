@@ -8,12 +8,15 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -51,23 +54,53 @@ class ExpoPushSender(
                 )
             }
         }
-        val status = answer(body.toString()) ?: throw PushNotSentException("Expo did not answer.")
-        if (!status.isSuccess()) throw PushNotSentException("Expo refused (${status.value}).")
+        val answer = answer(body.toString())
+        val refusal = when {
+            answer == null -> "Expo did not answer."
+            !answer.status.isSuccess() -> "Expo refused (${answer.status.value})."
+            // 200 with a ticket per message: one in error (rate, size, an unknown device) is a refusal too.
+            else -> ticketError(answer.text)?.let { "Expo refused a message ($it)." }
+        }
+        if (refusal != null) throw PushNotSentException(refusal)
     }
 
-    /** Expo's status for [body], or null when it did not answer (connection, timeout). */
-    private suspend fun answer(body: String): HttpStatusCode? = try {
-        http.post(url) {
+    private class Answer(val status: HttpStatusCode, val text: String)
+
+    /** Expo's answer to [body], or null when it did not answer (connection, timeout). */
+    private suspend fun answer(body: String): Answer? = try {
+        val response = http.post(url) {
             accessToken?.let { header(HttpHeaders.Authorization, "Bearer $it") }
             contentType(ContentType.Application.Json)
             setBody(body)
-        }.status
+        }
+        Answer(response.status, response.bodyAsText())
     } catch (error: CancellationException) {
         throw error
     } catch (_: Exception) {
         null
     }
 }
+
+/** The error code of the first ticket in error (`DeviceNotRegistered`, `MessageRateExceeded`…), or null. */
+internal fun ticketError(text: String): String? {
+    val answer = try {
+        EXPO_JSON.decodeFromString<ExpoAnswer>(text)
+    } catch (_: IllegalArgumentException) {
+        ExpoAnswer()
+    }
+    return answer.data.firstOrNull { it.status == "error" }?.let { it.details?.error ?: "error" }
+}
+
+private val EXPO_JSON = Json { ignoreUnknownKeys = true }
+
+@Serializable
+private data class ExpoAnswer(val data: List<ExpoTicket> = emptyList())
+
+@Serializable
+private data class ExpoTicket(val status: String = "ok", val details: ExpoTicketDetails? = null)
+
+@Serializable
+private data class ExpoTicketDetails(val error: String? = null)
 
 /** The most messages Expo takes in one request. */
 internal const val MAX_BATCH = 100
