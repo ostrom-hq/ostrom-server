@@ -70,9 +70,11 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 
 /** How long a Stripe call may take before it fails (and its outbox task is retried). */
 private const val STRIPE_TIMEOUT_MILLIS = 30_000L
+private val STRIPE_HTTP = named("billing.stripe.http")
 
 /**
  * The billing module: Stripe subscriptions per active person, plan limits enforced on the server, cloud agent usage
@@ -88,10 +90,14 @@ object BillingModule : ServerModule {
         single { BillingConfig.load(get<ConfigSource>()) }
         single { BillingSettings(get<BillingConfig>().stripeSecretKey != null, get<BillingConfig>().consoleUrl) }
         single<BillingRepository> { BillingRepositoryImpl(get()) }
+        // Its own definition, so that Koin closes it with the application: its selector holds a thread of
+        // Dispatchers.IO until then (StoppedApplicationsTest).
+        single(STRIPE_HTTP) {
+            HttpClient { install(HttpTimeout) { requestTimeoutMillis = STRIPE_TIMEOUT_MILLIS } }
+        } onClose { it?.close() }
         single<StripeGateway> {
             val config = get<BillingConfig>()
-            val client = HttpClient { install(HttpTimeout) { requestTimeoutMillis = STRIPE_TIMEOUT_MILLIS } }
-            StripeGatewayImpl(client, StripeConfig(config.stripeSecretKey.orEmpty(), config.stripeApiBase))
+            StripeGatewayImpl(get(STRIPE_HTTP), StripeConfig(config.stripeSecretKey.orEmpty(), config.stripeApiBase))
         }
         single { StripeSignatureVerifier(get<BillingConfig>().webhookSecrets, get<Clock>()) }
         single<GetPlanLimitsUseCase> { GetPlanLimitsUseCaseImpl(get(), licenses(), get(), get()) }
