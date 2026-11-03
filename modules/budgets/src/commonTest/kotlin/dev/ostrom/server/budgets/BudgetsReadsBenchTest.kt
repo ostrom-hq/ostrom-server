@@ -7,7 +7,7 @@ import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.measureRead
-import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.writeReadReport
 import dev.ostrom.server.usage.UsageModule
 import io.ktor.client.request.bearerAuth
@@ -44,7 +44,7 @@ class BudgetsReadsBenchTest {
     }
 
     @Test
-    fun myBudgetKeepsItsBudget() = serverTest(listOf(SecretsModule, UsageModule, BudgetsModule), overrides) { server ->
+    fun myBudgetKeepsItsBudget() = benchTest(listOf(SecretsModule, UsageModule, BudgetsModule), overrides) { server ->
         val fixtures = server.database.superuser
         orgs.forEach { fixtures.execute(usageOf(it)).getOrThrow() }
         fixtures.execute(

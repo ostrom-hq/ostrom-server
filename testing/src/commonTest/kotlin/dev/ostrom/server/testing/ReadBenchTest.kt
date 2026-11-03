@@ -20,7 +20,7 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 class ReadBenchTest {
     @Test
-    fun theHealthRouteSendsOneQueryAndIsTimed() = serverTest(emptyList()) { server ->
+    fun theHealthRouteSendsOneQueryAndIsTimed() = benchTest(emptyList(), null) { server ->
         val measure = server.measureRead("GET /health") { get("/health") }
         assertEquals(listOf("SELECT 1"), measure.statements.map { it.sql })
         assertEquals(1, measure.queries)
@@ -75,6 +75,9 @@ class ReadBenchTest {
             }
         }
         driver.fetchAll("SELECT 6").getOrThrow()
+        assertFails { driver.record { error("a failed request") } }
+        driver.fetchAll("SELECT 7").getOrThrow()
+        assertEquals(listOf("SELECT 8"), driver.record { driver.fetchAll("SELECT 8").getOrThrow() }.map { it.sql })
         assertEquals(8, sent.size)
         val bound = sent.map { it.statement?.namedParametersValues?.keys?.single() }
         assertEquals(listOf(null, "v", null, "n", null, "v", null, "n"), bound)

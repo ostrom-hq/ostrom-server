@@ -8,6 +8,7 @@ import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.update
 
 /**
  * One statement the server sent, as it sent it.
@@ -54,10 +55,7 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
     internal fun newTransaction(): Int = transactions.addAndFetch(1)
 
     internal fun note(sql: String, statement: Statement?, transaction: Int = newTransaction()) {
-        while (true) {
-            val current = sent.load() ?: return
-            if (sent.compareAndSet(current, current + SentStatement(sql, statement, transaction))) return
-        }
+        sent.update { it?.plus(SentStatement(sql, statement, transaction)) }
     }
 
     override suspend fun execute(sql: String): Result<Long> = inner.execute(sql).also { note(sql, null) }

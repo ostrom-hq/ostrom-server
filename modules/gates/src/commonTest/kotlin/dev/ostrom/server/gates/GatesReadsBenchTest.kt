@@ -20,7 +20,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.measureRead
-import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -68,19 +68,18 @@ class GatesReadsBenchTest {
     }
 
     @Test
-    fun theApprovalQueueKeepsItsBudget() = serverTest(listOf(GatesModule), overrides) { server ->
-        val repository = PostgresGatesRepository(server.driver)
-        orgs.forEachIndexed { index, org ->
-            val gates = (0 until GATES_PER_ORG).map { gateOf(org, index * GATES_PER_ORG + it) }
-            repository.transaction {
-                for (gate in gates) {
-                    insertGate(gate)
-                    insertRequests(listOf(requestOf(gate, 0), requestOf(gate, 1)))
-                }
+    fun theApprovalQueueKeepsItsBudget() = benchTest(listOf(GatesModule), overrides) { server ->
+        val gates = (0 until GATES_PER_ORG).map { gateOf(acme, it) }
+        PostgresGatesRepository(server.driver).transaction {
+            for (gate in gates) {
+                insertGate(gate)
+                insertRequests(listOf(requestOf(gate, 0), requestOf(gate, 1)))
             }
         }
+        val fixtures = server.database.superuser
+        orgs.drop(1).forEach { org -> copyOf(org).forEach { fixtures.execute(it).getOrThrow() } }
         for (table in listOf("gates_gates", "gates_requests", "gates_sessions")) {
-            server.database.superuser.execute("VACUUM ANALYZE $table").getOrThrow()
+            fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
         }
 
         val measures = listOf(
@@ -89,6 +88,22 @@ class GatesReadsBenchTest {
         ).map { (name, person) -> server.measureRead(name) { get("/api/v1/approvals/queue") { bearerAuth(person) } } }
         writeReadReport("gates", measures)
         measures.forEach { it.assertWithinBudget(setOf("gates_gates", "gates_requests")) }
+    }
+
+    // acme's gates, requests and session links copied into [org], ids renamed: one org written through the repository
+    // is enough, the nine others only fill the tables. No `::` cast and no colon: the driver reads `:x` as a parameter.
+    private fun copyOf(org: Uuid): List<String> {
+        fun renamed(column: String) = "CAST(md5(CAST($column AS text) || '$org') AS uuid)"
+        val from = "WHERE org_id = CAST('$acme' AS uuid)"
+        return listOf(
+            "INSERT INTO gates_gates SELECT (jsonb_populate_record(g, jsonb_build_object('id', ${renamed("g.id")}, " +
+                "'org_id', CAST('$org' AS text)))).* FROM gates_gates g $from",
+            "INSERT INTO gates_requests (id, gate_id, org_id, position, approver_id, status, answered_at, channel, " +
+                "created_at) SELECT ${renamed("id")}, ${renamed("gate_id")}, CAST('$org' AS uuid), position, " +
+                "approver_id, status, answered_at, channel, created_at FROM gates_requests $from",
+            "INSERT INTO gates_sessions (org_id, session_id, gate_id) SELECT CAST('$org' AS uuid), session_id, " +
+                "${renamed("gate_id")} FROM gates_sessions $from",
+        )
     }
 
     private fun gateOf(org: Uuid, n: Int) = Gate(

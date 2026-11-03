@@ -12,7 +12,7 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.measureRead
-import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.get
 import org.koin.dsl.module
@@ -58,7 +58,7 @@ class IdentityReadsBenchTest {
             "NULL FROM generate_series(1, $count) AS i"
 
     @Test
-    fun theReadRoutesKeepTheirBudget() = serverTest(listOf(IdentityModule), overrides) { server ->
+    fun theReadRoutesKeepTheirBudget() = benchTest(listOf(IdentityModule), overrides) { server ->
         val people = orgs.mapIndexed { index, org ->
             val login = if (index == 0) "ada" else "person$index"
             val user = server.koin.get<ResolveUserUseCase>()(

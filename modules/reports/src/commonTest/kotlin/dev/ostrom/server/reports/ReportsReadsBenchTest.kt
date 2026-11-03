@@ -12,7 +12,7 @@ import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.measureRead
-import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.writeReadReport
 import dev.ostrom.server.usage.UsageModule
 import io.ktor.client.request.bearerAuth
@@ -56,7 +56,7 @@ class ReportsReadsBenchTest {
     }
 
     @Test
-    fun theSpendingReportKeepsItsBudget() = serverTest(modules, reportsOverrides(FixedClock())) { server ->
+    fun theSpendingReportKeepsItsBudget() = benchTest(modules, reportsOverrides(FixedClock())) { server ->
         server.seedPeople()
         val fixtures = server.database.superuser
         orgs.forEach { org ->

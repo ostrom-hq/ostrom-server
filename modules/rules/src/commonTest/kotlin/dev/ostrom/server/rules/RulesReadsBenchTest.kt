@@ -13,7 +13,7 @@ import dev.ostrom.server.rules.fakes.call
 import dev.ostrom.server.rules.presentation.NewRuleRequest
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.measureRead
-import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -43,7 +43,7 @@ class RulesReadsBenchTest {
             "generate_series($from, ${RULES_PER_ORG - 1}) AS i WHERE org_id = CAST('$orgA' AS uuid)"
 
     @Test
-    fun theRuleListKeepsItsBudget() = serverTest(
+    fun theRuleListKeepsItsBudget() = benchTest(
         modules,
         module { includes(RulesCallers.overrides(TestClock()), RulesCallers.gateSessions) },
     ) { server ->

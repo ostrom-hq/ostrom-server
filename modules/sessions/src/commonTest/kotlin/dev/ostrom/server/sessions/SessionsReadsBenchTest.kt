@@ -15,7 +15,7 @@ import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.measureRead
-import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -64,7 +64,7 @@ class SessionsReadsBenchTest {
             "FROM generate_series(1, $SESSIONS_PER_ORG) AS i"
 
     @Test
-    fun theReadRoutesKeepTheirBudget() = serverTest(
+    fun theReadRoutesKeepTheirBudget() = benchTest(
         listOf(InstanceModule, ReceiptsModule, GatesModule, SessionsModule),
         overrides,
     ) { server ->

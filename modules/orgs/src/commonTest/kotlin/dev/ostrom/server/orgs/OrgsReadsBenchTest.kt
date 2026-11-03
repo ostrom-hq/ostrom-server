@@ -13,7 +13,7 @@ import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.measureRead
-import dev.ostrom.server.testing.serverTest
+import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
@@ -59,7 +59,7 @@ class OrgsReadsBenchTest {
     )
 
     @Test
-    fun theMemberListKeepsItsBudget() = serverTest(listOf(IdentityModule, OrgsModule)) { server ->
+    fun theMemberListKeepsItsBudget() = benchTest(listOf(IdentityModule, OrgsModule), null) { server ->
         val sessions = (0 until ORGS).map { server.owner(it) }
         val fixtures = server.database.superuser
         (0 until ORGS).flatMap { membersOf(it) }.forEach { fixtures.execute(it).getOrThrow() }

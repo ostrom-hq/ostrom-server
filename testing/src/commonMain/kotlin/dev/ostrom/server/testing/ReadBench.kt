@@ -140,9 +140,8 @@ private fun SentStatement.isQuery(): Boolean = QUERY.containsMatchIn(sql) && !SE
 // A fresh statement for each run: the server's own is never shared between the concurrent replays.
 private fun SentStatement.copy(prefix: String): Statement {
     val copy = Statement.create(prefix + sql)
-    statement?.namedParametersValues?.forEach { (name, value) ->
-        if (value == null) copy.bindNull(name, String::class) else copy.bind(name, value)
-    }
+    // A null bound with `bindNull` is a typed null, bound again as it is.
+    statement?.namedParametersValues.orEmpty().forEach { (name, value) -> copy.bind(name, value) }
     return copy
 }
 
