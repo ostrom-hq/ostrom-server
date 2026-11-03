@@ -25,7 +25,7 @@ internal object GitHubContentsJson {
     fun text(file: Content): String? {
         val readable = file.type == "file" && file.encoding == "base64" && file.size <= MAX_FILE_BYTES
         val bytes = if (readable) decoded(file.content) else null
-        return bytes?.decodeToString()?.takeUnless { '\u0000' in it }
+        return bytes?.let { decoded -> decoded.decodeToString().takeUnless { '\u0000' in it } }
     }
 
     private fun decoded(content: String): ByteArray? = try {
@@ -44,7 +44,7 @@ internal object GitHubContentsJson {
     fun protectionOf(classic: Branch, rules: List<BranchRule>): BranchProtection {
         val reviews = rules.filter { it.type == "pull_request" }.map { it.parameters }
         val approvals = reviews.maxOfOrNull { it.int("required_approving_review_count") } ?: 0
-        val checks = classic.protection?.requiredStatusChecks?.contexts.orEmpty() +
+        val checks = classic.protection.requiredStatusChecks.contexts +
             rules.filter { it.type == "required_status_checks" }.flatMap { contexts(it.parameters) }
         return BranchProtection(
             protected = classic.protected || rules.isNotEmpty(),
@@ -80,14 +80,14 @@ internal object GitHubContentsJson {
 
     @Serializable
     internal data class Protection(
-        @SerialName("required_status_checks") val requiredStatusChecks: RequiredChecks? = null,
+        @SerialName("required_status_checks") val requiredStatusChecks: RequiredChecks = RequiredChecks(),
     )
 
     @Serializable
     internal data class Branch(
         val commit: BranchCommit,
         val protected: Boolean = false,
-        val protection: Protection? = null,
+        val protection: Protection = Protection(),
     )
 
     @Serializable

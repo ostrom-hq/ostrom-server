@@ -148,4 +148,8 @@ private val CONTENTS = mapOf("contents" to "read", "metadata" to "read")
 private val EMPTY = RepositoryTree(emptyList(), truncated = false)
 private val SHA = Regex("[0-9a-f]{40}([0-9a-f]{24})?")
 private val DEFAULT_WAIT = 60.seconds
-private val contentsJson = Json { ignoreUnknownKeys = true }
+// An explicit null (a branch without protection details) reads as the shape's default.
+private val contentsJson = Json {
+    ignoreUnknownKeys = true
+    coerceInputValues = true
+}

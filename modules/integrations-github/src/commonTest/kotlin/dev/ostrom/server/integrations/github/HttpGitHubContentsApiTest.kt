@@ -13,6 +13,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
@@ -45,7 +46,8 @@ class HttpGitHubContentsApiTest {
         answers.getOrPut("/repos/acme/api$path") { ArrayDeque() }.addLast(Answer(status, body, headers))
     }
 
-    private fun api(maxWait: Duration = 60.seconds): HttpGitHubContentsApi {
+    // `waits`: the API waits with its own default, on the test's virtual clock, rather than recording the pauses.
+    private fun api(maxWait: Duration = 60.seconds, waits: Boolean = false): HttpGitHubContentsApi {
         val engine = MockEngine { request ->
             calls += request
             val queue = answers[request.url.encodedPath]
@@ -58,10 +60,16 @@ class HttpGitHubContentsApiTest {
             )
         }
         val http = HttpClient(engine) { expectSuccess = false }
-        return HttpGitHubContentsApi(http, "https://api.github.test", clock, maxWait, { pauses += it }) { id, wanted ->
+        val tokens: suspend (Long, Map<String, String>) -> String? = { id, wanted ->
             assertEquals(42L, id)
             asked += wanted
             token
+        }
+        val url = "https://api.github.test"
+        return if (waits) {
+            HttpGitHubContentsApi(http, url, clock, maxWait, tokens = tokens)
+        } else {
+            HttpGitHubContentsApi(http, url, clock, maxWait, { pauses += it }, tokens)
         }
     }
 
@@ -181,6 +189,10 @@ class HttpGitHubContentsApiTest {
         assertEquals(BranchProtection(true, 0, false, emptyList(), true), api.protection(42, "acme/api", "main"))
 
         answers.clear()
+        answer("/branches/main", branch(protection = """{"required_status_checks":null}"""))
+        assertEquals(BranchProtection(false, 0, false, emptyList(), false), api.protection(42, "acme/api", "main"))
+
+        answers.clear()
         answer("/branches/main", branch())
         answer("/rules/branches/main", """[{"type":"pull_request","parameters":{}}]""")
         assertEquals(BranchProtection(true, 0, false, emptyList(), false), api.protection(42, "acme/api", "main"))
@@ -203,6 +215,17 @@ class HttpGitHubContentsApiTest {
         answer("/branches/main", branch())
         assertEquals(RepositoryTree(emptyList(), false), api().tree(42, "acme/api", "main"))
         assertEquals(1.seconds, pauses.last(), "A reset already past waits a second")
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun byDefaultTheWaitIsADelayOfTheCoroutine() = runTest {
+        answer("/branches/main", "{}", HttpStatusCode.TooManyRequests, mapOf("retry-after" to "5"))
+        answer("/branches/main", branch())
+        val start = testScheduler.currentTime
+        assertEquals(RepositoryTree(emptyList(), false), api(waits = true).tree(42, "acme/api", "main"))
+        assertEquals(5_000L, testScheduler.currentTime - start, "Five seconds, on the test's clock")
+        assertEquals(emptyList(), pauses)
     }
 
     @Test
