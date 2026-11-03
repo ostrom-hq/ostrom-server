@@ -67,7 +67,7 @@ class RegisteredRuntimeDriver(
          * What the reconciler reads from a machine's report. A map rather than a `when`: an exhaustive `when` on a
          * nullable enum compiles a default branch no test can reach.
          */
-        val STATUS_OF = mapOf(
+        private val STATUS_OF = mapOf(
             MachineExecutionState.RUNNING to ExecutionStatus.RUNNING,
             MachineExecutionState.ENDED to ExecutionStatus.ENDED,
             MachineExecutionState.MISSING to ExecutionStatus.ENDED,
