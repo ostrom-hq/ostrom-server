@@ -259,6 +259,14 @@ class UsagePostgresTest {
             HttpStatusCode.BadRequest,
             server.client.get("$orgA/events?before=soon") { bearerAuth("admin-a") }.status,
         )
+        // Instants the parser reads but PostgreSQL cannot store: a 400, never the database's 500.
+        for (at in listOf("%2B300000-01-01T00:00:00Z", "-300000-01-01T00:00:00Z")) {
+            assertEquals(
+                HttpStatusCode.BadRequest,
+                server.client.get("$orgA/events?before=$at") { bearerAuth("admin-a") }.status,
+                at,
+            )
+        }
     }
 
     @Test
