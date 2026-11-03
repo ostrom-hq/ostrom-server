@@ -147,10 +147,12 @@ class WorkflowsUseCaseImpl(
         // never a creation; a creation never replaces.
         val expected = when {
             create && before != null -> throw OstromException(ErrorKind.CONFLICT, "A workflow with this id exists.")
-            create -> {
-                refuseBeyondTheLimit(orgId)
-                null
-            }
+            // Every read of the workflows loads them all: a creation beyond the limit is refused.
+            create && repository.workflowCount(orgId) >= MAX_WORKFLOWS -> throw OstromException(
+                ErrorKind.CONFLICT,
+                "workflow_limit: an organization keeps at most $MAX_WORKFLOWS workflows; delete one first.",
+            )
+            create -> null
             before == null -> throw OstromException(ErrorKind.NOT_FOUND, "Workflow not found.")
             else -> expectedVersion ?: before.version
         }
@@ -160,15 +162,6 @@ class WorkflowsUseCaseImpl(
         val change = changeOf(before?.doc, workflow, repos)
         if (change != null) record(orgId, WorkflowDoc(raw, workflow), before?.doc, change, author)
         return saved
-    }
-
-    private suspend fun refuseBeyondTheLimit(orgId: Uuid) {
-        if (repository.workflowCount(orgId) >= MAX_WORKFLOWS) {
-            throw OstromException(
-                ErrorKind.CONFLICT,
-                "workflow_limit: an organization keeps at most $MAX_WORKFLOWS workflows; delete one first.",
-            )
-        }
     }
 
     override fun check(raw: JsonObject) {

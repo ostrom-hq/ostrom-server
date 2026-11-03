@@ -616,12 +616,12 @@ class CompilerPostgresTest {
         assertNull(repository.harness(orgA, "acme-api", "d"))
         assertNull(repository.harness(orgB, null, "d"))
 
-        val decision = DecisionDoc("dec_1", "workflow", "w", "lead", "2026-10-30T08:00:00.000Z", null)
+        val decision = DecisionDoc("dec_1", "workflow", "decided", "lead", "2026-10-30T08:00:00.000Z", null)
         repository.addDecision(orgA, decision)
         assertEquals(emptyList(), repository.lastDecisions(orgA), "A decision on no existing workflow is not cited")
         server.database.superuser.execute(
             "INSERT INTO compiler_workflows (org_id, id, doc, version, updated_by, updated_at, created_at) " +
-                "VALUES ('0000000a-0000-0000-0000-000000000000', 'w', '{}', 1, 'lead', now(), now())",
+                "VALUES ('0000000a-0000-0000-0000-000000000000', 'decided', '{}', 1, 'lead', now(), now())",
         ).getOrThrow()
         assertEquals(listOf(decision), repository.lastDecisions(orgA))
 
