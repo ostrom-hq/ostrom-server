@@ -39,7 +39,8 @@ class MemberSearchPostgresTest {
     private fun org(slug: String) = Org(Uuid.random(), slug, slug.uppercase(), null, null, now)
 
     private fun search(org: Uuid) =
-        Statement.create("SELECT member_id FROM orgs_search_members(:org, 'a', NULL, 10)").bind("org", org.toString())
+        Statement.create("SELECT member_id FROM orgs_search_members(CAST(:org AS uuid), 'a', NULL, 10)")
+            .bind("org", org.toString())
 
     @Test
     fun theSearchKeepsToTheSessionsOrganizationAndReadsThePrefixAsAValue() =
