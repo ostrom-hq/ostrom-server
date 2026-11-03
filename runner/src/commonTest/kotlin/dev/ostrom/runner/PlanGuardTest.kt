@@ -128,6 +128,7 @@ class PlanGuardTest {
             "privileged" to hostWith("Privileged", JsonPrimitive(true)),
             "the host's network" to hostWith("NetworkMode", JsonPrimitive("host")),
             "a host path" to hostWith("Binds", JsonArray(listOf(JsonPrimitive("/:/host")))),
+            "a mount that is not text" to hostWith("Binds", JsonArray(listOf(JsonPrimitive(1)))),
             "capabilities kept" to hostWith("CapDrop", null),
             "new privileges" to hostWith("SecurityOpt", JsonArray(emptyList())),
         )

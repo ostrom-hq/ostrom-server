@@ -50,7 +50,9 @@ class PlanGuard(private val runnerId: Uuid, private val network: String?, privat
         require(USER.matches(text(body["User"]).orEmpty())) { "A container must run as a non-root uid and gid." }
         val host = body["HostConfig"] as? JsonObject ?: throw IllegalArgumentException("A container needs its limits.")
         require(host.keys.all { it in HOST_KEYS }) { "A container asks for a host setting a session never needs." }
-        require(texts(host["Binds"]).all { BIND.matches(it) }) { "A container may mount the session's volumes only." }
+        require(texts(host["Binds"]).all { it != null && BIND.matches(it) }) {
+            "A container may mount the session's volumes only."
+        }
         require("ALL" in texts(host["CapDrop"])) { "A container must drop every capability." }
         require("no-new-privileges" in texts(host["SecurityOpt"])) { "A container must forbid new privileges." }
         val placed = if (network == null) host else JsonObject(host + ("NetworkMode" to JsonPrimitive(network)))
