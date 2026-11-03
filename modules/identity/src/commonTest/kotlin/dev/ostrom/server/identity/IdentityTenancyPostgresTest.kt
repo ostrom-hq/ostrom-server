@@ -14,6 +14,7 @@ import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
@@ -143,17 +144,72 @@ class IdentityTenancyPostgresTest {
         assertEquals(listOf("personal"), s.asOwner(null) { tokenNames() })
         assertEquals(listOf("account", "user.created"), s.asOwner(null) { actions() })
         assertEquals(listOf("personal"), s.driver.transaction { tokenNames() })
-        // Confined to B, the owner is held to B like the tenant role: it reads, changes and deletes B's rows only.
+        // Confined to B, the owner is held to B like the tenant role: it reads and changes B's rows only (the audit
+        // log, append-only, is changed by nobody: theAuditLogIsAppendOnlyForEveryRole).
         assertEquals(listOf("b"), s.asOwner(orgB) { tokenNames() })
         assertEquals(listOf("b"), s.asOwner(orgB) { actions() })
         s.asOwner(orgB) { execute("UPDATE identity_api_tokens SET name = 'renamed'").getOrThrow() }
-        s.asOwner(orgB) { execute("DELETE FROM identity_audit_events").getOrThrow() }
         assertEquals(listOf("renamed"), s.asOwner(orgB) { tokenNames() })
         assertEquals(listOf("a"), s.asOwner(orgA) { tokenNames() })
-        assertEquals(listOf("a"), s.driver.inOrg(orgA) { actions() })
-        assertEquals(emptyList(), s.driver.inOrg(orgB) { actions() })
         assertFailsWith<Exception> { s.asOwner(orgB) { insertAuditRowOf(orgA) } }
         assertFailsWith<Exception> { s.asOwner(orgB) { insertTokenRowOf(orgA) } }
+    }
+
+    /** Runs [block] as the serving role itself (no `SET ROLE`), with `ostrom.org_id` set to [org] when there is one. */
+    private suspend fun <T> TestServer.asServingRole(org: Uuid?, block: suspend Transaction.() -> T): T =
+        driver.transaction {
+            if (org != null) {
+                execute(Statement.create("SELECT set_config('ostrom.org_id', :org, true)").bind("org", org.toString()))
+                    .getOrThrow()
+            }
+            block()
+        }
+
+    /** Runs [block] and checks the append-only trigger refused it, not some other failure. */
+    private suspend fun refusedAsAppendOnly(what: String, block: suspend () -> Unit) {
+        val error = assertFailsWith<SQLError>(what) { block() }
+        assertTrue("append-only" in error.message.orEmpty(), "$what: ${error.message}")
+    }
+
+    @Test
+    fun theAuditLogIsAppendOnlyForEveryRole() = serverTest(listOf(IdentityModule)) { s ->
+        s.seed()
+        val rewrite = "UPDATE identity_audit_events SET action = 'forged'"
+        val erase = "DELETE FROM identity_audit_events"
+        val truncate = "TRUNCATE identity_audit_events"
+        // The serving role holds UPDATE and DELETE (default privileges) and sets the organization itself: before the
+        // append-only trigger it rewrote and erased A's log, and the account chain outside any organization.
+        refusedAsAppendOnly("serving, A, rewrite") { s.asServingRole(orgA) { execute(rewrite).getOrThrow() } }
+        refusedAsAppendOnly("serving, A, erase") { s.asServingRole(orgA) { execute(erase).getOrThrow() } }
+        refusedAsAppendOnly("serving, account, rewrite") { s.asServingRole(null) { execute(rewrite).getOrThrow() } }
+        refusedAsAppendOnly("serving, account, erase") { s.asServingRole(null) { execute(erase).getOrThrow() } }
+        // A statement that reaches no row is refused all the same: never zero rows in silence.
+        val empty = Uuid.random()
+        refusedAsAppendOnly("serving, empty org, erase") { s.asServingRole(empty) { execute(erase).getOrThrow() } }
+        // The owner and a superuser, who own the table or bypass the policies, are refused the same, TRUNCATE too.
+        refusedAsAppendOnly("owner, B, erase") { s.asOwner(orgB) { execute(erase).getOrThrow() } }
+        refusedAsAppendOnly("owner, truncate") { s.asOwner(null) { execute(truncate).getOrThrow() } }
+        refusedAsAppendOnly("superuser, rewrite") { s.database.superuser.execute(rewrite).getOrThrow() }
+        refusedAsAppendOnly("superuser, truncate") { s.database.superuser.execute(truncate).getOrThrow() }
+        // Replica mode skips ordinary triggers; this one is enabled ALWAYS.
+        refusedAsAppendOnly("superuser, replica, erase") {
+            s.database.superuser.transaction {
+                execute("SET LOCAL session_replication_role = replica").getOrThrow()
+                execute(erase).getOrThrow()
+            }
+        }
+
+        assertEquals(listOf("a"), s.driver.inOrg(orgA) { actions() })
+        assertEquals(listOf("b"), s.driver.inOrg(orgB) { actions() })
+        assertEquals(listOf("account", "user.created"), s.asOwner(null) { actions() })
+        // Appending is untouched.
+        s.driver.inOrg(orgA) { insertAuditRowOf(orgA) }
+        assertEquals(listOf("a", "x"), s.driver.inOrg(orgA) { actions() })
+        // The catalog keeps the guard: present, and enabled ALWAYS.
+        val always = s.database.superuser.fetchAll(
+            "SELECT tgenabled = 'A' AS always FROM pg_trigger WHERE tgname = 'identity_audit_events_append_only'",
+        ).getOrThrow().map { it.get("always").asBoolean() }
+        assertEquals(listOf(true), always)
     }
 
     @Test
