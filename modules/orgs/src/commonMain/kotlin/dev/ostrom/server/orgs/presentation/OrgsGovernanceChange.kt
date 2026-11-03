@@ -6,6 +6,9 @@ import dev.ostrom.server.kernel.auth.GovernanceConfirmer
 import dev.ostrom.server.kernel.auth.GovernancePreview
 import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.auth.confirmsByConsole
+import dev.ostrom.server.kernel.auth.holdForConfirmation
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCase
 import dev.ostrom.server.orgs.domain.InvalidOrgRequestException
@@ -15,6 +18,7 @@ import dev.ostrom.server.orgs.domain.MemberWrite
 import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.People
 import dev.ostrom.server.orgs.domain.findMember
+import io.ktor.server.application.ApplicationCall
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.addJsonObject
@@ -196,4 +200,28 @@ class OrgsGovernanceChange(
             put(ROLE, role.key())
         }
     }
+}
+
+/**
+ * Holds [write] for a confirmation on the console when a person's API token asks for it (contract audit 2, F1), once
+ * it is checked as the asker's: the 202 is answered and nothing is written. The console's session writes at once,
+ * after its own step-up.
+ *
+ * @param call The request.
+ * @param orgId The organization the route resolved.
+ * @param userId The asker.
+ * @param write The write on the members.
+ * @return Whether it was held: the route then answers nothing more.
+ * @throws dev.ostrom.server.kernel.errors.OstromException With the refusal the write itself would get.
+ */
+internal suspend fun OrgsRoutesDependencies.heldForConsole(
+    call: ApplicationCall,
+    orgId: Uuid,
+    userId: Uuid,
+    write: MemberWrite,
+): Boolean {
+    if (!call.requirePrincipal().confirmsByConsole) return false
+    val checked = members.check(orgId, userId, write)
+    call.holdForConfirmation(orgId, ORGS_WRITE, OrgsGovernanceChange.of(checked))
+    return true
 }

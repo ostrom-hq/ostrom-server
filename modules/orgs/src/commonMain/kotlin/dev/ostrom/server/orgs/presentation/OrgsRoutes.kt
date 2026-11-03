@@ -7,8 +7,6 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
-import dev.ostrom.server.kernel.auth.confirmsByConsole
-import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
@@ -180,30 +178,6 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
             call.respond(HttpStatusCode.NoContent)
         }
     }
-
-/**
- * Holds [write] for a confirmation on the console when a person's API token asks for it (contract audit 2, F1), once
- * it is checked as the asker's: the 202 is answered and nothing is written. The console's session writes at once,
- * after its own step-up.
- *
- * @param call The request.
- * @param orgId The organization the route resolved.
- * @param userId The asker.
- * @param write The write on the members.
- * @return Whether it was held: the route then answers nothing more.
- * @throws dev.ostrom.server.kernel.errors.OstromException With the refusal the write itself would get.
- */
-private suspend fun OrgsRoutesDependencies.heldForConsole(
-    call: ApplicationCall,
-    orgId: Uuid,
-    userId: Uuid,
-    write: MemberWrite,
-): Boolean {
-    if (!call.requirePrincipal().confirmsByConsole) return false
-    val checked = members.check(orgId, userId, write)
-    call.holdForConfirmation(orgId, ORGS_WRITE, OrgsGovernanceChange.of(checked))
-    return true
-}
 
 /**
  * Resolves the caller as a member of the organization [ref] names, with [scope]; the token's
