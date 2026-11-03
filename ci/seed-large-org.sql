@@ -11,6 +11,8 @@
 --   (`joined_at`, `id`): `zoe-late` (found by login) and `crowd-119`, named "Zoey Byname" (found by name).
 -- * "Search elsewhere" (`search-elsewhere`): its owner and `zoe-elsewhere`, whom a search of the crowd never shows.
 --
+-- Ids are md5 of a name, given the version (4) and variant (8) bits of a random UUID, as the server's own are: the
+-- console reads ids as RFC 9562 UUIDs (`z.uuid()`), and a bare md5 is not one.
 -- Played once, on the journeys' fresh database: a clash fails loudly (`ON_ERROR_STOP`) and nothing is written.
 -- The orgs tables force row-level security on `ostrom.org_id` (OrgsMigrations), so each organization's rows are
 -- written with the setting on that organization, as the server's `inOrg` does.
@@ -18,7 +20,7 @@
 BEGIN;
 
 INSERT INTO identity_users (id, login, display_name, primary_email, avatar_url, created_at)
-SELECT md5('search-seed ' || p.login)::uuid, p.login, p.name, p.email, NULL, TIMESTAMPTZ '2026-11-01 09:00:00+00'
+SELECT overlay(overlay(md5('search-seed ' || p.login) PLACING '4' FROM 13) PLACING '8' FROM 17)::uuid, p.login, p.name, p.email, NULL, TIMESTAMPTZ '2026-11-01 09:00:00+00'
 FROM (
     VALUES ('search-owner', 'Search Owner', 'search-owner@search-crowd.e2e.ostrom.test'),
            ('zoe-late', 'Late Joiner', NULL),
@@ -27,12 +29,12 @@ FROM (
            ('zoe-elsewhere', 'Zoe Elsewhere', NULL)
 ) AS p (login, name, email)
 UNION ALL
-SELECT md5('search-seed crowd-' || lpad(n::text, 3, '0'))::uuid, 'crowd-' || lpad(n::text, 3, '0'),
+SELECT overlay(overlay(md5('search-seed crowd-' || lpad(n::text, 3, '0')) PLACING '4' FROM 13) PLACING '8' FROM 17)::uuid, 'crowd-' || lpad(n::text, 3, '0'),
        'Crowd ' || lpad(n::text, 3, '0'), NULL, NULL, TIMESTAMPTZ '2026-11-01 09:00:00+00'
 FROM generate_series(1, 118) AS n;
 
 INSERT INTO identity_user_emails (user_id, email, verified, created_at)
-VALUES (md5('search-seed search-owner')::uuid, 'search-owner@search-crowd.e2e.ostrom.test', TRUE,
+VALUES (overlay(overlay(md5('search-seed search-owner') PLACING '4' FROM 13) PLACING '8' FROM 17)::uuid, 'search-owner@search-crowd.e2e.ostrom.test', TRUE,
         TIMESTAMPTZ '2026-11-01 09:00:00+00');
 
 -- Search crowd: the owner first, the crowd one second apart, then the two people of the second page.
@@ -40,8 +42,8 @@ DO $$ BEGIN PERFORM set_config('ostrom.org_id', 'a5ea7c00-0000-4000-8000-0000000
 INSERT INTO orgs_organizations (id, slug, name, created_at)
 VALUES ('a5ea7c00-0000-4000-8000-000000000001', 'search-crowd', 'Search crowd', TIMESTAMPTZ '2026-11-01 09:00:00+00');
 INSERT INTO orgs_members (id, org_id, user_id, role, joined_at)
-SELECT md5('search-seed member ' || m.login)::uuid, 'a5ea7c00-0000-4000-8000-000000000001',
-       md5('search-seed ' || m.login)::uuid, m.role, TIMESTAMPTZ '2026-11-01 10:00:00+00' + m.n * INTERVAL '1 second'
+SELECT overlay(overlay(md5('search-seed member ' || m.login) PLACING '4' FROM 13) PLACING '8' FROM 17)::uuid, 'a5ea7c00-0000-4000-8000-000000000001',
+       overlay(overlay(md5('search-seed ' || m.login) PLACING '4' FROM 13) PLACING '8' FROM 17)::uuid, m.role, TIMESTAMPTZ '2026-11-01 10:00:00+00' + m.n * INTERVAL '1 second'
 FROM (
     SELECT 'search-owner' AS login, 'owner' AS role, 0 AS n
     UNION ALL
@@ -58,8 +60,8 @@ INSERT INTO orgs_organizations (id, slug, name, created_at)
 VALUES ('a5ea7c00-0000-4000-8000-000000000002', 'search-elsewhere', 'Search elsewhere',
         TIMESTAMPTZ '2026-11-01 09:00:00+00');
 INSERT INTO orgs_members (id, org_id, user_id, role, joined_at)
-SELECT md5('search-seed member ' || m.login)::uuid, 'a5ea7c00-0000-4000-8000-000000000002',
-       md5('search-seed ' || m.login)::uuid, m.role, TIMESTAMPTZ '2026-11-01 10:00:00+00' + m.n * INTERVAL '1 second'
+SELECT overlay(overlay(md5('search-seed member ' || m.login) PLACING '4' FROM 13) PLACING '8' FROM 17)::uuid, 'a5ea7c00-0000-4000-8000-000000000002',
+       overlay(overlay(md5('search-seed ' || m.login) PLACING '4' FROM 13) PLACING '8' FROM 17)::uuid, m.role, TIMESTAMPTZ '2026-11-01 10:00:00+00' + m.n * INTERVAL '1 second'
 FROM (VALUES ('elsewhere-owner', 'owner', 0), ('zoe-elsewhere', 'member', 1)) AS m (login, role, n);
 
 COMMIT;
