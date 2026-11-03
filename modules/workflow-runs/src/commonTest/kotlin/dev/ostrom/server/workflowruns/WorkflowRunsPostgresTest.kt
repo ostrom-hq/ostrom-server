@@ -72,6 +72,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
@@ -571,6 +572,16 @@ class WorkflowRunsPostgresTest {
             assertEquals(setOf("ntf_a", "ntf_c", "ntf_d"), page.map { it.id }.toSet())
             val older = repository.notifications(ada.org.id, RunQuery(before = "ntf_d"))
             assertEquals(listOf("ntf_c", "ntf_a"), older.map { it.id }, "Older than the cursor, newest first")
+            // Held by key, in the organization only: what refuses a cursor no page gave.
+            assertTrue(repository.hasNotification(ada.org.id, "ntf_a"))
+            assertTrue(repository.hasCheck(ada.org.id, ids.first()))
+            val other = Uuid.random()
+            assertFalse(repository.hasNotification(other, "ntf_a"))
+            assertFalse(repository.hasCheck(other, ids.first()))
+            for (list in listOf("checks", "notifications")) {
+                val refused = server.call(ada.cliToken, "/api/v1/$list?before=nope")
+                assertEquals(HttpStatusCode.BadRequest, refused.status, list)
+            }
         }
 
     @Test

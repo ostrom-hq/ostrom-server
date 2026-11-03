@@ -62,6 +62,15 @@ interface WorkflowRunsRepository {
     suspend fun checks(orgId: Uuid, query: RunQuery): List<CheckRun>
 
     /**
+     * Whether the organization holds a check run.
+     *
+     * @param orgId The organization.
+     * @param id The run's id.
+     * @return True when it does.
+     */
+    suspend fun hasCheck(orgId: Uuid, id: String): Boolean
+
+    /**
      * Stores a notification, unless the same action of the same session already had it: a hook may pass twice.
      *
      * @param orgId The organization.
@@ -89,4 +98,13 @@ interface WorkflowRunsRepository {
      * @return The notifications.
      */
     suspend fun notifications(orgId: Uuid, query: RunQuery): List<Notification>
+
+    /**
+     * Whether the organization holds a notification.
+     *
+     * @param orgId The organization.
+     * @param id The notification's id.
+     * @return True when it does.
+     */
+    suspend fun hasNotification(orgId: Uuid, id: String): Boolean
 }

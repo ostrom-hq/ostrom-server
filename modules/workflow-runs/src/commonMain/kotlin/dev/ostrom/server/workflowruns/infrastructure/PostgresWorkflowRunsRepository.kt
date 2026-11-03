@@ -88,6 +88,17 @@ class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsR
             }
         }
 
+    override suspend fun hasCheck(orgId: Uuid, id: String): Boolean = holds(orgId, "workflow_runs_checks", id)
+
+    override suspend fun hasNotification(orgId: Uuid, id: String): Boolean =
+        holds(orgId, "workflow_runs_notifications", id)
+
+    // One row by its key (the table's primary key starts with the organization), under row-level security.
+    private suspend fun holds(orgId: Uuid, table: String, id: String): Boolean = driver.withOrganization(orgId) { tx ->
+        val statement = Statement.create("SELECT 1 AS one FROM $table WHERE org_id = :org_id AND id = :id")
+        tx.fetchAll(statement.bind("org_id", orgId).bind("id", id)).getOrThrow().isNotEmpty()
+    }
+
     private fun String.bindQuery(orgId: Uuid, query: RunQuery): Statement {
         var statement = Statement.create(this).bind("org_id", orgId).bind("limit", query.limit)
         query.sessionId?.let { statement = statement.bind("session_id", it) }
