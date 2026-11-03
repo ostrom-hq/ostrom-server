@@ -8,6 +8,7 @@ import dev.ostrom.server.compiler.domain.usecases.ServedPackage
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.fakes.RulesCallers
 import dev.ostrom.server.rules.fakes.call
 import dev.ostrom.server.rules.presentation.NewRuleRequest
@@ -26,6 +27,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /**
@@ -41,6 +43,13 @@ class CompiledPackageFollowsTheRulesPostgresTest {
 
     private suspend fun TestServer.current(orgId: Uuid): ServedPackage =
         koin.get<PublishPackageUseCase>()(orgId, REPO, "https://ostrom.example", "lyes")
+
+    // A decision's receipt is an input of the harness: the request signs it before it answers
+    // (SignDecisionsUseCase, called by the audit of the change). Checked, so that a count cannot be off by a late one.
+    private suspend fun TestServer.everyDecisionSigned() {
+        val decisions = koin.get<RulesRepository>().lastRuleDecisions(RulesCallers.orgA)
+        assertTrue(decisions.isNotEmpty() && decisions.all { it.signed }, "decisions signed: $decisions")
+    }
 
     private fun ServedPackage.harness(): JsonElement? =
         Json.parseToJsonElement(stored.envelope.payload).jsonObject["harness"]
@@ -61,6 +70,7 @@ class CompiledPackageFollowsTheRulesPostgresTest {
 
         val created = server.call("POST", "/api/v1/rules", "admin-a", RULE)
         assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        server.everyDecisionSigned()
         val proposed = server.current(RulesCallers.orgA)
         assertEquals(3, packages.compilations, "A rule written is a new input")
         assertNotEquals(first.stored.envelope.contentDigest, proposed.stored.envelope.contentDigest)
@@ -69,6 +79,7 @@ class CompiledPackageFollowsTheRulesPostgresTest {
         val accept = buildJsonObject { put("status", "accepted") }
         val decided = server.call("PATCH", "/api/v1/rules/$id", "admin-a", accept)
         assertEquals(HttpStatusCode.OK, decided.status, decided.bodyAsText())
+        server.everyDecisionSigned()
         val accepted = server.current(RulesCallers.orgA)
         assertEquals(4, packages.compilations, "A rule decided is a new input")
         assertNotEquals(proposed.stored.envelope.contentDigest, accepted.stored.envelope.contentDigest)
