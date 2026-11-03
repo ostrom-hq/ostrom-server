@@ -101,7 +101,7 @@ data class Assignment(
     val delivered: Boolean,
     val stopped: Boolean,
     val dropped: Boolean,
-    val superseded: Boolean = false,
+    val superseded: Boolean,
 )
 
 /** What a registered runner reports of one execution, from its runner container. */
