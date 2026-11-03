@@ -116,7 +116,7 @@ class ContractSchema(private val document: JsonObject) {
     // required; otherwise the first part that says it wins (a closed part must not refuse its sibling's properties).
     private fun merged(parts: JsonArray): JsonObject {
         val schemas = parts.map { part ->
-            part.jsonObject[REF]?.let { resolve(it.jsonPrimitive.content) } ?: part.jsonObject
+            part.jsonObject[REF].let { if (it == null) part.jsonObject else resolve(it.jsonPrimitive.content) }
         }
         val properties = schemas.flatMap { it["properties"]?.jsonObject.orEmpty().entries }.associate { it.toPair() }
         val required = schemas.flatMap { it["required"]?.jsonArray.orEmpty() }.distinct()

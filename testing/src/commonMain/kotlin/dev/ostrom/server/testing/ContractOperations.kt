@@ -78,7 +78,9 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
 
     private fun operation(schema: ContractSchema, path: String, method: String, operation: JsonObject) =
         ContractOperation(
-            id = operation["operationId"]?.let { it.jsonPrimitive.content } ?: "${method.uppercase()} $path",
+            id = operation["operationId"].let { id ->
+                if (id == null) "${method.uppercase()} $path" else id.jsonPrimitive.content
+            },
             method = method.uppercase(),
             path = path,
             served = operation["x-ostrom-status"]?.let { it.jsonPrimitive.content } == "served",

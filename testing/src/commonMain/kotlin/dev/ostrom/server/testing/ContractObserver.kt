@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.config.ConfigSource
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
+import io.ktor.http.isSuccess
 import io.ktor.server.application.ApplicationPlugin
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.hooks.ResponseBodyReadyForSend
@@ -131,7 +132,8 @@ class ContractObserver(
         val found = violations(contract.schema, operation, status, type, body)
         lock.withLock {
             drifts += found.map { Drift(operation.id, status, it) }
-            if (status in SUCCESS && operation.response(status)?.json != null && body.isNotEmpty()) {
+            val success = HttpStatusCode.fromValue(status).isSuccess()
+            if (success && operation.response(status)?.json != null && body.isNotEmpty()) {
                 seen += operation.id
             }
         }
@@ -193,9 +195,6 @@ class ContractObserver(
 private const val REPORTS = "build/reports/contract"
 private const val INTERNAL = 500
 private val UNFORESEEN = ContractResponse(JsonObject(mapOf("\$ref" to JsonPrimitive("#/components/schemas/ApiError"))))
-private const val FIRST_SUCCESS = 200
-private const val LAST_SUCCESS = 299
-private val SUCCESS = FIRST_SUCCESS..LAST_SUCCESS
 
 // One file per test process: the module's test tasks never write to the same one.
 private val FILE = "observed-${Random.nextLong().toULong()}.txt"
