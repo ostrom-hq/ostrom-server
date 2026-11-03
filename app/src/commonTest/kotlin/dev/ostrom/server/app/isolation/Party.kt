@@ -150,8 +150,10 @@ private suspend fun TestServer.signUp(login: String): User = koin.get<ResolveUse
 internal suspend fun TestServer.token(owner: User, org: Org, kind: TokenKind, scopes: Set<String>): Pair<Uuid, String> {
     val now = Clock.System.now()
     val secret = "${kind.prefix}_" + Uuid.random().toHexString()
+    // The phone's token names no organization, as a mobile sign-in issues it: the person's membership decides.
+    val bound = org.id.takeIf { kind != TokenKind.MOBILE }
     val row = ApiToken(
-        Uuid.random(), owner.id, org.id, kind.name.lowercase(), kind, scopes, secret.takeLast(4), null, now,
+        Uuid.random(), owner.id, bound, kind.name.lowercase(), kind, scopes, secret.takeLast(4), null, now,
         now + 8.hours, null, null, authenticatedAt = now,
     )
     val hasher = koin.get<SecretHasher>()
