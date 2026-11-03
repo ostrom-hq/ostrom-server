@@ -56,6 +56,42 @@ private fun requireGivable(caller: Membership, role: OrgRole) =
     }
 
 /**
+ * Checks that [caller] may send [invites], without sending anything.
+ *
+ * @param caller The caller's membership.
+ * @param invites Who, with which role.
+ * @return The invites with their addresses cleaned, each address once.
+ * @throws InvalidOrgRequestException For no invite, more than 50, or an invalid address.
+ * @throws NotAllowedException For a caller who is not an owner or an admin, or a role beyond what they give.
+ */
+internal fun requireInvites(caller: Membership, invites: List<InviteRequest>): List<InviteRequest> {
+    ensure(invites.size in 1..MAX_INVITES_PER_REQUEST) {
+        InvalidOrgRequestException("Invite 1 to 50 people at once.")
+    }
+    val clean = invites.map { it.copy(email = validInviteEmail(it.email)) }.distinctBy { it.email }
+    requireManager(caller)
+    clean.forEach { requireGivable(caller, it.role) }
+    return clean
+}
+
+/**
+ * Checks that [caller] may create a link giving [role] to [maxUses] people, without creating it.
+ *
+ * @param caller The caller's membership.
+ * @param role The role it gives.
+ * @param maxUses How many people it brings in.
+ * @throws InvalidOrgRequestException For fewer than 1 or more than 100 uses.
+ * @throws NotAllowedException For a caller who is not an owner or an admin, or a role beyond what they give.
+ */
+internal fun requireLink(caller: Membership, role: OrgRole, maxUses: Int) {
+    ensure(maxUses in 1..MAX_LINK_USES) {
+        InvalidOrgRequestException("A link works for 1 to 100 people.")
+    }
+    requireManager(caller)
+    requireGivable(caller, role)
+}
+
+/**
  * Invites people by e-mail: each gets a link that only works for an account holding that verified
  * address.
  */
@@ -99,14 +135,8 @@ class InviteByEmailUseCaseImpl(
         userId: Uuid,
         invites: List<InviteRequest>,
     ): List<String> {
-        ensure(invites.size in 1..MAX_INVITES_PER_REQUEST) {
-            InvalidOrgRequestException("Invite 1 to 50 people at once.")
-        }
-        val clean =
-            invites.map { it.copy(email = validInviteEmail(it.email)) }.distinctBy { it.email }
         val caller = requireMembership(orgs, members, orgId, userId)
-        requireManager(caller)
-        clean.forEach { requireGivable(caller, it.role) }
+        val clean = requireInvites(caller, invites)
         val now = clock.nowMillis()
         val current = members.list(orgId)
         val memberEmails =
@@ -213,12 +243,8 @@ class CreateInviteLinkUseCaseImpl(
         role: OrgRole,
         maxUses: Int,
     ): IssuedInvitation {
-        ensure(maxUses in 1..MAX_LINK_USES) {
-            InvalidOrgRequestException("A link works for 1 to 100 people.")
-        }
         val caller = requireMembership(orgs, members, orgId, userId)
-        requireManager(caller)
-        requireGivable(caller, role)
+        requireLink(caller, role, maxUses)
         ensure(services.limiter.tryAcquire("org-invite:$orgId", INVITES_PER_HOUR, HOUR)) {
             OrgRateLimitedException()
         }

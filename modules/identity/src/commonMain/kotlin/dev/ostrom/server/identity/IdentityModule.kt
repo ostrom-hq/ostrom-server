@@ -194,7 +194,7 @@ object IdentityModule : ServerModule {
         single<UsersRepository> { UsersRepositoryImpl(get()) }
         single<LinkedIdentities> { LinkedIdentitiesImpl(get()) }
         single<WebSessionsRepository> { WebSessionsRepositoryImpl(get()) }
-        single<ApiTokensRepository> { ApiTokensRepositoryImpl(get()) }
+        single<ApiTokensRepository> { ApiTokensRepositoryImpl(get(), get()) }
         single<ServiceKeysRepository> { ServiceKeysRepositoryImpl(get()) }
         single<ElevatedTokensRepository> { ElevatedTokensRepositoryImpl(get()) }
         single<DeviceAuthorizationsRepository> { DeviceAuthorizationsRepositoryImpl(get()) }
