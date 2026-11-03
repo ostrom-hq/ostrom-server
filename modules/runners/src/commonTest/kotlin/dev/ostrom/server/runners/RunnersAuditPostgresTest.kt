@@ -43,6 +43,7 @@ class RunnersAuditPostgresTest {
             assertEquals(HttpStatusCode.Created, registered.status)
             val created = registered.body<RegisteredRunnerDto>()
 
+            assertEquals(listOf("runner.registered"), audit.map { it.event }, "One line, written by the registration")
             val line = audit.single()
             assertEquals(ORG_A, line.orgId)
             assertEquals("dana", line.actor.subjectId)
