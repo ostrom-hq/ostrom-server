@@ -84,26 +84,6 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
             }
         }
 
-    /** The sums a call is admitted on, each bound only when a limit needs it. */
-    private fun holdTotals(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Statement {
-        val org = limits.orgMicros != null
-        val member = limits.memberMicros != null
-        val daily = limits.daily
-        val orgDay = daily?.orgMicros != null
-        val memberDay = daily?.memberMicros != null
-        // A workflow's limits apply only to a call of a launch that plays it; its sums are read only then.
-        val workflowId = hold.workflowId?.takeIf { limits.workflowMicros != null || daily?.workflowMicros != null }
-        val workflow = workflowId != null && limits.workflowMicros != null
-        val workflowDay = workflowId != null && daily?.workflowMicros != null
-        val sums = Statement.create(UsageQueries.holdTotals(org, member, orgDay, memberDay, workflow, workflowDay))
-            .bind("org_id", hold.orgId).bind("call_id", hold.callId).bind("now", window.now)
-        if (org || member || workflow) sums.bind("since", window.since)
-        if (daily != null) sums.bind("day_since", daily.since)
-        if (member || memberDay) sums.bind("member_id", hold.memberId)
-        workflowId?.let { sums.bind("workflow_id", it) }
-        return sums
-    }
-
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long {
         val statement = Statement.create(UsageQueries.spent(member = memberId != null))
             .bind("org_id", orgId).bind("since", since)
@@ -227,3 +207,22 @@ private fun ResultSet.Row.toEvent() = UsageEvent(
     outcome = get("outcome").asString(),
     at = get("at").asInstant(),
 )
+
+/** The sums a call is admitted on, each bound only when a limit needs it. */
+private fun holdTotals(hold: SpendHold, limits: SpendLimits, window: HoldWindow): Statement {
+    val org = limits.orgMicros != null
+    val member = limits.memberMicros != null
+    val daily = limits.daily
+    val orgDay = daily?.orgMicros != null
+    val memberDay = daily?.memberMicros != null
+    // A workflow's limits apply only to a call of a launch that plays it; its sums are read only then.
+    val workflow = hold.workflowId != null && limits.workflowMicros != null
+    val workflowDay = hold.workflowId != null && daily?.workflowMicros != null
+    val sums = Statement.create(UsageQueries.holdTotals(org, member, orgDay, memberDay, workflow, workflowDay))
+        .bind("org_id", hold.orgId).bind("call_id", hold.callId).bind("now", window.now)
+    if (org || member || workflow) sums.bind("since", window.since)
+    if (daily != null) sums.bind("day_since", daily.since)
+    if (member || memberDay) sums.bind("member_id", hold.memberId)
+    hold.workflowId?.takeIf { workflow || workflowDay }?.let { sums.bind("workflow_id", it) }
+    return sums
+}

@@ -17,6 +17,7 @@ class WorkflowBudgetsRemoval(
     private val cache: BudgetDecisionCache,
 ) : WorkflowRemovals {
     override suspend fun removed(orgId: Uuid, workflowId: String) {
-        // Red: nothing is forgotten yet.
+        repository.removeWorkflow(orgId, workflowId)
+        cache.invalidate(orgId)
     }
 }

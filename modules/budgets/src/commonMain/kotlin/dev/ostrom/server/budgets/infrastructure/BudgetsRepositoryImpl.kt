@@ -48,7 +48,10 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
             orgId,
             Statement.create(BudgetsQueries.WORKFLOW_LIMITS)
                 .bind("org_id", orgId).bind("limit", BudgetRules.MAX_WORKFLOW_BUDGETS),
-        ).getOrThrow().map { it.toStored() }
+        ).getOrThrow().map { row ->
+            val stored = row.toStored()
+            WorkflowBudget(row.get("workflow_id").asString(), stored.limit, stored.updatedAt)
+        }
         val kept = rows.mapNotNull { it.memberId }.distinct().take(maxOverrides).toSet()
         return BudgetSettings(
             org = rows.filter { it.scope == ORG }.map { it.limit },
@@ -58,9 +61,7 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
                 row.memberId?.takeIf { it in kept }
                     ?.let { MemberBudget(it, limit.micros, row.updatedAt, limit.window, limit.action) }
             },
-            workflows = workflows.mapNotNull { row ->
-                row.workflowId?.let { WorkflowBudget(it, row.limit, row.updatedAt) }
-            },
+            workflows = workflows,
         )
     }
 
@@ -187,7 +188,6 @@ private fun Statement.bindMember(memberId: Uuid?): Statement =
 private fun ResultSet.Row.toStored() = StoredLimit(
     scope = get("scope").asString(),
     memberId = get("member_id").asUuidOrNull(),
-    workflowId = get("workflow_id").asStringOrNull(),
     limit = BudgetLimit(
         micros = get("limit_micros").asLong(),
         window = BudgetWindow.valueOf(get("period").asString()),
@@ -199,7 +199,6 @@ private fun ResultSet.Row.toStored() = StoredLimit(
 private class StoredLimit(
     val scope: String,
     val memberId: Uuid?,
-    val workflowId: String?,
     val limit: BudgetLimit,
     val updatedAt: Instant,
 )

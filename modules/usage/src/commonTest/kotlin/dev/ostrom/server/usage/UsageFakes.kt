@@ -172,16 +172,26 @@ class InMemoryUsageRepository : UsageRepository {
             memberHeld = live.filter { it.memberId == hold.memberId }.sumOf { it.micros },
             orgDaySpent = limits.daily?.let { spentMicros(hold.orgId, null, it.since) } ?: 0,
             memberDaySpent = limits.daily?.let { spentMicros(hold.orgId, hold.memberId, it.since) } ?: 0,
-            workflowSpent = hold.workflowId?.let { workflowSpentMicros(hold.orgId, it, window.since) } ?: 0,
-            workflowHeld = live.filter { it.workflowId != null && it.workflowId == hold.workflowId }
-                .sumOf { it.micros },
-            workflowDaySpent = hold.workflowId?.let { id ->
-                limits.daily?.let { workflowSpentMicros(hold.orgId, id, it.since) }
-            } ?: 0,
         )
-        return limits.admit(totals, hold.micros).also {
+        return limits.admit(withWorkflow(totals, hold, limits, window, live), hold.micros).also {
             if (it == Admission.Admitted) holds[hold.callId] = hold to window.expiresAt
         }
+    }
+
+    /** The sums of the workflow [hold]'s launch plays, if any. */
+    private suspend fun withWorkflow(
+        totals: SpendTotals,
+        hold: SpendHold,
+        limits: SpendLimits,
+        window: HoldWindow,
+        live: List<SpendHold>,
+    ): SpendTotals {
+        val id = hold.workflowId ?: return totals
+        return totals.copy(
+            workflowSpent = workflowSpentMicros(hold.orgId, id, window.since),
+            workflowHeld = live.filter { it.workflowId == id }.sumOf { it.micros },
+            workflowDaySpent = limits.daily?.let { workflowSpentMicros(hold.orgId, id, it.since) } ?: 0,
+        )
     }
 
     override suspend fun spentMicros(orgId: Uuid, memberId: Uuid?, since: Instant): Long = events

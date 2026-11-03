@@ -181,6 +181,7 @@ class WorkflowsUseCaseImpl(
             throw OstromException(ErrorKind.CONFLICT, "workflow_in_use: a pinned package compiles this workflow.")
         }
         repository.deleteWorkflow(orgId, id)
+        removals?.removed(orgId, id)
     }
 
     private fun compiles(payload: String, id: String): Boolean =

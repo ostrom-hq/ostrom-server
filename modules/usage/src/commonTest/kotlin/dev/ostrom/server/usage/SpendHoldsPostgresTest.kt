@@ -12,6 +12,7 @@ import dev.ostrom.server.usage.domain.DailySpendLimits
 import dev.ostrom.server.usage.domain.SpendAdmission
 import dev.ostrom.server.usage.domain.SpendHold
 import dev.ostrom.server.usage.domain.SpendLimits
+import dev.ostrom.server.usage.domain.SpendReader
 import dev.ostrom.server.usage.domain.SpendScope
 import dev.ostrom.server.usage.domain.UsageRecorder
 import dev.ostrom.server.usage.domain.UsageRepository
@@ -117,6 +118,26 @@ class SpendHoldsPostgresTest {
         assertEquals(
             Admission.Insufficient(SpendScope.MEMBER, 2_000, 500),
             server.admit(hold(600, memberId = one), limits),
+        )
+    }
+
+    @Test
+    fun aCallThatPlaysAWorkflowWithoutALimitIsAdmittedOnTheOthersAlone() = serverTest(modules, overrides) { server ->
+        server.koin.get<UsageRecorder>().record(modelEvent(900, memberId = member).copy(workflowId = "review"))
+        assertEquals(900, server.koin.get<SpendReader>().workflowSpentMicros(TestCallers.orgA, "review", since))
+        val today = TestCallers.epoch - 1.hours
+        assertEquals(
+            Admission.Admitted,
+            server.admit(hold(100).copy(workflowId = "review"), SpendLimits(1_000, null)),
+            "The org's month alone: its 900 and this 100 fit",
+        )
+        assertEquals(
+            Admission.Insufficient(SpendScope.ORG, 1_000, 0, daily = true),
+            server.admit(
+                hold(1).copy(workflowId = "review"),
+                SpendLimits(null, null, DailySpendLimits(today, 1_000, null)),
+            ),
+            "The org's day alone: the 100 in flight fill it",
         )
     }
 
