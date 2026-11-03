@@ -59,9 +59,11 @@ interface ListMembersUseCase {
      * @param userId The caller, a member.
      * @param after The member the page starts after, the previous page's `next`.
      * @param limit The most members, 1 to [MAX_MEMBER_PAGE].
+     * @param query Only the members whose login or name starts with it, whatever the case; 1 to [MAX_MEMBER_QUERY]
+     *   characters.
      * @return The members, oldest first.
      */
-    suspend operator fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int): MemberPage
+    suspend operator fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int, query: String? = null): MemberPage
 }
 
 /**
@@ -76,9 +78,15 @@ class ListMembersUseCaseImpl(
     private val members: MembersRepository,
     private val people: People,
 ) : ListMembersUseCase {
-    override suspend fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int): MemberPage {
+    override suspend fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int, query: String?): MemberPage {
         requireMembership(orgs, members, orgId, userId)
         if (limit !in 1..MAX_MEMBER_PAGE) throw InvalidOrgRequestException("limit is 1 to $MAX_MEMBER_PAGE.")
+        if (query != null) {
+            if (query.length !in 1..MAX_MEMBER_QUERY) {
+                throw InvalidOrgRequestException("q is 1 to $MAX_MEMBER_QUERY characters.")
+            }
+            return search(orgId, after, limit, query.lowercase())
+        }
         // One more than the page says whether another follows.
         val read = members.page(orgId, after, limit + 1)
         val list = read.take(limit)
@@ -86,7 +94,25 @@ class ListMembersUseCaseImpl(
         val items = list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
         return MemberPage(items, if (read.size > limit) list.last().id else null)
     }
+
+    // The search reads the whole team, bounded by its seats, in two queries (the members, then their people by
+    // primary key: OrgsReadsBenchTest), and pages the matches in the members' order.
+    private suspend fun search(orgId: Uuid, after: Uuid?, limit: Int, prefix: String): MemberPage {
+        val all = members.list(orgId)
+        val from = if (after == null) 0 else all.indexOfFirst { it.id == after } + 1
+        if (after != null && from == 0) return MemberPage(emptyList(), null)
+        val following = all.drop(from)
+        val byId = people.getMany(following.map { it.userId }).associateBy { it.id }
+        val found = following.mapNotNull { member ->
+            byId[member.userId]?.takeIf { it.startsWith(prefix) }?.let { profileOf(member, it) }
+        }
+        val items = found.take(limit)
+        return MemberPage(items, if (found.size > limit) items.last().member.id else null)
+    }
 }
+
+private fun Person.startsWith(prefix: String) =
+    login.lowercase().startsWith(prefix) || displayName.lowercase().startsWith(prefix)
 
 /** One member of an organization. */
 interface GetMemberUseCase {

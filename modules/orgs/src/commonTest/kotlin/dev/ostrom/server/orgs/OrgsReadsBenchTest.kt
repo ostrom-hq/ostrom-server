@@ -88,6 +88,8 @@ class OrgsReadsBenchTest {
             "GET /api/v1/orgs/{org}/members/{login}" to "/api/v1/orgs/org0/members/user0-500",
             "GET /api/v1/orgs/{org}/members?limit=100&after= (a middle page)" to
                 "/api/v1/orgs/org0/members?limit=$PAGE&after=$middle",
+            "GET /api/v1/orgs/{org}/members?q= (a search of the whole team)" to
+                "/api/v1/orgs/org0/members?q=user0-4&limit=$PAGE",
         ).map { (name, path) -> server.measureRead(name) { get(path) { session(sessions.first()) } } }
         writeReadReport("orgs", measures)
         measures.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }

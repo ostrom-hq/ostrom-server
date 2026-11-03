@@ -78,6 +78,9 @@ data class MemberPage(val items: List<MemberProfile>, val next: Uuid?)
 /** The most members of a page, and the default: the whole team of every organization today. */
 const val MAX_MEMBER_PAGE = 1000
 
+/** The longest member search. */
+const val MAX_MEMBER_QUERY = 100
+
 /**
  * A member with what the console shows of the person.
  *
