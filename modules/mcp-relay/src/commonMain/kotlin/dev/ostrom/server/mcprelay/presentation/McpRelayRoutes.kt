@@ -10,6 +10,7 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.heldCalls
 import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import dev.ostrom.server.mcprelay.domain.McpCallCursor
 import dev.ostrom.server.mcprelay.domain.McpSecretNotFoundException
@@ -59,7 +60,12 @@ fun Route.mcpRelayRoutes(dependencies: McpRelayRoutesDependencies) {
         assignmentRoutes(dependencies)
         policyRoutes(dependencies)
         journalRoutes(dependencies)
-        endpointRoutes(dependencies)
+    }
+    // A relayed call lasts as long as the upstream server takes: a held call, counted apart from the server's other
+    // calls from before authentication on, so that a slow server plugged in by a member never takes their places
+    // (P1 memory).
+    heldCalls {
+        authenticated { endpointRoutes(dependencies) }
     }
 }
 

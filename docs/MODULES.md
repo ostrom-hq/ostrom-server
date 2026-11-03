@@ -211,7 +211,7 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_READS_IN_FLIGHT` | `16` | 1 to 1 000: how many of those reads one subject holds at once; past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_READ_WAITS_IN_FLIGHT` | `256` | 1 to 10 000: how many gate reads (`GET /gates/{id}`, whose `wait` holds the call up to 30 s) one subject holds at once, apart from the reads above; they count in `OSTROM_READS_PER_MINUTE` too. Past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_MAX_CALLS_IN_PROGRESS` | from the memory limit | 1 to 100 000: how many calls this replica runs at once. Past it, a call waits in line for a place, before authentication and before its body is read, then gets a 503 `unavailable` with `Retry-After: 1`. Unset, 150 per 512 MiB of container limit (at least 16; 256 without a limit), read again at every call. Held calls and `/health`, `/ready` are not counted |
-| `OSTROM_MAX_HELD_CALLS` | from the memory limit | 1 to 100 000: the same, apart, for the calls that stay open: gate and confirmation waits, terminal WebSockets, the live usage stream, inference calls |
+| `OSTROM_MAX_HELD_CALLS` | from the memory limit | 1 to 100 000: the same, apart, for the calls that stay open: gate and confirmation waits, terminal WebSockets, the live usage stream, inference calls, MCP relay calls |
 | `OSTROM_CALL_QUEUE_SECONDS` | `5` | 0 to 60: how long a call past its ceiling waits in line for a place before its 503 |
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
@@ -257,9 +257,10 @@ key to set (the ceilings of calls can be set):
   100 at once, so 500 approvals at once still OOMKilled the server under 512 MiB once the heap was bounded, where 200
   peaked at 377 MiB (CHARGE 41644506470). Past 150 calls per 512 MiB, a call waits in line up to 5 s
   (`OSTROM_CALL_QUEUE_SECONDS`), as the reads already wait for theirs (500 reads at once held under 512 MiB, CHARGE
-  41647341533), then is told 503 with `Retry-After: 1`. The calls that stay open (waits, WebSockets, streams) count apart under their own ceiling
-  (`OSTROM_MAX_HELD_CALLS`), so that they neither take the other calls' places nor escape a ceiling; `/health` and
-  `/ready` are never counted.
+  41647341533), then is told 503 with `Retry-After: 1`. The calls that stay open (waits, WebSockets, streams, MCP
+  relay calls, as slow as their upstream) count apart under their own ceiling (`OSTROM_MAX_HELD_CALLS`), so that they
+  neither take the other calls' places nor escape a ceiling: a member who plugs in a slow MCP server fills only the
+  held places. `/health` and `/ready` are never counted.
 
 Without a limit (a plain process), the heap keeps the runtime's own tuning and both ceilings are 256.
 
