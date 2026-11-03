@@ -36,7 +36,9 @@ import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -146,7 +148,8 @@ class AnalysisEnginePostgresTest {
                 lock(AnalysisKind.ANALYSIS)
                 put(run)
             }
-            analyze(run, listOf(RepositoryFixtures.docs.repo))
+            // Real time: the database answers on its own threads, and virtual time would reach the deadline first.
+            withContext(Dispatchers.Default) { analyze(run, listOf(RepositoryFixtures.docs.repo)) }
 
             assertEquals(AnalysisRun.READY, runs.run(orgA, AnalysisKind.ANALYSIS)?.phase)
             assertEquals(

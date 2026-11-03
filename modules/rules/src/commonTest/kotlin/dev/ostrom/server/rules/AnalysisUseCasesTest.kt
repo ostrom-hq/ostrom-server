@@ -5,6 +5,7 @@ import dev.ostrom.core.api.models.Workflow
 import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
 import dev.ostrom.server.compiler.domain.models.WorkflowDoc
+import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.rules.domain.models.AnalysisBusyException
 import dev.ostrom.server.rules.domain.models.AnalysisKind
@@ -95,6 +96,7 @@ class AnalysisUseCasesTest {
         val again = start(RulesFixtures.lyes, AnalysisKind.REPLAY)
         assertNull(again.failure, "A failed run never blocks the next")
         runs.runs[org to AnalysisKind.REPLAY] = again.copy(phase = AnalysisRun.READY)
+        clock.advance(1.minutes)
         assertEquals(AnalysisRun.CONNECT, start(RulesFixtures.lyes, AnalysisKind.REPLAY).phase, "Nor a ready one")
     }
 
@@ -114,6 +116,7 @@ class AnalysisUseCasesTest {
         val done = start(RulesFixtures.lyes, AnalysisKind.REPLAY).copy(phase = AnalysisRun.READY, items = listOf(item))
         runs.runs[org to AnalysisKind.REPLAY] = done
         engine.answer = AnalysisStart.Unavailable("engine", "No engine.")
+        clock.advance(1.minutes)
         assertEquals(listOf(item), start(RulesFixtures.lyes, AnalysisKind.REPLAY).items)
         assertEquals(listOf(item), runs.run(org, AnalysisKind.REPLAY)?.items)
     }
@@ -218,5 +221,21 @@ class AnalysisUseCasesTest {
         val run = start(RulesFixtures.lyes, AnalysisKind.REPLAY)
         runs.runs[org to AnalysisKind.REPLAY] = run.copy(phase = AnalysisRun.READY, items = listOf(item))
         assertEquals(listOf(item), replay(org))
+    }
+
+    // AUDIT-SECU-ANALYSE R3: a replay holds the server's only replay lane; an organization replays once a minute.
+    @Test
+    fun aReplayStartsAtMostOnceAMinute() = runTest {
+        val done = start(RulesFixtures.lyes, AnalysisKind.REPLAY).copy(phase = AnalysisRun.READY)
+        runs.runs[org to AnalysisKind.REPLAY] = done
+        clock.advance(59.seconds)
+        val refused = assertFailsWith<OstromException> { start(RulesFixtures.lyes, AnalysisKind.REPLAY) }
+        assertEquals("A replay ran less than a minute ago: start it again in a minute.", refused.message)
+        assertEquals(done, runs.run(org, AnalysisKind.REPLAY), "A refused start writes nothing")
+        clock.advance(1.seconds)
+        assertEquals(AnalysisRun.CONNECT, start(RulesFixtures.lyes, AnalysisKind.REPLAY).phase)
+        val analysed = start(RulesFixtures.lyes, AnalysisKind.ANALYSIS).copy(phase = AnalysisRun.READY)
+        runs.runs[org to AnalysisKind.ANALYSIS] = analysed
+        assertEquals(AnalysisRun.CONNECT, start(RulesFixtures.lyes, AnalysisKind.ANALYSIS).phase, "Not an analysis")
     }
 }

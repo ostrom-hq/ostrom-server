@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules.domain.services
 
+import dev.ostrom.server.kernel.text.SafePattern
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
@@ -136,8 +137,10 @@ object RuleChecks {
         ensure(label.length <= MAX_LABEL) { "An action label has at most $MAX_LABEL characters." }
         ensure(action.patterns.size <= MAX_PATTERNS) { "An action has at most $MAX_PATTERNS patterns." }
         val patterns = action.patterns.map { it.trim() }.filter { it.isNotEmpty() }
-        ensure(patterns.all { it.length <= MAX_PATTERN && compiles(it) }) {
-            "Each pattern of ${action.cls} is a regular expression of at most $MAX_PATTERN characters."
+        // A pattern runs in every hook and in the server's replay, on backtracking engines (AUDIT-SECU-ANALYSE R5).
+        ensure(patterns.all { it.length <= MAX_PATTERN && compiles(it) && SafePattern.isSafe(it) }) {
+            "Each pattern of ${action.cls} is a regular expression of at most $MAX_PATTERN characters that never " +
+                "repeats a repeated group nor repeats without bound more than twice."
         }
         ensure(action.repos.size <= MAX_REPOS) { "An action names at most $MAX_REPOS repositories." }
         val repos = action.repos.map { text(it, MAX_REPO, "repository") }.distinct()
