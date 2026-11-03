@@ -148,7 +148,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fake-mcp"
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=127.0.0.1" \
             -addext "subjectAltName=IP:127.0.0.1" -addext "basicConstraints=critical,CA:TRUE" \
-            -keyout "$RUNNER_TEMP/fake-mcp/key.pem" -out "$RUNNER_TEMP/fake-mcp/cert.pem" 2>/dev/null
+            -keyout "$RUNNER_TEMP/fake-mcp/key.pem" -out "$RUNNER_TEMP/fake-mcp/cert.pem"
           cat /etc/ssl/certs/ca-certificates.crt "$RUNNER_TEMP/fake-mcp/cert.pem" > "$RUNNER_TEMP/fake-mcp/bundle.pem"
           chmod 0644 "$RUNNER_TEMP/fake-mcp/bundle.pem"
           # The server's non-root user writes the mails (0644); the journey, as the runner's user, reads them.
