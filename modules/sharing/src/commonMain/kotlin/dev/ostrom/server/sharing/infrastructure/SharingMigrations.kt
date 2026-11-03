@@ -91,4 +91,10 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         """.trimIndent() + ";\n" + tenantTableSql("sharing_groups") + "\n" +
             tenantTableSql("sharing_group_members") + "\n" + tenantTableSql("sharing_group_accounts"),
     ),
+    // An account lent to groups (`sharedWith: group:<id>`): a lease reads the groups of the member who asks.
+    SchemaMigration(
+        version = 6,
+        name = "sharing_group_members_by_member",
+        sql = "CREATE INDEX sharing_group_members_member ON sharing_group_members (org_id, member_id)",
+    ),
 )

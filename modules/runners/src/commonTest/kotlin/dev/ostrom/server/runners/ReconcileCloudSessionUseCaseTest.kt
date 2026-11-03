@@ -201,6 +201,62 @@ class ReconcileCloudSessionUseCaseTest {
     }
 
     @Test
+    fun aRunningSessionWhoseMachineDiedStartsAgainOnAnother() = runTest {
+        val running = runningSession()
+        driver.status = ExecutionStatus.HOST_LOST
+        clock.now = t0 + 30.seconds
+
+        assertEquals(clock.now, reconcile(running), "Looked at again at once")
+        val paused = stored(running)
+        assertEquals(SessionState.PAUSED, paused.state)
+        assertEquals(DesiredState.RUNNING, paused.desiredState, "Still wanted running")
+        assertEquals("runner_lost", paused.failure?.code)
+        assertEquals(listOf("status", "stop"), driver.calls)
+
+        reconcile(paused)
+        assertEquals(SessionState.RESUMING, stored(running).state)
+        reconcile(stored(running))
+        assertEquals(listOf("status", "stop", "ensureWorkspace", "start:2"), driver.calls)
+    }
+
+    @Test
+    fun onARuntimeThatRelocatesASilentRunnerMovesUnlessItsExecutionEnded() = runTest {
+        driver.relocates = true
+        driver.status = ExecutionStatus.RUNNING
+        val silent = runningSession()
+        clock.now = t0 + 91.seconds
+        reconcile(silent)
+        assertEquals("runner_lost", stored(silent).failure?.code)
+        assertEquals(DesiredState.RUNNING, stored(silent).desiredState)
+
+        driver.status = ExecutionStatus.ENDED
+        val ended = runningSession()
+        reconcile(ended)
+        assertEquals("execution_lost", stored(ended).failure?.code)
+        assertEquals(DesiredState.PAUSED, stored(ended).desiredState)
+
+        // Not silent: a running execution stays.
+        driver.status = ExecutionStatus.RUNNING
+        val healthy = put(runningSession().copy(lastHeartbeatAt = clock.now))
+        assertEquals(clock.now + 15.seconds, reconcile(healthy))
+    }
+
+    @Test
+    fun aStartWhoseMachineDiedStartsAgainAtOnce() = runTest {
+        val starting = put(session().copy(epoch = 1, executionStartedAt = t0, phase = "starting_runner"))
+        driver.status = ExecutionStatus.HOST_LOST
+        clock.now = t0 + 95.seconds
+
+        assertEquals(clock.now, reconcile(starting))
+        val after = stored(starting)
+        assertEquals(SessionState.CREATING, after.state)
+        assertNull(after.executionStartedAt)
+        assertEquals("scheduling", after.phase)
+        reconcile(after)
+        assertEquals(listOf("status", "stop", "ensureWorkspace", "start:2"), driver.calls)
+    }
+
+    @Test
     fun aPauseRequestStartsTheDrain() = runTest {
         val running = runningSession(desired = DesiredState.PAUSED)
         driver.status = ExecutionStatus.RUNNING

@@ -228,8 +228,8 @@ private object NativeCheckHomes : CheckHomes {
 
 /**
  * A registered runner (`ostrom-runner machine`): heartbeats with its key until the server refuses it three times in a
- * row (exit 3) or the machine stops it (SIGTERM, exit 0). A bad configuration, an unreadable key file included, exits
- * with 2.
+ * row (exit 3) or the machine stops it (SIGTERM, exit 0). With a Docker Engine (`OSTROM_DOCKER_API_URL`), it runs the
+ * cloud sessions the server hands it. A bad configuration, an unreadable key file included, exits with 2.
  */
 private fun machine(environment: Map<String, String>): Nothing {
     signal(SIGTERM, staticCFunction<Int, Unit> { _exit(0) })
@@ -254,10 +254,28 @@ private fun machine(environment: Map<String, String>): Nothing {
                 requestTimeoutMillis = CONNECT_TIMEOUT_MILLIS
             }
         }
+        // An image pull can take minutes: the engine's calls have their own, longer timeout.
+        val engine = config.docker?.let {
+            HttpClient(CIO) {
+                expectSuccess = false
+                install(HttpTimeout) {
+                    connectTimeoutMillis = CONNECT_TIMEOUT_MILLIS
+                    requestTimeoutMillis = DOCKER_TIMEOUT_MILLIS
+                }
+            }
+        }
         try {
-            MachineRunner(HttpMachineApi(client, config), config.interval, ::log).run()
+            val sessions = config.docker?.let { docker ->
+                MachineSessions(
+                    HttpDockerEngine(checkNotNull(engine), docker.apiUrl, config.runnerId),
+                    PlanGuard(config.runnerId, docker.network, docker.image),
+                    ::log,
+                )
+            }
+            MachineRunner(HttpMachineApi(client, config), config.interval, ::log, sessions).run()
         } finally {
             client.close()
+            engine?.close()
         }
     }
     log("exiting with $code")
@@ -296,9 +314,13 @@ private val KNOWN_VARIABLES = listOf(
     "OSTROM_REPOSITORY_URL", "OSTROM_REPOSITORY_REF", "OSTROM_RUNNER_TOKEN", "OSTROM_RUNNER_TOKEN_FILE",
     "OSTROM_WORKSPACE", "OSTROM_AGENT_SOCKET", "OSTROM_RUNNER_CHECKS", "OSTROM_CHECK_HOST_SOCKET",
     "OSTROM_RUNNER_ID", "OSTROM_RUNNER_KEY", "OSTROM_RUNNER_KEY_FILE", "OSTROM_RUNNER_INTERVAL_SECONDS",
+    "OSTROM_DOCKER_API_URL", "OSTROM_DOCKER_NETWORK", "OSTROM_RUNNER_SESSION_IMAGE",
 )
 
 private const val CONNECT_TIMEOUT_MILLIS = 10_000L
+
+/** An image pull, the longest call to the engine. */
+private const val DOCKER_TIMEOUT_MILLIS = 600_000L
 
 /** rw for the host's uid and the shared group, nothing for others (0660). */
 private const val SOCKET_MODE = 0x1B0

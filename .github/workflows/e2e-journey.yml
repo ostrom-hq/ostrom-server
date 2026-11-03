@@ -235,7 +235,7 @@ jobs:
           # Test values only, as ostrom-e2e's bench: mails to a directory, the console is the server's own origin, the
           # scenarios' addresses come through the trusted local proxy, Stripe is stripe-mock, and the providers' token
           # endpoint and APIs behind the gateway are the fake provider a scenario starts on port 4620 (BUDGET-002,
-          # SHARE-*), wired as in ostrom-e2e's ci.yml.
+          # SHARE-*), and GitHub is the fake GitHub the scenarios start on 4610 and 4700, wired as in ostrom-e2e's ci.yml.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -251,8 +251,26 @@ jobs:
           OSTROM_SHARING_CODEX_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
           OSTROM_GATEWAY_ANTHROPIC_URL=http://127.0.0.1:4620
           OSTROM_GATEWAY_CODEX_URL=http://127.0.0.1:4620
+          OSTROM_GITHUB_WEB_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_API_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_CLIENT_ID=Iv1.e2ebench
+          OSTROM_GITHUB_CLIENT_SECRET=e2e-bench-fake-github
+          OSTROM_GITHUB_API=http://127.0.0.1:4700
+          OSTROM_GITHUB_WEB=http://127.0.0.1:4700
+          OSTROM_GITHUB_APP_ID=1
+          OSTROM_GITHUB_APP_SLUG=ostrom-e2e
+          OSTROM_GITHUB_APP_CLIENT_ID=Iv1.fake
+          OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
+          OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_e2e
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          # The bench's GitHub App gets a key made for this run, written straight to the env file: never to $GITHUB_ENV,
+          # whose values every later step prints. One line, its newlines as `\n`, as the server reads it (as
+          # console-journey.yml).
+          openssl genrsa -traditional -out "$RUNNER_TEMP/github-app.pem" 2048
+          printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$(awk '{printf "%s\\n", $0}' "$RUNNER_TEMP/github-app.pem")" \
+            >> "$RUNNER_TEMP/server.env"
+          rm "$RUNNER_TEMP/github-app.pem"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
@@ -273,6 +291,10 @@ jobs:
           OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
           # The fake provider the scenarios start, where the server's gateway and sharing point (step above).
           OSTROM_E2E_FAKE_TOKENS_PORT: "4620"
+          # The fake GitHub the scenarios start, where the server points (step above): 4610 for the sign-in with GitHub
+          # (E2E-AUTH-002), 4700 for the App's installations and repositories (E2E-PARC-004, E2E-GH-*).
+          OSTROM_E2E_FAKE_GITHUB_PORT: "4610"
+          OSTROM_E2E_GITHUB_PORT: "4700"
           # E2E-TC-003/004: the CLI, the fake TeamCode team, and the superuser of this throwaway database (to make an
           # imported account wait for a reconnection and read the org's audit chain), as on ostrom-e2e's bench.
           OSTROM_E2E_CLI_BIN: ${{ steps.cli.outputs.bin }}

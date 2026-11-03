@@ -11,6 +11,7 @@ import dev.ostrom.core.api.models.WorkflowNodeKind.STEP
 import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
+import dev.ostrom.server.compiler.domain.services.WorkflowRepos
 import dev.ostrom.server.compiler.domain.usecases.CompileSourcesUseCaseImpl
 import dev.ostrom.server.compiler.domain.usecases.PublishPackageUseCaseImpl
 import dev.ostrom.server.compiler.domain.usecases.RevokePackageUseCaseImpl
@@ -134,6 +135,32 @@ class WorkflowsUseCaseTest {
         assertEquals(listOf("release"), workflows.list(org, "acme-api", null).map { it.doc.workflow.id })
         assertEquals(listOf("web"), workflows.list(org, null, WorkflowStatus.ACCEPTED).map { it.doc.workflow.id })
         assertEquals("release", workflows.get(org, "release").doc.workflow.id)
+    }
+
+    @Test
+    fun aWorkflowsRepositoriesAreCheckedSignedAndLimitWhereItApplies() = runTest {
+        fun limitedTo(vararg repos: String) =
+            JsonObject(raw(release()) + (WorkflowRepos.FIELD to JsonArray(repos.map { JsonPrimitive(it) })))
+        expectFailure(ErrorKind.INVALID_REQUEST) {
+            workflows.save(org, limitedTo("acme"), null, "dev-a", create = true)
+        }
+
+        val saved = workflows.save(org, limitedTo("acme/docs"), null, "dev-a", create = true)
+        assertEquals(listOf("acme/docs"), saved.doc.repos)
+        assertEquals(JsonArray(listOf(JsonPrimitive("acme/docs"))), signer.signed.single().third["repos"])
+        // R6: its name says acme-api, but it is limited to acme/docs.
+        assertEquals(emptyList<String>(), workflows.list(org, "acme-api", null).map { it.doc.workflow.id })
+        assertEquals(listOf("release"), workflows.list(org, "acme/docs", null).map { it.doc.workflow.id })
+
+        // Changing only the repositories is a decision; saving the same is none; removing them is one.
+        workflows.save(org, limitedTo("acme/*"), null, "dev-a", create = false)
+        assertEquals(JsonArray(listOf(JsonPrimitive("acme/*"))), signer.signed.last().third["repos"])
+        workflows.save(org, limitedTo("acme/*"), null, "dev-a", create = false)
+        assertEquals(2, signer.signed.size)
+        workflows.save(org, raw(release()), null, "dev-a", create = false)
+        assertEquals(3, signer.signed.size)
+        assertNull(signer.signed.last().third["repos"])
+        assertEquals(listOf("release"), workflows.list(org, "acme-api", null).map { it.doc.workflow.id })
     }
 
     @Test

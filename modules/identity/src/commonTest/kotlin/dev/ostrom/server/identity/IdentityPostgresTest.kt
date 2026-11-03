@@ -191,6 +191,7 @@ class IdentityPostgresTest {
         val ada = user().also { users.create(it, github("1"), null, now) }
         val pending = DeviceAuthorization(
             Uuid.random(), "BCDF-GHJK", "laptop", DeviceAuthorizationStatus.PENDING, null, now, now + 1.days, null,
+            requestedFrom = "203.0.113.0/24",
         )
         devices.create(pending, "device-hash")
 

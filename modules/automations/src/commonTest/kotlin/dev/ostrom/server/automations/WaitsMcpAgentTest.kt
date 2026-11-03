@@ -3,6 +3,7 @@ package dev.ostrom.server.automations
 
 import dev.ostrom.server.automations.domain.WaitAgent
 import dev.ostrom.server.automations.domain.WaitAgentResolver
+import dev.ostrom.server.automations.fakes.ALICE
 import dev.ostrom.server.automations.fakes.BOB
 import dev.ostrom.server.automations.fakes.FOREIGN_SESSION
 import dev.ostrom.server.automations.fakes.FakeWaitAgents
@@ -138,6 +139,53 @@ class WaitsMcpAgentTest {
 
             val person = client.rpc(ping, UNBOUND, token = "agent")
             assertEquals(HttpStatusCode.OK, person.status, "A person's credential still asks outside a session")
+        }
+
+    @Test
+    fun anAgentTokenAsksOnlyThePersonWhoLaunchedIt() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            val other = client.call("ask_human", """{"title":"Ship it?","assignee":"$ALICE"}""", OWN)
+            assertTrue(other.isError(), other.text())
+            assertEquals("An agent asks only the person who launched it.", other.text())
+            val own = client.call("ask_human", """{"title":"Ship it?","assignee":"$BOB"}""", OWN)
+            assertFalse(own.isError(), own.text())
+        }
+
+    @Test
+    fun anAgentTokenNeitherSeesNorCancelsWhatSomeoneElseAskedItsPerson() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            // alice asks bob, the agent's person, about the agent's session
+            val asked = client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", OWN, "alicekey")
+            assertFalse(asked.isError(), asked.text())
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+
+            assertEquals("No waits.", client.call("list_waits", "{}", OWN).text(), "Not listed to the agent")
+            val read = client.call("get_wait", """{"wait":"$id"}""", OWN)
+            assertTrue(read.isError(), read.text())
+            val cancelled = client.call("cancel_wait", """{"wait":"$id"}""", OWN)
+            assertTrue(cancelled.isError(), cancelled.text())
+            val still = client.get("/api/v1/waits/$id") { bearerAuth("alicekey") }
+            val status = Json.parseToJsonElement(still.bodyAsText()).jsonObject.getValue("status").jsonPrimitive.content
+            assertEquals("open", status, "Still open")
+        }
+
+    @Test
+    fun anAgentTokenSeesAndCancelsWhatItsPersonAskedSomeoneElse() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            // bob, the agent's person, asks alice from the console about the agent's session; alice asks bob too
+            val asked = client.call("ask_human", """{"title":"Review it?","assignee":"$ALICE"}""", OWN, "bob")
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+            client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", OWN, "alicekey")
+
+            assertTrue(client.call("list_waits", "{}", OWN).text().startsWith("$id  open  Review it?"))
+            assertEquals(1, client.call("list_waits", "{}", OWN).text().lines().size, "Only what its person asked")
+            assertFalse(client.call("get_wait", """{"wait":"$id"}""", OWN).isError())
+            assertEquals("Cancelled wait $id.", client.call("cancel_wait", """{"wait":"$id"}""", OWN).text())
+            val person = client.call("list_waits", """{"status":"all"}""", OWN, "bob").text().lines()
+            assertEquals(2, person.size, "A person's credential still sees what it was asked: $person")
         }
 
     @Test

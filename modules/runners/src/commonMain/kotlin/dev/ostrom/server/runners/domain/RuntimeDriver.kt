@@ -9,6 +9,12 @@ import kotlin.uuid.Uuid
  */
 interface RuntimeDriver {
     /**
+     * Whether a lost execution starts again elsewhere rather than pausing its session: true where executions run on
+     * machines that may die (registered runners), whose workspace is lost with them.
+     */
+    val relocates: Boolean get() = false
+
+    /**
      * Creates the session's workspace volume unless it exists.
      *
      * @param session The session.
@@ -78,6 +84,16 @@ data class ExecutionSpec(
             "prompt=${if (prompt == null) "none" else "***"})"
 }
 
+/**
+ * The execution of a session's current epoch.
+ *
+ * @param runnerToken The execution's runner token.
+ *
+ * @return What to start; the first message goes to the first execution only.
+ */
+fun CloudSession.executionSpec(runnerToken: String): ExecutionSpec =
+    ExecutionSpec(id, orgId, epoch, agent, repository, runnerToken, limits, model, prompt.takeIf { epoch == 1L })
+
 /** The state of an execution as the runtime sees it. */
 enum class ExecutionStatus {
     /** Accepted, not started yet (image pull, scheduling). */
@@ -94,6 +110,9 @@ enum class ExecutionStatus {
 
     /** The runtime has no such execution. */
     MISSING,
+
+    /** The machine that runs it stopped answering: it can start again on another one. */
+    HOST_LOST,
 }
 
 /** The names a driver gives to a session's objects, the same in every runtime. */
