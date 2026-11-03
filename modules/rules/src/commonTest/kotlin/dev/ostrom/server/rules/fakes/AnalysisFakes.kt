@@ -61,4 +61,6 @@ class FakeWorkflows(private val workflows: List<StoredWorkflow> = emptyList()) :
     ): StoredWorkflow = error("not written")
 
     override suspend fun delete(orgId: Uuid, id: String) = error("not deleted")
+
+    override fun check(raw: JsonObject): Unit = error("not checked")
 }

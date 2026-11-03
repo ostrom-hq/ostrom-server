@@ -3,8 +3,11 @@ package dev.ostrom.server.kernel.http
 
 import dev.ostrom.core.telemetry.Telemetry
 import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.GovernanceConfirmations
 import dev.ostrom.server.kernel.auth.RefusingGovernanceAudit
+import dev.ostrom.server.kernel.auth.RefusingGovernanceConfirmations
 import dev.ostrom.server.kernel.auth.governanceAuditKey
+import dev.ostrom.server.kernel.auth.governanceConfirmationsKey
 import dev.ostrom.server.kernel.auth.stepUpClockKey
 import dev.ostrom.server.kernel.auth.token
 import dev.ostrom.server.kernel.logging.Logger
@@ -64,6 +67,10 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
     install(Authentication) { token(koin.get()) }
     attributes.put(governanceAuditKey, koin.getOrNull<GovernanceAudit>() ?: RefusingGovernanceAudit())
     attributes.put(stepUpClockKey, koin.getOrNull<Clock>() ?: Clock.System)
+    attributes.put(
+        governanceConfirmationsKey,
+        koin.getOrNull<GovernanceConfirmations>() ?: RefusingGovernanceConfirmations(),
+    )
     routing {
         healthRoutes(koin.getAll(), SERVER_VERSION, koin.getOrNull<Readiness>() ?: Readiness())
         modules.forEach { it.routes(this, koin) }
