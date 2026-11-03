@@ -38,6 +38,14 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
         select("id = :id", lock = false) { bind("id", id) }.firstOrNull()
     }
 
+    // The primary key finds the named segment, the unique (org_id, root_id, segment) index its session's.
+    override suspend fun segmentsOf(orgId: Uuid, id: String): List<Session> = scoped(orgId) {
+        select(
+            "root_id = (SELECT root_id FROM sessions_sessions WHERE org_id = :org AND id = :id) ORDER BY segment",
+            lock = false,
+        ) { bind("id", id) }
+    }
+
     override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> = scoped(orgId) {
         val where = buildList {
             add("org_id = :org")

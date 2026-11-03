@@ -89,6 +89,8 @@ interface RunnerAssignmentsRepository {
  * @property delivered Whether its plan was handed to the runner.
  * @property stopped Whether it must stop.
  * @property dropped Whether its session's workspace must go.
+ * @property superseded Whether another runner took a later execution of its session: the workspace this runner holds
+ *   is then stale, and it deletes it (a machine back after it was declared lost never keeps the session's data).
  */
 data class Assignment(
     val sessionId: Uuid,
@@ -99,6 +101,7 @@ data class Assignment(
     val delivered: Boolean,
     val stopped: Boolean,
     val dropped: Boolean,
+    val superseded: Boolean,
 )
 
 /** What a registered runner reports of one execution, from its runner container. */
@@ -134,10 +137,12 @@ enum class MachineExecutionState(val wire: String) {
  *
  * @property executions The executions it has, by session and epoch.
  * @property workspaces The sessions whose workspace it holds.
+ * @property capacity The sessions it runs at once at most; null for no limit.
  */
 data class MachineReport(
     val executions: Map<Pair<Uuid, Long>, MachineExecutionState> = emptyMap(),
     val workspaces: Set<Uuid> = emptySet(),
+    val capacity: Int? = null,
 )
 
 /**

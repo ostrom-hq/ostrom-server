@@ -66,7 +66,7 @@ class AskWaitUseCaseImpl(
         earlier(caller, idempotencyKey)?.let { return AskedWait(it, replayed = true) }
         val wait = newWait(caller, request, idempotencyKey)
         val limit = if (wait.sessionId == null) MAX_OPEN_ALONE else MAX_OPEN
-        return when (repository.createWithinLimit(wait, limit)) {
+        return when (repository.createWithinLimit(wait, limit, caller.segments.orEmpty())) {
             CreateOutcome.CREATED -> AskedWait(wait, replayed = false).also { events.created(wait) }
             CreateOutcome.AT_LIMIT -> throw WaitLimitException(limit)
             CreateOutcome.DUPLICATE -> AskedWait(
@@ -126,6 +126,7 @@ class AskWaitUseCaseImpl(
  * @property runId Only this run's.
  * @property before The last wait of the previous page.
  * @property limit The page size, 1 to 100 (50).
+ * @property sessionIds Only those of one of these sessions.
  */
 data class WaitQuery(
     val mine: Boolean = false,
@@ -135,6 +136,7 @@ data class WaitQuery(
     val runId: String? = null,
     val before: Uuid? = null,
     val limit: Int? = null,
+    val sessionIds: List<String>? = null,
 )
 
 /**
@@ -182,7 +184,12 @@ class ReadWaitsUseCaseImpl(private val repository: WaitsRepository) : ReadWaitsU
             WaitStatus.entries.firstOrNull { it.wire == wire }
                 ?: throw InvalidWaitException("status is open, resolved, cancelled or all.")
         }
-        val filter = scope(caller, query).copy(status = status, sessionId = query.sessionId, runId = query.runId)
+        val filter = scope(caller, query).copy(
+            status = status,
+            sessionId = query.sessionId,
+            sessionIds = query.sessionIds,
+            runId = query.runId,
+        )
         val items = repository.list(filter, query.before, limit + 1)
         return WaitPage(items.take(limit), if (items.size > limit) items[limit - 1].id else null)
     }

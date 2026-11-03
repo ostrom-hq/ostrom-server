@@ -5,6 +5,7 @@ import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GateStatus
+import dev.ostrom.server.gates.domain.services.OpenSegment
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.sessions.domain.models.EndSession
@@ -253,5 +254,29 @@ class SessionLifecycleTest {
         assertEquals(ErrorKind.CONFLICT, closed.kind)
         assertTrue("(ended)" in closed.message.orEmpty(), closed.message)
         assertTrue(Session.LOST.isNotEmpty())
+    }
+
+    @Test
+    fun theOpenSegmentIsFoundFromAnyIdOfTheAgentSessionWithItsLaunchsSegments() = runTest {
+        val bench = SessionBench()
+        val guard = SessionsGateGuard(bench.repository)
+        val session = bench.start(agent(), start)
+        assertEquals(OpenSegment("s-1", listOf("s-1")), guard.openSegment(ORG, "s-1", "launch-1"), "Itself")
+
+        bench.end(agent(), session.id, EndSession())
+        val closed = assertFailsWith<SessionClosedException> { guard.openSegment(ORG, "s-1", "launch-1") }
+        assertTrue("(ended)" in closed.message.orEmpty(), "Nothing open yet: the last segment's refusal")
+        bench.reopen(agent(), session.id)
+        val reopened = OpenSegment("s-1~r2", listOf("s-1", "s-1~r2"))
+        assertEquals(reopened, guard.openSegment(ORG, "s-1", "launch-1"), "The agent's id, its segment reopened")
+        assertEquals(reopened, guard.openSegment(ORG, "s-1~r2", null))
+        bench.end(agent(), "s-1~r2", EndSession())
+
+        // Resumed by another launch: its own segment only, never what the first launch opened.
+        bench.start(agent("launch-2"), start)
+        assertEquals(OpenSegment("s-1~r3", listOf("s-1~r3")), guard.openSegment(ORG, "s-1~r2", "launch-2"))
+        assertFailsWith<NotYourSessionException> { guard.openSegment(ORG, "s-1", "launch-1") }
+        assertFailsWith<SessionNotFoundException> { guard.openSegment(OTHER_ORG, "s-1", "launch-2") }
+        assertFailsWith<SessionNotFoundException> { guard.openSegment(ORG, "s-9", "launch-2") }
     }
 }

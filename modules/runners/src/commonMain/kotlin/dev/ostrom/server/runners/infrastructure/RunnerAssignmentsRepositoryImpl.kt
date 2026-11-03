@@ -8,6 +8,7 @@ import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
@@ -115,30 +116,53 @@ class RunnerAssignmentsRepositoryImpl(private val driver: Driver) : RunnerAssign
         delivered = get("delivered_at").asInstantOrNull() != null,
         stopped = get("stopped_at").asInstantOrNull() != null,
         dropped = get("dropped_at").asInstantOrNull() != null,
+        superseded = get("superseded").asBoolean(),
     )
 
     /** The statements, shared with the tests. */
     internal companion object {
-        /** An assignment with its runner's last heartbeat; a removed runner reads as never seen. */
+        /**
+         * An assignment with its runner's last heartbeat (a removed runner reads as never seen), and whether another
+         * runner took a later execution of its session.
+         */
         const val SELECT_SQL: String =
             "SELECT a.session_id, a.epoch, a.runner_id, a.state, a.delivered_at, a.stopped_at, a.dropped_at, " +
-                "r.last_seen_at FROM runners_assignments a LEFT JOIN runners_registered r " +
+                "r.last_seen_at, EXISTS (SELECT 1 FROM runners_assignments n WHERE n.session_id = a.session_id " +
+                "AND n.epoch > a.epoch AND n.runner_id IS NOT NULL AND n.runner_id <> a.runner_id) AS superseded " +
+                "FROM runners_assignments a LEFT JOIN runners_registered r " +
                 "ON r.org_id = a.org_id AND r.id = a.runner_id"
 
-        /** A new execution, for the runner of the session's latest one while it is online, for anyone otherwise. */
+        /** Whether runner `r` holds fewer executions not stopped than the capacity it declared (none: no limit). */
+        private const val ROOM_SQL: String =
+            "(r.capacity IS NULL OR r.capacity > (SELECT COUNT(*) FROM runners_assignments h " +
+                "WHERE h.org_id = r.org_id AND h.runner_id = r.id AND h.stopped_at IS NULL))"
+
+        /**
+         * A new execution, for the runner of the session's latest one while it is online and has room, for anyone
+         * otherwise.
+         */
         const val ASSIGN_SQL: String =
             "INSERT INTO runners_assignments (session_id, epoch, org_id, runner_id, created_at) " +
                 "SELECT CAST(:session_id AS UUID), CAST(:epoch AS BIGINT), CAST(:org_id AS UUID), (" +
                 "SELECT a.runner_id FROM runners_assignments a JOIN runners_registered r " +
                 "ON r.org_id = a.org_id AND r.id = a.runner_id WHERE a.org_id = :org_id " +
-                "AND a.session_id = :session_id AND r.last_seen_at >= :online_since ORDER BY a.epoch DESC LIMIT 1" +
+                "AND a.session_id = :session_id AND r.last_seen_at >= :online_since AND $ROOM_SQL " +
+                "ORDER BY a.epoch DESC LIMIT 1" +
                 "), CAST(:now AS TIMESTAMPTZ) ON CONFLICT (session_id, epoch) DO NOTHING"
 
-        /** The oldest waiting execution, taken by one runner only even when two ask at once. */
+        /**
+         * The oldest waiting execution, taken by one runner only even when two ask at once, one at most, and only
+         * while the runner has room (its heartbeats come one after another: its count does not race with itself).
+         * The pick is a materialized CTE, run once: as `WHERE … IN (SELECT … LIMIT 1 FOR UPDATE SKIP LOCKED)`,
+         * PostgreSQL may run the subquery again for each row it scans, and a heartbeat then took several.
+         */
         const val TAKE_SQL: String =
-            "UPDATE runners_assignments SET runner_id = :runner_id WHERE (session_id, epoch) IN (" +
-                "SELECT session_id, epoch FROM runners_assignments WHERE org_id = :org_id AND runner_id IS NULL " +
-                "AND stopped_at IS NULL ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
+            "WITH pick AS MATERIALIZED (SELECT session_id, epoch FROM runners_assignments WHERE org_id = :org_id " +
+                "AND runner_id IS NULL AND stopped_at IS NULL " +
+                "AND EXISTS (SELECT 1 FROM runners_registered r WHERE r.org_id = :org_id AND r.id = :runner_id " +
+                "AND $ROOM_SQL) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) " +
+                "UPDATE runners_assignments a SET runner_id = :runner_id FROM pick " +
+                "WHERE a.session_id = pick.session_id AND a.epoch = pick.epoch"
 
         /** The online runners that still hold a session's workspace. */
         const val HOLDERS_SQL: String =

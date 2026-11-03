@@ -7,8 +7,10 @@ import dev.ostrom.server.secrets.infrastructure.tenantTableSql
 
 /**
  * The schema of the budgets module; its tables start with `budgets_`. `budgets_limits.scope` is `ORG` and
- * `DEFAULT_MEMBER` (member id null) or `MEMBER` (member id set). `budgets_alerts` makes each alert unique per limit
- * value, threshold and month across replicas: a changed limit alerts again.
+ * `DEFAULT_MEMBER` (member id null) or `MEMBER` (member id set); since version 3 a subject has one row per `period`
+ * (`DAY` or `MONTH`), each with its `action` (`BLOCK` or `WARN`). `budgets_alerts` makes each alert unique per limit
+ * value, action, threshold and period across replicas: a changed limit alerts again. Both tables stay under the
+ * row-level security of version 2: the new columns are read and written only through rows of the caller's org.
  */
 val BudgetsMigrations: List<SchemaMigration> = listOf(
     SchemaMigration(
@@ -43,5 +45,23 @@ val BudgetsMigrations: List<SchemaMigration> = listOf(
         name = "confine_budgets_to_their_org",
         sql = listOf(TENANT_ROLE_SQL, tenantTableSql("budgets_limits"), tenantTableSql("budgets_alerts"))
             .joinToString("\n"),
+    ),
+    SchemaMigration(
+        version = 3,
+        name = "budgets_by_the_day_that_stop_or_warn",
+        sql = """
+            ALTER TABLE budgets_limits
+                ADD COLUMN period TEXT NOT NULL DEFAULT 'MONTH' CHECK (period IN ('DAY', 'MONTH')),
+                ADD COLUMN action TEXT NOT NULL DEFAULT 'BLOCK' CHECK (action IN ('BLOCK', 'WARN'));
+            DROP INDEX budgets_limits_scope;
+            CREATE UNIQUE INDEX budgets_limits_scope
+                ON budgets_limits (org_id, scope, member_id, period) NULLS NOT DISTINCT;
+            ALTER TABLE budgets_alerts
+                ADD COLUMN period TEXT NOT NULL DEFAULT 'MONTH' CHECK (period IN ('DAY', 'MONTH')),
+                ADD COLUMN action TEXT NOT NULL DEFAULT 'BLOCK' CHECK (action IN ('BLOCK', 'WARN'));
+            DROP INDEX budgets_alerts_once;
+            CREATE UNIQUE INDEX budgets_alerts_once ON budgets_alerts
+                (org_id, scope, member_id, period, action, period_start, threshold, limit_micros) NULLS NOT DISTINCT
+        """.trimIndent(),
     ),
 )

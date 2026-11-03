@@ -45,6 +45,30 @@ class ReadBenchTest {
     }
 
     @Test
+    fun aReportIsHeldAloneAndUnderACeilingAtLoad() {
+        val alone = { ms: Double -> listOf("Result\nPlanning Time: 0.000 ms\nExecution Time: $ms ms") }
+        val loaded = listOf(REPORT_P95_CEILING)
+        ReadMeasure("report", emptyList(), alone(25.0), loaded, 3.milliseconds).assertReportWithinBudget(emptySet())
+        val slowAlone = ReadMeasure("slow alone", emptyList(), alone(51.0), listOf(1.milliseconds), 3.milliseconds)
+        assertFails { slowAlone.assertReportWithinBudget(emptySet()) }
+        val overCeiling = ReadMeasure("over", emptyList(), alone(1.0), listOf(REPORT_P95_CEILING * 2), 3.milliseconds)
+        assertFails { overCeiling.assertReportWithinBudget(emptySet()) }
+        val scan = ReadMeasure("scan", emptyList(), listOf("Seq Scan on big"), listOf(1.milliseconds), 3.milliseconds)
+        assertFails { scan.assertReportWithinBudget(setOf("big")) }
+    }
+
+    @Test
+    fun theMedianTrialIsKeptNotTheBestNorTheWorst() {
+        val fast = List(20) { 1.milliseconds }
+        val loaded = List(20) { 70.milliseconds }
+        val usual = List(19) { 2.milliseconds } + 30.milliseconds
+        assertEquals(usual, medianTrial(listOf(loaded, usual.reversed(), fast)))
+        assertEquals(fast, medianTrial(listOf(fast)))
+        assertFailsWith<IllegalArgumentException> { medianTrial(listOf(fast, usual)) }
+        assertFailsWith<IllegalArgumentException> { medianTrial(listOf(emptyList())) }
+    }
+
+    @Test
     fun theDatabaseTimeIsWhatPostgresReports() {
         val plan = "Result  (actual time=0.002..0.002)\nPlanning Time: 0.500 ms\nExecution Time: 1.25 ms"
         val plans = listOf(plan, "Result")

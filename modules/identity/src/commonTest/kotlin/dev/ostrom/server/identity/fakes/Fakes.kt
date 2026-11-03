@@ -70,6 +70,10 @@ class RecordingAuditLog : AuditLog {
         val occurredAt = Instant.parse("2026-10-30T10:00:00Z")
         return AuditEvent(Uuid.random(), entries.size.toLong(), entry, occurredAt, null, "hash", "sig", "kid")
     }
+
+    override fun sign(entry: AuditEntry): suspend (String?, Long) -> AuditEvent = { previousHash, sequence ->
+        AuditEvent(Uuid.random(), sequence, entry, Instant.fromEpochMilliseconds(0), previousHash, "hash", "sig", "kid")
+    }
 }
 
 class InMemoryUsersRepository : UsersRepository {
@@ -215,6 +219,12 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
         val live = tokens.values.filter { it.agentSessionId == agentSessionId && it.revokedAt == null }
         live.forEach { token -> update(token.id) { it.copy(revokedAt = at) } }
         return live.size.toLong()
+    }
+
+    override suspend fun purgeAgentTokens(before: Instant): Long {
+        val gone = tokens.filterValues { it.kind == TokenKind.AGENT && it.expiresAt?.let { at -> at < before } == true }
+        gone.keys.forEach { tokens.remove(it) }
+        return gone.size.toLong()
     }
 
     private fun update(id: Uuid, change: (ApiToken) -> ApiToken) {

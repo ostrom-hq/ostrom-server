@@ -90,7 +90,15 @@ private fun RegisteredRunnerHeartbeatRequest.toReport() = MachineReport(
         (sessionIdOf(reported.sessionId) to reported.epoch) to state
     },
     workspaces = workspaces.map(::sessionIdOf).toSet(),
+    capacity = capacity?.also {
+        if (it !in 0..MAX_CAPACITY) {
+            throw InvalidCloudSessionRequestException("The capacity is 0 to $MAX_CAPACITY sessions.")
+        }
+    },
 )
+
+/** The most sessions a registered runner may declare it runs at once. */
+private const val MAX_CAPACITY = 256
 
 private fun sessionIdOf(raw: String): Uuid =
     Uuid.parseOrNull(raw) ?: throw InvalidCloudSessionRequestException("Malformed session id.")

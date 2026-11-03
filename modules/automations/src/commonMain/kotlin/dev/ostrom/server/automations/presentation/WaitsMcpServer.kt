@@ -81,7 +81,13 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
         else -> error(id, METHOD_NOT_FOUND, "Method not found.")
     }
 
-    private class Bound(val binding: WaitsMcpApi, val callerFor: suspend (String) -> WaitCaller)
+    private class Bound(val binding: WaitsMcpApi, val callerFor: suspend (String) -> WaitCaller) {
+        /**
+         * The sessions whose waits are the caller's: the segments the server found for an agent token, else the one
+         * named, or none outside a session.
+         */
+        fun sessions(caller: WaitCaller): List<String>? = caller.segments ?: binding.session?.let(::listOf)
+    }
 
     private suspend fun call(id: JsonElement, name: String, arguments: JsonObject, bound: Bound): JsonObject = try {
         val text = when (name) {
@@ -101,15 +107,17 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
 
     private suspend fun ask(bound: Bound, arguments: AskArguments): String {
         val question = WaitSpec(arguments.title, arguments.body, arguments.fields, arguments.actions, arguments.refs)
-        val request = AskWait(question, bound.binding.session, bound.binding.run, arguments.assignee)
-        val wait = dependencies.ask.ask(bound.callerFor(WAITS_ASK), request, null).wait
+        val caller = bound.callerFor(WAITS_ASK)
+        val request = AskWait(question, caller.session ?: bound.binding.session, bound.binding.run, arguments.assignee)
+        val wait = dependencies.ask.ask(caller, request, null).wait
         return "Asked: wait ${wait.id} is open, for member ${wait.assignee}. End your turn now: the answer comes " +
             "back to this session when the member gives it, and get_wait reads it."
     }
 
     private suspend fun list(bound: Bound, arguments: ListArguments): String {
-        val query = WaitQuery(status = arguments.status, sessionId = bound.binding.session, runId = bound.binding.run)
-        val waits = dependencies.read.list(bound.callerFor(WAITS_READ), query).items
+        val caller = bound.callerFor(WAITS_READ)
+        val query = WaitQuery(status = arguments.status, sessionIds = bound.sessions(caller), runId = bound.binding.run)
+        val waits = dependencies.read.list(caller, query).items
         if (waits.isEmpty()) return "No waits."
         return waits.joinToString("\n") { "${it.id}  ${it.status.wire}  ${it.question.title}" }
     }
@@ -120,10 +128,16 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
         return "Cancelled wait ${wait.id}."
     }
 
-    /** A wait of this agent's session: a wait of another session is not this agent's to read or cancel. */
+    /**
+     * A wait of this agent's session, in any segment its launch opened (one asked before the launcher reopened it stays
+     * the agent's): a wait of another session, or of another launch's segment, is not this agent's to read or cancel.
+     */
     private suspend fun ownWait(bound: Bound, raw: String, scope: String): Wait {
-        val wait = dependencies.read.get(bound.callerFor(scope), waitId(raw))
-        return wait.takeIf { it.sessionId == bound.binding.session } ?: throw WaitNotFoundException()
+        val caller = bound.callerFor(scope)
+        val wait = dependencies.read.get(caller, waitId(raw))
+        val sessions = bound.sessions(caller)
+        val own = if (sessions == null) wait.sessionId == null else wait.sessionId in sessions
+        return wait.takeIf { own } ?: throw WaitNotFoundException()
     }
 
     private fun describe(wait: Wait): String = JSON.encodeToString(WaitResponse.serializer(), wait.toResponse())

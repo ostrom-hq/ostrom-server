@@ -76,6 +76,17 @@ interface AuditLog {
      * @return The signed, chained event.
      */
     suspend fun record(entry: AuditEntry): AuditEvent
+
+    /**
+     * The signed event of [entry], built once its place in its chain is known: for a writer that appends it to the
+     * chain itself, inside the transaction of the action it tells of
+     * ([dev.ostrom.server.identity.infrastructure.TransactionalAuditLog]).
+     *
+     * @param entry What happened.
+     *
+     * @return Builds the event from the previous event's hash (null for the first) and the next sequence.
+     */
+    fun sign(entry: AuditEntry): suspend (previousHash: String?, sequence: Long) -> AuditEvent
 }
 
 /**

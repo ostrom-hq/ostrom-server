@@ -77,6 +77,7 @@ class FakeRuntimeDriver : RuntimeDriver {
     var status: ExecutionStatus = ExecutionStatus.PENDING
     var workspaceDeleted = true
     var failStart: Exception? = null
+    var holder: Uuid? = null
 
     override suspend fun ensureWorkspace(session: CloudSession) {
         calls += "ensureWorkspace"
@@ -101,6 +102,8 @@ class FakeRuntimeDriver : RuntimeDriver {
         calls += "deleteWorkspace"
         return workspaceDeleted
     }
+
+    override suspend fun holder(session: CloudSession): Uuid? = holder
 }
 
 /**

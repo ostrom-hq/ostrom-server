@@ -2,8 +2,11 @@
 package dev.ostrom.server.reports
 
 import dev.ostrom.server.budgets.BudgetsModule
-import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.budgets.domain.BudgetGuard
+import dev.ostrom.server.budgets.domain.BudgetLimit
+import dev.ostrom.server.budgets.domain.BudgetTarget
 import dev.ostrom.server.budgets.domain.BudgetsRepository
+import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.instance.InstanceModule
@@ -25,6 +28,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodeURLParameter
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -94,7 +98,9 @@ class ReportsPostgresTest {
             repo = "beta/secret",
         ))
         decision(SeedDecision(ORG_B, "db", "workflow", "b-flow", CAROL.userId.toString(), NOW - 43.minutes))
-        koin.get<BudgetsRepository>().putOrgLimits(ORG_A, 100_000_000, 20_000_000, NOW)
+        val budgets = koin.get<BudgetsRepository>()
+        budgets.replaceLimits(ORG_A, BudgetTarget.Org, listOf(BudgetLimit(100_000_000)), NOW)
+        budgets.replaceLimits(ORG_A, BudgetTarget.DefaultMember, listOf(BudgetLimit(20_000_000)), NOW)
     }
 
     private suspend fun TestServer.read(token: String?, path: String): HttpResponse =
@@ -300,5 +306,42 @@ class ReportsPostgresTest {
         assertEquals(HttpStatusCode.Forbidden, server.read("spend", "/api/v1/activity").status)
         assertEquals(HttpStatusCode.Unauthorized, server.read(null, "/api/v1/activity").status)
         assertEquals(HttpStatusCode.NotFound, server.read("nobody", "/api/v1/activity").status)
+    }
+
+    @Test
+    fun aBudgetPastItsLimitIsListedAsExceededToWhoeverSeesItsSpending() = reportsTest { server ->
+        // mia's own budget: 0.40 $ a day, that only warns; she spent 0.50 $ today.
+        server.sql(
+            ORG_A,
+            "INSERT INTO budgets_limits (org_id, member_id, scope, period, action, limit_micros, updated_at) " +
+                "VALUES (:org, :member, 'MEMBER', 'DAY', 'WARN', 400000, :at)",
+            "org" to ORG_A, "member" to MIA.memberId, "at" to NOW,
+        )
+        // And the organization's monthly 1 $ that stops: it spent 1.55 $ this month.
+        server.koin.get<BudgetsRepository>().replaceLimits(ORG_A, BudgetTarget.Org, listOf(BudgetLimit(1_000_000)), NOW)
+        // The gateway's check before her next call is what sees both.
+        server.koin.get<BudgetGuard>().check(ORG_A, MIA.memberId)
+
+        suspend fun exceeded(token: String) =
+            server.read(token, "/api/v1/spending").body<JsonObject>().getValue("exceeded").jsonArray
+        val (org, line) = exceeded("olga").map { it.jsonObject }
+        assertEquals("organization", org.getValue("scope").jsonPrimitive.content)
+        assertEquals(null, org["subject"], "The organization's own has no subject")
+        assertEquals("month", org.getValue("period").jsonPrimitive.content)
+        assertEquals(1.0, org.getValue("usd").jsonPrimitive.content.toDouble())
+        assertEquals("true", org.getValue("hardStop").jsonPrimitive.content)
+        assertEquals("member", line.getValue("scope").jsonPrimitive.content)
+        assertEquals(MIA.memberId.toString(), line.getValue("subject").jsonPrimitive.content)
+        assertEquals("day", line.getValue("period").jsonPrimitive.content)
+        assertEquals("0.4", line.getValue("usd").jsonPrimitive.content)
+        assertEquals("false", line.getValue("hardStop").jsonPrimitive.content)
+        assertEquals(NOW.toString(), line.getValue("since").jsonPrimitive.content)
+        assertEquals(listOf(line), exceeded("mia").map { it.jsonObject }, "mia sees her own")
+        assertEquals(0, exceeded("carol").size, "Another organization sees none")
+
+        // Raised past what she spent, the limit is no longer exceeded.
+        val raise = "UPDATE budgets_limits SET limit_micros = 600000 WHERE member_id = :member"
+        server.sql(ORG_A, raise, "member" to MIA.memberId)
+        assertEquals(listOf(org), exceeded("olga").map { it.jsonObject })
     }
 }

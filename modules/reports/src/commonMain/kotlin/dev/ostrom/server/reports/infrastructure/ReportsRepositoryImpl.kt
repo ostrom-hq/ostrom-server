@@ -27,9 +27,7 @@ import kotlin.uuid.Uuid
  */
 class ReportsRepositoryImpl(private val driver: Driver) : ReportsRepository {
     override suspend fun spending(orgId: Uuid, memberId: Uuid?, from: Instant, to: Instant): SpendingTotals {
-        val statement = Statement.create(ReportsQueries.spending(member = memberId != null))
-            .bind("org_id", orgId).bind("from", from).bind("to", to)
-        memberId?.let { statement.bind("member_id", it) }
+        val statement = spendingStatement(orgId, memberId, from, to)
         val rows = driver.withOrganization(orgId) { it.fetchAll(statement).getOrThrow().map { row -> row } }
         fun lines(dim: String) = rows.filter { it.get("dim").asString() == dim }.map { it.toLine(dim) }
         return SpendingTotals(

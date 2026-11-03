@@ -31,11 +31,13 @@ import dev.ostrom.server.orgs.domain.OrgRateLimiter
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.orgs.domain.People
 import dev.ostrom.server.orgs.domain.SlugTakenException
+import dev.ostrom.server.orgs.fakes.orgDeleted
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -91,6 +93,16 @@ class OrgsPostgresTest {
             null,
         )
 
+    private suspend fun TestServer.nameAndZone(id: Uuid): Pair<String, String> =
+        database.superuser.fetchAll(
+            Statement.create("SELECT name, time_zone FROM orgs_organizations WHERE id = :id").bind("id", id),
+        ).getOrThrow().single().let { it.get("name").asString() to it.get("time_zone").asString() }
+
+    private suspend fun TestServer.purgeAfter(id: Uuid): Instant =
+        database.superuser.fetchAll(
+            Statement.create("SELECT purge_after FROM orgs_organizations WHERE id = :id").bind("id", id),
+        ).getOrThrow().single().get("purge_after").asInstant()
+
     @Test
     @Suppress("LongMethod") // One organization's life through the repositories, read top to bottom.
     fun organizationsAreCreatedReadRenamedAndDeleted() =
@@ -125,10 +137,19 @@ class OrgsPostgresTest {
             assertTrue(acme.id !in deletions.deletionsToSettle(now, 10), "A live organization is not being deleted")
 
             invitations.create(link(acme, owner), "hash-1")
-            orgs.delete(acme.id, now, now + 30.days)
+            assertTrue(orgs.delete(acme.id, now, orgDeleted(acme.id, ada.id), now + 30.days))
+            // A second deletion, replayed or run at the same time, changes nothing: its 30 days do not start again.
+            assertFalse(orgs.delete(acme.id, now + 1.days, orgDeleted(acme.id, ada.id), now + 31.days))
+            assertEquals(now + 30.days, server.purgeAfter(acme.id))
+            orgs.update(acme.id, "Late rename", "Asia/Tokyo")
+            assertEquals(
+                "Acme Labs" to "Europe/Paris",
+                server.nameAndZone(acme.id),
+                "A change that raced the deletion leaves the deleted row as it is",
+            )
             assertNull(orgs.get(acme.id))
             assertNull(orgs.findBySlug("acme"))
-            assertTrue(orgs.slugTaken("acme"), "A deleted organization keeps its short name")
+            assertTrue(orgs.slugTaken("acme"), "A deleted organization keeps its short name during its days of grace")
             assertEquals(emptyList(), orgs.listOfUser(ada.id))
             assertNull(members.findByUser(acme.id, ada.id))
             assertNull(invitations.findLiveByTokenHash("hash-1", now))
@@ -162,7 +183,7 @@ class OrgsPostgresTest {
             assertNull(tombstone.get("github_org_id").asStringOrNull())
             assertEquals("UTC", tombstone.get("time_zone").asString())
             assertEquals(now + 30.days, tombstone.get("purged_at").asInstant())
-            assertTrue(orgs.slugTaken("acme"), "An erased organization still keeps its short name")
+            assertFalse(orgs.slugTaken("acme"), "An erased organization gives its short name back")
         }
 
     @Test
@@ -189,6 +210,27 @@ class OrgsPostgresTest {
                 )
             }
             assertEquals(0, invitations.findLiveByTokenHash("h", now)?.uses)
+        }
+
+    @Test
+    fun twoDeletionsAtOnceDeleteOnceAndRecordOneEvent() =
+        serverTest(modules) { server ->
+            val orgs = server.koin.get<OrgsRepository>()
+            val ada = server.user("ada")
+            val acme = org("acme")
+            orgs.create(acme, member(acme, ada, OrgRole.OWNER)) { false }
+
+            val deleted = coroutineScope {
+                (1..4).map { async { orgs.delete(acme.id, now, orgDeleted(acme.id, ada.id)) } }.awaitAll()
+            }
+
+            assertEquals(1, deleted.count { it }, "Exactly one deletion wins")
+            val events = server.database.superuser.fetchAll(
+                Statement.create(
+                    "SELECT count(*) AS n FROM identity_audit_events WHERE org_id = :org AND action = 'org.deleted'",
+                ).bind("org", acme.id),
+            ).getOrThrow().single().get("n").asLong()
+            assertEquals(1L, events, "One event, chained once")
         }
 
     @Test
@@ -479,7 +521,7 @@ class OrgsPostgresTest {
             assertFalse(directory.isActiveMember(acme.id, Uuid.random().toString()))
             assertFalse(directory.isActiveMember(acme.id, "not-a-member-id"))
             // Deleting the organization removes its members: none stays active.
-            orgs.delete(acme.id, now)
+            orgs.delete(acme.id, now, orgDeleted(acme.id))
             assertFalse(directory.isActiveMember(acme.id, owner.id.toString()))
         }
 
