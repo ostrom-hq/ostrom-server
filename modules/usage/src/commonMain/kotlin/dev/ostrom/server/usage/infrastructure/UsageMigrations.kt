@@ -127,4 +127,14 @@ val UsageMigrations: List<SchemaMigration> = listOf(
             tenantTableSql("usage_holds"),
         ).joinToString("\n"),
     ),
+    // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+    // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+    SchemaMigration(
+        version = 6,
+        name = "usage_router_policies_inside_functions_only",
+        sql = """
+            ALTER POLICY usage_events_router_read ON usage_events USING (current_user = 'ostrom_router');
+            ALTER POLICY usage_events_router_purge ON usage_events USING (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
 )

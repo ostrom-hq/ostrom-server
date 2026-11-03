@@ -5,6 +5,7 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.WriteAccess
+import dev.ostrom.server.kernel.auth.admitServiceKey
 import dev.ostrom.server.kernel.auth.auditGovernance
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.governs
@@ -12,10 +13,12 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.rules.domain.models.Decider
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.OnlyConsoleDecidesException
+import dev.ostrom.server.rules.domain.usecases.ListRulesUseCase
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -25,21 +28,25 @@ import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlinx.serialization.json.JsonObject
+import kotlin.uuid.Uuid
 
 /**
  * The rules routes. A member, or a token with [RuleScopes.READ], reads the rules and the decisions (the policy too, or
  * with `gates:read`); only an owner or admin writes, decides or deletes a rule and sets the policy (CONVENTIONS 16.2),
  * signed in to the console or with the token of `ostrom login --admin` ([GovernanceScopes.POLICY_WRITE] for the rules,
  * [GovernanceScopes.GATES_POLICY] for the policy, bound to their organization): any other token is refused even with
- * every scope, and a device always is.
+ * every scope, and a device always is. A service key with [RuleScopes.READ] reads the rules of its own organization
+ * for its CI (`listRules`, `getRule`), each call audited in its name; it reads neither the decisions nor the policy,
+ * and never writes.
  *
  * @param dependencies The use cases.
  */
 fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies) {
     authenticated {
         get<RulesApi> { filters ->
-            val caller = call.requireCaller(callers, RuleScopes.READ)
-            call.respond(RulesPage(listRules(caller.orgId, filters.toQuery()).map { it.toDto() }))
+            val orgId = call.readerOrg(this@with, "listRules")
+            val page = listRules(orgId, filters.toQuery(), filters.limit ?: ListRulesUseCase.MAX_RULES)
+            call.respond(RulesPage(page.items.map { it.toDto() }, page.next?.wire))
         }
         post<RulesApi> {
             val decider = call.decider(callers, actors)
@@ -47,8 +54,7 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
             call.respond(HttpStatusCode.Created, rule.toDto())
         }
         get<RulesApi.Id> { path ->
-            val caller = call.requireCaller(callers, RuleScopes.READ)
-            call.respond(getRule(caller.orgId, path.id).toDto())
+            call.respond(getRule(call.readerOrg(this@with, "getRule"), path.id).toDto())
         }
         patch<RulesApi.Id> { path ->
             val decider = call.decider(callers, actors)
@@ -82,6 +88,14 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
         }
     }
 }
+
+/**
+ * The organization whose rules a caller reads: a service key's own with [RuleScopes.READ], audited; a member's, or a
+ * token's with that scope, as on the other reads.
+ */
+private suspend fun ApplicationCall.readerOrg(dependencies: RulesRoutesDependencies, operation: String): Uuid =
+    requirePrincipal().admitServiceKey(dependencies.serviceKeys, RuleScopes.READ, operation, request.path())
+        ?: requireCaller(dependencies.callers, RuleScopes.READ).orgId
 
 /**
  * The person who decides: signed in to the console (a user's browser session, which holds every user scope) or holding

@@ -102,7 +102,7 @@ class NotificationsTest {
     @Test
     fun aPersonOutsideASessionNotifiesAsThemselvesInThePackagesRepository() = runTest {
         val sent = send(BOB, request(sessionId = null, command = null))
-        assertEquals("bob ran  in acme/pkg (-)", sent.text)
+        assertEquals("bob ran  in acme/api (-)", sent.text)
         assertNull(sent.sessionId)
         val noRepo = SendNotificationUseCaseImpl(
             access(packages = FakePackages(listOf(PACKAGE.copy(envelope = envelope(repo = null))))),
@@ -117,7 +117,7 @@ class NotificationsTest {
             channels,
             FixedClock(),
         )
-        assertEquals("ada ran ls in acme/pkg (s-1)", sessionWithoutRepo(AGENT, request(command = "ls")).text)
+        assertEquals("ada ran ls in acme/api (s-1)", sessionWithoutRepo(AGENT, request(command = "ls")).text)
     }
 
     @Test

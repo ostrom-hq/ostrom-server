@@ -75,7 +75,7 @@ object SessionsModule : ServerModule {
     override val migrations: List<SchemaMigration> = SessionsMigrations
 
     override fun routes(route: Route, koin: Koin) {
-        route.sessionsRoutes(koin.get())
+        route.sessionsRoutes(koin.get(), koin.get())
     }
 
     /**

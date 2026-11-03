@@ -13,6 +13,9 @@ on:
       server_image:
         description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
         default: ""
+      runner_image:
+        description: Cloud session image the server starts on this runner's Docker (empty = latest)
+        default: ""
       web_ref:
         description: ostrom-web ref whose console and journeys run
         default: main
@@ -58,6 +61,7 @@ jobs:
       # The console of ostrom-web main, unless a dispatch names another ref.
       WEB_REF: ${{ inputs.web_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
+      RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
       # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch runs
       # what it names, or all of e2e-real.
       SPECS: ${{ github.event_name == 'pull_request' && 'me.spec.ts' || inputs.specs }}
@@ -111,10 +115,15 @@ jobs:
             || { echo "::error::$image is ostrom-server@${revision:0:7}, older than $MIN_SERVER (server#92)"; exit 1; }
           # The database roles of the image's own commit, not of a main that may have moved past it.
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
+          # The cloud sessions' image, by digest: the server starts it on this runner's Docker (line 6.2).
+          docker pull --quiet "$RUNNER_IMAGE" || { echo "::error::$RUNNER_IMAGE cannot be pulled"; exit 1; }
+          runner=$(docker inspect -f '{{index .RepoDigests 0}}' "$RUNNER_IMAGE")
           echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
             echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
+            echo "- cloud session: \`$runner\`, on this runner's Docker"
             echo "- console: ostrom-web $(git -C web rev-parse --short HEAD) ($WEB_REF), built here without mocks"
           } >> "$GITHUB_STEP_SUMMARY"
       # The GitHub App of the journeys: a key made for this run only. The server points at the fake GitHub the journeys
@@ -123,6 +132,7 @@ jobs:
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
           IMAGE: ${{ steps.server.outputs.image }}
+          SESSION_IMAGE: ${{ steps.server.outputs.runner }}
           PGPASSWORD: ostrom
           OWNER_URL: postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom
         run: |
@@ -135,6 +145,7 @@ jobs:
           # runner's loopback, is trusted for X-Forwarded-For: each person of the journeys signs in from an address of
           # their own (ostrom-web e2e-real/real.ts, since ostrom-web#54), so sixty sign-ins from one machine do not trip the
           # per-source limit. A console from before it sends no address of its own, and its sign-ins are limited again.
+          # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -157,6 +168,9 @@ jobs:
           OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
           OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_web_journey
           OSTROM_WEB_ORIGIN=http://localhost:4173
+          OSTROM_READS_PER_MINUTE=6000
+          OSTROM_READS_IN_FLIGHT=64
+          OSTROM_READ_WAITS_IN_FLIGHT=256
           ENV
           # The journeys' GitHub App gets a key made for this run, written straight to the env file: never to
           # $GITHUB_ENV, whose values every later step prints. One line, its newlines as `\n`, as the server reads it.
@@ -165,6 +179,20 @@ jobs:
             >> "$RUNNER_TEMP/server.env"
           rm "$RUNNER_TEMP/github-app.pem"
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          # Cloud sessions (line 6.2: launch and stop from /cloud) on this runner's Docker, as in demo-stack: the
+          # Engine API through a socket proxy limited to what the driver calls, on loopback. The session's containers
+          # reach the server, on the host network, through host.docker.internal (the driver adds it).
+          docker run -d --name docker-api -p 127.0.0.1:2375:2375 -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -e CONTAINERS=1 -e VOLUMES=1 -e IMAGES=1 -e POST=1 -e ALLOW_START=1 -e ALLOW_STOP=1 \
+            -e INFO=0 -e NETWORKS=0 -e EXEC=0 \
+            docker.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+          {
+            echo "OSTROM_RUNNERS_DRIVER=docker"
+            echo "OSTROM_RUNNERS_DOCKER_API_URL=http://127.0.0.1:2375"
+            echo "OSTROM_RUNNERS_SERVER_URL=http://host.docker.internal:4600"
+            echo "OSTROM_RUNNERS_IMAGE=$SESSION_IMAGE"
+            echo "OSTROM_RUNNERS_ALLOWED_ORGS=*"
+          } >> "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
@@ -199,7 +227,10 @@ jobs:
           pnpm exec playwright test --config playwright.real.config.ts $SPECS
       - name: Server logs
         if: always()
-        run: docker logs ostrom-server 2>&1 | tail -n 300 || true
+        run: |
+          docker logs ostrom-server 2>&1 | tail -n 300 || true
+          echo "--- cloud session containers"
+          docker ps -a --filter label=ostrom.run/session --format '{{.Names}} {{.Status}}' || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

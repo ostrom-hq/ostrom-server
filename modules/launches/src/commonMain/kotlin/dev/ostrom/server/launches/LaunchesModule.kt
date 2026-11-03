@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.domain.services.AgentTokenService
+import dev.ostrom.server.launches.domain.services.CloudExecutions
 import dev.ostrom.server.launches.domain.services.LaunchModelRules
 import dev.ostrom.server.launches.domain.services.LauncherResolver
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
@@ -25,6 +26,7 @@ import dev.ostrom.server.launches.infrastructure.LaunchesMigrations
 import dev.ostrom.server.launches.infrastructure.ModelAccessLaunchRules
 import dev.ostrom.server.launches.infrastructure.NoLaunchModelRules
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
+import dev.ostrom.server.launches.infrastructure.RunnerCloudExecutions
 import dev.ostrom.server.launches.presentation.LaunchesRoutesDependencies
 import dev.ostrom.server.launches.presentation.launchesRoutes
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -48,7 +50,8 @@ object LaunchesModule : ServerModule {
         single<LaunchesRepository> { PostgresLaunchesRepository(get()) }
         single<LauncherResolver> { IdentityLauncherResolver(get(), get(), get()) }
         single<AgentTokenService> { IdentityAgentTokens(get()) }
-        single { LaunchAgents(get(), get(), get()) }
+        single<CloudExecutions> { RunnerCloudExecutions(get()) }
+        single { LaunchAgents(get(), get(), get(), get()) }
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
         single<CallerResolver> { LaunchRelayCallers(get(), get()) }
         single { LaunchPolicy(get()) }

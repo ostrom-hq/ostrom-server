@@ -6,6 +6,8 @@ import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.ReadThrottle
+import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.reports.domain.ActivityCursor
 import dev.ostrom.server.reports.domain.SpendingPeriod
 import dev.ostrom.server.reports.domain.Viewer
@@ -19,17 +21,20 @@ import io.ktor.server.routing.Route
  * or app session, or a token with the read scope. The organization comes from the credential, never the request.
  *
  * @param dependencies The use cases.
+ * @param throttle Bounds both reports per caller (AUDIT-SECU-LECTURES M1): each reads a lot.
  */
-fun Route.reportsRoutes(dependencies: ReportsRoutesDependencies) = with(dependencies) {
+fun Route.reportsRoutes(dependencies: ReportsRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
     authenticated {
-        get<SpendingApi> { params ->
-            val viewer = call.viewer(this@with, ReportsScopes.spending)
-            call.respond(getSpending(viewer, SpendingPeriod.of(params.period)).toDto())
-        }
-        get<ActivityApi> { params ->
-            val viewer = call.viewer(this@with, ReportsScopes.activity)
-            val before = params.before?.let(ActivityCursor::of)
-            call.respond(listActivity(viewer, before, params.repo).toDto())
+        throttledReads(throttle) {
+            get<SpendingApi> { params ->
+                val viewer = call.viewer(this@with, ReportsScopes.spending)
+                call.respond(getSpending(viewer, SpendingPeriod.of(params.period)).toDto())
+            }
+            get<ActivityApi> { params ->
+                val viewer = call.viewer(this@with, ReportsScopes.activity)
+                val before = params.before?.let(ActivityCursor::of)
+                call.respond(listActivity(viewer, before, params.repo).toDto())
+            }
         }
     }
 }

@@ -70,8 +70,25 @@ class OrgAuditTest {
 
         assertEquals(listOf("org.created"), world.list(orgId, "ada", null, null).lines.map { it.event.entry.action })
         assertEquals(listOf(gone), world.list(orgId, null, "org.renamed", null).lines.map { it.event.entry.actorId })
-        // Nobody by that login: no event, without looking at the log.
         assertEquals(emptyList(), world.list(orgId, "nobody", null, null).lines)
+    }
+
+    @Test
+    fun anUnknownLoginReadsTheLogLikeAKnownOne() = runTest {
+        // AUDIT-SECU-LECTURES B1: the same reads for a login of the instance and one that does not exist, so the time
+        // of the answer tells them apart no more than its body.
+        val world = world()
+        world.log.record(AuditEntry(orgId, ada.id, "org.created", "org", "$orgId"))
+        val elsewhere = User(Uuid.random(), "grace", "Grace", null, null, Instant.fromEpochSeconds(0))
+        world.users.users[elsewhere.id] = elsewhere
+
+        val unknown = world.list(orgId, "nobody", null, null)
+        val other = world.list(orgId, "grace", null, null)
+
+        assertEquals(emptyList(), unknown.lines)
+        assertEquals(emptyList(), other.lines)
+        assertEquals(listOf(Uuid.NIL, elsewhere.id), world.events.orgReads.map { it.actorId })
+        assertEquals(1, world.events.orgReads.map { it.limit }.toSet().size, "the same query")
     }
 
     @Test

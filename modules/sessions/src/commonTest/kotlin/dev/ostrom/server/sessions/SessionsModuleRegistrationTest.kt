@@ -29,7 +29,7 @@ class SessionsModuleRegistrationTest {
     @Test
     fun registersUnderItsNameWithDefinitionsThatLoad() {
         assertEquals("sessions", SessionsModule.name)
-        assertEquals(4, SessionsModule.migrations.size)
+        assertEquals(5, SessionsModule.migrations.size)
         koinApplication { modules(SessionsModule.koinModule) }.close()
     }
 

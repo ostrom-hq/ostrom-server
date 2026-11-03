@@ -165,4 +165,15 @@ val BillingMigrations: List<SchemaMigration> = listOf(
         name = "billing_routing_under_row_level_security",
         sql = ROUTING_UNDER_ROW_LEVEL_SECURITY_SQL,
     ),
+    // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+    // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+    SchemaMigration(
+        version = 4,
+        name = "billing_router_policies_inside_functions_only",
+        sql = """
+            ALTER POLICY billing_customers_router ON billing_customers USING (current_user = 'ostrom_router');
+            ALTER POLICY billing_outbox_router ON billing_outbox USING (current_user = 'ostrom_router')
+                WITH CHECK (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
 )

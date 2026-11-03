@@ -52,7 +52,7 @@ object WorkflowRunsModule : ServerModule {
         single<WorkflowRunsRepository> { PostgresWorkflowRunsRepository(get()) }
         single<RunPackages> { CompilerRunPackages(get()) }
         single<RunSessions> { SessionsRunSessions(get(), get()) }
-        single { RunAccess(get(), get()) }
+        single { RunAccess(get(), get(), get()) }
         single<ReportCheckUseCase> { ReportCheckUseCaseImpl(get(), get(), get()) }
         single<ListChecksUseCase> { ListChecksUseCaseImpl(get(), get()) }
         single<SendNotificationUseCase> { SendNotificationUseCaseImpl(get(), get(), get(), get()) }
@@ -62,7 +62,9 @@ object WorkflowRunsModule : ServerModule {
         single<RunLaunches> { LaunchesRunLaunches(get()) }
         single<ReportRunnerCheckUseCase> { ReportRunnerCheckUseCaseImpl(get(), get(), get()) }
         single<GateCheckProofs> { RunsGateCheckProofs(get()) { get() } }
-        single { WorkflowRunsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single {
+            WorkflowRunsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        }
     }
 
     override val migrations: List<SchemaMigration> = WorkflowRunsMigrations

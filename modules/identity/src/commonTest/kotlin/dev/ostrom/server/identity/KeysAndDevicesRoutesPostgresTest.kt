@@ -82,7 +82,7 @@ class KeysAndDevicesRoutesPostgresTest {
         setBody(body)
     }
 
-    private val ciKey = CreateServiceKeyRequest("CI", listOf("sessions:read"), expiresInDays = 30)
+    private val ciKey = CreateServiceKeyRequest("CI", listOf("sessions:write"), expiresInDays = 30)
 
     private suspend fun TestServer.keys(person: Person): List<ServiceKeyResponse> =
         client.get(KEYS) { signedIn(person) }.body<ServiceKeysResponse>().items

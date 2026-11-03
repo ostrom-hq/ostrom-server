@@ -125,4 +125,13 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
         REVOKE CREATE ON SCHEMA public FROM ostrom_router
         """.trimIndent(),
     ),
+    // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+    // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+    SchemaMigration(
+        version = 5,
+        name = "sessions_router_policies_inside_functions_only",
+        sql = """
+            ALTER POLICY sessions_sessions_router ON sessions_sessions USING (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
 )
