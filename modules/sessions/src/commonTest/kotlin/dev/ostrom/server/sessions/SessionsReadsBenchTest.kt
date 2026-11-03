@@ -14,13 +14,15 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.testing.assertWithinBudget
-import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.benchTest
+import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import org.koin.dsl.module
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /**
@@ -75,7 +77,7 @@ class SessionsReadsBenchTest {
         val measures = listOf(
             "GET /api/v1/sessions" to "/api/v1/sessions",
             "GET /api/v1/sessions?before=s2500" to "/api/v1/sessions?before=s2500",
-            "GET /api/v1/sessions?dev=dev7 (166 of 5 000)" to "/api/v1/sessions?dev=dev7",
+            "GET /api/v1/sessions?dev=dev7 (167 of 5 000)" to "/api/v1/sessions?dev=dev7",
             "GET /api/v1/sessions?dev=ada (5 of 5 000)" to "/api/v1/sessions?dev=ada",
             "GET /api/v1/sessions?open=true (100 of 5 000)" to "/api/v1/sessions?open=true",
             "GET /api/v1/sessions?repo=acme/r3" to "/api/v1/sessions?repo=acme/r3",
@@ -83,6 +85,12 @@ class SessionsReadsBenchTest {
         ).map { (name, path) -> server.measureRead(name) { get(path) { bearerAuth("lyes") } } }
         writeReadReport("sessions", measures)
         measures.forEach { it.assertWithinBudget(setOf("sessions_sessions")) }
+        // No N+1: a page of 50 sends the queries of a page of 5. The filters read through their indexes (version 6).
+        val lists = measures.dropLast(1)
+        assertEquals(1, lists.map { it.queries }.distinct().size, lists.joinToString("\n") { it.describe() })
+        listOf(3 to "sessions_by_dev", 4 to "sessions_open").forEach { (at, index) ->
+            assertTrue(measures[at].plans.any { index in it }, measures[at].describe())
+        }
     }
 
     private companion object {
