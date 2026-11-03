@@ -149,7 +149,7 @@ class WorkflowsUseCaseTest {
         assertEquals(listOf("acme/docs"), saved.doc.repos)
         assertEquals(JsonArray(listOf(JsonPrimitive("acme/docs"))), signer.signed.single().third["repos"])
         // R6: its name says acme-api, but it is limited to acme/docs.
-        assertEquals(emptyList(), workflows.list(org, "acme-api", null).map { it.doc.workflow.id })
+        assertEquals(emptyList<String>(), workflows.list(org, "acme-api", null).map { it.doc.workflow.id })
         assertEquals(listOf("release"), workflows.list(org, "acme/docs", null).map { it.doc.workflow.id })
 
         // Changing only the repositories is a decision; saving the same is none; removing them is one.

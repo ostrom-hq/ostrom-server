@@ -27,7 +27,8 @@ class WorkflowReposTest {
         assertNull(WorkflowRepos.of(raw(JsonNull)))
         val mixed = list(JsonPrimitive("acme/api"), JsonPrimitive(1), JsonNull, JsonArray(emptyList()))
         assertEquals(listOf("acme/api"), WorkflowRepos.of(mixed))
-        assertEquals(emptyList(), WorkflowRepos.of(raw(JsonPrimitive("acme/api"))), "not a list: applies nowhere")
+        val notAList = raw(JsonPrimitive("acme/api"))
+        assertEquals(emptyList<String>(), WorkflowRepos.of(notAList), "not a list: applies nowhere")
         assertEquals(mapOf("id" to JsonPrimitive("w")), WorkflowRepos.withoutField(texts("acme/api")))
     }
 
