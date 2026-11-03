@@ -28,7 +28,7 @@ internal object WaitRules {
     val DONE = WaitAction("done", "Done")
 
     private val ID = Regex("[A-Za-z][A-Za-z0-9_]{0,63}")
-    private val REF_ID = Regex("[A-Za-z0-9._:-]{1,200}")
+    private val REF_ID = Regex("[A-Za-z0-9._:~-]{1,200}") // `~`: a resumed session's segment, `<id>~r<n>`
     private val STYLES = setOf("primary", "secondary", "danger")
     private val REF_KINDS = setOf("artifact", "session", "url")
 
