@@ -2,6 +2,7 @@
 
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.ADMIN_READ_SCOPES
 import dev.ostrom.server.identity.domain.ADMIN_SCOPES
 import dev.ostrom.server.identity.domain.ADMIN_TOKEN_LIFETIME
 import dev.ostrom.server.identity.domain.ADMIN_TOKEN_SCOPES
@@ -28,8 +29,9 @@ class AdminScopesTest {
     @Test
     fun onlyTheAdminTokenHoldsTheGovernanceScopesWhateverARowLists() {
         val stored = ADMIN_SCOPES + CLI_SCOPES + "orgs:write" + "user:*"
-        assertEquals(ADMIN_TOKEN_SCOPES, grantedScopes(TokenKind.ADMIN, stored))
-        assertEquals(CLI_SCOPES + ADMIN_SCOPES, ADMIN_TOKEN_SCOPES)
+        // never more than its row lists: this one lists no read of the governance
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES, grantedScopes(TokenKind.ADMIN, stored))
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES, ADMIN_TOKEN_SCOPES)
         assertEquals(CLI_SCOPES + "orgs:write", grantedScopes(TokenKind.PERSONAL, stored - "user:*"))
         assertEquals(CLI_SCOPES, grantedScopes(TokenKind.CLI, stored))
         assertEquals(8.hours, ADMIN_TOKEN_LIFETIME)
