@@ -81,8 +81,9 @@ class AskWaitUseCaseImpl(
 
     private suspend fun newWait(caller: WaitCaller, request: AskWait, key: String?): Wait {
         requireWait(request.kind == null || request.kind == HUMAN_REQUEST) { "kind is $HUMAN_REQUEST." }
-        requireWait(request.sessionId == null || WaitRules.REFERENCE.matches(request.sessionId)) { "sessionId is malformed." }
-        requireWait(request.runId == null || WaitRules.REFERENCE.matches(request.runId)) { "runId is malformed." }
+        val reference = WaitRules.REFERENCE
+        requireWait(request.sessionId == null || reference.matches(request.sessionId)) { "sessionId is malformed." }
+        requireWait(request.runId == null || reference.matches(request.runId)) { "runId is malformed." }
         val assignee = request.assignee ?: caller.memberId
         if (caller.agent && assignee != caller.memberId) throw AgentAssigneeRefusedException()
         if (assignee != caller.memberId && !members.isActiveMember(caller.orgId, assignee)) {
