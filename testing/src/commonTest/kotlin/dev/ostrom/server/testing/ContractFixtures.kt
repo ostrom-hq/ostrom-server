@@ -69,6 +69,7 @@ object ContractFixtures {
                 "responses": {
                   "200": {
                     "content": {
+                      "application/json": {"schema": {"$R": "#/components/schemas/Thing"}},
                       "text/event-stream": {
                         "schema": {"type": "string"},
                         "x-ostrom-event-data": {"$R": "#/components/schemas/Thing"},

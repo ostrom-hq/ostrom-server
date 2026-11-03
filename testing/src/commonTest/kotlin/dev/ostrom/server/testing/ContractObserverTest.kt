@@ -128,7 +128,9 @@ class ContractObserverTest {
         things(observer)
         assertEquals("data: [DONE]", client.get("/api/v1/things/stream").bodyAsText().lines().dropLast(2).last())
         assertEquals("""{"items": [{"id": "a"}]}""", client.get("/api/v1/things?as=streamed").bodyAsText())
-        client.get("/api/v1/things/stream?as=drift")
+        client.get("/api/v1/things/stream?as=json")
+        listOf("drift", "teapot").forEach { client.get("/api/v1/things/stream?as=$it") }
+        client.get("/api/v1/things?as=events")
         client.delete("/api/v1/things/a?as=streamed")
         client.get("/streamed/elsewhere")
 
@@ -137,11 +139,13 @@ class ContractObserverTest {
             "streamThings 200 $.id MISSING",
             "streamThings 200 $.name UNDECLARED",
             "streamThings 200 $ BODY",
+            "streamThings 418 $ STATUS",
+            "listThings 200 $ BODY",
         )
         assertEquals(expected, failure.lines().drop(1).map { it.substringBefore("  (") }, failure)
         assertTrue("a data: that is not JSON" in failure, failure)
-        val seen = report(reports).lines().filter { it.startsWith("seen") }
-        assertEquals(listOf("seen listThings"), seen, "A JSON answer written as it goes is read to its end")
+        val seen = report(reports).lines().filter { it.startsWith("seen") }.sorted()
+        assertEquals(listOf("seen listThings", "seen streamThings"), seen, "Each answer is read to its end")
     }
 
     @Test
@@ -175,10 +179,11 @@ class ContractObserverTest {
 
 private val json = ContentType.Application.Json
 
-// The list, in one piece (its status set on the response, not the content) or written as it goes (a
-// WriteChannelContent).
+// The list, in one piece (its status set on the response, not the content), written as it goes (a
+// WriteChannelContent), or as events where its contract declares none.
 private suspend fun list(call: RoutingCall) = when (call.request.queryParameters["as"]) {
     "streamed" -> call.respondBytesWriter(json) { writeStringUtf8("""{"items": [{"id": "a"}]}""") }
+    "events" -> call.respond(events("data: {}\n\n"))
     else -> {
         call.response.status(HttpStatusCode.OK)
         call.respondText("""{"items": [{"id": "a"}]}""", json)
@@ -191,19 +196,20 @@ private suspend fun remove(call: RoutingCall) = when (call.request.queryParamete
     else -> call.respondText("""{"x": 1}""", json)
 }
 
-// Server-sent events from a channel (a ReadChannelContent): each `data:` follows Thing, or not.
-private suspend fun stream(call: RoutingCall) {
-    val events = when (call.request.queryParameters["as"]) {
-        "drift" -> "data: {\"name\": 1}\n\ndata: oops\n\n"
-        else -> "event: thing\ndata: {\"id\": \"a\"}\n\n: heartbeat\n\ndata: [DONE]\n\n"
-    }
-    call.respond(
-        object : OutgoingContent.ReadChannelContent() {
-            override val contentType = ContentType.Text.EventStream
+// A Thing as JSON, or as server-sent events from a channel (a ReadChannelContent) whose each `data:` follows Thing,
+// or not, or with a status the contract does not declare.
+private suspend fun stream(call: RoutingCall) = when (call.request.queryParameters["as"]) {
+    "json" -> call.respondText("""{"id": "a"}""", json)
+    "drift" -> call.respond(events("data: {\"name\": 1}\n\ndata: oops\n\n"))
+    "teapot" -> call.respond(events("data: {}\n\n", HttpStatusCode(418, "Teapot")))
+    else -> call.respond(events("event: thing\ndata: {\"id\": \"a\"}\n\n: heartbeat\n\ndata: [DONE]\n\n"))
+}
 
-            override fun readFrom() = ByteReadChannel(events)
-        },
-    )
+private fun events(text: String, code: HttpStatusCode? = null) = object : OutgoingContent.ReadChannelContent() {
+    override val contentType = ContentType.Text.EventStream
+    override val status = code
+
+    override fun readFrom() = ByteReadChannel(text)
 }
 
 // The export: a CSV, or a 404 in plain text or in JSON, which the contract both declares.
