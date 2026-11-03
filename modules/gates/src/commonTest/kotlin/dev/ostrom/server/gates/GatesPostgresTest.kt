@@ -52,6 +52,8 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.http.CallCeilingSettings
+import dev.ostrom.server.kernel.http.CallsInProgress
 import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.testing.TestServer
@@ -75,6 +77,7 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -464,7 +467,7 @@ class GatesPostgresTest {
     }
 
     @Test
-    fun twoHundredWaitingHooksHoldNoConnection() = gatesTest { server ->
+    fun twoHundredWaitingHooksHoldNoConnection() = serverTest(listOf(GatesModule), manyHeldCalls(overrides)) { server ->
         // The test pool has 4 connections: a wait that held one would stall every other request for its 30 s.
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
@@ -858,5 +861,13 @@ class GatesPostgresTest {
 private const val WARM_UP = 50
 private const val SAMPLES = 200
 private const val WAITERS = 200
+
+// Two hundred hooks wait together: more than the held calls a server takes by default without a memory limit (128),
+// so the instance sets its own ceiling, as OSTROM_MAX_HELD_CALLS does.
+private fun manyHeldCalls(overrides: Module) = module {
+    includes(overrides)
+    single { CallsInProgress(CallCeilingSettings(held = WAITERS + 16), { null }) }
+}
+
 private const val FEW_WAITS = 4
 private const val ROUNDS = 3

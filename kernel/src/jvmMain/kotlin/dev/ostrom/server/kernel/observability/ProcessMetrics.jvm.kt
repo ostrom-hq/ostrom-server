@@ -14,3 +14,6 @@ internal actual fun processCpuSeconds(): Double =
 
 /** The heap in use: the JVM does not expose its resident set. */
 internal actual fun processResidentBytes(): Long? = Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }
+
+/** The tests run outside any container limit that matters: none. */
+internal actual fun processMemoryLimit(): String? = null
