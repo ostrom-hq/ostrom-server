@@ -10,6 +10,7 @@ import dev.ostrom.core.api.models.WorkflowNode
 import dev.ostrom.core.api.models.WorkflowNodeKind
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -29,10 +30,11 @@ data class ConditionVerdict(val holds: Boolean? = null, val reason: String? = nu
  * condition that does not evaluate never chooses a branch.
  */
 object NodeConditions {
-    /** The most keys of an `output.<key>…` path. */
-    const val MAX_KEYS: Int = 10
+    /** The most segments (`.<key>`, `[<index>]`) of a path after `output`. */
+    const val MAX_SEGMENTS: Int = 10
 
-    private val PATH = Regex("outcome|output(\\.[A-Za-z0-9_-]{1,64}){0,$MAX_KEYS}")
+    private val PATH = Regex("outcome|output(\\.[A-Za-z0-9_-]{1,64}|\\[[0-9]{1,4}\\]){0,$MAX_SEGMENTS}")
+    private val SEGMENT = Regex("\\.([A-Za-z0-9_-]{1,64})|\\[([0-9]{1,4})\\]")
 
     /**
      * Checks the conditions of a workflow before it is saved.
@@ -101,24 +103,31 @@ object NodeConditions {
         ConditionVerdict(reason = "The condition's pattern: ${expected.message}")
     }
 
-    // The value a path reads of a visit: its outcome, its output, or a value of its output read as a JSON object.
+    // The value a path reads of a visit: its outcome, its output, or a value of its output read as JSON.
     private fun valueOf(visit: NodeVisit, path: String): String? = when (path) {
         OUTCOME -> visit.outcome
         OUTPUT -> visit.output
-        else -> visit.output?.let { read(it, path.removePrefix("$OUTPUT.").split('.')) }
+        else -> visit.output?.let { read(it, path.removePrefix(OUTPUT)) }
     }
 
-    private fun read(output: String, keys: List<String>): String? {
+    private fun read(output: String, segments: String): String? {
         val root: JsonElement? = try {
             Json.parseToJsonElement(output)
         } catch (expected: SerializationException) {
             null
         }
-        return when (val leaf = keys.fold(root) { element, key -> (element as? JsonObject)?.get(key) }) {
+        return when (val leaf = SEGMENT.findAll(segments).fold(root, ::member)) {
             null, JsonNull -> null
             is JsonPrimitive -> leaf.content
             else -> leaf.toString()
         }
+    }
+
+    // A member of an object (`.<key>`) or an element of an array (`[<index>]`); null for a value of the other kind.
+    private fun member(element: JsonElement?, segment: MatchResult): JsonElement? {
+        val (key, index) = segment.destructured
+        val inObject = (element as? JsonObject)?.get(key)
+        return if (key.isNotEmpty()) inObject else (element as? JsonArray)?.getOrNull(index.toInt())
     }
 
     private fun problem(pattern: String): String? = try {
@@ -136,6 +145,6 @@ private const val OUTPUT = "output"
 private const val MAX_SHOWN = 200
 private const val MAX_TEXT_FIELD = 200
 private const val NO_CONDITION = "The check node has no condition: the server plays a check node by its condition only."
-private const val PATH_FORM =
-    "outcome, output or output.<key>[.<key>…], at most 10 keys of 1 to 64 letters, digits, _ or -."
+private const val PATH_FORM = "outcome, output, or output followed by 1 to 10 segments .<key> (1 to 64 letters, " +
+    "digits, _ or -) or [<index>] (at most 4 digits), as output.a.b[0].c; 200 characters in all."
 private const val VALUE_FORM = "required for equals, notEquals and matches, absent for exists."

@@ -49,7 +49,7 @@ class NodeConditionsTest {
     fun aWellFormedConditionOfACheckNodeIsSavedAndAWorkflowWithoutConditionsToo() {
         checked(NodeCondition("ask", "outcome", NodeConditionOp.EQUALS, "ship"))
         checked(NodeCondition("ask", "output.note", NodeConditionOp.EXISTS), on = "false")
-        checked(NodeCondition("ask", "output.a.b-c.d_e", NodeConditionOp.MATCHES, "^go+$"))
+        checked(NodeCondition("ask", "output.a.b-c[0].d_e[9999]", NodeConditionOp.MATCHES, "^go+$"))
         checked(NodeCondition("c", "output", NodeConditionOp.NOT_EQUALS, ""))
         NodeConditions.check(workflow("w", listOf(node("t", WorkflowNodeKind.TRIGGER))))
     }
@@ -60,11 +60,13 @@ class NodeConditionsTest {
         val at = "node c: condition"
         assertEquals("$at: only a check node has a condition.", refusal(equals, WorkflowNodeKind.GATE))
         assertEquals("$at.step: gone is not a node of the workflow.", refusal(equals.copy(step = "gone")))
-        val form = "$at.path: outcome, output or output.<key>[.<key>…], at most 10 keys of 1 to 64 letters, digits, " +
-            "_ or -."
+        val form = "$at.path: outcome, output, or output followed by 1 to 10 segments .<key> (1 to 64 letters, " +
+            "digits, _ or -) or [<index>] (at most 4 digits), as output.a.b[0].c; 200 characters in all."
         assertEquals(form, refusal(equals.copy(path = "outputs")))
         assertEquals(form, refusal(equals.copy(path = "output.a b")))
-        assertEquals(form, refusal(equals.copy(path = "output" + ".k".repeat(NodeConditions.MAX_KEYS + 1))))
+        assertEquals(form, refusal(equals.copy(path = "output" + ".k".repeat(NodeConditions.MAX_SEGMENTS + 1))))
+        assertEquals(form, refusal(equals.copy(path = "output[10000]")))
+        assertEquals(form, refusal(equals.copy(path = "output.a[x]")))
         assertEquals(form, refusal(equals.copy(path = "output." + "k".repeat(65))))
         assertEquals(form, refusal(equals.copy(path = "output" + ".${"k".repeat(25)}".repeat(8))))
         val unknown = equals.copy(op = NodeConditionOp.UNKNOWN)
@@ -107,6 +109,8 @@ class NodeConditionsTest {
         assertEquals(true, read("output.ok", "true"))
         assertEquals(true, read("output.deep.k", """["a",1]"""))
         assertEquals(true, read("output.deep", """{"k":["a",1]}"""))
+        assertEquals(true, read("output.deep.k[1]", "1"))
+        assertEquals(true, read("output.list[0]", "1"))
         fun exists(path: String, output: String? = json) =
             holds(NodeCondition("ask", path, NodeConditionOp.EXISTS), visit("ask", output = output)).holds
         assertEquals(
@@ -114,6 +118,14 @@ class NodeConditionsTest {
             listOf(
                 exists("output.note"), exists("output.none"), exists("output.gone"), exists("output.list.k"),
                 exists("output.note.k"), exists("output.note", "not json"), exists("output.note", null),
+            ),
+        )
+        // An index reads an array only, within its length; a JSON array output is read from its root.
+        assertEquals(
+            listOf(false, false, false, true),
+            listOf(
+                exists("output.list[1]"), exists("output.note[0]"), exists("output.deep[0]"),
+                exists("output[1]", "[0,2]"),
             ),
         )
     }
