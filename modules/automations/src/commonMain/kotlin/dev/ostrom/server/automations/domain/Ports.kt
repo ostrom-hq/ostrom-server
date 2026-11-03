@@ -10,6 +10,7 @@ import kotlin.uuid.Uuid
  * @property orgId The organization.
  * @property assignee Only those asked of this member, if set.
  * @property involving Only those asked of or by this member, if set.
+ * @property createdBy Only those asked by this member, if set.
  * @property status Only those in this state, if set.
  * @property sessionId Only those of this session, if set.
  * @property runId Only those of this run, if set.
@@ -18,6 +19,7 @@ data class WaitFilter(
     val orgId: Uuid,
     val assignee: String? = null,
     val involving: String? = null,
+    val createdBy: String? = null,
     val status: WaitStatus? = null,
     val sessionId: String? = null,
     val runId: String? = null,

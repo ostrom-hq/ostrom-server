@@ -163,9 +163,17 @@ private fun Route.deviceAnswerRoutes(dependencies: IdentityRoutesDependencies) =
         val principal = call.requireBrowserSession()
         val code = params.userCode ?: throw OstromException(ErrorKind.INVALID_REQUEST, "userCode is required.")
         val authorization = getDeviceAuthorization(principal.userId(), code)
-        val expiresAt = authorization.expiresAt.toString()
         val scopes = authorization.scopes.sorted().takeIf { it.isNotEmpty() }
-        call.respond(DeviceAuthorizationResponse(authorization.userCode, authorization.clientName, expiresAt, scopes))
+        call.respond(
+            DeviceAuthorizationResponse(
+                userCode = authorization.userCode,
+                clientName = authorization.clientName,
+                expiresAt = authorization.expiresAt.toString(),
+                scopes = scopes,
+                requestedAt = authorization.createdAt.toString(),
+                requestedFrom = authorization.requestedFrom,
+            ),
+        )
     }
     post<AuthApi.Device.Answer, AnswerDeviceRequest> { _, request ->
         val principal = call.requireBrowserSession()

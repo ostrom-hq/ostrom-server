@@ -50,6 +50,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The identity routes end to end: real HTTP through the kernel, real PostgreSQL, real credentials. */
@@ -300,6 +302,18 @@ class IdentityRoutesPostgresTest {
                 json(CreateTokenRequest("t", listOf("orgs:write")))
             }.status,
         )
+    }
+
+    @Test
+    fun theConsoleSeesWhenADeviceLoginWasAsked() = serverTest(listOf(IdentityModule)) { server ->
+        val (_, started) = server.signIn()
+        val codes =
+            server.client.post("/api/v1/auth/device") { json(DeviceCodeRequest("laptop")) }.body<DeviceCodeResponse>()
+
+        val shown = server.client.get("/api/v1/auth/device?userCode=${codes.userCode}") { session(started) }
+            .body<DeviceAuthorizationResponse>()
+        // Web audit 2, W3: when the CLI asked, the request's whole lifetime before it expires.
+        assertEquals(10.minutes, Instant.parse(shown.expiresAt) - Instant.parse(shown.requestedAt))
     }
 
     @Test
