@@ -5,6 +5,7 @@ import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.infrastructure.DefaultCompilerSources
 import dev.ostrom.server.gates.domain.services.GateCheckNeeds
 import dev.ostrom.server.gates.domain.services.GatePolicies
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
@@ -52,6 +53,8 @@ import dev.ostrom.server.rules.infrastructure.RulesGateCheckNeeds
 import dev.ostrom.server.rules.infrastructure.RulesGatePolicies
 import dev.ostrom.server.rules.infrastructure.RulesMigrations
 import dev.ostrom.server.rules.presentation.AnalysisRoutesDependencies
+import dev.ostrom.server.rules.presentation.RulesGovernanceChange
+import dev.ostrom.server.rules.presentation.RulesGovernanceDependencies
 import dev.ostrom.server.rules.presentation.RulesRoutesDependencies
 import dev.ostrom.server.rules.presentation.analysisRoutes
 import dev.ostrom.server.rules.presentation.rulesRoutes
@@ -62,6 +65,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
 
@@ -91,6 +95,9 @@ object RulesModule : ServerModule {
         single<SetGatePolicyUseCase> { SetGatePolicyUseCaseImpl(get(), get(), get()) }
         single<GatePolicies> { RulesGatePolicies(get()) }
         single<GateCheckNeeds> { RulesGateCheckNeeds(get()) }
+        single<GovernanceChange>(named("rules")) {
+            RulesGovernanceChange(RulesGovernanceDependencies(get(), get(), get(), get(), get(), get(), get(), get()))
+        }
         // The compiler binds its default sources only when none is bound: these replace them, repositories and
         // settings still read from the compiler's configuration.
         single<CompilerSources> { RulesCompilerSources(get(), DefaultCompilerSources(get())) }

@@ -8,6 +8,7 @@ import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.gates.GatesModule
@@ -73,6 +74,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.serialization.json.JsonNull
@@ -284,6 +286,36 @@ class WorkflowRunsPostgresTest {
             assertEquals(HttpStatusCode.Conflict, other.status, other.bodyAsText())
             val own = server.call(agent, "/api/v1/checks", CHECK)
             assertEquals(HttpStatusCode.Created, own.status, "Its own repository: ${own.bodyAsText()}")
+        }
+
+    @Test
+    fun anAgentReportsUnderItsRepositorysPinnedOrLatestPackageOnly() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val agent = server.session(ada)
+            val compiler = server.koin.get<CompilerRepository>()
+            suspend fun publish(digest: String, at: Instant, repo: String = "acme/api", revoked: Boolean = false) {
+                val envelope = PackageEnvelope(
+                    "ostrom.package/1", "v1", repo, digest, "content-$digest", "Ed25519", "k", "sig", BODY, false,
+                    revoked,
+                )
+                compiler.savePackage(ada.org.id, StoredPackage(envelope, at.toString(), emptyMap()))
+            }
+            suspend fun report(digest: String): HttpStatusCode =
+                server.call(agent, "/api/v1/checks", CHECK.replace(DIGEST, digest)).status
+            // Published while the session runs, revoked, or another repository's: none replaces the session's package.
+            publish("sha256:later", now + 1.hours)
+            publish("sha256:revoked", now + 1.milliseconds, revoked = true)
+            publish("sha256:docs-newer", now + 1.milliseconds, repo = "acme/docs")
+            assertEquals(HttpStatusCode.Created, report(DIGEST))
+            assertEquals(HttpStatusCode.Created, report("sha256:later"), "The latest one")
+            // A newer package of the repository, compiled before the session started: the older one no longer passes.
+            publish("sha256:newer", now + 1.milliseconds)
+            assertEquals(HttpStatusCode.Conflict, report(DIGEST), "An older version of the repository's package")
+            assertEquals(HttpStatusCode.Created, report("sha256:newer"))
+            // Unless an admin pinned it: the pinned package is the one its sessions receive.
+            compiler.setPin(ada.org.id, "acme/api", PackagePin("sha256:content", "ada", now))
+            assertEquals(HttpStatusCode.Created, report(DIGEST), "The pinned version")
         }
 
     @Test

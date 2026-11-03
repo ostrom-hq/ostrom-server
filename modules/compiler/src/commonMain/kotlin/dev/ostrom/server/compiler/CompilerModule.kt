@@ -26,15 +26,18 @@ import dev.ostrom.server.compiler.infrastructure.CompilerMigrations
 import dev.ostrom.server.compiler.infrastructure.DefaultCompilerSources
 import dev.ostrom.server.compiler.infrastructure.PostgresCompilerRepository
 import dev.ostrom.server.compiler.infrastructure.ReceiptsCompilerSigner
+import dev.ostrom.server.compiler.presentation.CompilerGovernanceChange
 import dev.ostrom.server.compiler.presentation.CompilerRoutesDependencies
 import dev.ostrom.server.compiler.presentation.compilerRoutes
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 /**
@@ -59,6 +62,7 @@ object CompilerModule : ServerModule {
         single<GatePolicyUseCase> { GatePolicyUseCaseImpl(get(), get(), get()) }
         single<ApproversGraphUseCase> { ApproversGraphUseCaseImpl(get()) }
         single<WorkflowsUseCase> { WorkflowsUseCaseImpl(get(), get(), get()) }
+        single<GovernanceChange>(named("compiler")) { CompilerGovernanceChange(get(), get()) }
         // Created when the gates module looks for it, possibly before this module's initialize has bound the
         // sources: the catalogue is only fetched at the first gate.
         single<GateNodeResolver> {
