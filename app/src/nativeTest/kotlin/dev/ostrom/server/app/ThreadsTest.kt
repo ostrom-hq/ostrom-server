@@ -49,7 +49,6 @@ import platform.posix.SOL_SOCKET
 import platform.posix.SO_LINGER
 import platform.posix.close
 import platform.posix.connect
-import platform.posix.inet_addr
 import platform.posix.linger
 import platform.posix.recv
 import platform.posix.send
@@ -214,7 +213,7 @@ class ThreadsTest {
             val address = alloc<sockaddr_in>().apply {
                 sin_family = AF_INET.convert()
                 sin_port = ((port and BYTE) shl BITS or (port shr BITS and BYTE)).convert()
-                sin_addr.s_addr = inet_addr(LOOPBACK)
+                sin_addr.s_addr = LOOPBACK_IN_NETWORK_ORDER
             }
             check(connect(fd, address.ptr.reinterpret(), sizeOf<sockaddr_in>().convert()) == 0) { "no connection" }
             val request = "GET /stream HTTP/1.1\r\nHost: t\r\n\r\n".encodeToByteArray()
@@ -301,6 +300,7 @@ class ThreadsTest {
         const val RESET_CLIENTS = 16
         const val BYTE = 0xff
         const val BITS = 8
+        const val LOOPBACK_IN_NETWORK_ORDER = 0x0100007fu // 127.0.0.1, its bytes reversed on a little-endian CPU.
 
         // The connections' pool (8 by default), and Dispatchers.Default, whose threads may start with the first call.
         const val SERVER_THREADS = 8 + 4
