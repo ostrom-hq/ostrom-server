@@ -83,10 +83,10 @@ class UsageQueryPlansTest {
                             "lch_1",
                         ).bind("from", TestCallers.epoch - 2.hours).bind("to", TestCallers.epoch)
                     },
-                "spend and holds of the org and a member (gateway admission, under the org's lock)" to
-                    driver.explain(UsageQueries.holdTotals(org = true, member = true)) {
+                "spend and holds of the org and a member, by the month and the day (gateway admission)" to
+                    driver.explain(UsageQueries.holdTotals(true, member = true, orgDay = true, memberDay = true)) {
                         bind("since", since).bind("now", TestCallers.epoch).bind("call_id", Uuid.random())
-                            .bind("member_id", member)
+                            .bind("member_id", member).bind("day_since", TestCallers.epoch - 1.hours)
                     },
                 "summary of 30 days by model" to
                     driver.explain(UsageQueries.summary(UsageGroupBy.MODEL, false, false)) {

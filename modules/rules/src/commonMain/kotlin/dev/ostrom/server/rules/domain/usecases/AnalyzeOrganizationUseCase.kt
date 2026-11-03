@@ -8,6 +8,7 @@ import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.RepositoryReadException
 import dev.ostrom.server.rules.domain.models.RepositoryRef
 import dev.ostrom.server.rules.domain.models.RepositorySnapshot
+import dev.ostrom.server.rules.domain.models.RepositoryTree
 import dev.ostrom.server.rules.domain.models.Rule
 import dev.ostrom.server.rules.domain.models.RuleProposal
 import dev.ostrom.server.rules.domain.models.RuleStatus
@@ -25,6 +26,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -66,7 +68,7 @@ class AnalyzeOrganizationUseCaseImpl(
     private val runs = RunRecorder(analyses, clock, logger)
 
     override suspend fun invoke(run: AnalysisRun, repos: List<RepositoryRef>) {
-        runs.execute(run, "analysis") { analyse(run, repos) }
+        runs.execute(run, "analysis", ANALYSIS_DEADLINE) { analyse(run, repos) }
     }
 
     private suspend fun analyse(run: AnalysisRun, repos: List<RepositoryRef>) {
@@ -74,15 +76,21 @@ class AnalyzeOrganizationUseCaseImpl(
             .sortedWith(compareByDescending<RepositoryRef> { it.pushedAt.orEmpty() }.thenBy { it.name })
             .take(MAX_REPOS)
         if (selected.isEmpty()) return runs.fail(run, GITHUB, ARCHIVED)
-        val snapshots = mutableListOf<RepositorySnapshot>()
+        // Each repository is read, inferred and let go before the next: 30 trees of 100,000 paths held at once would
+        // pass the pod's memory.
+        val proposals = mutableListOf<RuleProposal>()
+        val items = mutableListOf<JsonObject>()
         selected.forEachIndexed { index, repo ->
             runs.advance(run, READ, READ_SHARE * index / selected.size)
-            read(run, repo)?.let { snapshots += it }
+            read(run, repo)?.let { snapshot ->
+                proposals += RuleInference.infer(snapshot)
+                items += item(snapshot)
+            }
         }
-        if (snapshots.isEmpty()) return runs.fail(run, GITHUB, UNREAD)
+        if (items.isEmpty()) return runs.fail(run, GITHUB, UNREAD)
         runs.advance(run, PROPOSE, READ_SHARE)
-        propose(run, snapshots.flatMap(RuleInference::infer))
-        runs.advance(run, AnalysisRun.READY, 1.0, snapshots.map(::item))
+        propose(run, proposals)
+        runs.advance(run, AnalysisRun.READY, 1.0, items)
     }
 
     // One repository that cannot be read (a permission, a timeout) is left out; the others are still analysed.
@@ -94,7 +102,9 @@ class AnalyzeOrganizationUseCaseImpl(
     }
 
     private suspend fun snapshot(orgId: Uuid, repo: RepositoryRef): RepositorySnapshot {
-        val tree = reader.tree(orgId, repo)
+        val listed = reader.tree(orgId, repo)
+        // Past MAX_PATHS, the list is cut and said cut, as GitHub cuts its own.
+        val tree = if (listed.paths.size > MAX_PATHS) RepositoryTree(listed.paths.take(MAX_PATHS), true) else listed
         val files = RepositoryFacts.wantedFiles(tree.paths)
             .mapNotNull { path -> reader.file(orgId, repo, path)?.let { path to it } }
             .toMap()
@@ -163,6 +173,9 @@ class AnalyzeOrganizationUseCaseImpl(
         /** The proposals one run stores at most. */
         const val MAX_PROPOSALS: Int = 400
 
+        /** The paths of one repository the analysis reads at most. */
+        const val MAX_PATHS: Int = 20_000
+
         /** Who finds a learned rule. */
         const val FOUND_BY: String = "analysis"
 
@@ -186,3 +199,7 @@ class AnalyzeOrganizationUseCaseImpl(
             "server log, then start the analysis again."
     }
 }
+
+// How long an analysis may take: 30 repositories, six GitHub calls each, take seconds when GitHub answers. Top-level:
+// a companion property has a getter nothing calls, which Kover counts.
+private val ANALYSIS_DEADLINE = 15.minutes

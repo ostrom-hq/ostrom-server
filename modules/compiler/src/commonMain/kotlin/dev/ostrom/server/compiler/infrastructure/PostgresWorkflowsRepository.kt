@@ -4,6 +4,7 @@ package dev.ostrom.server.compiler.infrastructure
 import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
+import dev.ostrom.server.compiler.domain.repositories.MAX_WORKFLOWS
 import dev.ostrom.server.compiler.domain.repositories.WorkflowsRepository
 import dev.ostrom.server.compiler.domain.services.CompilerDocs
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -11,6 +12,7 @@ import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -29,7 +31,7 @@ class PostgresWorkflowsRepository(private val driver: Driver) : WorkflowsReposit
         fetch(
             Statement.create(
                 "SELECT $WORKFLOW_COLUMNS FROM compiler_workflows WHERE org_id = :org " +
-                    "ORDER BY created_at, id LIMIT $MAX_ROWS",
+                    "ORDER BY created_at, id LIMIT $READ_GUARD",
             ).bind("org", orgId),
         ).map { it.toWorkflow() }
     }
@@ -73,11 +75,20 @@ class PostgresWorkflowsRepository(private val driver: Driver) : WorkflowsReposit
         ) > 0
     }
 
-    override suspend fun decisions(orgId: Uuid): List<DecisionDoc> = scoped(orgId) {
+    override suspend fun workflowCount(orgId: Uuid): Int = scoped(orgId) {
+        fetch(Statement.create("SELECT count(*) AS n FROM compiler_workflows WHERE org_id = :org").bind("org", orgId))
+            .single().get("n").asLong().toInt()
+    }
+
+    // One row per existing workflow, through compiler_decisions_by_subject: bounded by MAX_WORKFLOWS.
+    override suspend fun lastDecisions(orgId: Uuid): List<DecisionDoc> = scoped(orgId) {
         fetch(
             Statement.create(
-                "SELECT id, subject_kind, subject_id, decided_by, decided_at, receipt_id FROM compiler_decisions " +
-                    "WHERE org_id = :org ORDER BY decided_at, id LIMIT $MAX_ROWS",
+                "SELECT DISTINCT ON (d.subject_id) d.id, d.subject_kind, d.subject_id, d.decided_by, d.decided_at, " +
+                    "d.receipt_id FROM compiler_decisions d JOIN compiler_workflows w " +
+                    "ON w.org_id = d.org_id AND w.id = d.subject_id " +
+                    "WHERE d.org_id = :org AND d.subject_kind = 'workflow' " +
+                    "ORDER BY d.subject_id, d.decided_at DESC, d.id DESC",
             ).bind("org", orgId),
         ).map {
             DecisionDoc(
@@ -105,7 +116,8 @@ class PostgresWorkflowsRepository(private val driver: Driver) : WorkflowsReposit
     }
 
     private companion object {
-        const val MAX_ROWS = 1000
+        // Two creations at the limit at once may both pass the count: the read keeps room for them, and stays bounded.
+        const val READ_GUARD = 2 * MAX_WORKFLOWS
         const val WORKFLOW_COLUMNS = "doc, version, updated_by, updated_at"
 
         fun ResultSet.Row.toWorkflow() = StoredWorkflow(

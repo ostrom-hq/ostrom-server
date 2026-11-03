@@ -170,6 +170,8 @@ class InMemoryUsageRepository : UsageRepository {
             orgHeld = live.sumOf { it.micros },
             memberSpent = spentMicros(hold.orgId, hold.memberId, window.since),
             memberHeld = live.filter { it.memberId == hold.memberId }.sumOf { it.micros },
+            orgDaySpent = limits.daily?.let { spentMicros(hold.orgId, null, it.since) } ?: 0,
+            memberDaySpent = limits.daily?.let { spentMicros(hold.orgId, hold.memberId, it.since) } ?: 0,
         )
         return limits.admit(totals, hold.micros).also {
             if (it == Admission.Admitted) holds[hold.callId] = hold to window.expiresAt

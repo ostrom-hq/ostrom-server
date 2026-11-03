@@ -234,6 +234,23 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
                 .map { it.toMember() }
         }
 
+    // The page starts after a member by their place, (joined_at, id): a row comparison with no row gives no member.
+    override suspend fun page(orgId: Uuid, after: Uuid?, limit: Int): List<Member> =
+        driver.inOrg(orgId) {
+            val start = if (after == null) {
+                ""
+            } else {
+                " AND (m.joined_at, m.id) > (SELECT a.joined_at, a.id FROM orgs_members a WHERE a.org_id = :org " +
+                    "AND a.id = :after)"
+            }
+            val statement = Statement.create(
+                "SELECT $MEMBER_COLUMNS FROM orgs_members m WHERE m.org_id = :org$start " +
+                    "ORDER BY m.joined_at, m.id LIMIT :limit",
+            ).bind("org", orgId).bind("limit", limit)
+            if (after != null) statement.bind("after", after)
+            fetchAll(statement).getOrThrow().map { it.toMember() }
+        }
+
     override suspend fun count(orgId: Uuid): Int =
         driver.inOrg(orgId) {
             fetchAll(

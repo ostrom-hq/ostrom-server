@@ -66,6 +66,12 @@ class DockerRuntimeDriverTest {
     private fun body(index: Int): JsonObject = Json.parseToJsonElement(api.calls[index].body!!).jsonObject
 
     @Test
+    fun aSessionOnThisDockerNamesNoRegisteredRunner() = runTest {
+        assertNull(driver.holder(session))
+        assertTrue(api.lines().isEmpty(), "Nothing asked of the engine")
+    }
+
+    @Test
     fun aWorkspaceIsANamedVolumeWithItsSocketVolumes() = runTest {
         driver.ensureWorkspace(session)
         assertEquals(List(3) { "POST /volumes/create" }, api.lines())

@@ -107,6 +107,9 @@ class RuleChecksTest {
             RuleGate(listOf(push.copy(patterns = List(21) { "p" })), emptyList(), null),
             RuleGate(listOf(push.copy(patterns = listOf("(unclosed"))), emptyList(), null),
             RuleGate(listOf(push.copy(patterns = listOf("p".repeat(501)))), emptyList(), null),
+            // AUDIT-SECU-ANALYSE R5: a pattern that could backtrack for minutes on the server's replay or in a hook.
+            RuleGate(listOf(push.copy(patterns = listOf("(a+)+$"))), emptyList(), null),
+            RuleGate(listOf(push.copy(patterns = listOf(".*.*.*x"))), emptyList(), null),
             RuleGate(listOf(push.copy(repos = List(51) { "r$it" })), emptyList(), null),
             RuleGate(listOf(push.copy(tools = List(11) { "T$it" })), emptyList(), null),
             RuleGate(listOf(push.copy(tools = listOf("not a tool"))), emptyList(), null),
