@@ -29,6 +29,10 @@ import kotlinx.serialization.json.putJsonObject
  *   self-approval policy refuses.
  *
  * The tools a gate watches are not replayed: the history holds the actions the hooks already classed.
+ *
+ * An item stays small however many rules cover the action (a replay holds up to 1 000 of them, stored and served
+ * whole): it lists at most [MAX_LISTED] rules and approvers, with their counts, each statement cut to
+ * [MAX_STATEMENT] characters, and its `why` names at most [MAX_NAMED] of each. The rule's id leads to the whole rule.
  */
 object GateReplay {
     /** The outcomes, as the items say them. */
@@ -40,6 +44,17 @@ object GateReplay {
     /** Nobody could have said yes. */
     const val BLOCKED: String = "blocked"
 
+    /** The rules, and the approvers, an item lists at most. */
+    const val MAX_LISTED: Int = 10
+
+    /** The characters of a statement an item keeps; a longer one ends with `…`. */
+    const val MAX_STATEMENT: Int = 280
+
+    /** The rules, and the approvers, a `why` names at most. */
+    const val MAX_NAMED: Int = 3
+
+    private const val NAMED_STATEMENT = 120
+
     /**
      * Prepares rules for replay: their patterns compiled once, a pattern that does not compile left out.
      *
@@ -47,7 +62,10 @@ object GateReplay {
      * @return The replayable rules.
      */
     fun prepare(rules: List<Rule>): List<ReplayedRule> = rules.mapNotNull { rule ->
-        rule.gate?.let { gate -> ReplayedRule(rule, gate, gate.actions.map { ReplayedAction(it, compiled(it)) }) }
+        rule.gate?.let { gate ->
+            val approvers = gate.approvers.map { it to it.lowercase() }
+            ReplayedRule(rule, gate, gate.actions.map { ReplayedAction(it, compiled(it)) }, approvers)
+        }
     }
 
     /**
@@ -61,9 +79,12 @@ object GateReplay {
     fun replay(gate: Gate, rules: List<ReplayedRule>, policy: SelfApprovalPolicy): JsonObject {
         val subject = gate.subject
         val covering = rules.filter { covers(it.rule.scope, subject.repo) && it.actions.any { a -> a.covers(subject) } }
-        val approvers = covering.flatMap { it.gate.approvers }.distinctBy { it.lowercase() }
+        // By lowered name, the first spelling kept: computed once per rule, a replay meets each rule 1 000 times.
+        val byKey = LinkedHashMap<String, String>()
+        covering.forEach { rule -> rule.approverKeys.forEach { (name, key) -> byKey.getOrPut(key) { name } } }
+        val approvers = byKey.values.toList()
         val askers = gate.askedBy.map { it.lowercase() }.toSet()
-        val others = approvers.filter { it.lowercase() !in askers }
+        val others = byKey.filterKeys { it !in askers }.values.toList()
         val alone = policy == SelfApprovalPolicy.SOLE_APPROVER && approvers.size == 1
         val may = if (alone) approvers else others
         val outcome = when {
@@ -84,10 +105,12 @@ object GateReplay {
             }
             put("outcome", outcome)
             putJsonArray("sessions") { gate.sessionIds.forEach { add(it) } }
+            put("ruleCount", covering.size)
             putJsonArray("rules") {
-                covering.forEach { addJsonObject { rule(it) } }
+                covering.take(MAX_LISTED).forEach { addJsonObject { rule(it) } }
             }
-            putJsonArray("approvers") { may.forEach { add(it) } }
+            put("approverCount", may.size)
+            putJsonArray("approvers") { may.take(MAX_LISTED).forEach { add(it) } }
             put("why", why(outcome, covering, may, approvers))
             put("simulation", true)
         }
@@ -95,24 +118,33 @@ object GateReplay {
 
     private fun JsonObjectBuilder.rule(replayed: ReplayedRule) {
         put("id", replayed.rule.id)
-        put("statement", replayed.rule.statement)
+        put("statement", cut(replayed.rule.statement, MAX_STATEMENT))
         put("status", replayed.rule.status.value)
         putJsonArray("approvers") { replayed.gate.approvers.forEach { add(it) } }
     }
 
     private fun why(outcome: String, covering: List<ReplayedRule>, may: List<String>, approvers: List<String>): String {
-        val named = covering.joinToString("; ") { "${it.rule.id}: ${it.rule.statement}" }
+        val named = names(covering, "; ") { "${it.rule.id}: ${cut(it.rule.statement, NAMED_STATEMENT)}" }
         return when (outcome) {
             PASSED -> "No replayed rule gates this action: it would have run without asking anything."
-            ASKED -> "It would have waited for a yes from ${may.joinToString(", ")} ($named)."
+            ASKED -> "It would have waited for a yes from ${names(may, ", ") { it }} ($named)."
             else -> if (approvers.isEmpty()) {
                 "It would have been blocked: the gate names no approver ($named)."
             } else {
-                "It would have been blocked: only ${approvers.joinToString(", ")}, who asked, may approve it, and " +
+                "It would have been blocked: only ${names(approvers, ", ") { it }}, who asked, may approve it, and " +
                     "the organization refuses a yes on one's own action ($named)."
             }
         }
     }
+
+    // The first MAX_NAMED, then how many more: only those named are written out.
+    private fun <T> names(all: List<T>, separator: String, name: (T) -> String): String {
+        val more = all.size - MAX_NAMED
+        val shown = all.take(MAX_NAMED).joinToString(separator, transform = name)
+        return if (more > 0) "$shown$separator$more more" else shown
+    }
+
+    private fun cut(text: String, max: Int): String = if (text.length > max) text.take(max - 1) + "…" else text
 
     // What the action reached: a push's refs, a merge's pull request.
     private fun target(subject: GateSubject): String? {
@@ -148,6 +180,8 @@ object GateReplay {
         val rule: Rule,
         val gate: RuleGate,
         internal val actions: List<ReplayedAction>,
+        // Each approver with its lowered name, the key two spellings of one person share.
+        internal val approverKeys: List<Pair<String, String>>,
     )
 
     /**

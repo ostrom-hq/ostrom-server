@@ -138,4 +138,36 @@ class GateReplayTest {
         assertFalse(prepared.single().gate.approvers.isEmpty())
         assertEquals(ReplayFixtures.gated().gate, prepared.single().gate)
     }
+
+    @Test
+    fun anActionManyRulesCoverListsAFewOfThemAndCountsThemAll() {
+        val rules = (1..1_500).map { n ->
+            gated(id = "rule_${n.toString().padStart(4, '0')}", approvers = listOf("rev-${n % 50}", "Lyes"))
+                .copy(statement = "x".repeat(2_000))
+        }
+        val item = replay(action(), rules)
+        assertEquals(GateReplay.ASKED, item.text("outcome"))
+        assertEquals("1500", item.text("ruleCount"))
+        val listed = item.getValue("rules").jsonArray.map { it.jsonObject }
+        assertEquals(GateReplay.MAX_LISTED, listed.size)
+        assertEquals("rule_0001", listed.first().text("id"))
+        val statement = listed.first().text("statement").orEmpty()
+        assertEquals(GateReplay.MAX_STATEMENT, statement.length)
+        assertTrue(statement.endsWith("…"), statement)
+        assertEquals("50", item.text("approverCount"), "The 50 reviewers, never the asker")
+        assertEquals((1..10).map { "rev-$it" }, item.texts("approvers"))
+        val why = item.text("why").orEmpty()
+        val named = "It would have waited for a yes from rev-1, rev-2, rev-3, 47 more (rule_0001: x"
+        assertTrue(why.startsWith(named), why)
+        assertTrue(why.endsWith("; 1497 more)."), why)
+        assertTrue(why.length < 1_000, "${why.length}")
+    }
+
+    @Test
+    fun aShortListIsCountedAndKeptWhole() {
+        val item = replay(action(), listOf(gated(approvers = listOf("bob"))))
+        assertEquals("1", item.text("ruleCount"))
+        assertEquals("1", item.text("approverCount"))
+        assertEquals("0", replay(action(), emptyList()).text("ruleCount"))
+    }
 }
