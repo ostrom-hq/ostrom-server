@@ -41,7 +41,8 @@ fun Route.launchesRoutes(dependencies: LaunchesRoutesDependencies) = with(depend
         post<LaunchesApi> {
             val launcher = call.launcher(launchers)
             val body = call.receive<CreateLaunchRequest>()
-            val created = call.retryAfter { createLaunch(launcher, NewLaunch(body.repo, body.agent, body.model)) }
+            val request = NewLaunch(body.repo, body.agent, body.model, workflowId = body.workflowId)
+            val created = call.retryAfter { createLaunch(launcher, request) }
             call.respond(HttpStatusCode.Created, created.toResponse())
         }
         // The end of `ostrom <agent>` (AUDIT-SECU-RUNNER-2 R2b): only the launch's own agent token ends it. Only an

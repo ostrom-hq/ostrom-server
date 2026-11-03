@@ -8,6 +8,7 @@ import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.models.LaunchRateLimitedException
 import dev.ostrom.server.launches.domain.models.LaunchRefusedException
+import dev.ostrom.server.launches.domain.models.LaunchWorkflowNotFoundException
 import dev.ostrom.server.launches.domain.models.Launcher
 import dev.ostrom.server.launches.domain.models.NewLaunch
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
@@ -59,13 +60,20 @@ class CreateLaunchUseCaseImpl(
 ) : CreateLaunchUseCase {
     override suspend fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch {
         val repo = request.repo
-        if (repo != null && !wellFormed(repo)) {
+        if (repo != null && !wellFormed(repo, MAX_REPO)) {
             throw InvalidLaunchException("repo: 1 to $MAX_REPO characters, without control characters.")
+        }
+        val workflowId = request.workflowId
+        workflowId?.takeUnless { wellFormed(it, MAX_WORKFLOW_ID) }?.let {
+            throw InvalidLaunchException("workflowId: 1 to $MAX_WORKFLOW_ID characters, without control characters.")
         }
         // A malformed name is the client's mistake (400); a refusal, the organization's answer (403).
         policy.malformed(request.agent, request.model)?.let { throw InvalidLaunchException(it) }
         policy.refusal(launcher, request.agent, request.model)?.let { throw LaunchRefusedException(it) }
-        request.workflowId?.let { workflows?.name(launcher.orgId, it) }
+        // A workflow of another organization is answered like none: nothing leaks.
+        workflowId?.takeIf { workflows?.name(launcher.orgId, it) == null }?.let {
+            throw LaunchWorkflowNotFoundException()
+        }
         val now = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
         val launch = Launch(
             id = "lch_" + Uuid.random().toHexString(),
@@ -78,6 +86,7 @@ class CreateLaunchUseCaseImpl(
             createdAt = now,
             expiresAt = now + LIFETIME,
             cloudSessionId = request.cloudSessionId,
+            workflowId = workflowId,
         )
         // The launch first: its token never exists without the launch it is scoped to.
         // Counted before any token exists: a refused launch issues nothing.
@@ -85,7 +94,7 @@ class CreateLaunchUseCaseImpl(
         return CreatedLaunch(launch, tokens.issue(launcher, launch.id, LIFETIME))
     }
 
-    private fun wellFormed(repo: String) = repo.length in 1..MAX_REPO && repo.none { it.isISOControl() }
+    private fun wellFormed(value: String, max: Int) = value.length in 1..max && value.none { it.isISOControl() }
 
     /** The bounds of a launch. */
     companion object {
