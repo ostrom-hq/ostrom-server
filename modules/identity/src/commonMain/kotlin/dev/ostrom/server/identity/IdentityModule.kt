@@ -95,6 +95,7 @@ import dev.ostrom.server.identity.domain.StartWebSessionUseCaseImpl
 import dev.ostrom.server.identity.domain.UnlockMobileAppUseCase
 import dev.ostrom.server.identity.domain.UnlockMobileAppUseCaseImpl
 import dev.ostrom.server.identity.domain.LinkedIdentities
+import dev.ostrom.server.identity.domain.UserPrefixSearch
 import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCase
 import dev.ostrom.server.identity.domain.VerifyMagicLinkUseCaseImpl
@@ -125,6 +126,7 @@ import dev.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import dev.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import dev.ostrom.server.identity.infrastructure.LinkedIdentitiesImpl
+import dev.ostrom.server.identity.infrastructure.UserPrefixSearchImpl
 import dev.ostrom.server.identity.infrastructure.UsersRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.WebSessionsRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.closeHttpClient
@@ -183,6 +185,7 @@ object IdentityModule : ServerModule {
         single<RateLimiter> { InMemoryRateLimiter(get()) }
 
         single<UsersRepository> { UsersRepositoryImpl(get()) }
+        single<UserPrefixSearch> { UserPrefixSearchImpl(get()) }
         single<LinkedIdentities> { LinkedIdentitiesImpl(get()) }
         single<WebSessionsRepository> { WebSessionsRepositoryImpl(get()) }
         single<ApiTokensRepository> { ApiTokensRepositoryImpl(get()) }

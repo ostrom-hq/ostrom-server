@@ -39,6 +39,15 @@ interface People {
     suspend fun getMany(ids: Collection<Uuid>): List<Person>
 
     /**
+     * Keeps the people whose login or name starts with [prefix], whatever the case.
+     *
+     * @param ids The users to look at.
+     * @param prefix The start of the login or name.
+     * @return The users it names.
+     */
+    suspend fun matching(ids: Collection<Uuid>, prefix: String): Set<Uuid>
+
+    /**
      * Finds a person by login.
      *
      * @param login The login, any case.

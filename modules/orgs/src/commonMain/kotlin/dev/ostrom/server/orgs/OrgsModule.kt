@@ -109,7 +109,7 @@ object OrgsModule : ServerModule {
         single<OrgsRepository> { OrgsRepositoryImpl(get()) }
         single<MembersRepository> { MembersRepositoryImpl(get()) }
         single<InvitationsRepository> { InvitationsRepositoryImpl(get()) }
-        single<People> { IdentityPeople(get()) }
+        single<People> { IdentityPeople(get(), get()) }
         single<OrgAudit> { IdentityOrgAudit(get()) }
         single<InvitationTokens> { IdentityInvitationTokens(get(), get()) }
         single<OrgRateLimiter> { IdentityRateLimiter(get()) }

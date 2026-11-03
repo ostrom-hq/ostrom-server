@@ -95,24 +95,21 @@ class ListMembersUseCaseImpl(
         return MemberPage(items, if (read.size > limit) list.last().id else null)
     }
 
-    // The search reads the whole team, bounded by its seats, in two queries (the members, then their people by
-    // primary key: OrgsReadsBenchTest), and pages the matches in the members' order.
+    // The search reads the team's members (bounded by its seats), asks the identity module which of them the prefix
+    // names in one query, and reads the people of the page only: three queries (OrgsReadsBenchTest, 5 000 members).
     private suspend fun search(orgId: Uuid, after: Uuid?, limit: Int, prefix: String): MemberPage {
         val all = members.list(orgId)
         val from = if (after == null) 0 else all.indexOfFirst { it.id == after } + 1
         if (after != null && from == 0) return MemberPage(emptyList(), null)
         val following = all.drop(from)
-        val byId = people.getMany(following.map { it.userId }).associateBy { it.id }
-        val found = following.mapNotNull { member ->
-            byId[member.userId]?.takeIf { it.startsWith(prefix) }?.let { profileOf(member, it) }
-        }
-        val items = found.take(limit)
-        return MemberPage(items, if (found.size > limit) items.last().member.id else null)
+        val named = people.matching(following.map { it.userId }, prefix)
+        val found = following.filter { it.userId in named }
+        val page = found.take(limit)
+        val byId = people.getMany(page.map { it.userId }).associateBy { it.id }
+        val items = page.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
+        return MemberPage(items, if (found.size > limit) page.last().id else null)
     }
 }
-
-private fun Person.startsWith(prefix: String) =
-    login.lowercase().startsWith(prefix) || displayName.lowercase().startsWith(prefix)
 
 /** One member of an organization. */
 interface GetMemberUseCase {

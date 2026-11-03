@@ -15,6 +15,7 @@ import dev.ostrom.server.orgs.domain.MemberNotFoundException
 import dev.ostrom.server.orgs.domain.NotAllowedException
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgNotFoundException
+import dev.ostrom.server.orgs.domain.People
 import dev.ostrom.server.orgs.domain.Person
 import dev.ostrom.server.orgs.domain.RemoveMemberUseCaseImpl
 import dev.ostrom.server.orgs.fakes.OrgsWorld
@@ -90,6 +91,12 @@ class MemberUseCasesTest {
         assertEquals(listOf("dana"), afterBob.items.map { it.login })
         assertNull(afterBob.next)
         assertTrue(list(org.id, carl.id, Uuid.random(), 2, "d").items.isEmpty())
+        // A person deleted between the search and the read of the page is not shown.
+        val vanished = object : People by world.people {
+            override suspend fun matching(ids: Collection<Uuid>, prefix: String) = ids.toSet()
+        }
+        val listWithAVanished = ListMembersUseCaseImpl(world.orgs, world.members, vanished)
+        assertEquals(4, listWithAVanished(org.id, carl.id, null, 10, "z").items.size)
         for (query in listOf("", "x".repeat(MAX_MEMBER_QUERY + 1))) {
             assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, null, 2, query) }
         }

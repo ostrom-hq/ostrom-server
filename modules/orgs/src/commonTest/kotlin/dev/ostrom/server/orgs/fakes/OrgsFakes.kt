@@ -231,6 +231,11 @@ class FakePeople : People {
     override suspend fun getMany(ids: Collection<Uuid>): List<Person> =
         ids.mapNotNull { people[it] }
 
+    override suspend fun matching(ids: Collection<Uuid>, prefix: String): Set<Uuid> =
+        getMany(ids).filter { person ->
+            listOf(person.login, person.displayName).any { it.lowercase().startsWith(prefix.lowercase()) }
+        }.map { it.id }.toSet()
+
     override suspend fun findByLogin(login: String): Person? =
         people.values.firstOrNull { it.login == login.lowercase() }
 
