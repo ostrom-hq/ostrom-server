@@ -14,8 +14,9 @@ object McpRules {
 
     /**
      * Ostrom's own MCP servers, as the agent knows them: `ostrom`, which the local relay of `ostrom claude` serves
-     * itself (`/mcp/ostrom`, the waits), and `ostrom-workflow`, which every session package declares (`PackageCompiler`).
-     * The launcher lists an organization's servers by name next to them, so one of these names would never be reached.
+     * itself (`/mcp/ostrom`, the waits), and `ostrom-workflow`, which every session package declares
+     * (`PackageCompiler`). The launcher lists an organization's servers by name next to them, so one of these names
+     * would never be reached.
      * Refused whatever its case and surrounding spaces.
      */
     val OSTROM_SERVERS: Set<String> = setOf("ostrom", "ostrom-workflow")
