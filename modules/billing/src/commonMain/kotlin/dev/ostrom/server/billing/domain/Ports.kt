@@ -181,6 +181,9 @@ interface BillingNotifier {
  * @property consoleUrl The console, for Checkout and portal return pages (`https://app.ostrom.run`).
  */
 data class BillingSettings(val stripeEnabled: Boolean, val consoleUrl: String) {
-    /** The billing page of the console, where limit messages send people. */
-    val billingPageUrl: String get() = "${consoleUrl.trimEnd('/')}/settings/billing"
+    /**
+     * The billing page of the console (its route `/billing`), where Checkout and the portal bring people back and limit
+     * messages send them.
+     */
+    val billingPageUrl: String get() = "${consoleUrl.trimEnd('/')}/billing"
 }
