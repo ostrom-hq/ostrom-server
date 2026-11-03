@@ -8,31 +8,9 @@ package dev.ostrom.server.testing
  * `scripts/check-contract-coverage.py`. Found by the first run of the check on every served operation (#246).
  */
 object KnownDrifts {
-    private const val AUDIT = "The package audit's meta holds counts where the contract says strings."
-    private const val RECEIPT = "The approval's receipt lacks properties the contract requires."
-
-    /** Each drift's key ([Drift.key]) and why it waits. */
-    val drifts: Map<String, String> = listOf(
-        waiting(
-            AUDIT,
-            "listPackageAudit 200 $.items[*].meta.enforcedScripts TYPE",
-            "listPackageAudit 200 $.items[*].meta.files TYPE",
-            "listPackageAudit 200 $.items[*].meta.hooks TYPE",
-            "listPackageAudit 200 $.items[*].meta.nodes TYPE",
-            "listPackageAudit 200 $.items[*].meta.notifications TYPE",
-            "listPackageAudit 200 $.items[*].meta.scripts TYPE",
-            "listPackageAudit 200 $.items[*].meta.workflows TYPE",
-        ),
-        waiting(
-            RECEIPT,
-            "answerApproval 200 $.receipt.createdAt MISSING",
-            "answerApproval 200 $.receipt.decisions MISSING",
-            "answerApproval 200 $.receipt.initiator MISSING",
-            "answerApproval 200 $.receipt.rules MISSING",
-            "answerApproval 200 $.receipt.signature MISSING",
-            "answerApproval 200 $.receipt.subject MISSING",
-        ),
-    ).flatten().toMap()
-
-    private fun waiting(reason: String, vararg keys: String) = keys.map { it to reason }
+    /**
+     * Each drift's key ([Drift.key], such as `listThings 200 $.id MISSING`) to why it waits. Empty: every answer the
+     * tests see follows the ostrom-core contract.
+     */
+    val drifts: Map<String, String> = emptyMap()
 }
