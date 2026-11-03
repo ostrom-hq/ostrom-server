@@ -10,16 +10,19 @@ import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.kernel.auth.CSRF_COOKIE
 import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
+import dev.ostrom.server.orgs.presentation.MembersResponse
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
+import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.http.HttpHeaders
 import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /**
  * `GET /api/v1/orgs/{org}/members` on 10 organizations of 1 000 members each: the whole list and one member. Each
@@ -66,12 +69,17 @@ class OrgsReadsBenchTest {
         fixtures.execute("VACUUM ANALYZE identity_users").getOrThrow()
         fixtures.execute("VACUUM ANALYZE orgs_members").getOrThrow()
 
+        val members = server.client.get("/api/v1/orgs/org0/members") { session(sessions.first()) }
+            .body<MembersResponse>()
+        assertEquals(MEMBERS_PER_ORG, members.items.size)
         val measures = listOf(
             "GET /api/v1/orgs/{org}/members (1 000 members)" to "/api/v1/orgs/org0/members",
             "GET /api/v1/orgs/{org}/members/{login}" to "/api/v1/orgs/org0/members/user0-500",
         ).map { (name, path) -> server.measureRead(name) { get(path) { session(sessions.first()) } } }
         writeReadReport("orgs", measures)
         measures.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }
+        // No N+1: the list of 1 000 sends the queries of one member.
+        assertEquals(measures[1].queries, measures[0].queries, measures.joinToString("\n") { it.describe() })
     }
 
     private companion object {
