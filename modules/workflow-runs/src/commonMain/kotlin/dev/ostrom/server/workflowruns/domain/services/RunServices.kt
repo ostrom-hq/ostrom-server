@@ -5,6 +5,7 @@ import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.workflowruns.domain.models.RunPackage
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The organization's compiled packages (the compiler module). */
@@ -18,6 +19,19 @@ interface RunPackages {
      * @return The package, or null when it is not one of the organization's.
      */
     suspend fun find(orgId: Uuid, digest: String): RunPackage?
+
+    /**
+     * Whether a session that started at [startedAt] may report under [pack] (AUDIT-SECU-RUNNER-2 R3b): its
+     * repository's pinned package, or one that no other usable package of the repository replaced before the session
+     * started. A package published while the session runs never refuses the session's own.
+     *
+     * @param orgId The organization.
+     * @param pack The package a report names.
+     * @param startedAt When the session started.
+     *
+     * @return True when the session may report under it.
+     */
+    suspend fun current(orgId: Uuid, pack: RunPackage, startedAt: Instant): Boolean
 }
 
 /** The organization's sessions and their gates (the sessions and gates modules). */

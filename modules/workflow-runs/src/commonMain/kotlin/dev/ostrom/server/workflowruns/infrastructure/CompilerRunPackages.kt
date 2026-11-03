@@ -10,6 +10,7 @@ import dev.ostrom.server.workflowruns.domain.models.PackageScript
 import dev.ostrom.server.workflowruns.domain.models.RunPackage
 import dev.ostrom.server.workflowruns.domain.services.RunPackages
 import kotlinx.serialization.Serializable
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /**
@@ -28,7 +29,19 @@ class CompilerRunPackages(private val compiler: CompilerRepository) : RunPackage
             nodes = body.nodes.map { PackageNode(it.id, it.workflowId, it.workflowName, it.kind, it.label, it.mode) },
             scripts = body.scripts.map { PackageScript(it.id, it.nodeId, it.sha256, it.mode) },
             notifications = body.notifications.map { PackageNotify(it.id, it.nodeId, it.channel, it.message, it.mode) },
+            compiledAt = stored.compiledAt,
         )
+    }
+
+    override suspend fun current(orgId: Uuid, pack: RunPackage, startedAt: Instant): Boolean {
+        val own = pack.envelope
+        if (compiler.pin(orgId, own.repo)?.contentDigest == own.contentDigest) return true
+        val ownAt = Instant.parse(pack.compiledAt)
+        // Replaced: another usable package of the repository, compiled after this one and before the session started.
+        return compiler.packages(orgId, null).none { other ->
+            val at = Instant.parse(other.compiledAt)
+            other.envelope.repo == own.repo && !other.revoked && at > ownAt && at <= startedAt
+        }
     }
 }
 
