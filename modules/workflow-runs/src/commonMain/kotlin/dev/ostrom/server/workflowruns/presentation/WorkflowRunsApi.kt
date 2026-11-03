@@ -111,6 +111,7 @@ data class NotificationsPage(val items: List<Notification>, val next: String? = 
  * @property digest The digest signed.
  * @property kid The key that signed it.
  * @property reason Why not.
+ * @property orgBound True when the signed body names the caller's organization.
  */
 @Serializable
 data class VerificationDto(
@@ -118,6 +119,7 @@ data class VerificationDto(
     val digest: String? = null,
     val kid: String? = null,
     val reason: String? = null,
+    val orgBound: Boolean = false,
 )
 
 /**
