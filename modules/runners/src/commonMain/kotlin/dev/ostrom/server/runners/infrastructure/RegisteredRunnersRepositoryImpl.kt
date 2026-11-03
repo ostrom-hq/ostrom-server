@@ -73,8 +73,9 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
     override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant, capacity: Int?): Boolean =
         driver.inTenant(orgId) {
             execute(
-                Statement.create(TOUCH_SQL).bind("at", at).bind("capacity", capacity).bind("org_id", orgId)
-                    .bind("id", id).bind("key_hash", keyHash),
+                Statement.create(TOUCH_SQL).bind("at", at).bind("org_id", orgId).bind("id", id)
+                    .bind("key_hash", keyHash)
+                    .apply { if (capacity == null) bindNull("capacity", Int::class) else bind("capacity", capacity) },
             ).getOrThrow() > 0
         }
 
