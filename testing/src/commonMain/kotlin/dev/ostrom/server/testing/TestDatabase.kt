@@ -68,7 +68,8 @@ class TestDatabase private constructor(
      *
      * A pool larger than [ROLE_POOL_SIZE] (a read bench's 20 concurrent callers, a load test's contended pool) runs
      * [exclusively]: one at a time on the PostgreSQL server, whatever test process opens it. The wait comes before the
-     * pool opens, so a bench never times it.
+     * pool opens, so a bench never times it. A pool is at most [LARGEST_POOL]: the one large pool open on the server
+     * beside every test process's own pools must stay under CI's `max_connections` (a pool of 50 did not, 03/11/2026).
      *
      * @param bypassRowLevelSecurity Whether the role bypasses row-level security.
      * @param poolSize The connections of the role's pool; 1 makes every query run on the same session.
@@ -80,10 +81,13 @@ class TestDatabase private constructor(
         bypassRowLevelSecurity: Boolean = false,
         poolSize: Int = ROLE_POOL_SIZE,
         block: suspend (role: String, driver: Driver) -> T,
-    ): T = if (poolSize > ROLE_POOL_SIZE) {
-        exclusively { connectedAsRole(bypassRowLevelSecurity, poolSize, block) }
-    } else {
-        connectedAsRole(bypassRowLevelSecurity, poolSize, block)
+    ): T {
+        require(poolSize <= LARGEST_POOL) { "A pool of $poolSize: at most $LARGEST_POOL beside the other tests' pools." }
+        return if (poolSize > ROLE_POOL_SIZE) {
+            exclusively { connectedAsRole(bypassRowLevelSecurity, poolSize, block) }
+        } else {
+            connectedAsRole(bypassRowLevelSecurity, poolSize, block)
+        }
     }
 
     /**
@@ -191,6 +195,12 @@ class TestDatabase private constructor(
         private const val SUPERUSER_POOL_SIZE = 2
         // The pool of withRole by default, the largest one that never waits for the others.
         private const val ROLE_POOL_SIZE = 2
+
+        /**
+         * The largest pool of [withRole]: CI's PostgreSQL service keeps 97 of its 100 connections for roles other than
+         * superusers, and a few test processes at once each hold up to 12 ([create]) besides the one large pool.
+         */
+        const val LARGEST_POOL = 20
 
         /** The advisory lock key of [exclusively], in the configured database. */
         internal const val EXCLUSIVE_LOCK = 774_210_001L

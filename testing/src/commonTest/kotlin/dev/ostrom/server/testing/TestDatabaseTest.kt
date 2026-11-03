@@ -175,6 +175,19 @@ class TestDatabaseTest {
     }
 
     @Test
+    fun aPoolLargerThanTheLargestIsRefusedBeforeAnyConnection() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            val refused = assertFailsWith<IllegalArgumentException> {
+                database.withRole(poolSize = TestDatabase.LARGEST_POOL + 1) { _, _ -> error("never opened") }
+            }
+            assertEquals("A pool of 21: at most 20 beside the other tests' pools.", refused.message)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun aDatabaseThatCannotBeCreatedReleasesItsConnection() = runTest {
         val url = environment["OSTROM_TEST_DATABASE_URL"] ?: return@runTest
         // A database name that PostgreSQL refuses to create: the creation fails, nothing is left open.
