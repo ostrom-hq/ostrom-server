@@ -19,7 +19,7 @@ import kotlin.uuid.Uuid
 /** Starts a run of a workflow (contract `startWorkflowRun`). */
 interface StartWorkflowRunUseCase {
     /**
-     * Records the run, queued: no engine plays the runs yet (`.coord/QUESTIONS.md`, 03/11).
+     * Records the run, queued: no engine plays the runs yet.
      *
      * @param actor The caller: an owner or an admin of the organization, with a person's credential.
      * @param workflowId The workflow.
