@@ -133,13 +133,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
           # Test values only: sign-in mails are written to a directory, Stripe is never called by the flows.
           # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
+          # stripe-mock refuses a key with another underscore after `sk_test_` (401, as console-journey.yml's did).
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
           OSTROM_MAIL_DIR=/var/lib/ostrom/mail
           OSTROM_PUBLIC_URL=http://127.0.0.1:4600
           OSTROM_CONSOLE_URL=http://127.0.0.1:4600
-          OSTROM_STRIPE_SECRET_KEY=sk_test_app_e2e
+          OSTROM_STRIPE_SECRET_KEY=sk_test_appe2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_app_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
           OSTROM_GITHUB_CLIENT_ID=Iv1.ostromappe2e
