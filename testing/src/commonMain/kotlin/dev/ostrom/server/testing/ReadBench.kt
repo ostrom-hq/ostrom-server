@@ -45,11 +45,20 @@ private const val EXPLAIN = "EXPLAIN (ANALYZE, BUFFERS) "
  * of the test (`SELECT 1` reached a p95 of 210 ms there). The HTTP p95 of a deployment is k6's (ostrom-e2e,
  * `chart-load`).
  *
+ * A route that writes on every call (a runner's heartbeat) is measured with [writes]: its `UPDATE`, `INSERT` and
+ * `DELETE` statements are explained too, so that a write that scans a table, or one sent once per row, is counted. Its
+ * concurrent replays write the same rows, and wait for each other's locks: their p95 is a ceiling.
+ *
  * @param name The route and its case.
+ * @param writes Whether its writes are explained and counted as queries.
  * @param call One call.
  * @return The measure.
  */
-suspend fun TestServer.measureRead(name: String, call: suspend HttpClient.() -> HttpResponse): ReadMeasure {
+suspend fun TestServer.measureRead(
+    name: String,
+    writes: Boolean = false,
+    call: suspend HttpClient.() -> HttpResponse,
+): ReadMeasure {
     // Every call must succeed: a refused call (a 429 of the read limits) sends fewer statements and would be measured.
     val checked: suspend () -> Unit = {
         val response = client.call()
@@ -58,15 +67,15 @@ suspend fun TestServer.measureRead(name: String, call: suspend HttpClient.() -> 
     repeat(WARM_UP_CALLS) { checked() }
     val http = List(HTTP_CALLS) { timed { checked() } }.sorted()[HTTP_CALLS / 2]
     val statements = (1..RECORDINGS).map { driver.record(checked) }.minBy { it.size }
-    val plans = database.driver.replay(statements, explain = true)
+    val plans = database.driver.replay(statements, explain = true, writes)
     val latencies = database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
         database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
         val callers = 1..CONCURRENT_CALLS
         // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.
-        coroutineScope { callers.map { async { pool.replay(statements, explain = true) } }.awaitAll() }
+        coroutineScope { callers.map { async { pool.replay(statements, explain = true, writes) } }.awaitAll() }
         coroutineScope {
             callers.map {
-                async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true)) } }
+                async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true, writes)) } }
             }.awaitAll().flatten().sorted()
         }
     }
@@ -98,14 +107,19 @@ private inline fun timed(block: () -> Unit): Duration {
  *
  * @param statements What one request sent.
  * @param explain Whether to return the plans.
+ * @param writes Whether `UPDATE`, `INSERT` and `DELETE` statements are explained too, as queries.
  * @return The plan of each query, in order; none without [explain].
  */
-internal suspend fun Driver.replay(statements: List<SentStatement>, explain: Boolean): List<String> {
+internal suspend fun Driver.replay(
+    statements: List<SentStatement>,
+    explain: Boolean,
+    writes: Boolean = false,
+): List<String> {
     val plans = mutableListOf<String>()
     for (group in statements.byTransaction()) {
         val tx = begin().getOrThrow()
         try {
-            plans += tx.replay(group, explain)
+            plans += tx.replay(group, explain, writes)
         } finally {
             tx.rollback().getOrThrow()
         }
@@ -113,10 +127,11 @@ internal suspend fun Driver.replay(statements: List<SentStatement>, explain: Boo
     return plans
 }
 
-private suspend fun Transaction.replay(group: List<SentStatement>, explain: Boolean): List<String> =
+private suspend fun Transaction.replay(group: List<SentStatement>, explain: Boolean, writes: Boolean): List<String> =
     group.mapNotNull { sent ->
-        // A query, apart from setting the organization or taking a lock.
-        if (QUERY.containsMatchIn(sent.sql) && !SETUP.containsMatchIn(sent.sql)) {
+        // A query (a write too, with writes), apart from setting the organization or taking a lock.
+        val query = QUERY.containsMatchIn(sent.sql) || (writes && WRITE.containsMatchIn(sent.sql))
+        if (query && !SETUP.containsMatchIn(sent.sql)) {
             val rows = fetchAll(sent.copy(if (explain) EXPLAIN else "")).getOrThrow()
             if (explain) rows.joinToString("\n") { it.get("QUERY PLAN").asString() } else null
         } else {
@@ -136,6 +151,7 @@ private fun List<SentStatement>.byTransaction(): List<List<SentStatement>> =
     }
 
 private val QUERY = Regex("^[\\s(]*(SELECT|WITH|VALUES|TABLE)\\b", RegexOption.IGNORE_CASE)
+private val WRITE = Regex("^\\s*(UPDATE|INSERT|DELETE)\\b", RegexOption.IGNORE_CASE)
 private val SETUP = Regex("set_config\\(|pg_advisory", RegexOption.IGNORE_CASE)
 
 // A fresh statement for each run: the server's own is never shared between the concurrent replays.
