@@ -240,12 +240,24 @@ class LaunchPathLoadPostgresTest {
 
     // The whole path of one launch, each call timed under its route; null once a call fails.
     private suspend fun TestServer.wholePath(person: Person, n: Int, calls: Calls): Started? {
-        calls.timed("GET /policy/agents", { client.get(POLICY) { bearer(person.cliToken) } }) { } ?: return null
-        calls.timed("GET /packages/current", { client.get(PACKAGE) { bearer(person.cliToken) } }) { } ?: return null
-        val launch = calls.timed(
-            "POST /launches",
-            { client.post(LAUNCHES) { bearer(person.cliToken); json(LAUNCH) } },
-        ) { it.body<LaunchResponse>() } ?: return null
+        val reads = listOf<Pair<String, suspend () -> HttpResponse>>(
+            "GET /policy/agents" to { client.get(POLICY) { bearer(person.cliToken) } },
+            "GET /packages/current" to { client.get(PACKAGE) { bearer(person.cliToken) } },
+        )
+        val read = reads.all { (route, call) -> calls.timed(route, call) { } != null }
+        val launch = if (read) {
+            calls.timed(
+                "POST /launches",
+                { client.post(LAUNCHES) { bearer(person.cliToken); json(LAUNCH) } },
+            ) { it.body<LaunchResponse>() }
+        } else {
+            null
+        }
+        return launch?.let { governed(it, n, calls) }
+    }
+
+    // What the agent of a launch does with its token: its session, the catalog, a governed gate, the two ends.
+    private suspend fun TestServer.governed(launch: LaunchResponse, n: Int, calls: Calls): Started? {
         val token = launch.agentToken
         val sessionId = "s-$n"
         val steps = listOf<Pair<String, suspend () -> HttpResponse>>(
@@ -255,8 +267,8 @@ class LaunchPathLoadPostgresTest {
             "POST /sessions/{id}/end" to { client.post("$SESSIONS/$sessionId/end") { bearer(token); json("{}") } },
             "DELETE /launches/{id}" to { client.delete("$LAUNCHES/${launch.launchId}") { bearer(token) } },
         )
-        for ((route, call) in steps) calls.timed(route, call) { } ?: return null
-        return Started(launch.launchId, token, sessionId)
+        val whole = steps.all { (route, call) -> calls.timed(route, call) { } != null }
+        return if (whole) Started(launch.launchId, token, sessionId) else null
     }
 
     // A launch as the 1 000 of the leak test run it: created, its session started and ended, then the launch ended.
@@ -521,6 +533,7 @@ class LaunchPathLoadPostgresTest {
         const val LEAK_WIDTH = 3
         val CONCURRENCY_BUDGET = 150.seconds
         const val TEXT = 120
+        const val SHA_LENGTH = 40
         const val FILLED_ROWS = 20_000
         val FILLED = setOf("launches_launches", "identity_api_tokens", "sessions_sessions")
         const val WRITE_WARM_UPS = 3
@@ -540,8 +553,10 @@ class LaunchPathLoadPostgresTest {
         fun session(id: String, launchId: String) =
             """{"id":"$id","launchId":"$launchId","agent":"claude-code","repo":"$REPO"}"""
 
+        // The hook sends the commits a push sends: the enforced gate of the release workflow refuses a push without.
         fun ask(sessionId: String, n: Int) =
             """{"sessionId":"$sessionId","repo":"$REPO","class":"push-main","tool":"Bash",""" +
-                """"command":"git push origin main # $n"}"""
+                """"command":"git push origin main # $n","push":{"remote":"origin",""" +
+                """"refs":[{"ref":"refs/heads/main","sha":"${n.toString().padStart(SHA_LENGTH, '0')}"}]}}"""
     }
 }
