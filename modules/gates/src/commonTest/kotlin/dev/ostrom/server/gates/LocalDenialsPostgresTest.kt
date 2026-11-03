@@ -154,6 +154,25 @@ class LocalDenialsPostgresTest {
     }
 
     @Test
+    fun everyReasonOfTheContractIsRecorded() = deniedTest { server ->
+        val reasons = listOf(
+            "redirected",
+            "unreadable",
+            "unknown_landing",
+            "dynamic_command",
+            "git_setting",
+            "foreign_repository",
+            "policy_held",
+        )
+        for (reason in reasons) {
+            assertEquals(HttpStatusCode.Accepted, server.report("user:a:dana", denial(reason = reason)).status, reason)
+        }
+        assertEquals(reasons, audit.map { it.details["reason"] })
+        assertEquals(HttpStatusCode.BadRequest, server.report("user:a:dana", denial(reason = "Redirected")).status)
+        assertEquals(reasons.size, audit.size)
+    }
+
+    @Test
     fun anUnknownClosedOrOtherOrganizationsSessionWritesNothing() = deniedTest { server ->
         assertEquals(HttpStatusCode.NotFound, server.report("user:a:dana", denial(session = "s-gone")).status)
         assertEquals(HttpStatusCode.NotFound, server.report("user:b:zoe", denial()).status)
