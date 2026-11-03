@@ -50,21 +50,23 @@ private const val EXPLAIN = "EXPLAIN (ANALYZE, BUFFERS) "
  * @return The measure.
  */
 suspend fun TestServer.measureRead(name: String, call: suspend HttpClient.() -> HttpResponse): ReadMeasure {
-    repeat(WARM_UP_CALLS) {
+    // Every call must succeed: a refused call (a 429 of the read limits) sends fewer statements and would be measured.
+    val checked: suspend () -> Unit = {
         val response = client.call()
         check(response.status.isSuccess()) { "$name answers ${response.status}: ${response.bodyAsText()}" }
     }
-    val http = List(HTTP_CALLS) { timed { client.call() } }.sorted()[HTTP_CALLS / 2]
-    val statements = (1..RECORDINGS).map { driver.record { client.call() } }.minBy { it.size }
+    repeat(WARM_UP_CALLS) { checked() }
+    val http = List(HTTP_CALLS) { timed { checked() } }.sorted()[HTTP_CALLS / 2]
+    val statements = (1..RECORDINGS).map { driver.record(checked) }.minBy { it.size }
     val plans = database.driver.replay(statements, explain = true)
     val latencies = database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
         database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
+        val callers = 1..CONCURRENT_CALLS
+        // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.
+        coroutineScope { callers.map { async { pool.replay(statements, explain = true) } }.awaitAll() }
         coroutineScope {
-            (1..CONCURRENT_CALLS).map {
-                async {
-                    pool.replay(statements, explain = true)
-                    List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true)) }
-                }
+            callers.map {
+                async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true)) } }
             }.awaitAll().flatten().sorted()
         }
     }
@@ -91,7 +93,7 @@ private inline fun timed(block: () -> Unit): Duration {
 /**
  * Replays [statements] as the call ran them: each transaction of the call in a transaction of its own, rolled back
  * afterwards, so that every statement sees the role and the organization its transaction had set. With [explain], each
- * query (`SELECT` or `WITH`, apart from setting the organization or taking a lock) runs under
+ * query (`SELECT`, `WITH`, `VALUES` or `TABLE`, apart from setting the organization or taking a lock) runs under
  * `EXPLAIN (ANALYZE, BUFFERS)` and its plan is returned.
  *
  * @param statements What one request sent.
@@ -132,7 +134,7 @@ private fun List<SentStatement>.byTransaction(): List<List<SentStatement>> =
         groups
     }
 
-private val QUERY = Regex("^\\s*(SELECT|WITH)\\b", RegexOption.IGNORE_CASE)
+private val QUERY = Regex("^[\\s(]*(SELECT|WITH|VALUES|TABLE)\\b", RegexOption.IGNORE_CASE)
 private val SETUP = Regex("set_config\\(|pg_advisory", RegexOption.IGNORE_CASE)
 
 private fun SentStatement.isQuery(): Boolean = QUERY.containsMatchIn(sql) && !SETUP.containsMatchIn(sql)
@@ -152,7 +154,10 @@ private fun SentStatement.copy(prefix: String): Statement {
  * @param largeTables The tables never to scan.
  */
 fun ReadMeasure.assertWithinBudget(largeTables: Set<String>) {
-    val scanned = largeTables.filter { table -> plans.any { it.contains(Regex("Seq Scan on $table\\b")) } }
+    val scanned = largeTables.filter { table ->
+        val scan = Regex("Seq Scan on ${Regex.escape(table)}\\b")
+        plans.any { scan.containsMatchIn(it) }
+    }
     assertTrue(scanned.isEmpty(), "$name scans $scanned:\n${describe()}")
     assertTrue(p95 < READ_P95_BUDGET, "$name: database p95 $p95 over $READ_P95_BUDGET:\n${describe()}")
 }
