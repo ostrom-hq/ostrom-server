@@ -73,8 +73,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
@@ -185,9 +183,17 @@ class GatesPostgresTest {
             object : GateReceiptSigner {
                 override suspend fun sign(gate: Gate): String = "rcpt_${gate.id}"
 
-                // The receipts module is not loaded here: a stored receipt is its id.
-                override suspend fun read(orgId: Uuid, receiptId: String?) =
-                    receiptId?.let { JsonObject(mapOf("id" to JsonPrimitive(it))) }
+                // The receipts module is not loaded here: a stored receipt reads as a signed one, in the contract's
+                // `Receipt` shape (the answers are checked against it, ContractObserver).
+                override suspend fun read(orgId: Uuid, receiptId: String?) = receiptId?.let { id ->
+                    Json.parseToJsonElement(
+                        """
+                        {"id": "$id", "subject": {"kind": "gate", "id": "$id", "digest": "sha256:0"},
+                          "initiator": "dev", "rules": [], "decisions": [], "createdAt": "2026-11-03T00:00:00Z",
+                          "signature": "sig"}
+                        """,
+                    ).jsonObject
+                }
             }
         }
     }

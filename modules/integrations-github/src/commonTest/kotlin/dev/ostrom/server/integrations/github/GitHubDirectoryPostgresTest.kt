@@ -11,6 +11,7 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.presentation.GateScopes
+import dev.ostrom.server.identity.domain.LinkedIdentities
 import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubContentsApi
@@ -173,7 +174,9 @@ class GitHubDirectoryPostgresTest {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<Clock> { clock }
         single<GitHubApi> { github }
-        single<UsersRepository> { LinkedGitHubUsers(emptyMap()) }
+        val users = LinkedGitHubUsers(emptyMap())
+        single<UsersRepository> { users }
+        single<LinkedIdentities> { users }
         single<GitHubDirectoryApi> { directoryApi }
         single<GitHubManifestApi> { directoryApi }
         single<GitHubContentsApi> { contentsApi }
