@@ -4,13 +4,16 @@ package dev.ostrom.server.workflowruns.presentation
 import dev.ostrom.core.api.models.CheckRun
 import dev.ostrom.core.api.models.Notification
 import dev.ostrom.core.api.models.ReportCheckRequest
+import dev.ostrom.core.api.models.WorkflowRun
+import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.http.NullsKept
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
 // The routes and bodies of `ostrom-core/api/openapi.yaml` (operations `reportCheck`, `listChecks`, `sendNotification`,
-// `listNotifications`, `signWorkflowReceipt` and `getReceiptBundle`).
+// `listNotifications`, `signWorkflowReceipt`, `getReceiptBundle`, `startWorkflowRun`, `listWorkflowRuns` and
+// `listRuns`).
 
 /**
  * The check runs.
@@ -108,6 +111,7 @@ data class NotificationsPage(val items: List<Notification>, val next: String? = 
  * @property digest The digest signed.
  * @property kid The key that signed it.
  * @property reason Why not.
+ * @property orgBound True when the signed body names the caller's organization.
  */
 @Serializable
 data class VerificationDto(
@@ -115,6 +119,7 @@ data class VerificationDto(
     val digest: String? = null,
     val kid: String? = null,
     val reason: String? = null,
+    val orgBound: Boolean = false,
 )
 
 /**
@@ -143,3 +148,56 @@ class RunnerChecksApi
  */
 @Serializable
 data class RunnerCheckRequest(val sessionId: String, val epoch: Long, val check: ReportCheckRequest)
+
+/**
+ * The runs of a workflow.
+ *
+ * @property id The workflow.
+ * @property status Only these (`queued`, `running`, `waiting`, `succeeded`, `failed`, `cancelled`).
+ * @property before The id the previous page ended on.
+ */
+@Serializable
+@Resource("/api/v1/workflows/{id}/runs")
+class WorkflowRunsOfApi(val id: String, val status: String? = null, val before: String? = null)
+
+/**
+ * The runs of the organization's workflows.
+ *
+ * @property status Only these.
+ * @property before The id the previous page ended on.
+ */
+@Serializable
+@Resource("/api/v1/runs")
+class RunsApi(val status: String? = null, val before: String? = null)
+
+/**
+ * The body of `POST /api/v1/workflows/{id}/runs`.
+ *
+ * @property inputs The inputs, by id.
+ */
+@Serializable
+data class StartRunRequest(val inputs: Map<String, String> = emptyMap())
+
+/**
+ * A page of runs of workflows.
+ *
+ * @property items The runs, newest first.
+ * @property next The id to ask the next page before, or null on the last page.
+ */
+@Serializable
+data class RunsPage(val items: List<WorkflowRun>, val next: String? = null)
+
+/** The scopes of the runs of workflows; a person's browser session (`user:*`) holds them all. */
+object RunScopes {
+    /** Reads the workflows and their runs. */
+    const val WORKFLOWS_READ: String = "workflows:read"
+
+    /** Writes the workflows and starts their runs (an owner or an admin). */
+    const val WORKFLOWS_WRITE: String = "workflows:write"
+
+    /** Who starts a run: a person's credential that writes workflows; never an agent token. */
+    val starting: Set<String> = setOf(GateScopes.ALL_USER, WORKFLOWS_WRITE)
+
+    /** Who reads the runs: any credential that reads workflows; never an agent token. */
+    val reading: Set<String> = setOf(GateScopes.ALL_USER, WORKFLOWS_READ, WORKFLOWS_WRITE)
+}

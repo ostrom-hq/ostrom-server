@@ -68,6 +68,16 @@ class LaunchRelayCallersTest {
     }
 
     @Test
+    fun anAgentTokenOfALaunchThatPlaysAWorkflowNamesIt() = runTest {
+        launches.create(launch.copy(workflowId = "review"))
+        assertEquals(
+            Caller(ORG, memberOf(ADA.userId), MemberRole.MEMBER, launchId = launch.id, workflowId = "review"),
+            callers.resolve(agent(), null),
+            "Every model call of the launch counts under its workflow",
+        )
+    }
+
+    @Test
     fun anAgentTokenStopsWhenItsLaunchExpiresOrItsPersonMayNoLongerLaunch() = runTest {
         launches.create(launch)
         launchers.roles[ADA.userId] = OrgRole.BILLING

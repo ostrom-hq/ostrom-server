@@ -2,6 +2,7 @@
 package dev.ostrom.server.compiler
 
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
+import dev.ostrom.server.compiler.domain.services.CompiledPackages
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.domain.services.HarnessReceiptSigner
 import dev.ostrom.server.compiler.domain.usecases.ApproversGraphUseCase
@@ -23,6 +24,7 @@ import dev.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
 import dev.ostrom.server.compiler.domain.usecases.WorkflowsUseCaseImpl
 import dev.ostrom.server.compiler.infrastructure.CatalogGateNodes
 import dev.ostrom.server.compiler.infrastructure.CompilerMigrations
+import dev.ostrom.server.compiler.infrastructure.CompilerWorkflowDirectory
 import dev.ostrom.server.compiler.infrastructure.DefaultCompilerSources
 import dev.ostrom.server.compiler.infrastructure.PostgresCompilerRepository
 import dev.ostrom.server.compiler.infrastructure.ReceiptsCompilerSigner
@@ -34,6 +36,7 @@ import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.workflows.WorkflowDirectory
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -54,7 +57,8 @@ object CompilerModule : ServerModule {
         single { ReceiptsCompilerSigner(get()) }
         single<HarnessReceiptSigner> { get<ReceiptsCompilerSigner>() }
         single<WorkflowDecisionSigner> { get<ReceiptsCompilerSigner>() }
-        single<CompileSourcesUseCase> { CompileSourcesUseCaseImpl(get(), get(), get(), get()) }
+        single { CompiledPackages() }
+        single<CompileSourcesUseCase> { CompileSourcesUseCaseImpl(get(), get(), get(), get(), get()) }
         single<PublishPackageUseCase> { PublishPackageUseCaseImpl(get(), get(), get(), get(), get()) }
         single<PreviewPackageUseCase> { PreviewPackageUseCaseImpl(get()) }
         single<RevokePackageUseCase> { RevokePackageUseCaseImpl(get(), get()) }
@@ -62,6 +66,7 @@ object CompilerModule : ServerModule {
         single<GatePolicyUseCase> { GatePolicyUseCaseImpl(get(), get(), get()) }
         single<ApproversGraphUseCase> { ApproversGraphUseCaseImpl(get()) }
         single<WorkflowsUseCase> { WorkflowsUseCaseImpl(get(), get(), get()) }
+        single<WorkflowDirectory> { CompilerWorkflowDirectory(get<CompilerRepository>()) }
         single<GovernanceChange>(named("compiler")) { CompilerGovernanceChange(get(), get()) }
         // Created when the gates module looks for it, possibly before this module's initialize has bound the
         // sources: the catalogue is only fetched at the first gate.

@@ -76,6 +76,19 @@ class ReceiptsUseCasesTest {
             val refused = assertFailsWith<InvalidReceiptException> { sign(ORG_A, withField) }
             assertEquals("The server sets a receipt's id, createdAt and signature.", refused.message)
         }
+        val withOrg = JsonObject(draft() + ("orgId" to JsonPrimitive(ORG_B.toString())))
+        assertEquals(
+            "The server sets a receipt's orgId.",
+            assertFailsWith<InvalidReceiptException> { sign(ORG_A, withOrg) }.message,
+        )
+        for (field in listOf("launchId", "sessionId")) {
+            for (bad in listOf(JsonPrimitive(""), JsonPrimitive(1))) {
+                val refused = assertFailsWith<InvalidReceiptException> {
+                    sign(ORG_A, JsonObject(draft() + (field to bad)))
+                }
+                assertEquals("A receipt's launchId and sessionId are non-empty texts.", refused.message)
+            }
+        }
         for (id in listOf("gate-1", "rcpt_", "rcpt_a b", "rcpt_" + "x".repeat(121))) {
             assertFailsWith<InvalidReceiptException> { sign(ORG_A, draft(), id) }
         }
@@ -113,6 +126,7 @@ class ReceiptsUseCasesTest {
         val verify = VerifyReceiptUseCaseImpl(receipts, keys)
         val outcome = verify(ORG_A, receipt.text("id"))
         assertTrue(outcome.ok)
+        assertTrue(outcome.orgBound, "It names A, who verifies it")
         assertEquals(GoldenVectors.KID, outcome.kid)
         assertFailsWith<ReceiptNotFoundException> { verify(ORG_B, receipt.text("id")) }
         assertEquals(listOf(instance.receiptKey()), ListReceiptKeysUseCaseImpl(keys)())

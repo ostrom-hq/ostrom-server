@@ -99,14 +99,28 @@ class InMemorySessions : SessionsRepository {
 class FakeSessionGates : ListSessionGatesUseCase {
     val gates = mutableMapOf<String, List<SessionGate>>()
 
+    /** The sessions the end closed on the gates' side, with the time it gave, in order. */
+    val closed = mutableListOf<Pair<String, Instant>>()
+
     override suspend fun invoke(orgId: Uuid, sessionId: String): List<SessionGate> = gates[sessionId].orEmpty()
+
+    override suspend fun close(orgId: Uuid, sessionId: String, endedAt: Instant): List<SessionGate> {
+        closed += sessionId to endedAt
+        return gates[sessionId].orEmpty()
+    }
 }
 
 class FakeRules : ReceiptRules {
     private val rules =
         listOf(ReceiptRule("r-commit-style", "79b6ac48e5225be9037493c1e8a8fc9e5fbc42e2893b0c15b8846bd39d310cd7"))
 
-    override suspend fun rulesFor(orgId: Uuid, repo: String?): List<ReceiptRule> = rules
+    /** Runs once, the first time the rules are read: what happens while an end reads before its lock. */
+    var meanwhile: (suspend () -> Unit)? = null
+
+    override suspend fun rulesFor(orgId: Uuid, repo: String?): List<ReceiptRule> {
+        meanwhile?.also { meanwhile = null }?.invoke()
+        return rules
+    }
 }
 
 /** Signs by adding the id it is given; remembers every draft. */
