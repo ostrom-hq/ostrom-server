@@ -41,16 +41,19 @@ import kotlin.uuid.Uuid
 class EndLaunchPostgresTest {
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
-    private suspend fun TestServer.cliToken(login: String): String {
+    /** A CLI token of a new person, a member of a new organization unless [member] is false. */
+    private suspend fun TestServer.cliToken(login: String, member: Boolean = true): String {
         val user = koin.get<ResolveUserUseCase>()(
             VerifiedIdentity(IdentityProvider.GITHUB, login, "$login@example.com", true, login, login = login),
         )
         val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
-        koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        if (member) {
+            koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        }
         val secret = "osc_" + Uuid.random().toHexString()
         val token = ApiToken(
-            Uuid.random(), user.id, org.id, "cli", TokenKind.CLI, CLI_SCOPES, "hint", null, now, now + 1.hours, null,
-            null,
+            Uuid.random(), user.id, org.id.takeIf { member }, "cli", TokenKind.CLI, CLI_SCOPES, "hint", null, now,
+            now + 1.hours, null, null,
         )
         koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
         return secret
@@ -97,9 +100,10 @@ class EndLaunchPostgresTest {
             val first = server.launch(ada)
             val second = server.launch(ada)
             val elsewhere = server.launch(mallory)
-            // Another launch's agent token, the person's CLI token, another organization's agent token: not found,
-            // the same answer as a launch that does not exist.
-            for (token in listOf(second.agentToken, ada, elsewhere.agentToken)) {
+            val stranger = server.cliToken("nobody", member = false)
+            // Another launch's agent token, the person's CLI token, another organization's agent token, a person of
+            // no organization: not found, the same answer as a launch that does not exist.
+            for (token in listOf(second.agentToken, ada, elsewhere.agentToken, stranger)) {
                 val refused = server.end(token, first.launchId)
                 assertEquals(HttpStatusCode.NotFound, refused.status, refused.bodyAsText())
             }

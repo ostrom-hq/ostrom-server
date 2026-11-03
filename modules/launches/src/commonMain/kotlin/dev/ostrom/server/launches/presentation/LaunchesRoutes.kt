@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches.presentation
 
-import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireScope
@@ -45,10 +44,10 @@ fun Route.launchesRoutes(dependencies: LaunchesRoutesDependencies) = with(depend
             val created = call.retryAfter { createLaunch(launcher, NewLaunch(body.repo, body.agent, body.model)) }
             call.respond(HttpStatusCode.Created, created.toResponse())
         }
-        // The end of `ostrom <agent>` (AUDIT-SECU-RUNNER-2 R2b): only the launch's own agent token ends it.
+        // The end of `ostrom <agent>` (AUDIT-SECU-RUNNER-2 R2b): only the launch's own agent token ends it. Only an
+        // agent token's actor names a launch; a person, a device or a service key names none.
         delete<LaunchApi> { params ->
-            val caller = actors.resolve(call.requirePrincipal())?.takeIf { it.kind == ActorKind.AGENT_SESSION }
-            endLaunch(caller?.launchId, params.launchId)
+            endLaunch(actors.resolve(call.requirePrincipal())?.launchId, params.launchId)
             call.respond(HttpStatusCode.NoContent)
         }
     }
