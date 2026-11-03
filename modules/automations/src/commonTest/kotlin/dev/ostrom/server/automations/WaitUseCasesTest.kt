@@ -86,6 +86,13 @@ class WaitUseCasesTest {
     }
 
     @Test
+    fun aResumedSessionsSegmentIsAsked() = runTest {
+        // a session resumed by another launch is the segment `<id>~r<n>` the sessions module opened
+        val asked = ask.ask(bob, AskWait(review, sessionId = "claude-session-1~r3"), null).wait
+        assertEquals("claude-session-1~r3", asked.sessionId)
+    }
+
+    @Test
     fun malformedAsksAreRefused() = runTest {
         assertFailsWith<InvalidWaitException> { ask.ask(bob, AskWait(review, kind = "turn_failed"), null) }
         assertFailsWith<InvalidWaitException> { ask.ask(bob, AskWait(review, sessionId = "a b"), null) }
