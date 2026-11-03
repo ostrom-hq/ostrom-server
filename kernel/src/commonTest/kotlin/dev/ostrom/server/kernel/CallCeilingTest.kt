@@ -71,12 +71,16 @@ class CallCeilingTest {
         val calls = CallsInProgress(CallCeilingSettings(), { limit }, time)
         assertEquals(150, calls.ceiling(CallKind.SERVED))
         assertEquals(75, calls.ceiling(CallKind.HELD), "both kinds full stay near the 200 calls measured at 377 MiB")
-        assertEquals(150, calls.ceiling(CallKind.OPEN))
+        // With 150, the three kinds full peaked at 495 MiB under 512 MiB (CHARGE 41668930337).
+        assertEquals(100, calls.ceiling(CallKind.OPEN))
         limit = 1024 * mib
         time += 5.seconds
         assertEquals(300, calls.ceiling(CallKind.SERVED))
         assertEquals(150, calls.ceiling(CallKind.HELD))
-        assertEquals(300, calls.ceiling(CallKind.OPEN))
+        assertEquals(200, calls.ceiling(CallKind.OPEN))
+        limit = 32 * mib
+        time += 5.seconds
+        assertEquals(16, calls.ceiling(CallKind.OPEN), "never under 16")
         assertEquals(Int.MAX_VALUE, calls.ceiling(CallKind.FREE))
     }
 
@@ -104,7 +108,7 @@ class CallCeilingTest {
         val calls = CallsInProgress(CallCeilingSettings()) { null }
         assertEquals(CallsInProgress.DEFAULT_CEILING, calls.ceiling(CallKind.SERVED))
         assertEquals(CallsInProgress.DEFAULT_CEILING / 2, calls.ceiling(CallKind.HELD))
-        assertEquals(CallsInProgress.DEFAULT_CEILING, calls.ceiling(CallKind.OPEN))
+        assertEquals(170, calls.ceiling(CallKind.OPEN), "two thirds of the ordinary calls, as under a limit")
     }
 
     @Test
