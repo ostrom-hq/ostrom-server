@@ -230,7 +230,7 @@ internal class IsolationMatrix(
         return when {
             !case.rpc -> Answer(status, error?.text("type"), error?.text("message"), text)
             error != null -> Answer(status, "rpc ${error.text("code")}", error.text("message"), text, false)
-            refused -> Answer(status, "tool error", result?.toolText(), text, false)
+            refused -> Answer(status, "tool error", result.toolText(), text, false)
             else -> Answer(status, null, null, text)
         }
     }

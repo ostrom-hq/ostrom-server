@@ -69,6 +69,9 @@ internal class Party(
     /** The agent token of the organization's launch, once [seed] has launched it. */
     var agentToken: String? = null
 
+    /** Told each seeding request before it is sent: the native benches print them to name a request that hangs. */
+    var trace: ((String) -> Unit)? = null
+
     /** The owner's browser: the session cookie, the CSRF header repeating it, the console's origin. */
     val browser = Credential("browser owner") { session(owner.session) }
 

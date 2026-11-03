@@ -34,6 +34,7 @@ internal class Seeder(private val server: TestServer, private val party: Party) 
         body: String? = null,
         expected: Int = CREATED,
     ): JsonElement? {
+        party.trace?.invoke("seed ${party.marker} $step: $route [${credential.name}]")
         val answered = withTimeoutOrNull(SEND_TIMEOUT) {
             val response = server.client.request(route.substringAfter(' ')) {
                 method = HttpMethod.parse(route.substringBefore(' '))
@@ -43,23 +44,23 @@ internal class Seeder(private val server: TestServer, private val party: Party) 
                     setBody(it)
                 }
             }
-            response to response.bodyAsText()
+            response.status.value to response.bodyAsText()
         }
-        if (answered == null) {
-            party.problems += "seed ${party.marker} $step: $route did not answer in $SEND_TIMEOUT"
-            return null
+        val problem = when {
+            answered == null -> "$route did not answer in $SEND_TIMEOUT"
+            answered.first != expected -> "$route answers ${answered.first}, not $expected: " +
+                answered.second.take(PROBLEM_LENGTH)
+            else -> null
         }
-        val (response, text) = answered
-        if (response.status.value != expected) {
-            party.problems += "seed ${party.marker} $step: $route answers ${response.status.value}, not $expected: " +
-                text.take(PROBLEM_LENGTH)
-            return null
-        }
-        return try {
-            if (text.isBlank()) JsonObject(emptyMap()) else Json.parseToJsonElement(text)
-        } catch (_: IllegalArgumentException) {
-            JsonPrimitive(text)
-        }
+        problem?.let { party.problems += "seed ${party.marker} $step: $it" }
+        return answered?.second?.takeIf { problem == null }?.let(::jsonOf)
+    }
+
+    // The answer as JSON: an empty object for no body, a string for a body that is not JSON.
+    private fun jsonOf(text: String): JsonElement = try {
+        if (text.isBlank()) JsonObject(emptyMap()) else Json.parseToJsonElement(text)
+    } catch (_: IllegalArgumentException) {
+        JsonPrimitive(text)
     }
 
     /** Keeps [seed]'s value, read at [path] (`a.b.0.c`) of [answer]; a missing one is a problem of [step]. */
