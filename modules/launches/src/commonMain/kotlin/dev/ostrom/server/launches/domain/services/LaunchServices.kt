@@ -62,6 +62,15 @@ interface AgentTokenService {
      * @return The token's secret, handed to the CLI once.
      */
     suspend fun issue(launcher: Launcher, launchId: String, lifetime: Duration): String
+
+    /**
+     * Revokes the agent tokens of a launch, at once: every route that accepts one refuses them from then on.
+     *
+     * @param launchId The launch.
+     *
+     * @return How many were revoked: 0 when already revoked.
+     */
+    suspend fun revoke(launchId: String): Long
 }
 
 /**

@@ -16,6 +16,8 @@ import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.testing.TestServer
 import io.github.smyrgeorge.sqlx4k.Statement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -140,7 +142,11 @@ suspend fun TestServer.spend(org: Uuid, member: Uuid?, session: String?, micros:
     )
 }
 
-/** A gate of the seed; [decidedBy] and [decidedAt] together when a person decided it. */
+/**
+ * A gate of the seed; [decidedBy] and [decidedAt] together when a person decided it. [repo] and [realRepo] go into its
+ * stored subject, as the gates module writes it: the repository the session declared, and the one the command really
+ * ran in when it differs.
+ */
 data class SeedGate(
     val org: Uuid,
     val id: Uuid,
@@ -149,16 +155,25 @@ data class SeedGate(
     val createdAt: Instant,
     val decidedBy: String? = null,
     val decidedAt: Instant? = null,
+    val repo: String? = null,
+    val realRepo: String? = null,
 )
 
 /** Writes a gate, opened by the agent `claude`. */
 suspend fun TestServer.gate(seed: SeedGate) = with(seed) {
     val columns = "id, org_id, gate_key, subject, label, mode, status, asked_by, asked_via, session_ids, launch_ids, " +
         "shown_digest, evidence, created_at"
-    val values = ":id, :org, 'merge', 'pr', :label, 'ENFORCE', :status, '[\"claude\"]', 'cli', '[]', '[]', 'd', " +
+    val values = ":id, :org, 'merge', :subject, :label, 'ENFORCE', :status, '[\"claude\"]', 'cli', '[]', '[]', 'd', " +
         "'{}', :created"
+    val subject = buildJsonObject {
+        repo?.let { put("repo", it) }
+        realRepo?.let { put("realRepo", it) }
+        put("actionClass", "merge")
+        put("command", "")
+        put("scope", "sha:0")
+    }.toString()
     val common = arrayOf<Pair<String, Any>>(
-        "id" to id, "org" to org, "label" to label, "status" to status, "created" to createdAt,
+        "id" to id, "org" to org, "subject" to subject, "label" to label, "status" to status, "created" to createdAt,
     )
     if (decidedBy == null || decidedAt == null) {
         sql(org, "INSERT INTO gates_gates ($columns) VALUES ($values)", *common)

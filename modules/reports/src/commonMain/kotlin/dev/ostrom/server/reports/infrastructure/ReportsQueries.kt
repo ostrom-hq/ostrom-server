@@ -75,8 +75,8 @@ internal object ReportsQueries {
     /**
      * A page of the activity, newest first by (`at`, `item_id`): each source gives its newest `:limit` rows in that
      * very order (its index gives the time, the id only breaks ties), then the union keeps the newest `:limit`. Params
-     * `:org_id`, `:limit`, `:before_at` and `:before_id` if [cursor], `:repo` if [repo]. With a repository, only
-     * sessions concern it: gates and workflows have none.
+     * `:org_id`, `:limit`, `:before_at` and `:before_id` if [cursor], `:repo` if [repo]. A gate's line carries the
+     * repository of its subject ([GATE_REPO]); a workflow's carries none. With a repository, only sessions are read.
      *
      * @param cursor Whether the page starts before a position.
      * @param repo Whether only one repository's sessions.
@@ -110,13 +110,13 @@ internal object ReportsQueries {
         """
         val others = """
             UNION ALL
-            (SELECT $asked, g.created_at, 'gate.requested', $firstAsker, g.label, NULL, NULL, NULL, NULL,
+            (SELECT $asked, g.created_at, 'gate.requested', $firstAsker, g.label, NULL, $GATE_REPO, NULL, NULL,
                 CAST(g.id AS TEXT) FROM gates_gates g
                 WHERE g.org_id = :org_id AND g.status NOT IN ('SHADOW', 'UNGATED')${before("g.created_at", asked)}
                 ORDER BY g.created_at DESC, $asked DESC LIMIT :limit)
             UNION ALL
             (SELECT $decided, g.decided_at, 'gate.decided', g.decided_by, g.label,
-                CASE WHEN g.status = 'REJECTED' THEN 'rejected' ELSE 'approved' END, NULL, NULL, NULL,
+                CASE WHEN g.status = 'REJECTED' THEN 'rejected' ELSE 'approved' END, $GATE_REPO, NULL, NULL,
                 CAST(g.id AS TEXT) FROM gates_gates g
                 WHERE g.org_id = :org_id AND g.decided_at IS NOT NULL AND g.decided_by IS NOT NULL$decidedBefore
                 ORDER BY g.decided_at DESC, $decided DESC LIMIT :limit)
@@ -137,6 +137,12 @@ internal object ReportsQueries {
             ORDER BY feed.at DESC, feed.item_id DESC LIMIT :limit
         """.trimIndent()
     }
+
+    // The repository of a gate's subject (`owner/name`): the one the command really ran in when the hook read another
+    // (`realRepo`), else the one its session declared (`repo`); none outside a repository. The subject is the gate's
+    // own row, so it is never another organization's.
+    private const val GATE_REPO = "NULLIF(COALESCE(NULLIF(CAST(g.subject AS JSONB) ->> 'realRepo', ''), " +
+        "CAST(g.subject AS JSONB) ->> 'repo'), '')"
 
     // A person who decided, kept as a user's id, is shown by their login, and only if they are a member of the
     // organization: an id written anywhere else, or of a stranger, is shown as it is (never another org's login).

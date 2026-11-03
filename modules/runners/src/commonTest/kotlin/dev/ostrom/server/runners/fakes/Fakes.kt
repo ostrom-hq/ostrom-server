@@ -71,6 +71,7 @@ class FakeRunnerTokens : RunnerTokens {
 
 /** A runtime that records calls and answers what the test sets. */
 class FakeRuntimeDriver : RuntimeDriver {
+    override var relocates = false
     val calls = mutableListOf<String>()
     val started = mutableListOf<ExecutionSpec>()
     var status: ExecutionStatus = ExecutionStatus.PENDING

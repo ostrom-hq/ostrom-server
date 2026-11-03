@@ -543,6 +543,9 @@ class CompilerPostgresTest {
 
         val catalog = server.call("agent:a:l1", "/api/v1/gates/catalog?repo=acme-api").body<JsonObject>()
         assertEquals("closed", catalog.getValue("failMode").jsonPrimitive.content)
+        // The real answer, one gated action and ungated ones, against ostrom-core main's contract (WEB-PARCOURS 3344).
+        val contract = ContractSchema.fromEnvironment()
+        contract?.assertMatches("GateCatalog", catalog)
         val push = catalog.getValue("actions").jsonArray.map { it.jsonObject }
             .first { it.getValue("class").jsonPrimitive.content == "push-main" }
         assertEquals("release", push.getValue("gate").jsonObject.getValue("workflowId").jsonPrimitive.content)
@@ -551,10 +554,12 @@ class CompilerPostgresTest {
         // S2-20: the hooks trust the same catalogue only signed by the instance, for this repository, for minutes.
         val signedPath = "/api/v1/gates/catalog/signed?repo=acme-api"
         val policy = server.call("agent:a:l1", signedPath).body<JsonObject>()
+        contract?.assertMatches("SignedGatePolicy", policy)
         val signed = policy.getValue("payload").jsonPrimitive.content
         val signature = Base64.decode(policy.getValue("signature").jsonPrimitive.content)
         assertTrue(server.koin.get<InstanceSigner>().verify(signed.encodeToByteArray(), signature))
         val body = Json.parseToJsonElement(signed).jsonObject
+        contract?.assertMatches("SignedGatePolicyPayload", body)
         assertEquals("acme-api", body.getValue("repo").jsonPrimitive.content)
         assertEquals(catalog.getValue("actions"), body.getValue("actions"))
         val otherOrg = server.call("agent:b:l1", signedPath).body<JsonObject>().getValue("payload").jsonPrimitive
