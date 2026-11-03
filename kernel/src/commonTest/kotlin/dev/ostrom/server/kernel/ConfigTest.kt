@@ -293,10 +293,11 @@ class ConfigTest {
         val set = mapOf(
             "OSTROM_MAX_CALLS_IN_PROGRESS" to "1",
             "OSTROM_MAX_HELD_CALLS" to "100000",
+            "OSTROM_MAX_OPEN_CONNECTIONS" to "7",
             "OSTROM_CALL_QUEUE_SECONDS" to "0",
         )
         assertEquals(
-            CallCeilingSettings(1, 100_000, Duration.ZERO),
+            CallCeilingSettings(served = 1, held = 100_000, open = 7, queueWait = Duration.ZERO),
             ServerConfig.from(MapConfigSource(database + set)).callCeilings,
         )
         val wrongs = listOf(
@@ -304,6 +305,7 @@ class ConfigTest {
             "OSTROM_MAX_CALLS_IN_PROGRESS" to "many",
             "OSTROM_MAX_HELD_CALLS" to "100001",
             "OSTROM_CALL_QUEUE_SECONDS" to "61",
+            "OSTROM_MAX_OPEN_CONNECTIONS" to "0",
         )
         for (wrong in wrongs) {
             assertFailsWith<InvalidConfigException>(wrong.toString()) {

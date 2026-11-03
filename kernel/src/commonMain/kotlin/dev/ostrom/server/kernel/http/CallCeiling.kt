@@ -17,7 +17,9 @@ import io.ktor.server.routing.RouteSelector
 import io.ktor.server.routing.RouteSelectorEvaluation
 import io.ktor.server.routing.RoutingResolveContext
 import io.ktor.util.AttributeKey
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
@@ -34,29 +36,35 @@ enum class CallKind {
     /** An ordinary call: answered in at most a few seconds. */
     SERVED,
 
-    /** A call that stays open (a wait up to 30 s, a WebSocket, a stream): counted apart, under its own ceiling. */
+    /** A call held while it waits (a gate or a confirmation, up to 30 s; a model or an MCP server's answer). */
     HELD,
+
+    /** A connection open as long as its client keeps it (a terminal's WebSocket, the live usage stream). */
+    OPEN,
 
     /** Never counted: `/health` and `/ready`, which the orchestrator must always reach. */
     FREE,
 }
 
 /**
- * The ceilings set by the instance: `OSTROM_MAX_CALLS_IN_PROGRESS` and `OSTROM_MAX_HELD_CALLS`, each null to derive it
- * from the container's memory limit, and how long a call waits for a place (`OSTROM_CALL_QUEUE_SECONDS`).
+ * The ceilings set by the instance: `OSTROM_MAX_CALLS_IN_PROGRESS`, `OSTROM_MAX_HELD_CALLS` and
+ * `OSTROM_MAX_OPEN_CONNECTIONS`, each null to derive it, and how long a call waits for a place
+ * (`OSTROM_CALL_QUEUE_SECONDS`).
  *
  * @property served The most ordinary calls at once.
  * @property held The most held calls at once.
+ * @property open The most open connections at once.
  * @property queueWait How long a call past the ceiling waits for a place before its 503.
  */
 data class CallCeilingSettings(
     val served: Int? = null,
     val held: Int? = null,
+    val open: Int? = null,
     val queueWait: Duration = DEFAULT_QUEUE_WAIT,
 ) {
     /** The defaults. */
     companion object {
-        /** A burst waits this long for its place, as the reads wait for theirs. */
+        /** How long a burst waits for its place. */
         val DEFAULT_QUEUE_WAIT: Duration = 5.seconds
     }
 }
@@ -73,8 +81,9 @@ fun interface CallPlace {
  * costs memory while it runs, and up to 1 MiB more past about 100 at once: the reads, already bounded, held 500 at
  * once under 512 MiB (CHARGE 41647341533), while 500 approvals, writes bounded by nothing, OOMKilled the server
  * (41644506470). Unset, the ceilings follow the container's limit, read again every 5 s: 150 ordinary calls under
- * 512 MiB, in proportion above and below, at least 16, and 256 without a limit; half as many held calls, so that both
- * kinds full stay near the 200 calls measured at 377 MiB.
+ * 512 MiB, in proportion above and below, at least 16, and 256 without a limit; half the ordinary ceiling of held
+ * calls, so that both kinds full stay near the 200 calls measured at 377 MiB; and as many open connections as
+ * ordinary calls, an idle connection costing little.
  *
  * @param settings The ceilings the instance sets.
  * @param limitBytes Reads the container's memory limit; null without one.
@@ -87,6 +96,7 @@ class CallsInProgress(
 ) {
     private val served = Places()
     private val held = Places()
+    private val open = Places()
     private val limit = AtomicReference(LimitReading(null, null))
 
     /**
@@ -98,7 +108,8 @@ class CallsInProgress(
      */
     fun ceiling(kind: CallKind): Int = when (kind) {
         CallKind.SERVED -> settings.served ?: ceilingUnder(currentLimit())
-        CallKind.HELD -> settings.held ?: (ceilingUnder(currentLimit()) / HELD_SHARE)
+        CallKind.HELD -> settings.held ?: (ceilingUnder(currentLimit()) / HELD_SHARE).coerceAtLeast(1)
+        CallKind.OPEN -> ceiling(CallKind.HELD)
         CallKind.FREE -> Int.MAX_VALUE
     }
 
@@ -138,18 +149,22 @@ class CallsInProgress(
     private fun placesOf(kind: CallKind): Places? = when (kind) {
         CallKind.SERVED -> served
         CallKind.HELD -> held
+        CallKind.OPEN -> held
         CallKind.FREE -> null
     }
 
     /**
-     * The places of one kind: a semaphore as wide as the ceiling. A new ceiling starts a new semaphore; the calls in
+     * The places of one kind: a semaphore as wide as the ceiling, chosen under a lock so that the first calls of a
+     * burst all take the same one. A new ceiling (the container's limit changed) starts a new semaphore; the calls in
      * the old one give their places back to it, so that for a moment both count.
      */
     private class Places {
         val running = AtomicLong(0)
         private val waiting = AtomicLong(0)
+        private val choosing = Mutex()
+
         // No ceiling is 0: the first call starts the first real line.
-        private val line = AtomicReference(Line(0, Semaphore(1)))
+        private var line = Line(0, Semaphore(1))
 
         /** Past [ceiling] calls already in line, a call is refused at once: the line holds memory too. */
         suspend fun enter(ceiling: Int, wait: Duration): CallPlace? {
@@ -172,11 +187,8 @@ class CallsInProgress(
             waiting.decrementAndFetch()
         }
 
-        // Two calls that see a new ceiling at once may each start a line: the call on the line that is not kept still
-        // gives its place back to its own semaphore, and the next calls take the line kept.
-        private fun lineOf(ceiling: Int): Line {
-            val now = line.load()
-            return if (now.ceiling == ceiling) now else Line(ceiling, Semaphore(ceiling)).also { line.store(it) }
+        private suspend fun lineOf(ceiling: Int): Line = choosing.withLock {
+            line.takeIf { it.ceiling == ceiling } ?: Line(ceiling, Semaphore(ceiling)).also { line = it }
         }
     }
 
@@ -264,6 +276,17 @@ private const val RETRY_AFTER_SECONDS = "1"
  * @return The route holding them.
  */
 fun Route.heldCalls(build: Route.() -> Unit): Route = counted(CallKind.HELD, build)
+
+/**
+ * Routes whose connections stay open as long as their client keeps them (a terminal's WebSocket, the live usage
+ * stream): counted under [CallKind.OPEN], apart from the calls that wait, so that permanent connections never take
+ * the places of the waits and the model calls, nor escape a ceiling.
+ *
+ * @param build The routes.
+ *
+ * @return The route holding them.
+ */
+fun Route.openConnections(build: Route.() -> Unit): Route = counted(CallKind.OPEN, build)
 
 /**
  * Routes never counted: `/health` and `/ready`.

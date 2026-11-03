@@ -71,10 +71,12 @@ class CallCeilingTest {
         val calls = CallsInProgress(CallCeilingSettings(), { limit }, time)
         assertEquals(150, calls.ceiling(CallKind.SERVED))
         assertEquals(75, calls.ceiling(CallKind.HELD), "both kinds full stay near the 200 calls measured at 377 MiB")
+        assertEquals(150, calls.ceiling(CallKind.OPEN))
         limit = 1024 * mib
         time += 5.seconds
         assertEquals(300, calls.ceiling(CallKind.SERVED))
         assertEquals(150, calls.ceiling(CallKind.HELD))
+        assertEquals(300, calls.ceiling(CallKind.OPEN))
         assertEquals(Int.MAX_VALUE, calls.ceiling(CallKind.FREE))
     }
 
@@ -102,22 +104,34 @@ class CallCeilingTest {
         val calls = CallsInProgress(CallCeilingSettings()) { null }
         assertEquals(CallsInProgress.DEFAULT_CEILING, calls.ceiling(CallKind.SERVED))
         assertEquals(CallsInProgress.DEFAULT_CEILING / 2, calls.ceiling(CallKind.HELD))
+        assertEquals(CallsInProgress.DEFAULT_CEILING, calls.ceiling(CallKind.OPEN))
+    }
+
+    @Test
+    fun theHeldCeilingFollowsAnOrdinaryCeilingSetByTheInstance() {
+        assertEquals(25, CallsInProgress(CallCeilingSettings(served = 50)) { 1024 * mib }.ceiling(CallKind.HELD))
+        assertEquals(1, CallsInProgress(CallCeilingSettings(served = 1)) { null }.ceiling(CallKind.HELD), "at least 1")
     }
 
     @Test
     fun aCeilingSetByTheInstanceWinsOverTheLimit() {
-        val calls = CallsInProgress(CallCeilingSettings(served = 2, held = 3)) { 512 * mib }
+        val calls = CallsInProgress(CallCeilingSettings(served = 2, held = 3, open = 4)) { 512 * mib }
         assertEquals(2, calls.ceiling(CallKind.SERVED))
         assertEquals(3, calls.ceiling(CallKind.HELD))
+        assertEquals(4, calls.ceiling(CallKind.OPEN))
     }
 
     @Test
     fun eachKindCountsUnderItsOwnCeiling() = runTest {
-        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = ZERO)) { null }
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, open = 1, queueWait = ZERO)) { null }
         val served = assertNotNull(calls.enter(CallKind.SERVED))
         assertNull(calls.enter(CallKind.SERVED), "the served place is taken")
         val held = assertNotNull(calls.enter(CallKind.HELD), "a held call does not count with the served ones")
         assertNull(calls.enter(CallKind.HELD))
+        val open = assertNotNull(calls.enter(CallKind.OPEN), "an open connection takes no wait's place")
+        assertNull(calls.enter(CallKind.OPEN))
+        open.leave()
+        assertEquals(0, calls.inProgress(CallKind.OPEN))
         repeat(3) { assertNotNull(calls.enter(CallKind.FREE), "never counted").leave() }
         assertEquals(1, calls.inProgress(CallKind.SERVED), "a refusal takes no place")
         assertEquals(0, calls.inProgress(CallKind.FREE))
