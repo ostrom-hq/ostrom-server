@@ -205,7 +205,8 @@ class SessionUseCasesTest {
         assertNull(GetCloudSessionUseCaseImpl(repository, FakeRuntimeDriver())(alice, created.id).runnerId)
         for (state in listOf(SessionState.PAUSED, SessionState.TERMINATED, SessionState.FAILED)) {
             repository.sessions[created.id] = repository.sessions.getValue(created.id).copy(state = state)
-            assertNull(GetCloudSessionUseCaseImpl(repository, driver)(alice, created.id).runnerId, "$state runs nowhere")
+            val nowhere = GetCloudSessionUseCaseImpl(repository, driver)(alice, created.id)
+            assertNull(nowhere.runnerId, "$state runs nowhere")
         }
     }
 
