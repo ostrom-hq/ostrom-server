@@ -42,3 +42,18 @@ class InvalidRunException(reason: String) : OstromException(ErrorKind.INVALID_RE
 
 // The most of an id a message shows.
 private const val ID_SHOWN = 200
+
+/** No workflow of the organization has this id. */
+class RunWorkflowNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Workflow not found.")
+
+/** The workflow is a proposal: a person accepts it before anything runs it. */
+class WorkflowNotAcceptedException : OstromException(
+    ErrorKind.CONFLICT,
+    "workflow_not_accepted: accept the workflow before running it.",
+)
+
+/** Only an owner or an admin of the organization starts a run, with a person's credential. */
+class StartRunForbiddenException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Only an owner or an admin of the organization starts a workflow run.",
+)

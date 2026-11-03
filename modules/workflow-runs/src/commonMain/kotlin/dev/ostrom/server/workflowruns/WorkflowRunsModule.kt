@@ -4,17 +4,21 @@ package dev.ostrom.server.workflowruns
 import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
 import dev.ostrom.server.workflowruns.domain.repositories.WorkflowRunsRepository
 import dev.ostrom.server.workflowruns.domain.services.NotificationChannels
 import dev.ostrom.server.workflowruns.domain.services.RunLaunches
 import dev.ostrom.server.workflowruns.domain.services.RunPackages
 import dev.ostrom.server.workflowruns.domain.services.RunSessions
+import dev.ostrom.server.workflowruns.domain.services.RunWorkflows
 import dev.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.ListChecksUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.ListChecksUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.ListNotificationsUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.ListNotificationsUseCaseImpl
+import dev.ostrom.server.workflowruns.domain.usecases.ListWorkflowRunsUseCase
+import dev.ostrom.server.workflowruns.domain.usecases.ListWorkflowRunsUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.ReportRunnerCheckUseCase
@@ -24,9 +28,13 @@ import dev.ostrom.server.workflowruns.domain.usecases.SendNotificationUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.SendNotificationUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCaseImpl
+import dev.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
+import dev.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCaseImpl
 import dev.ostrom.server.workflowruns.infrastructure.CompilerRunPackages
+import dev.ostrom.server.workflowruns.infrastructure.CompilerRunWorkflows
 import dev.ostrom.server.workflowruns.infrastructure.LaunchesRunLaunches
 import dev.ostrom.server.workflowruns.infrastructure.LogChannels
+import dev.ostrom.server.workflowruns.infrastructure.PostgresStartedRunsRepository
 import dev.ostrom.server.workflowruns.infrastructure.PostgresWorkflowRunsRepository
 import dev.ostrom.server.workflowruns.infrastructure.RunsGateCheckProofs
 import dev.ostrom.server.workflowruns.infrastructure.SessionsRunSessions
@@ -43,7 +51,8 @@ import org.koin.dsl.module
  * runs, notifications), the session's signed workflow receipt, and the receipt bundle `ostrom verify` reads offline.
  * Needs the gates, sessions, receipts and compiler modules, the launches module (its
  * [dev.ostrom.server.gates.domain.services.GateActorResolver] and the cloud session of a launch) and the runners module
- * (the runner token of a check run the runner reports itself, `isolated_runner`).
+ * (the runner token of a check run the runner reports itself, `isolated_runner`). It also starts and lists the runs of
+ * the workflows, read from the compiler module.
  */
 object WorkflowRunsModule : ServerModule {
     override val name: String = "workflow-runs"
@@ -62,8 +71,14 @@ object WorkflowRunsModule : ServerModule {
         single<RunLaunches> { LaunchesRunLaunches(get()) }
         single<ReportRunnerCheckUseCase> { ReportRunnerCheckUseCaseImpl(get(), get(), get()) }
         single<GateCheckProofs> { RunsGateCheckProofs(get()) { get() } }
+        single<StartedRunsRepository> { PostgresStartedRunsRepository(get()) }
+        single<RunWorkflows> { CompilerRunWorkflows(get()) }
+        single<StartWorkflowRunUseCase> { StartWorkflowRunUseCaseImpl(get(), get(), get()) }
+        single<ListWorkflowRunsUseCase> { ListWorkflowRunsUseCaseImpl(get(), get()) }
         single {
-            WorkflowRunsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+            WorkflowRunsRoutesDependencies(
+                get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            )
         }
     }
 

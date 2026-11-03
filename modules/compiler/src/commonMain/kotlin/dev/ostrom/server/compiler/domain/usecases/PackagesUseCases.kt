@@ -9,6 +9,7 @@ import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.services.CompiledBody
+import dev.ostrom.server.compiler.domain.services.CompiledPackages
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.compiler.domain.services.GatesCatalog
 import dev.ostrom.server.compiler.domain.services.HarnessReceiptSigner
@@ -66,12 +67,14 @@ interface CompileSourcesUseCase {
  * @param sources Rules, repositories and settings.
  * @param harnessReceipts Signs a new harness version.
  * @param clock The time.
+ * @param packages The packages already compiled, by their inputs: the same inputs are compiled once.
  */
 class CompileSourcesUseCaseImpl(
     private val repository: CompilerRepository,
     private val sources: CompilerSources,
     private val harnessReceipts: HarnessReceiptSigner,
     private val clock: Clock,
+    private val packages: CompiledPackages = CompiledPackages(),
 ) : CompileSourcesUseCase {
     override suspend fun inputs(orgId: Uuid, repo: String?): CompileInputs {
         val settings = sources.settings(orgId)
@@ -90,12 +93,14 @@ class CompileSourcesUseCaseImpl(
     }
 
     override suspend fun compile(orgId: Uuid, inputs: CompileInputs): CompiledBody =
-        PackageCompiler.compile(inputs) { digest ->
-            repository.harness(orgId, inputs.repo, digest) ?: run {
-                val version = PackageSigner.harnessVersion(inputs.now, digest)
-                val rules = RulesHarness(inputs.rules, inputs.decisions, inputs.repos).rulesFor(inputs.repo)
-                val receipt = harnessReceipts.sign(orgId, version, digest, rules, inputs.now)
-                repository.saveHarness(orgId, inputs.repo, digest, HarnessStamp(version, receipt))
+        packages.of(orgId, inputs) {
+            PackageCompiler.compile(inputs) { digest ->
+                repository.harness(orgId, inputs.repo, digest) ?: run {
+                    val version = PackageSigner.harnessVersion(inputs.now, digest)
+                    val rules = RulesHarness(inputs.rules, inputs.decisions, inputs.repos).rulesFor(inputs.repo)
+                    val receipt = harnessReceipts.sign(orgId, version, digest, rules, inputs.now)
+                    repository.saveHarness(orgId, inputs.repo, digest, HarnessStamp(version, receipt))
+                }
             }
         }
 }

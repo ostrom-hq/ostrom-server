@@ -33,13 +33,14 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class ReceiptsPostgresTest {
-    // A token ends with its organization's letter: `a`, `b` (a person's session), `agent-a`, `device-a`,
+    // A token ends with its organization's letter: `a`, `b`, `c` (a person's session), `agent-a`, `device-a`,
     // `reader-a` (receipts:read only), `profile-a` (profile:read only); any other belongs to no organization.
     private val overrides = module {
         single<TokenAuthenticator> {
@@ -59,6 +60,7 @@ class ReceiptsPostgresTest {
                     when (principal.subjectId.substringAfterLast('-')) {
                         "a" -> OrgPrincipal(ORG_A, Uuid.random(), OrgRole.MEMBER)
                         "b" -> OrgPrincipal(ORG_B, Uuid.random(), OrgRole.MEMBER)
+                        "c" -> OrgPrincipal(ORG_C, Uuid.random(), OrgRole.MEMBER)
                         else -> null
                     }
             }
@@ -180,5 +182,37 @@ class ReceiptsPostgresTest {
         assertEquals(1, stored.map { it.body }.distinct().size)
         assertEquals(stored.first(), repository.get(ORG_A, "rcpt_same"))
         assertNull(repository.get(ORG_B, "rcpt_same"))
+    }
+
+    @Test
+    fun anIdTwoOrganizationsShareReadsAsEachOnesOwnReceiptAndAThirdFindsNone() = receiptsTest { server ->
+        // A harness receipt id derives from the harness version and digest (`rcpt_harness_<version>`): two
+        // organizations that compile the same sources in the same minute sign under the same id.
+        val id = "rcpt_harness_h202610301200-ca824dbe"
+        val sign = server.koin.get<SignReceiptUseCase>()
+        val ours = sign(ORG_A, draft("h202610301200-ca824dbe@a", "harness"), id)
+        val theirs = sign(ORG_B, draft("h202610301200-ca824dbe@b", "harness"), id)
+        assertNotEquals(ours, theirs)
+
+        assertEquals(ours, server.call("a", "/api/v1/receipts/$id").body<JsonObject>())
+        assertEquals(theirs, server.call("b", "/api/v1/receipts/$id").body<JsonObject>())
+        val signer = server.koin.get<InstanceSigner>()
+        val checks = listOf("a", "b").map {
+            server.call(it, "/api/v1/receipts/$id/verify").body<VerificationResponse>()
+        }
+        assertTrue(checks.all { it.ok && it.kid == signer.keyId }, "each verifies under the instance key: $checks")
+        assertNotEquals(checks[0].digest, checks[1].digest, "each verifies its own body")
+        assertEquals(HttpStatusCode.NotFound, server.call("c", "/api/v1/receipts/$id").status)
+        assertEquals(HttpStatusCode.NotFound, server.call("c", "/api/v1/receipts/$id/verify").status)
+
+        // The bundle (`/receipts/{id}/bundle`, workflow-runs) reads the receipt and its chain through this get.
+        val repository = server.koin.get<ReceiptsRepository>()
+        assertEquals(ours, repository.get(ORG_A, id)?.body)
+        assertEquals(theirs, repository.get(ORG_B, id)?.body)
+        assertNull(repository.get(ORG_C, id))
+    }
+
+    private companion object {
+        val ORG_C: Uuid = Uuid.parse("0000000c-0000-0000-0000-000000000000")
     }
 }

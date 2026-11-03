@@ -273,7 +273,7 @@ private fun machine(environment: Map<String, String>): Nothing {
                     ::log,
                 )
             }
-            MachineRunner(HttpMachineApi(client, config), config.interval, ::log, sessions).run()
+            MachineRunner(HttpMachineApi(client, config), config.interval, ::log, sessions, MachineRunner.WAIT).run()
         } finally {
             client.close()
             engine?.close()
