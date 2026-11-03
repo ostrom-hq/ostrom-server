@@ -36,9 +36,11 @@ internal fun profileOf(member: Member, person: Person) =
     MemberProfile(member, person.login, person.displayName, person.avatarUrl, person.email)
 
 /**
- * The profile as [viewer] may see it: an owner or an admin sees every member's address, any other member only their
- * own. A member's token (the CLI's, the app's, a personal one with `orgs:read`) never collects the team's addresses.
+ * The profile as [viewer] may see it: an owner or an admin sees every member's e-mail address, any other member only
+ * their own, so that a member's token (the CLI's, the app's, a personal one with `orgs:read`) never lists the team's
+ * addresses. The login and the name stay visible to every member.
  *
+ * @receiver The member's full profile.
  * @param viewer The caller's membership.
  * @return The profile, without the address when [viewer] may not see it.
  */

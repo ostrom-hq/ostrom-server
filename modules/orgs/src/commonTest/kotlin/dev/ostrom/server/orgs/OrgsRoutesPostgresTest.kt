@@ -323,6 +323,12 @@ class OrgsRoutesPostgresTest {
                 listed.items.map { it.login to it.email },
             )
             assertNull(bobSeen.email)
+            val adaSeen = server.client.get("/api/v1/orgs/acme/members/ada") { session(carl) }.body<MemberResponse>()
+            assertNull(adaSeen.email)
+            val carlSeen = server.client.get("/api/v1/orgs/acme/members/carl") { session(carl) }.body<MemberResponse>()
+            assertEquals("carl@example.com", carlSeen.email)
+            val carlByAdmin = server.client.get("/api/v1/orgs/acme/members/carl") { session(bob) }.body<MemberResponse>()
+            assertEquals("carl@example.com", carlByAdmin.email)
             val byOwner = server.client.get("/api/v1/orgs/acme/members") { session(ada) }.body<MembersResponse>()
             assertEquals(
                 listOf("ada@example.com", "bob@example.com", "carl@example.com"),
