@@ -8,7 +8,7 @@ import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.concurrent.atomics.update
+import kotlin.concurrent.atomics.atomicArrayOfNulls
 
 /**
  * One statement the server sent, as it sent it.
@@ -32,7 +32,7 @@ class SentStatement(val sql: String, val statement: Statement?, val transaction:
  */
 @OptIn(ExperimentalAtomicApi::class)
 class RecordingDriver(private val inner: Driver) : Driver by inner {
-    private val sent = AtomicReference<List<SentStatement>?>(null)
+    private val sent = AtomicReference<Recording?>(null)
     private val transactions = AtomicInt(0)
 
     /**
@@ -43,10 +43,11 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
      * @return The statements, in order.
      */
     suspend fun record(block: suspend () -> Unit): List<SentStatement> {
-        sent.store(emptyList())
+        val recording = Recording()
+        sent.store(recording)
         try {
             block()
-            return sent.load().orEmpty()
+            return recording.statements()
         } finally {
             sent.store(null)
         }
@@ -55,7 +56,7 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
     internal fun newTransaction(): Int = transactions.addAndFetch(1)
 
     internal fun note(sql: String, statement: Statement?, transaction: Int = newTransaction()) {
-        sent.update { it?.plus(SentStatement(sql, statement, transaction)) }
+        sent.load()?.add(SentStatement(sql, statement, transaction))
     }
 
     override suspend fun execute(sql: String): Result<Long> = inner.execute(sql).also { note(sql, null) }
@@ -96,4 +97,23 @@ internal class RecordingTransaction(
 
     override suspend fun fetchAll(statement: Statement): Result<ResultSet> =
         inner.fetchAll(statement).also { driver.note(statement.sql, statement, id) }
+}
+
+/**
+ * The statements of one recording, appended from any thread without a lock: a slot is claimed, then filled.
+ * A request sends a few dozen statements; past [CAPACITY], the next one fails the test.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+private class Recording {
+    private val slots = atomicArrayOfNulls<SentStatement>(CAPACITY)
+    private val count = AtomicInt(0)
+
+    fun add(statement: SentStatement) = slots.storeAt(count.fetchAndAdd(1), statement)
+
+    // A slot claimed but not filled yet belongs to a statement still being sent: it is left out.
+    fun statements(): List<SentStatement> = List(count.load()) { slots.loadAt(it) }.filterNotNull()
+
+    private companion object {
+        const val CAPACITY = 10_000
+    }
 }
