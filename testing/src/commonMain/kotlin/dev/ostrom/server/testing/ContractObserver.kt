@@ -176,6 +176,7 @@ class ContractObserver(
             response == null -> listOf(Violation("$", DriftKind.STATUS, "status $status is not declared"))
             declared == null && json && body.isNotEmpty() -> listOf(body("JSON where the contract declares none"))
             declared == null -> emptyList()
+            !json && response.other -> emptyList()
             !json || body.isEmpty() -> listOf(body("no JSON body where the contract declares one"))
             parsed == null -> listOf(body("a body that is not JSON"))
             else -> schema.violations(declared, parsed)

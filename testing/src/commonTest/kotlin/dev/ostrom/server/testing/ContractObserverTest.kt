@@ -64,7 +64,13 @@ class ContractObserverTest {
                     else -> call.respond(HttpStatusCode.NoContent)
                 }
             }
-            get("/api/v1/things/export") { call.respondBytesWriter(ContentType.Text.CSV) { writeStringUtf8("a") } }
+            get("/api/v1/things/export") {
+                when (call.request.queryParameters["as"]) {
+                    "missing" -> call.respondText("Not found", status = HttpStatusCode.NotFound)
+                    "missing-json" -> call.respondText("""{"error": {}}""", json, HttpStatusCode.NotFound)
+                    else -> call.respondBytesWriter(ContentType.Text.CSV) { writeStringUtf8("a") }
+                }
+            }
             delete("/api/v1/things/{id}") { call.respondText("""{"x": 1}""", json) }
             get("/health") { call.respondText("""{"x": 1}""", json) }
         }
@@ -114,6 +120,8 @@ class ContractObserverTest {
         val observer = ContractObserver(ContractFixtures.contract, emptySet(), reports.toString())
         things(observer)
         client.get("/api/v1/things")
+        // A 404 that declares plain text and JSON: either is one of its forms.
+        listOf("missing", "missing-json").forEach { client.get("/api/v1/things/export?as=$it") }
         observer.finish()
         assertEquals("seen listThings\n", report(reports))
     }
