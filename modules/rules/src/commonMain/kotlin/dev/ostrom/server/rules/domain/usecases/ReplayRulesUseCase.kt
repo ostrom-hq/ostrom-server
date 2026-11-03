@@ -55,16 +55,13 @@ class ReplayRulesUseCaseImpl(
         val replayed = GateReplay.prepare(rules.gatedRules(run.orgId))
         if (replayed.isEmpty()) return runs.fail(run, ENGINE, NO_RULES)
         val policy = rules.selfApproval(run.orgId) ?: SelfApprovalPolicy.DEFAULT
-        val actions = history.recent(run.orgId, clock.now() - WINDOW, MAX_ACTIONS)
+        val actions = history.recent(run.orgId, clock.now() - REPLAY_WINDOW, MAX_ACTIONS)
         runs.advance(run, REPLAY, HALF)
         runs.advance(run, AnalysisRun.READY, 1.0, actions.map { GateReplay.replay(it, replayed, policy) })
     }
 
     /** The bounds and words of a replay. */
     companion object {
-        /** How far back the history is replayed. */
-        val WINDOW = 30.days
-
         /** The boundary actions one replay reads at most: the most recent. */
         const val MAX_ACTIONS: Int = 1000
 
@@ -80,3 +77,7 @@ class ReplayRulesUseCaseImpl(
             "or give a rule a gate, then replay again."
     }
 }
+
+// How far back the history is replayed. Top-level: a companion property has a getter nothing calls, which Kover
+// counts.
+private val REPLAY_WINDOW = 30.days

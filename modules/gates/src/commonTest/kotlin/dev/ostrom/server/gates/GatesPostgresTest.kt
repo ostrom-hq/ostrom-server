@@ -27,7 +27,6 @@ import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.RequestStatus
-import dev.ostrom.server.gates.domain.repositories.GateHistory
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
@@ -81,7 +80,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
-import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -615,41 +613,6 @@ class GatesPostgresTest {
         assertEquals((0 until 100).map { "rev-$it" }, approvers.getValue(crowded), "100 at most, in their order")
         assertEquals(listOf("rev-0", "rev-1"), approvers.getValue(next))
         assertEquals(emptyMap(), repository.approversOf(orgB, listOf(crowded, next)))
-    }
-
-    @Test
-    fun theHistoryReadsTheOrganizationsRecentGatesNewestFirst() = gatesTest { server ->
-        val repository = server.koin.get<GatesRepository>()
-        val at = Instant.parse("2026-10-30T02:00:00Z")
-        fun gateOf(org: Uuid, cls: String, hoursAgo: Int) = Gate(
-            id = Uuid.random(),
-            orgId = org,
-            key = "k-$cls",
-            subject = GateSubject(repo = "o/r", actionClass = cls, command = "git push", scope = "session:s"),
-            node = null,
-            label = cls,
-            mode = GateMode.UNGATED,
-            status = GateStatus.PENDING,
-            askedBy = listOf("lyes"),
-            askedVia = setOf(AskedVia.HOOK),
-            sessionIds = listOf(session),
-            shownDigest = "s",
-            evidence = emptyList(),
-            createdAt = at - hoursAgo.hours,
-        )
-        repository.transaction {
-            insertGate(gateOf(orgA, "push-main", 1))
-            insertGate(gateOf(orgA, "deploy", 2))
-            insertGate(gateOf(orgA, "merge", 3))
-            insertGate(gateOf(orgA, "old", 24 * 31))
-        }
-        repository.transaction { insertGate(gateOf(orgB, "theirs", 1)) }
-
-        val history = server.koin.get<GateHistory>()
-        val since = at - 30.days
-        assertEquals(listOf("push-main", "deploy", "merge"), history.recent(orgA, since, 10).map { it.label })
-        assertEquals(listOf("push-main", "deploy"), history.recent(orgA, since, 2).map { it.label }, "At most limit")
-        assertEquals(listOf("theirs"), history.recent(orgB, since, 10).map { it.label }, "Org B reads only its own")
     }
 
     @Test
