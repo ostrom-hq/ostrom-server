@@ -132,6 +132,14 @@ jobs:
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
+      # Every served operation that answers JSON was seen answering by a test, so ContractObserver checked it against
+      # the contract (or contract/unobserved-operations.txt says why not); prints the drifts the tests met.
+      - name: Every served operation's answer was checked against the contract
+        if: success() || failure()
+        run: |
+          python3 scripts/check-contract-coverage.py --self-test
+          python3 scripts/check-contract-coverage.py "$RUNNER_TEMP/openapi.json" contract/unobserved-operations.txt \
+            testing/src/commonMain/kotlin/dev/ostrom/server/testing/KnownDrifts.kt .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

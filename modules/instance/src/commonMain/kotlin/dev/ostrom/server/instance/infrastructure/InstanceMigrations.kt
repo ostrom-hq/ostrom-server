@@ -22,4 +22,14 @@ val InstanceMigrations: List<SchemaMigration> = listOf(
             );
         """.trimIndent(),
     ),
+    // A new key handed over by the one it replaces (docs/receipt-key-rotation.md): the previous key's id and its
+    // signature, served with the new key by `GET /receipts/keys`.
+    SchemaMigration(
+        version = 2,
+        name = "signing_key_rotation",
+        sql = """
+            ALTER TABLE instance_signing_keys ADD COLUMN rotation_key_id TEXT;
+            ALTER TABLE instance_signing_keys ADD COLUMN rotation_signature TEXT
+        """.trimIndent(),
+    ),
 )

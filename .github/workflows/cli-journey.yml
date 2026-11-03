@@ -9,7 +9,9 @@ name: CLI journey
 # published, named in the run's summary, so a red night points at a commit; the hook's latency budgets of step 5.8 live
 # in ostrom-cli's e2e/journey.py), and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull
 # request only when the pull request changes this file. Cloud sessions (6.2: `ostrom claude --cloud`, `ostrom attach`)
-# run on this runner's Docker, with the session image ghcr.io/ostrom-hq/ostrom-runner: the token reads it too.
+# run on this runner's Docker, with the session image ghcr.io/ostrom-hq/ostrom-runner: the token reads it too. Step 5.9
+# (the launch end to end, p50 and p95 by part, the server's share from `docker logs ostrom-server`) writes its tables
+# to the run's summary.
 on:
   schedule:
     - cron: '17 3 * * *'
@@ -218,11 +220,18 @@ jobs:
           else
             echo "- 6.2 cloud sessions: not played, ostrom-cli $CLI_REF has no --cloud-sessions" >> "$GITHUB_STEP_SUMMARY"
           fi
+          # 5.9 times 20 launches end to end and reads the server's share in its own logs; an older CLI ref has neither flag
+          launch=()
+          if grep -q -e '"--launch-runs"' e2e/journey.py; then
+            launch=(--launch-runs 20 --server-log-command "docker logs ostrom-server")
+          else
+            echo "- 5.9 launch latency: not played, ostrom-cli $CLI_REF has no --launch-runs" >> "$GITHUB_STEP_SUMMARY"
+          fi
           python3 e2e/journey.py --binary cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe \
             --server http://127.0.0.1:4600 --mail-dir "$RUNNER_TEMP/ostrom-mail" --report "$RUNNER_TEMP/journey.json" \
             --fake-mcp-port 4630 --fake-mcp-cert "$RUNNER_TEMP/fake-mcp/cert.pem" \
             --fake-mcp-key "$RUNNER_TEMP/fake-mcp/key.pem" \
-            "${cloud[@]}" \
+            "${cloud[@]}" "${launch[@]}" \
             --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
             $IMAGE seed-test-account"
       - name: Server logs
