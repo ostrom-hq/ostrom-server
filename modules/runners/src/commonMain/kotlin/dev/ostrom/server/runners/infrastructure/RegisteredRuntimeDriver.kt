@@ -7,6 +7,7 @@ import dev.ostrom.server.runners.domain.ExecutionStatus
 import dev.ostrom.server.runners.domain.MachineExecutionState
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
+import dev.ostrom.server.runners.domain.RunnerWorkSignals
 import dev.ostrom.server.runners.domain.RuntimeDriver
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -24,10 +25,12 @@ import kotlin.uuid.Uuid
  *
  * @param assignments The executions handed to runners.
  * @param clock The time.
+ * @param signals Wakes the organization's heartbeats that wait for work.
  */
 class RegisteredRuntimeDriver(
     private val assignments: RunnerAssignmentsRepository,
     private val clock: Clock,
+    private val signals: RunnerWorkSignals,
 ) : RuntimeDriver {
     override val relocates: Boolean = true
 
@@ -38,6 +41,7 @@ class RegisteredRuntimeDriver(
     override suspend fun startExecution(spec: ExecutionSpec) {
         val now = clock.now()
         assignments.assign(spec.orgId, spec.sessionId, spec.epoch, now, onlineSince(now))
+        signals.arrived(spec.orgId)
     }
 
     override suspend fun executionStatus(session: CloudSession): ExecutionStatus {

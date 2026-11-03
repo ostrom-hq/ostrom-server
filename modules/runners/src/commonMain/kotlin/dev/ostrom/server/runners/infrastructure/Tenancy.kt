@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.infrastructure
 
+import dev.ostrom.server.kernel.database.inOrg
 import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import kotlin.uuid.Uuid
 
@@ -17,21 +17,17 @@ internal const val TENANT_ROLE: String = "ostrom_tenant"
 internal const val TENANT_SETTING: String = "ostrom.org_id"
 
 /**
- * Runs [block] in a transaction confined to one organization: the transaction switches to [TENANT_ROLE] and sets
- * [TENANT_SETTING]; a tenant table then only shows and accepts the rows of [orgId], whatever the query says.
+ * Runs [block] in a transaction confined to one organization, by the kernel's [inOrg]: the transaction switches to
+ * [TENANT_ROLE] and sets [TENANT_SETTING] in one statement; a tenant table then only shows and accepts the rows of
+ * [orgId], whatever the query says.
  *
  * @param orgId The organization.
  * @param block The queries; a failure inside rolls the transaction back.
  *
  * @return What [block] returns.
  */
-internal suspend fun <T> Driver.inTenant(orgId: Uuid, block: suspend Transaction.() -> T): T = transaction {
-    execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-    execute(
-        Statement.create("SELECT set_config('$TENANT_SETTING', :org, true)").bind("org", orgId.toString()),
-    ).getOrThrow()
-    block()
-}
+internal suspend fun <T> Driver.inTenant(orgId: Uuid, block: suspend Transaction.() -> T): T =
+    inOrg(orgId, block)
 
 /**
  * The SQL that creates [TENANT_ROLE] (tolerating one created by another module, database or test) and grants it to

@@ -12,6 +12,7 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateKeys
 import dev.ostrom.server.gates.domain.models.GateMode
 import dev.ostrom.server.gates.domain.models.GateNode
+import dev.ostrom.server.gates.domain.models.GateSessionClosedException
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.GateView
@@ -75,6 +76,7 @@ interface OpenGateUseCase {
      * @throws CheckNotAttestedException When the enforced gate needs a check attested and its last run is not.
      * @throws GateWithoutApproverException When the enforced gate has nobody to say yes.
      * @throws NotYourGateException When an agent token asks for another session.
+     * @throws GateSessionClosedException When the session ended while the gate was asked.
      * @throws InvalidGateRequestException When a field is out of bounds.
      */
     suspend operator fun invoke(request: OpenGate): GateView
@@ -116,6 +118,9 @@ class OpenGateUseCaseImpl(
         if (mode == GateMode.ENFORCED && approvers.isEmpty()) throw GateWithoutApproverException()
         val key = digester.digest(GateKeys.keyPreimage(orgId.toString(), request.subject, node))
         val opened = repository.transaction {
+            // AUDIT-SERVEUR-3 B2: the session's lock first, then its end is read. An end that read the session's gates
+            // for its receipt refuses this one; an end that comes after this transaction reads it.
+            request.sessionId?.let { holdOpen(orgId, it) }
             lockKey(orgId, key)
             val same = byKey(orgId, key, SAME_KEY_LIMIT)
                 .filter { request.subject.push == null || it.subject.diffDigest == request.subject.diffDigest }
@@ -297,6 +302,12 @@ internal suspend fun viewOf(
         else -> SelfApproval.waitingFor(gate.askedBy, pending, policy())
     }
     return GateView(gate, requests, waiting)
+}
+
+// Holds the session open until the transaction ends: its lock, then the mark of its end.
+private suspend fun GatesTransaction.holdOpen(orgId: Uuid, sessionId: String) {
+    lockSession(orgId, sessionId)
+    sessionEndedAt(orgId, sessionId)?.let { throw GateSessionClosedException(sessionId, it) }
 }
 
 // Out of the class: neither reads its state.

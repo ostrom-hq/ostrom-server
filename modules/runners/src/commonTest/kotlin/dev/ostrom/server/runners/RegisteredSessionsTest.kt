@@ -17,6 +17,7 @@ import dev.ostrom.server.runners.domain.RunnerRegistration
 import dev.ostrom.server.runners.domain.SessionState
 import dev.ostrom.server.runners.domain.executionSpec
 import dev.ostrom.server.runners.fakes.FakeRunnerTokens
+import dev.ostrom.server.runners.fakes.FakeRunnerWorkSignals
 import dev.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import dev.ostrom.server.runners.fakes.InMemoryRunnerAssignments
 import dev.ostrom.server.runners.fakes.ORG_A
@@ -24,6 +25,8 @@ import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.SettableClock
 import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.infrastructure.RegisteredRuntimeDriver
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
@@ -33,6 +36,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
@@ -46,7 +51,8 @@ class RegisteredSessionsTest {
         { id -> runners.runners.firstOrNull { it.id == id }?.lastSeenAt },
         { id -> runners.runners.firstOrNull { it.id == id }?.capacity },
     )
-    private val driver = RegisteredRuntimeDriver(assignments, clock)
+    private val signals = FakeRunnerWorkSignals()
+    private val driver = RegisteredRuntimeDriver(assignments, clock, signals)
     private val register = RegisterRunnerUseCaseImpl(runners, tokens, clock)
     private val heartbeat = RegisteredRunnerHeartbeatUseCaseImpl(
         runners,
@@ -54,6 +60,7 @@ class RegisteredSessionsTest {
         clock,
         assignments,
         sessions,
+        signals,
     ) { spec ->
         val runner = buildJsonObject {
             put("token", spec.runnerToken)
@@ -65,8 +72,8 @@ class RegisteredSessionsTest {
     private suspend fun runner(name: String, org: Uuid = ORG_A) =
         register(Caller(org, "dana", admin = true), RunnerRegistration(name, emptyList(), null))
 
-    private suspend fun beat(runner: NewRunner, report: MachineReport = MachineReport()) =
-        heartbeat(runner.runner.id, runner.key, report)
+    private suspend fun beat(runner: NewRunner, report: MachineReport = MachineReport(), wait: Duration = ZERO) =
+        heartbeat(runner.runner.id, runner.key, report, wait)
 
     /** A session whose first execution the reconciler just started, as it stores it. */
     private suspend fun starting(org: Uuid = ORG_A) = session(orgId = org)
@@ -108,6 +115,61 @@ class RegisteredSessionsTest {
         assertEquals(ExecutionStatus.PENDING, driver.executionStatus(session))
         beat(a, report(session, MachineExecutionState.ENDED))
         assertEquals(ExecutionStatus.ENDED, driver.executionStatus(session))
+    }
+
+    @Test
+    fun aWaitingHeartbeatIsHandedTheExecutionQueuedWhileItWaits() = runTest {
+        val a = runner("a")
+        val waiting = async { beat(a, wait = 20.seconds) }
+        runCurrent()
+        assertEquals(1, signals.waits, "Nothing to hand over: it waits")
+
+        val session = starting()
+        assertEquals(listOf(ORG_A), signals.arrivals, "Queuing wakes the organization's heartbeats")
+        signals.wake()
+
+        val work = waiting.await()
+        assertEquals(listOf(session.id), work.executions.filter { it.plan != null }.map { it.sessionId })
+        assertEquals(1, signals.waits, "Answered as soon as it was handed over")
+    }
+
+    @Test
+    fun aWaitingHeartbeatWokenForNothingWaitsAgainThenAnswersAtTheEndOfTheWait() = runTest {
+        val a = runner("a")
+        val started = testScheduler.currentTime
+        val waiting = async { beat(a, wait = 20.seconds) }
+        runCurrent()
+        signals.wake()
+        runCurrent()
+        assertEquals(2, signals.waits, "Another runner took it, or nothing came: it waits again")
+
+        assertEquals(MachineWork(emptyList(), emptyList()), waiting.await())
+        assertEquals(20_000, testScheduler.currentTime - started, "At the end of the wait")
+    }
+
+    @Test
+    fun aHeartbeatAnswersAtOnceWhenItIsHandedWorkHasNoRoomOrMayNotWait() = runTest {
+        val a = runner("a")
+        val session = starting()
+        assertTrue(beat(a, wait = 20.seconds).executions.single().plan != null, "Handed over: at once")
+        val full = report(session, MachineExecutionState.RUNNING).copy(capacity = 1)
+        assertEquals(1, beat(a, full, 20.seconds).executions.size, "No room: at once")
+        signals.room = false
+        assertEquals(1, beat(a, full.copy(capacity = 2), 20.seconds).executions.size, "Too many wait: at once")
+        assertTrue(heartbeat(a.runner.id, a.key, null, 20.seconds).executions.isEmpty(), "No report: no work")
+        assertEquals(0, signals.waits)
+        assertEquals(0, testScheduler.currentTime)
+    }
+
+    @Test
+    fun aRunnerWithRoomLeftWaits() = runTest {
+        val a = runner("a")
+        val session = starting()
+        beat(a)
+        val roomy = report(session, MachineExecutionState.RUNNING).copy(capacity = 2)
+        assertEquals(1, beat(a, roomy, 5.seconds).executions.size)
+        assertEquals(1, signals.waits)
+        assertEquals(5_000, testScheduler.currentTime)
     }
 
     @Test

@@ -9,6 +9,7 @@ import dev.ostrom.server.gates.domain.models.GateNotUsableException
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.NotYourGateException
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.gates.domain.repositories.GatesTransaction
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Clock
@@ -72,25 +73,30 @@ class UseGateUseCaseImpl(
         // ungated gate never gets a yes: no session is read for it.
         val before = if (use == GateUse.RELEASE) null else repository.get(actor.orgId, gateId)
         before?.let { receipts.ensureSigned(it) }
-        val open = when {
-            before == null -> true
-            before.status == GateStatus.SHADOW || before.status == GateStatus.UNGATED -> true
-            else -> inOpenSession(actor, before)
+        val asked = when {
+            before == null -> null
+            before.status == GateStatus.SHADOW || before.status == GateStatus.UNGATED -> null
+            else -> openSessions(actor, before)
         }
-        return move(actor, gateId, use, open)
+        return move(actor, gateId, use, asked)
     }
 
-    private suspend fun inOpenSession(actor: GateActor, gate: Gate): Boolean = gate.sessionIds.any { sessionId ->
-        try {
-            sessions.assertOpen(gate.orgId, sessionId, actor.launchId)
-            true
-        } catch (_: OstromException) {
-            false
+    // The sessions of the caller's launch that asked for the gate and that the sessions module says are open.
+    private suspend fun openSessions(actor: GateActor, gate: Gate): List<String> =
+        gate.sessionIds.filter { sessionId ->
+            try {
+                sessions.assertOpen(gate.orgId, sessionId, actor.launchId)
+                true
+            } catch (_: OstromException) {
+                false
+            }
         }
-    }
 
-    private suspend fun move(actor: GateActor, gateId: Uuid, use: GateUse, open: Boolean): Gate =
+    // [asked]: the open sessions that asked, or null when no session is read. Each is held under its end's lock
+    // (AUDIT-SERVEUR-3 B2), in one order, before the gate's row: one whose end already read its gates is not open.
+    private suspend fun move(actor: GateActor, gateId: Uuid, use: GateUse, asked: List<String>?): Gate =
         repository.transaction {
+            val open = asked == null || stillOpen(actor.orgId, asked)
             val gate = lockGate(actor.orgId, gateId) ?: throw GateNotFoundException()
             val launch = launchOf(actor, gate)
             val now = clock.now()
@@ -173,4 +179,11 @@ class UseGateUseCaseImpl(
         const val RELEASED = "This yes was already released once: use it for this action, or ask again."
         const val UNSIGNED = "This yes has no signed receipt yet: it cannot be used. Try again in a moment."
     }
+}
+
+// Out of the class, which reads none of it: the sessions locked in one order, then whether one has not ended.
+private suspend fun GatesTransaction.stillOpen(orgId: Uuid, asked: List<String>): Boolean {
+    val held = asked.sorted()
+    held.forEach { lockSession(orgId, it) }
+    return held.any { sessionEndedAt(orgId, it) == null }
 }

@@ -19,8 +19,9 @@ const val TENANT_SETTING = "ostrom.org_id"
 
 /**
  * Runs [block] in a transaction confined to one organization: the transaction switches to [TENANT_ROLE] and sets
- * [TENANT_SETTING], so a tenant table only shows and accepts the rows of [orgId], whatever the query says. A missing
- * `WHERE org_id = …` then reads nothing of another organization instead of leaking it.
+ * [TENANT_SETTING], in one statement before [block] ([IN_ORG]), so a tenant table only shows and accepts the rows of
+ * [orgId], whatever the query says. A missing `WHERE org_id = …` then reads nothing of another organization instead
+ * of leaking it.
  *
  * A tenant table declares, in its module's migration:
  * ```sql
@@ -41,11 +42,17 @@ const val TENANT_SETTING = "ostrom.org_id"
  * @return What [block] returns.
  */
 suspend fun <T> Driver.inOrg(orgId: Uuid, block: suspend Transaction.() -> T): T = transaction {
-    execute("SET LOCAL ROLE $TENANT_ROLE").getOrThrow()
-    execute(Statement.create("SELECT set_config('$TENANT_SETTING', :org, true)").bind("org", orgId.toString()))
-        .getOrThrow()
+    fetchAll(Statement.create(IN_ORG).bind("org", orgId.toString())).getOrThrow()
     block()
 }
+
+/**
+ * The one statement that confines a transaction of [inOrg], one round trip instead of two (perf pass of the launch):
+ * `set_config('role', …, true)` is `SET LOCAL ROLE`, with the same membership check and the same end at the
+ * transaction's end; `set_config(…, true)` of the organization is transaction-local too.
+ */
+private const val IN_ORG =
+    "SELECT set_config('role', '$TENANT_ROLE', true), set_config('$TENANT_SETTING', :org, true)"
 
 /**
  * Runs [block] in a transaction scoped to one organization, the only way a repository of tenant tables reaches the

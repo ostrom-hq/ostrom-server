@@ -66,4 +66,26 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
             CHECK (attestation IN ('workstation_declared', 'isolated_runner', 'ci'))
         """.trimIndent(),
     ),
+    // The runs of workflows (contract `WorkflowRun`), started as a whole: newest first, by workflow or by status.
+    SchemaMigration(
+        3,
+        "create_started_runs",
+        """
+        CREATE TABLE workflow_runs_started (
+            org_id UUID NOT NULL,
+            id TEXT NOT NULL,
+            workflow_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TIMESTAMPTZ NOT NULL,
+            body JSONB NOT NULL,
+            PRIMARY KEY (org_id, id)
+        );
+        CREATE INDEX workflow_runs_started_at ON workflow_runs_started (org_id, started_at DESC, id DESC);
+        CREATE INDEX workflow_runs_started_workflow
+            ON workflow_runs_started (org_id, workflow_id, started_at DESC, id DESC);
+        CREATE INDEX workflow_runs_started_status
+            ON workflow_runs_started (org_id, status, started_at DESC, id DESC);
+        ${policy("workflow_runs_started")}
+        """.trimIndent(),
+    ),
 )
