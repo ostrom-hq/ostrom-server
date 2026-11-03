@@ -72,6 +72,11 @@ class InMemoryRunnerAssignments(private val seenAt: (Uuid) -> Instant? = { null 
             .forEach { it.delivered = true }
     }
 
-    private fun Row.toAssignment() =
-        Assignment(sessionId, epoch, runnerId, runnerId?.let(seenAt), state, delivered, stopped, dropped)
+    private fun Row.toAssignment() = Assignment(
+        sessionId, epoch, runnerId, runnerId?.let(seenAt), state, delivered, stopped, dropped,
+        superseded = rows.any { later ->
+            val other = later.runnerId.let { it != null && it != runnerId }
+            later.sessionId == sessionId && later.epoch > epoch && other
+        },
+    )
 }

@@ -66,7 +66,7 @@ private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = wit
     }
     get<PackagesApi> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
-        call.respond(PackagesPage(repository.packages(actor.orgId, params.repo).map { summary(actor, it) }))
+        call.respond(PackagesPage(repository.listPackages(actor.orgId, params.repo).map { it.toSummary() }))
     }
     post<PackagesApi.Preview> {
         val actor = actorOf(call, CompilerScopes.readingPackages)
