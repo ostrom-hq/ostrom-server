@@ -12,18 +12,26 @@ import dev.ostrom.server.workflowruns.domain.models.RunPackageMismatchException
 import dev.ostrom.server.workflowruns.domain.models.RunPackageNotFoundException
 import dev.ostrom.server.workflowruns.domain.models.RunSessionNotFoundException
 import dev.ostrom.server.workflowruns.domain.models.SessionStillOpenException
+import dev.ostrom.server.workflowruns.domain.services.RunLaunches
 import dev.ostrom.server.workflowruns.domain.services.RunPackages
 import dev.ostrom.server.workflowruns.domain.services.RunSessions
+import kotlin.uuid.Uuid
 
 /**
  * Who may act on the runs of a session: the sessions module's rules (audit A12), read once here.
  *
  * @param sessions The sessions.
  * @param packages The packages.
+ * @param launches The repository each launch names.
  */
-class RunAccess(private val sessions: RunSessions, private val packages: RunPackages) {
+class RunAccess(
+    private val sessions: RunSessions,
+    private val packages: RunPackages,
+    private val launches: RunLaunches,
+) {
     /**
-     * The session a report is written for: only its person, and an agent token of its own launch, write there.
+     * The session a report is written for: only its person, an agent token of its own launch, and a service key of its
+     * organization (its CI) write there.
      *
      * @param actor The caller.
      * @param sessionId The session, or null for a report outside a session (a person's only).
@@ -32,21 +40,24 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
      *
      * @throws RunSessionNotFoundException When the organization has no such session.
      * @throws NotYourSessionException When it is another person's, or another
-     *   launch's; or when an agent token names no session.
+     *   launch's; or when an agent token or a service key names no session.
      * @throws SessionClosedException When the session has ended: its receipt is signed, nothing is added to it.
      */
     suspend fun writing(actor: GateActor, sessionId: String?): Session? {
         if (sessionId != null) {
             return owned(actor, sessionId).also { if (it.endedAt != null) throw SessionClosedException(it) }
         }
-        // An agent token acts inside its launch's sessions only: never outside one.
-        if (actor.kind == ActorKind.AGENT_SESSION) throw NotYourSessionException()
+        // An agent token acts inside its launch's sessions only, and a service key inside its organization's: no
+        // person stands behind a report outside a session.
+        if (actor.kind == ActorKind.AGENT_SESSION || actor.kind == ActorKind.SERVICE) throw NotYourSessionException()
         SessionAccess.person(actor)
         return null
     }
 
     /**
-     * A session only its person, and an agent token of its own launch, write for.
+     * A session only its person, an agent token of its own launch, and a service key of its organization write for.
+     * The key is no person: the CI of the organization reports for any of its sessions, never another organization's
+     * (the session is looked up in the key's organization only).
      *
      * @param actor The caller.
      * @param sessionId The session.
@@ -58,7 +69,7 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
      */
     suspend fun owned(actor: GateActor, sessionId: String): Session {
         val session = sessions.find(actor.orgId, sessionId) ?: throw RunSessionNotFoundException()
-        SessionAccess.ensureOwner(actor, session)
+        if (actor.kind != ActorKind.SERVICE) SessionAccess.ensureOwner(actor, session)
         return session
     }
 
@@ -90,7 +101,8 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
             ?: throw RunSessionNotFoundException()
 
     /**
-     * The package a report names, which must be its session's: an agent never reports under another package.
+     * The package a report names, which must be its session's: an agent never reports under another package, nor
+     * under the package of another repository than its launch's (AUDIT-SECU-RUNNER-2 R3).
      *
      * @param actor The caller.
      * @param digest The package's digest.
@@ -99,11 +111,22 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
      * @return The package.
      *
      * @throws RunPackageNotFoundException When the organization has none with that digest.
-     * @throws RunPackageMismatchException When the session started with another package.
+     * @throws RunPackageMismatchException When the session started with another package, or the package is not its
+     *   repository's.
      */
     suspend fun pack(actor: GateActor, digest: String, session: Session?): RunPackage {
         val started = session?.packageDigest
         if (started != null && started != digest) throw RunPackageMismatchException()
-        return packages.find(actor.orgId, digest) ?: throw RunPackageNotFoundException()
+        val pack = packages.find(actor.orgId, digest) ?: throw RunPackageNotFoundException()
+        if (session != null) requireRepository(actor.orgId, session, pack)
+        return pack
+    }
+
+    // The repository the launch names wins over the one the session declares: the hooks write the session's, the
+    // launch's comes from the CLI's own call or the cloud session. A session that names none binds no package.
+    private suspend fun requireRepository(orgId: Uuid, session: Session, pack: RunPackage) {
+        val expected = (session.launchId?.let { launches.repo(orgId, it) } ?: session.repo)?.takeIf { it.isNotEmpty() }
+        val repo = pack.envelope.repo
+        if (expected != null && (repo == null || !RepoNames.same(expected, repo))) throw RunPackageMismatchException()
     }
 }

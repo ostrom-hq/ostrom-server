@@ -78,6 +78,7 @@ import dev.ostrom.server.identity.domain.RotateTokenUseCase
 import dev.ostrom.server.identity.domain.RotateTokenUseCaseImpl
 import dev.ostrom.server.identity.domain.SecretGenerator
 import dev.ostrom.server.identity.domain.SecretHasher
+import dev.ostrom.server.identity.domain.ServiceKeyAuditImpl
 import dev.ostrom.server.identity.domain.ServiceKeysRepository
 import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCase
 import dev.ostrom.server.identity.domain.SetNotificationPreferencesUseCaseImpl
@@ -143,6 +144,7 @@ import dev.ostrom.server.identity.presentation.sessionRoutes
 import dev.ostrom.server.identity.presentation.signInRoutes
 import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.ServiceKeyAudit
 import dev.ostrom.server.kernel.auth.SignOutListener
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -186,6 +188,7 @@ object IdentityModule : ServerModule {
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
+        single<ServiceKeyAudit> { ServiceKeyAuditImpl(get()) }
         single<GovernanceAudit> { AuditLogGovernanceAudit(get()) }
         single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }
         single<AuditVerifier> { AuditVerifierImpl(get(), get()) }
@@ -279,7 +282,7 @@ object IdentityModule : ServerModule {
         route.signInRoutes(koin.get())
         route.sessionRoutes(koin.get())
         route.mobileRoutes(koin.get())
-        route.orgAuditRoutes(koin.get())
+        route.orgAuditRoutes(koin.get(), koin.get())
         route.keysAndDevicesRoutes(koin.get())
     }
 
