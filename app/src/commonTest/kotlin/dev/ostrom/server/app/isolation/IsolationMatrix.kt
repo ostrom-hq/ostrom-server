@@ -89,10 +89,10 @@ internal class IsolationMatrix(
 
     /** How many requests the matrix sent. */
     var requests = 0
+        private set
 
     /** Told each call before it is sent, when set: the last one names the call a hung test stopped on. */
     var trace: ((String) -> Unit)? = null
-        private set
 
     /** Runs every case against every credential, reads before writes and creating writes last (see [order]). */
     suspend fun run(credentials: List<Credential>) {
