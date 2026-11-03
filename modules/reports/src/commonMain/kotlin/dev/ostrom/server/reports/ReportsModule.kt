@@ -37,6 +37,6 @@ object ReportsModule : ServerModule {
     override val migrations: List<SchemaMigration> = ReportsMigrations
 
     override fun routes(route: Route, koin: Koin) {
-        route.reportsRoutes(koin.get())
+        route.reportsRoutes(koin.get(), koin.get())
     }
 }

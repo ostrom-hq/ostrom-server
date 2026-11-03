@@ -34,6 +34,7 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
+import dev.ostrom.server.gates.domain.usecases.GetGateUseCase
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
 import dev.ostrom.server.gates.presentation.Approval
@@ -51,6 +52,8 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.http.ReadLimits
+import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -191,6 +194,18 @@ class GatesPostgresTest {
 
     private fun gatesTest(block: suspend (TestServer) -> Unit) =
         serverTest(listOf(GatesModule), overrides) { server -> block(server) }
+
+    // Four waits at once per subject, the default for the rest.
+    private val fewWaits = module {
+        includes(overrides)
+        single {
+            ReadThrottle(
+                Clock.System,
+                ReadLimits(ReadLimits.DEFAULT_PER_MINUTE, ReadLimits.DEFAULT_IN_FLIGHT, FEW_WAITS),
+                ReadThrottle.MAX_SUBJECTS,
+            )
+        }
+    }
 
     private suspend fun TestServer.call(
         token: String?,
@@ -444,26 +459,53 @@ class GatesPostgresTest {
 
     @Test
     fun twoHundredWaitingHooksHoldNoConnection() = gatesTest { server ->
-        // The test pool has 4 connections: a wait that held one would stall every other request for its 20 s.
+        // The test pool has 4 connections: a wait that held one would stall every other request for its 30 s.
+        val agent = "agent:a:$session"
+        val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
+        val path = "/api/v1/gates/${opened.gate.id}"
+        val wait = GetGateUseCase.MAX_WAIT
+        coroutineScope {
+            val started = TimeSource.Monotonic.markNow()
+            val waiting = List(WAITERS) { async { server.call(agent, "$path?wait=${wait.inWholeSeconds}") } }
+            delay(1.seconds)
+            val reads = List(10) {
+                val readStarted = TimeSource.Monotonic.markNow()
+                assertEquals(HttpStatusCode.OK, server.call("user:a:rev-c", path).status)
+                readStarted.elapsedNow()
+            }
+            assertTrue(reads.max() < 2.seconds, "a plain read waited behind the waiting ones: $reads")
+            assertTrue(waiting.none { it.isCompleted }, "nothing answered yet")
+            assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status)
+            val answers = waiting.awaitAll()
+            // A wait that missed the answer would end only when its own wait runs out. How long the 200 reads after
+            // the answer take depends on the runner (5.4 s once in linuxX64), so the bound is that deadline.
+            assertTrue(started.elapsedNow() < wait, "the waits end with the answer: ${started.elapsedNow()}")
+            assertEquals(setOf("approved"), answers.map { it.body<GateResponse>().gate.status }.toSet())
+        }
+    }
+
+    @Test
+    fun anAgentPastItsWaitsAtOnceIsToldToRetryAndOthersAreNot() = serverTest(listOf(GatesModule), fewWaits) { server ->
+        // AUDIT-SECU-LECTURES M1: a wait holds one of its caller's waits at once; past them, a 429 with Retry-After.
+        // The default (256) lets two hundred hooks of one agent wait together (the test above); four here.
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         val path = "/api/v1/gates/${opened.gate.id}"
         coroutineScope {
-            val waiting = List(WAITERS) { async { server.call(agent, "$path?wait=20") } }
+            val waiting = List(FEW_WAITS) { async { server.call(agent, "$path?wait=20") } }
             delay(1.seconds)
-            val reads = List(10) {
-                val started = TimeSource.Monotonic.markNow()
-                assertEquals(HttpStatusCode.OK, server.call("user:a:rev-c", path).status)
-                started.elapsedNow()
-            }
-            assertTrue(reads.max() < 2.seconds, "a plain read waited behind the waiting ones: $reads")
-            assertTrue(waiting.none { it.isCompleted }, "nothing answered yet")
-            val answered = TimeSource.Monotonic.markNow()
+            val refused = server.call(agent, path)
+            assertEquals(HttpStatusCode.TooManyRequests, refused.status)
+            assertEquals("2", refused.headers[HttpHeaders.RetryAfter])
+            assertTrue("rate_limited" in refused.bodyAsText(), refused.bodyAsText())
+            // Another caller has its own count, and the agent's waits end with the answer.
+            assertEquals(HttpStatusCode.OK, server.call("user:a:rev-c", path).status)
             assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status)
-            val answers = waiting.awaitAll()
-            assertTrue(answered.elapsedNow() < 5.seconds, "the waits end with the answer: ${answered.elapsedNow()}")
-            assertEquals(setOf("approved"), answers.map { it.body<GateResponse>().gate.status }.toSet())
+            assertEquals(setOf(HttpStatusCode.OK), waiting.awaitAll().map { it.status }.toSet())
         }
+        // A slot is given back once its answer is sent: a moment after the client has it.
+        delay(1.seconds)
+        assertEquals(HttpStatusCode.OK, server.call(agent, path).status, "the slots are given back")
     }
 
     // PARCOURS 3.3: a session links each of its gates to /yes/<gate id>; both reads of the console answer that id
@@ -823,4 +865,5 @@ class GatesPostgresTest {
 private const val WARM_UP = 50
 private const val SAMPLES = 200
 private const val WAITERS = 200
+private const val FEW_WAITS = 4
 private const val ROUNDS = 3
