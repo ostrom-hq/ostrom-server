@@ -67,7 +67,7 @@ object LaunchesModule : ServerModule {
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
         single<CallerResolver> { LaunchRelayCallers(get(), get()) }
         single<WaitAgentResolver> { LaunchWaitAgents(get(), get()) }
-        single<HooksCheckRules> { OrgsHooksCheckRules(get(), get()) }
+        single<HooksCheckRules> { OrgsHooksCheckRules(get(), get(), get()) }
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get(), get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get(), get()) }
