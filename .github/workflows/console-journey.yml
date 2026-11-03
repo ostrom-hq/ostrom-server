@@ -143,13 +143,15 @@ jobs:
           # their own (ostrom-web e2e-real/real.ts, since ostrom-web#54), so sixty sign-ins from one machine do not trip the
           # per-source limit. A console from before it sends no address of its own, and its sign-ins are limited again.
           # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
+          # stripe-mock refuses a key with another underscore after `sk_test_`: `sk_test_web_e2e` was refused (401),
+          # and every Checkout of the billing journey answered 500.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
           OSTROM_MAIL_DIR=/var/lib/ostrom/mail
           OSTROM_PUBLIC_URL=http://localhost:4173
           OSTROM_CONSOLE_URL=http://localhost:4173
-          OSTROM_STRIPE_SECRET_KEY=sk_test_web_e2e
+          OSTROM_STRIPE_SECRET_KEY=sk_test_webe2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_web_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
           OSTROM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
