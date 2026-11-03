@@ -54,7 +54,8 @@ class SpendHoldsPostgresTest {
 
     /** Records the call of [hold] at [costMicros], as the gateway does once it is answered. */
     private suspend fun TestServer.settle(hold: SpendHold, costMicros: Long) = koin.get<UsageRecorder>().settle(
-        modelEvent(costMicros, memberId = hold.memberId, orgId = hold.orgId).copy(id = hold.callId),
+        modelEvent(costMicros, memberId = hold.memberId, orgId = hold.orgId)
+            .copy(id = hold.callId, workflowId = hold.workflowId),
     )
 
     private suspend fun TestServer.holdRows(): Long =
@@ -117,6 +118,54 @@ class SpendHoldsPostgresTest {
             Admission.Insufficient(SpendScope.MEMBER, 2_000, 500),
             server.admit(hold(600, memberId = one), limits),
         )
+    }
+
+    @Test
+    fun aWorkflowLimitCountsTheCallsAndHoldsOfItsLaunchesOnly() = serverTest(modules, overrides) { server ->
+        val recorder = server.koin.get<UsageRecorder>()
+        recorder.record(modelEvent(600, memberId = member).copy(workflowId = "review"))
+        recorder.record(modelEvent(5_000, memberId = member).copy(workflowId = "release"))
+        recorder.record(modelEvent(5_000, memberId = member))
+        recorder.record(modelEvent(9_000, memberId = member, orgId = TestCallers.orgB).copy(workflowId = "review"))
+        val repository = server.koin.get<UsageRepository>()
+        assertEquals(600, repository.workflowSpentMicros(TestCallers.orgA, "review", since))
+        assertEquals(9_000, repository.workflowSpentMicros(TestCallers.orgB, "review", since), "Org B's own")
+
+        val limits = SpendLimits(null, null, workflowMicros = 1_000)
+        val first = hold(300).copy(workflowId = "review")
+        assertEquals(Admission.Admitted, server.admit(first, limits))
+        assertEquals(
+            Admission.Insufficient(SpendScope.WORKFLOW, 1_000, 100),
+            server.admit(hold(101).copy(workflowId = "review"), limits),
+            "Its 600 spent and the 300 in flight leave 100",
+        )
+        assertEquals(
+            Admission.Exhausted(SpendScope.WORKFLOW, 1_000),
+            server.admit(hold(1).copy(workflowId = "release"), limits),
+            "Another workflow's spend is its own",
+        )
+        assertEquals(
+            Admission.Admitted,
+            server.admit(hold(900, orgId = TestCallers.orgB).copy(workflowId = "nightly"), limits),
+            "Org B's workflows are apart",
+        )
+        val read = Statement.create("SELECT workflow_id FROM usage_holds WHERE call_id = :call_id")
+            .bind("call_id", first.callId)
+        val stored = server.driver.fetchInOrg(TestCallers.orgA, read).getOrThrow().first()
+            .get("workflow_id").asStringOrNull()
+        assertEquals("review", stored, "The hold names its workflow")
+
+        val today = TestCallers.epoch - 1.hours
+        val daily = SpendLimits(null, null, DailySpendLimits(today, null, null, workflowMicros = 900))
+        assertEquals(
+            Admission.Insufficient(SpendScope.WORKFLOW, 900, 0, daily = true),
+            server.admit(hold(1).copy(workflowId = "review"), daily),
+            "Today's 600 and the 300 in flight fill the day",
+        )
+        server.settle(first, 300)
+        val settled = server.koin.get<UsageRepository>().workflowSpentMicros(TestCallers.orgA, "review", since)
+        assertEquals(900, settled, "The settled call counts under its workflow")
+        assertEquals(1, server.holdRows(), "Org B's hold is left; org A's call dropped its own")
     }
 
     @Test

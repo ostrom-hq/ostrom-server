@@ -19,6 +19,13 @@ sealed interface BudgetTarget {
      * @property memberId The member.
      */
     data class Member(val memberId: Uuid) : BudgetTarget
+
+    /**
+     * One workflow's limit: what the model calls of the launches that play it may spend.
+     *
+     * @property workflowId The workflow, one of the org's.
+     */
+    data class Workflow(val workflowId: String) : BudgetTarget
 }
 
 /** Sets a subject's limits, leaving the other subjects' as they are (admins). */
@@ -35,6 +42,7 @@ interface SetBudgetUseCase {
      *
      * @throws dev.ostrom.server.secrets.domain.AdminRequiredException When the caller does not administer the org.
      * @throws InvalidBudgetException When a limit is out of range.
+     * @throws BudgetWorkflowNotFoundException When a workflow budget's workflow is not one of the org's.
      */
     suspend operator fun invoke(caller: Caller, target: BudgetTarget, limits: List<BudgetLimit>): BudgetOverview
 }

@@ -13,6 +13,7 @@ import dev.ostrom.server.budgets.domain.BudgetWindow
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.ExceededBudget
 import dev.ostrom.server.budgets.domain.MemberBudget
+import dev.ostrom.server.budgets.domain.WorkflowBudget
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel.BROWSER
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -115,9 +116,11 @@ class RecordingLogger : Logger {
     override fun with(fields: Map<String, Any?>): Logger = this
 }
 
-/** Spend by (org, member), member null for the org's total; counts the reads. */
+/** Spend by (org, member), member null for the org's total, and by (org, workflow); counts the reads. */
 class FakeSpendReader : SpendReader {
     val spent = mutableMapOf<Pair<Uuid, Uuid?>, Long>()
+    val workflowSpent = mutableMapOf<Pair<Uuid, String>, Long>()
+    val workflowReads = mutableListOf<Pair<Uuid, String>>()
     val reads = mutableListOf<Pair<Uuid, Uuid?>>()
     val sinces = mutableListOf<Instant>()
 
@@ -135,6 +138,11 @@ class FakeSpendReader : SpendReader {
     }
 
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long = 0
+
+    override suspend fun workflowSpentMicros(orgId: Uuid, workflowId: String, since: Instant): Long {
+        workflowReads += orgId to workflowId
+        return workflowSpent[orgId to workflowId] ?: 0
+    }
 }
 
 /** Keeps every alert published; can fail. */
@@ -186,11 +194,20 @@ class InMemoryBudgetsRepository : BudgetsRepository {
         org(orgId),
         defaultMember(orgId),
         memberLimits.filterKeys { it.first == orgId }.values.sortedBy { it.memberId.toString() }.take(maxOverrides),
+        otherLimits.filterKeys { it.first == orgId }.mapNotNull { (key, limits) ->
+            (key.second as? BudgetTarget.Workflow)?.let { target ->
+                limits.map { WorkflowBudget(target.workflowId, it, Instant.fromEpochSeconds(0)) }
+            }
+        }.flatten().sortedBy { it.workflowId },
     )
 
-    override suspend fun limits(orgId: Uuid, memberId: Uuid): BudgetLimits {
+    override suspend fun limits(orgId: Uuid, memberId: Uuid, workflowId: String?): BudgetLimits {
         limitReads++
-        return BudgetLimits(org(orgId), member(orgId, memberId).ifEmpty { defaultMember(orgId) })
+        return BudgetLimits(
+            org(orgId),
+            member(orgId, memberId).ifEmpty { defaultMember(orgId) },
+            workflowId?.let { others(orgId, BudgetTarget.Workflow(it)) }.orEmpty(),
+        )
     }
 
     override suspend fun replaceLimits(orgId: Uuid, target: BudgetTarget, limits: List<BudgetLimit>, at: Instant) {
@@ -208,6 +225,7 @@ class InMemoryBudgetsRepository : BudgetsRepository {
                 }
                 monthly
             }
+            is BudgetTarget.Workflow -> null
         }
         val rest = limits.filter { it !== kept }
         if (rest.isEmpty()) otherLimits.remove(orgId to target) else otherLimits[orgId to target] = rest
@@ -241,5 +259,5 @@ class InMemoryBudgetsRepository : BudgetsRepository {
         .take(max)
 
     private fun BudgetAlert.markKey() =
-        listOf(orgId, memberId, scope, window, action, periodStart, thresholdPercent, limitMicros)
+        listOf(orgId, memberId, workflowId, scope, window, action, periodStart, thresholdPercent, limitMicros)
 }

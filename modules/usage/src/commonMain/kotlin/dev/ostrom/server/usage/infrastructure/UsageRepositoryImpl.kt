@@ -69,11 +69,15 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
                 memberHeld = row.get("member_held").asLong(),
                 orgDaySpent = row.get("org_day_spent").asLong(),
                 memberDaySpent = row.get("member_day_spent").asLong(),
+                workflowSpent = row.get("workflow_spent").asLong(),
+                workflowHeld = row.get("workflow_held").asLong(),
+                workflowDaySpent = row.get("workflow_day_spent").asLong(),
             )
             limits.admit(totals, hold.micros).also { admission ->
                 if (admission == Admission.Admitted) {
                     val put = Statement.create(UsageQueries.PUT_HOLD).bind("call_id", hold.callId)
                         .bind("org_id", hold.orgId).bind("member_id", hold.memberId).bind("micros", hold.micros)
+                        .bindNullable("workflow_id", hold.workflowId, String::class)
                         .bind("expires_at", window.expiresAt)
                     execute(put).getOrThrow()
                 }
@@ -87,11 +91,16 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
         val daily = limits.daily
         val orgDay = daily?.orgMicros != null
         val memberDay = daily?.memberMicros != null
-        val sums = Statement.create(UsageQueries.holdTotals(org, member, orgDay, memberDay))
+        // A workflow's limits apply only to a call of a launch that plays it; its sums are read only then.
+        val workflowId = hold.workflowId?.takeIf { limits.workflowMicros != null || daily?.workflowMicros != null }
+        val workflow = workflowId != null && limits.workflowMicros != null
+        val workflowDay = workflowId != null && daily?.workflowMicros != null
+        val sums = Statement.create(UsageQueries.holdTotals(org, member, orgDay, memberDay, workflow, workflowDay))
             .bind("org_id", hold.orgId).bind("call_id", hold.callId).bind("now", window.now)
-        if (org || member) sums.bind("since", window.since)
+        if (org || member || workflow) sums.bind("since", window.since)
         if (daily != null) sums.bind("day_since", daily.since)
         if (member || memberDay) sums.bind("member_id", hold.memberId)
+        workflowId?.let { sums.bind("workflow_id", it) }
         return sums
     }
 
@@ -108,6 +117,13 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
             UsageQueries.ACCOUNT_SPENT,
         ).bind("org_id", orgId).bind("account_id", accountId).bind("since", since),
     ).getOrThrow().first().get("spent").asLong()
+
+    override suspend fun workflowSpentMicros(orgId: Uuid, workflowId: String, since: Instant): Long =
+        driver.fetchInOrg(
+            orgId,
+            Statement.create(UsageQueries.WORKFLOW_SPENT)
+                .bind("org_id", orgId).bind("workflow_id", workflowId).bind("since", since),
+        ).getOrThrow().first().get("spent").asLong()
 
     override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? =
         driver.fetchInOrg(
@@ -162,8 +178,9 @@ class UsageRepositoryImpl(private val driver: Driver) : UsageRepository {
 
 // Top level rather than in a companion: a private companion leaves a synthetic constructor no test can reach.
 private val PARAMETERS = listOf(
-    "id", "org_id", "member_id", "kind", "name", "provider", "account_id", "session_id", "launch_id", "input_tokens",
-    "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micros", "duration_ms", "outcome", "at",
+    "id", "org_id", "member_id", "kind", "name", "provider", "account_id", "session_id", "launch_id", "workflow_id",
+    "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micros", "duration_ms", "outcome",
+    "at",
 )
 internal val COLUMNS = PARAMETERS.joinToString(", ")
 private val ONE_ROW = PARAMETERS.joinToString(", ") { ":$it" }
@@ -177,6 +194,7 @@ private fun Statement.bindEvent(prefix: String, event: UsageEvent): Statement = 
     .bindNullable("${prefix}account_id", event.accountId, Uuid::class)
     .bindNullable("${prefix}session_id", event.sessionId, String::class)
     .bindNullable("${prefix}launch_id", event.launchId, String::class)
+    .bindNullable("${prefix}workflow_id", event.workflowId, String::class)
     .bind("${prefix}input_tokens", event.inputTokens)
     .bind("${prefix}output_tokens", event.outputTokens)
     .bind("${prefix}cache_read_tokens", event.cacheReadTokens)
@@ -199,6 +217,7 @@ private fun ResultSet.Row.toEvent() = UsageEvent(
     accountId = get("account_id").asUuidOrNull(),
     sessionId = get("session_id").asStringOrNull(),
     launchId = get("launch_id").asStringOrNull(),
+    workflowId = get("workflow_id").asStringOrNull(),
     inputTokens = get("input_tokens").asLong(),
     outputTokens = get("output_tokens").asLong(),
     cacheReadTokens = get("cache_read_tokens").asLong(),

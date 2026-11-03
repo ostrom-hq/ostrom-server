@@ -172,6 +172,12 @@ class InMemoryUsageRepository : UsageRepository {
             memberHeld = live.filter { it.memberId == hold.memberId }.sumOf { it.micros },
             orgDaySpent = limits.daily?.let { spentMicros(hold.orgId, null, it.since) } ?: 0,
             memberDaySpent = limits.daily?.let { spentMicros(hold.orgId, hold.memberId, it.since) } ?: 0,
+            workflowSpent = hold.workflowId?.let { workflowSpentMicros(hold.orgId, it, window.since) } ?: 0,
+            workflowHeld = live.filter { it.workflowId != null && it.workflowId == hold.workflowId }
+                .sumOf { it.micros },
+            workflowDaySpent = hold.workflowId?.let { id ->
+                limits.daily?.let { workflowSpentMicros(hold.orgId, id, it.since) }
+            } ?: 0,
         )
         return limits.admit(totals, hold.micros).also {
             if (it == Admission.Admitted) holds[hold.callId] = hold to window.expiresAt
@@ -184,6 +190,9 @@ class InMemoryUsageRepository : UsageRepository {
 
     override suspend fun accountSpentMicros(orgId: Uuid, accountId: Uuid, since: Instant): Long =
         events.filter { it.orgId == orgId && it.accountId == accountId && it.at >= since }.sumOf { it.costMicros }
+
+    override suspend fun workflowSpentMicros(orgId: Uuid, workflowId: String, since: Instant): Long =
+        events.filter { it.orgId == orgId && it.workflowId == workflowId && it.at >= since }.sumOf { it.costMicros }
 
     override suspend fun launchSpentMicros(orgId: Uuid, launchId: String, from: Instant, to: Instant): Long? = events
         .filter { it.orgId == orgId && it.launchId == launchId && it.at >= from && it.at < to && it.costMicros > 0 }

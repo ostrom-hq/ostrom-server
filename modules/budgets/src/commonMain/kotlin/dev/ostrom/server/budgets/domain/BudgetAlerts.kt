@@ -22,6 +22,7 @@ import kotlin.uuid.Uuid
  * @property periodStart The day or the month (its first instant, UTC).
  * @property window Whether the limit is a day's or a month's.
  * @property action Whether it stops the calls or only warns.
+ * @property workflowId The workflow, for a [BudgetScope.WORKFLOW] limit.
  */
 data class BudgetAlert(
     val orgId: Uuid,
@@ -33,6 +34,7 @@ data class BudgetAlert(
     val periodStart: Instant,
     val window: BudgetWindow = BudgetWindow.MONTH,
     val action: BudgetAction = BudgetAction.BLOCK,
+    val workflowId: String? = null,
 )
 
 /**
@@ -74,9 +76,9 @@ class AuditedBudgetAlerts(private val alerts: BudgetAlerts, private val audit: O
         actor = BUDGETS_ACTOR,
         event = "budget.exceeded",
         subjectType = "budget",
-        subjectId = if (memberId == null) ORGANIZATION else memberId.toString(),
+        subjectId = workflowId ?: memberId?.toString() ?: ORGANIZATION,
         details = auditDetails(
-            "scope" to if (memberId == null) ORGANIZATION else "member",
+            "scope" to scope.label(),
             "period" to window.name.lowercase(),
             "action" to action.name.lowercase(),
             "limit_usd" to fixedUsd(limitMicros),
@@ -84,6 +86,13 @@ class AuditedBudgetAlerts(private val alerts: BudgetAlerts, private val audit: O
             "period_start" to periodStart,
         ),
     )
+}
+
+/** The scope as the API spells it. */
+private fun BudgetScope.label(): String = when (this) {
+    BudgetScope.ORG -> ORGANIZATION
+    BudgetScope.MEMBER -> "member"
+    BudgetScope.WORKFLOW -> "workflow"
 }
 
 /** Who writes `budget.exceeded`: the budgets, a service and not a person (the audit log keeps its kind and id). */
