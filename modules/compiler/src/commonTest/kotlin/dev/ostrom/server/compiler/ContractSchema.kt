@@ -57,10 +57,23 @@ class ContractSchema(private val schemas: JsonObject) {
         val one = schema["oneOf"]?.jsonArray
         return when {
             ref != null -> against(named(ref.removePrefix(PREFIX)), value, at)
-            all != null -> all.flatMap { against(it.jsonObject, value, at) }
+            all != null -> against(merged(all), value, at)
             one != null -> oneOf(one, value, at)
             else -> enumViolations(schema, value, at) + typed(schema, value, at)
         }
+    }
+
+    // The parts of an `allOf` as one schema: a property any part declares is declared, a property any requires is
+    // required; otherwise the first part that says it wins (a closed part must not refuse its sibling's properties).
+    private fun merged(parts: JsonArray): JsonObject {
+        val schemas = parts.map { part ->
+            val ref = part.jsonObject["\$ref"]?.jsonPrimitive?.content
+            if (ref != null) named(ref.removePrefix(PREFIX)) else part.jsonObject
+        }
+        val properties = schemas.flatMap { it["properties"]?.jsonObject.orEmpty().entries }.associate { it.toPair() }
+        val required = schemas.flatMap { it["required"]?.jsonArray.orEmpty() }.distinct()
+        val rest = schemas.reversed().fold(emptyMap<String, JsonElement>()) { all, schema -> all + schema }
+        return JsonObject(rest + mapOf("properties" to JsonObject(properties), "required" to JsonArray(required)))
     }
 
     private fun oneOf(branches: JsonArray, value: JsonElement, at: String): List<String> {
