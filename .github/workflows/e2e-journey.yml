@@ -43,8 +43,14 @@ on:
         type: string
         default: main
 
+# Called by ci.yml (`image_artifact`), the group is the calling run's own: GitHub keeps one run in progress and one
+# waiting per group, so a shared group cancelled the waiting e2e of every `core_ref` run on main (all
+# `Build-refs/heads/main-workflow_dispatch`, core#104, #110, #93) and of main's intermediate commits, even with
+# cancel-in-progress false. ci.yml's own concurrency still cancels a pull request's older run. By hand, one per ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  group: >-
+    ${{ inputs.image_artifact && format('e2e-journey-call-{0}', github.run_id)
+    || format('e2e-journey-{0}-{1}', github.ref, github.event_name) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
