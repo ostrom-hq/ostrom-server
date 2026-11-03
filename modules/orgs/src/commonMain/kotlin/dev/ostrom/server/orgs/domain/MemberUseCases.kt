@@ -36,6 +36,16 @@ internal fun profileOf(member: Member, person: Person) =
     MemberProfile(member, person.login, person.displayName, person.avatarUrl, person.email)
 
 /**
+ * The profile as [viewer] may see it: an owner or an admin sees every member's address, any other member only their
+ * own. A member's token (the CLI's, the app's, a personal one with `orgs:read`) never collects the team's addresses.
+ *
+ * @param viewer The caller's membership.
+ * @return The profile, without the address when [viewer] may not see it.
+ */
+internal fun MemberProfile.seenBy(viewer: Member): MemberProfile =
+    if (viewer.role in MANAGER_ROLES || viewer.userId == member.userId) this else copy(email = null)
+
+/**
  * Whether [caller] may change or remove [target]: owners and admins manage the other roles; only
  * the owner manages admins; nobody manages the owner (the ownership moves by transfer).
  *
@@ -75,10 +85,10 @@ class ListMembersUseCaseImpl(
     private val people: People,
 ) : ListMembersUseCase {
     override suspend fun invoke(orgId: Uuid, userId: Uuid): List<MemberProfile> {
-        requireMembership(orgs, members, orgId, userId)
+        val viewer = requireMembership(orgs, members, orgId, userId).member
         val list = members.list(orgId)
         val byId = people.getMany(list.map { it.userId }).associateBy { it.id }
-        return list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
+        return list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it).seenBy(viewer) } }
     }
 }
 
@@ -108,8 +118,8 @@ class GetMemberUseCaseImpl(
     private val people: People,
 ) : GetMemberUseCase {
     override suspend fun invoke(orgId: Uuid, userId: Uuid, login: String): MemberProfile {
-        requireMembership(orgs, members, orgId, userId)
-        return findMember(members, people, orgId, login)
+        val viewer = requireMembership(orgs, members, orgId, userId).member
+        return findMember(members, people, orgId, login).seenBy(viewer)
     }
 }
 
