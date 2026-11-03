@@ -40,6 +40,8 @@ internal const val CONTENT_HOST = "artifacts.test"
 
 private const val LINK = "a link artifact is public by design: its unguessable slug is the capability " +
     "(a team artifact's content, behind a ticket, is attacked on /a/)"
+private const val WEBSOCKET = "a WebSocket: plain HTTP never reaches its handler, and the client's socket opens with " +
+    "a terminal ticket, attacked on POST .../terminal/ticket; the runner's names its own execution"
 private const val CAPABILITY = "the secret in the body is the capability: holding it is the right (invitation link)"
 
 /**
@@ -355,11 +357,11 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/cloud/sessions/{id}/pause" to target("id" to CLOUD_SESSION),
     "POST /api/v1/cloud/sessions/{id}/resume" to target("id" to CLOUD_SESSION),
     "POST /api/v1/cloud/sessions/{id}/terminal/ticket" to target("id" to CLOUD_SESSION),
-    "GET /api/v1/cloud/sessions/{id}/terminal" to target("id" to CLOUD_SESSION),
+    "GET /api/v1/cloud/sessions/{id}/terminal" to Case.Exempt(WEBSOCKET),
     "POST /api/v1/cloud/runner/heartbeat" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/launch" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
     "POST /api/v1/cloud/runner/checks" to Case.Target(body = """{"sessionId": "{{CLOUD_SESSION}}", "epoch": 1}"""),
-    "GET /api/v1/cloud/runner/terminal" to Case.Target(),
+    "GET /api/v1/cloud/runner/terminal" to Case.Exempt(WEBSOCKET),
 
     // GitHub App.
     "GET /api/v1/github/app" to Case.Target(),
