@@ -5,6 +5,7 @@ import dev.ostrom.server.reports.domain.ActivityCursor
 import dev.ostrom.server.reports.domain.ActivityItem
 import dev.ostrom.server.reports.domain.ActivityKind
 import dev.ostrom.server.reports.domain.ActivityPage
+import dev.ostrom.server.reports.domain.ExceededBudget
 import dev.ostrom.server.reports.domain.SpendingDay
 import dev.ostrom.server.reports.domain.SpendingLine
 import dev.ostrom.server.reports.domain.SpendingPeriod
@@ -12,6 +13,7 @@ import dev.ostrom.server.reports.domain.SpendingReport
 import dev.ostrom.server.reports.domain.SpendingTotals
 import dev.ostrom.server.reports.presentation.ActivityActorDto
 import dev.ostrom.server.reports.presentation.ActivityItemDto
+import dev.ostrom.server.reports.presentation.ExceededBudgetDto
 import dev.ostrom.server.reports.presentation.SpendingDayDto
 import dev.ostrom.server.reports.presentation.SpendingDto
 import dev.ostrom.server.reports.presentation.SpendingLineDto
@@ -20,6 +22,7 @@ import kotlinx.datetime.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.uuid.Uuid
 
 class ReportsPresentationTest {
     @Test
@@ -43,6 +46,19 @@ class ReportsPresentationTest {
             report.toDto(),
         )
         assertNull(report.copy(budgetMicros = null).toDto().budgetUsd)
+    }
+
+    @Test
+    fun aBudgetPastItsLimitMapsToTheContract() {
+        val member = Uuid.parse("00000000-0000-0000-0000-00000000000a")
+        assertEquals(
+            ExceededBudgetDto("member", member.toString(), "day", 0.4, hardStop = false, since = NOW.toString()),
+            ExceededBudget(member, daily = true, stops = false, limitMicros = 400_000, since = NOW).toDto(),
+        )
+        assertEquals(
+            ExceededBudgetDto("organization", null, "month", 100.0, hardStop = true, since = NOW.toString()),
+            ExceededBudget(null, daily = false, stops = true, limitMicros = 100_000_000, since = NOW).toDto(),
+        )
     }
 
     @Test

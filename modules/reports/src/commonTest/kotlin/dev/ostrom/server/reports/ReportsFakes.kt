@@ -3,6 +3,7 @@ package dev.ostrom.server.reports
 
 import dev.ostrom.server.reports.domain.ActivityCursor
 import dev.ostrom.server.reports.domain.ActivityItem
+import dev.ostrom.server.reports.domain.ExceededBudget
 import dev.ostrom.server.reports.domain.ReportsRepository
 import dev.ostrom.server.reports.domain.SpendingBudgets
 import dev.ostrom.server.reports.domain.SpendingTotals
@@ -37,6 +38,17 @@ class FakeReportsRepository : ReportsRepository {
     }
 }
 
-class FakeBudgets(private val org: Long?, private val member: Long?) : SpendingBudgets {
+class FakeBudgets(
+    private val org: Long?,
+    private val member: Long?,
+    private val exceeded: List<ExceededBudget> = emptyList(),
+) : SpendingBudgets {
+    val exceededAsked = mutableListOf<Pair<Viewer, Instant>>()
+
     override suspend fun monthlyMicros(viewer: Viewer): Long? = if (viewer.wholeOrganization) org else member
+
+    override suspend fun exceeded(viewer: Viewer, at: Instant): List<ExceededBudget> {
+        exceededAsked += viewer to at
+        return exceeded
+    }
 }

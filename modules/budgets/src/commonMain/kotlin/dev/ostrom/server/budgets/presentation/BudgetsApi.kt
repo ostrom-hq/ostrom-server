@@ -31,13 +31,16 @@ object BudgetScopes {
 }
 
 /**
- * A spending limit (contract `Budget`): per calendar month (UTC), always a hard stop.
+ * A subject's spending limits (contract `Budget`): per calendar month and per day (UTC), that stop the calls or only
+ * warn. Setting one replaces the subject's limits whole.
  *
  * @property scope `organization` (also `org`) or `member`.
- * @property subject For `member`: the member's id, or absent for every member without a limit of their own.
- * @property usdPerMonth The limit in US dollars; absent removes it.
- * @property usdPerDay Daily limits are not supported: must be absent.
- * @property hardStop Must be true: a reached limit refuses model calls.
+ * @property subject For `member`: the member's id (`id` of `/orgs/{org}/members`), or absent for every member without
+ *   limits of their own.
+ * @property usdPerMonth The monthly limit in US dollars; absent, none.
+ * @property usdPerDay The daily limit in US dollars; absent, none. Both absent remove the subject's limits.
+ * @property hardStop True (the default): a reached limit refuses model calls until its period ends. False: the calls go
+ *   on, and the overrun is written to the audit log (`budget.exceeded`) and listed by `GET /spending` (`exceeded`).
  */
 @Serializable
 data class BudgetDto(

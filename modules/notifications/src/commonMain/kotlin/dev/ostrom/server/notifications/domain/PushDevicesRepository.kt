@@ -29,6 +29,25 @@ interface PushDevicesRepository {
     suspend fun delete(orgId: Uuid, memberId: Uuid, id: Uuid): Boolean
 
     /**
+     * The phones a member registered in an organization, the most recently seen first.
+     *
+     * @param orgId The organization.
+     * @param memberId The member.
+     *
+     * @return Their phones.
+     */
+    suspend fun ofMember(orgId: Uuid, memberId: Uuid): List<PushDevice>
+
+    /**
+     * Forgets the phones a person registered in an organization with a credential that ended.
+     *
+     * @param orgId The organization.
+     * @param userId The person.
+     * @param credentialId The credential, or null for every browser session of theirs (sign out everywhere).
+     */
+    suspend fun forget(orgId: Uuid, userId: Uuid, credentialId: Uuid?)
+
+    /**
      * Removes every phone of an organization: it was deleted, so nothing may be pushed for it any more.
      *
      * @param orgId The organization.
