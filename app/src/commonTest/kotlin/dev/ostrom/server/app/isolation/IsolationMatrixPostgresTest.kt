@@ -80,7 +80,8 @@ class IsolationMatrixPostgresTest {
         val other = server.anotherLaunch(a)
         val agent = a.credentials.filter { it.name == "agent token" }
         val cases = casesNaming(ISOLATION_REGISTRY, LAUNCH_SEEDS)
-        val matrix = IsolationMatrix(direct(), cases, a.values + other, other.values.toSet())
+        // The other launch is of the agent's own organization: a 403 may say it exists, a success is the finding.
+        val matrix = IsolationMatrix(direct(), cases, a.values + other, other.values.toSet(), strict = false)
         val changes = matrix.watch(a.browser) { matrix.run(agent) }
         val missing = LAUNCH_SEEDS.filter { it != Seed.APPROVAL && it != Seed.WAIT && it !in other }
         report(a.problems + missing.map { "second launch: no $it" } + matrix.findings + changes, matrix)

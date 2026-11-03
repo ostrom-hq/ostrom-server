@@ -33,6 +33,8 @@ internal sealed interface Case {
      * @property admin Whether the write is reserved to an owner or an admin of the organization.
      * @property host The `Host` the route answers on, when not the API's (the artifact pages' content origin).
      * @property query The query string the route needs, without its `?`.
+     * @property stream Whether a success is a stream that does not end (server-sent events): its body is not read.
+     * @property rpc Whether the route speaks JSON-RPC (MCP): a refusal is an `error` or an `isError` result in a 200.
      */
     data class Target(
         val params: Map<String, Param> = emptyMap(),
@@ -40,6 +42,8 @@ internal sealed interface Case {
         val admin: Boolean = false,
         val host: String? = null,
         val query: String? = null,
+        val stream: Boolean = false,
+        val rpc: Boolean = false,
     ) : Case
 
     /**

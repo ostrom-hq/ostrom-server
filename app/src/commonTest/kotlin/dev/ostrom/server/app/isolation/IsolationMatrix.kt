@@ -5,26 +5,39 @@ import dev.ostrom.server.kernel.auth.ORG_HEADER
 import io.ktor.client.HttpClient
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
-import io.ktor.client.request.request
+import io.ktor.client.request.prepareRequest
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 
 /** A way to call the server as someone: a browser session, a token, nothing at all. */
 internal class Credential(val name: String, val apply: HttpRequestBuilder.() -> Unit)
 
-/** What the attacker can see of an answer. */
-internal data class Answer(val status: Int, val type: String?, val message: String?, val body: String) {
-    val succeeded: Boolean get() = status in 200..299
-
+/**
+ * What the attacker can see of an answer.
+ *
+ * @property type The `error.type` of an ApiError, or the JSON-RPC refusal of an MCP answer.
+ * @property succeeded Whether the call did what it asked: a 2xx, without a JSON-RPC refusal.
+ */
+internal data class Answer(
+    val status: Int,
+    val type: String?,
+    val message: String?,
+    val body: String,
+    val succeeded: Boolean = status in 200..299,
+) {
     /** Whether an attacker could tell this answer from [other], once the values each request sent are masked. */
     fun differsFrom(other: Answer, sent: Collection<String>, otherSent: Collection<String>): Boolean {
         if (succeeded && other.succeeded) return false
@@ -41,7 +54,7 @@ internal class Resolved(
     val body: String?,
     val org: String?,
     val sent: Set<String>,
-    val host: String? = null,
+    val case: Case.Target = Case.Target(),
 )
 
 /**
@@ -51,12 +64,15 @@ internal class Resolved(
  *
  * @property values B's seeded values.
  * @property canaries What only B's data contains: its ids, names, logins and distinctive figures.
+ * @property strict Whether B's value must answer as a lookalike does; when not (another launch of the caller's own
+ *   organization, whose existence is not a secret to it), only a success with B's value is a finding.
  */
 internal class IsolationMatrix(
     private val client: HttpClient,
     private val registry: Map<String, Case>,
     private val values: Map<Seed, String>,
     private val canaries: Set<String>,
+    private val strict: Boolean = true,
 ) {
     /** What the matrix found, one line each, readable in the CI log. */
     val findings = mutableListOf<String>()
@@ -120,8 +136,11 @@ internal class IsolationMatrix(
         val answer = call(route, own, credential)
         val other = call(route, twin, credential)
         val where = "$route [${credential.name}${if (header) ", Ostrom-Org: B" else ""}]"
-        if (answer.differsFrom(other, own.sent, twin.sent)) {
-            findings += "$where: B's value answers ${answer.describe()}, a lookalike ${other.describe()}"
+        when {
+            answer.status == NO_ANSWER || other.status == NO_ANSWER -> findings += "$where: no answer in $CALL_TIMEOUT"
+            strict && answer.differsFrom(other, own.sent, twin.sent) ->
+                findings += "$where: B's value answers ${answer.describe()}, a lookalike ${other.describe()}"
+            !strict && answer.succeeded -> findings += "$where: B's value answers ${answer.describe()}"
         }
         leak(where, answer, own.sent)
         leak(where, other, twin.sent)
@@ -130,7 +149,9 @@ internal class IsolationMatrix(
     private suspend fun search(route: String, credential: Credential) {
         val path = route.substringAfter(' ')
         if (PARAMETER.containsMatchIn(path)) return
-        leak("$route [${credential.name}]", call(route, Resolved(path, null, null, emptySet()), credential), emptySet())
+        val case = registry[route] as? Case.Target ?: Case.Target()
+        val answer = call(route, Resolved(path, null, null, emptySet(), case), credential)
+        leak("$route [${credential.name}]", answer, emptySet())
     }
 
     // The values the request sent are cut out first: an answer may repeat them ("no rule rule_x"), and a slug or a
@@ -143,7 +164,7 @@ internal class IsolationMatrix(
 
     private fun missing(route: String, case: Case.Target) {
         val seeds = case.params.values.filterIsInstance<Param.Of>().map { it.seed } +
-            PLACEHOLDER.findAll(case.body.orEmpty()).map { Seed.valueOf(it.groupValues[1]) }
+            PLACEHOLDER.findAll(case.body.orEmpty() + case.query.orEmpty()).map { Seed.valueOf(it.groupValues[1]) }
         val absent = (seeds + Seed.ORG_ID).filter { it !in values }.distinct()
         val unknown = PARAMETER.findAll(route).map { it.groupValues[1] }.filter { it !in case.params }.toList()
         findings += "$route: not attacked, ${if (unknown.isEmpty()) "B has no $absent" else "no case for $unknown"}"
@@ -156,39 +177,59 @@ internal class IsolationMatrix(
     internal fun resolve(route: String, case: Case.Target, twin: Boolean = false, header: Boolean = false):
         Resolved? {
         val filler = Filler(values, twin)
-        val path = filler.fill(route.substringAfter(' '), PARAMETER) { case.params[it] } +
-            case.query?.let { "?$it" }.orEmpty()
-        val body = case.body?.let { text -> filler.fill(text, PLACEHOLDER) { Param.Of(Seed.valueOf(it)) } }
+        val placeholder = { name: String -> Param.Of(Seed.valueOf(name)) }
+        val query = case.query?.let { "?" + filler.fill(it, PLACEHOLDER, placeholder) }.orEmpty()
+        val path = filler.fill(route.substringAfter(' '), PARAMETER) { case.params[it] } + query
+        val body = case.body?.let { filler.fill(it, PLACEHOLDER, placeholder) }
         val org = if (header) filler.value(Param.Of(Seed.ORG_ID)) else null
         val complete = filler.complete && (org != null || !header)
-        return if (complete) Resolved(path, body, org, filler.sent, case.host) else null
+        return if (complete) Resolved(path, body, org, filler.sent, case) else null
     }
 
-    /** Sends [resolved] as [credential]. */
+    /** Sends [resolved] as [credential]; a call with no answer in [CALL_TIMEOUT] is a [NO_ANSWER]. */
     internal suspend fun call(route: String, resolved: Resolved, credential: Credential): Answer {
         requests++
-        val response = client.request(resolved.path) {
+        val request = client.prepareRequest(resolved.path) {
             method = HttpMethod.parse(route.substringBefore(' '))
             credential.apply(this)
             resolved.org?.let { header(ORG_HEADER, it) }
-            resolved.host?.let { header(HttpHeaders.Host, it) }
+            resolved.case.host?.let { header(HttpHeaders.Host, it) }
             resolved.body?.let {
                 contentType(ContentType.Application.Json)
                 setBody(it)
             }
         }
-        val text = response.bodyAsText()
-        val error = errorOf(text)
-        val type = error?.get("type")?.jsonPrimitive?.content
-        return Answer(response.status.value, type, error?.get("message")?.jsonPrimitive?.content, text)
+        return withTimeoutOrNull(CALL_TIMEOUT) { request.execute { answerOf(it, resolved.case) } }
+            ?: Answer(NO_ANSWER, null, null, "")
     }
 
-    // The `error` object of an ApiError answer; null for any other body (a list, an HTML page, nothing).
-    private fun errorOf(text: String): JsonObject? = try {
-        Json.parseToJsonElement(text).jsonObject["error"] as? JsonObject
+    private suspend fun answerOf(response: HttpResponse, case: Case.Target): Answer {
+        val status = response.status.value
+        if (case.stream && status in 200..299) return Answer(status, null, null, "")
+        val text = response.bodyAsText()
+        val json = objectOf(text)
+        val error = json?.get("error") as? JsonObject
+        val result = json?.get("result") as? JsonObject
+        val refused = result?.get("isError")?.jsonPrimitive?.content == "true"
+        return when {
+            !case.rpc -> Answer(status, error?.text("type"), error?.text("message"), text)
+            error != null -> Answer(status, "rpc ${error.text("code")}", error.text("message"), text, false)
+            refused -> Answer(status, "tool error", result?.toolText(), text, false)
+            else -> Answer(status, null, null, text)
+        }
+    }
+
+    // The answer's JSON object; null for any other body (a list, an HTML page, nothing).
+    private fun objectOf(text: String): JsonObject? = try {
+        Json.parseToJsonElement(text) as? JsonObject
     } catch (_: IllegalArgumentException) {
         null
     }
+
+    private fun JsonObject.text(key: String): String? = (get(key) as? JsonPrimitive)?.content
+
+    private fun JsonObject.toolText(): String? =
+        ((get("content") as? JsonArray)?.firstOrNull() as? JsonObject)?.text("text")
 
     private fun Answer.describe(): String = "$status${type?.let { " $it" }.orEmpty()}"
 
@@ -220,6 +261,12 @@ internal class IsolationMatrix(
         // Reads first, then deletions, updates and creations: a creation with B's name (an MCP server, a secret) makes
         // A's own resource of that name, which a later read or deletion would find while the lookalike finds nothing.
         val ORDER = listOf("GET", "DELETE", "PATCH", "POST", "PUT")
+
+        /** How long a call may take: a stream or a hung route must not stop the matrix. */
+        val CALL_TIMEOUT = 10.seconds
+
+        /** The status of a call that did not answer in [CALL_TIMEOUT]. */
+        const val NO_ANSWER = -1
 
         fun order(route: String): Int = ORDER.indexOf(route.substringBefore(' '))
     }

@@ -166,7 +166,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     // Usage and spending.
     "GET /api/v1/usage" to Case.Target(),
     "GET /api/v1/usage/summary" to Case.Target(),
-    "GET /api/v1/usage/live" to Case.Target(),
+    "GET /api/v1/usage/live" to Case.Target(stream = true),
     "GET /api/v1/usage/events" to Case.Target(),
     "POST /api/v1/usage/events" to Case.Target(body = "{}"),
     "GET /api/v1/spending" to Case.Target(),
@@ -215,6 +215,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/mcp/{server}" to target(
         "server" to MCP_SERVER,
         body = """{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}""",
+        rpc = true,
     ),
 
     // Artifacts.
@@ -222,7 +223,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/artifacts" to Case.Target(
         body = """{"title": "Taken", "access": "team", "files": [{"path": "index.html", "content": "x"}]}""",
     ),
-    "POST /api/v1/artifacts/mcp" to Case.Target(body = "{}"),
+    "POST /api/v1/artifacts/mcp" to Case.Target(body = mcpCall("read", "artifact"), rpc = true),
     "GET /api/v1/artifacts/{id}" to target("id" to ARTIFACT),
     "PATCH /api/v1/artifacts/{id}" to target("id" to ARTIFACT, body = """{"title": "Taken"}"""),
     "DELETE /api/v1/artifacts/{id}" to target("id" to ARTIFACT),
@@ -257,7 +258,8 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/waits" to Case.Target(),
     "POST /api/v1/waits" to
         Case.Target(body = """{"question": {"title": "Taken"}, "assignee": "{{MEMBER_ID}}"}"""),
-    "POST /api/v1/waits/mcp" to Case.Target(body = "{}"),
+    "POST /api/v1/waits/mcp" to
+        Case.Target(body = mcpCall("get_wait", "wait"), query = "session={{SESSION}}", rpc = true),
     "GET /api/v1/waits/{id}" to target("id" to WAIT),
     "POST /api/v1/waits/{id}/answer" to target("id" to WAIT, body = """{"action": "approve"}"""),
     "POST /api/v1/waits/{id}/cancel" to target("id" to WAIT),
@@ -372,3 +374,10 @@ private const val AUTOMATION_BODY = """{"name": "Taken", "trigger": {"kind": "we
 
 private const val GATE_BODY = """{"sessionId": "{{SESSION}}", "repo": "acme/api", "class": "push-main",""" +
     """ "tool": "Bash", "command": "deploy"}"""
+
+// A JSON-RPC call of the MCP tool [tool], its one argument [argument] naming B's seed of the same name.
+private fun mcpCall(tool: String, argument: String): String {
+    val seed = argument.uppercase()
+    return """{"jsonrpc": "2.0", "id": 1, "method": "tools/call", """ +
+        """"params": {"name": "$tool", "arguments": {"$argument": "{{$seed}}"}}}"""
+}
