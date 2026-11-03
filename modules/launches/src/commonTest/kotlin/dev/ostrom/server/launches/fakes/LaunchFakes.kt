@@ -82,6 +82,13 @@ class RecordingTokens : AgentTokenService {
         issued += Triple(launcher, launchId, lifetime)
         return "osa_$launchId"
     }
+
+    val revoked = mutableListOf<String>()
+
+    override suspend fun revoke(launchId: String): Long {
+        revoked += launchId
+        return 1
+    }
 }
 
 /** Refuses the models of [refused] with their reason. */

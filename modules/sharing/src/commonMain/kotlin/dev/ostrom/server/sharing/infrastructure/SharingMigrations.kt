@@ -53,4 +53,42 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         name = "version_sharing_accounts",
         sql = "ALTER TABLE sharing_accounts ADD COLUMN version BIGINT NOT NULL DEFAULT 1",
     ),
+    // The contract's daily allocation (`dailyAllocationUsd`), in USD millionths like the monthly budget.
+    SchemaMigration(
+        version = 4,
+        name = "daily_budget_of_sharing_accounts",
+        sql = "ALTER TABLE sharing_accounts ADD COLUMN daily_budget_micros BIGINT",
+    ),
+    // The contract's groups (`/api/v1/groups`): members of an organization and the accounts lent to them. Each table
+    // is confined to its organization; the foreign keys cascade a deleted group or account.
+    SchemaMigration(
+        version = 5,
+        name = "create_sharing_groups",
+        sql = """
+            CREATE TABLE sharing_groups (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                name TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL
+            );
+            CREATE UNIQUE INDEX sharing_groups_name ON sharing_groups (org_id, lower(name));
+            CREATE TABLE sharing_group_members (
+                org_id UUID NOT NULL,
+                group_id UUID NOT NULL REFERENCES sharing_groups (id) ON DELETE CASCADE,
+                member_id UUID NOT NULL,
+                paused_until TIMESTAMPTZ,
+                PRIMARY KEY (group_id, member_id)
+            );
+            CREATE INDEX sharing_group_members_org ON sharing_group_members (org_id, group_id);
+            CREATE TABLE sharing_group_accounts (
+                org_id UUID NOT NULL,
+                group_id UUID NOT NULL REFERENCES sharing_groups (id) ON DELETE CASCADE,
+                account_id UUID NOT NULL REFERENCES sharing_accounts (id) ON DELETE CASCADE,
+                PRIMARY KEY (group_id, account_id)
+            );
+            CREATE INDEX sharing_group_accounts_org ON sharing_group_accounts (org_id, group_id);
+            CREATE INDEX sharing_group_accounts_account ON sharing_group_accounts (account_id)
+        """.trimIndent() + ";\n" + tenantTableSql("sharing_groups") + "\n" +
+            tenantTableSql("sharing_group_members") + "\n" + tenantTableSql("sharing_group_accounts"),
+    ),
 )

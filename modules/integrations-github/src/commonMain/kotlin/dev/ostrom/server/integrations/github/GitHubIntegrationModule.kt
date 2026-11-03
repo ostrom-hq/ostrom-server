@@ -5,6 +5,7 @@ import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateChannel
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.integrations.github.domain.ConfiguredInstanceAdmins
+import dev.ostrom.server.integrations.github.domain.GitHubAccounts
 import dev.ostrom.server.integrations.github.domain.GitHubApi
 import dev.ostrom.server.integrations.github.domain.GitHubAppManifests
 import dev.ostrom.server.integrations.github.domain.GitHubAppSource
@@ -39,6 +40,7 @@ import dev.ostrom.server.integrations.github.infrastructure.GitHubMigrations
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
 import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubContentsApi
+import dev.ostrom.server.integrations.github.infrastructure.IdentityGitHubAccounts
 import dev.ostrom.server.integrations.github.infrastructure.OrgsOrgReferences
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubDirectoryRepository
@@ -140,7 +142,8 @@ object GitHubIntegrationModule : ServerModule {
             GitHubCiChecks(get(), get(), { apps.current().slug }, get())
         }
         single { GitHubGateChecks(get(), get(), get<GitHubSettings>().webOrigin, get()) } bind GateChannel::class
-        single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get(), get(), get()) }
+        single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get(), get(), get(), get()) }
+        single<GitHubAccounts> { IdentityGitHubAccounts(get()) }
         single {
             val apps = get<GitHubAppSource>()
             val sync = get<GitHubDirectorySync>()

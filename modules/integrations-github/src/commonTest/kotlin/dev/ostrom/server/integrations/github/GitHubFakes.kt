@@ -8,6 +8,11 @@ import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.RequestStatus
+import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.User
+import dev.ostrom.server.identity.domain.UserEmail
+import dev.ostrom.server.identity.domain.UsersRepository
+import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.integrations.github.domain.CheckRun
 import dev.ostrom.server.integrations.github.domain.GateCheck
 import dev.ostrom.server.integrations.github.domain.GitHubApi
@@ -183,3 +188,34 @@ fun request(approver: String, status: RequestStatus = RequestStatus.PENDING) =
 
 /** Thrown by the fake API to test GitHub failing. */
 fun gitHubDown() = GitHubCallException("GitHub did not answer GET /repos/acme/api/pulls/6.")
+
+/**
+ * The identity module's users as the GitHub integration reads them: by the GitHub account each one signed in with.
+ *
+ * @param linked The login of the person linked to each GitHub user id.
+ */
+class LinkedGitHubUsers(private val linked: Map<Long, String>) : UsersRepository {
+    override suspend fun findByIdentity(issuer: String, subject: String): User? =
+        linked[subject.toLong()]?.takeIf { issuer == IdentityProvider.GITHUB.key }
+            ?.let { User(Uuid.random(), it, it, null, null, NOW) }
+
+    override suspend fun get(id: Uuid): User? = unused()
+
+    override suspend fun findByVerifiedEmail(email: String): User? = unused()
+
+    override suspend fun loginTaken(login: String): Boolean = unused()
+
+    override suspend fun findByLogin(login: String): User? = unused()
+
+    override suspend fun getMany(ids: Collection<Uuid>): List<User> = unused()
+
+    override suspend fun create(user: User, identity: VerifiedIdentity, email: UserEmail?, at: Instant) = unused()
+
+    override suspend fun link(userId: Uuid, identity: VerifiedIdentity, email: UserEmail?, at: Instant) = unused()
+
+    override suspend fun listEmails(userId: Uuid): List<UserEmail> = unused()
+
+    override suspend fun listIssuers(userId: Uuid): List<String> = unused()
+
+    private fun unused(): Nothing = error("The GitHub integration only reads a user by their GitHub account.")
+}

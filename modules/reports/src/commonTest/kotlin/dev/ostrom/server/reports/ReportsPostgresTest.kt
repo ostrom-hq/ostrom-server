@@ -24,15 +24,19 @@ import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodeURLParameter
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
@@ -72,10 +76,12 @@ class ReportsPostgresTest {
         spend(ORG_A, MIA.memberId, "s1", 7_000_000, NOW - 40.days)
         gate(SeedGate(
             ORG_A, approved, "Merge PR #6", "APPROVED", NOW - 40.minutes, OLGA.userId.toString(), NOW - 15.minutes,
+            repo = "acme/api",
         ))
         // Decided under the id of org B's person: org A never learns her login.
         gate(SeedGate(
             ORG_A, rejected, "Deploy", "REJECTED", NOW - 20.minutes, CAROL.userId.toString(), NOW - 3.minutes,
+            repo = "acme/web", realRepo = "acme/infra",
         ))
         gate(SeedGate(ORG_A, pending, "Publish", "PENDING", NOW - 1.minutes))
         // A gate that only watched shows nothing.
@@ -89,6 +95,7 @@ class ReportsPostgresTest {
         spend(ORG_B, CAROL.memberId, "sb", 9_000_000, NOW - 55.minutes)
         gate(SeedGate(
             ORG_B, Uuid.random(), "Merge B", "APPROVED", NOW - 45.minutes, CAROL.userId.toString(), NOW - 44.minutes,
+            repo = "beta/secret",
         ))
         decision(SeedDecision(ORG_B, "db", "workflow", "b-flow", CAROL.userId.toString(), NOW - 43.minutes))
         val budgets = koin.get<BudgetsRepository>()
@@ -236,6 +243,34 @@ class ReportsPostgresTest {
             carol.items.map { it.kind }.sorted(),
         )
         assertEquals(listOf("carol"), carol.items.filter { it.kind == "gate.decided" }.map { it.actor.name })
+    }
+
+    @Test
+    fun aGateLineCarriesTheRepositoryItRanInAndOnlyItsOwnOrganizations() = reportsTest { server ->
+        val page = server.read("mia", "/api/v1/activity").body<ActivityPageDto>()
+        val repos = page.items.associate { it.id to it.repo }
+
+        // The repository the session declared, or the one the command really ran in when the hook read another.
+        assertEquals("acme/api", repos["gate.requested:$approved"])
+        assertEquals("acme/api", repos["gate.decided:$approved"])
+        assertEquals("acme/infra", repos["gate.requested:$rejected"])
+        assertEquals("acme/infra", repos["gate.decided:$rejected"])
+        // A gate outside any repository, and a workflow, carry none: the field is left out, not sent empty.
+        assertNull(repos["gate.requested:$pending"])
+        assertNull(repos["workflow.changed:d1"])
+        val raw = Json.parseToJsonElement(server.read("mia", "/api/v1/activity").bodyAsText()).jsonObject
+        val lines = raw.getValue("items").jsonArray.map { it.jsonObject }
+        val publish = lines.single { it.getValue("id").jsonPrimitive.content == "gate.requested:$pending" }
+        assertFalse("repo" in publish)
+
+        // Each organization reads its own gates' repositories, never the other's.
+        assertFalse("beta/secret" in repos.values)
+        val carol = server.read("carol", "/api/v1/activity").body<ActivityPageDto>()
+        assertEquals(
+            setOf("beta/secret"),
+            carol.items.filter { it.kind.startsWith("gate.") }.mapNotNull { it.repo }.toSet(),
+        )
+        assertTrue(carol.items.none { it.repo == "acme/infra" || it.repo == "acme/web" })
     }
 
     @Test
