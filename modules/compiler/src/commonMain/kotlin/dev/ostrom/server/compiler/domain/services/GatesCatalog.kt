@@ -31,6 +31,17 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
     }
 
     /**
+     * The repositories the gates' declared actions are limited to: the organization's catalogue leaves out a gate
+     * limited to them, theirs has it.
+     *
+     * @return The repositories, as first written (case ignored).
+     */
+    fun repositories(): List<String> = workflows
+        .flatMap { workflow -> gates(workflow).flatMap { it.actions.orEmpty() } }
+        .flatMap { it.repos }
+        .distinctBy { it.lowercase() }
+
+    /**
      * The gate that covers an action class in a repository.
      *
      * @param action The action class.

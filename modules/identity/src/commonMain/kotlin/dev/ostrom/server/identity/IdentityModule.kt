@@ -282,7 +282,7 @@ object IdentityModule : ServerModule {
         route.signInRoutes(koin.get())
         route.sessionRoutes(koin.get())
         route.mobileRoutes(koin.get())
-        route.orgAuditRoutes(koin.get())
+        route.orgAuditRoutes(koin.get(), koin.get())
         route.keysAndDevicesRoutes(koin.get())
     }
 

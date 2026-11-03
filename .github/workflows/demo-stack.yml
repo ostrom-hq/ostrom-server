@@ -13,6 +13,9 @@ on:
       server_image:
         description: Server image (empty = edge)
         default: ""
+      runner_image:
+        description: Cloud session and machine runner image (empty = latest)
+        default: ""
       helm_ref:
         description: ostrom-helm ref holding compose/demo
         default: main
@@ -43,7 +46,7 @@ jobs:
     env:
       HELM_REF: ${{ inputs.helm_ref || 'main' }}
       SERVER_IMAGE: ${{ inputs.server_image || 'ghcr.io/ostrom-hq/ostrom-server:edge' }}
-      RUNNER_IMAGE: ghcr.io/ostrom-hq/ostrom-runner:latest
+      RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,7 +81,7 @@ jobs:
           {
             echo "### Images"
             echo "- server: \`$server\`"
-            echo "- cloud session: \`$runner\`"
+            echo "- cloud session and machine runner: \`$runner\`"
             echo "- console: ostrom-web main $(git -C web rev-parse --short HEAD), built here"
             echo "- ostrom-helm $(git -C helm rev-parse --short HEAD) ($HELM_REF)"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -107,6 +110,8 @@ jobs:
           REPORT: ${{ runner.temp }}/demo-report.md
           OSTROM_DEMO_SESSION_CHECK: demo/check-session.sh
           OSTROM_DEMO_TEAMCODE_CHECK: demo/teamcode/check.sh
+          # A registered runner on a machine (6.2): the same image, `ostrom-runner machine`, on the sessions' network.
+          OSTROM_DEMO_RUNNER_IMAGE: ${{ steps.images.outputs.runner }}
         run: node demo/journey.mjs
       - name: Report
         if: always()
