@@ -8,6 +8,7 @@ import dev.ostrom.server.orgs.domain.GetMemberUseCaseImpl
 import dev.ostrom.server.orgs.domain.InvalidOrgRequestException
 import dev.ostrom.server.orgs.domain.LeaveOrgUseCaseImpl
 import dev.ostrom.server.orgs.domain.ListMembersUseCaseImpl
+import dev.ostrom.server.orgs.domain.MAX_MEMBER_PAGE
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.MemberNotFoundException
 import dev.ostrom.server.orgs.domain.NotAllowedException
@@ -20,6 +21,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.test.runTest
@@ -65,11 +67,25 @@ class MemberUseCasesTest {
         world.store.members[ghost.id] = ghost
         val list = ListMembersUseCaseImpl(world.orgs, world.members, world.people)
 
-        val members = list(org.id, carl.id)
+        val whole = list(org.id, carl.id, null, MAX_MEMBER_PAGE)
+        val members = whole.items
 
         assertEquals(listOf("ada", "bob", "carl", "dana"), members.map { it.login })
-        assertEquals("ada@example.com", list(org.id, bob.id).first().email)
-        assertFailsWith<OrgNotFoundException> { list(org.id, Uuid.random()) }
+        assertNull(whole.next)
+        assertEquals("ada@example.com", list(org.id, bob.id, null, MAX_MEMBER_PAGE).items.first().email)
+        assertFailsWith<OrgNotFoundException> { list(org.id, Uuid.random(), null, MAX_MEMBER_PAGE) }
+        // Two at a time, each page after the previous one's next; the ghost (no person) is read, not shown.
+        val first = list(org.id, carl.id, null, 2)
+        assertEquals(listOf("ada", "bob"), first.items.map { it.login })
+        val second = list(org.id, carl.id, first.next, 2)
+        assertEquals(listOf("carl", "dana"), second.items.map { it.login })
+        val third = list(org.id, carl.id, second.next, 2)
+        assertTrue(third.items.isEmpty())
+        assertNull(third.next)
+        assertTrue(list(org.id, carl.id, Uuid.random(), 2).items.isEmpty())
+        for (limit in listOf(0, MAX_MEMBER_PAGE + 1)) {
+            assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, null, limit) }
+        }
         val get = GetMemberUseCaseImpl(world.orgs, world.members, world.people)
         assertEquals(OrgRole.ADMIN, get(org.id, carl.id, "bob").member.role)
         assertFailsWith<MemberNotFoundException> { get(org.id, carl.id, "nobody") }
@@ -82,14 +98,14 @@ class MemberUseCasesTest {
         val get = GetMemberUseCaseImpl(world.orgs, world.members, world.people)
 
         // A member (or a token of theirs: the CLI's, the app's) sees their own address, never the others'.
-        val seenByMember = list(org.id, carl.id).associate { it.login to it.email }
+        val seenByMember = list(org.id, carl.id, null, MAX_MEMBER_PAGE).items.associate { it.login to it.email }
 
         assertEquals(mapOf("ada" to null, "bob" to null, "carl" to "carl@example.com", "dana" to null), seenByMember)
         assertNull(get(org.id, carl.id, "ada").email)
         assertEquals("carl@example.com", get(org.id, carl.id, "carl").email)
         assertEquals(
             listOf("ada@example.com", "bob@example.com", "carl@example.com", "dana@example.com"),
-            list(org.id, ada.id).map { it.email },
+            list(org.id, ada.id, null, MAX_MEMBER_PAGE).items.map { it.email },
         )
         assertEquals("carl@example.com", get(org.id, bob.id, "carl").email)
     }

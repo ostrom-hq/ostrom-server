@@ -73,3 +73,7 @@ data class AnalysisRun(
 
 /** A run of the same kind is still going: one at a time per organization. */
 class AnalysisBusyException : OstromException(ErrorKind.CONFLICT, "An analysis of this kind is already running.")
+
+/** A replay ended less than a minute ago: an organization replays once a minute at most (AUDIT-SECU-ANALYSE R3). */
+class AnalysisTooSoonException :
+    OstromException(ErrorKind.CONFLICT, "A replay ran less than a minute ago: start it again in a minute.")
