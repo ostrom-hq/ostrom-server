@@ -132,11 +132,12 @@ class WaitsPostgresTest {
         assertEquals(listOf(resumed.id), one)
         assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, sessionIds = listOf("s-1~r")), null, 10))
 
-        // The limit spans the agent session's segments, and only its own: `s-10` and `sX1` are other sessions.
-        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s-1~r4", at = t0), 3))
-        for (other in listOf("s-10~r2", "sX1~r2")) {
-            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = other, at = t0), 3), other)
-        }
+        // The limit counts the sessions named with the wait's own: a launch's segments, not another launch's.
+        val launch = listOf("s-1", "s-1~r2")
+        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s-1~r2"), 2, launch))
+        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s-1~r4"), 2, launch))
+        assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = "s-1~r4"), 2, listOf("s-1~r4")))
+        assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = "s-1~r3"), 2))
     }
 
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)

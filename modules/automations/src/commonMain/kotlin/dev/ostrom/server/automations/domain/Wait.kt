@@ -209,21 +209,6 @@ data class WaitCaller(
     val actsAsAdmin: Boolean get() = admin && interactive
 }
 
-/**
- * What separates an agent session's id from a segment's number, `<id>~r<n>`, as the sessions module names the segments
- * a launcher reopens (`SessionSegments`; an agent's session id never holds `~`). The launches module's PostgreSQL test
- * of a reopened session fails if the two ever differ.
- */
-const val SEGMENT_MARK: String = "~r"
-
-/**
- * The agent session a segment belongs to: `<id>` for `<id>` and `<id>~r<n>`.
- *
- * @param segment A segment's id.
- * @return The agent session's id.
- */
-fun agentSessionOf(segment: String): String = segment.substringBefore(SEGMENT_MARK)
-
 /** How storing a new wait went. */
 enum class CreateOutcome {
     /** Stored. */

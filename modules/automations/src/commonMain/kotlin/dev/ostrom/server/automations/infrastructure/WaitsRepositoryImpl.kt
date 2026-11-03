@@ -2,14 +2,12 @@
 package dev.ostrom.server.automations.infrastructure
 
 import dev.ostrom.server.automations.domain.CreateOutcome
-import dev.ostrom.server.automations.domain.SEGMENT_MARK
 import dev.ostrom.server.automations.domain.Wait
 import dev.ostrom.server.automations.domain.WaitAnswer
 import dev.ostrom.server.automations.domain.WaitFilter
 import dev.ostrom.server.automations.domain.WaitSpec
 import dev.ostrom.server.automations.domain.WaitStatus
 import dev.ostrom.server.automations.domain.WaitsRepository
-import dev.ostrom.server.automations.domain.agentSessionOf
 import dev.ostrom.server.kernel.http.OstromJson
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
@@ -31,54 +29,56 @@ import kotlin.uuid.Uuid
  * @param driver The database.
  */
 internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository {
-    override suspend fun createWithinLimit(wait: Wait, maxOpen: Int): CreateOutcome = driver.inTenant(wait.orgId) {
-        // Serialize the count and the insert of one scope, so that two concurrent asks never both pass the limit.
-        // A session's limit spans its segments: an agent that ends and reopens its session does not open MAX_OPEN more.
-        val session = wait.sessionId?.let(::agentSessionOf)
-        val scope = if (session == null) "member:${wait.createdBy}" else "session:$session"
-        fetchAll(
-            Statement.create("""SELECT pg_advisory_xact_lock(hashtext(:key))""")
-                .bind("key", "automations:${wait.orgId}:$scope"),
-        ).getOrThrow()
-        val count = if (session == null) {
-            Statement.create(
-                """
-                SELECT COUNT(*) AS n FROM automations_waits WHERE org_id = :org_id AND created_by = :created_by AND
-                session_id IS NULL AND status = 'open'
-                """,
-            ).bind("created_by", wait.createdBy)
-        } else {
-            Statement.create(
-                """
-                SELECT COUNT(*) AS n FROM automations_waits WHERE org_id = :org_id AND status = 'open' AND
-                (session_id = :session_id OR starts_with(session_id, :segments))
-                """,
-            ).bind("session_id", session).bind("segments", session + SEGMENT_MARK)
+    override suspend fun createWithinLimit(wait: Wait, maxOpen: Int, sessions: List<String>): CreateOutcome =
+        driver.inTenant(wait.orgId) {
+            // Serialize the count and the insert of one scope, so that two concurrent asks never both pass the limit.
+            // Keyed on the session written to: an agent asks only in its launch's open segment.
+            val session = wait.sessionId
+            val scope = if (session == null) "member:${wait.createdBy}" else "session:$session"
+            fetchAll(
+                Statement.create("""SELECT pg_advisory_xact_lock(hashtext(:key))""")
+                    .bind("key", "automations:${wait.orgId}:$scope"),
+            ).getOrThrow()
+            val count = if (session == null) {
+                Statement.create(
+                    """
+                    SELECT COUNT(*) AS n FROM automations_waits WHERE org_id = :org_id AND created_by = :created_by AND
+                    session_id IS NULL AND status = 'open'
+                    """,
+                ).bind("created_by", wait.createdBy)
+            } else {
+                // A session id never holds a comma (`SESSION_ID` of the sessions module, `REFERENCE` of the waits).
+                Statement.create(
+                    """
+                    SELECT COUNT(*) AS n FROM automations_waits WHERE org_id = :org_id AND status = 'open' AND
+                    session_id = ANY(string_to_array(:session_ids, ','))
+                    """,
+                ).bind("session_ids", (sessions + session).distinct().joinToString(","))
+            }
+            val open = fetchAll(count.bind("org_id", wait.orgId)).getOrThrow().first().get("n").asInt()
+            if (open >= maxOpen) return@inTenant CreateOutcome.AT_LIMIT
+            val inserted = fetchAll(
+                Statement.create(
+                    """
+                    INSERT INTO automations_waits (id, org_id, kind, status, session_id, run_id, assignee, created_by,
+                    question, created_at, idempotency_key) VALUES (:id, :org_id, :kind, :status, :session_id, :run_id,
+                    :assignee, :created_by, :question, :created_at, :key) ON CONFLICT (org_id, created_by,
+                    idempotency_key) DO NOTHING RETURNING id
+                    """,
+                ).bind("id", wait.id)
+                    .bind("org_id", wait.orgId)
+                    .bind("kind", wait.kind)
+                    .bind("status", wait.status.wire)
+                    .bind("session_id", wait.sessionId)
+                    .bind("run_id", wait.runId)
+                    .bind("assignee", wait.assignee)
+                    .bind("created_by", wait.createdBy)
+                    .bind("question", OstromJson.encodeToString(WaitSpec.serializer(), wait.question))
+                    .bind("created_at", wait.createdAt)
+                    .bind("key", wait.idempotencyKey),
+            ).getOrThrow()
+            if (inserted.none()) CreateOutcome.DUPLICATE else CreateOutcome.CREATED
         }
-        val open = fetchAll(count.bind("org_id", wait.orgId)).getOrThrow().first().get("n").asInt()
-        if (open >= maxOpen) return@inTenant CreateOutcome.AT_LIMIT
-        val inserted = fetchAll(
-            Statement.create(
-                """
-                INSERT INTO automations_waits (id, org_id, kind, status, session_id, run_id, assignee, created_by,
-                question, created_at, idempotency_key) VALUES (:id, :org_id, :kind, :status, :session_id, :run_id,
-                :assignee, :created_by, :question, :created_at, :key) ON CONFLICT (org_id, created_by,
-                idempotency_key) DO NOTHING RETURNING id
-                """,
-            ).bind("id", wait.id)
-                .bind("org_id", wait.orgId)
-                .bind("kind", wait.kind)
-                .bind("status", wait.status.wire)
-                .bind("session_id", wait.sessionId)
-                .bind("run_id", wait.runId)
-                .bind("assignee", wait.assignee)
-                .bind("created_by", wait.createdBy)
-                .bind("question", OstromJson.encodeToString(WaitSpec.serializer(), wait.question))
-                .bind("created_at", wait.createdAt)
-                .bind("key", wait.idempotencyKey),
-        ).getOrThrow()
-        if (inserted.none()) CreateOutcome.DUPLICATE else CreateOutcome.CREATED
-    }
 
     override suspend fun findByIdempotencyKey(orgId: Uuid, createdBy: String, key: String): Wait? = driver.fetchInOrg(
         orgId,

@@ -136,7 +136,7 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
         val caller = bound.callerFor(scope)
         val wait = dependencies.read.get(caller, waitId(raw))
         val sessions = bound.sessions(caller)
-        val own = if (sessions == null) wait.sessionId == null else sessions.any { it == wait.sessionId }
+        val own = if (sessions == null) wait.sessionId == null else wait.sessionId in sessions
         return wait.takeIf { own } ?: throw WaitNotFoundException()
     }
 

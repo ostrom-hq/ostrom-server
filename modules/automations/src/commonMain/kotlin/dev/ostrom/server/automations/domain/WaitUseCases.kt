@@ -66,7 +66,7 @@ class AskWaitUseCaseImpl(
         earlier(caller, idempotencyKey)?.let { return AskedWait(it, replayed = true) }
         val wait = newWait(caller, request, idempotencyKey)
         val limit = if (wait.sessionId == null) MAX_OPEN_ALONE else MAX_OPEN
-        return when (repository.createWithinLimit(wait, limit)) {
+        return when (repository.createWithinLimit(wait, limit, caller.segments.orEmpty())) {
             CreateOutcome.CREATED -> AskedWait(wait, replayed = false).also { events.created(wait) }
             CreateOutcome.AT_LIMIT -> throw WaitLimitException(limit)
             CreateOutcome.DUPLICATE -> AskedWait(

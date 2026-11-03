@@ -11,7 +11,6 @@ import dev.ostrom.server.automations.domain.WaitEvents
 import dev.ostrom.server.automations.domain.WaitFilter
 import dev.ostrom.server.automations.domain.WaitStatus
 import dev.ostrom.server.automations.domain.WaitsRepository
-import dev.ostrom.server.automations.domain.agentSessionOf
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.OrgPrincipal
@@ -157,17 +156,18 @@ class InMemoryWaits : WaitsRepository {
     var loseNextAnswer = false
     var duplicateNext: Wait? = null
 
-    override suspend fun createWithinLimit(wait: Wait, maxOpen: Int): CreateOutcome {
+    override suspend fun createWithinLimit(wait: Wait, maxOpen: Int, sessions: List<String>): CreateOutcome {
         duplicateNext?.let { earlier ->
             duplicateNext = null
             if (earlier.id != wait.id) waits[earlier.id] = earlier
             return CreateOutcome.DUPLICATE
         }
-        // A session's limit spans its segments, as the repository's.
-        val session = wait.sessionId?.let(::agentSessionOf)
+        // The named sessions count with the wait's own, as the repository's.
+        val session = wait.sessionId
+        val scope = sessions + listOfNotNull(session)
         val open = waits.values.count {
-            it.orgId == wait.orgId && it.status == WaitStatus.OPEN && it.sessionId?.let(::agentSessionOf) == session &&
-                (session != null || it.createdBy == wait.createdBy)
+            it.orgId == wait.orgId && it.status == WaitStatus.OPEN &&
+                if (session == null) it.sessionId == null && it.createdBy == wait.createdBy else it.sessionId in scope
         }
         if (open >= maxOpen) return CreateOutcome.AT_LIMIT
         waits[wait.id] = wait
