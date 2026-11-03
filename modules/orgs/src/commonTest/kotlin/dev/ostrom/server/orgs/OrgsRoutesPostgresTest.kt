@@ -317,7 +317,7 @@ class OrgsRoutesPostgresTest {
             assertNotNull(Uuid.parseOrNull(bobSeen.id))
             val listed = server.client.get("/api/v1/orgs/acme/members") { session(carl) }.body<MembersResponse>()
             assertEquals(bobSeen.id, listed.items.single { it.login == "bob" }.id)
-            // A member reads their own address only; an owner or an admin reads everyone's (audit 2 of the contract, F2).
+            // A member reads their own address only; an owner or an admin reads everyone's.
             assertEquals(
                 listOf("ada" to null, "bob" to null, "carl" to "carl@example.com"),
                 listed.items.map { it.login to it.email },
@@ -327,7 +327,8 @@ class OrgsRoutesPostgresTest {
             assertNull(adaSeen.email)
             val carlSeen = server.client.get("/api/v1/orgs/acme/members/carl") { session(carl) }.body<MemberResponse>()
             assertEquals("carl@example.com", carlSeen.email)
-            val carlByAdmin = server.client.get("/api/v1/orgs/acme/members/carl") { session(bob) }.body<MemberResponse>()
+            val carlByAdmin =
+                server.client.get("/api/v1/orgs/acme/members/carl") { session(bob) }.body<MemberResponse>()
             assertEquals("carl@example.com", carlByAdmin.email)
             val byOwner = server.client.get("/api/v1/orgs/acme/members") { session(ada) }.body<MembersResponse>()
             assertEquals(
