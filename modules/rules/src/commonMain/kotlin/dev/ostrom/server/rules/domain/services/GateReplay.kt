@@ -5,6 +5,7 @@ import dev.ostrom.server.compiler.domain.services.GatesCatalog
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.kernel.text.SafePattern
 import dev.ostrom.server.rules.domain.models.Rule
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
@@ -53,6 +54,9 @@ object GateReplay {
 
     /** The characters of a statement an item keeps; a longer one ends with `…`. */
     const val MAX_STATEMENT: Int = 120
+
+    /** The characters of a command a pattern reads, at most. */
+    const val MAX_MATCHED: Int = 8_192
 
     /** The approvers of a listed rule, and the rules and approvers a `why` names, at most. */
     const val MAX_NAMED: Int = 3
@@ -209,12 +213,16 @@ object GateReplay {
         val names: Set<String> = listOfNotNull(subject.repo, subject.repo?.substringAfterLast('/'))
             .flatMap { GatesCatalog.aliases(it) + it.lowercase() }.toSet()
         val actionClass = subject.actionClass
-        val command = subject.command
+        // What a pattern reads of the command: its first MAX_MATCHED characters, so that even a quadratic pattern
+        // stays bounded.
+        val matched = subject.command.take(MAX_MATCHED)
     }
 
+    // A pattern stored before SafePattern was checked could backtrack for minutes on the server's only replay lane,
+    // beyond the run's deadline (nothing suspends there): it is left out, as one that does not compile.
     private fun compiled(action: RuleGateAction): List<Regex> = action.patterns.mapNotNull { pattern ->
         try {
-            Regex(pattern, RegexOption.IGNORE_CASE)
+            Regex(pattern, RegexOption.IGNORE_CASE).takeIf { SafePattern.isSafe(pattern) }
         } catch (_: IllegalArgumentException) {
             null
         }
@@ -256,7 +264,7 @@ object GateReplay {
         // The catalogue names a repository by its short name or an alias of it; the history by `owner/name`.
         internal fun covers(target: Target): Boolean {
             val inRepo = repos.isEmpty() || repos.any { it in target.names }
-            val same = action.cls == target.actionClass || patterns.any { it.containsMatchIn(target.command) }
+            val same = action.cls == target.actionClass || patterns.any { it.containsMatchIn(target.matched) }
             return inRepo && same
         }
     }
