@@ -13,6 +13,7 @@ import dev.ostrom.server.billing.domain.LicenseGrant
 import dev.ostrom.server.billing.domain.LicenseProvider
 import dev.ostrom.server.billing.domain.ProcessOutboxUseCase
 import dev.ostrom.server.billing.domain.RecordAgentUsageUseCase
+import dev.ostrom.server.billing.domain.StartCheckoutUseCase
 import dev.ostrom.server.billing.domain.StripeEvent
 import dev.ostrom.server.billing.domain.StripeGateway
 import dev.ostrom.server.billing.fakes.FakeBillingRepository
@@ -99,6 +100,8 @@ class ModuleWiringTest {
             assertEquals(null, koin.get<GetPlanLimitsUseCase>()(ORG).maxPeople, "No license: no people limit")
             koin.get<HandleStripeEventUseCase>()
             koin.get<RecordAgentUsageUseCase>()
+            // Without the orgs module, nobody's address is known: Checkout asks for it.
+            koin.get<StartCheckoutUseCase>()
             assertEquals(0L, koin.get<GetAgentUsageUseCase>()(ORG).agentSeconds)
         }
     }
