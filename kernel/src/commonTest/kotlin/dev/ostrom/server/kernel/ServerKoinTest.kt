@@ -98,6 +98,20 @@ class ServerKoinTest {
     }
 
     @Test
+    fun anOverriddenBindingIsNeverBuilt() {
+        var built = 0
+        val identity = ProbeModule(
+            "identity",
+            module { single<TokenAuthenticator> { built++; RejectingTokenAuthenticator() } },
+        )
+        val overrides = module { single<TokenAuthenticator> { FakeAuthenticator() } }
+        val koin = serverKoin(kernel, listOf(identity), overrides)
+        assertIs<FakeAuthenticator>(koin.get<TokenAuthenticator>())
+        koin.close()
+        assertEquals(0, built)
+    }
+
+    @Test
     fun aModuleHasNoMigrationOrWorkByDefault() = runTest {
         val module = ProbeModule("probe", module {})
         val koin = serverKoin(kernel, listOf(module))

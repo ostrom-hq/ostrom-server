@@ -59,7 +59,7 @@ class GatesQueryPlansTest {
         val unlinked = gateOf(others.first(), TOTAL_GATES).copy(sessionIds = emptyList())
         repository.transaction { insertGate(unlinked) }
         // Statistics are the owner's to gather; the reads run as the serving role, as every test does (#68).
-        for (table in listOf("gates_gates", "gates_requests", "gates_sessions")) {
+        for (table in listOf("gates_gates", "gates_requests", "gates_sessions", "gates_session_ends")) {
             server.database.owner.execute("VACUUM ANALYZE $table").getOrThrow()
         }
         val plans = plansOf(server.driver, ofA)
@@ -104,6 +104,9 @@ class GatesQueryPlansTest {
             "gates of a session (session receipt)" to serving.explain(GatesQueries.OF_SESSION) {
                 bind("session", sessionOf(7))
             },
+            "end of a session (asking, reserving)" to serving.explain(GatesQueries.SESSION_ENDED) {
+                bind("session", sessionOf(7))
+            },
         )
     }
 
@@ -124,6 +127,8 @@ class GatesQueryPlansTest {
                 insertGate(gate)
                 insertRequests(listOf(requestOf(gate, 0), requestOf(gate, 1)))
             }
+            // Every session of the organization has ended: the read of an end finds its row among them all.
+            gates.flatMap { it.sessionIds }.distinct().forEach { markSessionEnded(org, it, epoch) }
         }
         return gates
     }

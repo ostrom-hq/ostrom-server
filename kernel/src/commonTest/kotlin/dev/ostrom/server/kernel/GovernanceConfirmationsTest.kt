@@ -3,6 +3,7 @@ package dev.ostrom.server.kernel
 
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import dev.ostrom.server.kernel.auth.GovernanceConfirmations
 import dev.ostrom.server.kernel.auth.GovernanceConfirmer
@@ -42,6 +43,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -168,6 +170,19 @@ class GovernanceConfirmationsTest {
         assertEquals(PrincipalChannel.BROWSER, confirmer.principal.channel)
         assertEquals(OrgRole.ADMIN, confirmer.member.role)
         assertEquals(org, confirmer.member.orgId)
+    }
+
+    @Test
+    fun aChangeKeepsItsWholeResultUnlessItSaysWhatItsSecretIs() {
+        val change = object : GovernanceChange {
+            override val kinds: Set<String> = setOf("gates.policy")
+
+            override suspend fun preview(orgId: Uuid, write: GovernanceWrite): GovernancePreview =
+                GovernancePreview("Set it", null, null)
+
+            override suspend fun apply(orgId: Uuid, write: GovernanceWrite, confirmer: GovernanceConfirmer) = null
+        }
+        assertNull(change.shownOnce("gates.policy", JsonPrimitive("never")))
     }
 
     private companion object {

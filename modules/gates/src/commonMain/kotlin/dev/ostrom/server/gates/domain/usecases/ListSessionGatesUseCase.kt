@@ -56,6 +56,18 @@ interface ListSessionGatesUseCase {
      * @return The gates, oldest first.
      */
     suspend operator fun invoke(orgId: Uuid, sessionId: String): List<SessionGate>
+
+    /**
+     * Ends a session on the gates' side and lists its gates for its receipt, in one transaction under the session's
+     * lock (AUDIT-SERVEUR-3 B2): a gate asked in the session from now on is refused, and every gate it accepted before
+     * is listed. Called once the end is written; a session already ended keeps its first time.
+     *
+     * @param orgId The organization.
+     * @param sessionId The session segment.
+     * @param endedAt When it ended.
+     * @return The gates, oldest first.
+     */
+    suspend fun close(orgId: Uuid, sessionId: String, endedAt: Instant): List<SessionGate>
 }
 
 /**
@@ -64,15 +76,23 @@ interface ListSessionGatesUseCase {
  * @param repository The gates.
  */
 class ListSessionGatesUseCaseImpl(private val repository: GatesRepository) : ListSessionGatesUseCase {
-    override suspend fun invoke(orgId: Uuid, sessionId: String): List<SessionGate> {
-        val gates = repository.ofSession(orgId, sessionId)
+    override suspend fun invoke(orgId: Uuid, sessionId: String): List<SessionGate> =
+        sessionGatesOf(repository.ofSession(orgId, sessionId)) { repository.requestsOfGates(orgId, it) }
+
+    override suspend fun close(orgId: Uuid, sessionId: String, endedAt: Instant): List<SessionGate> =
+        repository.transaction {
+            lockSession(orgId, sessionId)
+            markSessionEnded(orgId, sessionId, endedAt)
+            sessionGatesOf(gatesOfSession(orgId, sessionId)) { requestsOfGates(orgId, it) }
+        }
+
+    private suspend fun sessionGatesOf(
+        gates: List<Gate>,
+        requestsOfGates: suspend (List<Uuid>) -> List<ApprovalRequest>,
+    ): List<SessionGate> {
         val decided = gates.filter { it.decidedAt != null }.map { it.id }
         // One read for the answers of every decided gate, never one per gate.
-        val requests = if (decided.isEmpty()) {
-            emptyMap()
-        } else {
-            repository.requestsOfGates(orgId, decided).groupBy { it.gateId }
-        }
+        val requests = if (decided.isEmpty()) emptyMap() else requestsOfGates(decided).groupBy { it.gateId }
         return gates.map { gate ->
             val decisions = decisionsOf(gate, requests[gate.id].orEmpty())
             SessionGate(gate.id, gate.subject.actionClass, gate.mode, gate.status, gate.receiptId, decisions)

@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
  * receipt's session's launch (`ostrom <agent>` keeps it at the end). Outside the contract, the runner of a cloud
  * session reports the checks it ran itself on `/api/v1/cloud/runner/checks`, with its runner token. A service key with
  * `sessions:write` (the organization's CI) also reports a check and signs an ended session's receipt, in its own
- * organization; it reads nothing here.
+ * organization; it reads nothing here. The runs of workflows are in [startedRunsRoutes].
  *
  * @param dependencies The use cases.
  */
@@ -87,6 +87,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
         get<ReceiptBundleApi> { params ->
             call.respond(bundle(bundleReader(call), params.id).toJson())
         }
+        startedRunsRoutes(dependencies)
     }
     // The runner channel: the execution's runner token, checked before the body is read (S2-46), never a member's.
     post<RunnerChecksApi> {
@@ -114,7 +115,7 @@ private suspend fun WorkflowRunsRoutesDependencies.writerOf(call: ApplicationCal
 private const val SERVICE_KEY_WRITES = "sessions:write"
 
 // The scope first (SECURITY-AUDIT S2-03): a credential that may not use the route learns nothing about its org.
-private suspend fun WorkflowRunsRoutesDependencies.actorOf(call: ApplicationCall, accepted: Set<String>): GateActor {
+internal suspend fun WorkflowRunsRoutesDependencies.actorOf(call: ApplicationCall, accepted: Set<String>): GateActor {
     val principal = call.requirePrincipal()
     principal.requireAnyScope(accepted)
     return resolve(principal)
@@ -133,7 +134,7 @@ private suspend fun WorkflowRunsRoutesDependencies.bundleReader(call: Applicatio
 }
 
 // The next page's cursor: the last id of a full page, none after a shorter one.
-private fun nextOf(ids: List<String>, limit: Int): String? = if (ids.size == limit) ids.last() else null
+internal fun nextOf(ids: List<String>, limit: Int): String? = if (ids.size == limit) ids.last() else null
 
 private fun statusOf(value: String?): NotificationStatus? = value?.let { text ->
     NotificationStatus.entries.filter { it != NotificationStatus.UNKNOWN }.firstOrNull { it.value == text }
