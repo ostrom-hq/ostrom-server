@@ -513,6 +513,9 @@ class CompilerPostgresTest {
         val audit = server.call("user:a:lead", "/api/v1/packages/audit?limit=500").body<AuditPage>().items
         val events = listOf("package.restored", "package.revoked", "package.pinned", "package.compiled")
         assertEquals(events, audit.map { it.event })
+        // `AuditEvent.meta` of the contract: every value a string, the counts of a compiled package included.
+        val compiled = audit.last().meta
+        assertTrue(compiled.getValue("workflows").all { it.isDigit() }, compiled.toString())
         assertEquals(1, server.call("user:a:lead", "/api/v1/packages/audit?limit=1").body<AuditPage>().items.size)
         assertEquals(4, server.call("user:a:lead", "/api/v1/packages/audit").body<AuditPage>().items.size)
         assertTrue(server.call("user:b:lead", "/api/v1/packages/audit").body<AuditPage>().items.isEmpty())
