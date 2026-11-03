@@ -173,8 +173,16 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
 
     override suspend fun findBySecretHash(secretHash: String): ApiToken? = tokens[secretHash]
 
-    override suspend fun get(userId: Uuid, id: Uuid): ApiToken? =
-        tokens.values.firstOrNull { it.id == id && it.userId == userId }
+    // Inside an organization only its tokens are read, as under row-level security; outside, any (callers check kinds).
+    override suspend fun get(userId: Uuid, id: Uuid, orgId: Uuid?): ApiToken? =
+        tokens.values.firstOrNull { it.id == id && it.userId == userId && (orgId == null || it.orgId == orgId) }
+
+    override suspend fun listLiveElevated(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken> =
+        tokens.values.filter {
+            it.orgId == orgId && it.kind == TokenKind.ADMIN && (userId == null || it.userId == userId) &&
+                it.revokedAt == null && (it.expiresAt?.let { e -> e > now } ?: true)
+        }
+            .sortedByDescending { it.createdAt }
 
     override suspend fun listLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): List<ApiToken> =
         tokens.values.filter {
@@ -192,7 +200,7 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
     }
 
     override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant, orgId: Uuid?): Boolean {
-        val token = get(userId, id)?.takeIf { it.revokedAt == null && it.kind != TokenKind.AGENT } ?: return false
+        val token = get(userId, id, orgId)?.takeIf { it.revokedAt == null && it.kind != TokenKind.AGENT } ?: return false
         update(token.id) { it.copy(revokedAt = at) }
         return true
     }

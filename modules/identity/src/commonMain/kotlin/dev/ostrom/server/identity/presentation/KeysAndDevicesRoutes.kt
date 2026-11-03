@@ -3,10 +3,14 @@ package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.DeviceNotFoundException
 import dev.ostrom.server.identity.domain.ServiceKeyNotFoundException
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -45,12 +49,22 @@ fun Route.keysAndDevicesRoutes(dependencies: KeysAndDevicesRoutesDependencies) =
         }
         get<DevicesApi> {
             val userId = call.requireBrowserSession().userId()
-            call.respond(DevicesResponse(listDevices(userId).map { it.toDeviceResponse() }))
+            val devices = listDevices(userId, call.namedMember(orgs))
+            call.respond(DevicesResponse(devices.map { it.toDeviceResponse() }))
         }
         delete<DevicesApi.Id> { params ->
             val userId = call.requireBrowserSession().userId()
-            signOutDevice(userId, Uuid.parseOrNull(params.id) ?: throw DeviceNotFoundException())
+            val member = call.namedMember(orgs)
+            signOutDevice(userId, Uuid.parseOrNull(params.id) ?: throw DeviceNotFoundException(), member)
             call.respond(HttpStatusCode.NoContent)
         }
     }
 }
+
+/**
+ * The caller in the organization the request names in its `Ostrom-Org` header, where the tokens of
+ * `ostrom login --admin` bound to it are read; null when it names none, never the caller's only organization by
+ * default. A member of another organization is answered 404.
+ */
+private suspend fun ApplicationCall.namedMember(orgs: PrincipalOrgResolver): OrgPrincipal? =
+    if (requirePrincipal().namedOrg == null) null else requireOrgPrincipal(orgs, null)

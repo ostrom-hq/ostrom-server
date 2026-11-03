@@ -116,10 +116,24 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
         Statement.create("SELECT $TOKEN_COLUMNS FROM identity_token_by_hash(:hash)").bind("hash", secretHash),
     ).getOrThrow().firstOrNull()?.toApiToken()
 
-    override suspend fun get(userId: Uuid, id: Uuid): ApiToken? = driver.fetchAll(
-        Statement.create("SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE id = :id AND user_id = :user")
-            .bind("id", id).bind("user", userId),
-    ).getOrThrow().firstOrNull()?.toApiToken()
+    override suspend fun get(userId: Uuid, id: Uuid, orgId: Uuid?): ApiToken? {
+        val statement = Statement.create(
+            "SELECT $TOKEN_COLUMNS FROM identity_api_tokens WHERE id = :id AND user_id = :user",
+        ).bind("id", id).bind("user", userId)
+        val rows = if (orgId == null) {
+            driver.fetchAll(statement).getOrThrow()
+        } else {
+            driver.withOrganization(orgId) { it.fetchAll(statement).getOrThrow() }
+        }
+        return rows.firstOrNull()?.toApiToken()
+    }
+
+    override suspend fun listLiveElevated(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken> {
+        val sql = if (userId == null) LIVE_ELEVATED_TOKENS_SQL else LIVE_ELEVATED_TOKENS_OF_USER_SQL
+        val statement = Statement.create(sql).bind("org", orgId).bind("now", now).bind("limit", MAX_TOKENS_PER_USER)
+        userId?.let { statement.bind("user", it) }
+        return driver.withOrganization(orgId) { tx -> tx.fetchAll(statement).getOrThrow().map { it.toApiToken() } }
+    }
 
     override suspend fun listLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): List<ApiToken> = driver.fetchAll(
         Statement.create(
@@ -234,3 +248,19 @@ internal fun ResultSet.Row.toApiToken() = ApiToken(
     revokedAt = get("revoked_at").asInstantOrNull(),
     authenticatedAt = get("authenticated_at").asInstantOrNull(),
 )
+
+/**
+ * An organization's live tokens of `ostrom login --admin` (`:org`, `:now`, `:limit`), newest first, read inside it
+ * through the partial index `identity_api_tokens_elevated` (`ElevatedTokensQueryPlansTest`).
+ */
+internal const val LIVE_ELEVATED_TOKENS_SQL: String =
+    "SELECT id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, expires_at, last_used_at, " +
+        "revoked_at, authenticated_at FROM identity_api_tokens WHERE org_id = :org AND kind = 'ADMIN' " +
+        "AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > :now) ORDER BY created_at DESC, id LIMIT :limit"
+
+/** The same, of one member only (`:user`): what a member who governs nothing sees of their own. */
+internal const val LIVE_ELEVATED_TOKENS_OF_USER_SQL: String =
+    "SELECT id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, expires_at, last_used_at, " +
+        "revoked_at, authenticated_at FROM identity_api_tokens WHERE org_id = :org AND kind = 'ADMIN' " +
+        "AND user_id = :user AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > :now) " +
+        "ORDER BY created_at DESC, id LIMIT :limit"

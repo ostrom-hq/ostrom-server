@@ -196,10 +196,23 @@ interface ApiTokensRepository {
      *
      * @param userId The owner.
      * @param id The token.
+     * @param orgId The organization to read it in (the token of `ostrom login --admin` is only reached inside its
+     *   organization); null for an account-level token.
      *
-     * @return The token, or null when absent or another user's.
+     * @return The token, or null when absent, another user's, or bound to another organization than [orgId].
      */
-    suspend fun get(userId: Uuid, id: Uuid): ApiToken?
+    suspend fun get(userId: Uuid, id: Uuid, orgId: Uuid? = null): ApiToken?
+
+    /**
+     * Lists the live tokens of `ostrom login --admin` bound to an organization, read inside it.
+     *
+     * @param orgId The organization.
+     * @param userId Their owner, or null for those of every member.
+     * @param now The current time, for expiry.
+     *
+     * @return At most [MAX_TOKENS_PER_USER] tokens, newest first.
+     */
+    suspend fun listLiveElevated(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken>
 
     /**
      * Lists a user's live tokens (not revoked, not expired) of the given kinds.
