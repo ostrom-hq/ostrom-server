@@ -22,6 +22,7 @@ import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
@@ -98,6 +99,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.time.TimeSource
@@ -115,11 +117,13 @@ import kotlin.uuid.Uuid
  * Three measures, written to `build/reports/perf/launch-*.txt`:
  * - each route alone, on tables filled past 20 000 rows by another organization: its database p95 at 20 concurrent
  *   callers, its queries and its plans, none of which scans a filled table;
- * - 100 launches at once in one organization, each person its own, twice: on a pool of 10 connections, a deployment's
- *   default, where the budget is judged, then on the test's pool of 4, a stress figure. The wall time of each route,
- *   every call answered, no deadlock, and every agent token refused once its launch ended; then one more path alone,
- *   the statements and round trips of each step; then the launch's own transaction (its advisory lock, its two counts
- *   and its insert) by 100 callers on a pool of 20, the contention the in-process server hides;
+ * - 100 launches at once in one organization, each person its own: on a pool of 10 connections, a deployment's
+ *   default, then on the test's pool of 4, a stress figure. Every call answered, no deadlock, every agent token refused
+ *   once its launch ended, and the round trips of each step, counted on paths alone, as kept: what ci.yml asserts.
+ *   The p95 of each step is published; its budget, 500 ms on 10 connections, is asserted by perf.yml only
+ *   (`OSTROM_PERF_BUDGETS`), on the median of 3 rounds: a shared runner's milliseconds are no verdict (JOURNAL 02:5x).
+ *   Then the launch's own transaction (its advisory lock, its two counts and its insert) by 100 callers on a pool of
+ *   20, the contention the in-process server hides;
  * - 1 000 launches ended in two organizations: no agent token left active, and the rows each one leaves.
  */
 class LaunchPathLoadPostgresTest {
@@ -214,47 +218,65 @@ class LaunchPathLoadPostgresTest {
         val deadlocksBefore = server.deadlocks()
         val packages = server.koin.get<CompiledPackages>()
         val compiledBefore = packages.compilations
-        // The budget is judged on a deployment's pool; the test's own pool of 4 is published as a stress figure.
-        val deployed = Round("on a pool of $SERVING_POOL connections, a deployment's default (the budget's)", 0)
-        val stress = Round("on the test's pool of $TEST_POOL connections (stress)", 2 * CONCURRENT)
+        // The budget is judged on a deployment's pool, by perf.yml on the median of 3 rounds; the test's own pool of 4
+        // is published as a stress figure.
+        val deployed = List(if (perfBudgets) PERF_ROUNDS else 1) {
+            Round("on a pool of $SERVING_POOL connections, a deployment's default, round ${it + 1}", (it + 1) * ROUND)
+        }
+        val stress = Round("on the test's pool of $TEST_POOL connections (stress)", 0)
         // Timed alone on the server: no other test process's bench times or loads it meanwhile (exclusively).
         val contended = server.database.exclusively {
             server.database.withRole(poolSize = SERVING_POOL) { role, pool ->
                 server.database.superuser.execute("GRANT ${server.database.servingRole} TO $role").getOrThrow()
-                server.driver.through(pool) { server.hundredPaths(team, deployed) }
+                deployed.forEach { round -> server.driver.through(pool) { server.hundredPaths(team, round) } }
             }
             server.hundredPaths(team, stress)
             server.contendedLaunches(team)
         }
         val compilations = packages.compilations - compiledBefore
-        // The statements of one more whole path, alone on the server: what each step costs the database.
-        val alone = Calls(server.driver)
-        server.wholePath(team.people.first(), CONCURRENT, alone)
+        // A few more whole paths, alone on the server: the statements of each step, the fewest of the recordings (a
+        // background job's statement may fall into one).
+        val alone = List(ALONE_PATHS) { n ->
+            Calls(server.driver).also { server.wholePath(team.people[n], ALONE + n, it) }
+        }
+        val trips = alone.first().trips().keys.associateWith { step -> alone.minOf { it.trips().getValue(step) } }
+        val budgeted = trips.keys.associateWith { step ->
+            deployed.map { it.calls.p95(step) }.sorted()[deployed.size / 2]
+        }
         val deadlocks = server.deadlocks() - deadlocksBefore
         val active = server.activeAgentTokens(team.org.id)
-        val stillActing = (deployed.finished + stress.finished).count { launch ->
+        val stillActing = (deployed + stress).flatMap { it.finished }.count { launch ->
             server.client.post(SESSIONS) { bearer(launch.agentToken); json(session("s-after", launch.launchId)) }
                 .status != HttpStatusCode.Unauthorized
         }
         val report = buildString {
-            listOf(deployed, stress).forEach { append(it.report()) }
+            (deployed + stress).forEach { append(it.report()) }
+            appendLine("p95 on $SERVING_POOL connections, median of ${deployed.size} round(s) (budget $STEP_BUDGET):")
+            budgeted.forEach { (step, p95) -> appendLine("  $step: $p95${if (p95 > STEP_BUDGET) " OVER" else ""}") }
+            appendLine("round trips per step, the fewest of $ALONE_PATHS paths alone (kept): $trips")
             appendLine("one more path alone, per step: its time, statements and round trips to the database")
-            append(alone.statementsReport())
+            append(alone.first().statementsReport())
             val transaction = "launch transaction, 100 callers, pool of $CONTENDED_POOL (advisory lock wait included)"
             appendLine(line(transaction, contended))
             appendLine("deadlocks: $deadlocks; agent tokens still active: $active")
             appendLine("ended agent tokens still accepted: $stillActing")
-            appendLine("packages compiled for the ${2 * CONCURRENT} reads of GET /packages/current: $compilations")
+            appendLine("packages compiled for the reads of GET /packages/current: $compilations")
         }
         write("launch-concurrency", report)
-        listOf(deployed, stress).forEach {
+        (deployed + stress).forEach {
             assertEquals(CONCURRENT, it.finished.size, "Every launch goes through its whole path\n$report")
         }
-        assertEquals(STEPS, alone.steps(), "The path alone goes through every step\n$report")
+        // Deterministic, in ci.yml: the round trips of each step, as kept; a step that gains or loses one changes them.
+        assertEquals(KEPT_TRIPS, trips, "The round trips of each step of the launch path\n$report")
         assertEquals(0L, deadlocks, report)
         assertEquals(0L, active, "Every agent token is revoked once its launch ended (R2b)\n$report")
         assertEquals(0, stillActing, report)
         assertTrue(compilations <= 1, "The same sources are compiled once, not at every launch\n$report")
+        // In milliseconds, in perf.yml only (OSTROM_PERF_BUDGETS): a shared CI runner's times are no verdict.
+        if (perfBudgets) {
+            val over = budgeted.filterValues { it > STEP_BUDGET }
+            assertTrue(over.isEmpty(), "Each step's p95 under $STEP_BUDGET, $SERVING_POOL connections: $over\n$report")
+        }
     }
 
     @Test
@@ -345,7 +367,9 @@ class LaunchPathLoadPostgresTest {
             }
         }
 
-        fun steps(): Int = sent.size
+        fun trips(): Map<String, Int> = sent.mapValues { (_, list) -> list.roundTrips() }
+
+        fun p95(route: String): Duration = quantile(times.getValue(route), P95)
 
         fun statementsReport(): String = buildString {
             sent.forEach { (route, list) ->
@@ -668,8 +692,30 @@ class LaunchPathLoadPostgresTest {
         const val BUDGET = "/api/v1/budgets/me"
         const val CIPHER_KEY = 32
 
-        // The calls of one whole path: 4 with the CLI's token, 7 with the agent's.
-        const val STEPS = 11
+        // Set by perf.yml: the milliseconds budgets are checked there, on the median of PERF_ROUNDS rounds.
+        val perfBudgets = EnvironmentConfigSource()["OSTROM_PERF_BUDGETS"] == "true"
+        const val PERF_ROUNDS = 3
+        val STEP_BUDGET = 500.milliseconds
+        // Apart: the session ids and gate commits of each round, and of the paths alone.
+        const val ROUND = 1_000
+        const val ALONE = 900
+        const val ALONE_PATHS = 3
+
+        // The round trips of each step of one whole path (statements, and each transaction's BEGIN and COMMIT), in its
+        // order: 4 calls with the CLI's token, 7 with the agent's. Kept: a change of the path changes them here.
+        val KEPT_TRIPS = mapOf(
+            "GET /policy/agents" to 17,
+            "GET /packages/current" to 23,
+            "POST /launches" to 28,
+            "GET /mcp/servers?mine" to 16,
+            "POST /sessions" to 21,
+            "GET /gates/catalog/signed" to 14,
+            "GET /budgets/me" to 20,
+            "POST /mcp/{server} (initialize)" to 15,
+            "POST /gates (governed)" to 28,
+            "POST /sessions/{id}/end" to 56,
+            "DELETE /launches/{id}" to 11,
+        )
 
         const val PEOPLE_FOR_ROUTES = 10
         const val MEASURED_CALLS = 30
@@ -698,11 +744,13 @@ class LaunchPathLoadPostgresTest {
         const val P50 = 0.5
         const val P95 = 0.95
 
-        fun line(route: String, times: List<Duration>): String {
+        fun quantile(times: List<Duration>, q: Double): Duration {
             val sorted = times.sorted()
-            fun at(q: Double) = sorted[ceil(q * sorted.size).toInt() - 1]
-            return "$route: p50 ${at(P50)}, p95 ${at(P95)}, max ${sorted.last()} (${sorted.size} calls)"
+            return sorted[ceil(q * sorted.size).toInt() - 1]
         }
+
+        fun line(route: String, times: List<Duration>): String =
+            "$route: p50 ${quantile(times, P50)}, p95 ${quantile(times, P95)}, max ${times.max()} (${times.size} calls)"
 
         fun session(id: String, launchId: String) =
             """{"id":"$id","launchId":"$launchId","agent":"claude-code","repo":"$REPO"}"""
