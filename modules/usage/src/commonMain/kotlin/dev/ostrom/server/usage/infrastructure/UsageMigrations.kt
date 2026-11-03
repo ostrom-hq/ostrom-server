@@ -52,6 +52,78 @@ private val RETENTION_THROUGH_THE_ROUTER_SQL: String =
     """
         .trimIndent()
 
+/** The daily totals of the whole ledger, as version 7 writes them for the calls recorded before it. */
+internal const val DAILY_TOTALS_OF_THE_LEDGER: String =
+    "INSERT INTO usage_daily (org_id, day, member_id, session_id, launch_id, cost_micros) " +
+        "SELECT org_id, CAST(at AT TIME ZONE 'UTC' AS DATE), member_id, session_id, launch_id, SUM(cost_micros) " +
+        "FROM usage_events WHERE cost_micros > 0 GROUP BY 1, 2, 3, 4, 5"
+
+/**
+ * Version 7: the daily totals of the ledger, by organization, UTC day, member, session and launch, for the calls that
+ * cost something (`cost_micros > 0`), which the spending report reads instead of adding up a month of calls
+ * (ReportsQueries.spending). Two statement triggers keep them in the transaction of every write of the ledger, whatever
+ * the path: an insert adds its calls, a delete (the retention purge, run by `ostrom_router`) takes them away and
+ * drops a total that reaches zero. They run with the rights of the writer: the organization's role through its
+ * policy, the router through its own. The table is locked while the totals of the existing ledger are written, so
+ * that no call is written meanwhile, and the ledger's policy is lifted from the owner for that one statement, as
+ * gates' version 3 does.
+ */
+private val DAILY_TOTALS_SQL: String =
+    """
+    LOCK TABLE usage_events IN SHARE ROW EXCLUSIVE MODE;
+    CREATE TABLE usage_daily (
+        org_id UUID NOT NULL,
+        day DATE NOT NULL,
+        member_id UUID,
+        session_id TEXT,
+        launch_id TEXT,
+        cost_micros BIGINT NOT NULL
+    );
+    CREATE UNIQUE INDEX usage_daily_key ON usage_daily (org_id, day, member_id, session_id, launch_id)
+        NULLS NOT DISTINCT;
+    CREATE FUNCTION usage_daily_add() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+    BEGIN
+        INSERT INTO usage_daily AS d (org_id, day, member_id, session_id, launch_id, cost_micros)
+            SELECT n.org_id, CAST(n.at AT TIME ZONE 'UTC' AS DATE), n.member_id, n.session_id, n.launch_id,
+                SUM(n.cost_micros)
+            FROM usage_events_added n WHERE n.cost_micros > 0
+            GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 3, 4, 5
+            ON CONFLICT (org_id, day, member_id, session_id, launch_id)
+                DO UPDATE SET cost_micros = d.cost_micros + EXCLUDED.cost_micros;
+        RETURN NULL;
+    END $$;
+    CREATE FUNCTION usage_daily_remove() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+    BEGIN
+        UPDATE usage_daily d SET cost_micros = d.cost_micros - o.cost_micros
+            FROM (
+                SELECT r.org_id, CAST(r.at AT TIME ZONE 'UTC' AS DATE) AS day, r.member_id, r.session_id, r.launch_id,
+                    SUM(r.cost_micros) AS cost_micros
+                FROM usage_events_removed r WHERE r.cost_micros > 0
+                GROUP BY 1, 2, 3, 4, 5
+            ) o
+            WHERE d.org_id = o.org_id AND d.day = o.day AND d.member_id IS NOT DISTINCT FROM o.member_id
+                AND d.session_id IS NOT DISTINCT FROM o.session_id AND d.launch_id IS NOT DISTINCT FROM o.launch_id;
+        DELETE FROM usage_daily d WHERE d.cost_micros <= 0 AND (d.org_id, d.day) IN (
+            SELECT r.org_id, CAST(r.at AT TIME ZONE 'UTC' AS DATE) FROM usage_events_removed r
+        );
+        RETURN NULL;
+    END $$;
+    CREATE TRIGGER usage_daily_add AFTER INSERT ON usage_events
+        REFERENCING NEW TABLE AS usage_events_added FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_add();
+    CREATE TRIGGER usage_daily_remove AFTER DELETE ON usage_events
+        REFERENCING OLD TABLE AS usage_events_removed FOR EACH STATEMENT EXECUTE FUNCTION usage_daily_remove();
+    ALTER TABLE usage_events NO FORCE ROW LEVEL SECURITY;
+    $DAILY_TOTALS_OF_THE_LEDGER;
+    ALTER TABLE usage_events FORCE ROW LEVEL SECURITY;
+    ${tenantTableSql("usage_daily")}
+    CREATE POLICY usage_daily_router ON usage_daily FOR ALL TO ostrom_router
+        USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
+    GRANT SELECT, UPDATE, DELETE ON usage_daily TO ostrom_router
+    """
+        .trimIndent()
+
 /**
  * The schema of the usage module; its tables start with `usage_`. The spend indexes include `cost_micros` so that the
  * budget sums are index-only scans; `usage_events_at` serves the retention purge. `usage_holds` keeps the budget held
@@ -137,4 +209,5 @@ val UsageMigrations: List<SchemaMigration> = listOf(
             ALTER POLICY usage_events_router_purge ON usage_events USING (current_user = 'ostrom_router')
         """.trimIndent(),
     ),
+    SchemaMigration(version = 7, name = "usage_daily_totals", sql = DAILY_TOTALS_SQL),
 )

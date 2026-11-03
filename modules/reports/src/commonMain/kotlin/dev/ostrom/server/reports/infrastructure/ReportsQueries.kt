@@ -8,7 +8,8 @@ package dev.ostrom.server.reports.infrastructure
 internal object ReportsQueries {
     /**
      * The ledger of a window joined to the session of each event, grouped four ways: `dim` is `agent`, `repo`,
-     * `person` or `day`. Parameters `:org_id`, `:from`, `:to`, and `:member_id` if [member].
+     * `person` or `day`. Parameters `:org_id`, the window's parts ([SpendingRanges]: `:day_from`, `:day_to`,
+     * `:head_from`, `:head_to`, `:tail_from`, `:tail_to`), and `:member_id` if [member].
      *
      * An event names its session by its id, or, for a model call through the gateway, by its launch (`launch_id`; its
      * `session_id` is then the launch's id too): the agent and the repository come from the session with that id, else
@@ -18,20 +19,29 @@ internal object ReportsQueries {
      * never.
      *
      * The ledger is first added up by member, session, launch and day (`calls`), then joined: a session's calls are
-     * joined once per day, not once per call (ReportsReadsBenchTest measures it).
+     * joined once per day, not once per call. The whole days of the window come from the daily totals the usage module
+     * keeps with the ledger (`usage_daily`); only the hours before the first whole day and after the last are added up
+     * from the calls, so the result is the one of the calls alone (ReportsDailyTotalsPostgresTest), and a month reads
+     * a few thousand totals instead of every call (ReportsReadsBenchTest).
      *
      * @param member Whether one member's spending only.
      * @return The statement.
      */
     fun spending(member: Boolean): String {
-        val mine = if (member) " AND e.member_id = :member_id" else ""
+        val mine = if (member) " AND member_id = :member_id" else ""
+        fun hours(from: String, to: String) = """
+                SELECT org_id, member_id, session_id, launch_id,
+                    CAST(at AT TIME ZONE 'UTC' AS DATE) AS day, SUM(cost_micros) AS cost_micros
+                FROM usage_events
+                WHERE org_id = :org_id AND at >= :$from AND at < :$to AND cost_micros > 0$mine
+                GROUP BY 1, 2, 3, 4, 5"""
         return """
             WITH calls AS (
-                SELECT e.org_id, e.member_id, e.session_id, e.launch_id,
-                    CAST(e.at AT TIME ZONE 'UTC' AS DATE) AS day, SUM(e.cost_micros) AS cost_micros
-                FROM usage_events e
-                WHERE e.org_id = :org_id AND e.at >= :from AND e.at < :to AND e.cost_micros > 0$mine
-                GROUP BY e.org_id, e.member_id, e.session_id, e.launch_id, CAST(e.at AT TIME ZONE 'UTC' AS DATE)
+                SELECT org_id, member_id, session_id, launch_id, day, cost_micros
+                FROM usage_daily
+                WHERE org_id = :org_id AND day >= CAST(:day_from AS DATE) AND day < CAST(:day_to AS DATE)$mine
+                UNION ALL${hours("head_from", "head_to")}
+                UNION ALL${hours("tail_from", "tail_to")}
             ),
             spent AS (
                 SELECT c.member_id, COALESCE(s.id, l.id) AS spent_in, c.cost_micros, c.day,

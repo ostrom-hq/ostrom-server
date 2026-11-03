@@ -10,6 +10,7 @@ import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.reports.infrastructure.ReportsQueries
+import dev.ostrom.server.reports.infrastructure.SpendingRanges
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.sessions.SessionsModule
 import dev.ostrom.server.testing.TestServer
@@ -78,10 +79,10 @@ class ReportsQueryPlansTest {
         val cursorAt = NOW - 10.days
         val plans = linkedMapOf(
             "spending of the organization, 30 days" to server.explain(ReportsQueries.spending(member = false)) {
-                bind("from", month).bind("to", NOW)
+                SpendingRanges.of(month, NOW).bindTo(this)
             },
             "spending of a member, 7 days" to server.explain(ReportsQueries.spending(member = true)) {
-                bind("from", NOW - 7.days).bind("to", NOW).bind("member_id", MIA.memberId)
+                SpendingRanges.of(NOW - 7.days, NOW).bindTo(bind("member_id", MIA.memberId))
             },
             "newest page of the feed" to server.explain(ReportsQueries.activity(cursor = false, repo = false)) {
                 bind("limit", 51)
