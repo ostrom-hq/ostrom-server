@@ -5,6 +5,7 @@ import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * The tenancy rules of `docs/tenancy.md`, read from PostgreSQL's catalog once every module has migrated: they hold for
@@ -40,6 +41,23 @@ class SchemaTenancyPostgresTest {
             .map { "${it["tablename"]}.${it["policyname"]} (${it["cmd"]})" }
         val missing = server.rows(TABLES_WITHOUT_ORG_POLICY, "name").map { "${it["name"]}: no policy on ostrom.org_id" }
         assertEquals(UNBOUND, (unbound + missing).toSet(), "Policies that open rows beyond the organization")
+    }
+
+    @Test
+    fun everyRouterPolicyHoldsOnlyInsideTheRoutersFunctions() = schemaTest { server ->
+        // The owner is a member of ostrom_router (it hands the functions over): a policy `TO ostrom_router USING
+        // (true)` would open every row to it. `current_user = 'ostrom_router'` is true only inside those functions.
+        val policies = server.rows(ROUTER_POLICIES, "tablename", "policyname", "cmd", "qual", "with_check")
+        val found = policies.mapNotNull { policy ->
+            val qual = policy["qual"].orEmpty()
+            val check = policy["with_check"].orEmpty()
+            val rule = if (policy["cmd"] == "INSERT") check else qual
+            val checkHolds = policy["cmd"] == "INSERT" || check in setOf("", "false") || insideTheRouter(check)
+            "${policy["tablename"]}.${policy["policyname"]}: USING ($qual) WITH CHECK ($check)"
+                .takeUnless { insideTheRouter(rule) && checkHolds }
+        }
+        assertTrue(policies.isNotEmpty(), "The functions' tables have their ostrom_router policies")
+        assertEquals(emptySet(), found.toSet(), "Router policies that hold outside the router's functions")
     }
 
     @Test
@@ -84,6 +102,11 @@ class SchemaTenancyPostgresTest {
 
     private fun schemaTest(block: suspend (TestServer) -> Unit) =
         serverTest(serverModules()) { server -> block(server) }
+
+    /** `current_user = 'ostrom_router'` as the catalog prints it, `(CURRENT_USER = 'ostrom_router'::name)`. */
+    private fun insideTheRouter(rule: String): Boolean =
+        rule.lowercase().filterNot { it.isWhitespace() || it == '(' || it == ')' }
+            .removeSuffix("::name") == "current_user='$ROUTER'"
 
     private suspend fun TestServer.rows(sql: String, vararg columns: String): List<Map<String, String?>> =
         database.superuser.fetchAll(sql).getOrThrow().map { row ->
@@ -138,6 +161,13 @@ class SchemaTenancyPostgresTest {
                 AND (p.with_check IS NULL OR p.with_check LIKE '%current_setting(''ostrom.org_id''%')
                 AND replace(r.rules, 'current_setting(''ostrom.org_id''', '') NOT LIKE '%current_setting(%'
             )
+            ORDER BY 1, 2
+        """
+
+        /** Every policy given to `ostrom_router`, on any table: its rule must name the router as `current_user`. */
+        const val ROUTER_POLICIES = """
+            SELECT p.tablename, p.policyname, p.cmd, p.qual, p.with_check FROM pg_policies p
+            WHERE p.schemaname = 'public' AND 'ostrom_router' = ANY (p.roles)
             ORDER BY 1, 2
         """
 
