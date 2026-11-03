@@ -39,6 +39,8 @@ kotlin {
             implementation(project(":modules:sharing"))
             implementation(project(":modules:budgets"))
             implementation(project(":modules:reports"))
+            // The load test of the launch path: the session package and the signed gates catalogue are on it.
+            implementation(project(":modules:compiler"))
             implementation(libs.ktor.client.mock)
         }
     }
