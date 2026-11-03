@@ -50,6 +50,7 @@ import dev.ostrom.server.identity.fakes.InMemoryWebSessionsRepository
 import dev.ostrom.server.identity.fakes.RecordingAuditLog
 import dev.ostrom.server.identity.fakes.ScriptedRateLimiter
 import dev.ostrom.server.identity.fakes.SettableClock
+import dev.ostrom.server.identity.presentation.confirmPage
 import dev.ostrom.server.identity.presentation.toUrl
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
@@ -160,6 +161,8 @@ class MobileSignInTest {
         assertEquals("s256($verifier)", stored.codeChallenge)
 
         val issued = exchange(code, verifier, APP_REDIRECT_URI, "1.2.3.4")
+        // The page that asks before going back to the app says who signed in (AUDIT-SECU-APP-2 N1).
+        assertEquals(issued.user.login, back.login)
         assertTrue(issued.token.secret.startsWith("osm_"))
         assertEquals(TokenKind.MOBILE, issued.token.token.kind)
         assertEquals(MOBILE_SCOPES, issued.token.token.scopes)
@@ -362,6 +365,17 @@ class MobileSignInTest {
             clock.now + 1.days, null, null, authenticatedAt = clock.now,
         )
         assertEquals(setOf(ANSWER_SCOPE, "profile:read"), authenticator.authenticate("osm_x")?.scopes)
+    }
+
+    @Test
+    fun theConfirmationPageSaysWhoSignedInAndLinksOnlyToTheApp() {
+        val page = MobileCallback(APP_REDIRECT_URI, "s/1", code = "c 1", login = "ada<b>").confirmPage()
+        assertTrue("href=\"ostrom://auth/callback?code=c+1&amp;state=s%2F1\"" in page, page)
+        assertTrue("@ada&lt;b&gt;" in page, "The login is escaped: $page")
+        assertTrue("<script" !in page, "The person taps: nothing goes to the app by itself")
+        assertTrue("<form" !in page && "<img" !in page, "Nothing else leaves the page")
+        val unnamed = MobileCallback(APP_REDIRECT_URI, "s", code = "c").confirmPage()
+        assertTrue("Sign in to the Ostrom app?" in unnamed, "Without a login, the page names nobody: $unnamed")
     }
 
     @Test
