@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs
 
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.MemberDirectory
+import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.auth.MemberLogins
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -12,6 +14,8 @@ import dev.ostrom.server.orgs.domain.AcceptInvitationUseCase
 import dev.ostrom.server.orgs.domain.AcceptInvitationUseCaseImpl
 import dev.ostrom.server.orgs.domain.ChangeRoleUseCase
 import dev.ostrom.server.orgs.domain.ChangeRoleUseCaseImpl
+import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCase
+import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCaseImpl
 import dev.ostrom.server.orgs.domain.CountMembersUseCase
 import dev.ostrom.server.orgs.domain.CountMembersUseCaseImpl
 import dev.ostrom.server.orgs.domain.CreateInviteLinkUseCase
@@ -67,6 +71,7 @@ import dev.ostrom.server.orgs.infrastructure.IdentityRateLimiter
 import dev.ostrom.server.orgs.infrastructure.InvitationsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MailInvitationMailer
 import dev.ostrom.server.orgs.infrastructure.MemberDirectoryImpl
+import dev.ostrom.server.orgs.infrastructure.MemberEmailsImpl
 import dev.ostrom.server.orgs.infrastructure.MemberLoginsImpl
 import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembershipOrgResolver
@@ -79,6 +84,7 @@ import dev.ostrom.server.orgs.presentation.InvitationCommands
 import dev.ostrom.server.orgs.presentation.MemberCommands
 import dev.ostrom.server.orgs.presentation.OrgCommands
 import dev.ostrom.server.orgs.presentation.OrgsConfig
+import dev.ostrom.server.orgs.presentation.OrgsGovernanceChange
 import dev.ostrom.server.orgs.presentation.OrgsRoutesDependencies
 import dev.ostrom.server.orgs.presentation.myOrganizationsRoutes
 import dev.ostrom.server.orgs.presentation.orgsRoutes
@@ -87,6 +93,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 /**
@@ -96,7 +103,8 @@ import org.koin.dsl.module
  *
  * Other modules use it through the interfaces it binds: [PrincipalOrgResolver] (through the
  * kernel's `requireOrgPrincipal`), [MemberDirectory] (who a wait may be asked of), [MemberLogins] (the
- * people a shared account is lent to, by login), [CountMembersUseCase] for
+ * people a shared account is lent to, by login), [MemberEmails] (the address of the person who opens a
+ * Checkout), [CountMembersUseCase] for
  * per-seat billing. Until the billing
  * module binds its own [SeatPolicy] here, every organization has the free plan's limit
  * ([FreePlanSeats]).
@@ -118,6 +126,7 @@ object OrgsModule : ServerModule {
         single<PrincipalOrgResolver> { MembershipOrgResolver(get(), get()) }
         single<MemberDirectory> { MemberDirectoryImpl(get()) }
         single<MemberLogins> { MemberLoginsImpl(get(), get()) }
+        single<MemberEmails> { MemberEmailsImpl(get(), get()) }
         // Identity has no teams: the QA account (a person, their team, a token) is assembled here.
         single<TestAccountSeeder> { TestAccountSeederImpl(get(), get(), get(), get()) }
         single {
@@ -162,9 +171,12 @@ object OrgsModule : ServerModule {
         }
 
         single { OrgCommands(get(), get(), get(), get(), get(), get(), get()) }
-        single { MemberCommands(get(), get(), get(), get(), get()) }
+        single<CheckMemberWriteUseCase> { CheckMemberWriteUseCaseImpl(get(), get(), get()) }
+        single { MemberCommands(get(), get(), get(), get(), get(), get()) }
         single { InvitationCommands(get(), get(), get(), get(), get(), get()) }
         single { OrgsRoutesDependencies(get(), get(), get(), get()) }
+        // The member writes a person's API token asks for, held for the console (contract audit 2, F1).
+        single<GovernanceChange>(named("orgs")) { OrgsGovernanceChange(get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = OrgsMigrations

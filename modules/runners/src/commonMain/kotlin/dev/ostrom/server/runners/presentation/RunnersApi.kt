@@ -38,11 +38,13 @@ class RunnersApi {
  *
  * @property executions The executions it has.
  * @property workspaces The sessions whose workspace it holds.
+ * @property capacity The sessions it runs at once at most (0 to 256; 0 drains the machine); none for no limit.
  */
 @Serializable
 data class RegisteredRunnerHeartbeatRequest(
     val executions: List<ReportedExecutionDto> = emptyList(),
     val workspaces: List<String> = emptyList(),
+    val capacity: Int? = null,
 )
 
 /**

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.presentation
 
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.auditDetails
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireWrite
@@ -37,6 +39,8 @@ import kotlin.uuid.Uuid
  *   answer no cache keeps (`Cache-Control: no-store`, S2-08); the role is checked before the body is read;
  * - `DELETE /api/v1/runners/{id}`, from the same session and role: removes a registered runner and its key; a runner of
  *   another organization, or a malformed id, is not found (404);
+ * - a runner registered or removed is written to the organization's audit log (`runner.registered`, `runner.deleted`),
+ *   with who did it, never its key;
  * - `POST /api/v1/runners/{id}/heartbeat`, with the runner's key as a bearer token: marks it seen and returns its
  *   assigned sessions.
  *
@@ -56,6 +60,10 @@ fun Route.runnersRoutes(dependencies: RunnersRoutesDependencies) = with(dependen
             caller.requireAdmin()
             val request = call.receive<RegisterRunnerRequest>()
             val registered = registerRunner(caller, RunnerRegistration(request.name, request.labels, request.version))
+            val runner = registered.runner
+            // Its key takes the organization's cloud sessions: who registered it is in the audit log, never the key.
+            val details = auditDetails("name" to runner.name, "labels" to runner.labels, "version" to runner.version)
+            audit.record(OrgAuditRecord(caller.orgId, principal, REGISTERED, RUNNER, runner.id.toString(), details))
             call.response.header(HttpHeaders.CacheControl, "no-store")
             call.respond(HttpStatusCode.Created, registered.toDto())
         }
@@ -63,7 +71,9 @@ fun Route.runnersRoutes(dependencies: RunnersRoutesDependencies) = with(dependen
             val principal = call.requirePrincipal()
             principal.requireWrite()
             val caller = orgResolver.callerOf(principal, CLOUD_WRITE)
-            deleteRunner(caller, Uuid.parseOrNull(params.id) ?: throw RunnerNotFoundException())
+            val id = Uuid.parseOrNull(params.id) ?: throw RunnerNotFoundException()
+            deleteRunner(caller, id)
+            audit.record(OrgAuditRecord(caller.orgId, principal, "runner.deleted", RUNNER, id.toString()))
             call.respond(HttpStatusCode.NoContent)
         }
     }
@@ -81,6 +91,12 @@ fun Route.runnersRoutes(dependencies: RunnersRoutesDependencies) = with(dependen
     }
 }
 
+/** The audit log's subject type of a registered runner. */
+private const val RUNNER = "runner"
+
+/** The audit log's event of a runner registered. */
+private const val REGISTERED = "runner.registered"
+
 /** Reads a runner's report; a malformed session id or an unknown state is a bad request. */
 private fun RegisteredRunnerHeartbeatRequest.toReport() = MachineReport(
     executions = executions.associate { reported ->
@@ -90,7 +106,15 @@ private fun RegisteredRunnerHeartbeatRequest.toReport() = MachineReport(
         (sessionIdOf(reported.sessionId) to reported.epoch) to state
     },
     workspaces = workspaces.map(::sessionIdOf).toSet(),
+    capacity = capacity?.also {
+        if (it !in 0..MAX_CAPACITY) {
+            throw InvalidCloudSessionRequestException("The capacity is 0 to $MAX_CAPACITY sessions.")
+        }
+    },
 )
+
+/** The most sessions a registered runner may declare it runs at once. */
+private const val MAX_CAPACITY = 256
 
 private fun sessionIdOf(raw: String): Uuid =
     Uuid.parseOrNull(raw) ?: throw InvalidCloudSessionRequestException("Malformed session id.")
