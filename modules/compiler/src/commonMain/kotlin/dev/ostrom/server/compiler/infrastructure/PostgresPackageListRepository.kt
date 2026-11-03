@@ -13,8 +13,8 @@ import kotlin.uuid.Uuid
 
 /**
  * [PackageListRepository] on PostgreSQL: the summary columns of `compiler_packages` and the pin of each, joined on
- * `compiler_pins` in one query (`compiler_packages_recent`), never the envelope, which holds the whole compiled
- * payload.
+ * `compiler_pins` in one query (`compiler_packages_recent`, or `compiler_packages_by_repo` for one repository), never
+ * the envelope, which holds the whole compiled payload.
  *
  * @param driver The connection pool.
  */
