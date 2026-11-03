@@ -19,6 +19,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
 
@@ -33,6 +34,16 @@ class AdminScopesTest {
         assertEquals(CLI_SCOPES, grantedScopes(TokenKind.CLI, stored))
         assertEquals(8.hours, ADMIN_TOKEN_LIFETIME)
         assertEquals("osg", TokenKind.ADMIN.prefix)
+    }
+
+    @Test
+    fun theAdminTokenReadsTheModelPolicyItRewrites() {
+        // ostrom policy set models keeps the default and the members' lists: it reads the policy before writing it
+        assertTrue("inference:read" in ADMIN_TOKEN_SCOPES, "$ADMIN_TOKEN_SCOPES")
+        assertTrue("inference:read" in grantedScopes(TokenKind.ADMIN, ADMIN_TOKEN_SCOPES))
+        // a read, not a governance scope: a personal token still holds it, the device's token still does not
+        assertEquals(setOf("inference:read"), grantedScopes(TokenKind.PERSONAL, setOf("inference:read")))
+        assertTrue("inference:read" !in grantedScopes(TokenKind.CLI, ADMIN_TOKEN_SCOPES))
     }
 
     @Test
