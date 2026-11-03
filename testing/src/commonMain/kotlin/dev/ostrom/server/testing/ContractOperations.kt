@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.testing
 
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -22,6 +24,7 @@ data class ContractResponse(val json: JsonObject?, val other: Boolean = false)
  * @property path Its template, `/api/v1/rules/{id}`.
  * @property served True when `x-ostrom-status` is `served`: the server must answer it as the contract says.
  * @property responses By status (`200`, `404`, `default`).
+ * @property query Its query parameters, the path's and its own, each with its schema (`{}` when it declares none).
  */
 data class ContractOperation(
     val id: String,
@@ -29,6 +32,7 @@ data class ContractOperation(
     val path: String,
     val served: Boolean,
     val responses: Map<String, ContractResponse>,
+    val query: Map<String, JsonObject> = emptyMap(),
 ) {
     /** True when a success (2xx) answers a JSON body: an operation the tests must observe at least once. */
     val answersJson: Boolean
@@ -54,8 +58,9 @@ data class ContractOperation(
 class ContractOperations(schema: ContractSchema, document: JsonObject) {
     /** Every operation, in the contract's order. */
     val all: List<ContractOperation> = document["paths"]?.jsonObject.orEmpty().flatMap { (path, item) ->
+        val shared = item.jsonObject["parameters"]?.jsonArray.orEmpty()
         item.jsonObject.filterKeys { it in METHODS }.map { (method, operation) ->
-            operation(schema, path, method, operation.jsonObject)
+            operation(schema, path, method, operation.jsonObject, shared)
         }
     }
 
@@ -78,7 +83,13 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
             ?.first
     }
 
-    private fun operation(schema: ContractSchema, path: String, method: String, operation: JsonObject) =
+    private fun operation(
+        schema: ContractSchema,
+        path: String,
+        method: String,
+        operation: JsonObject,
+        shared: List<JsonElement>,
+    ) =
         ContractOperation(
             id = operation["operationId"].let { id ->
                 if (id == null) "${method.uppercase()} $path" else id.jsonPrimitive.content
@@ -93,7 +104,18 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
                 val json = content[JSON]?.let { it.jsonObject["schema"] }
                 ContractResponse(json?.let { it.jsonObject }, other = content.keys.any { it != JSON })
             },
+            query = query(schema, shared + operation["parameters"]?.jsonArray.orEmpty()),
         )
+
+    // The query parameters by name, each reference resolved; the operation's own come last and win.
+    private fun query(schema: ContractSchema, parameters: List<JsonElement>): Map<String, JsonObject> =
+        parameters.map { element ->
+            element.jsonObject[REF]?.let { schema.resolve(it.jsonPrimitive.content) } ?: element.jsonObject
+        }.filter { it.getValue("in").jsonPrimitive.content == "query" }.associate { parameter ->
+            val declared = parameter["schema"]?.jsonObject ?: JsonObject(emptyMap())
+            val resolved = declared[REF]?.let { schema.resolve(it.jsonPrimitive.content) } ?: declared
+            parameter.getValue("name").jsonPrimitive.content to resolved
+        }
 
     private fun segments(path: String) = path.trim('/').split('/')
 
