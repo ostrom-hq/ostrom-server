@@ -57,12 +57,21 @@ class MachineRunnerTest {
             "OSTROM_DOCKER_API_URL" to "http://127.0.0.1:2375/",
         )
         val plain = MachineConfig.from(env) { error("no file") }
-        assertEquals(MachineDocker("http://127.0.0.1:2375", null, null), plain.docker)
+        assertEquals(MachineDocker("http://127.0.0.1:2375", null, null, null), plain.docker)
         assertTrue("docker=MachineDocker(apiUrl=http://127.0.0.1:2375" in plain.toString())
         val placed = MachineConfig.from(
             env + ("OSTROM_DOCKER_NETWORK" to "sessions") + ("OSTROM_RUNNER_SESSION_IMAGE" to "img:1"),
         ) { error("no file") }
-        assertEquals(MachineDocker("http://127.0.0.1:2375", "sessions", "img:1"), placed.docker)
+        assertEquals(MachineDocker("http://127.0.0.1:2375", "sessions", "img:1", null), placed.docker)
+        for (max in listOf(0, 256)) {
+            val capped = MachineConfig.from(env + ("OSTROM_RUNNER_MAX_SESSIONS" to "$max")) { error("no file") }
+            assertEquals(max, capped.docker?.maxSessions)
+        }
+        for (max in listOf("-1", "257", "two")) {
+            assertFailsWith<IllegalArgumentException> {
+                MachineConfig.from(env + ("OSTROM_RUNNER_MAX_SESSIONS" to max)) { error("no file") }
+            }
+        }
         assertEquals(null, MachineConfig.from(env + ("OSTROM_DOCKER_API_URL" to " ")) { error("no file") }.docker)
         val remote = MachineConfig.from(env + ("OSTROM_DOCKER_API_URL" to "https://docker.lan")) { error("no file") }
         assertEquals("https://docker.lan", remote.docker?.apiUrl)
@@ -171,7 +180,7 @@ class MachineRunnerTest {
             )
         }
         val api = HttpMachineApi(HttpClient(engine) { expectSuccess = false }, MachineConfig("http://s", id, key))
-        val work = api.heartbeat(MachineReport(listOf(ReportedExecution("s", 2, "running")), listOf("s")))
+        val work = api.heartbeat(MachineReport(listOf(ReportedExecution("s", 2, "running")), listOf("s"), 3))
         assertEquals(MachineWork(listOf(AssignedExecution("s", 2)), listOf("s")), work)
         assertEquals(
             """{"executions":[{"sessionId":"s","epoch":2,"state":"running"}],"workspaces":["s"]}""",
@@ -198,7 +207,7 @@ class MachineRunnerTest {
         val code = async { machine.run() }
 
         runCurrent()
-        assertEquals(MachineReport(emptyList(), emptyList()), reports.single())
+        assertEquals(MachineReport(emptyList(), emptyList(), 1), reports.single())
         assertEquals(3, docker.containers.size, "Applied after the beat, in the background")
 
         answer = { MachineWork(listOf(AssignedExecution(session.toString(), 1))) }
