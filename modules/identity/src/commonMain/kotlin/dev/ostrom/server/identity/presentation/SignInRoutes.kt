@@ -8,6 +8,7 @@ import dev.ostrom.server.identity.domain.CompleteOAuthSignInUseCase
 import dev.ostrom.server.identity.domain.IdentityTakenException
 import dev.ostrom.server.identity.domain.InvalidSignInStateException
 import dev.ostrom.server.identity.domain.LauncherLoginUseCase
+import dev.ostrom.server.identity.domain.MAGIC_LINK_LIFETIME
 import dev.ostrom.server.identity.domain.OAUTH_STATE_LIFETIME
 import dev.ostrom.server.identity.domain.ProviderNotConfiguredException
 import dev.ostrom.server.identity.domain.ProviderRejectedException
@@ -40,6 +41,12 @@ const val OAUTH_STATE_COOKIE = "ostrom_oauth_state"
  * one-time code to the app instead of opening a browser session.
  */
 const val MOBILE_OAUTH_STATE_COOKIE = "ostrom_mobile_oauth_state"
+
+/**
+ * The cookie that binds an e-mailed sign-in link to the browser that asked for it (web audit n°2 M4), as the OAuth
+ * state does: the link is used only where this nonce is presented.
+ */
+const val EMAIL_LINK_COOKIE = "ostrom_email_link"
 
 private const val SIGN_IN_COOKIE_PATH = "/api/v1/auth"
 
@@ -110,15 +117,7 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
         call.setSessionCookie(signedIn.session, config)
         call.respondRedirect(config.consoleUrl + signedIn.redirectPath)
     }
-    post<SignInApi.Email, MagicLinkRequest> { _, request ->
-        requestMagicLink(request.email, request.redirect, call.request.origin.remoteAddress)
-        call.respond(HttpStatusCode.Accepted)
-    }
-    post<SignInApi.Email.Verify, VerifyMagicLinkRequest> { _, request ->
-        val signedIn = verifyMagicLink(request.token)
-        call.setSessionCookie(signedIn.session, config)
-        call.respond(SignedInResponse(signedIn.redirectPath, signedIn.session.csrfToken))
-    }
+    emailRoutes(dependencies)
     post<LauncherApi.Login, LauncherLoginRequest> { _, request ->
         val login = launcherLogin(request.githubToken, request.via, call.request.origin.remoteAddress)
         val token = login.token
@@ -134,6 +133,25 @@ fun Route.signInRoutes(dependencies: SignInRoutesDependencies) = with(dependenci
             call.response.cookies.append(stateCookie(started.state, lifetime, config))
             call.respond(LinkStartedResponse(started.authorizationUrl))
         }
+    }
+}
+
+
+/** The e-mailed link: asked for by a browser, which keeps a nonce (a cookie) that the link needs to sign in (M4). */
+private fun Route.emailRoutes(dependencies: SignInRoutesDependencies) = with(dependencies) {
+    post<SignInApi.Email, MagicLinkRequest> { _, request ->
+        val source = call.request.origin.remoteAddress
+        val nonce = requestMagicLink(request.email, request.redirect, source, call.request.cookies[EMAIL_LINK_COOKIE])
+        val lifetime = MAGIC_LINK_LIFETIME.inWholeSeconds.toInt()
+        call.response.cookies.append(stateCookie(nonce, lifetime, config, EMAIL_LINK_COOKIE))
+        call.respond(HttpStatusCode.Accepted)
+    }
+    post<SignInApi.Email.Verify, VerifyMagicLinkRequest> { _, request ->
+        val signedIn = verifyMagicLink(request.token, call.request.cookies[EMAIL_LINK_COOKIE])
+        // Signed in: the browser's nonce served its purpose.
+        call.response.cookies.append(stateCookie("", 0, config, EMAIL_LINK_COOKIE))
+        call.setSessionCookie(signedIn.session, config)
+        call.respond(SignedInResponse(signedIn.redirectPath, signedIn.session.csrfToken))
     }
 }
 
@@ -175,7 +193,7 @@ private fun stateCookie(value: String, maxAge: Int, config: IdentityConfig, name
     path = SIGN_IN_COOKIE_PATH,
     secure = config.secureCookies,
     httpOnly = true,
-    // Lax: the provider sends the browser back by a top-level GET, which carries it.
+    // Lax: the provider sends the browser back by a top-level GET, which carries it; the console's own calls carry it.
     extensions = mapOf("SameSite" to "Lax"),
 )
 

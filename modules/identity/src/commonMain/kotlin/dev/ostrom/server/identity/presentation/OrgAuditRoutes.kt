@@ -10,6 +10,8 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requireScope
+import dev.ostrom.server.kernel.http.ReadThrottle
+import dev.ostrom.server.kernel.http.throttledReads
 import io.ktor.resources.Resource
 import io.ktor.server.resources.get
 import io.ktor.server.response.respond
@@ -77,14 +79,17 @@ data class OrgAuditRoutesDependencies(val listOrgAudit: ListOrgAuditUseCase, val
  * [AUDIT_READ_SCOPE]. Another member gets a 403; a person outside the organization a 404, as for any of its routes.
  *
  * @param dependencies The use case and the resolver.
+ * @param throttle Bounds the reads of the log per caller (AUDIT-SECU-LECTURES M1).
  */
-fun Route.orgAuditRoutes(dependencies: OrgAuditRoutesDependencies) = with(dependencies) {
+fun Route.orgAuditRoutes(dependencies: OrgAuditRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
     authenticated {
-        get<OrgAuditApi> { params ->
-            call.requireScope(AUDIT_READ_SCOPE)
-            val member = call.requireOrgPrincipal(orgResolver, null)
-            if (member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) throw AuditReadForbiddenException()
-            call.respond(listOrgAudit(member.orgId, params.actor, params.event, params.before).toResponse())
+        throttledReads(throttle) {
+            get<OrgAuditApi> { params ->
+                call.requireScope(AUDIT_READ_SCOPE)
+                val member = call.requireOrgPrincipal(orgResolver, null)
+                if (member.role != OrgRole.OWNER && member.role != OrgRole.ADMIN) throw AuditReadForbiddenException()
+                call.respond(listOrgAudit(member.orgId, params.actor, params.event, params.before).toResponse())
+            }
         }
     }
 }

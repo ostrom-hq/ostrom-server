@@ -146,5 +146,59 @@ enum class RuleStatus(val value: String) {
  * @property repo Only the rules that cover this repository (or the whole organization), when set.
  * @property status Only this status, when set.
  * @property group Only this group, when set.
+ * @property after Only the rules after this one in the list's order (group, then id), when set.
  */
-data class RuleQuery(val repo: String? = null, val status: RuleStatus? = null, val group: String? = null)
+data class RuleQuery(
+    val repo: String? = null,
+    val status: RuleStatus? = null,
+    val group: String? = null,
+    val after: RuleCursor? = null,
+)
+
+/**
+ * A position in the list of rules: the rules strictly after ([group], [id]) in its order.
+ *
+ * @property group The group of the last rule of the previous page.
+ * @property id Its id.
+ */
+data class RuleCursor(val group: String, val id: String) {
+    /** The opaque form of `next` and `?after=`: the id's length, `~`, the id, then the group, whatever they hold. */
+    val wire: String get() = "${id.length}$SEPARATOR$id$group"
+
+    /** Reading a cursor. */
+    companion object {
+        private const val SEPARATOR = '~'
+
+        /**
+         * The cursor after a rule.
+         *
+         * @param rule The last rule of a page.
+         * @return The cursor.
+         */
+        fun after(rule: Rule): RuleCursor = RuleCursor(rule.group, rule.id)
+
+        /**
+         * Reads `?after=`.
+         *
+         * @param wire The value a previous page gave as `next`.
+         * @return The cursor.
+         * @throws InvalidRuleException When it is not one.
+         */
+        fun of(wire: String): RuleCursor {
+            val length = wire.substringBefore(SEPARATOR, "").toIntOrNull()
+            val rest = wire.substringAfter(SEPARATOR, "")
+            if (length == null || length < 1 || rest.length <= length) {
+                throw InvalidRuleException("The cursor is not one a previous page gave.")
+            }
+            return RuleCursor(group = rest.substring(length), id = rest.take(length))
+        }
+    }
+}
+
+/**
+ * A page of rules.
+ *
+ * @property items The rules, by group then id.
+ * @property next Where the next page starts, null on the last one.
+ */
+data class RulePage(val items: List<Rule>, val next: RuleCursor?)
