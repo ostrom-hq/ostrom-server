@@ -5,12 +5,16 @@ import dev.ostrom.core.telemetry.metrics.MeterImpl
 import dev.ostrom.core.telemetry.metrics.MetricData
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
+import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.gates.domain.repositories.GateHistory
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.kernel.observability.ProcessMetrics
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
+import dev.ostrom.server.rules.domain.services.EveryRule
+import dev.ostrom.server.rules.domain.services.GateReplay
 import dev.ostrom.server.rules.fakes.ReplayFixtures.action
 import dev.ostrom.server.rules.fakes.ReplayFixtures.gated
 import dev.ostrom.server.rules.fakes.ReplayFixtures.push
@@ -86,13 +90,39 @@ class ReplayLoadPostgresTest {
             val report = "replay: ${items.size} actions x $RULES rules in $took; resident memory ${mib(before)} " +
                 "before, peak ${mib(memory.peak())} (+${mib(memory.peak() - before)}); items ${mib(stored.toLong())} " +
                 "stored; ${statements.size} statements\n" + plans.joinToString("\n\n")
-            write(report)
+            write("rules-replay", report)
 
             assertEquals(ACTIONS, items.size, "The 1 000 newest actions of the window")
             assertTrue(items.all { it.getValue("ruleCount").jsonPrimitive.content == "$RULES" }, "Every rule counts")
             assertTrue(plans.none { "Seq Scan on gates_gates" in it || "Seq Scan on rules_rules" in it }, report)
             assertTrue(stored < MAX_STORED, "Items over ${mib(MAX_STORED.toLong())}:\n$report")
             assertTrue(took < MAX_DURATION, "Over $MAX_DURATION:\n$report")
+        }
+
+    @Test
+    fun eachStepOfTheReplayReportsItsResidentMemory() =
+        benchTest(modules, module { includes(RulesCallers.overrides(), RulesCallers.gateSessions) }) { server ->
+            seed(server)
+            val memory = MemorySampler()
+            val steps = mutableListOf("seeded: ${mib(memory.read())}")
+            fun step(name: String) {
+                steps += "$name: ${mib(memory.read())}"
+            }
+            val rules = EveryRule.gated(server.koin.get<RulesRepository>(), orgA)
+            step("${rules.size} rules read")
+            val prepared = GateReplay.prepare(rules)
+            step("rules prepared")
+            val actions = server.koin.get<GateHistory>().recent(orgA, RulesFixtures.epoch - 30.days, ACTIONS)
+            step("${actions.size} actions read")
+            val items = coroutineScope {
+                val sampler = launch(Dispatchers.Default) { memory.sample() }
+                GateReplay.replayAll(actions, prepared, SelfApprovalPolicy.NEVER).also { sampler.cancelAndJoin() }
+            }
+            step("replayed (peak ${mib(memory.peak())})")
+            val text = JsonArray(items).toString()
+            step("items written out (${mib(text.length.toLong() * 2)} of text)")
+            write("rules-replay-steps", steps.joinToString("\n"))
+            assertEquals(ACTIONS, items.size)
         }
 
     // The measured organization: its rules, its window's actions and older ones; then another organization's rows,
@@ -146,9 +176,9 @@ class ReplayLoadPostgresTest {
             }
         }
 
-    private fun write(report: String) {
+    private fun write(name: String, report: String) {
         SystemFileSystem.createDirectories(Path("build/reports/perf"))
-        SystemFileSystem.sink(Path("build/reports/perf/rules-replay.txt")).buffered().use { it.writeString(report) }
+        SystemFileSystem.sink(Path("build/reports/perf/$name.txt")).buffered().use { it.writeString(report) }
         println(report)
     }
 
