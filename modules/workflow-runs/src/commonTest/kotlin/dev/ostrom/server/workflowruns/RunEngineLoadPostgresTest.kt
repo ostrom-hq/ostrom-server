@@ -22,6 +22,8 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.launches.LaunchesModule
 import dev.ostrom.server.orgs.OrgsModule
+import dev.ostrom.server.orgs.domain.Invitation
+import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -58,8 +60,10 @@ import kotlin.math.ceil
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.time.TimeSource
@@ -168,6 +172,16 @@ class RunEngineLoadPostgresTest {
         )
         val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
         koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
+        // The gates' approver, another member: whoever started a run never approves its gate alone (four eyes).
+        val email = "$APPROVER@example.com"
+        val approver = koin.get<ResolveUserUseCase>()(
+            VerifiedIdentity(IdentityProvider.GITHUB, APPROVER, email, true, APPROVER, login = APPROVER),
+        )
+        val invitations = koin.get<InvitationsRepository>()
+        val invitation =
+            Invitation(Uuid.random(), org.id, null, OrgRole.MEMBER, user.id, now, now + 1.hours, null, 0, null)
+        invitations.create(invitation, "hash-" + Uuid.random().toHexString())
+        assertTrue(invitations.accept(invitation, Member(Uuid.random(), org.id, approver.id, OrgRole.MEMBER, now), now))
         return Owner(login, org)
     }
 
@@ -184,7 +198,7 @@ class RunEngineLoadPostgresTest {
             inputs = mapOf("branch" to "main"),
             startedAt = now.isoMillis(),
         )
-        koin.get<StartedRunsRepository>().add(owner.org.id, run, now, graph(owner.login), RunAudit("started"))
+        koin.get<StartedRunsRepository>().add(owner.org.id, run, now, GRAPH, RunAudit("started"))
         return run
     }
 
@@ -198,8 +212,8 @@ class RunEngineLoadPostgresTest {
         val gateId = Uuid.parse(assertNotNull(stored(owner.org.id, run.id).visits.last().gateId))
         val gates = koin.get<GatesRepository>()
         val gate = assertNotNull(gates.get(owner.org.id, gateId))
-        val request = gates.requestsOf(owner.org.id, gateId).first { it.approverId == owner.login }
-        val actor = GateActor.person(owner.login, owner.org.id, OrgRole.OWNER, Clock.System.now())
+        val request = gates.requestsOf(owner.org.id, gateId).first { it.approverId == APPROVER }
+        val actor = GateActor.person(APPROVER, owner.org.id, OrgRole.MEMBER, Clock.System.now())
         koin.get<AnswerGateUseCase>()(actor, request.id, Answer.YES, gate.shownDigest, AnswerChannel.CONSOLE)
     }
 
@@ -227,7 +241,9 @@ class RunEngineLoadPostgresTest {
         const val BATCH = 50
         val STEP = 5.seconds
 
-        fun graph(approver: String) = RunGraph(
+        const val APPROVER = "bea"
+
+        val GRAPH = RunGraph(
             start = "build",
             nodes = listOf(
                 WorkflowNode(
@@ -236,7 +252,7 @@ class RunEngineLoadPostgresTest {
                     label = "Build",
                     run = NodeRun(instructions = "Fix the build of {{inputs.branch}}", agent = "claude"),
                 ),
-                WorkflowNode("review", WorkflowNodeKind.GATE, "Review", approvers = listOf(approver)),
+                WorkflowNode("review", WorkflowNodeKind.GATE, "Review", approvers = listOf(APPROVER)),
             ),
             edges = listOf(WorkflowEdge("build", "review"), WorkflowEdge("review", null, on = "approved")),
         )

@@ -31,6 +31,8 @@ import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.launches.LaunchesModule
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
 import dev.ostrom.server.orgs.OrgsModule
+import dev.ostrom.server.orgs.domain.Invitation
+import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
@@ -122,6 +124,7 @@ class RunEnginePostgresTest {
         val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
         val member = Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)
         koin.get<OrgsRepository>().create(org, member) { false }
+        approver(org, user.id, now)
         val secret = TokenKind.PERSONAL.prefix + "_" + Uuid.random().toHexString()
         val token = ApiToken(
             Uuid.random(), user.id, org.id, "t", TokenKind.PERSONAL, scopes, "hint", null, now, now + 1.hours, null,
@@ -129,6 +132,18 @@ class RunEnginePostgresTest {
         )
         koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
         return Person(login, org, user.id, member.id, secret)
+    }
+
+    // The gate nodes' approver, a member of every organization here: whoever asked never approves alone (four eyes).
+    private suspend fun TestServer.approver(org: Org, owner: Uuid, now: Instant) {
+        val email = "$APPROVER@example.com"
+        val identity = VerifiedIdentity(IdentityProvider.GITHUB, APPROVER, email, true, APPROVER, login = APPROVER)
+        val user = koin.get<ResolveUserUseCase>()(identity)
+        val invitations = koin.get<InvitationsRepository>()
+        val invitation =
+            Invitation(Uuid.random(), org.id, null, OrgRole.MEMBER, owner, now, now + 1.hours, null, 0, null)
+        invitations.create(invitation, "hash-" + Uuid.random().toHexString())
+        assertTrue(invitations.accept(invitation, Member(Uuid.random(), org.id, user.id, OrgRole.MEMBER, now), now))
     }
 
     private suspend fun TestServer.call(token: String, path: String, body: String? = null): HttpResponse =
@@ -205,8 +220,8 @@ class RunEnginePostgresTest {
     private suspend fun TestServer.answer(person: Person, gateId: Uuid, answer: Answer) {
         val gates = koin.get<GatesRepository>()
         val gate = assertNotNull(gates.get(person.org.id, gateId))
-        val request = gates.requestsOf(person.org.id, gateId).first { it.approverId == person.login }
-        val actor = GateActor.person(person.login, person.org.id, OrgRole.OWNER, Clock.System.now())
+        val request = gates.requestsOf(person.org.id, gateId).first { it.approverId == APPROVER }
+        val actor = GateActor.person(APPROVER, person.org.id, OrgRole.MEMBER, Clock.System.now())
         koin.get<AnswerGateUseCase>()(actor, request.id, answer, gate.shownDigest, AnswerChannel.CONSOLE)
     }
 
@@ -293,7 +308,7 @@ class RunEnginePostgresTest {
         val node = assertNotNull(opened.node)
         assertEquals(listOf<Any>(SHIP, "review", true), listOf(node.workflowId, node.nodeId, node.enforced))
         val approvers = server.koin.get<GatesRepository>().requestsOf(ada.org.id, gateId).map { it.approverId }
-        assertEquals(listOf("ada"), approvers)
+        assertEquals(listOf(APPROVER), approvers)
         // A look while nobody answered changes nothing: the same gate, still waiting.
         engine.next()
         assertEquals(waiting, server.read(ada, run.id))
@@ -558,12 +573,13 @@ class RunEnginePostgresTest {
         val eveOrg: Uuid = Uuid.parse("0000000e-0000-0000-0000-000000000000")
         val TRIGGER = WorkflowNode("t", WorkflowNodeKind.TRIGGER, "Push")
         val AGENT = WorkflowNode("a", WorkflowNodeKind.AGENT, "Agent", run = NodeRun(instructions = "Do it"))
+        const val APPROVER = "bea"
         const val AGENT_THEN_GATE = """[{"id":"build","kind":"agent","label":"Build",""" +
             """"run":{"instructions":"Fix the build of {{inputs.branch}}","agent":"claude",""" +
             """"model":"claude-opus-5-5"}},""" +
-            """{"id":"review","kind":"gate","label":"Review","approvers":["ada"]}]"""
+            """{"id":"review","kind":"gate","label":"Review","approvers":["bea"]}]"""
         const val AGENT_THEN_GATE_EDGES =
             """[{"from":"build","to":"review"},{"from":"review","to":null,"on":"approved"}]"""
-        const val GATE_ONLY = """[{"id":"review","kind":"gate","label":"Review","approvers":["ada"]}]"""
+        const val GATE_ONLY = """[{"id":"review","kind":"gate","label":"Review","approvers":["bea"]}]"""
     }
 }
