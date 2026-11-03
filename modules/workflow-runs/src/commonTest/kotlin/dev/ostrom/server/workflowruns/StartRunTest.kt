@@ -132,7 +132,7 @@ class StartRunTest {
         )
         for ((given, message) in refused) {
             val error = assertFailsWith<InvalidRunException> { RunInputs.of(inputs, given) }
-            assertTrue(error.message.toString().startsWith(message), error.message)
+            assertTrue(error.message.startsWith(message), error.message)
         }
     }
 }

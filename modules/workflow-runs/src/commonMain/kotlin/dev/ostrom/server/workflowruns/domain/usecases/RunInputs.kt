@@ -24,16 +24,20 @@ object RunInputs {
             throw InvalidRunException("inputs.${it.take(RunTexts.ID)}: not an input of this workflow.")
         }
         val values = LinkedHashMap<String, String>()
-        for (input in declared) {
-            val value = given[input.id]?.takeIf { it.isNotBlank() } ?: input.default
-            if (value.isNullOrBlank()) {
-                if (input.required) throw InvalidRunException("inputs.${input.id}: required.")
-            } else if (value.length > input.maxLength) {
-                throw InvalidRunException("inputs.${input.id}: at most ${input.maxLength} characters.")
-            } else {
-                values[input.id] = value
-            }
-        }
+        for (input in declared) valueOf(input, given[input.id])?.let { values[input.id] = it }
         return values
+    }
+
+    // The value of one input: the given one unless blank, else its default; none for an optional one without either.
+    private fun valueOf(input: WorkflowInput, given: String?): String? {
+        val value = given?.takeIf { it.isNotBlank() } ?: input.default
+        if (value.isNullOrBlank()) {
+            if (input.required) throw InvalidRunException("inputs.${input.id}: required.")
+            return null
+        }
+        if (value.length > input.maxLength) {
+            throw InvalidRunException("inputs.${input.id}: at most ${input.maxLength} characters.")
+        }
+        return value
     }
 }
