@@ -9,6 +9,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.Hook
+import io.ktor.server.application.call
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.response.header
 import io.ktor.server.routing.Route
@@ -16,10 +17,16 @@ import io.ktor.server.routing.RouteSelector
 import io.ktor.server.routing.RouteSelectorEvaluation
 import io.ktor.server.routing.RoutingResolveContext
 import io.ktor.util.AttributeKey
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicLong
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
+import kotlin.concurrent.atomics.updateAndFetch
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** How a call counts against the replica's ceilings ([CallsInProgress]). */
 enum class CallKind {
@@ -35,25 +42,44 @@ enum class CallKind {
 
 /**
  * The ceilings set by the instance: `OSTROM_MAX_CALLS_IN_PROGRESS` and `OSTROM_MAX_HELD_CALLS`, each null to derive it
- * from the container's memory limit.
+ * from the container's memory limit, and how long a call waits for a place (`OSTROM_CALL_QUEUE_SECONDS`).
  *
  * @property served The most ordinary calls at once.
  * @property held The most held calls at once.
+ * @property queueWait How long a call past the ceiling waits for a place before its 503.
  */
-data class CallCeilingSettings(val served: Int? = null, val held: Int? = null)
+data class CallCeilingSettings(
+    val served: Int? = null,
+    val held: Int? = null,
+    val queueWait: Duration = DEFAULT_QUEUE_WAIT,
+) {
+    /** The defaults. */
+    companion object {
+        /** A burst waits this long for its place, as the reads wait for theirs. */
+        val DEFAULT_QUEUE_WAIT: Duration = 5.seconds
+    }
+}
+
+/** A place taken by [CallsInProgress.enter], given back once by [leave]. */
+fun interface CallPlace {
+    /** Gives the place back. */
+    fun leave()
+}
 
 /**
- * The calls this replica runs at once, per [CallKind], each under its ceiling. A call costs memory while it runs, and
- * up to 1 MiB more past about 100 at once: 500 approvals at once OOMKilled the server under 512 MiB, 200 peaked at
- * 377 MiB (CHARGE 41644506470). Unset, a ceiling follows the container's limit, read at every call so that a new limit
- * applies at once: 150 calls under 512 MiB, in proportion above and below, at least 16, and 256 without a limit.
+ * The calls this replica runs at once, per [CallKind], each under its ceiling; past it, a call waits in line for
+ * [CallCeilingSettings.queueWait], then is refused. A call costs memory while it runs, and up to 1 MiB more past about
+ * 100 at once: the reads, already bounded, held 500 at once under 512 MiB (CHARGE 41647341533), while 500 approvals,
+ * writes bounded by nothing, OOMKilled the server (41644506470). Unset, a ceiling follows the container's limit, read at
+ * every call so that a new limit applies at once: 150 calls under 512 MiB, in proportion above and below, at least 16,
+ * and 256 without a limit.
  *
  * @param settings The ceilings the instance sets.
  * @param limitBytes Reads the container's memory limit; null without one.
  */
 class CallsInProgress(private val settings: CallCeilingSettings, private val limitBytes: () -> Long?) {
-    private val served = AtomicLong(0)
-    private val held = AtomicLong(0)
+    private val served = Places()
+    private val held = Places()
 
     /**
      * The ceiling of [kind] now.
@@ -69,26 +95,15 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
     }
 
     /**
-     * Takes a place for a call of [kind], without waiting.
+     * Takes a place for a call of [kind], waiting in line for one up to [CallCeilingSettings.queueWait].
      *
      * @param kind The kind of call.
      *
-     * @return True when admitted; the caller then calls [leave] exactly once.
+     * @return The place, to give back once the call ends; null when none came in time.
      */
-    fun tryEnter(kind: CallKind): Boolean {
-        val counter = counterOf(kind) ?: return true
-        val admitted = counter.incrementAndFetch() <= ceiling(kind)
-        if (!admitted) counter.decrementAndFetch()
-        return admitted
-    }
-
-    /**
-     * Gives back the place of a call admitted by [tryEnter].
-     *
-     * @param kind The kind of call.
-     */
-    fun leave(kind: CallKind) {
-        counterOf(kind)?.decrementAndFetch()
+    suspend fun enter(kind: CallKind): CallPlace? {
+        val places = placesOf(kind) ?: return NO_PLACE
+        return places.enter(ceiling(kind), settings.queueWait)
     }
 
     /**
@@ -98,13 +113,43 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
      *
      * @return Their number; 0 for [CallKind.FREE], never counted.
      */
-    fun inProgress(kind: CallKind): Long = counterOf(kind)?.load() ?: 0
+    fun inProgress(kind: CallKind): Long = placesOf(kind)?.running?.load() ?: 0
 
-    private fun counterOf(kind: CallKind): AtomicLong? = when (kind) {
+    private fun placesOf(kind: CallKind): Places? = when (kind) {
         CallKind.SERVED -> served
         CallKind.HELD -> held
         CallKind.FREE -> null
     }
+
+    /**
+     * The places of one kind: a semaphore as wide as the ceiling. A new ceiling starts a new semaphore; the calls in the
+     * old one give their places back to it, so that for a moment both count.
+     */
+    private class Places {
+        val running = AtomicLong(0)
+        // No ceiling is 0: the first call starts the first real line.
+        private val line = AtomicReference(Line(0, Semaphore(1)))
+
+        suspend fun enter(ceiling: Int, wait: Duration): CallPlace? {
+            val semaphore = lineOf(ceiling).semaphore
+            val taken = semaphore.tryAcquire() || withTimeoutOrNull(wait * 0) { semaphore.acquire() } != null
+            return if (taken) {
+                running.incrementAndFetch()
+                CallPlace {
+                    running.decrementAndFetch()
+                    semaphore.release()
+                }
+            } else {
+                null
+            }
+        }
+
+        private fun lineOf(ceiling: Int): Line = line.updateAndFetch { now ->
+            if (now.ceiling == ceiling) now else Line(ceiling, Semaphore(ceiling))
+        }
+    }
+
+    private class Line(val ceiling: Int, val semaphore: Semaphore)
 
     /** The ceilings a limit gives. */
     companion object {
@@ -115,6 +160,7 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
         private const val CALLS_UNDER_REFERENCE = 150L
         private const val REFERENCE_MIB = 512L
         private const val MIN_CEILING = 16L
+        private val NO_PLACE = CallPlace {}
 
         /**
          * The ceiling under [limitBytes]: 150 calls per 512 MiB, at least 16.
@@ -145,8 +191,8 @@ class CallCeilingConfig {
 }
 
 /**
- * Counts each call against the replica's ceiling for its kind, and refuses it at once past it: 503 `unavailable` with
- * `Retry-After: 1`, before the body is read. Installed on the routing root by [configureHttp] for [CallKind.SERVED];
+ * Counts each call against the replica's ceiling for its kind, before the body is read; past it, the call waits in line
+ * for a place, then is refused: 503 `unavailable` with `Retry-After: 1`. Installed on the routing root by [configureHttp] for [CallKind.SERVED];
  * [heldCalls] and [uncountedCalls] install it again on their routes, and the closest installation counts the call,
  * once. Routes built without [configureHttp] (a module's own test) are not counted.
  */
@@ -156,14 +202,16 @@ val CallCeiling = createRouteScopedPlugin("CallCeiling", ::CallCeilingConfig) {
     on(AroundEveryPlugin) { call, proceed ->
         if (calls == null) {
             proceed()
-        } else if (!calls.tryEnter(kind)) {
-            call.response.header(HttpHeaders.RetryAfter, RETRY_AFTER_SECONDS)
-            throw ServerBusyException()
         } else {
+            val place = calls.enter(kind)
+            if (place == null) {
+                call.response.header(HttpHeaders.RetryAfter, RETRY_AFTER_SECONDS)
+                throw ServerBusyException()
+            }
             try {
                 proceed()
             } finally {
-                calls.leave(kind)
+                place.leave()
             }
         }
     }

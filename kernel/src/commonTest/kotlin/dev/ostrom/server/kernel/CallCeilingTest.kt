@@ -31,6 +31,8 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -39,7 +41,11 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -79,18 +85,44 @@ class CallCeilingTest {
     }
 
     @Test
-    fun eachKindCountsUnderItsOwnCeiling() {
-        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1)) { null }
-        assertTrue(calls.tryEnter(CallKind.SERVED))
-        assertFalse(calls.tryEnter(CallKind.SERVED), "the served place is taken")
-        assertTrue(calls.tryEnter(CallKind.HELD), "a held call does not count with the served ones")
-        assertFalse(calls.tryEnter(CallKind.HELD))
-        repeat(3) { assertTrue(calls.tryEnter(CallKind.FREE), "never counted") }
-        assertEquals(1, calls.inProgress(CallKind.SERVED), "a refusal gives its count back")
+    fun eachKindCountsUnderItsOwnCeiling() = runTest {
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = ZERO)) { null }
+        val served = assertNotNull(calls.enter(CallKind.SERVED))
+        assertNull(calls.enter(CallKind.SERVED), "the served place is taken")
+        val held = assertNotNull(calls.enter(CallKind.HELD), "a held call does not count with the served ones")
+        assertNull(calls.enter(CallKind.HELD))
+        repeat(3) { assertNotNull(calls.enter(CallKind.FREE), "never counted").leave() }
+        assertEquals(1, calls.inProgress(CallKind.SERVED), "a refusal takes no place")
         assertEquals(0, calls.inProgress(CallKind.FREE))
-        calls.leave(CallKind.SERVED)
-        calls.leave(CallKind.FREE)
-        assertTrue(calls.tryEnter(CallKind.SERVED), "a place given back is taken again")
+        served.leave()
+        held.leave()
+        assertEquals(0, calls.inProgress(CallKind.HELD))
+        assertNotNull(calls.enter(CallKind.SERVED), "a place given back is taken again")
+    }
+
+    @Test
+    fun pastTheCeilingACallWaitsInLineForAPlaceThenIsRefused() = runTest {
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, queueWait = 2.seconds)) { null }
+        val first = assertNotNull(calls.enter(CallKind.SERVED))
+        val waiting = async { calls.enter(CallKind.SERVED) }
+        advanceTimeBy(1.seconds)
+        assertFalse(waiting.isCompleted, "it waits for a place")
+        first.leave()
+        val second = assertNotNull(waiting.await(), "the place given back goes to the call in line")
+        val start = testScheduler.currentTime
+        assertNull(calls.enter(CallKind.SERVED), "no place within the wait")
+        assertEquals(2_000, testScheduler.currentTime - start, "refused once the wait is over")
+        second.leave()
+    }
+
+    @Test
+    fun aNewLimitAdmitsCallsUnderItsNewCeiling() = runTest {
+        var limit = 32 * mib
+        val calls = CallsInProgress(CallCeilingSettings(queueWait = ZERO)) { limit }
+        repeat(16) { assertNotNull(calls.enter(CallKind.SERVED)) }
+        assertNull(calls.enter(CallKind.SERVED), "16 under 32 MiB")
+        limit = 1024 * mib
+        assertNotNull(calls.enter(CallKind.SERVED), "300 under 1 GiB")
     }
 
     /** Routes that hold their call until [release] completes, and say when they are in. */
@@ -118,30 +150,32 @@ class CallCeilingTest {
         }
     }
 
-    private fun ceilingTest(block: suspend ApplicationTestBuilder.(Probe, CompletableDeferred<Unit>) -> Unit) =
-        testApplication {
-            val release = CompletableDeferred<Unit>()
-            val probe = Probe(release)
-            val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1)) { null }
-            val koin = koinApplication {
-                modules(
-                    module {
-                        single<Logger> { JsonLogger(LogLevel.WARN, sink = {}) }
-                        single<TokenAuthenticator> {
-                            object : TokenAuthenticator {
-                                override suspend fun authenticate(token: String) =
-                                    AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
-                            }
+    private fun ceilingTest(
+        wait: Duration = ZERO,
+        block: suspend ApplicationTestBuilder.(Probe, CompletableDeferred<Unit>) -> Unit,
+    ) = testApplication {
+        val release = CompletableDeferred<Unit>()
+        val probe = Probe(release)
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = wait)) { null }
+        val koin = koinApplication {
+            modules(
+                module {
+                    single<Logger> { JsonLogger(LogLevel.WARN, sink = {}) }
+                    single<TokenAuthenticator> {
+                        object : TokenAuthenticator {
+                            override suspend fun authenticate(token: String) =
+                                AuthenticatedPrincipal(token, PrincipalKind.USER, emptySet())
                         }
-                        single { calls }
-                    },
-                )
-            }.koin
-            application { configureHttp(koin, listOf(probe)) }
-            block(probe, release)
-            // A call answered gives its place back just after its answer is sent.
-            withTimeout(5.seconds) { while (calls.inProgress(CallKind.SERVED) > 0) delay(10.milliseconds) }
-        }
+                    }
+                    single { calls }
+                },
+            )
+        }.koin
+        application { configureHttp(koin, listOf(probe)) }
+        block(probe, release)
+        // A call answered gives its place back just after its answer is sent.
+        withTimeout(5.seconds) { while (calls.inProgress(CallKind.SERVED) > 0) delay(10.milliseconds) }
+    }
 
     private fun assertBusy(response: HttpResponse, body: String) {
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
@@ -160,6 +194,20 @@ class CallCeilingTest {
             assertEquals(HttpStatusCode.OK, client.get("/ready").status)
             release.complete(Unit)
             assertEquals("served", first.await())
+        }
+    }
+
+    @Test
+    fun aCallInLineIsServedOnceAPlaceIsGivenBack() = ceilingTest(wait = 10.seconds) { probe, release ->
+        coroutineScope {
+            val first = async { client.get("/probe/served").bodyAsText() }
+            probe.servedIn.await()
+            val waiting = async { client.get("/probe/quick").bodyAsText() }
+            delay(200.milliseconds)
+            assertFalse(waiting.isCompleted, "it waits in line")
+            release.complete(Unit)
+            assertEquals("served", first.await())
+            assertEquals("quick", waiting.await(), "served, not refused")
         }
     }
 
