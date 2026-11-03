@@ -172,6 +172,14 @@ internal class AutomationsRepositoryImpl(private val driver: Driver) : Automatio
         return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().map { it.toRun() } }
     }
 
+    override suspend fun hasRun(orgId: Uuid, automationId: Uuid, id: Uuid): Boolean {
+        val statement = Statement.create(
+            "SELECT 1 AS one FROM automations_runs WHERE id = :id AND automation_id = :automation_id " +
+                "AND org_id = :org_id",
+        ).bind("id", id).bind("automation_id", automationId).bind("org_id", orgId)
+        return driver.inTenant(orgId) { fetchAll(statement).getOrThrow().isNotEmpty() }
+    }
+
     override suspend fun countRuns(
         orgId: Uuid,
         automationId: Uuid,
