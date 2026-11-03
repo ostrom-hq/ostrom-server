@@ -80,7 +80,16 @@ class CloseSessionUseCaseImpl(
     // end that fails in between leaves a segment ended without its receipt, which the next end signs.
     override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session {
         val seen = repository.get(orgId, id) ?: throw SessionNotFoundException()
-        if (seen.receiptId != null) return locked(orgId, id) { merged(it, end) to null }.first
+        return if (seen.receiptId != null) {
+            locked(orgId, id) { merged(it, end) to null }.first
+        } else {
+            signed(orgId, seen, end)
+        }
+    }
+
+    // The end of a segment without its receipt yet: read, written, signed, then its receipt's id written.
+    private suspend fun signed(orgId: Uuid, seen: Session, end: EndSession): Session {
+        val id = seen.id
         val endedAt = seen.endedAt ?: now()
         val measured = end.copy(
             costUsd = if (seen.endedAt == null) {
