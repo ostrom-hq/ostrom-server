@@ -262,8 +262,8 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
                         "CAST(NULLIF(:after, '') AS UUID), :limit) WITH ORDINALITY s(member_id, n) " +
                         "CROSS JOIN LATERAL (SELECT * FROM orgs_members x WHERE x.id = s.member_id " +
                         "AND x.org_id = :org LIMIT 1) m ORDER BY s.n",
-                ).bind("org", orgId).bind("prefix", prefix).bind("after", after?.toString() ?: "")
-                    .bind("limit", limit),
+                ).bind("org", orgId).bind("prefix", prefix)
+                    .bind("after", if (after == null) "" else after.toString()).bind("limit", limit),
             ).getOrThrow().map { it.toMember() }
         }
 
