@@ -287,16 +287,18 @@ class StartRunPostgresTest {
         repeat(ROWS) { server.call("user:a:lead", RUNS, """{"inputs":{"branch":"b$it"}}""") }
         // Statistics only: the serving role owns no table, the owner analyzes it.
         server.database.owner.execute("ANALYZE workflow_runs_started").getOrThrow()
-        val any = "workflow_runs_started_"
+        // Each page is read in its order from an index: with sorting priced out, a page that needs a sort says so.
         val plans = listOf(
             Triple("runs of the organization", StartedRunQueries.page(RunsQuery()), "workflow_runs_started_at"),
-            Triple("runs of a workflow", StartedRunQueries.page(RunsQuery(workflowId = SHIP)), any),
-            Triple("runs by status", StartedRunQueries.page(RunsQuery(status = RunStatus.QUEUED)), any),
+            Triple("runs of a workflow", StartedRunQueries.page(RunsQuery(workflowId = SHIP)), "_workflow"),
+            Triple("runs by status", StartedRunQueries.page(RunsQuery(status = RunStatus.QUEUED)), "_status"),
             Triple("runs before a cursor", StartedRunQueries.page(RunsQuery(before = "wfr_x")), "pkey"),
         )
         plans.forEach { (name, sql, index) ->
             val plan = server.driver.withOrganization(orgA) { tx ->
                 tx.execute("SET LOCAL enable_seqscan = off").getOrThrow()
+                tx.execute("SET LOCAL enable_bitmapscan = off").getOrThrow()
+                tx.execute("SET LOCAL enable_sort = off").getOrThrow()
                 var explain = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", orgA)
                     .bind("limit", PAGE)
                 if (":workflow_id" in sql) explain = explain.bind("workflow_id", SHIP)
@@ -305,7 +307,7 @@ class StartRunPostgresTest {
                 tx.fetchAll(explain).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
             }
             println("-- $name\n$plan")
-            assertTrue("Index" in plan && index in plan, "$name\n$plan")
+            assertTrue("Index" in plan && index in plan && "Sort" !in plan, "$name\n$plan")
         }
     }
 
