@@ -2,6 +2,7 @@
 
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.ADMIN_READ_SCOPES
 import dev.ostrom.server.identity.domain.ADMIN_SCOPES
 import dev.ostrom.server.identity.domain.AdminApprovalForbiddenException
 import dev.ostrom.server.identity.domain.AnswerDeviceAuthorizationUseCaseImpl
@@ -181,7 +182,7 @@ class DeviceUseCasesTest {
         assertEquals(TokenKind.ADMIN, token.kind)
         assertEquals("osg_secret2", approved.token.secret)
         assertEquals(orgId, token.orgId)
-        assertEquals(CLI_SCOPES + ADMIN_SCOPES, token.scopes)
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES, token.scopes)
         assertEquals(clock.now + 8.hours, token.expiresAt)
         val created = audit.entries.last()
         assertEquals(orgId, created.orgId)

@@ -115,7 +115,8 @@ internal suspend fun Driver.replay(statements: List<SentStatement>, explain: Boo
 
 private suspend fun Transaction.replay(group: List<SentStatement>, explain: Boolean): List<String> =
     group.mapNotNull { sent ->
-        if (sent.isQuery()) {
+        // A query, apart from setting the organization or taking a lock.
+        if (QUERY.containsMatchIn(sent.sql) && !SETUP.containsMatchIn(sent.sql)) {
             val rows = fetchAll(sent.copy(if (explain) EXPLAIN else "")).getOrThrow()
             if (explain) rows.joinToString("\n") { it.get("QUERY PLAN").asString() } else null
         } else {
@@ -136,8 +137,6 @@ private fun List<SentStatement>.byTransaction(): List<List<SentStatement>> =
 
 private val QUERY = Regex("^[\\s(]*(SELECT|WITH|VALUES|TABLE)\\b", RegexOption.IGNORE_CASE)
 private val SETUP = Regex("set_config\\(|pg_advisory", RegexOption.IGNORE_CASE)
-
-private fun SentStatement.isQuery(): Boolean = QUERY.containsMatchIn(sql) && !SETUP.containsMatchIn(sql)
 
 // A fresh statement for each run: the server's own is never shared between the concurrent replays.
 private fun SentStatement.copy(prefix: String): Statement {

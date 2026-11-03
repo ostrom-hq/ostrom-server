@@ -11,6 +11,7 @@ import dev.ostrom.server.runners.domain.DeleteRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.InvalidCloudSessionRequestException
 import dev.ostrom.server.runners.domain.ListRegisteredRunnersUseCaseImpl
 import dev.ostrom.server.runners.domain.ListedRunner
+import dev.ostrom.server.runners.domain.MachineWork
 import dev.ostrom.server.runners.domain.NewRunner
 import dev.ostrom.server.runners.domain.RegisterRunnerUseCaseImpl
 import dev.ostrom.server.runners.domain.RegisteredRunnerHeartbeatUseCaseImpl
@@ -26,6 +27,8 @@ import dev.ostrom.server.runners.domain.RunnerRegistrationOutcome
 import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.runners.domain.constantTimeEquals
 import dev.ostrom.server.runners.fakes.FakeRunnerTokens
+import dev.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
+import dev.ostrom.server.runners.fakes.InMemoryRunnerAssignments
 import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.SettableClock
@@ -198,17 +201,25 @@ class RegisteredRunnersTest {
         lastSeenAt = lastSeenAt,
     )
 
+    private fun newHeartbeat() = RegisteredRunnerHeartbeatUseCaseImpl(
+        repository,
+        tokens,
+        clock,
+        InMemoryRunnerAssignments(),
+        InMemoryCloudSessionsRepository(),
+    ) { error("No execution to plan") }
+
     private companion object {
         val MEMBER: Uuid = Uuid.parse("00000000-0000-0000-0000-0000000000aa")
     }
 
     @Test
     fun aHeartbeatWithTheRunnersKeyMarksItSeenUntilTheWindowPasses() = runTest {
-        val heartbeat = RegisteredRunnerHeartbeatUseCaseImpl(repository, tokens, clock)
+        val heartbeat = newHeartbeat()
         val created = register(admin, RunnerRegistration("build-1", emptyList(), null))
         assertFalse(list(admin).single().online, "Never seen: offline")
 
-        assertEquals(emptyList(), heartbeat(created.runner.id, created.key))
+        assertEquals(MachineWork(emptyList(), emptyList()), heartbeat(created.runner.id, created.key))
         assertEquals(clock.now, repository.runners.single().lastSeenAt)
         assertTrue(list(admin).single().online)
 
@@ -220,7 +231,7 @@ class RegisteredRunnersTest {
 
     @Test
     fun aHeartbeatIsRefusedTheSameForAnUnknownRunnerAWrongKeyOrARemovedOne() = runTest {
-        val heartbeat = RegisteredRunnerHeartbeatUseCaseImpl(repository, tokens, clock)
+        val heartbeat = newHeartbeat()
         val created = register(admin, RunnerRegistration("build-1", emptyList(), null))
         val other = register(admin, RunnerRegistration("build-2", emptyList(), null))
 
@@ -251,7 +262,7 @@ class RegisteredRunnersTest {
 }
 
 /** The runners in memory, by organization then name; [outcome] forces what [register] answers. */
-private class InMemoryRegisteredRunners : RegisteredRunnersRepository {
+internal class InMemoryRegisteredRunners : RegisteredRunnersRepository {
     val runners = mutableListOf<RegisteredRunner>()
     var outcome = RunnerRegistrationOutcome.REGISTERED
     var lastMax = 0

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches.presentation
 
+import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.launches.domain.services.LauncherResolver
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCase
+import dev.ostrom.server.launches.domain.usecases.EndLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
 import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
@@ -17,6 +19,8 @@ import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
  * @property checkRunnerToken Checks a runner token before its call's body is read (S2-46).
  * @property authenticateRunner Reads the cloud session of a runner's current execution.
  * @property openRunnerLaunch Opens a cloud session's launch.
+ * @property actors Reads an agent token's launch ([dev.ostrom.server.launches.infrastructure.LaunchGateActors]).
+ * @property endLaunch Ends a launch.
  */
 data class LaunchesRoutesDependencies(
     val launchers: LauncherResolver,
@@ -25,4 +29,6 @@ data class LaunchesRoutesDependencies(
     val checkRunnerToken: CheckRunnerTokenUseCase,
     val authenticateRunner: AuthenticateRunnerUseCase,
     val openRunnerLaunch: OpenRunnerLaunchUseCase,
+    val actors: GateActorResolver,
+    val endLaunch: EndLaunchUseCase,
 )

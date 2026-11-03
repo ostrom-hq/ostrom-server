@@ -38,7 +38,7 @@ enum class ActivityKind(val wire: String, val byAgent: Boolean) {
  *   or the id the source keeps when no login is known).
  * @property subject What it is about: the person who runs a session, the label of a gate, the id of a workflow.
  * @property outcome How a gate was decided: `approved` or `rejected`.
- * @property repo The repository, for a session.
+ * @property repo The repository (`owner/name`), for a session or a gate that has one.
  * @property costMicros What an ended session cost, as the server measured it.
  * @property sessionId The session, for a session item.
  * @property gateId The gate, for a gate item.

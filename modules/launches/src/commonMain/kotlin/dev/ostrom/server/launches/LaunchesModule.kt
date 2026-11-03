@@ -15,6 +15,8 @@ import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCaseImpl
+import dev.ostrom.server.launches.domain.usecases.EndLaunchUseCase
+import dev.ostrom.server.launches.domain.usecases.EndLaunchUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCaseImpl
@@ -43,8 +45,9 @@ import org.koin.dsl.module
  * sessions and compiler routes ([LaunchGateActors]), and those of the MCP relay, the inference gateway and the budgets
  * and the usage events ([LaunchRelayCallers]), so that an agent token reaches the organization's MCP servers, and the
  * agent token of the waits MCP server ([LaunchWaitAgents]), so that an agent asks a person. It also opens the launch of
- * a cloud session its runner asks for. Needs the identity, orgs, gates and runners modules; it binds the secrets
- * module's `CallerResolver` and the automations module's `WaitAgentResolver`, which those modules look up.
+ * a cloud session its runner asks for, and ends a launch when its own agent token asks (the end of `ostrom <agent>`).
+ * Needs the identity, orgs, gates and runners modules; it binds the secrets module's `CallerResolver` and the
+ * automations module's `WaitAgentResolver`, which those modules look up.
  */
 object LaunchesModule : ServerModule {
     override val name: String = "launches"
@@ -52,7 +55,7 @@ object LaunchesModule : ServerModule {
     override val koinModule: Module = module {
         single<LaunchesRepository> { PostgresLaunchesRepository(get()) }
         single<LauncherResolver> { IdentityLauncherResolver(get(), get(), get()) }
-        single<AgentTokenService> { IdentityAgentTokens(get()) }
+        single<AgentTokenService> { IdentityAgentTokens(get(), get()) }
         single<CloudExecutions> { RunnerCloudExecutions(get()) }
         single { LaunchAgents(get(), get(), get(), get()) }
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
@@ -62,7 +65,8 @@ object LaunchesModule : ServerModule {
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get(), get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }
         single<OpenRunnerLaunchUseCase> { OpenRunnerLaunchUseCaseImpl(get(), get()) }
-        single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get()) }
+        single<EndLaunchUseCase> { EndLaunchUseCaseImpl(get()) }
+        single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = LaunchesMigrations

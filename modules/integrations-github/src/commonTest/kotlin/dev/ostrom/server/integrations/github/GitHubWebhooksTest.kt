@@ -15,6 +15,7 @@ import dev.ostrom.server.integrations.github.domain.InstallationNotYoursExceptio
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
 import dev.ostrom.server.integrations.github.domain.WebhookOutcome
 import dev.ostrom.server.integrations.github.domain.installPage
+import dev.ostrom.server.integrations.github.infrastructure.IdentityGitHubAccounts
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.logging.LogLevel
@@ -47,6 +48,7 @@ class GitHubWebhooksTest {
         GitHubGateChecks(repository, api, "https://console.example", clock),
         logger,
         clock,
+        IdentityGitHubAccounts(LinkedGitHubUsers(mapOf(7L to "dev"))),
     )
     private var delivered = 0
 
@@ -54,10 +56,15 @@ class GitHubWebhooksTest {
     private suspend fun webhooks(event: String?, body: String) =
         handler(event, "0000-${(++delivered).toString().padStart(4, '0')}", body)
 
-    private fun pull(action: String, number: Int = 6, base: String = "main", state: String = "open") =
-        """{"action":"$action","installation":{"id":42},"repository":{"full_name":"acme/api"},""" +
-            """"pull_request":{"number":$number,"state":"$state","base":{"ref":"$base"},"user":{"login":"dev"},""" +
-            """"head":{"sha":"$SHA"}}}"""
+    private fun pull(
+        action: String,
+        number: Int = 6,
+        base: String = "main",
+        state: String = "open",
+        user: String = """{"login":"dev"}""",
+    ) = """{"action":"$action","installation":{"id":42},"repository":{"full_name":"acme/api"},""" +
+        """"pull_request":{"number":$number,"state":"$state","base":{"ref":"$base"},"user":$user,""" +
+        """"head":{"sha":"$SHA"}}}"""
 
     @Test
     fun anOpenedPullRequestAsksTheGateOfItsMergeAndPublishesTheCheck() = runTest {
@@ -73,6 +80,16 @@ class GitHubWebhooksTest {
 
         assertEquals(WebhookOutcome.CHECKED, webhooks("pull_request", pull("synchronize", base = "develop")))
         assertEquals("merge", asked.last().second.actionClass)
+    }
+
+    // G1: the author is named as their approvers are, by the Ostrom login linked to their GitHub account, so that
+    // the gate never counts them among those who may say yes; a GitHub user linked to nobody keeps their login.
+    @Test
+    fun theAuthorIsTheOstromPersonLinkedToTheirGitHubAccount() = runTest {
+        repository.saveInstallation(GitHubInstallation(ORG, 42, "acme"), NOW)
+        webhooks("pull_request", pull("opened", user = """{"login":"Dev-On-GitHub","id":7}"""))
+        webhooks("pull_request", pull("synchronize", user = """{"login":"someone","id":8}"""))
+        assertEquals(listOf("dev", "someone"), asked.map { it.first.personId })
     }
 
     @Test
