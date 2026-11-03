@@ -49,9 +49,20 @@ class ReadMeasure(
         statements.forEach { appendLine("-- ${it.sql}") }
         plans.forEach { appendLine(it).appendLine() }
     }
+}
 
-    private companion object {
-        const val P50 = 0.5
-        const val P95 = 0.95
-    }
+private const val P50 = 0.5
+private const val P95 = 0.95
+
+/**
+ * The trial a measure keeps out of several timings of the same replays: the one whose p95 is their median. On a CI
+ * runner shared with the other modules' tests, one trial slowed by their load neither breaks the budget nor, as the
+ * best one would, hides a slow route (orchestrator, 03/11/2026: a 73 ms p95 of OrgsReadsBenchTest on server#271).
+ *
+ * @param trials The database times of each trial.
+ * @return The median trial, sorted.
+ */
+internal fun medianTrial(trials: List<List<Duration>>): List<Duration> {
+    val sorted = trials.map { it.sorted() }.sortedBy { it[ceil(P95 * it.size).toInt() - 1] }
+    return sorted[sorted.size / 2]
 }
