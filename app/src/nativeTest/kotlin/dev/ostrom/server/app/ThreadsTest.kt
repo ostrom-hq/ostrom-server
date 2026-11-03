@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class, NativeRuntimeApi::class)
 
 package dev.ostrom.server.app
 
@@ -22,7 +22,9 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.toKString
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
@@ -32,6 +34,28 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readString
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.convert
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.readBytes
+import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.sizeOf
+import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.newFixedThreadPoolContext
+import platform.posix.AF_INET
+import platform.posix.SOCK_STREAM
+import platform.posix.SOL_SOCKET
+import platform.posix.SO_LINGER
+import platform.posix.close
+import platform.posix.connect
+import platform.posix.inet_addr
+import platform.posix.linger
+import platform.posix.recv
+import platform.posix.send
+import platform.posix.setsockopt
+import platform.posix.sockaddr_in
+import platform.posix.socket
 import platform.posix.closedir
 import platform.posix.fclose
 import platform.posix.fgets
@@ -43,6 +67,8 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
+import kotlin.native.runtime.GC
+import kotlin.native.runtime.NativeRuntimeApi
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -62,7 +88,11 @@ class ThreadsTest {
      */
     @Test
     fun streamsAndWaitsCutByTheirClientsLeaveNoThreadBehind() = runBlocking {
-        val base = threadCount() ?: return@runBlocking // No /proc: macOS.
+        if (threadCount() == null) return@runBlocking // No /proc: macOS.
+        // The clients that reset their connection block a thread each while they wait: their own, started up front.
+        val resetting = newFixedThreadPoolContext(RESET_CLIENTS, "client")
+        coroutineScope { repeat(RESET_CLIENTS) { launch(resetting) { usleep(HOLD_MICROS) } } }
+        val base = threadCount()!!
         val open = AtomicInt(0)
         val server = serverEngine(port = 0, host = LOOPBACK) {
             routing {
@@ -99,6 +129,7 @@ class ThreadsTest {
                 coroutineScope {
                     repeat(PER_KIND) {
                         launch { exchange(selector, port, "/stream") { it == ": connected" } }
+                        launch(resetting) { streamThenReset(port) }
                         launch { exchange(selector, port, "/wait") { false } }
                         launch { exchange(selector, port, "/quick", close = true) { false } }
                     }
@@ -111,6 +142,7 @@ class ThreadsTest {
         } finally {
             selector.close()
             server.stop(0, STOP_TIMEOUT_MILLIS)
+            resetting.close()
         }
         val kinds = namePools()
         assertTrue(
@@ -122,6 +154,24 @@ class ThreadsTest {
             growth <= TOLERANCE,
             "threads after each round: $counts (+$growth past the first round); by pool: $kinds",
         )
+    }
+
+    /** Diagnostic: the same rounds while the collector pauses the threads that allocate past a small target. */
+    @Test
+    fun underATightHeap() {
+        val target = GC.targetHeapBytes
+        val max = GC.maxHeapBytes
+        val pause = GC.pauseOnTargetHeapOverflow
+        try {
+            GC.collect()
+            GC.targetHeapBytes = 48L shl 20
+            GC.pauseOnTargetHeapOverflow = true
+            streamsAndWaitsCutByTheirClientsLeaveNoThreadBehind()
+        } finally {
+            GC.pauseOnTargetHeapOverflow = pause
+            GC.maxHeapBytes = max
+            GC.targetHeapBytes = target
+        }
     }
 
     /** Sends GET [path], reads until [until] matches a line (or the whole answer with [close]), then hangs up. */
@@ -150,6 +200,39 @@ class ThreadsTest {
             }
         } finally {
             socket.close()
+        }
+    }
+
+    /**
+     * Opens GET /stream on a plain socket, waits for `: connected`, then resets the connection (SO_LINGER 0, so close
+     * sends a RST, as a client that crashes or a proxy that drops it), rather than closing it cleanly.
+     */
+    private fun streamThenReset(port: Int) = memScoped {
+        val fd = socket(AF_INET, SOCK_STREAM, 0)
+        check(fd >= 0) { "no socket" }
+        try {
+            val address = alloc<sockaddr_in>().apply {
+                sin_family = AF_INET.convert()
+                sin_port = ((port and BYTE) shl BITS or (port shr BITS and BYTE)).convert()
+                sin_addr.s_addr = inet_addr(LOOPBACK)
+            }
+            check(connect(fd, address.ptr.reinterpret(), sizeOf<sockaddr_in>().convert()) == 0) { "no connection" }
+            val request = "GET /stream HTTP/1.1\r\nHost: t\r\n\r\n".encodeToByteArray()
+            request.usePinned { send(fd, it.addressOf(0), request.size.convert(), 0) }
+            val buffer = allocArray<ByteVar>(BUFFER)
+            val seen = StringBuilder()
+            var read = recv(fd, buffer, BUFFER.convert(), 0)
+            while (read > 0 && ": connected" !in seen) {
+                seen.append(buffer.readBytes(read.toInt()).decodeToString())
+                if (": connected" !in seen) read = recv(fd, buffer, BUFFER.convert(), 0)
+            }
+            val reset = alloc<linger>().apply {
+                l_onoff = 1
+                l_linger = 0
+            }
+            setsockopt(fd, SOL_SOCKET, SO_LINGER, reset.ptr, sizeOf<linger>().convert())
+        } finally {
+            close(fd)
         }
     }
 
@@ -215,6 +298,9 @@ class ThreadsTest {
         const val ROUNDS = 4
         const val PER_KIND = 100
         const val TOLERANCE = 8
+        const val RESET_CLIENTS = 16
+        const val BYTE = 0xff
+        const val BITS = 8
 
         // The connections' pool (8 by default), and Dispatchers.Default, whose threads may start with the first call.
         const val SERVER_THREADS = 8 + 4
