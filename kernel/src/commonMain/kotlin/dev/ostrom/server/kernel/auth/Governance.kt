@@ -53,7 +53,9 @@ fun AuthenticatedPrincipal.governs(scope: String): Boolean = kind == PrincipalKi
  * Whether a governance write of this credential waits for an owner or an admin to confirm it on the console (audit CLI
  * H1, decision of 02/11/2026): a person's API token, the CLI's (elevated by `ostrom login --admin` or not) or a
  * personal one. An agent runs on the developer's machine and can present any of them, so none writes the governance
- * itself; it opens a [GovernanceConfirmations] request. A browser session writes at once.
+ * itself; it opens a [GovernanceConfirmations] request. A browser session writes at once. The writes on the members
+ * (a role, a removal, an invitation) are held the same way when a token makes them with `orgs:write` (contract audit 2,
+ * F1).
  */
 val AuthenticatedPrincipal.confirmsByConsole: Boolean
     get() = kind == PrincipalKind.USER && channel == PrincipalChannel.API_TOKEN
@@ -86,7 +88,7 @@ data class GovernancePreview(val summary: String, val before: JsonElement?, val 
 data class GovernanceConfirmer(val principal: AuthenticatedPrincipal, val member: OrgPrincipal)
 
 /**
- * The governance writes one module owns (rules, workflows, model policy): it previews them when a token asks, and makes
+ * The governance writes one module owns (rules, workflows, model policy, members): it previews them when a token asks, and makes
  * them once an owner or an admin confirmed. Each module binds one, named after itself.
  */
 interface GovernanceChange {
@@ -124,7 +126,7 @@ interface GovernanceChange {
  *
  * @property principal The token's principal.
  * @property orgId The organization the route resolved.
- * @property scope The governance scope the write uses ([GovernanceScopes]).
+ * @property scope The scope the write uses: one of [GovernanceScopes], or `orgs:write` for the members.
  * @property method The request's method.
  * @property path The request's path.
  * @property write The write itself.

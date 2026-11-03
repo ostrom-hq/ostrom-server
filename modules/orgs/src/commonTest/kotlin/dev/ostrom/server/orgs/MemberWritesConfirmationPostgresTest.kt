@@ -202,7 +202,12 @@ class MemberWritesConfirmationPostgresTest {
             val noScope = client.delete("/api/v1/orgs/acme/members/bob") { bearerAuth(readOnly) }
             assertEquals(HttpStatusCode.Forbidden, noScope.status)
             // Another organization answers 404, as if it did not exist.
-            val elsewhere = client.delete("/api/v1/orgs/globex/members/bob") { bearerAuth(team.token) }
+            val carl = signIn("carl")
+            client.post("/api/v1/orgs") {
+                session(carl)
+                json(CreateOrgRequest("Globex", null))
+            }
+            val elsewhere = client.delete("/api/v1/orgs/globex/members/carl") { bearerAuth(team.token) }
             assertEquals(HttpStatusCode.NotFound, elsewhere.status)
             val badRole = client.patch("/api/v1/orgs/acme/members/bob") {
                 bearerAuth(team.token)

@@ -3,10 +3,13 @@ package dev.ostrom.server.orgs.presentation
 
 import dev.ostrom.server.identity.domain.isBrowserSession
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.confirmsByConsole
+import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
@@ -118,16 +121,18 @@ private fun Route.memberRoutes(dependencies: OrgsRoutesDependencies) =
         }
         patch<OrgsApi.Org.Members.Login, UpdateMemberRequest> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
-            call.requireRecentSignIn("change a member's role")
-            call.respond(
-                members
-                    .changeRole(orgId, userId, params.login, roleOf(request.role))
-                    .toMemberResponse()
-            )
+            val role = roleOf(request.role)
+            val held = call.heldForConsole(orgId, "change a member's role") {
+                OrgsGovernanceChange.role(params.login, role)
+            }
+            if (held) return@patch
+            call.respond(members.changeRole(orgId, userId, params.login, role).toMemberResponse())
         }
         delete<OrgsApi.Org.Members.Login> { params ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
-            call.requireRecentSignIn("remove a member")
+            if (call.heldForConsole(orgId, "remove a member") { OrgsGovernanceChange.removal(params.login) }) {
+                return@delete
+            }
             members.remove(orgId, userId, params.login)
             call.respond(HttpStatusCode.NoContent)
         }
@@ -137,8 +142,6 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
     with(dependencies) {
         post<OrgsApi.Org.Members.Invites, InviteRequestBody> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
-            // An invitation adds a member, with any role: the same fresh sign-in as changing one.
-            call.requireRecentSignIn("invite a member")
             val invites =
                 request.invites.map { invite ->
                     val email =
@@ -146,6 +149,10 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
                             ?: throw InvalidOrgRequestException("Each invite needs an email.")
                     InviteRequest(email, roleOf(invite["role"] ?: "member"))
                 }
+            // An invitation adds a member, with any role: held like a role change, or the same fresh sign-in.
+            if (call.heldForConsole(orgId, "invite a member") { OrgsGovernanceChange.invites(invites) }) {
+                return@post
+            }
             call.respond(InvitedResponse(invitations.byEmail(orgId, userId, invites)))
         }
         get<OrgsApi.Org.Invitations> { params ->
@@ -158,8 +165,11 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
         }
         post<OrgsApi.Org.Invitations.Links, CreateLinkRequest> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
-            call.requireRecentSignIn("invite a member")
-            val issued = invitations.link(orgId, userId, roleOf(request.role), request.maxUses)
+            val role = roleOf(request.role)
+            if (call.heldForConsole(orgId, "invite a member") { OrgsGovernanceChange.link(role, request.maxUses) }) {
+                return@post
+            }
+            val issued = invitations.link(orgId, userId, role, request.maxUses)
             call.respond(
                 HttpStatusCode.Created,
                 InvitationLinkResponse(issued.invitation.toInvitationResponse(), issued.url),
@@ -175,6 +185,25 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
             call.respond(HttpStatusCode.NoContent)
         }
     }
+
+/**
+ * Holds the write [write] builds for a confirmation on the console when a person's API token asks for it (contract
+ * audit 2, F1): the 202 is answered and nothing is written. From the console, asks instead for a sign-in of less than
+ * 5 minutes, and the route writes at once.
+ *
+ * @param orgId The organization the route resolved.
+ * @param action What the write does, for the step-up's message.
+ * @param write The held write, built only when it is held.
+ * @return Whether it was held: the route then answers nothing more.
+ */
+private suspend fun ApplicationCall.heldForConsole(orgId: Uuid, action: String, write: () -> GovernanceWrite): Boolean {
+    if (requirePrincipal().confirmsByConsole) {
+        holdForConfirmation(orgId, ORGS_WRITE, write())
+        return true
+    }
+    requireRecentSignIn(action)
+    return false
+}
 
 /**
  * Resolves the caller as a member of the organization [ref] names, with [scope]; the token's
@@ -249,7 +278,7 @@ private fun Membership.toOrgResponse() =
         org.timeZone,
     )
 
-private fun MemberProfile.toMemberResponse() =
+internal fun MemberProfile.toMemberResponse() =
     MemberResponse(
         member.id.toString(),
         login,
@@ -260,7 +289,7 @@ private fun MemberProfile.toMemberResponse() =
         member.joinedAt.toString(),
     )
 
-private fun Invitation.toInvitationResponse() =
+internal fun Invitation.toInvitationResponse() =
     InvitationResponse(
         id.toString(),
         email,
