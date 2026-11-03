@@ -12,7 +12,9 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
+import dev.ostrom.server.gates.presentation.Approval
 import dev.ostrom.server.gates.presentation.ApprovalAnswer
+import dev.ostrom.server.gates.presentation.ApprovalViewResponse
 import dev.ostrom.server.gates.presentation.ApprovalsPage
 import dev.ostrom.server.gates.presentation.GateAskRequest
 import dev.ostrom.server.gates.presentation.GatePush as PushDto
@@ -44,7 +46,8 @@ import kotlin.uuid.Uuid
 
 /**
  * Another organization can neither reserve nor release a gate of the organization that asked it: every move answers
- * 404 and the gate keeps the state its own organization gave it (row-level security, the serving role).
+ * 404 and the gate keeps the state its own organization gave it (row-level security, the serving role). A gate's id
+ * reads its approval in its own organization only.
  */
 class GatesIsolationPostgresTest {
     private val orgA = Uuid.parse("0000000a-0000-0000-0000-000000000000")
@@ -165,5 +168,19 @@ class GatesIsolationPostgresTest {
             "A's yes is still held by A: B's release changed nothing",
         )
         assertEquals("approved", server.move(agentA, opened, "release").body<GateResponse>().gate.status)
+    }
+
+    // PARCOURS 3.3: a session links each of its gates to /yes/<gate id>; both reads of the console answer that id
+    // with the reader's own request, its id the request's, and another organization still reads a 404.
+    @Test
+    fun anApprovalIsReadByItsGatesIdToo() = gatesTest { server ->
+        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
+        val revB = server.call("user:a:rev-b", "/api/v1/approvals?limit=100").body<ApprovalsPage>().items
+            .first { it.group == opened.gate.id && it.requestedFrom == "rev-b" }
+        val byGate = "/api/v1/approvals/${opened.gate.id}"
+        assertEquals(revB, server.call("user:a:rev-b", byGate).body<Approval>())
+        assertEquals(revB.id, server.call("user:a:Rev-B", "$byGate/view").body<ApprovalViewResponse>().approval.id)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", byGate).status)
+        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "$byGate/view").status)
     }
 }

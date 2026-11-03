@@ -508,19 +508,6 @@ class GatesPostgresTest {
         assertEquals(HttpStatusCode.OK, server.call(agent, path).status, "the slots are given back")
     }
 
-    // PARCOURS 3.3: a session links each of its gates to /yes/<gate id>; both reads of the console answer that id
-    // with the reader's own request, its id the request's, and another organization still reads a 404.
-    @Test
-    fun anApprovalIsReadByItsGatesIdToo() = gatesTest { server ->
-        val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
-        val revB = server.approvalsOf(opened).first { it.requestedFrom == "rev-b" }
-        val byGate = "/api/v1/approvals/${opened.gate.id}"
-        assertEquals(revB, server.call("user:a:rev-b", byGate).body<Approval>())
-        assertEquals(revB.id, server.call("user:a:Rev-B", "$byGate/view").body<ApprovalViewResponse>().approval.id)
-        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", byGate).status)
-        assertEquals(HttpStatusCode.NotFound, server.call("user:b:rev-b", "$byGate/view").status)
-    }
-
     @Test
     fun anotherOrganizationSeesNothing() = gatesTest { server ->
         val opened = server.call("agent:a:$session", "/api/v1/gates", push()).body<GateResponse>()
