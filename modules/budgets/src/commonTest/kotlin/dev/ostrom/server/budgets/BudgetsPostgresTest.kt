@@ -109,7 +109,8 @@ class BudgetsPostgresTest {
         val repository = server.koin.get<BudgetsRepository>()
         val half = listOf(BudgetLimit(500_000))
         repository.replaceLimits(TestCallers.orgA, BudgetTarget.DefaultMember, half, TestCallers.epoch)
-        repository.putMemberLimit(TestCallers.orgA, member, 2_000_000, TestCallers.epoch)
+        val own = listOf(BudgetLimit(2_000_000))
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.Member(member), own, TestCallers.epoch)
         assertEquals(2_000_000, repository.limits(TestCallers.orgA, member).memberLimitMicros, "The override wins")
         server.spend(1_900_000, member)
         assertEquals(
@@ -320,8 +321,8 @@ class BudgetsPostgresTest {
                     "scope" to "member",
                     "period" to "day",
                     "action" to "warn",
-                    "limit_usd" to "1.0",
-                    "spent_usd" to "1.0",
+                    "limit_usd" to "1",
+                    "spent_usd" to "1",
                     "period_start" to "2026-10-30T00:00:00Z",
                 ),
                 line.details,
@@ -386,7 +387,7 @@ class BudgetsPostgresTest {
     @Test
     fun oneSubjectsLimitsAreReplacedWholeWithoutTheOthers() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<BudgetsRepository>()
-        repository.putOrgLimits(TestCallers.orgA, 5_000, 1_000, TestCallers.epoch)
+        repository.putOrgLimits(5_000, 1_000)
 
         val org = listOf(BudgetLimit(7_000), BudgetLimit(300, BudgetWindow.DAY, BudgetAction.WARN))
         repository.replaceLimits(TestCallers.orgA, BudgetTarget.Org, org, TestCallers.epoch)
@@ -396,24 +397,26 @@ class BudgetsPostgresTest {
         assertEquals(org to emptyList(), settings.org to settings.defaultMember)
         assertEquals(org, repository.limits(TestCallers.orgA, member).org, "The month's before the day's")
 
-        // A monthly write of the older routes stops again, and leaves the day as it is.
-        repository.putOrgLimits(TestCallers.orgA, 8_000, null, TestCallers.epoch)
         val day = org.last()
-        assertEquals(listOf(BudgetLimit(8_000), day), repository.limits(TestCallers.orgA, member).org)
         repository.replaceLimits(TestCallers.orgA, BudgetTarget.Org, listOf(day), TestCallers.epoch)
         assertEquals(listOf(day), repository.settings(TestCallers.orgA, maxOverrides = 0).org)
     }
 
     @Test
-    fun theOrgLimitsSurviveManyOverrides() = serverTest(modules, overrides) { server ->
+    fun theOrgLimitsSurviveManyOverridesAndNoMemberIsCutBetweenWindows() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<BudgetsRepository>()
-        repository.putOrgLimits(TestCallers.orgA, 5_000, 1_000, TestCallers.epoch)
-        repeat(3) { repository.putMemberLimit(TestCallers.orgA, Uuid.random(), 10, TestCallers.epoch) }
+        repository.putOrgLimits(5_000, 1_000)
+        val both = listOf(BudgetLimit(10), BudgetLimit(1, BudgetWindow.DAY))
+        repeat(3) {
+            repository.replaceLimits(TestCallers.orgA, BudgetTarget.Member(Uuid.random()), both, TestCallers.epoch)
+        }
 
         val settings = repository.settings(TestCallers.orgA, maxOverrides = 2)
         assertEquals(5_000L, settings.orgLimitMicros, "The org-wide rows are read before the overrides")
         assertEquals(1_000L, settings.defaultMemberLimitMicros)
-        assertEquals(2, settings.overrides.size)
+        val windows = settings.overrides.groupBy({ it.memberId }, { it.window })
+        assertEquals(2, windows.size, "Two members, not two rows")
+        assertEquals(setOf(BudgetWindow.MONTH, BudgetWindow.DAY), windows.values.map { it.toSet() }.toSet().single())
     }
 
     @Test
@@ -444,8 +447,9 @@ class BudgetsPostgresTest {
     @Test
     fun rowLevelSecurityConfinesEveryQueryToItsOrg() = serverTest(modules, overrides) { server ->
         val repository = server.koin.get<BudgetsRepository>()
-        repository.putOrgLimits(TestCallers.orgA, 5_000, 1_000, TestCallers.epoch)
-        repository.putMemberLimit(TestCallers.orgA, member, 10, TestCallers.epoch)
+        repository.putOrgLimits(5_000, 1_000)
+        val own = listOf(BudgetLimit(10))
+        repository.replaceLimits(TestCallers.orgA, BudgetTarget.Member(member), own, TestCallers.epoch)
         val alert = BudgetAlert(TestCallers.orgA, null, BudgetScope.ORG, 80, 1_000, 900, TestCallers.monthStart)
         repository.markAlerted(alert, TestCallers.epoch)
         for (table in listOf("budgets_limits", "budgets_alerts")) {
@@ -468,4 +472,10 @@ class BudgetsPostgresTest {
             server.driver.executeInOrg(TestCallers.orgB, foreign).getOrThrow()
         }
     }
+}
+
+/** The org's monthly limit and the default member's, both stopping, in org A. */
+private suspend fun BudgetsRepository.putOrgLimits(org: Long, defaultMember: Long) {
+    replaceLimits(TestCallers.orgA, BudgetTarget.Org, listOf(BudgetLimit(org)), TestCallers.epoch)
+    replaceLimits(TestCallers.orgA, BudgetTarget.DefaultMember, listOf(BudgetLimit(defaultMember)), TestCallers.epoch)
 }

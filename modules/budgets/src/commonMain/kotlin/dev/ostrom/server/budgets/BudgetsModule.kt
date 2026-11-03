@@ -7,18 +7,12 @@ import dev.ostrom.server.budgets.domain.BudgetDecisionCache
 import dev.ostrom.server.budgets.domain.BudgetGuard
 import dev.ostrom.server.budgets.domain.BudgetGuardImpl
 import dev.ostrom.server.budgets.domain.BudgetsRepository
-import dev.ostrom.server.budgets.domain.DeleteMemberBudgetUseCase
-import dev.ostrom.server.budgets.domain.DeleteMemberBudgetUseCaseImpl
 import dev.ostrom.server.budgets.domain.GetBudgetsUseCase
 import dev.ostrom.server.budgets.domain.GetBudgetsUseCaseImpl
 import dev.ostrom.server.budgets.domain.GetMyBudgetUseCase
 import dev.ostrom.server.budgets.domain.GetMyBudgetUseCaseImpl
 import dev.ostrom.server.budgets.domain.LedgerSpendGuard
 import dev.ostrom.server.budgets.domain.NoBudgetAlerts
-import dev.ostrom.server.budgets.domain.PutBudgetsUseCase
-import dev.ostrom.server.budgets.domain.PutBudgetsUseCaseImpl
-import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCase
-import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCaseImpl
 import dev.ostrom.server.budgets.domain.SetBudgetUseCase
 import dev.ostrom.server.budgets.domain.SetBudgetUseCaseImpl
 import dev.ostrom.server.budgets.infrastructure.BudgetsMigrations
@@ -56,9 +50,6 @@ object BudgetsModule : ServerModule {
         // The gateway asks it before each model call (GatewayModule falls back to allowing every call without it).
         single<SpendGuard> { LedgerSpendGuard(get(), get(), get(), get()) }
         single<GetBudgetsUseCase> { GetBudgetsUseCaseImpl(get(), get(), get()) }
-        single<PutBudgetsUseCase> { PutBudgetsUseCaseImpl(get(), get(), get(), get()) }
-        single<PutMemberBudgetUseCase> { PutMemberBudgetUseCaseImpl(get(), get(), get()) }
-        single<DeleteMemberBudgetUseCase> { DeleteMemberBudgetUseCaseImpl(get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
         single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get()) }
         single { BudgetsRoutesDependencies(callerResolver(), get(), get(), get(), get()) }

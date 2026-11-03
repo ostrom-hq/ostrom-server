@@ -63,8 +63,10 @@ class NoBudgetAlerts : BudgetAlerts {
  */
 class AuditedBudgetAlerts(private val alerts: BudgetAlerts, private val audit: OrgAuditTrail) : BudgetAlerts {
     override suspend fun publish(alert: BudgetAlert) {
-        alerts.publish(alert)
+        // The line first: if it cannot be written, nothing is sent and the guard tries both again later, rather than
+        // sending the alert again at every check while the audit log is down.
         if (alert.action == BudgetAction.WARN && alert.thresholdPercent == REACHED) audit.record(alert.exceeded())
+        alerts.publish(alert)
     }
 
     private fun BudgetAlert.exceeded(): OrgAuditRecord = OrgAuditRecord(
@@ -77,8 +79,8 @@ class AuditedBudgetAlerts(private val alerts: BudgetAlerts, private val audit: O
             "scope" to if (memberId == null) ORGANIZATION else "member",
             "period" to window.name.lowercase(),
             "action" to action.name.lowercase(),
-            "limit_usd" to limitMicros / MICROS_PER_USD,
-            "spent_usd" to spentMicros / MICROS_PER_USD,
+            "limit_usd" to fixedUsd(limitMicros),
+            "spent_usd" to fixedUsd(spentMicros),
             "period_start" to periodStart,
         ),
     )
@@ -89,4 +91,12 @@ val BUDGETS_ACTOR: AuthenticatedPrincipal = AuthenticatedPrincipal("budgets", Pr
 
 private const val REACHED = 100
 private const val ORGANIZATION = "organization"
-private const val MICROS_PER_USD = 1_000_000.0
+private const val MICROS_PER_USD = 1_000_000L
+private const val MICROS_DIGITS = 6
+
+/** USD millionths as a fixed-point amount, `12.345678` or `0.0005`: never a float's exponent nor its noise. */
+private fun fixedUsd(micros: Long): String {
+    val whole = micros / MICROS_PER_USD
+    val fraction = (micros % MICROS_PER_USD).toString().padStart(MICROS_DIGITS, '0').trimEnd('0')
+    return if (fraction.isEmpty()) whole.toString() else "$whole.$fraction"
+}

@@ -3,6 +3,8 @@ package dev.ostrom.server.reports
 
 import dev.ostrom.server.budgets.BudgetsModule
 import dev.ostrom.server.budgets.domain.BudgetGuard
+import dev.ostrom.server.budgets.domain.BudgetLimit
+import dev.ostrom.server.budgets.domain.BudgetTarget
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
@@ -89,7 +91,9 @@ class ReportsPostgresTest {
             ORG_B, Uuid.random(), "Merge B", "APPROVED", NOW - 45.minutes, CAROL.userId.toString(), NOW - 44.minutes,
         ))
         decision(SeedDecision(ORG_B, "db", "workflow", "b-flow", CAROL.userId.toString(), NOW - 43.minutes))
-        koin.get<BudgetsRepository>().putOrgLimits(ORG_A, 100_000_000, 20_000_000, NOW)
+        val budgets = koin.get<BudgetsRepository>()
+        budgets.replaceLimits(ORG_A, BudgetTarget.Org, listOf(BudgetLimit(100_000_000)), NOW)
+        budgets.replaceLimits(ORG_A, BudgetTarget.DefaultMember, listOf(BudgetLimit(20_000_000)), NOW)
     }
 
     private suspend fun TestServer.read(token: String?, path: String): HttpResponse =
@@ -273,12 +277,19 @@ class ReportsPostgresTest {
                 "VALUES (:org, :member, 'MEMBER', 'DAY', 'WARN', 400000, :at)",
             "org" to ORG_A, "member" to MIA.memberId, "at" to NOW,
         )
-        // The gateway's check before her next call is what sees it.
+        // And the organization's monthly 1 $ that stops: it spent 1.55 $ this month.
+        server.koin.get<BudgetsRepository>().replaceLimits(ORG_A, BudgetTarget.Org, listOf(BudgetLimit(1_000_000)), NOW)
+        // The gateway's check before her next call is what sees both.
         server.koin.get<BudgetGuard>().check(ORG_A, MIA.memberId)
 
         suspend fun exceeded(token: String) =
             server.read(token, "/api/v1/spending").body<JsonObject>().getValue("exceeded").jsonArray
-        val line = exceeded("olga").single().jsonObject
+        val (org, line) = exceeded("olga").map { it.jsonObject }
+        assertEquals("organization", org.getValue("scope").jsonPrimitive.content)
+        assertEquals(null, org["subject"], "The organization's own has no subject")
+        assertEquals("month", org.getValue("period").jsonPrimitive.content)
+        assertEquals(1.0, org.getValue("usd").jsonPrimitive.content.toDouble())
+        assertEquals("true", org.getValue("hardStop").jsonPrimitive.content)
         assertEquals("member", line.getValue("scope").jsonPrimitive.content)
         assertEquals(MIA.memberId.toString(), line.getValue("subject").jsonPrimitive.content)
         assertEquals("day", line.getValue("period").jsonPrimitive.content)
@@ -291,6 +302,6 @@ class ReportsPostgresTest {
         // Raised past what she spent, the limit is no longer exceeded.
         val raise = "UPDATE budgets_limits SET limit_micros = 600000 WHERE member_id = :member"
         server.sql(ORG_A, raise, "member" to MIA.memberId)
-        assertEquals(0, exceeded("olga").size)
+        assertEquals(listOf(org), exceeded("olga").map { it.jsonObject })
     }
 }

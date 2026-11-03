@@ -87,17 +87,6 @@ interface BudgetsRepository {
     suspend fun limits(orgId: Uuid, memberId: Uuid): BudgetLimits
 
     /**
-     * Replaces the org's monthly limit and the default member's together, both stopping the calls; a null removes all
-     * of that subject's limits.
-     *
-     * @param orgId The org.
-     * @param orgLimitMicros The org limit.
-     * @param defaultMemberLimitMicros The default member limit.
-     * @param at The time of the change.
-     */
-    suspend fun putOrgLimits(orgId: Uuid, orgLimitMicros: Long?, defaultMemberLimitMicros: Long?, at: Instant)
-
-    /**
      * Replaces a subject's limits whole, in one transaction: a window absent from [limits] has no limit afterwards.
      * Only that subject's rows are written, so that two admins changing two subjects at once keep both changes.
      *
@@ -107,28 +96,6 @@ interface BudgetsRepository {
      * @param at The time of the change.
      */
     suspend fun replaceLimits(orgId: Uuid, target: BudgetTarget, limits: List<BudgetLimit>, at: Instant)
-
-    /**
-     * Sets a member's own limit.
-     *
-     * @param orgId The org.
-     * @param memberId The member.
-     * @param limitMicros The limit.
-     * @param at The time of the change.
-     *
-     * @return The stored override.
-     */
-    suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget
-
-    /**
-     * Removes a member's own limit: the default applies again.
-     *
-     * @param orgId The org.
-     * @param memberId The member.
-     *
-     * @return True if there was one.
-     */
-    suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean
 
     /**
      * Records that an alert is being sent, once across replicas.

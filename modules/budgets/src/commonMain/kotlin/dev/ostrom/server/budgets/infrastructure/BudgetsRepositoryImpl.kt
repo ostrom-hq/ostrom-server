@@ -16,7 +16,6 @@ import dev.ostrom.server.secrets.infrastructure.executeInOrg
 import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.secrets.infrastructure.inTenant
 import io.github.smyrgeorge.sqlx4k.Driver
-import io.github.smyrgeorge.sqlx4k.QueryExecutor
 import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
@@ -32,23 +31,24 @@ import kotlin.uuid.Uuid
  */
 class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
     override suspend fun settings(orgId: Uuid, maxOverrides: Int): BudgetSettings {
-        // The org-wide rows (two windows each) sort first, so that the limit only ever cuts member overrides.
+        // The org-wide rows (two windows each) sort first, so that the limit only ever cuts member overrides; it
+        // reads one row more than every window of the members kept, so that a member is never cut between windows.
         val rows = driver.fetchInOrg(
             orgId,
             Statement.create(
                 "SELECT scope, member_id, period, action, limit_micros, updated_at FROM budgets_limits " +
                     "WHERE org_id = :org_id ORDER BY scope = 'MEMBER', scope, member_id, period DESC LIMIT :limit",
-            ).bind("org_id", orgId).bind("limit", maxOverrides + SHARED_ROWS),
+            ).bind("org_id", orgId).bind("limit", maxOverrides * WINDOWS + SHARED_ROWS),
         ).getOrThrow().map { it.toStored() }
+        val kept = rows.mapNotNull { it.memberId }.distinct().take(maxOverrides).toSet()
         return BudgetSettings(
             org = rows.filter { it.scope == ORG }.map { it.limit },
             defaultMember = rows.filter { it.scope == DEFAULT_MEMBER }.map { it.limit },
-            overrides = rows
-                .mapNotNull { row ->
-                    val limit = row.limit
-                    row.memberId?.let { MemberBudget(it, limit.micros, row.updatedAt, limit.window, limit.action) }
-                }
-                .take(maxOverrides),
+            overrides = rows.mapNotNull { row ->
+                val limit = row.limit
+                row.memberId?.takeIf { it in kept }
+                    ?.let { MemberBudget(it, limit.micros, row.updatedAt, limit.window, limit.action) }
+            },
         )
     }
 
@@ -64,18 +64,6 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
         fun of(scope: String) = rows.filter { it.scope == scope }.map { it.limit }
         // A member's own limits replace the default member limits whole.
         return BudgetLimits(org = of(ORG), member = of(MEMBER).ifEmpty { of(DEFAULT_MEMBER) })
-    }
-
-    override suspend fun putOrgLimits(
-        orgId: Uuid,
-        orgLimitMicros: Long?,
-        defaultMemberLimitMicros: Long?,
-        at: Instant,
-    ) {
-        driver.inTenant(orgId) {
-            putShared(orgId, ORG, orgLimitMicros, at)
-            putShared(orgId, DEFAULT_MEMBER, defaultMemberLimitMicros, at)
-        }
     }
 
     override suspend fun replaceLimits(orgId: Uuid, target: BudgetTarget, limits: List<BudgetLimit>, at: Instant) {
@@ -103,25 +91,6 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
             }
         }
     }
-
-    override suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget {
-        driver.executeInOrg(
-            orgId,
-            Statement.create(
-                "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) " +
-                    "VALUES (:org_id, :member_id, 'MEMBER', :limit, :at) " + UPSERT,
-            ).bind("org_id", orgId).bind("member_id", memberId).bind("limit", limitMicros).bind("at", at),
-        ).getOrThrow()
-        return MemberBudget(memberId, limitMicros, at)
-    }
-
-    override suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean = driver.executeInOrg(
-        orgId,
-        Statement.create(
-            "DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = 'MEMBER' AND member_id = :member_id",
-        )
-            .bind("org_id", orgId).bind("member_id", memberId),
-    ).getOrThrow() > 0L
 
     override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
         val statement = Statement.create(
@@ -182,24 +151,6 @@ private fun Statement.bindAlert(alert: BudgetAlert): Statement {
 private fun Statement.bindMember(memberId: Uuid?): Statement =
     if (memberId == null) bindNull("member_id", Uuid::class) else bind("member_id", memberId)
 
-private suspend fun QueryExecutor.putShared(orgId: Uuid, scope: String, limitMicros: Long?, at: Instant) {
-    if (limitMicros == null) {
-        execute(
-            Statement.create(
-                "DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = :scope AND member_id IS NULL",
-            )
-                .bind("org_id", orgId).bind("scope", scope),
-        ).getOrThrow()
-        return
-    }
-    execute(
-        Statement.create(
-            "INSERT INTO budgets_limits (org_id, member_id, scope, limit_micros, updated_at) " +
-                "VALUES (:org_id, NULL, :scope, :limit, :at) " + UPSERT,
-        ).bind("org_id", orgId).bind("scope", scope).bind("limit", limitMicros).bind("at", at),
-    ).getOrThrow()
-}
-
 private fun ResultSet.Row.toStored() = StoredLimit(
     scope = get("scope").asString(),
     memberId = get("member_id").asUuidOrNull(),
@@ -222,6 +173,9 @@ private const val MEMBER = "MEMBER"
 
 /** The org's and the default member's rows: two windows each. */
 private const val SHARED_ROWS = 4
+
+/** The windows a subject may have a limit in: a day and a month. */
+private const val WINDOWS = 2
 
 /** The rows that can apply to one member: the org's, the default's and their own, two windows each. */
 private const val LIMIT_ROWS = 6

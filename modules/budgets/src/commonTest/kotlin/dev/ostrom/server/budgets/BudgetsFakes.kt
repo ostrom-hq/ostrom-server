@@ -193,20 +193,6 @@ class InMemoryBudgetsRepository : BudgetsRepository {
         return BudgetLimits(org(orgId), member(orgId, memberId).ifEmpty { defaultMember(orgId) })
     }
 
-    override suspend fun putOrgLimits(
-        orgId: Uuid,
-        orgLimitMicros: Long?,
-        defaultMemberLimitMicros: Long?,
-        at: Instant,
-    ) {
-        if (orgLimitMicros == null) orgLimits.remove(orgId) else orgLimits[orgId] = orgLimitMicros
-        if (defaultMemberLimitMicros == null) {
-            defaultLimits.remove(orgId)
-        } else {
-            defaultLimits[orgId] = defaultMemberLimitMicros
-        }
-    }
-
     override suspend fun replaceLimits(orgId: Uuid, target: BudgetTarget, limits: List<BudgetLimit>, at: Instant) {
         val monthly = limits.firstOrNull { it.window == BudgetWindow.MONTH }
         val kept = when (target) {
@@ -233,12 +219,6 @@ class InMemoryBudgetsRepository : BudgetsRepository {
         if (stops == null) remove(orgId) else this[orgId] = stops.micros
         return stops
     }
-
-    override suspend fun putMemberLimit(orgId: Uuid, memberId: Uuid, limitMicros: Long, at: Instant): MemberBudget =
-        MemberBudget(memberId, limitMicros, at).also { memberLimits[orgId to memberId] = it }
-
-    override suspend fun deleteMemberLimit(orgId: Uuid, memberId: Uuid): Boolean =
-        memberLimits.remove(orgId to memberId) != null
 
     override suspend fun markAlerted(alert: BudgetAlert, at: Instant): Boolean {
         markFailure?.let { throw it }

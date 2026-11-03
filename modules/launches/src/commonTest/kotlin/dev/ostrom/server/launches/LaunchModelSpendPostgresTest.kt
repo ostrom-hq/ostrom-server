@@ -266,7 +266,9 @@ class LaunchModelSpendPostgresTest {
         with(server) {
             val bob = owner("bob")
             // A personal limit of 5 000 µ$: one call of the fake Anthropic bills 7 200.
-            koin.get<BudgetsRepository>().putMemberLimit(bob.orgId, bob.memberId, 5_000, now)
+            koin.get<BudgetsRepository>().replaceLimits(
+                bob.orgId, BudgetTarget.Member(bob.memberId), listOf(BudgetLimit(5_000)), now,
+            )
             val launch = send(bob.cliToken, "/api/v1/launches", """{"repo":"acme/api","agent":"claude-code"}""")
                 .body<LaunchResponse>()
             val session = """{"id":"s-3","agent":"claude-code","repo":"acme/api","launchId":"${launch.launchId}"}"""

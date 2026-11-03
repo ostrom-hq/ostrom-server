@@ -11,16 +11,12 @@ import dev.ostrom.server.budgets.domain.BudgetRules
 import dev.ostrom.server.budgets.domain.BudgetScope
 import dev.ostrom.server.budgets.domain.BudgetTarget
 import dev.ostrom.server.budgets.domain.BudgetWindow
-import dev.ostrom.server.budgets.domain.DeleteMemberBudgetUseCaseImpl
 import dev.ostrom.server.budgets.domain.GetBudgetsUseCaseImpl
 import dev.ostrom.server.budgets.domain.GetMyBudgetUseCaseImpl
 import dev.ostrom.server.budgets.domain.InvalidBudgetException
 import dev.ostrom.server.budgets.domain.MemberBudget
-import dev.ostrom.server.budgets.domain.MemberBudgetNotFoundException
 import dev.ostrom.server.budgets.domain.MyBudget
 import dev.ostrom.server.budgets.domain.NoBudgetAlerts
-import dev.ostrom.server.budgets.domain.PutBudgetsUseCaseImpl
-import dev.ostrom.server.budgets.domain.PutMemberBudgetUseCaseImpl
 import dev.ostrom.server.budgets.domain.SetBudgetUseCaseImpl
 import dev.ostrom.server.budgets.presentation.BudgetDto
 import dev.ostrom.server.budgets.presentation.toPage
@@ -38,62 +34,61 @@ class BudgetUseCasesTest {
     private val spend = FakeSpendReader()
     private val cache = RecordingCache()
     private val getBudgets = GetBudgetsUseCaseImpl(repository, spend, clock)
-    private val putBudgets = PutBudgetsUseCaseImpl(repository, cache, getBudgets, clock)
-    private val putMember = PutMemberBudgetUseCaseImpl(repository, cache, clock)
-    private val deleteMember = DeleteMemberBudgetUseCaseImpl(repository, cache)
+    private val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets)
     private val member = TestCallers.memberA.memberId
 
     @Test
     fun anAdminSetsTheOrgAndDefaultLimitsAndSeesTheMonthsSpend() = runTest {
         spend.spent[TestCallers.orgA to null] = 1_234
 
-        val overview = putBudgets(TestCallers.adminA, 50_000_000, 10_000_000)
+        set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(50_000_000)))
+        val overview = set(TestCallers.adminA, BudgetTarget.DefaultMember, listOf(BudgetLimit(10_000_000)))
 
         assertEquals(50_000_000L, overview.settings.orgLimitMicros)
         assertEquals(10_000_000L, overview.settings.defaultMemberLimitMicros)
         assertEquals(1_234L, overview.orgSpentMicros)
         assertEquals(BudgetPeriod(TestCallers.monthStart, TestCallers.nextMonth), overview.period)
-        assertEquals(listOf(TestCallers.orgA), cache.invalidated, "The guard forgets the old limits")
+        assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated, "The guard forgets the old limits")
 
-        val cleared = putBudgets(TestCallers.adminA, null, null)
+        set(TestCallers.adminA, BudgetTarget.Org, emptyList())
+        val cleared = set(TestCallers.adminA, BudgetTarget.DefaultMember, emptyList())
         assertEquals(null, cleared.settings.orgLimitMicros)
         assertEquals(null, cleared.settings.defaultMemberLimitMicros)
     }
 
     @Test
     fun limitsAreZeroToOneBillionDollars() = runTest {
-        assertFailsWith<InvalidBudgetException> { putBudgets(TestCallers.adminA, -1, null) }
+        assertFailsWith<InvalidBudgetException> { set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(-1))) }
         assertFailsWith<InvalidBudgetException> {
-            putBudgets(
-                TestCallers.adminA,
-                null,
-                BudgetRules.MAX_LIMIT_MICROS + 1,
-            )
+            set(TestCallers.adminA, BudgetTarget.DefaultMember, listOf(BudgetLimit(BudgetRules.MAX_LIMIT_MICROS + 1)))
         }
-        assertFailsWith<InvalidBudgetException> { putMember(TestCallers.adminA, member, -5) }
-        assertEquals(0L, putBudgets(TestCallers.adminA, 0, BudgetRules.MAX_LIMIT_MICROS).settings.orgLimitMicros)
+        assertFailsWith<InvalidBudgetException> {
+            set(TestCallers.adminA, BudgetTarget.Member(member), listOf(BudgetLimit(-5)))
+        }
+        assertEquals(0L, set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(0))).settings.orgLimitMicros)
+        val most = set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(BudgetRules.MAX_LIMIT_MICROS)))
+        assertEquals(BudgetRules.MAX_LIMIT_MICROS, most.settings.orgLimitMicros)
         assertEquals(emptyList(), repository.memberLimits.values.toList())
     }
 
     @Test
     fun onlyAdminsReadOrChangeTheBudgets() = runTest {
         assertFailsWith<AdminRequiredException> { getBudgets(TestCallers.memberA) }
-        assertFailsWith<AdminRequiredException> { putBudgets(TestCallers.memberA, 1, 1) }
-        assertFailsWith<AdminRequiredException> { putMember(TestCallers.memberA, member, 1) }
-        assertFailsWith<AdminRequiredException> { deleteMember(TestCallers.memberA, member) }
+        assertFailsWith<AdminRequiredException> {
+            set(TestCallers.memberA, BudgetTarget.Member(member), listOf(BudgetLimit(1)))
+        }
+        assertFailsWith<AdminRequiredException> { set(TestCallers.memberA, BudgetTarget.Member(member), emptyList()) }
         assertEquals(emptyList(), cache.invalidated)
     }
 
     @Test
     fun anAdminGivesAMemberTheirOwnLimitThenRemovesIt() = runTest {
-        val budget = putMember(TestCallers.adminA, member, 3_000_000)
+        val given = set(TestCallers.adminA, BudgetTarget.Member(member), listOf(BudgetLimit(3_000_000)))
 
-        assertEquals(MemberBudget(member, 3_000_000, TestCallers.epoch), budget)
-        assertEquals(listOf(budget), getBudgets(TestCallers.adminA).settings.overrides)
-        deleteMember(TestCallers.adminA, member)
+        assertEquals(listOf(MemberBudget(member, 3_000_000, TestCallers.epoch)), given.settings.overrides)
+        set(TestCallers.adminA, BudgetTarget.Member(member), emptyList())
         assertEquals(emptyList(), getBudgets(TestCallers.adminA).settings.overrides)
         assertEquals(listOf(TestCallers.orgA, TestCallers.orgA), cache.invalidated)
-        assertFailsWith<MemberBudgetNotFoundException> { deleteMember(TestCallers.adminA, member) }
     }
 
     @Test
@@ -148,8 +143,8 @@ class BudgetUseCasesTest {
 
     @Test
     fun theOverviewAndAnOverrideMapToTheApi() = runTest {
-        putMember(TestCallers.adminA, member, 7)
-        val page = putBudgets(TestCallers.adminA, 1_000_000, null).toPage()
+        set(TestCallers.adminA, BudgetTarget.Member(member), listOf(BudgetLimit(7)))
+        val page = set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(1_000_000))).toPage()
 
         assertEquals(
             listOf(BudgetDto("organization", usdPerMonth = 1.0), BudgetDto("member", member.toString(), 7e-6)),
@@ -162,7 +157,6 @@ class BudgetUseCasesTest {
 
     @Test
     fun aSubjectsLimitsListAsOneBudgetThatStopsOnlyIfTheyAllDo() = runTest {
-        val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets)
         val day = BudgetLimit(2_000_000, BudgetWindow.DAY)
         set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(10_000_000), day))
         set(TestCallers.adminA, BudgetTarget.DefaultMember, listOf(day.copy(action = BudgetAction.WARN)))
@@ -180,7 +174,6 @@ class BudgetUseCasesTest {
 
     @Test
     fun settingOneSubjectsLimitsLeavesTheOthersAsAnotherAdminJustSetThem() = runTest {
-        val set = SetBudgetUseCaseImpl(repository, cache, clock, getBudgets)
         repository.defaultLimits[TestCallers.orgA] = 5_000_000
         val org = set(TestCallers.adminA, BudgetTarget.Org, listOf(BudgetLimit(7_000_000)))
         assertEquals(7_000_000, org.settings.orgLimitMicros)
