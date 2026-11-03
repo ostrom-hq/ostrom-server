@@ -10,9 +10,10 @@ The rule is CONVENTIONS section 16.1 (ostrom-core); this page says how `ostrom-s
 - The **serving role** (`ostrom_app` in the Helm chart) owns nothing and is `NOSUPERUSER NOBYPASSRLS`: row-level
   security applies to it, `FORCE ROW LEVEL SECURITY` included. It can read and write rows, never alter a table, a
   policy or a function, nor create one.
-- **`ostrom_tenant`** (`NOLOGIN`, owner of nothing) is the role the `inTenant` of some modules (secrets, usage,
-  budgets, runners) switches to with `SET LOCAL ROLE`, until they move to the kernel's `withOrganization`, which needs
-  no switch. The serving role must be a member of it, and it needs `USAGE` on the schema; their migrations create it
+- **`ostrom_tenant`** (`NOLOGIN`, owner of nothing) is the role the kernel's `inOrg` switches to, and the `inTenant`
+  of some modules (secrets, usage, budgets, runners, artifacts, automations) through it: one statement,
+  `set_config('role', …, true)` with the organization's `set_config`, which is `SET LOCAL ROLE` in one round trip. The
+  kernel's `withOrganization` needs no switch. The serving role must be a member of it, and it needs `USAGE` on the schema; their migrations create it
   when missing, so the owner has `CREATEROLE` (since PostgreSQL 16, that only lets it manage the roles it administers).
   `ci/database-roles.sql` creates it beforehand, as a deployment must.
 - At start the server refuses to serve (`UnsafeDatabaseRoleException`, exit 1) when its role is a superuser, has
