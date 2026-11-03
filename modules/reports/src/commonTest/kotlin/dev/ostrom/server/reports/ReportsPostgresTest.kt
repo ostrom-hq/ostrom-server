@@ -292,6 +292,11 @@ class ReportsPostgresTest {
         assertEquals(listOf("session.started:s1"), olderThanEnd.items.map { it.id })
 
         assertEquals(HttpStatusCode.BadRequest, server.read("mia", "/api/v1/activity?before=yesterday").status)
+        // Instants the parser reads but PostgreSQL cannot store: a 400, never the database's 500.
+        for (at in listOf("+300000-01-01T00:00:00Z", "-300000-01-01T00:00:00Z")) {
+            val beyond = "$at~session.started:s1".encodeURLParameter()
+            assertEquals(HttpStatusCode.BadRequest, server.read("mia", "/api/v1/activity?before=$beyond").status, at)
+        }
         assertEquals(HttpStatusCode.Forbidden, server.read("spend", "/api/v1/activity").status)
         assertEquals(HttpStatusCode.Unauthorized, server.read(null, "/api/v1/activity").status)
         assertEquals(HttpStatusCode.NotFound, server.read("nobody", "/api/v1/activity").status)
