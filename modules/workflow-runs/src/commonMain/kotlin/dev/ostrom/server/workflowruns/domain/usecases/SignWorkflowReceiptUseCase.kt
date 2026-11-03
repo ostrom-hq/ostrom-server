@@ -120,6 +120,8 @@ class SignWorkflowReceiptUseCaseImpl(
                 },
             )
             put("initiator", session.dev)
+            session.launchId?.let { put("launchId", it) }
+            put("sessionId", session.id)
             put("agent", request.agent ?: session.agent)
             request.model?.let { put("model", it) }
             put("rules", JsonArray(emptyList()))
@@ -134,7 +136,7 @@ class SignWorkflowReceiptUseCaseImpl(
             put("nodes", nodesJson)
         }
         val receipt = sign(orgId, draft, "rcpt_workflow_${session.id}")
-        return VerifiedReceipt(receipt, verify.verify(receipt))
+        return VerifiedReceipt(receipt, verify.verify(orgId, receipt))
     }
 
     // The CI's run of each check node that ran, on the commit its last run reported, in the repository the session

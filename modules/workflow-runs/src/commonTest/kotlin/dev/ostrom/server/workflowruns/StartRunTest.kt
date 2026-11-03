@@ -9,6 +9,8 @@ import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.workflowruns.domain.models.InvalidRunException
+import dev.ostrom.server.workflowruns.domain.models.RunAudit
+import dev.ostrom.server.workflowruns.domain.models.RunGraph
 import dev.ostrom.server.workflowruns.domain.models.RunWorkflow
 import dev.ostrom.server.workflowruns.domain.models.RunWorkflowNotFoundException
 import dev.ostrom.server.workflowruns.domain.models.StartRunForbiddenException
@@ -33,9 +35,15 @@ class StartRunTest {
     private class InMemoryStartedRuns : StartedRunsRepository {
         val stored = mutableListOf<Triple<Uuid, WorkflowRun, Instant>>()
 
-        override suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant) {
+        val audits = mutableListOf<RunAudit>()
+
+        override suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph, audit: RunAudit) {
             stored += Triple(orgId, run, startedAt)
+            audits += audit
         }
+
+        override suspend fun find(orgId: Uuid, id: String): WorkflowRun? =
+            stored.firstOrNull { it.first == orgId && it.second.id == id }?.second
 
         override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = stored
             .filter { it.first == orgId && (query.workflowId == null || it.second.workflowId == query.workflowId) }

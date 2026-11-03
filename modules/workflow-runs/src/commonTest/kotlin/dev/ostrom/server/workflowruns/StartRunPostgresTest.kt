@@ -150,7 +150,7 @@ class StartRunPostgresTest {
             listOf(SHIP, "Ship $SHIP", version.toString(), "lead", "manual"),
             listOf(run.workflowId, run.workflowName, run.workflowVersion.toString(), run.startedBy, run.source),
         )
-        // No engine plays a run yet: it is queued, with nothing visited, no session, no end.
+        // The engine does not run in this test (RunEnginePostgresTest plays runs): queued, nothing visited, no end.
         assertEquals(RunStatus.QUEUED, run.status)
         assertEquals(emptyList(), run.visits)
         assertNull(run.sessionId)

@@ -15,12 +15,12 @@ kotlin {
             implementation(project(":modules:compiler"))
             implementation(project(":modules:launches"))
             implementation(project(":modules:runners"))
+            implementation(project(":modules:identity"))
             implementation(libs.ostrom.api)
         }
         commonTest.dependencies {
             implementation(project(":testing"))
             implementation(project(":modules:instance"))
-            implementation(project(":modules:identity"))
             implementation(project(":modules:orgs"))
         }
     }

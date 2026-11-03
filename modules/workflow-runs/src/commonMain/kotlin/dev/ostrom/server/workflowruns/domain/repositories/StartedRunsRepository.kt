@@ -3,6 +3,8 @@ package dev.ostrom.server.workflowruns.domain.repositories
 
 import dev.ostrom.core.api.models.RunStatus
 import dev.ostrom.core.api.models.WorkflowRun
+import dev.ostrom.server.workflowruns.domain.models.RunAudit
+import dev.ostrom.server.workflowruns.domain.models.RunGraph
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -24,13 +26,25 @@ data class RunsQuery(
 /** Storage of the runs of workflows, isolated by organization. */
 interface StartedRunsRepository {
     /**
-     * Stores a run as it starts.
+     * Stores a run as it starts, due at once for the engine, with its audit line in the same transaction.
      *
      * @param orgId The organization.
      * @param run The run.
      * @param startedAt When it started, to the precision the database keeps (the run says it to the millisecond).
+     * @param graph The graph it plays, copied from its workflow.
+     * @param audit Its audit line.
      */
-    suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant)
+    suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph, audit: RunAudit)
+
+    /**
+     * Reads a run.
+     *
+     * @param orgId The organization.
+     * @param id The run.
+     *
+     * @return The run, or null when the organization has none of that id.
+     */
+    suspend fun find(orgId: Uuid, id: String): WorkflowRun?
 
     /**
      * Lists runs, newest first.
