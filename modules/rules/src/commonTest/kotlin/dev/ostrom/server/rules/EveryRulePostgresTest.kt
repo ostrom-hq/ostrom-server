@@ -64,8 +64,8 @@ class EveryRulePostgresTest {
 
     private fun id(n: Int) = "rule_${n.toString().padStart(4, '0')}"
 
-    // 1 500 rules of org A, in groups that do not follow the ids; the first 1 200 and rule 1 400 carry an accepted gate,
-    // rule 1 450 a rejected one. Org B has a rule of its own.
+    // 1 500 rules of org A, in groups that do not follow the ids; the first 1 200 and rule 1 400 carry an accepted
+    // gate, rule 1 450 a rejected one. Org B has a rule of its own.
     private suspend fun seed(rules: PostgresRulesRepository) {
         rules.transaction(orgA) {
             (1..TOTAL).forEach { n ->
