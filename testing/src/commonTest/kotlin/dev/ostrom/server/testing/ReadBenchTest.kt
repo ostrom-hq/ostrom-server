@@ -14,6 +14,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The read bench: the server's pool records the statements of a request, on the pool and in its transactions, and only
@@ -28,7 +29,7 @@ class ReadBenchTest {
         assertTrue("Result" in measure.plans.single(), measure.plans.single())
         assertEquals(CONCURRENT_CALLS * 10, measure.calls)
         assertTrue(measure.p50 <= measure.p95 && measure.http.isPositive())
-        measure.assertWithinBudget(setOf("pg_class"))
+        measure.assertWithinBudget(setOf("pg_class"), maxQueries = 1)
         val report = writeReadReport("testing", listOf(measure))
         assertTrue("== GET /health" in report && "queries per call: 1" in report, report)
         val written = SystemFileSystem.source(Path("build/reports/perf/testing.txt")).buffered().use { it.readString() }
@@ -38,27 +39,52 @@ class ReadBenchTest {
     }
 
     @Test
-    fun aScanOrASlowPageBreaksTheBudget() {
+    fun aScanOrAnNPlusOneBreaksThePageButASlowRunnerOnlyPastTenTimes() {
         val plan = listOf("Seq Scan on big  (cost=0.00..1.00)")
         val scan = ReadMeasure("scan", emptyList(), plan, listOf(1.milliseconds), 3.milliseconds)
-        assertFails { scan.assertWithinBudget(setOf("big")) }
-        scan.assertWithinBudget(setOf("bi", "other"))
-        val slow = ReadMeasure("slow", emptyList(), emptyList(), listOf(READ_P95_BUDGET), 3.milliseconds)
-        assertFails { slow.assertWithinBudget(emptySet()) }
+        val scanned = assertFailsWith<AssertionError> { scan.assertWithinBudget(setOf("big"), maxQueries = 1) }
+        assertTrue("scans [big]" in scanned.message.orEmpty(), scanned.message)
+        scan.assertWithinBudget(setOf("bi", "other"), maxQueries = 1)
+        val perRow = ReadMeasure("per row", emptyList(), List(51) { "Index Scan" }, listOf(1.milliseconds), 1.seconds)
+        val nPlusOne = assertFailsWith<AssertionError> { perRow.assertWithinBudget(emptySet(), maxQueries = 2) }
+        assertTrue("sends 51 queries per call, over 2" in nPlusOne.message.orEmpty(), nPlusOne.message)
+        val slow = ReadMeasure("slow", emptyList(), emptyList(), listOf(READ_P95_BUDGET * BLOCK_FACTOR), 3.milliseconds)
+        slow.assertWithinBudget(emptySet(), maxQueries = 0)
+        val blocked = ReadMeasure("blocked", emptyList(), emptyList(), listOf(READ_P95_BUDGET * 11), 3.milliseconds)
+        val block = assertFailsWith<AssertionError> { blocked.assertWithinBudget(emptySet(), maxQueries = 0) }
+        assertTrue("blocked: database p95 550ms, over 10 times its budget of 50ms" in block.message.orEmpty())
     }
 
     @Test
-    fun aReportIsHeldAloneAndUnderACeilingAtLoad() {
+    fun aReportIsHeldByItsShapeAndItsTimesOnlyPastTenTimes() {
         val alone = { ms: Double -> listOf("Result\nPlanning Time: 0.000 ms\nExecution Time: $ms ms") }
-        val loaded = listOf(REPORT_P95_CEILING)
-        ReadMeasure("report", emptyList(), alone(25.0), loaded, 3.milliseconds).assertReportWithinBudget(emptySet())
-        val slowAlone = ReadMeasure("slow alone", emptyList(), alone(51.0), listOf(1.milliseconds), 3.milliseconds)
-        assertFails { slowAlone.assertReportWithinBudget(emptySet()) }
-        val overCeiling = ReadMeasure("over", emptyList(), alone(1.0), listOf(REPORT_P95_CEILING * 2), 3.milliseconds)
-        assertFails { overCeiling.assertReportWithinBudget(emptySet()) }
+        val loaded = listOf(REPORT_P95_CEILING * BLOCK_FACTOR)
+        val report = ReadMeasure("report", emptyList(), alone(500.0), loaded, 3.milliseconds)
+        report.assertReportWithinBudget(emptySet(), maxQueries = 1)
+        assertFails { report.assertReportWithinBudget(emptySet(), maxQueries = 0) }
+        val slowAlone = ReadMeasure("slow alone", emptyList(), alone(501.0), listOf(1.milliseconds), 3.milliseconds)
+        assertFails { slowAlone.assertReportWithinBudget(emptySet(), maxQueries = 1) }
+        val over = ReadMeasure("over", emptyList(), alone(1.0), listOf(REPORT_P95_CEILING * 11), 3.milliseconds)
+        assertFails { over.assertReportWithinBudget(emptySet(), maxQueries = 1) }
         val scan = ReadMeasure("scan", emptyList(), listOf("Seq Scan on big"), listOf(1.milliseconds), 3.milliseconds)
-        assertFails { scan.assertReportWithinBudget(setOf("big")) }
+        assertFails { scan.assertReportWithinBudget(setOf("big"), maxQueries = 1) }
     }
+
+    @Test
+    fun aTimeIsWrittenWithItsBudgetAndFailsOnlyPastTenTimesIt() {
+        val file = Path(TIME_BUDGETS_FILE)
+        val before = if (SystemFileSystem.exists(file)) read(file).lines().size else 1
+        checkTime("a measure", 120.milliseconds, 50.milliseconds)
+        assertEquals("a measure\t120.0\t50.0", read(file).lines()[before - 1])
+        val blocked = assertFailsWith<AssertionError> { checkTime("blocked", 501.milliseconds, 50.milliseconds) }
+        assertEquals("blocked: 501ms, over 10 times its budget of 50ms:\n", blocked.message)
+        val shown = assertFailsWith<AssertionError> { checkTime("shown", 2.seconds, 1.milliseconds) { "the plans" } }
+        assertTrue(shown.message.orEmpty().endsWith("the plans"), shown.message)
+        assertFailsWith<IllegalArgumentException> { checkTime("a\ttab", 1.milliseconds, 1.milliseconds) }
+        assertFailsWith<IllegalArgumentException> { checkTime("two\nlines", 1.milliseconds, 1.milliseconds) }
+    }
+
+    private fun read(file: Path): String = SystemFileSystem.source(file).buffered().use { it.readString() }
 
     @Test
     fun theMedianTrialIsKeptNotTheBestNorTheWorst() {

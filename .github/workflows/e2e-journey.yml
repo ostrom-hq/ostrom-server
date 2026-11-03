@@ -414,10 +414,15 @@ jobs:
           K6_SUMMARY_TREND_STATS: avg,min,med,max,p(90),p(95),p(99)
         run: |
           [ "$READY" = "true" ] || { echo "::error::the gate load setup failed: $REASON"; exit 1; }
-          # The race runs even when a threshold of the first run is crossed; the step fails if either fails.
+          # The race runs even when a threshold of the first run is crossed. k6's own exit is not the verdict: a
+          # threshold on a time (p95, p99) is reported in the summary and held nightly by ostrom-e2e's chart-load.yml,
+          # every other one (failed requests, checks, the race's counts) fails the step (scripts/k6-thresholds.py).
+          k6 run --summary-export "$RUNNER_TEMP/smoke-summary.json" load/smoke.js || echo "k6 smoke: exit $?"
+          k6 run --summary-export "$RUNNER_TEMP/race-summary.json" load/race.js || echo "k6 race: exit $?"
           rc=0
-          k6 run --summary-export "$RUNNER_TEMP/smoke-summary.json" load/smoke.js || rc=$?
-          k6 run --summary-export "$RUNNER_TEMP/race-summary.json" load/race.js || rc=$?
+          python3 ../server/scripts/k6-thresholds.py "$RUNNER_TEMP/smoke-summary.json" "$RUNNER_TEMP/race-summary.json" \
+            > "$RUNNER_TEMP/k6-thresholds.md" || rc=$?
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/k6-thresholds.md"
           exit "$rc"
       # E2E-LOAD-012 (the 13:5x P1: 100 requests without a credential killed the server at 512Mi). The container must
       # neither stop nor be OOM-killed, and its memory peak (its cgroup's memory.peak, the whole run) must stay under

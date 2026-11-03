@@ -79,7 +79,7 @@ class ReportsReadsBenchTest {
         ).map { (name, token, path) -> server.measureRead(name) { get(path) { bearerAuth(token) } } }
         writeReadReport("reports", measures)
         measures.forEach { measure ->
-            measure.assertReportWithinBudget(setOf("usage_events", "usage_daily", "sessions_sessions"))
+            measure.assertReportWithinBudget(setOf("usage_events", "usage_daily", "sessions_sessions"), MAX_QUERIES)
             // The ledger is added up before the joins: no step of the plan runs once per call of the window (the
             // session lookup by launch did before the sums), only once per session and day.
             val loops = measure.plans.flatMap { plan -> LOOPS.findAll(plan).map { it.groupValues[1].toInt() } }
@@ -90,6 +90,10 @@ class ReportsReadsBenchTest {
     private companion object {
         val LOOPS = Regex("loops=([0-9]+)")
         const val MAX_LOOPS = 10_000
+
+        // The queries of the busiest read today (a month's report, Build 41717982170):
+        // one more is an N+1, on any runner.
+        const val MAX_QUERIES = 3
         const val ORGS = 10
         const val USAGE_PER_ORG = 100_000
         const val SESSIONS_PER_ORG = 5_000

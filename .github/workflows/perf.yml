@@ -1,0 +1,83 @@
+# The time budgets of the server's benches, held where they mean something: the read benches, the load tests and the
+# timed tests (every checkTime of the testing module, TimeBudget.kt), run three times on the same runner, each measure's
+# median held to its budget (scripts/perf-budgets.py check). The Build (ci.yml) never fails on a time in milliseconds:
+# it holds what no runner's load changes (queries per call, plans, rows read), shows the times in its summary, and fails
+# on a time only past ten times its budget (orchestrator, JOURNAL 02:5x). This workflow is the one whose figures count.
+# The HTTP thresholds of k6 (p95, p99) are held the same way by ostrom-e2e's nightly chart-load.yml.
+name: Perf
+on:
+  workflow_dispatch:
+  # A change to this workflow, its filter or its script proves itself on its pull request.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: ['.github/workflows/perf.yml', 'ci/perf-benches.init.gradle.kts', 'scripts/perf-budgets.py']
+  schedule:
+    - cron: '41 3 * * *'
+permissions:
+  contents: read
+  packages: read # dev.ostrom artifacts of ostrom-core on GitHub Packages
+# One at a time: two runs of the benches on the same night would only measure each other's runners less often.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  KOTLIN_VERSION: '2.4.21'
+jobs:
+  benches:
+    name: Benches, three runs, medians against their budgets
+    timeout-minutes: 150
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ostrom
+          POSTGRES_PASSWORD: ostrom
+          POSTGRES_DB: ostrom_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ostrom" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OSTROM_TEST_DATABASE_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom_test
+      # A bench never passes by being skipped.
+      OSTROM_TEST_DATABASE_REQUIRED: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-setup
+        with:
+          core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: jvm
+      # Each run's measures are moved under a directory of their own: a test appends to its module's budgets.tsv.
+      - name: The benches, three times
+        run: |
+          status=0
+          for run in 1 2 3; do
+            ./gradlew --continue --init-script ci/perf-benches.init.gradle.kts jvmTest || status=1
+            find . -path '*/build/reports/perf/budgets.tsv' -print | while IFS= read -r file; do
+              mkdir -p "$RUNNER_TEMP/perf-runs/$run/$(dirname "$file")"
+              mv "$file" "$RUNNER_TEMP/perf-runs/$run/$file"
+            done
+          done
+          echo "status=$status" >> "$GITHUB_ENV"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Each measure's median against its budget
+        run: |
+          rc=0
+          python3 scripts/perf-budgets.py check "$RUNNER_TEMP/perf-runs/1" "$RUNNER_TEMP/perf-runs/2" \
+            "$RUNNER_TEMP/perf-runs/3" > "$RUNNER_TEMP/perf.md" || rc=$?
+          tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/perf.md"
+          [ "$status" = 0 ] || { echo "::error::a bench failed in at least one run (see the test reports)"; exit 1; }
+          exit "$rc"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: perf
+          path: |
+            ${{ runner.temp }}/perf-runs/**
+            **/build/reports/perf/**
+            **/build/reports/tests/**
+          retention-days: 14

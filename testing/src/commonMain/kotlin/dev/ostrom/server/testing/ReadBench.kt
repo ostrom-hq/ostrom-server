@@ -174,14 +174,28 @@ private fun SentStatement.copy(prefix: String): Statement {
 }
 
 /**
- * Fails unless this route keeps the budget of a read page: a database p95 under [READ_P95_BUDGET], and no sequential
- * scan of any of [largeTables], the organization tables the test filled past 10 000 rows.
+ * Fails unless this route keeps the shape of a read page: no sequential scan of any of [largeTables], the organization
+ * tables the test filled past 10 000 rows, and at most [maxQueries] queries per call (no N+1). Its database p95 is held
+ * to [READ_P95_BUDGET] by [checkTime]: written for the Build's summary and the Perf workflow, failing here only past
+ * [BLOCK_FACTOR] times the budget.
  *
  * @param largeTables The tables never to scan.
+ * @param maxQueries The queries one call sends at most, set at what it sends today.
  */
-fun ReadMeasure.assertWithinBudget(largeTables: Set<String>) {
+fun ReadMeasure.assertWithinBudget(largeTables: Set<String>, maxQueries: Int) {
     assertNoScan(largeTables)
-    assertTrue(p95 < READ_P95_BUDGET, "$name: database p95 $p95 over $READ_P95_BUDGET:\n${describe()}")
+    assertQueriesAtMost(maxQueries)
+    checkTime("$name: database p95", p95, READ_P95_BUDGET) { describe() }
+}
+
+/**
+ * Fails if one call of this route sends more than [maxQueries] queries: a query added per row of the page (N+1) fails
+ * on every runner, where a time only would on a quiet one.
+ *
+ * @param maxQueries The queries one call sends at most.
+ */
+fun ReadMeasure.assertQueriesAtMost(maxQueries: Int) {
+    assertTrue(queries <= maxQueries, "$name sends $queries queries per call, over $maxQueries:\n${describe()}")
 }
 
 /**
