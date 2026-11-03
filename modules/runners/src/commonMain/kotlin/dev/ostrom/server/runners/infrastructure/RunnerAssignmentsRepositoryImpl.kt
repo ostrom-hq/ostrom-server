@@ -112,7 +112,7 @@ class RunnerAssignmentsRepositoryImpl(private val driver: Driver) : RunnerAssign
     }
 
     override suspend fun hasWork(orgId: Uuid): Boolean = driver.inTenant(orgId) {
-        fetchAll(Statement.create(WORK_SQL).bind("org_id", orgId)).getOrThrow().isNotEmpty()
+        fetchAll(Statement.create(WORK_SQL).bind("org_id", orgId)).getOrThrow().firstOrNull() != null
     }
 
     private fun heldBy(orgId: Uuid, runnerId: Uuid) =

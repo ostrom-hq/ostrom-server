@@ -58,6 +58,8 @@ interface RegisteredRunnerHeartbeatUseCase {
  * @param signals Wakes a waiting heartbeat when work arrives in its organization.
  * @param planner What an execution is on the runner's Docker Engine.
  */
+// One port per owner: the runners, the executions, the sessions, the wake-ups, the plans.
+@Suppress("LongParameterList")
 class RegisteredRunnerHeartbeatUseCaseImpl(
     private val repository: RegisteredRunnersRepository,
     private val tokens: RunnerTokens,
