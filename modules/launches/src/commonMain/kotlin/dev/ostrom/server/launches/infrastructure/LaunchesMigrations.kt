@@ -117,4 +117,6 @@ val LaunchesMigrations: List<SchemaMigration> = listOf(
     ),
     SchemaMigration(4, "purge_launches", PURGE_LAUNCHES_SQL),
     SchemaMigration(5, "bound_launch_purge", BOUND_PURGE_SQL),
+    // A launch names the workflow it plays (`createLaunch.workflowId`): its model calls count under it.
+    SchemaMigration(6, "launch_workflow", "ALTER TABLE launches_launches ADD COLUMN workflow_id TEXT"),
 )

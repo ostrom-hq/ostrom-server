@@ -49,6 +49,12 @@ class OtherDeveloperForbiddenException : OstromException(
 class UnknownDeveloperException : OstromException(ErrorKind.NOT_FOUND, "Developer not found.")
 
 /**
+ * The workflow a launch names is not one of its organization's: answered like an unknown workflow, whether it exists in
+ * another organization or not.
+ */
+class LaunchWorkflowNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Workflow not found.")
+
+/**
  * The launch does not exist, or the caller is not its own agent token: answered the same, so that a credential
  * learns nothing about launches it does not hold.
  */

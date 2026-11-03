@@ -13,6 +13,7 @@ import dev.ostrom.server.receipts.domain.models.Verification
 import dev.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import dev.ostrom.server.receipts.domain.services.TrustedReceiptKeys
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.uuid.Uuid
 
 /** Reads a receipt of the caller's organization. */
@@ -83,13 +84,16 @@ interface VerifyReceiptUseCase {
     suspend operator fun invoke(orgId: Uuid, id: String): Verification
 
     /**
-     * Verifies a receipt as received, unknown fields included.
+     * Verifies a receipt as received, unknown fields included, for the caller's organization: a receipt whose signed
+     * body names another organization does not verify; one signed before receipts named their organization verifies
+     * by its signature, never bound to the caller's ([Verification.orgBound] false).
      *
+     * @param orgId The caller's organization.
      * @param receipt The receipt JSON.
      *
      * @return The outcome.
      */
-    suspend fun verify(receipt: JsonObject): Verification
+    suspend fun verify(orgId: Uuid, receipt: JsonObject): Verification
 }
 
 /**
@@ -104,20 +108,28 @@ class VerifyReceiptUseCaseImpl(
 ) : VerifyReceiptUseCase {
     override suspend fun invoke(orgId: Uuid, id: String): Verification {
         val stored = repository.get(orgId, id) ?: throw ReceiptNotFoundException()
-        return verify(stored.body)
+        return verify(orgId, stored.body)
     }
 
-    override suspend fun verify(receipt: JsonObject): Verification {
+    override suspend fun verify(orgId: Uuid, receipt: JsonObject): Verification {
         val trusted = keys.keys().map { ReceiptPublicKey.fromSpkiPem(it.publicKeyPem) }
         val outcome = ReceiptVerifierImpl(trusted).verify(receipt)
+        val named = receipt[ORG_ID]
+        val bound = named == JsonPrimitive(orgId.toString())
+        // Named, but not this organization (or not as a text): the signature holds, the receipt is someone else's.
+        val foreign = outcome.ok && named != null && !bound
+        val failure = (outcome as? ReceiptVerification.Failed)?.let { it.reason.message }
         return Verification(
-            ok = outcome.ok,
+            ok = outcome.ok && !foreign,
             digest = outcome.digest,
             kid = (outcome as? ReceiptVerification.Verified)?.kid,
-            reason = (outcome as? ReceiptVerification.Failed)?.let { it.reason.message },
+            reason = if (foreign) ANOTHER_ORGANIZATION else failure,
+            orgBound = outcome.ok && bound,
         )
     }
 }
+
+private const val ANOTHER_ORGANIZATION = "This receipt was signed for another organization."
 
 /** Lists the public keys receipts are verified against; public, so anyone can verify offline. */
 interface ListReceiptKeysUseCase {

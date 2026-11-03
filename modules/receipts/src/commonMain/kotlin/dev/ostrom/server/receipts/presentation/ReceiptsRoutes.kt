@@ -9,6 +9,7 @@ import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.receipts.domain.models.ReceiptQuery
+import dev.ostrom.server.receipts.domain.models.Verification
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.resources.get
 import io.ktor.server.response.respond
@@ -46,11 +47,13 @@ fun Route.receiptsRoutes(dependencies: ReceiptsRoutesDependencies, throttle: Rea
             }
             get<ReceiptsApi.Id.Verify> { params ->
                 val outcome = verifyReceipt(call.reader(orgs), params.parent.id)
-                call.respond(VerificationResponse(outcome.ok, outcome.digest, outcome.kid, outcome.reason))
+                call.respond(outcome.toResponse())
             }
         }
     }
 }
+
+private fun Verification.toResponse() = VerificationResponse(ok, digest, kid, reason, orgBound)
 
 // S2-47: a person with the receipts scope, then their organization.
 private suspend fun ApplicationCall.reader(orgs: PrincipalOrgResolver): Uuid {
