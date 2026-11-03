@@ -13,6 +13,7 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.infrastructure.PostgresGatesRepository
+import dev.ostrom.server.gates.presentation.ApprovalQueue
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
@@ -22,10 +23,14 @@ import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
+import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
+import io.ktor.http.isSuccess
 import org.koin.dsl.module
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
@@ -33,9 +38,10 @@ import kotlin.uuid.Uuid
 
 /**
  * `GET /api/v1/approvals/queue` on 10 organizations of 2 000 gates each, two approval requests per gate: the queue of
- * the approver of every gate (100 pending, the page's maximum) and of one of 20 reviewers (rev-1, who has pending
- * requests, so that the pending gates are read too). Each keeps the read budget (ReadBench.kt); its queries, plans
- * and p95 are written to `build/reports/perf/gates.txt`.
+ * the approver of every gate (100 pending, the page's maximum), of the busiest of 20 reviewers (rev-1, 100 pending)
+ * and of a reviewer with nothing waiting (rev-5). Each returns its pending requests, keeps the read budget
+ * (ReadBench.kt) and sends a handful of queries; its queries, plans and p95 are written to
+ * `build/reports/perf/gates.txt`.
  */
 class GatesReadsBenchTest {
     private val orgs = List(ORGS) { Uuid.fromLongs(0, it.toLong() + 1) }
@@ -83,12 +89,25 @@ class GatesReadsBenchTest {
             fixtures.execute("VACUUM ANALYZE $table").getOrThrow()
         }
 
-        val measures = listOf(
-            "GET /api/v1/approvals/queue (approver of every gate)" to OPS,
-            "GET /api/v1/approvals/queue (one reviewer of 20)" to "rev-1@acme.test",
-        ).map { (name, person) -> server.measureRead(name) { get("/api/v1/approvals/queue") { bearerAuth(person) } } }
+        // Who reads, and the pending requests their page shows. The pending gates are one in ten, and their first
+        // approver is rev-1 or rev-11: rev-1 is the busiest of the 20 reviewers, rev-5 has none waiting.
+        val readers = listOf(
+            Triple("approver of every gate", OPS, PENDING_PAGE),
+            Triple("rev-1, the busiest of 20 reviewers", "rev-1@acme.test", PENDING_PAGE),
+            Triple("rev-5, a reviewer with nothing waiting", "rev-5@acme.test", 0),
+        )
+        val measures = readers.map { (who, person, pending) ->
+            val response = server.client.get("/api/v1/approvals/queue") { bearerAuth(person) }
+            assertTrue(response.status.isSuccess(), "$who: ${response.status}")
+            assertEquals(pending, response.body<ApprovalQueue>().pending.size, who)
+            server.measureRead("GET /api/v1/approvals/queue ($who)") {
+                get("/api/v1/approvals/queue") { bearerAuth(person) }
+            }
+        }
         writeReadReport("gates", measures)
         measures.forEach { it.assertWithinBudget(setOf("gates_gates", "gates_requests")) }
+        // No N+1: a page of 100 requests sends a handful of queries, as a page of none does.
+        measures.forEach { assertTrue(it.queries <= MAX_QUERIES, it.describe()) }
     }
 
     // acme's gates, requests and session links copied into [org], ids renamed: one org written through the repository
@@ -137,6 +156,12 @@ class GatesReadsBenchTest {
     private companion object {
         const val ORGS = 10
         const val GATES_PER_ORG = 2_000
+
+        // The queue's page of pending requests (GetApprovalQueueUseCaseImpl).
+        const val PENDING_PAGE = 100
+
+        // Seven queries per read today (#206), one of margin.
+        const val MAX_QUERIES = 8
         const val KEYS = 300
         const val SESSIONS = 1_000
         const val APPROVERS = 20

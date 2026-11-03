@@ -174,4 +174,24 @@ class GatesCatalogTest {
         val web = GatesCatalog(listOf(wf), null).catalog("web")
         assertEquals(listOf("my-merge"), web.first { it.action.cls == "merge" }.action.patterns)
     }
+
+    @Test
+    fun aWorkflowLimitedToRepositoriesGatesThemOnlyAndNeverTheOrganization() {
+        // R6: a decided gate of a workflow limited to acme/docs neither gates acme/api nor adds its custom class there.
+        val custom = GateAction("db-drop", "Drop", listOf("\\bdrop\\b"), emptyList())
+        val docsOnly = workflow("docs-only", listOf(node("g", GATE, actions = listOf(action("merge"), custom))))
+        val catalogue = GatesCatalog.of(listOf(limited(docsOnly, "acme/docs", "acme/web-*")), emptyList(), "ops")
+
+        val docs = catalogue.catalog("acme/docs")
+        assertEquals("docs-only", docs.first { it.action.cls == "merge" }.gate?.workflowId)
+        assertTrue(docs.any { it.action.cls == "db-drop" })
+        val site = catalogue.catalog("ACME/web-site")
+        assertEquals("docs-only", site.first { it.action.cls == "merge" }.gate?.workflowId)
+        for (other in listOf("acme/api", null)) {
+            val catalog = catalogue.catalog(other)
+            assertNull(catalog.first { it.action.cls == "merge" }.gate, "not in the catalogue of $other")
+            assertFalse(catalog.any { it.action.cls == "db-drop" })
+        }
+        assertEquals(listOf("acme/docs", "acme/web-*"), catalogue.repositories())
+    }
 }

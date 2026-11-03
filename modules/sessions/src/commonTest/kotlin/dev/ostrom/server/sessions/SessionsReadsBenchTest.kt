@@ -13,10 +13,12 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.sessions.presentation.SessionsPage
 import dev.ostrom.server.testing.assertWithinBudget
 import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
+import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
 import org.koin.dsl.module
@@ -27,8 +29,9 @@ import kotlin.uuid.Uuid
 
 /**
  * The sessions' read routes on 50 000 segments of 10 organizations: the list (its first page, an older page, one
- * person's, a person with 5 segments, the open ones, one repository's) and one segment. Each keeps the read budget
- * (ReadBench.kt); its queries, plans and p95 are written to `build/reports/perf/sessions.txt`.
+ * person's, a person with 5 segments, the open ones, one repository's, a repository with 5 segments) and one segment.
+ * Each keeps the read budget (ReadBench.kt) and returns the segments it should; its queries, plans and p95 are
+ * written to `build/reports/perf/sessions.txt`.
  */
 class SessionsReadsBenchTest {
     private val orgs = List(ORGS) { Uuid.random() }
@@ -60,7 +63,8 @@ class SessionsReadsBenchTest {
     private fun sessionsOf(org: Uuid) =
         "INSERT INTO sessions_sessions (org_id, id, root_id, segment, launch_id, agent, dev, repo, started_at, " +
             "ended_at, last_seen_at, cost_usd) SELECT CAST('$org' AS uuid), 's' || i, 's' || i, 0, 'lch' || i, " +
-            "'claude-code', CASE WHEN i % 1000 = 0 THEN 'ada' ELSE 'dev' || (i % 30) END, 'acme/r' || (i % 20), " +
+            "'claude-code', CASE WHEN i % 1000 = 0 THEN 'ada' ELSE 'dev' || (i % 30) END, " +
+            "CASE WHEN i % 1000 = 1 THEN 'acme/rare' ELSE 'acme/r' || (i % 20) END, " +
             "now() - i * INTERVAL '10 minutes', CASE WHEN i % 50 <> 0 THEN now() - i * INTERVAL '10 minutes' + " +
             "INTERVAL '5 minutes' END, now() - i * INTERVAL '10 minutes', 0.5 " +
             "FROM generate_series(1, $SESSIONS_PER_ORG) AS i"
@@ -74,27 +78,48 @@ class SessionsReadsBenchTest {
         orgs.forEach { fixtures.execute(sessionsOf(it)).getOrThrow() }
         fixtures.execute("VACUUM ANALYZE sessions_sessions").getOrThrow()
 
-        val measures = listOf(
-            "GET /api/v1/sessions" to "/api/v1/sessions",
-            "GET /api/v1/sessions?before=s2500" to "/api/v1/sessions?before=s2500",
-            "GET /api/v1/sessions?dev=dev7 (167 of 5 000)" to "/api/v1/sessions?dev=dev7",
-            "GET /api/v1/sessions?dev=ada (5 of 5 000)" to "/api/v1/sessions?dev=ada",
-            "GET /api/v1/sessions?open=true (100 of 5 000)" to "/api/v1/sessions?open=true",
-            "GET /api/v1/sessions?repo=acme/r3" to "/api/v1/sessions?repo=acme/r3",
-            "GET /api/v1/sessions/{id}" to "/api/v1/sessions/s2500",
-        ).map { (name, path) -> server.measureRead(name) { get(path) { bearerAuth("lyes") } } }
+        val reads = listOf(
+            Read("/api/v1/sessions", "", PAGE),
+            Read("/api/v1/sessions?before=s2500", "", PAGE),
+            Read("/api/v1/sessions?dev=dev7", " (167 of 5 000)", PAGE, "sessions_by_dev"),
+            Read("/api/v1/sessions?dev=ada", " (5 of 5 000)", RARE, "sessions_by_dev"),
+            Read("/api/v1/sessions?open=true", " (100 of 5 000)", PAGE, "sessions_open"),
+            Read("/api/v1/sessions?repo=acme/r3", " (250 of 5 000)", PAGE),
+            // No index for the repository: its rarest value reads the organization's recent sessions.
+            Read("/api/v1/sessions?repo=acme/rare", " (5 of 5 000, no index)", RARE),
+            Read("/api/v1/sessions/s2500", " (one session)", null),
+        )
+        val measures = reads.map { read ->
+            server.measureRead("GET ${read.path}${read.note}") { get(read.path) { bearerAuth("lyes") } }
+        }
         writeReadReport("sessions", measures)
         measures.forEach { it.assertWithinBudget(setOf("sessions_sessions")) }
-        // No N+1: a page of 50 sends the queries of a page of 5. The filters read through their indexes (version 6).
-        val lists = measures.dropLast(1)
+        reads.filter { it.items != null }.forEach { read ->
+            val page = server.client.get(read.path) { bearerAuth("lyes") }.body<SessionsPage>()
+            assertEquals(read.items, page.items.size, read.path)
+        }
+        // No N+1: a page of 50 sends the queries of a page of 5.
+        val lists = reads.zip(measures).filter { (read, _) -> read.items != null }.map { it.second }
         assertEquals(1, lists.map { it.queries }.distinct().size, lists.joinToString("\n") { it.describe() })
-        listOf(3 to "sessions_by_dev", 4 to "sessions_open").forEach { (at, index) ->
-            assertTrue(measures[at].plans.any { index in it }, measures[at].describe())
+        reads.zip(measures).forEach { (read, measure) ->
+            read.index?.let { index -> assertTrue(measure.plans.any { index in it }, measure.describe()) }
         }
     }
+
+    /**
+     * A read of the bench.
+     *
+     * @property path The route and its filters.
+     * @property note What it reads, for the report.
+     * @property items The segments of its page; none for a single session.
+     * @property index The index its plan must name (SessionsMigrations version 6), if any.
+     */
+    private data class Read(val path: String, val note: String, val items: Int?, val index: String? = null)
 
     private companion object {
         const val ORGS = 10
         const val SESSIONS_PER_ORG = 5_000
+        const val PAGE = 50
+        const val RARE = 5
     }
 }
