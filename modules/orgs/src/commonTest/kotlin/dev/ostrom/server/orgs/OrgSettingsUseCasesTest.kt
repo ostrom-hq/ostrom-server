@@ -66,7 +66,7 @@ class OrgSettingsUseCasesTest {
     private val create =
         CreateOrgUseCaseImpl(world.orgs, world.people, world.seats, world.limiter, world.audit, world.clock)
     private val update = UpdateOrgUseCaseImpl(world.orgs, world.members, world.audit)
-    private val delete = DeleteOrgUseCaseImpl(world.orgs, world.members, world.audit, world.clock)
+    private val delete = DeleteOrgUseCaseImpl(world.orgs, world.members, world.clock)
     private val listener = RecordingListener()
     private val logs = RecordingLogger()
     private val settle = SettleOrgDeletionsUseCaseImpl(world.deletions, listOf(listener), world.clock, logs)

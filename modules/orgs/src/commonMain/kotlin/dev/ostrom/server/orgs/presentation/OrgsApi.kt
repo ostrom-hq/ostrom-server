@@ -120,7 +120,8 @@ class InvitationLinksApi {
  * Creates an organization.
  *
  * @property name The name.
- * @property slug The short name, or null to derive it from the name.
+ * @property slug The short name, or null to derive it from the name. One taken answers 409 `conflict`, whether a live
+ *   organization holds it or a deleted one in its 30 days of grace (it is freed when the deleted one is erased).
  */
 @Serializable data class CreateOrgRequest(val name: String, val slug: String? = null)
 

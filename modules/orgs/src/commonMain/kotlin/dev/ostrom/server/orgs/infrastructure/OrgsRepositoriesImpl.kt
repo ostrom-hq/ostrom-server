@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs.infrastructure
 
+import dev.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.orgs.domain.AlreadyMemberException
@@ -10,6 +11,7 @@ import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.orgs.domain.SlugTakenException
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -36,8 +38,12 @@ private const val LIVE_INVITATION =
  * [OrgsRepository] on PostgreSQL.
  *
  * @param driver The database.
+ * @param audit The identity module's audit log, which records a deletion in its transaction.
  */
-class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
+class OrgsRepositoryImpl(
+    private val driver: Driver,
+    private val audit: TransactionalAuditLog,
+) : OrgsRepository {
     override suspend fun create(
         org: Org,
         owner: Member,
@@ -131,36 +137,44 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
     override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
         val columns = listOfNotNull(name?.let { "name = :name" }, timeZone?.let { "time_zone = :zone" })
         if (columns.isEmpty()) return
+        // A live organization only: a change that races its deletion never rewrites the deleted or erased row.
         val statement =
-            Statement.create("UPDATE orgs_organizations SET ${columns.joinToString(", ")} WHERE id = :id")
+            Statement.create(
+                    "UPDATE orgs_organizations SET ${columns.joinToString(", ")} WHERE id = :id AND deleted_at IS NULL"
+                )
                 .bind("id", id)
         name?.let { statement.bind("name", it) }
         timeZone?.let { statement.bind("zone", it) }
         driver.inOrg(id) { execute(statement).getOrThrow() }
     }
 
-    override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
+    override suspend fun delete(id: Uuid, at: Instant, event: OrgEvent, purgeAfter: Instant): Boolean =
         driver.inOrg(id) {
-            execute(
-                    Statement.create("DELETE FROM orgs_invitations WHERE org_id = :id")
-                        .bind("id", id)
-                )
-                .getOrThrow()
-            execute(Statement.create("DELETE FROM orgs_members WHERE org_id = :id").bind("id", id))
-                .getOrThrow()
-            execute(
-                    Statement.create(
-                            "UPDATE orgs_organizations SET deleted_at = :at, purge_after = :purge, " +
-                                "free_claim = NULL WHERE id = :id"
-                        )
-                        .bind("at", at)
-                        .bind("purge", purgeAfter)
-                        .bind("id", id)
-                )
-                .getOrThrow()
+            // Only a live organization: a second deletion, run at the same time, waits for the first
+            // one's row, then finds it deleted and writes nothing.
+            val deleted =
+                execute(
+                        Statement.create(
+                                "UPDATE orgs_organizations SET deleted_at = :at, purge_after = :purge, " +
+                                    "free_claim = NULL WHERE id = :id AND deleted_at IS NULL"
+                            )
+                            .bind("at", at)
+                            .bind("purge", purgeAfter)
+                            .bind("id", id)
+                    )
+                    .getOrThrow() == 1L
+            if (deleted) {
+                execute(
+                        Statement.create("DELETE FROM orgs_invitations WHERE org_id = :id")
+                            .bind("id", id)
+                    )
+                    .getOrThrow()
+                execute(Statement.create("DELETE FROM orgs_members WHERE org_id = :id").bind("id", id))
+                    .getOrThrow()
+                audit.record(this, event.toAuditEntry())
+            }
+            deleted
         }
-    }
-
 
     override suspend fun listOfUser(userId: Uuid): List<Membership> =
         driver

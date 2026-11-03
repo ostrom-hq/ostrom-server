@@ -70,6 +70,10 @@ class RecordingAuditLog : AuditLog {
         val occurredAt = Instant.parse("2026-10-30T10:00:00Z")
         return AuditEvent(Uuid.random(), entries.size.toLong(), entry, occurredAt, null, "hash", "sig", "kid")
     }
+
+    override fun sign(entry: AuditEntry): suspend (String?, Long) -> AuditEvent = { previousHash, sequence ->
+        AuditEvent(Uuid.random(), sequence, entry, Instant.fromEpochMilliseconds(0), previousHash, "hash", "sig", "kid")
+    }
 }
 
 class InMemoryUsersRepository : UsersRepository {
