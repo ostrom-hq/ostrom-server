@@ -30,7 +30,8 @@ import kotlin.time.Duration.Companion.seconds
  *   period to close the pool and the workers.
  * @property readLimits How much one subject may read of the costly routes (`OSTROM_READS_PER_MINUTE`,
  *   `OSTROM_READS_IN_FLIGHT`, `OSTROM_READ_WAITS_IN_FLIGHT`).
- * @property callCeilings The calls one replica runs at once (`OSTROM_MAX_CALLS_IN_PROGRESS`, `OSTROM_MAX_HELD_CALLS`),
+ * @property callCeilings The calls one replica runs at once (`OSTROM_MAX_CALLS_IN_PROGRESS`, `OSTROM_MAX_HELD_CALLS`,
+ *   `OSTROM_MAX_OPEN_CONNECTIONS`),
  *   derived from the container's memory limit when unset, and how long a call waits for a place
  *   (`OSTROM_CALL_QUEUE_SECONDS`).
  */
@@ -108,9 +109,10 @@ data class ServerConfig(
         )
 
         /**
-         * The ceilings of the calls one replica runs at once: `OSTROM_MAX_CALLS_IN_PROGRESS` and
-         * `OSTROM_MAX_HELD_CALLS`, 1 to 100 000 each, unset to derive them from the container's memory limit, and
-         * `OSTROM_CALL_QUEUE_SECONDS`, 0 to 60 (5 by default), how long a call past its ceiling waits for a place.
+         * The ceilings of the calls one replica runs at once: `OSTROM_MAX_CALLS_IN_PROGRESS`, `OSTROM_MAX_HELD_CALLS`
+         * and `OSTROM_MAX_OPEN_CONNECTIONS`, 1 to 100 000 each, unset to derive them from the container's memory
+         * limit, and `OSTROM_CALL_QUEUE_SECONDS`, 0 to 60 (5 by default), how long a call past its ceiling waits for a
+         * place.
          *
          * @param source Where values are read from.
          *
@@ -121,6 +123,7 @@ data class ServerConfig(
         fun callCeilings(source: ConfigSource): CallCeilingSettings = CallCeilingSettings(
             served = source.optionalInt("OSTROM_MAX_CALLS_IN_PROGRESS", 1..MAX_CALL_CEILING),
             held = source.optionalInt("OSTROM_MAX_HELD_CALLS", 1..MAX_CALL_CEILING),
+            open = source.optionalInt("OSTROM_MAX_OPEN_CONNECTIONS", 1..MAX_CALL_CEILING),
             queueWait = source.int(
                 "OSTROM_CALL_QUEUE_SECONDS",
                 CallCeilingSettings.DEFAULT_QUEUE_WAIT.inWholeSeconds.toInt(),

@@ -5,7 +5,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.http.OstromJson
-import dev.ostrom.server.kernel.http.heldCalls
+import dev.ostrom.server.kernel.http.openConnections
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
 import dev.ostrom.server.usage.domain.InvalidUsageEventException
@@ -70,9 +70,9 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
             call.respond(UsageEventsPageResponse(page.map { it.toResponse() }, next))
         }
     }
-    // The live stream stays open: a held call, counted apart from the server's other calls from before authentication
-    // on (P1 memory).
-    heldCalls {
+    // The live stream stays open as long as its client keeps it: an open connection, counted apart from the server's
+    // other calls and from the waits, from before authentication on (P1 memory).
+    openConnections {
         authenticated {
             get<UsageApi.Live> {
                 val caller = call.requireCaller(callers, UsageScopes.READ)

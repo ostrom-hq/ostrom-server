@@ -108,8 +108,8 @@ class CallsInProgress(
      */
     fun ceiling(kind: CallKind): Int = when (kind) {
         CallKind.SERVED -> settings.served ?: ceilingUnder(currentLimit())
-        CallKind.HELD -> settings.held ?: (ceilingUnder(currentLimit()) / HELD_SHARE).coerceAtLeast(1)
-        CallKind.OPEN -> ceiling(CallKind.HELD)
+        CallKind.HELD -> settings.held ?: (ceiling(CallKind.SERVED) / HELD_SHARE).coerceAtLeast(1)
+        CallKind.OPEN -> settings.open ?: ceilingUnder(currentLimit())
         CallKind.FREE -> Int.MAX_VALUE
     }
 
@@ -149,7 +149,7 @@ class CallsInProgress(
     private fun placesOf(kind: CallKind): Places? = when (kind) {
         CallKind.SERVED -> served
         CallKind.HELD -> held
-        CallKind.OPEN -> held
+        CallKind.OPEN -> open
         CallKind.FREE -> null
     }
 

@@ -4,7 +4,7 @@ package dev.ostrom.server.runners.presentation
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.OstromException
-import dev.ostrom.server.kernel.http.heldCalls
+import dev.ostrom.server.kernel.http.openConnections
 import dev.ostrom.server.runners.domain.Caller
 import dev.ostrom.server.runners.domain.CloudSessionNotFoundException
 import dev.ostrom.server.runners.infrastructure.TerminalRelay
@@ -97,8 +97,9 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
             call.respond(TerminalTicketResponse(ticket.value, ticket.expiresAt.toString()))
         }
     }
-    // A terminal stays open: held calls, counted apart from the server's other calls (P1 memory).
-    heldCalls {
+    // A terminal stays open as long as its client keeps it: open connections, counted apart from the server's other
+    // calls and from the waits (P1 memory).
+    openConnections {
         webSocket("/api/v1/cloud/sessions/{id}/terminal") {
             val id = Uuid.parseOrNull(call.parameters.getOrFail("id"))
                 ?: return@webSocket close(CloseReason(TerminalCloseCodes.NOT_FOUND, "No such cloud session."))
