@@ -22,6 +22,7 @@ import dev.ostrom.server.identity.domain.TooManyServiceKeysException
 import dev.ostrom.server.identity.fakes.CountingSecretGenerator
 import dev.ostrom.server.identity.fakes.FakeHasher
 import dev.ostrom.server.identity.fakes.InMemoryApiTokensRepository
+import dev.ostrom.server.identity.fakes.InMemoryElevatedTokensRepository
 import dev.ostrom.server.identity.fakes.InMemoryServiceKeysRepository
 import dev.ostrom.server.identity.fakes.RecordingAuditLog
 import dev.ostrom.server.identity.fakes.SettableClock
@@ -50,8 +51,9 @@ class ServiceKeysAndDevicesTest {
     private val create = CreateServiceKeyUseCaseImpl(tokens, keys, secrets, FakeHasher(), audit, clock)
     private val list = ListServiceKeysUseCaseImpl(keys, clock)
     private val delete = DeleteServiceKeyUseCaseImpl(keys, audit, clock)
-    private val devices = ListDevicesUseCaseImpl(tokens, clock)
-    private val signOut = SignOutDeviceUseCaseImpl(tokens, audit, clock)
+    private val elevated = InMemoryElevatedTokensRepository(tokens)
+    private val devices = ListDevicesUseCaseImpl(tokens, elevated, clock)
+    private val signOut = SignOutDeviceUseCaseImpl(tokens, elevated, audit, clock)
     private val orgA = Uuid.random()
     private val orgB = Uuid.random()
     private val ada = Uuid.random()
@@ -173,9 +175,91 @@ class ServiceKeysAndDevicesTest {
         assertFailsWith<DeviceNotFoundException> { signOut(ada, laptop.id) }
     }
 
-    private suspend fun token(userId: Uuid, kind: TokenKind, name: String): ApiToken {
+    @Test
+    fun theTokensOfAnAdminLoginAreListedInTheOrganizationTheRequestNames() = runTest {
+        val bea = Uuid.random()
+        val laptop = token(ada, TokenKind.CLI, "laptop")
+        val adas = token(ada, TokenKind.ADMIN, "ada --admin", orgA)
+        val beas = token(bea, TokenKind.ADMIN, "bea --admin", orgA)
+        val inB = token(ada, TokenKind.ADMIN, "ada in B", orgB)
+        val adaMember = OrgPrincipal(orgA, Uuid.random(), OrgRole.MEMBER)
+
+        assertEquals(listOf(laptop.id), devices(ada).map { it.id }, "No organization named: no elevated token")
+        assertEquals(setOf(laptop.id, adas.id, beas.id), devices(ada, owner).map { it.id }.toSet(), "An owner")
+        assertEquals(setOf(adas.id, beas.id), devices(bea, admin).map { it.id }.toSet(), "An admin")
+        assertEquals(listOf(laptop.id, adas.id), devices(ada, adaMember).map { it.id }, "A member: their own")
+        assertEquals(listOf(laptop.id, inB.id), devices(ada, adminOfB).map { it.id }, "Never another organization's")
+    }
+
+    @Test
+    fun aMemberSignsOutTheirOwnElevatedTokenAudited() = runTest {
+        val adas = token(ada, TokenKind.ADMIN, "ada --admin", orgA)
+        val adaMember = OrgPrincipal(orgA, Uuid.random(), OrgRole.MEMBER)
+        assertFailsWith<DeviceNotFoundException> { signOut(ada, adas.id) }
+        signOut(ada, adas.id, adaMember)
+        val revoked = audit.entries.single()
+        assertEquals(listOf(orgA, ada), listOf(revoked.orgId, revoked.actorId))
+        assertEquals("token.revoked" to "admin", revoked.action to revoked.details["kind"])
+        assertEquals(ada.toString(), revoked.details["owner"])
+        assertFailsWith<DeviceNotFoundException> { signOut(ada, adas.id, adaMember) }
+    }
+
+    @Test
+    fun aMemberNeverSignsOutAnotherMembersElevatedToken() = runTest {
+        val beas = token(Uuid.random(), TokenKind.ADMIN, "bea --admin", orgA)
+        val adaMember = OrgPrincipal(orgA, Uuid.random(), OrgRole.MEMBER)
+        assertFailsWith<DeviceNotFoundException> { signOut(ada, beas.id, adaMember) }
+        assertTrue(audit.entries.isEmpty())
+        assertEquals(listOf(beas.id), devices(ada, owner).map { it.id })
+    }
+
+    @Test
+    fun anOwnerOrAnAdminSignsOutAnyMembersElevatedTokenAuditedWithItsOwner() = runTest {
+        val bea = Uuid.random()
+        val first = token(bea, TokenKind.ADMIN, "bea --admin", orgA)
+        val second = token(bea, TokenKind.ADMIN, "bea's other --admin", orgA)
+        signOut(ada, first.id, owner)
+        signOut(ada, second.id, admin)
+        assertEquals(listOf(ada, ada), audit.entries.map { it.actorId }, "The actor")
+        assertEquals(listOf(bea.toString(), bea.toString()), audit.entries.map { it.details["owner"] }, "The owner")
+        assertEquals(listOf(orgA, orgA), audit.entries.map { it.orgId })
+        assertTrue(devices(ada, owner).isEmpty())
+    }
+
+    @Test
+    fun anotherOrganizationsOrAnotherKindOfTokenIsUnknown() = runTest {
+        val inB = token(Uuid.random(), TokenKind.ADMIN, "in B", orgB)
+        val key = token(ada, TokenKind.SERVICE, "ci", orgA)
+        val personal = token(ada, TokenKind.PERSONAL, "script")
+        assertFailsWith<DeviceNotFoundException> { signOut(ada, inB.id, owner) }
+        assertFailsWith<DeviceNotFoundException> { signOut(ada, key.id, owner) }
+        assertFailsWith<DeviceNotFoundException> { signOut(ada, personal.id, owner) }
+        assertFailsWith<DeviceNotFoundException> { signOut(ada, Uuid.random(), owner) }
+        assertTrue(audit.entries.isEmpty())
+        val laptop = token(ada, TokenKind.CLI, "laptop")
+        signOut(ada, laptop.id, owner)
+        assertEquals(null to "cli", audit.entries.single().orgId to audit.entries.single().details["kind"])
+    }
+
+    @Test
+    fun anAdminLoginsTokenShowsItsOrganizationScopesAndExpiry() = runTest {
+        val elevated = token(ada, TokenKind.ADMIN, "ada --admin", orgA)
+            .copy(scopes = setOf("policy:write", "gates:policy"), expiresAt = clock.now + 8.hours)
+        val shown = elevated.toDeviceResponse()
+        assertEquals("admin" to orgA.toString(), shown.kind to shown.orgId)
+        assertEquals(listOf("gates:policy", "policy:write"), shown.scopes)
+        assertEquals((clock.now + 8.hours).toString(), shown.expiresAt)
+        val unbound = elevated.copy(orgId = null, expiresAt = null).toDeviceResponse()
+        assertEquals(null to null, unbound.orgId to unbound.expiresAt)
+
+        val cli = token(ada, TokenKind.CLI, "laptop").toDeviceResponse()
+        assertEquals("cli", cli.kind)
+        assertEquals(listOf(null, null, null), listOf(cli.orgId, cli.scopes, cli.expiresAt))
+    }
+
+    private suspend fun token(userId: Uuid, kind: TokenKind, name: String, orgId: Uuid? = null): ApiToken {
         val token = ApiToken(
-            Uuid.random(), userId, null, name, kind, setOf("profile:read"), "osc_hint", null, clock.now,
+            Uuid.random(), userId, orgId, name, kind, setOf("profile:read"), "osc_hint", null, clock.now,
             null, null, null,
         )
         tokens.create(token, "h(${token.id})")

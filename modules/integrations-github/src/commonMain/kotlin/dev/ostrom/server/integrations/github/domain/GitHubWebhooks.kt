@@ -51,7 +51,8 @@ interface HandleWebhookUseCase {
 
 /**
  * [HandleWebhookUseCase]: a pull request opened, updated or reopened asks the gate of its merge (as the CI, for the
- * organization that installed the App, the author being who asks) and publishes `ostrom-gate` on its head; the same
+ * organization that installed the App, the author being who asks: the Ostrom person linked to their GitHub account,
+ * else their GitHub login) and publishes `ostrom-gate` on its head; the same
  * request as the agent's `gh pr merge` when the head, base and gate match (gates module, APPROBATION). An
  * installation created on GitHub records who installed it, which the install callback checks (AUDIT-SECU-2 M1); one
  * deleted is forgotten, linked or not. Each delivery is handled once (AUDIT-SECU-2 B3): a replay of a captured
@@ -63,7 +64,9 @@ interface HandleWebhookUseCase {
  * @param checks Publishes the check.
  * @param logger Logs a refused gate.
  * @param clock The clock.
+ * @param accounts Who a pull request's author is in Ostrom.
  */
+@Suppress("LongParameterList") // One port per owner: GitHub's records, the gates, the clock, the identity of authors.
 class HandleWebhookUseCaseImpl(
     private val repository: GitHubRepository,
     private val origins: GitHubOriginsRepository,
@@ -71,6 +74,7 @@ class HandleWebhookUseCaseImpl(
     private val checks: GitHubGateChecks,
     private val logger: Logger,
     private val clock: Clock,
+    private val accounts: GitHubAccounts,
 ) : HandleWebhookUseCase {
     override suspend fun invoke(event: String?, delivery: String?, body: String): WebhookOutcome {
         val id = delivery?.takeIf { DELIVERY.matches(it) }
@@ -135,7 +139,10 @@ class HandleWebhookUseCaseImpl(
     }
 
     private suspend fun askFor(installation: GitHubInstallation, repo: String, pull: Pull): GateView? {
-        val actor = GateActor("github", installation.orgId, ActorKind.SERVICE, personId = pull.user.login)
+        // The author as their approvers are named: by their Ostrom login, never only their GitHub one, which may differ
+        // (an account opened by e-mail, a login taken): else they would say yes to their own merge (G1).
+        val author = pull.user.id?.let { accounts.loginOf(it) } ?: pull.user.login
+        val actor = GateActor("github", installation.orgId, ActorKind.SERVICE, personId = author)
         val asked = AskGate(
             sessionId = null,
             runId = null,
@@ -184,7 +191,7 @@ class HandleWebhookUseCaseImpl(
     private data class Ref(val ref: String)
 
     @Serializable
-    private data class Login(val login: String)
+    private data class Login(val login: String, val id: Long? = null)
 }
 
 // Top-level, not in the private companion: a companion property has a getter nothing calls, which Kover counts.

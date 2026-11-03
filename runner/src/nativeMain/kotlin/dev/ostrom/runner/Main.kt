@@ -40,7 +40,9 @@ import platform.posix.SIGTERM
 import platform.posix._exit
 import platform.posix.chmod
 import platform.posix.getenv
+import platform.posix.free
 import platform.posix.mkdtemp
+import platform.posix.realpath
 import platform.posix.system
 import platform.posix.signal
 import platform.posix.fflush
@@ -65,7 +67,7 @@ fun main(args: Array<String>) {
     if (args.firstOrNull() == "check-host") {
         val checkSocket = environment["OSTROM_CHECK_HOST_SOCKET"]?.takeIf { it.isNotBlank() }
             ?: RunnerConfig.DEFAULT_CHECK_HOST_SOCKET
-        checkHost(checkSocket)
+        checkHost(checkSocket, environment["OSTROM_WORKSPACE"] ?: RunnerConfig.DEFAULT_WORKSPACE)
     }
     val config = try {
         RunnerConfig.from(environment) { path ->
@@ -171,7 +173,7 @@ private class LinkListener(
  * behind. When the link ends it exits: the runner accepts no second link, so later checks fail rather than reach
  * another process.
  */
-private fun checkHost(socket: String): Nothing {
+private fun checkHost(socket: String, workspace: String): Nothing {
     signal(SIGTERM, staticCFunction<Int, Unit> { _exit(0) })
     if (ostrom_check_host_harden() != 0) log("the check host could not stop being dumpable")
     runBlocking {
@@ -179,7 +181,8 @@ private fun checkHost(socket: String): Nothing {
         val connect = suspend { AgentSocket.connect(selector, socket) }
         val link = linkToRunner(connect)
         log("check host linked to the runner")
-        CheckHost(AgentHost(CheckTerminals(PtyTerminal.Pipes, NativeCheckHomes)), connect, ::log).serve(link)
+        val terminals = CheckTerminals(PtyTerminal.Pipes, NativeCheckHomes, workspace, ::realPath)
+        CheckHost(AgentHost(terminals), connect, ::log).serve(link)
     }
     log("the runner closed the check link")
     exitProcess(EXIT_LINK_CLOSED)
@@ -197,6 +200,16 @@ private suspend fun linkToRunner(connect: suspend () -> AgentConnection): AgentC
         }
     }
     return connect()
+}
+
+/** The real path of [path], links resolved, or null when it does not exist. */
+private fun realPath(path: String): String? {
+    val resolved = realpath(path, null) ?: return null
+    return try {
+        resolved.toKString()
+    } finally {
+        free(resolved)
+    }
 }
 
 /** The checks' homes, under /tmp; a release kills every other process of the uid first (pid 1 only). */

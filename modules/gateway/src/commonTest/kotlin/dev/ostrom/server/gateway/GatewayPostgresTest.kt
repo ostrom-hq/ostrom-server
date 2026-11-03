@@ -14,13 +14,21 @@ import dev.ostrom.server.gateway.presentation.InferenceSettingsDto
 import dev.ostrom.server.gateway.presentation.MAX_INFERENCE_REQUEST_BYTES
 import dev.ostrom.server.gateway.presentation.ModelPolicyDto
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
-import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.GovernanceChange
+import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
+import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceConfirmer
+import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
+import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -72,10 +80,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -111,10 +121,11 @@ class GatewayPostgresTest {
     )
 
     /** The tokens of `ostrom login --admin`: a person's API token holding the governance scopes. */
-    private val elevated = setOf("elevated-a", "elevated-member-a")
+    private val elevated = setOf("elevated-a", "elevated-member-a", "elevated-orphan")
 
-    /** The governance writes recorded before they happen, as `METHOD /path scope`. */
-    private val audited = mutableListOf<String>()
+    /** The governance writes a token asked for, held for the console, as `kind METHOD /path scope`. */
+    private val held = mutableListOf<String>()
+    private val requests = mutableListOf<GovernanceRequest>()
 
     /** Browser sessions hold every right of the user; the others hold what they list. */
     private val principals = mapOf(
@@ -175,10 +186,12 @@ class GatewayPostgresTest {
 
     private val overrides: Module = module {
         includes(authenticator)
-        single<GovernanceAudit> {
-            object : GovernanceAudit {
-                override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String) {
-                    audited += "$target $scope"
+        single<GovernanceConfirmations> {
+            object : GovernanceConfirmations {
+                override suspend fun open(request: GovernanceRequest): GovernanceConfirmationPending {
+                    held += "${request.write.kind} ${request.method} ${request.path} ${request.scope}"
+                    requests += request
+                    return GovernanceConfirmationPending("gcf_1", "http://console/confirm/gcf_1", "later")
                 }
             }
         }
@@ -565,20 +578,41 @@ class GatewayPostgresTest {
     }
 
     @Test
-    fun theTokenOfAnAdminLoginSetsTheModelPolicyAuditedFirstAndOnlyForAnOwnerOrAdmin() =
+    fun theTokenOfAnAdminLoginSetsNoModelPolicyButHoldsItForTheConsoleAndOnlyForAnOwnerOrAdmin() =
         serverTest(modules, overrides) { server ->
             with(server) {
                 val policy = ModelPolicyDto(allowed = listOf("claude-"), defaultModel = "claude-sonnet-5")
                 val refused = putJson("/api/v1/policy/models", "elevated-member-a", policy)
                 assertEquals(HttpStatusCode.Forbidden, refused.status, "A member's elevated token")
-                assertEquals(emptyList(), audited, "Refused before its record")
-                val saved = putJson("/api/v1/policy/models", "elevated-a", policy)
-                assertEquals(policy, saved.body<ModelPolicyDto>())
-                assertEquals(listOf("PUT /api/v1/policy/models policy:write"), audited)
-                // The console and the service key write as before, recorded elsewhere or not at all.
+                val orphan = putJson("/api/v1/policy/models", "elevated-orphan", policy)
+                assertEquals(HttpStatusCode.NotFound, orphan.status, "A token of nobody's organization")
+                assertEquals(emptyList(), held, "Refused before anything is held")
+                val asked = putJson("/api/v1/policy/models", "elevated-a", policy)
+                assertEquals(HttpStatusCode.Accepted, asked.status)
+                assertEquals("gcf_1", asked.body<GovernanceConfirmationPending>().confirmationId)
+                assertEquals(listOf("models.policy PUT /api/v1/policy/models policy:write"), held)
+                val unchanged = client.get("/api/v1/policy/models") { bearerAuth("admin-a") }.body<ModelPolicyDto>()
+                assertEquals(ModelPolicyDto(), unchanged, "Nothing written")
+                // Confirmed in the console: shown before and after, then set as the confirmer's.
+                val change = koin.get<GovernanceChange>(named("gateway"))
+                assertEquals(setOf("models.policy"), change.kinds)
+                val write = requests.single().write
+                val shown = change.preview(Gw.orgA, write)
+                assertEquals(OstromJson.encodeToJsonElement(ModelPolicyDto.serializer(), unchanged), shown.before)
+                assertEquals(OstromJson.encodeToJsonElement(ModelPolicyDto.serializer(), policy), shown.after)
+                val admin = GovernanceConfirmer(
+                    AuthenticatedPrincipal("admin-a", PrincipalKind.USER, setOf(RelayScopes.ALL_USER)),
+                    OrgPrincipal(Gw.orgA, Gw.adminA.memberId, OrgRole.ADMIN),
+                )
+                val stranger = admin.copy(principal = admin.principal.copy(subjectId = "nobody"))
+                assertFailsWith<OstromException> { change.apply(Gw.orgA, write, stranger) }
+                assertEquals(shown.after, change.apply(Gw.orgA, write, admin))
+                val set = client.get("/api/v1/policy/models") { bearerAuth("admin-a") }.body<ModelPolicyDto>()
+                assertEquals(policy, set)
+                // The console and the service key write at once.
                 assertEquals(HttpStatusCode.OK, putJson("/api/v1/policy/models", "admin-a", policy).status)
                 assertEquals(HttpStatusCode.OK, putJson("/api/v1/policy/models", "inference-admin-a", policy).status)
-                assertEquals(1, audited.size)
+                assertEquals(1, held.size)
                 // policy:write opens the model policy, never the inference settings.
                 val settings = putJson("/api/v1/inference/settings", "elevated-a", InferenceSettingsDto())
                 assertEquals(HttpStatusCode.Forbidden, settings.status)

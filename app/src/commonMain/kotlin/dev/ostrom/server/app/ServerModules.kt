@@ -8,6 +8,7 @@ import dev.ostrom.server.budgets.BudgetsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gateway.GatewayModule
+import dev.ostrom.server.governance.GovernanceModule
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.importer.ImportModule
 import dev.ostrom.server.instance.InstanceModule
@@ -16,6 +17,7 @@ import dev.ostrom.server.integrations.slack.SlackIntegrationModule
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.launches.LaunchesModule
 import dev.ostrom.server.mcprelay.McpRelayModule
+import dev.ostrom.server.notifications.NotificationsModule
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.reports.ReportsModule
@@ -59,4 +61,7 @@ fun serverModules(): List<ServerModule> = listOf(
     SharingModule,
     ImportModule,
     ReportsModule,
+    // After the modules whose governance writes it holds (rules, compiler, gateway).
+    GovernanceModule,
+    NotificationsModule,
 ) + eeModules()

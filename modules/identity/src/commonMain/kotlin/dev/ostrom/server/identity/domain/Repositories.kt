@@ -296,6 +296,46 @@ interface ServiceKeysRepository {
     suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean
 }
 
+/**
+ * The tokens of `ostrom login --admin` bound to an organization: the `ADMIN` tokens of [ApiTokensRepository], read and
+ * revoked inside their organization, never outside it (they are created by the device flow, found by hash like any
+ * token).
+ */
+interface ElevatedTokensRepository {
+    /**
+     * Lists an organization's live elevated tokens (not revoked, not expired), inside that organization.
+     *
+     * @param orgId The organization.
+     * @param userId Their owner, or null for those of every member.
+     * @param now The current time, for expiry.
+     *
+     * @return At most [MAX_TOKENS_PER_USER] tokens, newest first.
+     */
+    suspend fun listLive(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken>
+
+    /**
+     * Reads an elevated token of an organization, revoked or not, inside that organization.
+     *
+     * @param orgId The organization.
+     * @param id The token.
+     *
+     * @return The token, or null when it is absent, another organization's or not an elevated token.
+     */
+    suspend fun get(orgId: Uuid, id: Uuid): ApiToken?
+
+    /**
+     * Revokes a live elevated token of an organization, inside that organization.
+     *
+     * @param orgId The organization.
+     * @param id The token.
+     * @param at When.
+     *
+     * @return True when a live token was revoked; false when it is absent, another organization's, not an elevated
+     *   token or already revoked.
+     */
+    suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean
+}
+
 /** Device authorizations of `ostrom login`. */
 interface DeviceAuthorizationsRepository {
     /**

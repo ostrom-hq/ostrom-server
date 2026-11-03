@@ -10,9 +10,9 @@ import dev.ostrom.server.sharing.domain.AccountLimits
 import dev.ostrom.server.sharing.domain.AccountNotFoundException
 import dev.ostrom.server.sharing.domain.AccountProvider
 import dev.ostrom.server.sharing.domain.AccountStatus
+import dev.ostrom.server.sharing.domain.EnrollAccountPayload
 import dev.ostrom.server.sharing.domain.InvalidAccountException
 import dev.ostrom.server.sharing.domain.ShareAccountPayload
-import dev.ostrom.server.sharing.domain.SharedAccount
 import dev.ostrom.server.sharing.domain.SharedAccountView
 import dev.ostrom.server.sharing.domain.UpdateAccountPayload
 import io.ktor.http.HttpStatusCode
@@ -25,6 +25,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlin.time.Instant
@@ -32,8 +33,9 @@ import kotlin.uuid.Uuid
 
 /**
  * The shared accounts routes: any member shares its own subscription and sees the pool (neutral labels for accounts
- * of others), admins and owners change and remove. Reading needs `accounts:read`, writing `accounts:write`; an agent's
- * or a device's credential reaches none of them (S2-03, S2-21), and no answer ever holds an account's tokens.
+ * of others), admins and owners change and remove; people are named by login, as the contract names them. Reading
+ * needs `accounts:read`, writing `accounts:write`; an agent's or a device's credential reaches none of them (S2-03,
+ * S2-21), and no answer ever holds an account's tokens.
  *
  * @param dependencies The use cases.
  */
@@ -45,8 +47,14 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
         }
         post<AccountsApi> {
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
-            val account = share(caller, call.receive<ShareAccountRequest>().toPayload())
-            call.respond(HttpStatusCode.Created, account.toResponse(caller))
+            // The contract's body names a secret; without one, the tokens' body (imports, end-to-end tests).
+            val body = call.receive<JsonObject>()
+            val account = if (body["credentialSecret"].let { it != null && it !is JsonNull }) {
+                enroll(caller, body.decoded(EnrollSharedAccountRequest.serializer()).toPayload())
+            } else {
+                share(caller, body.decoded(ShareAccountRequest.serializer()).toPayload())
+            }
+            call.respond(HttpStatusCode.Created, view(caller, account).toResponse(caller))
         }
         patch<AccountsApi.Id> { params ->
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
@@ -57,8 +65,9 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
                 priority = request.priority,
                 disabled = request.paused,
                 limits = request.limitsChange(),
+                sharedWith = request.sharedWith,
             )
-            call.respond(update(caller, id, payload).toResponse(caller))
+            call.respond(view(caller, update(caller, id, payload)).toResponse(caller))
         }
         delete<AccountsApi.Id> { params ->
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
@@ -78,20 +87,20 @@ fun Route.sharingRoutes(dependencies: SharingRoutesDependencies) = with(dependen
 }
 
 /**
- * How a change moves the current limits: the keys of `limits` replace theirs (the others stay), then `sharedWith`
- * replaces the members; an empty `sharedWith` opens the account to the whole org. Malformed input is refused before
- * the account is read.
+ * How a change moves the current limits: the keys of `limits` replace theirs (the others stay), then
+ * `dailyAllocationUsd` sets the daily allocation; `sharedWith` is the use case's (members are named by login).
+ * Malformed input is refused before the account is read.
  */
 private fun UpdateAccountRequest.limitsChange(): ((AccountLimits) -> AccountLimits)? {
     val patch = limits
-    val members = sharedWith?.let(::memberIds)
+    val daily = dailyAllocationUsd?.let(::usdToMicros)
     patch?.let { AccountLimits().patchedBy(it) }
-    return if (patch == null && sharedWith == null) {
+    return if (patch == null && daily == null) {
         null
     } else {
         { current ->
             val patched = if (patch == null) current else current.patchedBy(patch)
-            if (sharedWith == null) patched else patched.copy(allowedMembers = members)
+            if (daily == null) patched else patched.copy(dailyBudgetMicros = daily)
         }
     }
 }
@@ -104,27 +113,31 @@ private fun AccountLimits.patchedBy(patch: JsonObject): AccountLimits {
     } catch (_: SerializationException) {
         throw InvalidAccountException(
             "limits holds maxConcurrent, utilizationCeiling, monthlyBudgetMicros, " +
-                "allowedMembers.",
+                "allowedMembers, dailyBudgetMicros.",
         )
     }
     return dto.toDomain()
 }
 
-/** Member ids of `sharedWith`; an empty list opens the account to the whole org. */
-private fun memberIds(values: List<String>): Set<Uuid>? = values.takeIf { it.isNotEmpty() }?.map {
-    Uuid.parseOrNull(it)
-        ?: throw InvalidAccountException("sharedWith holds member ids.")
-}?.toSet()
+private fun EnrollSharedAccountRequest.toPayload() = EnrollAccountPayload(
+    provider = providerNamed(provider),
+    label = label,
+    credentialSecret = credentialSecret,
+    sharedWith = sharedWith,
+    dailyBudgetMicros = dailyAllocationUsd?.let(::usdToMicros),
+)
+
+private fun providerNamed(value: String) =
+    AccountProvider.named(value) ?: throw InvalidAccountException("provider is claude or codex.")
 
 private fun ShareAccountRequest.toPayload() = ShareAccountPayload(
-    provider =
-    AccountProvider.entries.firstOrNull { it.wire == provider }
-        ?: throw InvalidAccountException("provider is claude or codex."),
+    provider = providerNamed(provider),
     label = label,
     email = email,
     providerAccountId = providerAccountId,
     accessToken = accessToken,
-    refreshToken = refreshToken,
+    // Only an enrolled secret holds a long-lived token: the tokens' body always carries a refresh token.
+    refreshToken = refreshToken.ifEmpty { throw InvalidAccountException("The tokens are malformed.") },
     expiresAt = try {
         Instant.parse(expiresAt)
     } catch (_: IllegalArgumentException) {
@@ -141,6 +154,7 @@ private fun AccountLimitsDto.toDomain() = AccountLimits(
         Uuid.parseOrNull(it)
             ?: throw InvalidAccountException("allowedMembers holds member ids.")
     }?.toSet(),
+    dailyBudgetMicros = dailyBudgetMicros,
 )
 
 private fun AccountLimits.toDto() = AccountLimitsDto(
@@ -150,10 +164,8 @@ private fun AccountLimits.toDto() = AccountLimitsDto(
     allowedMembers?.map {
         it.toString()
     }?.sorted(),
+    dailyBudgetMicros,
 )
-
-private fun SharedAccount.toResponse(caller: Caller) =
-    SharedAccountView(this, label, true, emptyList(), 0, 0).toResponse(caller)
 
 private fun SharedAccountView.toResponse(caller: Caller) = SharedAccountResponse(
     id = account.id.toString(),
@@ -161,14 +173,8 @@ private fun SharedAccountView.toResponse(caller: Caller) = SharedAccountResponse
     label = displayLabel,
     email = account.email.takeIf { identityVisible },
     providerAccountId = account.providerAccountId.takeIf { identityVisible },
-    owner = if (identityVisible) account.ownerMemberId?.toString().orEmpty() else "",
-    sharedWith = if (identityVisible) {
-        account.limits.allowedMembers.orEmpty().map {
-            it.toString()
-        }.sorted()
-    } else {
-        emptyList()
-    },
+    owner = owner,
+    sharedWith = sharedWith,
     paused = account.status == AccountStatus.DISABLED,
     mine = identityVisible && account.ownerMemberId == caller.memberId,
     priority = account.priority,
@@ -188,4 +194,5 @@ private fun SharedAccountView.toResponse(caller: Caller) = SharedAccountResponse
     inFlight = inFlight,
     spentMicros = spentMicros,
     createdAt = account.createdAt.toString(),
+    dailyAllocationUsd = account.limits.dailyBudgetMicros?.takeIf { identityVisible }?.let { it / MICROS_PER_USD },
 )

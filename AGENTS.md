@@ -2,8 +2,8 @@
 
 This is the Ostrom server, Kotlin/Native (linuxX64, linuxArm64 in production, macosArm64 for development; + jvm for tests only), Ktor CIO, PostgreSQL (SQLite for tests and local) through sqlx4k. AGPL-3.0, `ee/` under the commercial license.
 
-**The conventions are in [ostrom-core `docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md) (local clone: `../ostrom-core/docs/CONVENTIONS.md`).** They follow Nathan Fallet's practices (teamcode, asonar, pkg, the ControlResell
-backend) and bind every contributor, human or agent. This file only summarizes the most important rules; when in
+**The conventions are in [ostrom-core `docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md) (local clone: `../ostrom-core/docs/CONVENTIONS.md`).** They follow Nathan Fallet's practices (teamcode, asonar,
+pkg) and bind every contributor, human or agent. This file only summarizes the most important rules; when in
 doubt, the conventions file wins, and it can be updated: re-read it before each pull request.
 
 All repository content (code, comments, docs, commits, pull requests) is in English.

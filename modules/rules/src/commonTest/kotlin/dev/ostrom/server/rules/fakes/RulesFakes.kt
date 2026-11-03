@@ -133,9 +133,15 @@ class FakeRulesRepository : RulesRepository {
             .take(limit)
     }
 
-    override suspend fun gatedRules(orgId: Uuid): List<Rule> = rules.values
-        .filter { it.orgId == orgId && it.gate != null && it.status != RuleStatus.REJECTED }
+    override suspend fun rulesById(orgId: Uuid, after: String?, limit: Int): List<Rule> = rules.values
+        .filter { it.orgId == orgId && (after == null || it.id > after) }
         .sortedBy { it.id }
+        .take(limit)
+
+    override suspend fun gatedRules(orgId: Uuid, after: String?, limit: Int): List<Rule> =
+        rulesById(orgId, after, Int.MAX_VALUE)
+            .filter { it.gate != null && it.status != RuleStatus.REJECTED }
+            .take(limit)
 
     override suspend fun lastRuleDecisions(orgId: Uuid): List<Decision> = decisions
         .filter { it.orgId == orgId && it.subject.kind == "rule" }
