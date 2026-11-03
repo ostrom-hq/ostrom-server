@@ -19,6 +19,7 @@ import dev.ostrom.server.orgs.domain.InvitationNotFoundException
 import dev.ostrom.server.orgs.domain.InviteRequest
 import dev.ostrom.server.orgs.domain.MAX_MEMBER_PAGE
 import dev.ostrom.server.orgs.domain.MemberProfile
+import dev.ostrom.server.orgs.domain.MemberWrite
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.OrgChange
 import io.ktor.http.HttpStatusCode
@@ -123,15 +124,14 @@ private fun Route.memberRoutes(dependencies: OrgsRoutesDependencies) =
         }
         patch<OrgsApi.Org.Members.Login, UpdateMemberRequest> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
+            val role = roleOf(request.role)
+            if (heldForConsole(call, orgId, userId, MemberWrite.Role(params.login, role))) return@patch
             call.requireRecentSignIn("change a member's role")
-            call.respond(
-                members
-                    .changeRole(orgId, userId, params.login, roleOf(request.role))
-                    .toMemberResponse()
-            )
+            call.respond(members.changeRole(orgId, userId, params.login, role).toMemberResponse())
         }
         delete<OrgsApi.Org.Members.Login> { params ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
+            if (heldForConsole(call, orgId, userId, MemberWrite.Removal(params.login))) return@delete
             call.requireRecentSignIn("remove a member")
             members.remove(orgId, userId, params.login)
             call.respond(HttpStatusCode.NoContent)
@@ -142,8 +142,6 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
     with(dependencies) {
         post<OrgsApi.Org.Members.Invites, InviteRequestBody> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
-            // An invitation adds a member, with any role: the same fresh sign-in as changing one.
-            call.requireRecentSignIn("invite a member")
             val invites =
                 request.invites.map { invite ->
                     val email =
@@ -151,6 +149,9 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
                             ?: throw InvalidOrgRequestException("Each invite needs an email.")
                     InviteRequest(email, roleOf(invite["role"] ?: "member"))
                 }
+            if (heldForConsole(call, orgId, userId, MemberWrite.Invites(invites))) return@post
+            // An invitation adds a member, with any role: the same fresh sign-in as changing one.
+            call.requireRecentSignIn("invite a member")
             call.respond(InvitedResponse(invitations.byEmail(orgId, userId, invites)))
         }
         get<OrgsApi.Org.Invitations> { params ->
@@ -163,8 +164,10 @@ private fun Route.invitationRoutes(dependencies: OrgsRoutesDependencies) =
         }
         post<OrgsApi.Org.Invitations.Links, CreateLinkRequest> { params, request ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_WRITE)
+            val role = roleOf(request.role)
+            if (heldForConsole(call, orgId, userId, MemberWrite.Link(role, request.maxUses))) return@post
             call.requireRecentSignIn("invite a member")
-            val issued = invitations.link(orgId, userId, roleOf(request.role), request.maxUses)
+            val issued = invitations.link(orgId, userId, role, request.maxUses)
             call.respond(
                 HttpStatusCode.Created,
                 InvitationLinkResponse(issued.invitation.toInvitationResponse(), issued.url),
@@ -254,7 +257,7 @@ private fun Membership.toOrgResponse() =
         org.timeZone,
     )
 
-private fun MemberProfile.toMemberResponse() =
+internal fun MemberProfile.toMemberResponse() =
     MemberResponse(
         member.id.toString(),
         login,
@@ -265,7 +268,7 @@ private fun MemberProfile.toMemberResponse() =
         member.joinedAt.toString(),
     )
 
-private fun Invitation.toInvitationResponse() =
+internal fun Invitation.toInvitationResponse() =
     InvitationResponse(
         id.toString(),
         email,
