@@ -116,6 +116,7 @@ class AnalysisUseCasesTest {
         val done = start(RulesFixtures.lyes, AnalysisKind.REPLAY).copy(phase = AnalysisRun.READY, items = listOf(item))
         runs.runs[org to AnalysisKind.REPLAY] = done
         engine.answer = AnalysisStart.Unavailable("engine", "No engine.")
+        clock.advance(1.minutes)
         assertEquals(listOf(item), start(RulesFixtures.lyes, AnalysisKind.REPLAY).items)
         assertEquals(listOf(item), runs.run(org, AnalysisKind.REPLAY)?.items)
     }
