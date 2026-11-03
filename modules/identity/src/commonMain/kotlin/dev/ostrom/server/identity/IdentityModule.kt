@@ -22,6 +22,7 @@ import dev.ostrom.server.identity.domain.CredentialAuthenticatorImpl
 import dev.ostrom.server.identity.domain.DeleteServiceKeyUseCase
 import dev.ostrom.server.identity.domain.DeleteServiceKeyUseCaseImpl
 import dev.ostrom.server.identity.domain.DeviceAuthorizationsRepository
+import dev.ostrom.server.identity.domain.ElevatedTokensRepository
 import dev.ostrom.server.identity.domain.EndWebSessionUseCase
 import dev.ostrom.server.identity.domain.EndWebSessionUseCaseImpl
 import dev.ostrom.server.identity.domain.ExchangeMobileCodeUseCase
@@ -103,6 +104,7 @@ import dev.ostrom.server.identity.infrastructure.ApiTokensRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.AuditRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.DeviceAuthorizationsRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.DirectoryMailSender
+import dev.ostrom.server.identity.infrastructure.ElevatedTokensRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.GitHubOAuthProvider
 import dev.ostrom.server.identity.infrastructure.GitHubTokenVerifierImpl
 import dev.ostrom.server.identity.infrastructure.IdentityMigrations
@@ -182,6 +184,7 @@ object IdentityModule : ServerModule {
         single<WebSessionsRepository> { WebSessionsRepositoryImpl(get()) }
         single<ApiTokensRepository> { ApiTokensRepositoryImpl(get()) }
         single<ServiceKeysRepository> { ServiceKeysRepositoryImpl(get()) }
+        single<ElevatedTokensRepository> { ElevatedTokensRepositoryImpl(get()) }
         single<DeviceAuthorizationsRepository> { DeviceAuthorizationsRepositoryImpl(get()) }
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
@@ -211,8 +214,8 @@ object IdentityModule : ServerModule {
         single<CreateServiceKeyUseCase> { CreateServiceKeyUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<ListServiceKeysUseCase> { ListServiceKeysUseCaseImpl(get(), get()) }
         single<DeleteServiceKeyUseCase> { DeleteServiceKeyUseCaseImpl(get(), get(), get()) }
-        single<ListDevicesUseCase> { ListDevicesUseCaseImpl(get(), get()) }
-        single<SignOutDeviceUseCase> { SignOutDeviceUseCaseImpl(get(), get(), get()) }
+        single<ListDevicesUseCase> { ListDevicesUseCaseImpl(get(), get(), get()) }
+        single<SignOutDeviceUseCase> { SignOutDeviceUseCaseImpl(get(), get(), get(), get()) }
         single { KeysAndDevicesRoutesDependencies(get(), get(), get(), get(), get(), get()) }
         single<StartDeviceAuthorizationUseCase> {
             StartDeviceAuthorizationUseCaseImpl(get(), get(), get(), get(), get())

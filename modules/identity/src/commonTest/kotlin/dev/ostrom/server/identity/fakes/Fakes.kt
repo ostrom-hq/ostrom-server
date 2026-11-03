@@ -11,6 +11,7 @@ import dev.ostrom.server.identity.domain.AuditRepository
 import dev.ostrom.server.identity.domain.DeviceAuthorization
 import dev.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import dev.ostrom.server.identity.domain.DeviceAuthorizationsRepository
+import dev.ostrom.server.identity.domain.ElevatedTokensRepository
 import dev.ostrom.server.identity.domain.DuplicateIdentityException
 import dev.ostrom.server.identity.domain.OrgAuditQuery
 import dev.ostrom.server.identity.domain.RateLimiter
@@ -173,16 +174,8 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
 
     override suspend fun findBySecretHash(secretHash: String): ApiToken? = tokens[secretHash]
 
-    // Inside an organization only its tokens are read, as under row-level security; outside, any (callers check kinds).
-    override suspend fun get(userId: Uuid, id: Uuid, orgId: Uuid?): ApiToken? =
-        tokens.values.firstOrNull { it.id == id && it.userId == userId && (orgId == null || it.orgId == orgId) }
-
-    override suspend fun listLiveElevated(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken> =
-        tokens.values.filter {
-            it.orgId == orgId && it.kind == TokenKind.ADMIN && (userId == null || it.userId == userId) &&
-                it.revokedAt == null && (it.expiresAt?.let { e -> e > now } ?: true)
-        }
-            .sortedByDescending { it.createdAt }
+    override suspend fun get(userId: Uuid, id: Uuid): ApiToken? =
+        tokens.values.firstOrNull { it.id == id && it.userId == userId }
 
     override suspend fun listLive(userId: Uuid, kinds: Set<TokenKind>, now: Instant): List<ApiToken> =
         tokens.values.filter {
@@ -200,7 +193,7 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
     }
 
     override suspend fun revoke(userId: Uuid, id: Uuid, at: Instant, orgId: Uuid?): Boolean {
-        val token = get(userId, id, orgId)?.takeIf { it.revokedAt == null && it.kind != TokenKind.AGENT } ?: return false
+        val token = get(userId, id)?.takeIf { it.revokedAt == null && it.kind != TokenKind.AGENT } ?: return false
         update(token.id) { it.copy(revokedAt = at) }
         return true
     }
@@ -239,6 +232,24 @@ class InMemoryServiceKeysRepository(private val tokens: InMemoryApiTokensReposit
 
     override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean {
         listLive(orgId, at).firstOrNull { it.id == id } ?: return false
+        tokens.tokens.entries.first { it.value.id == id }.let { it.setValue(it.value.copy(revokedAt = at)) }
+        return true
+    }
+}
+
+class InMemoryElevatedTokensRepository(private val tokens: InMemoryApiTokensRepository) : ElevatedTokensRepository {
+    override suspend fun listLive(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken> =
+        tokens.tokens.values.filter {
+            it.orgId == orgId && it.kind == TokenKind.ADMIN && (userId == null || it.userId == userId) &&
+                it.revokedAt == null && (it.expiresAt?.let { e -> e > now } ?: true)
+        }
+            .sortedByDescending { it.createdAt }
+
+    override suspend fun get(orgId: Uuid, id: Uuid): ApiToken? =
+        tokens.tokens.values.firstOrNull { it.id == id && it.orgId == orgId && it.kind == TokenKind.ADMIN }
+
+    override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean {
+        get(orgId, id)?.takeIf { it.revokedAt == null } ?: return false
         tokens.tokens.entries.first { it.value.id == id }.let { it.setValue(it.value.copy(revokedAt = at)) }
         return true
     }

@@ -196,23 +196,10 @@ interface ApiTokensRepository {
      *
      * @param userId The owner.
      * @param id The token.
-     * @param orgId The organization to read it in (the token of `ostrom login --admin` is only reached inside its
-     *   organization); null for an account-level token.
      *
-     * @return The token, or null when absent, another user's, or bound to another organization than [orgId].
+     * @return The token, or null when absent or another user's.
      */
-    suspend fun get(userId: Uuid, id: Uuid, orgId: Uuid? = null): ApiToken?
-
-    /**
-     * Lists the live tokens of `ostrom login --admin` bound to an organization, read inside it.
-     *
-     * @param orgId The organization.
-     * @param userId Their owner, or null for those of every member.
-     * @param now The current time, for expiry.
-     *
-     * @return At most [MAX_TOKENS_PER_USER] tokens, newest first.
-     */
-    suspend fun listLiveElevated(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken>
+    suspend fun get(userId: Uuid, id: Uuid): ApiToken?
 
     /**
      * Lists a user's live tokens (not revoked, not expired) of the given kinds.
@@ -305,6 +292,46 @@ interface ServiceKeysRepository {
      *
      * @return True when a live key was revoked; false when it is absent, another organization's, not a service key,
      *   expired or already revoked.
+     */
+    suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean
+}
+
+/**
+ * The tokens of `ostrom login --admin` bound to an organization: the `ADMIN` tokens of [ApiTokensRepository], read and
+ * revoked inside their organization, never outside it (they are created by the device flow, found by hash like any
+ * token).
+ */
+interface ElevatedTokensRepository {
+    /**
+     * Lists an organization's live elevated tokens (not revoked, not expired), inside that organization.
+     *
+     * @param orgId The organization.
+     * @param userId Their owner, or null for those of every member.
+     * @param now The current time, for expiry.
+     *
+     * @return At most [MAX_TOKENS_PER_USER] tokens, newest first.
+     */
+    suspend fun listLive(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken>
+
+    /**
+     * Reads an elevated token of an organization, revoked or not, inside that organization.
+     *
+     * @param orgId The organization.
+     * @param id The token.
+     *
+     * @return The token, or null when it is absent, another organization's or not an elevated token.
+     */
+    suspend fun get(orgId: Uuid, id: Uuid): ApiToken?
+
+    /**
+     * Revokes a live elevated token of an organization, inside that organization.
+     *
+     * @param orgId The organization.
+     * @param id The token.
+     * @param at When.
+     *
+     * @return True when a live token was revoked; false when it is absent, another organization's, not an elevated
+     *   token or already revoked.
      */
     suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean
 }

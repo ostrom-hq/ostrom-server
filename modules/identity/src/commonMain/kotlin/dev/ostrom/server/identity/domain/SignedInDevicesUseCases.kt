@@ -12,8 +12,11 @@ import kotlin.uuid.Uuid
  */
 private val DEVICE_KIND: TokenKind = TokenKind.CLI
 
-/** Who sees every member's tokens of `ostrom login --admin` in an organization: those who may approve one. */
-private val ELEVATED_TOKENS_VIEWERS: Set<OrgRole> = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+/**
+ * Who sees and signs out every member's tokens of `ostrom login --admin` in an organization: those who may approve one,
+ * for a token that leaked or a member who left.
+ */
+private val ELEVATED_TOKENS_MANAGERS: Set<OrgRole> = setOf(OrgRole.OWNER, OrgRole.ADMIN)
 
 /** Lists the workstations where the person is signed in. */
 interface ListDevicesUseCase {
@@ -30,59 +33,73 @@ interface ListDevicesUseCase {
 }
 
 /**
- * [ListDevicesUseCase] on the tokens repository.
+ * [ListDevicesUseCase] on the tokens repositories.
  *
- * @param tokens The tokens.
+ * @param tokens The account-level tokens.
+ * @param elevated The tokens of `ostrom login --admin`, inside their organization.
  * @param clock The clock.
  */
-class ListDevicesUseCaseImpl(private val tokens: ApiTokensRepository, private val clock: Clock) : ListDevicesUseCase {
+class ListDevicesUseCaseImpl(
+    private val tokens: ApiTokensRepository,
+    private val elevated: ElevatedTokensRepository,
+    private val clock: Clock,
+) : ListDevicesUseCase {
     override suspend fun invoke(userId: Uuid, member: OrgPrincipal?): List<ApiToken> {
         val now = clock.now()
         val devices = tokens.listLive(userId, setOf(DEVICE_KIND), now)
         if (member == null) return devices
-        val owner = userId.takeIf { member.role !in ELEVATED_TOKENS_VIEWERS }
-        return devices + tokens.listLiveElevated(member.orgId, owner, now)
+        val owner = userId.takeIf { member.role !in ELEVATED_TOKENS_MANAGERS }
+        return devices + elevated.listLive(member.orgId, owner, now)
     }
 }
 
-/** Signs one of the person's workstations out: its CLI token stops working at once. */
+/** Signs a workstation out: its token stops working at once. */
 interface SignOutDeviceUseCase {
     /**
-     * Signs it out. A token of `ostrom login --admin` is only signed out by its owner, in the organization the request
-     * names ([member]), where it is bound.
+     * Signs it out: one of the person's CLI tokens, or a token of `ostrom login --admin` in the organization the
+     * request names ([member]), where it is bound. A member signs out their own; an owner or an admin any member's.
      *
      * @param userId The person.
      * @param deviceId The device (its CLI token, or its token of `ostrom login --admin`).
      * @param member The person in the organization the request names, or null when it names none.
      *
-     * @throws DeviceNotFoundException When it is absent, another person's, neither kind of token, bound to another
-     *   organization, or already signed out.
+     * @throws DeviceNotFoundException When it is absent, another person's CLI token, another member's elevated token
+     *   for a member, bound to another organization, neither kind of token, or already signed out.
      */
     suspend operator fun invoke(userId: Uuid, deviceId: Uuid, member: OrgPrincipal? = null)
 }
 
 /**
- * [SignOutDeviceUseCase] on the tokens repository.
+ * [SignOutDeviceUseCase] on the tokens repositories. The audit names the person who signs it out (actor) and, for an
+ * elevated token, its owner.
  *
- * @param tokens The tokens.
+ * @param tokens The account-level tokens.
+ * @param elevated The tokens of `ostrom login --admin`, inside their organization.
  * @param audit The audit log.
  * @param clock The clock.
  */
 class SignOutDeviceUseCaseImpl(
     private val tokens: ApiTokensRepository,
+    private val elevated: ElevatedTokensRepository,
     private val audit: AuditLog,
     private val clock: Clock,
 ) : SignOutDeviceUseCase {
     override suspend fun invoke(userId: Uuid, deviceId: Uuid, member: OrgPrincipal?) {
         // `revoke` refuses a token already revoked; the kind is checked first, so no other token is signed out here.
-        val orgId = when {
-            tokens.get(userId, deviceId)?.kind == DEVICE_KIND -> null
-            member != null && tokens.get(userId, deviceId, member.orgId)?.kind == TokenKind.ADMIN -> member.orgId
-            else -> throw DeviceNotFoundException()
+        if (tokens.get(userId, deviceId)?.kind == DEVICE_KIND) {
+            if (!tokens.revoke(userId, deviceId, clock.nowMillis())) throw DeviceNotFoundException()
+            audit.record(AuditEntry(null, userId, "token.revoked", "token", deviceId.toString(), CLI_DETAILS))
+            return
         }
-        val kind = if (orgId == null) DEVICE_KIND else TokenKind.ADMIN
-        if (!tokens.revoke(userId, deviceId, clock.nowMillis(), orgId)) throw DeviceNotFoundException()
-        val details = mapOf("kind" to kind.name.lowercase())
-        audit.record(AuditEntry(orgId, userId, "token.revoked", "token", deviceId.toString(), details))
+        if (member == null) throw DeviceNotFoundException()
+        val token = elevated.get(member.orgId, deviceId) ?: throw DeviceNotFoundException()
+        if (token.userId != userId && member.role !in ELEVATED_TOKENS_MANAGERS) throw DeviceNotFoundException()
+        if (!elevated.revoke(member.orgId, deviceId, clock.nowMillis())) throw DeviceNotFoundException()
+        val details = mapOf("kind" to "admin", "owner" to token.userId.toString())
+        audit.record(AuditEntry(member.orgId, userId, "token.revoked", "token", deviceId.toString(), details))
+    }
+
+    private companion object {
+        val CLI_DETAILS: Map<String, String> = mapOf("kind" to "cli")
     }
 }

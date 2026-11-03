@@ -154,27 +154,51 @@ class ElevatedDevicesPostgresTest {
         }
 
     @Test
-    fun onlyItsOwnerSignsItOutInItsOrganizationAndItStopsAtOnce() =
+    fun aMemberSignsOutOnlyTheirOwnInItsOrganizationAndItStopsAtOnce() =
+        serverTest(listOf(IdentityModule), overrides) { server ->
+            val al = server.person("al", orgA, OrgRole.ADMIN)
+            val max = server.person("max", orgA, OrgRole.ADMIN)
+            val maxSecret = server.adminLogin(max)
+            val maxs = server.idOf(maxSecret)
+            val als = server.idOf(server.adminLogin(al))
+            roles[max.user.id.toString()] = orgA to OrgRole.MEMBER // demoted since, the token still live
+
+            assertEquals(HttpStatusCode.NotFound, server.signOut(max, maxs), "Outside its organization it is unknown")
+            assertEquals(HttpStatusCode.NotFound, server.signOut(max, als, orgA), "Another member's, for a member")
+            assertEquals(HttpStatusCode.NotFound, server.signOut(max, "nope", orgA))
+            assertEquals(HttpStatusCode.NoContent, server.signOut(max, maxs, orgA))
+            assertNull(server.koin.get<TokenAuthenticator>().authenticate(maxSecret), "Signed out at once")
+            assertEquals(HttpStatusCode.NotFound, server.signOut(max, maxs, orgA), "Already signed out")
+            assertEquals(listOf(als), server.devices(al, orgA).map { it.id })
+
+            val revoked = server.revocations().single()
+            assertEquals(max.user.id to maxs, revoked.actorId to revoked.targetId)
+            assertEquals("admin" to max.user.id.toString(), revoked.details["kind"] to revoked.details["owner"])
+        }
+
+    @Test
+    fun anOwnerOrAnAdminSignsOutAnyMembersTokenAuditedWithItsOwner() =
         serverTest(listOf(IdentityModule), overrides) { server ->
             val ada = server.person("ada", orgA, OrgRole.OWNER)
             val al = server.person("al", orgA, OrgRole.ADMIN)
-            val adasSecret = server.adminLogin(ada)
-            val adas = server.idOf(adasSecret)
-            val als = server.idOf(server.adminLogin(al))
+            val alsSecret = server.adminLogin(al)
+            val als = server.idOf(alsSecret)
+            val adas = server.idOf(server.adminLogin(ada))
 
-            assertEquals(HttpStatusCode.NotFound, server.signOut(ada, adas), "Outside its organization it is unknown")
-            assertEquals(HttpStatusCode.NotFound, server.signOut(ada, als, orgA), "Someone else's")
-            assertEquals(HttpStatusCode.NotFound, server.signOut(ada, "nope", orgA))
-            assertEquals(HttpStatusCode.NoContent, server.signOut(ada, adas, orgA))
-            assertNull(server.koin.get<TokenAuthenticator>().authenticate(adasSecret), "Signed out at once")
-            assertEquals(HttpStatusCode.NotFound, server.signOut(ada, adas, orgA), "Already signed out")
-            assertEquals(listOf(als), server.devices(ada, orgA).map { it.id })
+            assertEquals(HttpStatusCode.NoContent, server.signOut(ada, als, orgA), "The owner signs out the admin's")
+            assertNull(server.koin.get<TokenAuthenticator>().authenticate(alsSecret), "A leaked token stops at once")
+            assertEquals(HttpStatusCode.NoContent, server.signOut(al, adas, orgA), "An admin signs out the owner's")
+            assertTrue(server.devices(ada, orgA).isEmpty())
 
-            val events = server.koin.get<ListAuditEventsUseCase>()(orgA, null, null, 20).map { it.entry }
-            val revoked = events.single { it.action == "token.revoked" }
-            assertEquals(ada.user.id to adas, revoked.actorId to revoked.targetId)
-            assertEquals("admin", revoked.details["kind"])
+            val revocations = server.revocations().associateBy { it.targetId }
+            val ofAl = revocations.getValue(als)
+            assertEquals(ada.user.id to al.user.id.toString(), ofAl.actorId to ofAl.details["owner"])
+            val ofAda = revocations.getValue(adas)
+            assertEquals(al.user.id to ada.user.id.toString(), ofAda.actorId to ofAda.details["owner"])
         }
+
+    private suspend fun TestServer.revocations() = koin.get<ListAuditEventsUseCase>()(orgA, null, null, MAX_EVENTS)
+        .map { it.entry }.filter { it.action == "token.revoked" }
 
     @Test
     fun withoutABrowserSessionTheDevicesOfAnOrganizationAreRefused() =
@@ -194,5 +218,6 @@ class ElevatedDevicesPostgresTest {
 
     private companion object {
         const val DEVICES = "/api/v1/devices"
+        const val MAX_EVENTS = 20
     }
 }
