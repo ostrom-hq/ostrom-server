@@ -56,14 +56,14 @@ class TenancyPostgresTest {
     }
 
     // As asServingRole, with the table granted to the tenant role the serving role switches to in inOrg.
-    private fun asTenant(block: suspend (serving: Driver, role: String) -> Unit) = runTest {
+    private fun asTenant(block: suspend (serving: Driver, role: String, superuser: Driver) -> Unit) = runTest {
         val database = TestDatabase.create() ?: return@runTest
         try {
             // One connection: every transaction of the test reuses the connection the previous one used.
             database.withRole(poolSize = 1) { role, serving ->
                 database.superuser.execute("GRANT $TENANT_ROLE TO $role").getOrThrow()
                 createNotes(database.owner, TENANT_ROLE)
-                block(serving, role)
+                block(serving, role, database.superuser)
             }
         } finally {
             database.close()
@@ -135,7 +135,7 @@ class TenancyPostgresTest {
     }
 
     @Test
-    fun inOrgConfinesItsTransactionInOneStatementBeforeItsWork() = asTenant { serving, _ ->
+    fun inOrgConfinesItsTransactionInOneStatementBeforeItsWork() = asTenant { serving, _, _ ->
         val recording = RecordingDriver(serving)
         val sent = recording.record { recording.inOrg(alpha) { count() } }
         assertEquals(2, sent.size, sent.joinToString("\n") { it.sql })
@@ -143,7 +143,7 @@ class TenancyPostgresTest {
     }
 
     @Test
-    fun aReusedConnectionNeverKeepsTheRoleOrTheOrganizationOfAnInOrgTransaction() = asTenant { serving, role ->
+    fun aReusedConnectionNeverKeepsTheRoleOrTheOrganizationOfAnInOrgTransaction() = asTenant { serving, role, _ ->
         val inside = serving.inOrg(alpha) { insert(alpha, "alpha's"); state() }
         assertEquals(TENANT_ROLE to alpha.toString(), inside, "Inside: current_user is the tenant role, with alpha")
         assertEquals(role to null, serving.state(), "Back to the serving role, without an organization")
@@ -162,6 +162,28 @@ class TenancyPostgresTest {
         assertFailsWith<SQLError>("A row of another organization is refused") {
             serving.inOrg(alpha) { insert(beta, "planted") }
         }
+    }
+
+    @Test
+    fun outsideInOrgAReusedConnectionWritesInNoOrganizationNorWithoutOne() = asTenant { serving, role, superuser ->
+        serving.inOrg(alpha) { insert(alpha, "alpha's") }
+        serving.inOrg(beta) { insert(beta, "beta's") }
+        assertEquals(role to null, serving.state(), "Reused, without an organization")
+        // The serving role inherits the tenant role's grants: the policies alone stand between it and the rows.
+        listOf(alpha, beta).forEach { org ->
+            assertFailsWith<SQLError>("An insert without organization is refused, into $org") {
+                serving.insert(org, "outside")
+            }
+        }
+        assertEquals(0L, serving.execute("UPDATE notes SET body = 'touched'").getOrThrow(), "An update touches nothing")
+        assertEquals(0L, serving.execute("DELETE FROM notes").getOrThrow(), "A delete touches nothing")
+        val rows = superuser.fetchAll("SELECT org_id, body FROM notes ORDER BY body").getOrThrow()
+            .map { it.get("org_id").asStringOrNull() to it.get("body").asStringOrNull() }
+        assertEquals(
+            listOf(alpha.toString() to "alpha's", beta.toString() to "beta's"),
+            rows,
+            "No row written or changed, in an organization or without one",
+        )
     }
 
     @Test
