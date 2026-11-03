@@ -2,7 +2,6 @@
 package dev.ostrom.server.notifications
 
 import dev.ostrom.server.gates.GatesModule
-import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.AskedVia
 import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.GateActor
@@ -137,7 +136,8 @@ class ApprovalNotificationsPostgresTest {
     }
 
     private suspend fun TestServer.askPushToMain(org: Uuid) = koin.get<AskGateUseCase>()(
-        GateActor("agent", org, ActorKind.AGENT_SESSION, launchId = "launch-1", personId = "ana"),
+        // A person asking from their workstation's hook: an agent token would need its session (gates' rule).
+        GateActor.person("ana", org, OrgRole.MEMBER, now),
         AskGate(
             sessionId = null,
             runId = null,
