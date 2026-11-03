@@ -4,6 +4,7 @@ package dev.ostrom.server.kernel
 import dev.ostrom.server.kernel.auth.ALL_USER_SCOPES
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
+import dev.ostrom.server.kernel.auth.RejectingPhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.STEP_UP_REQUIRED
 import dev.ostrom.server.kernel.auth.STEP_UP_WITHIN
@@ -28,6 +29,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.test.runTest
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.koinApplication
@@ -35,6 +37,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
@@ -63,6 +66,12 @@ class StepUpTest {
                 assertEquals(message, refused.message)
             }
         }
+    }
+
+    // Without the identity module, which records the phone's unlocks, no unlock proves a yes from the app.
+    @Test
+    fun noPhoneUnlockProvesAYesWithoutTheModuleThatRecordsThem() = runTest {
+        assertFalse(RejectingPhoneUnlockProofs().consume("token", "request", now))
     }
 
     @Test

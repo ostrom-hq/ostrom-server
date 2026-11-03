@@ -204,13 +204,21 @@ interface UnlockMobileAppUseCase {
      * @param unlockKey The key the app read from behind the phone's biometrics.
      * @param source Who is asking (the client address): with the token, the rate limit, so a copy of the token used
      *   elsewhere cannot exhaust the phone's unlocks.
+     * @param requestId The approval request the unlock is for: a yes from the app to it is taken once, within a
+     *   minute (Q-APP-STEPUP-RISK). Null binds the unlock to no request.
      *
-     * @return When the unlock was recorded: a yes is accepted for five minutes after it.
+     * @return When the unlock was recorded: a no is accepted for five minutes after it, a yes only as above.
      *
      * @throws RateLimitedException When the token unlocks too often.
      * @throws MobileUnlockRefusedException When the key is wrong or the token is not a live app token.
      */
-    suspend operator fun invoke(userId: Uuid, tokenId: Uuid, unlockKey: String, source: String): Instant
+    suspend operator fun invoke(
+        userId: Uuid,
+        tokenId: Uuid,
+        unlockKey: String,
+        source: String,
+        requestId: String? = null,
+    ): Instant
 }
 
 /**
@@ -229,13 +237,21 @@ class UnlockMobileAppUseCaseImpl(
     private val audit: AuditLog,
     private val clock: Clock,
 ) : UnlockMobileAppUseCase {
-    override suspend fun invoke(userId: Uuid, tokenId: Uuid, unlockKey: String, source: String): Instant {
+    override suspend fun invoke(
+        userId: Uuid,
+        tokenId: Uuid,
+        unlockKey: String,
+        source: String,
+        requestId: String?,
+    ): Instant {
         if (!limiter.tryAcquire("mobile-unlock:$tokenId:$source", UNLOCK_LIMIT, MOBILE_LIMIT_WINDOW)) {
             throw RateLimitedException()
         }
         val now = clock.nowMillis()
         val wellFormed = unlockKey.length in 1..MAX_MOBILE_SECRET_LENGTH
-        if (!wellFormed || !mobileTokens.unlock(tokenId, userId, hasher.hash(unlockKey), now)) {
+        // An id longer than any request's names none: it is cut, and still binds the unlock to nothing a yes can use.
+        val request = requestId?.take(MAX_REQUEST_ID_LENGTH)
+        if (!wellFormed || !mobileTokens.unlock(tokenId, userId, hasher.hash(unlockKey), now, request)) {
             throw MobileUnlockRefusedException()
         }
         audit.record(AuditEntry(null, userId, "token.unlocked", "token", tokenId.toString()))
@@ -244,5 +260,6 @@ class UnlockMobileAppUseCaseImpl(
 
     private companion object {
         const val UNLOCK_LIMIT = 30
+        const val MAX_REQUEST_ID_LENGTH = 64
     }
 }
