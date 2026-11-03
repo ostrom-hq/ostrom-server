@@ -53,6 +53,8 @@ class Ed25519InstanceSigner private constructor(
          * @param path The PEM file.
          *
          * @return The signer.
+         *
+         * @throws InvalidConfigException When the file is not an Ed25519 private key.
          */
         suspend fun loadOrCreate(path: String): Ed25519InstanceSigner = loadOrCreate(path, ::createPrivateFile)
 
@@ -81,7 +83,7 @@ class Ed25519InstanceSigner private constructor(
          *
          * @return The signer.
          *
-         * @throws InvalidConfigException When the file does not exist.
+         * @throws InvalidConfigException When the file does not exist, or is not an Ed25519 private key.
          */
         suspend fun load(path: String): Ed25519InstanceSigner {
             val file = Path(path)
@@ -90,10 +92,18 @@ class Ed25519InstanceSigner private constructor(
         }
 
         private suspend fun read(file: Path): Ed25519InstanceSigner {
-            val pem = SystemFileSystem.source(file).buffered().use { it.readString() }
-            val privateKey = edDsa.privateKeyDecoder(EdDSA.Curve.Ed25519)
-                .decodeFromByteArray(EdDSA.PrivateKey.Format.PEM, pem.encodeToByteArray())
+            val privateKey = decode(file)
             return of(privateKey, privateKey.getPublicKey())
+        }
+
+        // Not suspending: no cancellation to let through. Whatever the library or the file system says, the start
+        // stops on a configuration error that names the file.
+        private fun decode(file: Path): EdDSA.PrivateKey = try {
+            val pem = SystemFileSystem.source(file).buffered().use { it.readString() }
+            edDsa.privateKeyDecoder(EdDSA.Curve.Ed25519)
+                .decodeFromByteArrayBlocking(EdDSA.PrivateKey.Format.PEM, pem.encodeToByteArray())
+        } catch (error: Exception) {
+            throw InvalidConfigException("Signing key file $file is not an Ed25519 private key in PKCS#8 PEM.", error)
         }
 
         private suspend fun of(privateKey: EdDSA.PrivateKey, publicKey: EdDSA.PublicKey): Ed25519InstanceSigner {
