@@ -135,6 +135,10 @@ class AnalysisUntrustedRepositoryTest {
         assertTrue(CodeOwners.gateable("/docs/**"))
         assertTrue(CodeOwners.gateable("/docs/"))
         assertFalse(CodeOwners.gateable("*a*"))
+        // A gateable pattern with one run of stars, of each kind, as a hook's expression.
+        assertEquals("(^|/)(?:.*/)?logs(?:/.*)?$", CodeOwners.gatePattern("**/logs"))
+        assertEquals("(^|/)bin/.*(?:/.*)?$", CodeOwners.gatePattern("/bin/**"))
+        assertEquals("(^|/)a[^/]c\\.txt(?:/.*)?$", CodeOwners.gatePattern("/a?c.txt"))
     }
 
     // The automaton reads patterns as GitHub does, step by step.
