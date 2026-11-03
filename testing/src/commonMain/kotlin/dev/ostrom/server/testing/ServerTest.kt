@@ -17,6 +17,7 @@ import dev.ostrom.server.kernel.module.serverKoin
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.install
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.runTestApplication
 import io.ktor.test.dispatcher.runTestWithRealTime
@@ -38,6 +39,9 @@ private val BENCH_TIMEOUT = 5.minutes
  * Started as a deployment starts: the owner applies the migrations (`ostrom-server migrate`), then the server connects
  * as the serving role, which must pass the start check (no row-level security bypass), verifies the migrations and
  * initializes the modules. Every request and every repository of the test runs as that role.
+ *
+ * Every JSON answer of an operation the ostrom-core contract marks `served` is checked against it when CI gives the
+ * contract (`OSTROM_CONTRACT_OPENAPI`): the test fails on a drift [KnownDrifts] does not list ([ContractObserver]).
  *
  * @param modules The modules under test, in dependency order.
  * @param overrides Koin definitions replacing real ones (a fake clock, a fake token authenticator).
@@ -96,12 +100,18 @@ private suspend fun ApplicationTestBuilder.serve(
             val migrations = koin.get<MigrationRunner>()
             modules.forEach { migrations.verify(it.name, it.migrations) }
             modules.forEach { it.initialize(koin) }
-            application { configureHttp(koin, modules) }
+            // Every answer is checked against ostrom-core main's contract when CI gives it (ContractObserver).
+            val observer = ContractObserver(Contract.from(environment))
+            application {
+                install(observer.plugin)
+                configureHttp(koin, modules)
+            }
             // Started now, not lazily at the first request: a test that never calls the client would otherwise start
             // the application after the finally below has closed Koin.
             startApplication()
             val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
             block(TestServer(koin, driver, client, database))
+            observer.finish()
         } finally {
             koin.close()
         }

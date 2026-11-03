@@ -34,6 +34,12 @@ import kotlin.uuid.Uuid
 /** Gates in memory; a transaction holds one mutex (like the row lock) and rolls back on an exception. */
 class InMemoryGatesRepository : GatesRepository {
     val gates = linkedMapOf<Uuid, Gate>()
+
+    /**
+     * The sessions linked to each gate, as `gates_sessions` holds them: written by `insertGate` and `addAskers` only,
+     * so a session written into a gate by `updateGate` alone is not found by `ofSession`, as on PostgreSQL.
+     */
+    val links = linkedSetOf<Pair<Uuid, String>>()
     val requests = linkedMapOf<Uuid, ApprovalRequest>()
     val lockedKeys = mutableListOf<String>()
     var gateUpdates = 0
@@ -50,11 +56,13 @@ class InMemoryGatesRepository : GatesRepository {
         transactions++
         val savedGates = LinkedHashMap(gates)
         val savedRequests = LinkedHashMap(requests)
+        val savedLinks = LinkedHashSet(links)
         try {
             Tx().block()
         } catch (error: Throwable) {
             gates.clear(); gates.putAll(savedGates)
             requests.clear(); requests.putAll(savedRequests)
+            links.clear(); links.addAll(savedLinks)
             throw error
         }
     }
@@ -72,7 +80,7 @@ class InMemoryGatesRepository : GatesRepository {
     }
 
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> =
-        gates.values.filter { it.orgId == orgId && sessionId in it.sessionIds }.sortedBy { it.createdAt }
+        gates.values.filter { it.orgId == orgId && (it.id to sessionId) in links }.sortedBy { it.createdAt }
 
     override suspend fun approval(orgId: Uuid, id: Uuid): ApprovalView? =
 
@@ -117,6 +125,7 @@ class InMemoryGatesRepository : GatesRepository {
                 sessionIds = gate.sessionIds,
                 launchIds = gate.launchIds,
             )
+            gate.sessionIds.forEach { links += gate.id to it }
         }
 
         override suspend fun lockGate(orgId: Uuid, id: Uuid): Gate? {
@@ -135,6 +144,7 @@ class InMemoryGatesRepository : GatesRepository {
 
         override suspend fun insertGate(gate: Gate) {
             gates[gate.id] = gate
+            gate.sessionIds.forEach { links += gate.id to it }
         }
 
         override suspend fun updateGate(gate: Gate) {
