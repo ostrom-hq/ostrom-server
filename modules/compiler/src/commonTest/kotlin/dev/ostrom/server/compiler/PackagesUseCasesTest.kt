@@ -133,7 +133,7 @@ class PackagesUseCasesTest {
         val third = publish(org, null, "https://acme.example", "dev-c")
         assertEquals(second.stored, third.stored, "a manual pin serves the pinned version")
         assertTrue(third.pinned)
-        assertEquals(3, repository.packages(org, null).size)
+        assertEquals(3, repository.packages(org).size)
     }
 
     @Test

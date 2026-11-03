@@ -6,6 +6,7 @@ import dev.ostrom.server.compiler.domain.models.PackageAudit
 import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
+import dev.ostrom.server.compiler.domain.repositories.PackageListRepository
 import dev.ostrom.server.compiler.domain.repositories.WorkflowsRepository
 import dev.ostrom.server.compiler.domain.services.HarnessStamp
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -21,14 +22,16 @@ import kotlin.uuid.Uuid
 
 /**
  * [CompilerRepository] on PostgreSQL (sqlx4k): harnesses, packages, pins and the audit here, workflows and decisions in
- * [PostgresWorkflowsRepository]. Every call is one transaction that first sets `ostrom.org_id`, read by the row level
- * security policies of the compiler tables.
+ * [PostgresWorkflowsRepository], the list of the packages in [PostgresPackageListRepository]. Every call is one
+ * transaction that first sets `ostrom.org_id`, read by the row level security policies of the compiler tables.
  *
  * @param driver The connection pool.
  */
 class PostgresCompilerRepository(
     private val driver: Driver,
-) : CompilerRepository, WorkflowsRepository by PostgresWorkflowsRepository(driver) {
+) : CompilerRepository,
+    WorkflowsRepository by PostgresWorkflowsRepository(driver),
+    PackageListRepository by PostgresPackageListRepository(driver) {
     override suspend fun harness(orgId: Uuid, repo: String?, digest: String): HarnessStamp? = driver.inOrg(orgId) {
         harnesses(orgId, repo, digest).firstOrNull()
     }
@@ -54,14 +57,13 @@ class PostgresCompilerRepository(
         ).firstOrNull()?.toPackage()
     }
 
-    override suspend fun packages(orgId: Uuid, repo: String?): List<StoredPackage> = driver.inOrg(orgId) {
-        val statement = Statement.create(
-            "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org" +
-                (if (repo == null) "" else " AND repo = :repo") +
-                " ORDER BY compiled_at DESC, content_digest LIMIT $MAX_ROWS",
-        ).bind("org", orgId)
-        repo?.let { statement.bind("repo", it) }
-        fetch(statement).map { it.toPackage() }
+    override suspend fun packages(orgId: Uuid): List<StoredPackage> = driver.inOrg(orgId) {
+        fetch(
+            Statement.create(
+                "SELECT $PACKAGE_COLUMNS FROM compiler_packages WHERE org_id = :org " +
+                    "ORDER BY compiled_at DESC, content_digest LIMIT $MAX_ROWS",
+            ).bind("org", orgId),
+        ).map { it.toPackage() }
     }
 
     override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage = driver.inOrg(orgId) {

@@ -217,6 +217,12 @@ class InMemoryApiTokensRepository : ApiTokensRepository {
         return live.size.toLong()
     }
 
+    override suspend fun purgeAgentTokens(before: Instant): Long {
+        val gone = tokens.filterValues { it.kind == TokenKind.AGENT && it.expiresAt?.let { at -> at < before } == true }
+        gone.keys.forEach { tokens.remove(it) }
+        return gone.size.toLong()
+    }
+
     private fun update(id: Uuid, change: (ApiToken) -> ApiToken) {
         tokens.entries.firstOrNull { it.value.id == id }?.let { it.setValue(change(it.value)) }
     }
