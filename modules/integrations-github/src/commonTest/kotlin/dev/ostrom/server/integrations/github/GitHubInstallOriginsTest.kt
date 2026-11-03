@@ -56,7 +56,7 @@ class GitHubInstallOriginsTest {
         GitHubGateChecks(repository, api, "https://console.example", clock),
         logger,
         clock,
-        IdentityGitHubAccounts(LinkedGitHubUsers(emptyMap())),
+        LinkedGitHubUsers(emptyMap()).let { IdentityGitHubAccounts(it, it) },
     )
     private val page = installPage(GITHUB, "ostrom-dev")
     private val installs = GitHubInstalls(repository, repository.origins, api, { page }, clock)

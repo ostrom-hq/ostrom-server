@@ -105,6 +105,16 @@ interface MembersRepository {
     suspend fun list(orgId: Uuid): List<Member>
 
     /**
+     * A page of the members, oldest first.
+     *
+     * @param orgId The organization.
+     * @param after The member the page starts after; an unknown one gives an empty page.
+     * @param limit The most members.
+     * @return The members.
+     */
+    suspend fun page(orgId: Uuid, after: Uuid?, limit: Int): List<Member>
+
+    /**
      * How many members the organization has.
      *
      * @param orgId The organization.

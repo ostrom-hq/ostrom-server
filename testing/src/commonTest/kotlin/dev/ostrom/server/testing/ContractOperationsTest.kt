@@ -44,6 +44,9 @@ class ContractOperationsTest {
         val export = operations.all.first { it.id == "exportThings" }
         assertNull(export.response(200)?.json, "Not JSON")
         assertNull(export.response(202)?.json, "JSON without a schema")
+        assertNotNull(export.response(404)?.json, "JSON, or plain text")
+        assertTrue(export.response(404)?.other == true, "Plain text too")
+        assertFalse(list.response(200)?.other == true, "JSON only")
     }
 
     @Test
