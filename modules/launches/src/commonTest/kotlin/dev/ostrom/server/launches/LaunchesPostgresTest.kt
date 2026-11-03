@@ -5,6 +5,7 @@ import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
 import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.IssueAgentTokenUseCase
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
@@ -48,9 +49,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -379,6 +382,37 @@ class LaunchesPostgresTest {
             val (session, token) = server.cloudSession(bob, ownerId = ada.memberId.toString())
             assertEquals(HttpStatusCode.NotFound, server.runnerLaunch("Bearer $token", claim(session)).status)
             assertEquals(0 to 0, server.launchesSeenBy(ada.org.id) to server.launchesSeenBy(bob.org.id))
+        }
+
+    @Test
+    fun aCloudLaunchsAgentTokenActsOnlyWhileTheExecutionItWasOpenedInRuns() =
+        serverTest(modules) { server ->
+            val ada = server.person("ada")
+            val (session, token) = server.cloudSession(ada)
+            val agent = server.runnerLaunch("Bearer $token", claim(session)).body<LaunchResponse>().agentToken
+            assertEquals(HttpStatusCode.OK, server.call(agent, "/api/v1/sessions", SESSION).status)
+            val sessions = server.koin.get<CloudSessionsRepository>()
+            suspend fun becomes(change: (CloudSession) -> CloudSession) {
+                val current = assertNotNull(sessions.get(ada.org.id, session.id))
+                assertNotNull(sessions.compareAndSet(change(current), null))
+            }
+            suspend fun acts() = server.call(agent, "/api/v1/sessions/s-1/alive", "{}").status.isSuccess()
+
+            becomes { it.copy(state = SessionState.RUNNING) }
+            assertTrue(acts(), "The execution it was opened in runs")
+            becomes { it.copy(executionStartedAt = now + 1.hours) }
+            assertFalse(acts(), "A later execution: its runner opens its own launch")
+            becomes { it.copy(state = SessionState.PAUSED, executionStartedAt = now) }
+            assertFalse(acts(), "Paused")
+            becomes { it.copy(state = SessionState.TERMINATED, executionStartedAt = null, runnerTokenHash = null) }
+            assertFalse(acts(), "Deleted, its token still unexpired")
+
+            // A launch naming a cloud session its organization does not hold acts nowhere.
+            val orphan = stored(ada.org.id, ada.user.id, now).copy(cloudSessionId = Uuid.random())
+            assertNull(server.koin.get<LaunchesRepository>().create(orphan, LaunchLimit.DEFAULT))
+            val issued = server.koin.get<IssueAgentTokenUseCase>()(ada.user.id, ada.org.id, orphan.id, 1.hours)
+            val own = server.call(issued.secret, "/api/v1/sessions", SESSION.replace("\"s-1\"", "\"s-9\""))
+            assertFalse(own.status.isSuccess(), "No such cloud session: ${own.bodyAsText()}")
         }
 
     private fun stored(orgId: Uuid, userId: Uuid, createdAt: Instant) = Launch(

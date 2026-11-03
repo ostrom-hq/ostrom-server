@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.launches.domain.models.Launch
+import dev.ostrom.server.launches.domain.services.CloudExecutions
 import dev.ostrom.server.launches.fakes.ADA
 import dev.ostrom.server.launches.fakes.FakeLaunchers
 import dev.ostrom.server.launches.fakes.FixedClock
@@ -30,6 +31,7 @@ class LaunchRelayCallersTest {
     private val started = Instant.parse("2026-10-30T09:58:00Z")
     private val launches = InMemoryLaunches()
     private val clock = FixedClock(started)
+    private val executions = CloudExecutions { _, _, _ -> true }
     private val launchers = FakeLaunchers(mapOf(ADA.userId.toString() to ADA.copy(role = OrgRole.OWNER)))
 
     /** The orgs module for a person's own credential: Ada owns [ORG]. */
@@ -39,7 +41,7 @@ class LaunchRelayCallersTest {
                 principal.subjectId == ADA.userId.toString() && (orgId == null || orgId == ORG)
             }
     }
-    private val callers = LaunchRelayCallers(orgs, LaunchAgents(launchers, launches, clock))
+    private val callers = LaunchRelayCallers(orgs, LaunchAgents(launchers, launches, clock, executions))
     private val launch =
         Launch("lch_1", ORG, ADA.userId, "ada", "acme/api", "claude-code", null, started, started + 24.hours)
 
