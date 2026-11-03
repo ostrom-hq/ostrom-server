@@ -374,6 +374,8 @@ class MobileSignInTest {
         assertTrue("@ada&lt;b&gt;" in page, "The login is escaped: $page")
         assertTrue("<script" !in page, "The person taps: nothing goes to the app by itself")
         assertTrue("<form" !in page && "<img" !in page, "Nothing else leaves the page")
+        val unnamed = MobileCallback(APP_REDIRECT_URI, "s", code = "c").confirmPage()
+        assertTrue("Sign in to the Ostrom app?" in unnamed, "Without a login, the page names nobody: $unnamed")
     }
 
     @Test

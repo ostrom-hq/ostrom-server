@@ -164,7 +164,7 @@ fun MobileCallback.confirmPage(): String = """
     <body style="font-family: system-ui; display: grid; place-items: center; min-height: 100vh; margin: 0;
     padding: 0 16px">
     <main style="max-width: 28rem">
-    <h1 style="font-size: 1.25rem">Sign in to the Ostrom app as @${htmlEscape(login.orEmpty())}?</h1>
+    <h1 style="font-size: 1.25rem">Sign in to the Ostrom app${login?.let { " as @" + htmlEscape(it) }.orEmpty()}?</h1>
     <p>Continue only if you started this sign-in from the Ostrom app on this phone. If you did not, close this page:
     someone else may be trying to sign in as you.</p>
     <p><a href="${htmlEscape(toUrl())}" style="display: inline-block; padding: 12px 20px; border-radius: 8px;
