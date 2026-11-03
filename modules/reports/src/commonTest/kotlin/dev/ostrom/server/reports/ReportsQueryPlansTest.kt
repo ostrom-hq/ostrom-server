@@ -56,7 +56,11 @@ class ReportsQueryPlansTest {
                 "FROM generate_series(1, $scale) AS i",
             "INSERT INTO gates_gates (id, org_id, gate_key, subject, label, mode, status, asked_by, asked_via, " +
                 "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, created_at) SELECT " +
-                "gen_random_uuid(), CAST('$org' AS uuid), 'merge', 'pr', 'Merge', 'ENFORCE', CASE WHEN i % 3 = 0 " +
+                "gen_random_uuid(), CAST('$org' AS uuid), 'merge', " +
+                // The subject as the gates module stores it, with the repository the feed reads.
+                "'{\"repo\":\"acme/r' || (i % 20) || '\",\"actionClass\":\"merge\",' || " +
+                "'\"command\":\"\",\"scope\":\"sha:0\"}', " +
+                "'Merge', 'ENFORCE', CASE WHEN i % 3 = 0 " +
                 "THEN 'PENDING' ELSE 'APPROVED' END, '[\"claude\"]', 'cli', '[]', '[]', 'd', '{}', CASE WHEN " +
                 "i % 3 = 0 THEN NULL ELSE 'rev' END, CASE WHEN i % 3 = 0 THEN NULL ELSE to_timestamp($epoch) - i * " +
                 "INTERVAL '1 hour' + INTERVAL '5 minutes' END, to_timestamp($epoch) - i * INTERVAL '1 hour' " +
