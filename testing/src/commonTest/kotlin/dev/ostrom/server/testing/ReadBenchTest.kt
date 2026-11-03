@@ -52,7 +52,7 @@ class ReadBenchTest {
         slow.assertWithinBudget(emptySet(), maxQueries = 0)
         val blocked = ReadMeasure("blocked", emptyList(), emptyList(), listOf(READ_P95_BUDGET * 11), 3.milliseconds)
         val block = assertFailsWith<AssertionError> { blocked.assertWithinBudget(emptySet(), maxQueries = 0) }
-        assertTrue("blocked: database p95 550ms, over 10 times its budget of 50ms" in block.message.orEmpty())
+        assertTrue("blocked: database p95: 550ms, over 10 times its budget of 50ms" in block.message.orEmpty())
     }
 
     @Test

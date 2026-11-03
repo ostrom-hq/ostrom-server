@@ -15,7 +15,6 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
-import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
@@ -186,30 +185,6 @@ fun ReadMeasure.assertWithinBudget(largeTables: Set<String>, maxQueries: Int) {
     assertNoScan(largeTables)
     assertQueriesAtMost(maxQueries)
     checkTime("$name: database p95", p95, READ_P95_BUDGET) { describe() }
-}
-
-/**
- * Fails if one call of this route sends more than [maxQueries] queries: a query added per row of the page (N+1) fails
- * on every runner, where a time only would on a quiet one.
- *
- * @param maxQueries The queries one call sends at most.
- */
-fun ReadMeasure.assertQueriesAtMost(maxQueries: Int) {
-    assertTrue(queries <= maxQueries, "$name sends $queries queries per call, over $maxQueries:\n${describe()}")
-}
-
-/**
- * Fails if this route scans any of [largeTables] sequentially: the organization tables the test filled past
- * 10 000 rows.
- *
- * @param largeTables The tables never to scan.
- */
-fun ReadMeasure.assertNoScan(largeTables: Set<String>) {
-    val scanned = largeTables.filter { table ->
-        val scan = Regex("Seq Scan on ${Regex.escape(table)}\\b")
-        plans.any { scan.containsMatchIn(it) }
-    }
-    assertTrue(scanned.isEmpty(), "$name scans $scanned:\n${describe()}")
 }
 
 /**

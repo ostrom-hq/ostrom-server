@@ -54,6 +54,7 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.http.ReadThrottle
+import dev.ostrom.server.testing.RecordingDriver
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.checkTime
 import dev.ostrom.server.testing.serverTest
@@ -780,14 +781,8 @@ class GatesPostgresTest {
             }.sorted()
             times[SAMPLES * 95 / 100 - 1] to times[SAMPLES / 2]
         }
-        val sent = List(ROUNDS) { server.driver.record { ask(actor, request) } }.minBy { it.size }
-        val statements = sent.joinToString("\n") { it.sql }
-        println("ask a gate: ${sent.size} statements\n$statements")
-        assertTrue(sent.size <= MAX_ASK_STATEMENTS, "An ask sends ${sent.size} statements:\n$statements")
-        val shown = rounds.joinToString { (p95, median) -> "p95 = $p95, median = $median" }
-        checkTime("ask a gate (AskGateUseCase): p95, best of $ROUNDS rounds", rounds.minOf { it.first }, ASK_BUDGET) {
-            shown
-        }
+        assertAskSendsAHandful(server.driver) { ask(actor, request) }
+        checkTime(ASK_MEASURE, rounds.minOf { it.first }, ASK_BUDGET) { rounds.joinToString() }
     }
 
     @Test
@@ -869,7 +864,16 @@ private const val WAITERS = 200
 private const val FEW_WAITS = 4
 private const val ROUNDS = 3
 private val ASK_BUDGET = 50.milliseconds
+private const val ASK_MEASURE = "ask a gate (AskGateUseCase): p95 (best, median) of $ROUNDS rounds"
 
-// The statements of one ask today (the role, the organization, the lock, the gates of the key, the rows it writes):
-// one more is a query per gate or per request, on any runner.
-private const val MAX_ASK_STATEMENTS = 12
+// The statements of one ask today (Build 41727084508): the role, the organization, the lock, the gates of the key and
+// what it writes. One more is a query per gate or per request, on any runner.
+private const val MAX_ASK_STATEMENTS = 6
+
+/** Fails if one ask sends over [MAX_ASK_STATEMENTS] statements: the fewest of three recordings, as a bench keeps. */
+private suspend fun assertAskSendsAHandful(driver: RecordingDriver, ask: suspend () -> Unit) {
+    val sent = List(ROUNDS) { driver.record(ask) }.minBy { it.size }
+    val statements = sent.joinToString("\n") { it.sql }
+    println("ask a gate: ${sent.size} statements\n$statements")
+    assertTrue(sent.size <= MAX_ASK_STATEMENTS, "An ask sends ${sent.size} statements:\n$statements")
+}
