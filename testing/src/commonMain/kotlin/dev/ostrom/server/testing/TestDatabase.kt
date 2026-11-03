@@ -7,8 +7,14 @@ import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.connectPostgres
 import io.github.smyrgeorge.sqlx4k.Driver
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.Uuid
 
 /**
@@ -83,7 +89,9 @@ class TestDatabase private constructor(
      * Runs [block] alone among the test processes that share this PostgreSQL server: it holds the server's lock of the
      * timed and large phases, an advisory lock taken in the configured database (the same for every test database) on
      * a connection of its own, released afterwards, on failure and cancellation too, and by PostgreSQL if the process
-     * dies with it. Within [block], this database takes it again at once (a bench's large pool inside its timing).
+     * dies with it. The lock is tried every [LOCK_RETRY], never waited on in PostgreSQL, so that a test cancelled
+     * while it waits stops at once. Within [block] and its child coroutines, this database takes it again at once (a
+     * bench's large pool inside its timing); another coroutine waits like another process.
      *
      * CI's PostgreSQL service has `max_connections` 100 and Gradle runs the modules' tests in parallel, each test with
      * pools of its own (up to 12 connections, [create]). Two read benches of 20 callers and the launch path's pool of 50
@@ -94,16 +102,31 @@ class TestDatabase private constructor(
      * @param block What runs alone.
      * @return What [block] returns.
      */
-    suspend fun <T> exclusively(block: suspend () -> T): T {
-        if (exclusive) return block()
+    suspend fun <T> exclusively(block: suspend () -> T): T = exclusively(onWait = {}, block)
+
+    /**
+     * [exclusively], calling [onWait] each time the lock is found held by another.
+     *
+     * @param onWait Called on each refused try.
+     * @param block What runs alone.
+     * @return What [block] returns.
+     */
+    internal suspend fun <T> exclusively(onWait: () -> Unit, block: suspend () -> T): T {
+        if (currentCoroutineContext()[Holder]?.database === this) return block()
         val pool = connectPostgres(admin)
         try {
-            return pool.holding(EXCLUSIVE_LOCK) {
-                exclusive = true
-                try {
-                    block()
-                } finally {
-                    exclusive = false
+            val lock = pool.acquire().getOrThrow()
+            try {
+                while (!lock.fetchAll(TRY_LOCK).getOrThrow().single().get("held").asBoolean()) {
+                    onWait()
+                    // Real time, also under a test dispatcher's virtual clock.
+                    withContext(Dispatchers.Default) { delay(LOCK_RETRY) }
+                }
+                return withContext(Holder(this)) { block() }
+            } finally {
+                withContext(NonCancellable) {
+                    lock.fetchAll("SELECT pg_advisory_unlock($EXCLUSIVE_LOCK)")
+                    lock.close()
                 }
             }
         } finally {
@@ -111,22 +134,10 @@ class TestDatabase private constructor(
         }
     }
 
-    // Runs block holding the advisory lock key on a connection of this pool, released afterwards whatever happens.
-    private suspend fun <T> Driver.holding(key: Long, block: suspend () -> T): T {
-        val lock = acquire().getOrThrow()
-        try {
-            lock.fetchAll("SELECT pg_advisory_lock($key)").getOrThrow()
-            return block()
-        } finally {
-            withContext(NonCancellable) {
-                lock.fetchAll("SELECT pg_advisory_unlock($key)")
-                lock.close()
-            }
-        }
+    // The coroutines that run within exclusively for this database, the one that holds the lock and its children.
+    private class Holder(val database: TestDatabase) : AbstractCoroutineContextElement(Holder) {
+        companion object Key : CoroutineContext.Key<Holder>
     }
-
-    // Whether this database holds the lock of exclusively: its phases run one after another, never at once.
-    private var exclusive = false
 
     private suspend fun <T> connectedAsRole(
         bypassRowLevelSecurity: Boolean,
@@ -182,6 +193,8 @@ class TestDatabase private constructor(
 
         /** The advisory lock key of [exclusively], in the configured database. */
         internal const val EXCLUSIVE_LOCK = 774_210_001L
+        private const val TRY_LOCK = "SELECT pg_try_advisory_lock($EXCLUSIVE_LOCK) AS held"
+        private val LOCK_RETRY = 200.milliseconds
 
         /**
          * Creates a fresh database with its owner and serving roles.

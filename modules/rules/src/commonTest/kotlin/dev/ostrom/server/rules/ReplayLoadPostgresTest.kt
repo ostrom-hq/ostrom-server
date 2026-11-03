@@ -75,10 +75,11 @@ class ReplayLoadPostgresTest {
             val started = server.call("POST", "/api/v1/analysis/replay", "admin-a")
             assertEquals(HttpStatusCode.Accepted, started.status, started.bodyAsText())
             val memory = MemorySampler()
-            val before = memory.read()
+            var before = 0L
             lateinit var statements: List<SentStatement>
             // Timed alone on the server: no other test process's bench times or loads it meanwhile (exclusively).
             val took = server.database.exclusively {
+                before = memory.read()
                 coroutineScope {
                     val sampler = launch(Dispatchers.Default) { memory.sample() }
                     val start = TimeSource.Monotonic.markNow()
