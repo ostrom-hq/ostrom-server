@@ -58,7 +58,7 @@ class LaunchWaitAgentsTest {
     @Test
     fun anAgentTokenIsThePersonWhoLaunchedItInsideItsLaunchsSession() = runTest {
         launches.create(launch)
-        assertEquals(WaitAgent(ORG, memberOf(ADA.userId).toString(), "lch_1"), agents.resolve(agent(), "s-1"))
+        assertEquals(WaitAgent(ORG, memberOf(ADA.userId).toString()), agents.resolve(agent(), "s-1"))
         val expected: List<Triple<Uuid, String, String?>> = listOf(Triple(ORG, "s-1", "lch_1"))
         assertEquals(expected, sessions.checked, "Checked as the gates check it")
     }
@@ -71,11 +71,14 @@ class LaunchWaitAgentsTest {
     }
 
     @Test
-    fun aTokenWhoseLaunchIsOverIsNobodyAndNoSessionIsRead() = runTest {
+    fun aTokenWhoseLaunchIsOverOrNoAgentTokenIsNobodyAndNoSessionIsRead() = runTest {
         launches.create(launch)
         clock.now = launch.expiresAt
         assertNull(agents.resolve(agent(), "s-1"), "Expired")
         assertNull(agents.resolve(agent("lch_2"), "s-1"), "Another launch")
+        clock.now = started
+        val person = AuthenticatedPrincipal("lch_1", PrincipalKind.USER, setOf("user:*"), orgId = ORG.toString())
+        assertNull(agents.resolve(person, "s-1"), "A person's credential named like a launch is no agent")
         assertTrue(sessions.checked.isEmpty(), "No session is read for a token that is nobody")
     }
 }

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.automations
 
+import dev.ostrom.server.automations.domain.WaitAgent
 import dev.ostrom.server.automations.domain.WaitAgentResolver
 import dev.ostrom.server.automations.fakes.BOB
 import dev.ostrom.server.automations.fakes.FOREIGN_SESSION
 import dev.ostrom.server.automations.fakes.FakeWaitAgents
 import dev.ostrom.server.automations.fakes.LAUNCH_SESSION
 import dev.ostrom.server.automations.fakes.testIdentities
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.testing.serverTest
 import io.ktor.client.HttpClient
 import io.ktor.client.request.bearerAuth
@@ -36,9 +38,21 @@ import kotlin.test.assertTrue
  * its own launch's session only, and never reaches the REST waits routes.
  */
 class WaitsMcpAgentTest {
+    /** [FakeWaitAgents], counting its resolutions. */
+    private class CountingWaitAgents : WaitAgentResolver {
+        var resolutions = 0
+
+        override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
+            resolutions++
+            return FakeWaitAgents.resolve(principal, sessionId)
+        }
+    }
+
+    private val agents = CountingWaitAgents()
+
     private val withAgents = module {
         includes(testIdentities)
-        single<WaitAgentResolver> { FakeWaitAgents }
+        single<WaitAgentResolver> { agents }
     }
 
     private suspend fun HttpClient.rpc(body: String, path: String, token: String = "launch"): HttpResponse =
@@ -77,7 +91,9 @@ class WaitsMcpAgentTest {
             val read = Json.parseToJsonElement(client.call("get_wait", """{"wait":"$id"}""", OWN).text()).jsonObject
             assertEquals(LAUNCH_SESSION, read.getValue("sessionId").jsonPrimitive.content)
             assertEquals(BOB.toString(), read.getValue("createdBy").jsonPrimitive.content, "Its person asked it")
+            val before = agents.resolutions
             assertEquals("Cancelled wait $id.", client.call("cancel_wait", """{"wait":"$id"}""", OWN).text())
+            assertEquals(before + 1, agents.resolutions, "Read then cancelled with one reading of the token")
         }
 
     @Test

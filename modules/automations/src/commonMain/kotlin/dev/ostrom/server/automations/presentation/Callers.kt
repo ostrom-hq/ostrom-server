@@ -94,11 +94,12 @@ suspend fun WaitAgentResolver.agentWaitCallerOf(
 }
 
 /**
- * The callers of one request to the waits MCP server, by scope. A person's credential or a key is the member the orgs
- * module resolves, with its waits scopes ([waitCallerOf]); an agent token is its launch's person
- * ([agentWaitCallerOf]), in the session it names, and never names a run (refused before any message is read). An agent
- * token may name no session yet: Claude Code connects its MCP servers at start-up, maybe before its SessionStart hook
- * told the relay the session, so the handshake and the tools' list are answered and each tool names what is missing.
+ * The callers of one request to the waits MCP server, by scope, each resolved once per request. A person's
+ * credential or a key is the member the orgs module resolves, with its waits scopes ([waitCallerOf]); an agent token
+ * is its launch's person ([agentWaitCallerOf]), in the session it names, and never names a run (refused before any
+ * message is read). An agent token may name no session yet: Claude Code connects its MCP servers at start-up, maybe
+ * before its SessionStart hook told the relay the session, so the handshake and the tools' list are answered and each
+ * tool names what is missing.
  *
  * @param principal The caller's principal.
  * @param binding The session and run the request names.
@@ -112,10 +113,20 @@ internal fun WaitsRoutesDependencies.mcpCallers(
     principal: AuthenticatedPrincipal,
     binding: WaitsMcpApi,
 ): suspend (String) -> WaitCaller {
-    if (principal.kind != PrincipalKind.AGENT) return { scope -> orgResolver.waitCallerOf(principal, scope) }
-    if (binding.run != null) throw AgentRunRefusedException()
-    val session = binding.session
-    return { scope -> agents.agentWaitCallerOf(principal, session ?: throw AgentSessionRequiredException(), scope) }
+    val resolve: suspend (String) -> WaitCaller = if (principal.kind == PrincipalKind.AGENT) {
+        if (binding.run != null) throw AgentRunRefusedException()
+        val session = binding.session
+        val agentCaller: suspend (String) -> WaitCaller = { scope ->
+            agents.agentWaitCallerOf(principal, session ?: throw AgentSessionRequiredException(), scope)
+        }
+        agentCaller
+    } else {
+        { scope -> orgResolver.waitCallerOf(principal, scope) }
+    }
+    // Once per scope and request: a tool may need its caller twice (`cancel_wait` reads, then cancels), and two
+    // readings of the token could disagree if its launch ends in between.
+    val resolved = mutableMapOf<String, WaitCaller>()
+    return { scope -> resolved.getOrPut(scope) { resolve(scope) } }
 }
 
 /** A wait id of a path; a malformed one names no wait. */

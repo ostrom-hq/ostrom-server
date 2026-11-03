@@ -10,9 +10,8 @@ import kotlin.uuid.Uuid
  *
  * @property orgId The launch's organization.
  * @property memberId The member who launched it.
- * @property launchId The launch the token names.
  */
-data class WaitAgent(val orgId: Uuid, val memberId: String, val launchId: String)
+data class WaitAgent(val orgId: Uuid, val memberId: String)
 
 /**
  * Reads an agent token for the waits MCP server. The launches module binds it, with the one reading of an agent token

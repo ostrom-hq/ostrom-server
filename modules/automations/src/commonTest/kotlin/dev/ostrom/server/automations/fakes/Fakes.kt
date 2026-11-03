@@ -128,7 +128,7 @@ object FakeWaitAgents : WaitAgentResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
         if (principal.subjectId != LAUNCH) return null
         if (sessionId != LAUNCH_SESSION) throw OstromException(ErrorKind.FORBIDDEN, "This session is not yours.")
-        return WaitAgent(ORG_A, BOB.toString(), LAUNCH)
+        return WaitAgent(ORG_A, BOB.toString())
     }
 }
 
