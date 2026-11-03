@@ -6,6 +6,7 @@ import dev.ostrom.server.rules.domain.models.Decision
 import dev.ostrom.server.rules.domain.models.DecisionSubject
 import dev.ostrom.server.rules.domain.models.GateChange
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
+import dev.ostrom.server.rules.domain.models.RuleCursor
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
 import dev.ostrom.server.rules.domain.models.RuleGateCheck
@@ -88,6 +89,20 @@ class RulesMappersTest {
         assertEquals("ostrom-hq/web", RulesApi(repo = " ostrom-hq/web ").toQuery().repo)
         assertNull(RulesApi().toQuery().status)
         assertFailsWith<InvalidRuleException> { RulesApi(status = "maybe").toQuery() }
+        assertNull(RulesApi().toQuery().after)
+        assertEquals(RuleCursor("Reviews", "rule_1"), RulesApi(after = "6~rule_1Reviews").toQuery().after)
+    }
+
+    @Test
+    fun aCursorReadsBackWhatAPageGave() {
+        // Whatever the group and the id hold, separator and digits included.
+        val odd = RuleCursor(group = "3~a~b 9", id = "rule_~1")
+        assertEquals(odd, RuleCursor.of(odd.wire))
+        assertEquals("6~rule_1Reviews", RuleCursor("Reviews", "rule_1").wire)
+        assertEquals(RuleCursor("Shipping", "rule_1"), RuleCursor.after(RulesFixtures.rule("rule_1")))
+        listOf("", "nope", "~rule_1G", "x~rule_1G", "0~G", "-1~G", "6~rule_1", "9~rule_1").forEach { wire ->
+            assertFailsWith<InvalidRuleException>(wire) { RuleCursor.of(wire) }
+        }
     }
 
     @Test

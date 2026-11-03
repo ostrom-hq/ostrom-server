@@ -33,17 +33,23 @@ class InMemoryOAuthAttemptsRepository : OAuthAttemptsRepository {
 
 class InMemoryMagicLinksRepository : MagicLinksRepository {
     val links = mutableMapOf<String, MagicLink>()
+    val browsers = mutableMapOf<String, String>()
     private val used = mutableSetOf<String>()
 
-    override suspend fun create(link: MagicLink, tokenHash: String) {
+    override suspend fun create(link: MagicLink, tokenHash: String, browserHash: String) {
         links[tokenHash] = link
+        browsers[tokenHash] = browserHash
     }
 
-    override suspend fun consume(tokenHash: String, now: Instant): MagicLink? {
-        val link = links[tokenHash]
-        val usable = link != null && tokenHash !in used && link.expiresAt > now
+    override suspend fun consume(tokenHash: String, browserHash: String, now: Instant): MagicLink? {
+        val usable = pending(tokenHash, now) && browsers[tokenHash] == browserHash
         if (usable) used += tokenHash
-        return link.takeIf { usable }
+        return links[tokenHash].takeIf { usable }
+    }
+
+    override suspend fun pending(tokenHash: String, now: Instant): Boolean {
+        val link = links[tokenHash]
+        return link != null && tokenHash !in used && link.expiresAt > now
     }
 }
 

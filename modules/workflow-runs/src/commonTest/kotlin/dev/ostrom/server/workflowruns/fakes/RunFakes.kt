@@ -65,7 +65,7 @@ fun session(
     receiptId = receiptId,
 )
 
-fun envelope(revoked: Boolean = false, repo: String? = "acme/pkg") = PackageEnvelope(
+fun envelope(revoked: Boolean = false, repo: String? = "acme/api") = PackageEnvelope(
     format = "ostrom.package/1",
     version = "v3",
     repo = repo,
@@ -114,8 +114,11 @@ class FakePackages(private val packages: List<RunPackage> = listOf(PACKAGE)) : R
     override suspend fun find(orgId: Uuid, digest: String): RunPackage? = packages.firstOrNull { it.digest == digest }
 }
 
-fun access(sessions: RunSessions = FakeSessions(), packages: RunPackages = FakePackages()) =
-    RunAccess(sessions, packages)
+fun access(
+    sessions: RunSessions = FakeSessions(),
+    packages: RunPackages = FakePackages(),
+    launches: RunLaunches = FakeLaunches(),
+) = RunAccess(sessions, packages, launches)
 
 /** The repository in memory, with the database's rule of one notification per action of a session. */
 class InMemoryRuns : WorkflowRunsRepository {
@@ -162,9 +165,14 @@ class InMemoryRuns : WorkflowRunsRepository {
     }
 }
 
-/** The cloud session that opened each launch of [opened]; any other launch is the CLI's. */
-class FakeLaunches(private val opened: Map<String, Uuid> = emptyMap()) : RunLaunches {
+/** The cloud session that opened each launch of [opened], any other launch being the CLI's; the [repos] they name. */
+class FakeLaunches(
+    private val opened: Map<String, Uuid> = emptyMap(),
+    private val repos: Map<String, String> = emptyMap(),
+) : RunLaunches {
     override suspend fun cloudSession(orgId: Uuid, launchId: String): Uuid? = opened[launchId]
+
+    override suspend fun repo(orgId: Uuid, launchId: String): String? = repos[launchId]
 }
 
 class RecordingChannels : NotificationChannels {

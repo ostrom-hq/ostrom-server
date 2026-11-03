@@ -15,10 +15,18 @@ import kotlinx.serialization.json.JsonObject
  * @property repo Only the rules that cover this repository.
  * @property status Only this status.
  * @property group Only this group.
+ * @property after The `next` of the previous page.
+ * @property limit The page size, 1 to 1 000 (1 000 by default).
  */
 @Serializable
 @Resource("/api/v1/rules")
-class RulesApi(val repo: String? = null, val status: String? = null, val group: String? = null) {
+class RulesApi(
+    val repo: String? = null,
+    val status: String? = null,
+    val group: String? = null,
+    val after: String? = null,
+    val limit: Int? = null,
+) {
     /**
      * `/{id}`: one rule (`getRule`, `updateRule`, `deleteRule`).
      *
@@ -159,8 +167,8 @@ data class GateActionDto(
 /**
  * A page of rules.
  *
- * @property items The rules.
- * @property next Always absent: an organization's rules fit in one page.
+ * @property items The rules, by group then id.
+ * @property next The `after` of the next page; absent on the last one.
  */
 @Serializable
 data class RulesPage(val items: List<RuleDto>, val next: String? = null)
