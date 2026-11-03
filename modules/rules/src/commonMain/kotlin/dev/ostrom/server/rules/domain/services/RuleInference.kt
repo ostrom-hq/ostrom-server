@@ -8,6 +8,7 @@ import dev.ostrom.server.rules.domain.models.RuleProposal
 import dev.ostrom.server.rules.domain.models.RuleStrength
 import dev.ostrom.server.rules.domain.services.RepositoryContext.Companion.counted
 import dev.ostrom.server.rules.domain.services.RepositoryContext.Companion.quoted
+import dev.ostrom.server.rules.domain.services.RepositoryContext.Companion.shown
 
 /**
  * The rules a repository's facts propose, without a model: how it builds and checks a change, which files need a yes
@@ -124,9 +125,10 @@ object RuleInference {
 
     private fun area(context: RepositoryContext, area: SensitiveArea): RuleProposal {
         val spec = areas.getValue(area.kind)
-        // Only the people who own every file found: a yes from one team never opens another team's files.
+        // Only the people who own every file found: a yes from one team never opens another team's files. And only
+        // when GitHub enforces CODEOWNERS: an unprotected file names nobody's yes.
         val approvers = area.evidence
-            .map { CodeOwners.logins(CodeOwners.ownersOf(context.owners, it)) }
+            .map { context.approvers(CodeOwners.ownersOf(context.owners, it)) }
             .reduce { common, owners -> common.filter { it in owners } }
         val yes = if (approvers.isEmpty()) "" else " from " + approvers.joinToString(", ") { "@$it" }
         val sourceKind = if (area.kind == AreaKind.CI) "ci" else RepositoryContext.FILE
@@ -135,9 +137,9 @@ object RuleInference {
             statement = spec.statement(context.name, quoted(area.prefixes), yes),
             output = "gate",
             group = area.kind.group,
-            scope = area.prefixes.map { "${context.name}/$it" },
+            scope = area.prefixes.map { "${context.name}/${shown(it)}" },
             sources = area.evidence.map { context.file(it, sourceKind) },
-            why = spec.why(context.branch) + omitted(area.omitted),
+            why = spec.why(context.shownBranch) + omitted(area.omitted),
             strength = RuleStrength.REQUIRED,
             confidence = spec.confidence,
             gate = RuleGate(

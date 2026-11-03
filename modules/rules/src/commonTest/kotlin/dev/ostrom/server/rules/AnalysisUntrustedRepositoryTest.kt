@@ -3,12 +3,15 @@ package dev.ostrom.server.rules
 
 import dev.ostrom.server.rules.domain.models.BranchProtection
 import dev.ostrom.server.rules.domain.services.CodeOwners
+import dev.ostrom.server.rules.domain.services.GlobMatcher
 import dev.ostrom.server.rules.domain.services.OwnerEntry
+import dev.ostrom.server.rules.domain.services.RepositoryContext
 import dev.ostrom.server.rules.domain.services.RuleInference
 import dev.ostrom.server.rules.fakes.RepositoryFixture
 import dev.ostrom.server.rules.fakes.RepositoryFixtures
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
@@ -122,5 +125,45 @@ class AnalysisUntrustedRepositoryTest {
         assertEquals("rule", twoRuns.output)
         assertEquals("In site, `/docs/**/*.md` is reviewed by @mia.", twoRuns.statement)
         assertEquals("gate", rules.getValue("owners:/docs/*.txt:site").output, "One run is gated")
+    }
+
+    @Test
+    fun aNameIsShownCleanAndCut() {
+        assertEquals("a'b\uFFFDc\uFFFDd\uFFFDe\u00e9", RepositoryContext.shown("a`b\nc\u200Bd\u2029e\u00e9"))
+        assertEquals("x".repeat(120), RepositoryContext.shown("x".repeat(120)))
+        assertEquals("x".repeat(119) + "\u2026", RepositoryContext.shown("x".repeat(121)))
+        assertTrue(CodeOwners.gateable("/docs/**"))
+        assertTrue(CodeOwners.gateable("/docs/"))
+        assertFalse(CodeOwners.gateable("*a*"))
+    }
+
+    // The automaton reads patterns as GitHub does, step by step.
+    @Test
+    fun theMatcherReadsPatternsAsGitHub() {
+        val cases = listOf(
+            Triple("/a?c.txt", "abc.txt", true),
+            Triple("/a?c.txt", "a/c.txt", false),
+            Triple("/docs/*.md", "docs/a.md", true),
+            Triple("/docs/*.md", "docs/a/b.md", false),
+            Triple("/docs/", "docs/a/b.md", true),
+            Triple("/docs/", "api/docs/a.md", false),
+            Triple("docs/", "docs", false),
+            Triple("*", "a/b", true),
+            Triple("*.sql", "a/b/c.sql", true),
+            Triple("*.sql", "a.sqlx", false),
+            Triple("/build", "build/out/x", true),
+            Triple("/build", "buildx", false),
+            Triple("src/**/test/", "src/test/a.kt", true),
+            Triple("src/**/test/", "src/a/b/test/a.kt", true),
+            Triple("bin/**", "bin/x/y", true),
+            Triple("a/**b", "a/x/yb", true),
+        )
+        cases.forEach { (pattern, path, expected) ->
+            assertEquals(expected, GlobMatcher.of(pattern).matches(path), "$pattern on $path")
+        }
+        val start = TimeSource.Monotonic.markNow()
+        assertFalse(GlobMatcher.of("*a".repeat(60) + "*b").matches("a".repeat(1_000)))
+        assertFalse(GlobMatcher.of("**a".repeat(60) + "**b").matches("a/".repeat(500)))
+        assertTrue(start.elapsedNow() < 2.seconds, "Matched in ${start.elapsedNow()}")
     }
 }
