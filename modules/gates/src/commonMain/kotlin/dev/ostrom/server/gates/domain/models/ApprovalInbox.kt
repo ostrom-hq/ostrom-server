@@ -69,6 +69,24 @@ data class ApprovalInbox(
  * rule (S2-15). The fresh sign-in of a yes (S2-54) is left out: the answer route asks for it when it is stale.
  */
 object ApprovalRights {
+    /**
+     * [rights] once the reader's GitHub account is known, for a gate that [SelfApproval.needsLink] (Q-GATES-G1 a).
+     *
+     * @param rights The rights without it.
+     * @param gate The gate.
+     * @param approvers Every approver of the gate.
+     * @param gitHubIds The GitHub accounts the reader linked.
+     * @return [rights], or a refusal with its reason.
+     */
+    fun linked(rights: CallerRights, gate: Gate, approvers: List<String>, gitHubIds: List<Long>): CallerRights {
+        val refusal = SelfApproval.linkRefusal(gate, approvers, rights.login, gitHubIds)
+        return if (!rights.canApprove || refusal == null) {
+            rights
+        } else {
+            rights.copy(canApprove = false, reason = refusal.message, selfApproval = false)
+        }
+    }
+
     /** The answer route's refusal of a yes from anything but the browser or the app. */
     const val NOT_HERE: String = "A yes is given in the browser or in the app."
 

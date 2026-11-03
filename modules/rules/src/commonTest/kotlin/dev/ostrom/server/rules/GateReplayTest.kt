@@ -25,6 +25,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 /** [GateReplay]: what the rules would have done on each recorded boundary action, and why, without a model. */
 class GateReplayTest {
@@ -188,5 +190,20 @@ class GateReplayTest {
         val rule = item.getValue("rules").jsonArray.single().jsonObject
         assertEquals(listOf("a1", "a2", "a3"), rule.texts("approvers"))
         assertEquals("4", item.text("approverCount"))
+    }
+
+    // AUDIT-SECU-ANALYSE R5: a pattern stored before it was checked never backtracks for minutes on the server's
+    // only replay lane, and a command is matched on its first 8 KiB.
+    @Test
+    fun aPatternThatCouldBacktrackCoversNothingAndALongCommandIsCut() {
+        fun outcome(pattern: String, command: String) = replay(
+            action(subject = push(cls = "shell", command = command)),
+            listOf(gated(cls = "deploy", patterns = listOf(pattern))),
+        ).text("outcome")
+        val start = TimeSource.Monotonic.markNow()
+        assertEquals(GateReplay.PASSED, outcome("(a+)+$", "a".repeat(30) + "!"))
+        assertTrue(start.elapsedNow() < 2.seconds, "Replayed in ${start.elapsedNow()}")
+        assertEquals(GateReplay.ASKED, outcome("secret", "x".repeat(8_000) + "secret"))
+        assertEquals(GateReplay.PASSED, outcome("secret", "x".repeat(8_200) + "secret"))
     }
 }

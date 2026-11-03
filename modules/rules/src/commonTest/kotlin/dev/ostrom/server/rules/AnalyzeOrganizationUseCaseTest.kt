@@ -7,6 +7,7 @@ import dev.ostrom.server.rules.domain.models.AnalysisKind
 import dev.ostrom.server.rules.domain.models.AnalysisRun
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.models.RuleStrength
+import dev.ostrom.server.rules.domain.services.RuleInference
 import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCaseImpl
 import dev.ostrom.server.rules.fakes.FakeAnalysisRepository
 import dev.ostrom.server.rules.fakes.FakeRepositoryReader
@@ -17,6 +18,7 @@ import dev.ostrom.server.rules.fakes.RepositoryFixtures
 import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.fakes.TestClock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -253,5 +255,29 @@ class AnalyzeOrganizationUseCaseTest {
         )
         assertEquals(AnalysisRun.READY, recorded()?.phase)
         assertEquals(listOf(LogLevel.WARN to "analysis left out a proposal"), logger.events)
+    }
+
+    // AUDIT-SECU-ANALYSE R1: a tree past 20,000 paths is cut and said cut; each repository is let go before the next.
+    @Test
+    fun aTreePastTwentyThousandPathsIsCutAndSaidCut() = runTest {
+        val huge = RepositoryFixture(
+            RepositoryFixtures.ref("huge"),
+            listOf("gradlew", "build.gradle.kts") + (1..25_000).map { "src/f$it.kt" },
+        )
+        analyse(huge)
+        val build = rules.rules.values.single { it.group == "Build" && it.output == "check" }
+        assertTrue(build.why.orEmpty().endsWith(RuleInference.TRUNCATED), build.why)
+        assertEquals(AnalysisRun.READY, recorded()?.phase)
+    }
+
+    // AUDIT-SECU-ANALYSE R2: GitHub slow or rate-limited at every call held one of the server's two workers for hours.
+    @Test
+    fun aRunPastItsDeadlineFailsAndGivesItsWorkerBack() = runTest {
+        reader.onTree = { awaitCancellation() }
+        analyse(RepositoryFixtures.api)
+        assertEquals("engine", recorded()?.failure?.stage)
+        assertEquals("The analysis took longer than 15 minutes; start it again.", recorded()?.failure?.reason)
+        assertEquals(listOf(previous), recorded()?.items, "The last results stay")
+        assertTrue(rules.rules.isEmpty(), "Nothing half-written")
     }
 }

@@ -103,6 +103,8 @@ class IdentityLauncherResolverTest {
 
         override suspend fun list(orgId: Uuid): List<Member> = unused()
 
+        override suspend fun page(orgId: Uuid, after: Uuid?, limit: Int): List<Member> = unused()
+
         override suspend fun count(orgId: Uuid): Int = unused()
 
         override suspend fun changeRole(orgId: Uuid, memberId: Uuid, role: OrgRole) = unused()

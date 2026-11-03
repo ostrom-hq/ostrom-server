@@ -2,6 +2,7 @@
 package dev.ostrom.server.sharing.presentation
 
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.database.storableInstantOrNull
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.requireCaller
 import dev.ostrom.server.secrets.presentation.toIdOr
@@ -19,7 +20,6 @@ import io.ktor.server.resources.post
 import io.ktor.server.resources.put
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
-import kotlin.time.Instant
 
 /**
  * The group routes: every member of the organization reads its groups (`accounts:read`), owners and admins change
@@ -66,7 +66,7 @@ fun Route.groupRoutes(dependencies: GroupRoutesDependencies) = with(dependencies
         }
         post<GroupsApi.Id.Member.Pause> { params ->
             val caller = call.requireCaller(callers, RelayScopes.ACCOUNTS_WRITE)
-            val until = call.receive<PauseGroupMemberRequest>().until?.let { Instant.parseOrNull(it) }
+            val until = call.receive<PauseGroupMemberRequest>().until?.let(::storableInstantOrNull)
                 ?: throw InvalidGroupException("until is an ISO 8601 instant.")
             val member = params.parent
             members.pause(caller, member.parent.id.toIdOr(::GroupNotFoundException), member.login, until)

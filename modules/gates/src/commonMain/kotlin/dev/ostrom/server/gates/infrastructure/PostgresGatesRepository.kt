@@ -25,6 +25,7 @@ import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLongOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -192,7 +193,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
                         "VALUES (:id, :org_id, :gate_key, :subject, :node, " +
                         ":label, :mode, :status, :asked_by, :asked_via, :session_ids, :launch_ids, :shown_digest, " +
                         ":evidence, :decided_by, :decided_at, :self_approved, :receipt_id, :reserved_by, " +
-                        ":reserved_at, :consumed_at, :released_at, :created_at)",
+                        ":reserved_at, :consumed_at, :released_at, :created_at, :unlinked_author)",
                 ).bindGate(gate),
             ).getOrThrow()
             executor.linkSessions(gate)
@@ -203,11 +204,13 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
             executor.execute(
                 Statement.create(
                     "UPDATE gates_gates SET asked_by = :asked_by, asked_via = :asked_via, " +
-                        "session_ids = :session_ids, launch_ids = :launch_ids WHERE org_id = :org_id AND id = :id",
+                        "session_ids = :session_ids, launch_ids = :launch_ids, unlinked_author = :unlinked_author " +
+                        "WHERE org_id = :org_id AND id = :id",
                 ).bind("asked_by", json.encodeToString(strings, gate.askedBy))
                     .bind("asked_via", json.encodeToString(strings, gate.askedVia.map { it.name }.sorted()))
                     .bind("session_ids", json.encodeToString(strings, gate.sessionIds))
                     .bind("launch_ids", json.encodeToString(strings, gate.launchIds))
+                    .bindOrNull("unlinked_author", gate.unlinkedAuthor, Long::class)
                     .bind("org_id", gate.orgId)
                     .bind("id", gate.id),
             ).getOrThrow()
@@ -224,7 +227,8 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
                         "evidence = :evidence, " +
                         "decided_by = :decided_by, decided_at = :decided_at, self_approved = :self_approved, " +
                         "receipt_id = :receipt_id, reserved_by = :reserved_by, reserved_at = :reserved_at, " +
-                        "consumed_at = :consumed_at, released_at = :released_at, created_at = :created_at " +
+                        "consumed_at = :consumed_at, released_at = :released_at, created_at = :created_at, " +
+                        "unlinked_author = :unlinked_author " +
                         "WHERE org_id = :org_id AND id = :id",
                 ).bindGate(gate),
             ).getOrThrow()
@@ -307,6 +311,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
             .bindOrNull("consumed_at", gate.consumedAt, Instant::class)
             .bindOrNull("released_at", gate.releasedAt, Instant::class)
             .bind("created_at", gate.createdAt)
+            .bindOrNull("unlinked_author", gate.unlinkedAuthor, Long::class)
 
         fun Statement.bindRequest(request: ApprovalRequest): Statement = bind("id", request.id)
             .bind("gate_id", request.gateId)
@@ -342,6 +347,7 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
             consumedAt = get("consumed_at").asInstantOrNull(),
             releasedAt = get("released_at").asInstantOrNull(),
             createdAt = get("created_at").asInstant(),
+            unlinkedAuthor = get("unlinked_author").asLongOrNull(),
         )
 
         fun ResultSet.Row.toRequest() = ApprovalRequest(

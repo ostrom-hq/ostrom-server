@@ -115,7 +115,8 @@ data class SessionLimitsDto(
 /**
  * A cloud session as clients see it (schema `CloudSession` of the contract). `status` is a closed enum
  * (`creating`, `running`, `pausing`, `paused`, `resuming`, `terminated`, `failed`), `desiredStatus` what the
- * owner asked for (`running`, `paused`, `terminated`); `phase` is open.
+ * owner asked for (`running`, `paused`, `terminated`); `phase` is open. `runnerId` names the registered runner the
+ * current execution was handed to, on the session's own read only (`GET /api/v1/cloud/sessions/{id}`).
  */
 @Serializable
 data class CloudSessionResponse(
@@ -138,6 +139,7 @@ data class CloudSessionResponse(
     val lastActivityAt: String? = null,
     val pausedAt: String? = null,
     val endedAt: String? = null,
+    val runnerId: String? = null,
 )
 
 /**
