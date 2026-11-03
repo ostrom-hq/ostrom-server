@@ -123,8 +123,8 @@ class CompilerReadsBenchTest {
         assertEquals(1, sent.map { it.size }.distinct().size, "Statements: ${sent.map { it.size }}")
 
         val reads = listOf(
-            Read("/api/v1/workflows", PER_ORG, "compiler_workflows_by_creation"),
-            Read("/api/v1/workflows?status=accepted", PER_ORG, "compiler_workflows_by_creation"),
+            Read("/api/v1/workflows", PER_ORG, "compiler_workflows_pkey"),
+            Read("/api/v1/workflows?status=accepted", PER_ORG, "compiler_workflows_pkey"),
             Read(PACKAGES[0], PER_ORG, "compiler_packages_recent"),
             Read(PACKAGES[1], PER_ORG / REPOS, "compiler_packages_by_repo"),
         )
@@ -153,7 +153,7 @@ class CompilerReadsBenchTest {
      *
      * @property path The route and its filters.
      * @property items The rows of its answer.
-     * @property index The index its plan must name (CompilerMigrations version 2, or the first).
+     * @property index The index its plan must name (compiler_packages_by_repo: CompilerMigrations version 2).
      */
     private data class Read(val path: String, val items: Int, val index: String)
 
