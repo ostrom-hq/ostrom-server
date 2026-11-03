@@ -79,22 +79,24 @@ class IdentityReadsBenchTest {
         fixtures.execute("VACUUM ANALYZE identity_api_tokens").getOrThrow()
         val session = server.koin.get<StartWebSessionUseCase>()(ada)
 
-        val measures = listOf(
-            "GET /api/v1/audit" to "/api/v1/audit",
-            "GET /api/v1/audit?actor=ada (10 lines of 10 000)" to "/api/v1/audit?actor=ada",
-            "GET /api/v1/audit?event=org.renamed (5 lines of 10 000)" to "/api/v1/audit?event=org.renamed",
-            "GET /api/v1/audit?before=5000" to "/api/v1/audit?before=5000",
-            "GET /api/v1/audit?actor=ada&before=5000 (an actor's older page)" to "/api/v1/audit?actor=ada&before=5000",
-            "GET /api/v1/devices (3 among 5 000 live tokens)" to "/api/v1/devices",
-        ).map { (name, path) ->
-            server.measureRead(name) { get(path) { browserSession(session.secret, null) } }
+        // Path, what the call returns, and the index its plan must name (IdentityMigrations version 12) when the
+        // filter alone decides it; an actor's older page may also walk the chain backwards, both are fast.
+        val reads = listOf(
+            Triple("/api/v1/audit", "", null),
+            Triple("/api/v1/audit?actor=ada", " (10 lines of 10 000)", "identity_audit_events_chain_actor"),
+            Triple("/api/v1/audit?event=org.renamed", " (5 lines of 10 000)", "identity_audit_events_chain_action"),
+            Triple("/api/v1/audit?before=5000", "", null),
+            Triple("/api/v1/audit?actor=ada&before=5000", " (an actor's older page)", null),
+            Triple("/api/v1/devices", " (3 among 5 000 live tokens)", "identity_api_tokens_user_kind"),
+        )
+        val measures = reads.map { (path, note, _) ->
+            server.measureRead("GET $path$note") { get(path) { browserSession(session.secret, null) } }
         }
         writeReadReport("identity", measures)
         measures.forEach { it.assertWithinBudget(setOf("identity_audit_events", "identity_api_tokens")) }
-        // Each filter reads through its own index (IdentityMigrations version 11), not the chain's.
-        listOf(1 to "identity_audit_events_chain_actor", 2 to "identity_audit_events_chain_action")
-            .plus(listOf(4 to "identity_audit_events_chain_actor", 5 to "identity_api_tokens_user_kind"))
-            .forEach { (at, index) -> assertTrue(measures[at].plans.any { index in it }, measures[at].describe()) }
+        reads.zip(measures).forEach { (read, measure) ->
+            read.third?.let { index -> assertTrue(measure.plans.any { index in it }, measure.describe()) }
+        }
     }
 
     private companion object {

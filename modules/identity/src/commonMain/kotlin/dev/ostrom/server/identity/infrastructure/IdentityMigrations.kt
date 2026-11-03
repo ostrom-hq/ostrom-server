@@ -368,8 +368,8 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
     // The reads the bench measured (IdentityReadsBenchTest): `/audit?actor=` and `/audit?event=` read the whole chain
     // of the organization and kept a line in a thousand (72 and 82 ms of p95 at 20 calls on 10 000 lines); `/devices`
     // read every live token of the person, agents' included, to keep three (43 ms on 5 000). The person's index by kind
-    // replaces the one without (every read of a person's live tokens names their kinds). Built in the migration's
-    // transaction, not CONCURRENTLY: writes to these tables wait for the build, short on the tables of today.
+    // comes beside the one without, which `/tokens` keeps: it lists several kinds in one creation order. Built in the
+    // migration's transaction, not CONCURRENTLY: writes to these tables wait for the build, short on today's tables.
     SchemaMigration(
         version = 12,
         name = "index_audit_filters_and_devices",
@@ -378,8 +378,7 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
                 WHERE actor_id IS NOT NULL;
             CREATE INDEX identity_audit_events_chain_action ON identity_audit_events (chain, action, sequence DESC);
             CREATE INDEX identity_api_tokens_user_kind ON identity_api_tokens (user_id, kind, created_at DESC, id)
-                WHERE revoked_at IS NULL;
-            DROP INDEX identity_api_tokens_user
+                WHERE revoked_at IS NULL
         """.trimIndent(),
     ),
 )
