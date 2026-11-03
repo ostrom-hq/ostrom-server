@@ -80,10 +80,14 @@ class OrgsReadsBenchTest {
 
         val response = server.client.get("/api/v1/orgs/org0/members") { session(sessions.first()) }
         assertTrue(response.status.isSuccess(), response.status.toString())
-        assertEquals(MEMBERS_PER_ORG, response.body<MembersResponse>().items.size)
+        val whole = response.body<MembersResponse>().items
+        assertEquals(MEMBERS_PER_ORG, whole.size)
+        val middle = whole[MEMBERS_PER_ORG / 2].id
         val measures = listOf(
             "GET /api/v1/orgs/{org}/members (1 000 members)" to "/api/v1/orgs/org0/members",
             "GET /api/v1/orgs/{org}/members/{login}" to "/api/v1/orgs/org0/members/user0-500",
+            "GET /api/v1/orgs/{org}/members?limit=100&after= (a middle page)" to
+                "/api/v1/orgs/org0/members?limit=$PAGE&after=$middle",
         ).map { (name, path) -> server.measureRead(name) { get(path) { session(sessions.first()) } } }
         writeReadReport("orgs", measures)
         measures.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }

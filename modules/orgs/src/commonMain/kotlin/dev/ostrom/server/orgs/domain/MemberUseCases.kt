@@ -57,9 +57,11 @@ interface ListMembersUseCase {
      *
      * @param orgId The organization.
      * @param userId The caller, a member.
+     * @param after The member the page starts after, the previous page's `next`.
+     * @param limit The most members, 1 to [MAX_MEMBER_PAGE].
      * @return The members, oldest first.
      */
-    suspend operator fun invoke(orgId: Uuid, userId: Uuid): List<MemberProfile>
+    suspend operator fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int): MemberPage
 }
 
 /**
@@ -74,11 +76,15 @@ class ListMembersUseCaseImpl(
     private val members: MembersRepository,
     private val people: People,
 ) : ListMembersUseCase {
-    override suspend fun invoke(orgId: Uuid, userId: Uuid): List<MemberProfile> {
+    override suspend fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int): MemberPage {
         requireMembership(orgs, members, orgId, userId)
-        val list = members.list(orgId)
+        if (limit !in 1..MAX_MEMBER_PAGE) throw InvalidOrgRequestException("limit is 1 to $MAX_MEMBER_PAGE.")
+        // One more than the page says whether another follows.
+        val read = members.page(orgId, after, limit + 1)
+        val list = read.take(limit)
         val byId = people.getMany(list.map { it.userId }).associateBy { it.id }
-        return list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
+        val items = list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
+        return MemberPage(items, list.lastOrNull()?.id?.takeIf { read.size > limit })
     }
 }
 
