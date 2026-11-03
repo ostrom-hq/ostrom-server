@@ -80,7 +80,7 @@ class OrgAuditTest {
         list(orgId, null, action, null).lines.associate { it.event.sequence to it.integrity }
 
     /** Replaces the line [sequence] of [orgId] in place, as a write in the table would. */
-    private fun World.rewrite(sequence: Long, change: (AuditEvent) -> AuditEvent) {
+    private suspend fun World.rewrite(sequence: Long, change: suspend (AuditEvent) -> AuditEvent) {
         val index = events.events.indexOfFirst { it.entry.orgId == orgId && it.sequence == sequence }
         events.events[index] = change(events.events[index])
     }

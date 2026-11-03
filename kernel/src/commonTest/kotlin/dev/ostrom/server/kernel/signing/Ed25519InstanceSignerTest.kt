@@ -110,13 +110,6 @@ class Ed25519InstanceSignerTest {
         assertNotEquals(Ed25519InstanceSigner.generate().keyId, Ed25519InstanceSigner.generate().keyId)
     }
 
-    private companion object {
-        // A fixed Ed25519 key (PKCS#8 PEM), as another replica would have written it.
-        const val OTHER_KEY_PEM = "-----BEGIN PRIVATE KEY-----\n" +
-            "MC4CAQAwBQYDK2VwBCIEIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g\n" +
-            "-----END PRIVATE KEY-----\n"
-    }
-
     @Test
     fun aPublishedKeyVerifiesWhatItsKeySignedAndNothingElse() = runTest {
         val past = Ed25519InstanceSigner.generate()
@@ -143,5 +136,10 @@ class Ed25519InstanceSignerTest {
 
     private companion object {
         const val SIGNATURE_SIZE = 64
+
+        // A fixed Ed25519 key (PKCS#8 PEM), as another replica would have written it.
+        const val OTHER_KEY_PEM = "-----BEGIN PRIVATE KEY-----\n" +
+            "MC4CAQAwBQYDK2VwBCIEIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g\n" +
+            "-----END PRIVATE KEY-----\n"
     }
 }
