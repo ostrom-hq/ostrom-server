@@ -26,7 +26,8 @@ import kotlin.uuid.Uuid
 /** The columns of an account row, tokens excluded: the envelope is only read by its own query. */
 internal const val ACCOUNT_COLUMNS: String =
     "id, org_id, provider, label, email, provider_account_id, owner_member_id, priority, status, max_concurrent, " +
-        "utilization_ceiling, monthly_budget_micros, allowed_members, cooldown_until, created_at, version"
+        "utilization_ceiling, monthly_budget_micros, allowed_members, cooldown_until, created_at, version, " +
+        "daily_budget_micros"
 
 private val MEMBERS = SetSerializer(String.serializer())
 
@@ -51,10 +52,13 @@ internal suspend fun Driver.setColumn(
     ).getOrThrow()
 }
 
-/** Binds `:max_concurrent`, `:ceiling`, `:budget` and `:allowed` (a JSON array of member ids, or NULL). */
+/**
+ * Binds `:max_concurrent`, `:ceiling`, `:budget`, `:daily` and `:allowed` (a JSON array of member ids, or NULL).
+ */
 internal fun Statement.bindLimits(limits: AccountLimits): Statement = bind("max_concurrent", limits.maxConcurrent)
     .bind("ceiling", limits.utilizationCeiling)
     .bindNullable("budget", limits.monthlyBudgetMicros, Long::class)
+    .bindNullable("daily", limits.dailyBudgetMicros, Long::class)
     .bindNullable(
         "allowed",
         limits.allowedMembers?.let { members -> Json.encodeToString(MEMBERS, members.map { it.toString() }.toSet()) },
@@ -83,6 +87,7 @@ internal fun ResultSet.Row.toAccount() = SharedAccount(
         allowedMembers = get("allowed_members").asStringOrNull()?.let { text ->
             Json.decodeFromString(MEMBERS, text).map(Uuid::parse).toSet()
         },
+        dailyBudgetMicros = get("daily_budget_micros").asLongOrNull(),
     ),
     cooldownUntil = get("cooldown_until").asInstantOrNull(),
     createdAt = get("created_at").asInstant(),
