@@ -30,6 +30,7 @@ val ErrorKind.httpStatus: HttpStatusCode
         ErrorKind.PAYLOAD_TOO_LARGE -> HttpStatusCode.PayloadTooLarge
         ErrorKind.UNSUPPORTED_MEDIA_TYPE -> HttpStatusCode.UnsupportedMediaType
         ErrorKind.RATE_LIMITED -> HttpStatusCode.TooManyRequests
+        ErrorKind.GONE -> HttpStatusCode.Gone
         ErrorKind.UNAVAILABLE -> HttpStatusCode.ServiceUnavailable
         ErrorKind.INTERNAL -> HttpStatusCode.InternalServerError
     }

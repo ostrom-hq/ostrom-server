@@ -3,6 +3,8 @@ package dev.ostrom.server.automations.fakes
 
 import dev.ostrom.server.automations.domain.CreateOutcome
 import dev.ostrom.server.automations.domain.Wait
+import dev.ostrom.server.automations.domain.WaitAgent
+import dev.ostrom.server.automations.domain.WaitAgentResolver
 import dev.ostrom.server.automations.domain.WaitAnswer
 import dev.ostrom.server.automations.domain.WaitCaller
 import dev.ostrom.server.automations.domain.WaitEvents
@@ -17,6 +19,8 @@ import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.OstromException
 import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -68,7 +72,8 @@ private val allUserScopes = setOf("user:*")
  * `nobody` (no org) sign in themselves; `reader`, `agent` and `writer` are bob's tokens with `waits:read`,
  * `waits:ask` and `waits:write`; `davekey` is dave's with `waits:write`; `cloud` is bob's with no waits scope;
  * `alicekey` is alice's personal token with `waits:write`, `aliceapp` alice in the unlocked mobile app;
- * `autoreader` and `autowriter` are alice's with `automations:read` and `automations:write`.
+ * `autoreader` and `autowriter` are alice's with `automations:read` and `automations:write`; `launch` is the agent
+ * token of bob's launch `lch_1` and `ended` the agent token of a launch that is over (see [FakeWaitAgents]).
  */
 val testIdentities = module {
     single<TokenAuthenticator> {
@@ -91,12 +96,40 @@ val testIdentities = module {
                 "cloud" -> AuthenticatedPrincipal("bob", PrincipalKind.SERVICE, setOf("cloud:read"))
                 "autoreader" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("automations:read"))
                 "autowriter" -> AuthenticatedPrincipal("alice", PrincipalKind.SERVICE, setOf("automations:write"))
+                "launch", "ended" ->
+                    AuthenticatedPrincipal(
+                        if (token == "launch") LAUNCH else "lch_0",
+                        PrincipalKind.AGENT,
+                        setOf("agent:session"),
+                        orgId = ORG_A.toString(),
+                    )
                 else -> null
             }
         }
     }
     single<PrincipalOrgResolver> { TestOrgResolver }
     single<MemberDirectory> { TestMembers }
+}
+
+/** The launch of the `launch` agent token: bob's. */
+const val LAUNCH = "lch_1"
+
+/** The session of [LAUNCH]; [FOREIGN_SESSION] is another launch's. */
+const val LAUNCH_SESSION = "s1"
+
+/** Another launch's session. */
+const val FOREIGN_SESSION = "s2"
+
+/**
+ * The launches module's reading of an agent token, as the waits MCP server sees it: [LAUNCH] is bob's, in
+ * [LAUNCH_SESSION] only (another session is refused as the sessions module refuses it); any other token is no one.
+ */
+object FakeWaitAgents : WaitAgentResolver {
+    override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
+        if (principal.subjectId != LAUNCH) return null
+        if (sessionId != LAUNCH_SESSION) throw OstromException(ErrorKind.FORBIDDEN, "This session is not yours.")
+        return WaitAgent(ORG_A, BOB.toString())
+    }
 }
 
 /** The test identities' organizations. */

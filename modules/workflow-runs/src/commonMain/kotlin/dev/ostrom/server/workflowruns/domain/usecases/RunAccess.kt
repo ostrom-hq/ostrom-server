@@ -102,7 +102,8 @@ class RunAccess(
 
     /**
      * The package a report names, which must be its session's: an agent never reports under another package, nor
-     * under the package of another repository than its launch's (AUDIT-SECU-RUNNER-2 R3).
+     * under the package of another repository than its launch's (AUDIT-SECU-RUNNER-2 R3), nor under an older version
+     * of its repository's package than the pinned one or the latest when the session started (R3b).
      *
      * @param actor The caller.
      * @param digest The package's digest.
@@ -112,21 +113,23 @@ class RunAccess(
      *
      * @throws RunPackageNotFoundException When the organization has none with that digest.
      * @throws RunPackageMismatchException When the session started with another package, or the package is not its
-     *   repository's.
+     *   repository's, or an older version of it.
      */
     suspend fun pack(actor: GateActor, digest: String, session: Session?): RunPackage {
         val started = session?.packageDigest
         if (started != null && started != digest) throw RunPackageMismatchException()
         val pack = packages.find(actor.orgId, digest) ?: throw RunPackageNotFoundException()
-        if (session != null) requireRepository(actor.orgId, session, pack)
+        if (session != null) requireServed(actor.orgId, session, pack)
         return pack
     }
 
     // The repository the launch names wins over the one the session declares: the hooks write the session's, the
-    // launch's comes from the CLI's own call or the cloud session. A session that names none binds no package.
-    private suspend fun requireRepository(orgId: Uuid, session: Session, pack: RunPackage) {
+    // launch's comes from the CLI's own call or the cloud session. A session that names none binds no package. Within
+    // the repository, the package is the pinned one or the latest when the session started.
+    private suspend fun requireServed(orgId: Uuid, session: Session, pack: RunPackage) {
         val expected = (session.launchId?.let { launches.repo(orgId, it) } ?: session.repo)?.takeIf { it.isNotEmpty() }
         val repo = pack.envelope.repo
         if (expected != null && (repo == null || !RepoNames.same(expected, repo))) throw RunPackageMismatchException()
+        if (!packages.current(orgId, pack, session.startedAt)) throw RunPackageMismatchException()
     }
 }

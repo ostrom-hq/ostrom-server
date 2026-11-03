@@ -11,9 +11,15 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceAudit
+import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
+import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.CallerResolver
@@ -67,6 +73,8 @@ object RulesCallers {
         "stranger" to Person(null, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         // The tokens of `ostrom login --admin`: all three governance scopes, or only one.
         "elevated-a" to Person(adminA, "lyes", PrincipalKind.USER, GovernanceScopes.ALL),
+        // An elevated token whose person belongs to no organization any more.
+        "elevated-stranger" to Person(null, null, PrincipalKind.USER, GovernanceScopes.ALL),
         "elevated-member-a" to Person(memberA, "mia", PrincipalKind.USER, GovernanceScopes.ALL),
         "policy-writer-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(GovernanceScopes.POLICY_WRITE)),
         "governing-agent-a" to Person(memberA, "lyes", PrincipalKind.SERVICE, GovernanceScopes.ALL),
@@ -103,6 +111,15 @@ object RulesCallers {
             }
         }
         single<GovernanceAudit> { AuditRecorder() }
+        single<GovernanceConfirmations> { HeldConfirmations() }
+        single<PrincipalOrgResolver> {
+            object : PrincipalOrgResolver {
+                override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
+                    people[principal.subjectId]?.caller?.let { caller ->
+                        OrgPrincipal(caller.orgId, caller.memberId, OrgRole.valueOf(caller.role.name))
+                    }
+            }
+        }
         single<CallerResolver> {
             object : CallerResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): Caller? =
@@ -155,13 +172,25 @@ object RulesCallers {
     }
 }
 
-/** Keeps the governance writes recorded before they happen, as `METHOD /path` and scope. */
+/** Keeps the governed actions of the elevated token recorded before they happen, as `METHOD /path` and scope. */
 class AuditRecorder : GovernanceAudit {
     /** What was recorded, in order. */
     val records: MutableList<String> = mutableListOf()
 
     override suspend fun record(principal: AuthenticatedPrincipal, scope: String, target: String) {
         records += "$target $scope"
+    }
+}
+
+/** Keeps the governance writes a token asked for, as the governance module would hold them: nothing is written. */
+class HeldConfirmations : GovernanceConfirmations {
+    /** What was asked, in order. */
+    val held: MutableList<GovernanceRequest> = mutableListOf()
+
+    override suspend fun open(request: GovernanceRequest): GovernanceConfirmationPending {
+        held += request
+        val id = "gcf_${held.size}"
+        return GovernanceConfirmationPending(id, "http://localhost:5173/confirm/$id", "2026-11-02T20:15:00Z")
     }
 }
 
