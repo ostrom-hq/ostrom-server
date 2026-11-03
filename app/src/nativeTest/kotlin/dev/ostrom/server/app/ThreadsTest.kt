@@ -181,14 +181,13 @@ class ThreadsTest {
         try {
             var entry = readdir(dir)
             while (entry != null) {
-                val tid = entry.pointed.d_name.toKString()
-                if (!tid.startsWith(".")) readFile("/proc/self/task/$tid/comm")?.trim()?.let { names += it }
+                names += entry.pointed.d_name.toKString()
                 entry = readdir(dir)
             }
         } finally {
             closedir(dir)
         }
-        return names
+        return names.filterNot { it.startsWith(".") }.mapNotNull { readFile("/proc/self/task/$it/comm")?.trim() }
     }
 
     private fun readFile(path: String): String? {
