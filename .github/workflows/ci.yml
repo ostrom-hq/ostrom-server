@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ostrom-hq/ostrom-core
-          ref: 0ce4b9e9115fc13b838e055e96b5017bd7d583dd # docs-truth and served-routes.txt; move it forward by pull request
+          ref: 67621d384e41d8cd851faf40a169702ea05596eb # docs-truth and served-routes.txt; move it forward by pull request
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: docs-truth-core
           persist-credentials: false
