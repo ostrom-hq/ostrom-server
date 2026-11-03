@@ -183,7 +183,7 @@ object SharingRules {
             limits.maxConcurrent !in 1..MAX_CONCURRENT -> "maxConcurrent is 1 to $MAX_CONCURRENT."
             limits.utilizationCeiling !in MIN_CEILING..1.0 -> "utilizationCeiling is $MIN_CEILING to 1."
             (limits.monthlyBudgetMicros ?: 0) < 0 -> "monthlyBudgetMicros is positive."
-            (limits.dailyBudgetMicros ?: 0) < 0 -> "The daily allocation is positive."
+            (limits.dailyBudgetMicros ?: 1) <= 0 -> "The daily allocation is positive."
             (limits.allowedMembers?.size ?: 0) > MAX_ALLOWED_MEMBERS -> "At most $MAX_ALLOWED_MEMBERS allowed members."
             else -> null
         }

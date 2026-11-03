@@ -89,7 +89,7 @@ object SharingModule : ServerModule {
         single<UpdateSharedAccountUseCase> { UpdateSharedAccountUseCaseImpl(get(), get()) }
         single<ViewSharedAccountUseCase> { ViewSharedAccountUseCaseImpl(get()) }
         single<CredentialSecrets> { SecretsCredentialSecrets(get(), get()) }
-        single<EnrollSharedAccountUseCase> { EnrollSharedAccountUseCaseImpl(get(), get(), get()) }
+        single<EnrollSharedAccountUseCase> { EnrollSharedAccountUseCaseImpl(get(), get(), get(), get()) }
         single<RemoveSharedAccountUseCase> { RemoveSharedAccountUseCaseImpl(get()) }
         single<GroupRepository> { GroupRepositoryImpl(get()) }
         single<GroupsUseCase> { GroupsUseCaseImpl(get(), get(), logins(), get()) }
