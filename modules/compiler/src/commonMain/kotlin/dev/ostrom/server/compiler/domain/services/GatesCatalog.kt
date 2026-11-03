@@ -9,6 +9,7 @@ import dev.ostrom.server.compiler.domain.models.ActionClass
 import dev.ostrom.server.compiler.domain.models.ActionClasses
 import dev.ostrom.server.compiler.domain.models.CatalogEntry
 import dev.ostrom.server.compiler.domain.models.CatalogGate
+import dev.ostrom.server.compiler.domain.models.WorkflowDoc
 
 /**
  * Which gate covers which boundary action in a repository (`bridge/harness.ts`): what the gates declare first
@@ -17,28 +18,38 @@ import dev.ostrom.server.compiler.domain.models.CatalogGate
  *
  * @param workflows The organization's workflows.
  * @param prodApprover The approver of a gate that names none.
+ * @param scopes The repositories each limited workflow applies to, by workflow id ([WorkflowRepos]); a workflow
+ *   absent from it applies to all of them.
  */
-class GatesCatalog(private val workflows: List<Workflow>, private val prodApprover: String?) {
+class GatesCatalog(
+    private val workflows: List<Workflow>,
+    private val prodApprover: String?,
+    private val scopes: Map<String, List<String>> = emptyMap(),
+) {
     /**
      * The catalogue of a repository: the built-in classes then the custom ones the gates declare, each with its
-     * patterns for this repository and its gate.
+     * patterns for this repository and its gate. A workflow limited to other repositories is not in it (R6).
      *
      * @param repo The repository, or null for the organization.
      * @return The catalogue, in order.
      */
-    fun catalog(repo: String?): List<CatalogEntry> = (ActionClasses.builtIn + customActions()).map { action ->
-        CatalogEntry(action.copy(patterns = patternsFor(action, repo)), gateFor(action, repo))
+    fun catalog(repo: String?): List<CatalogEntry> {
+        val within = GatesCatalog(workflows.filter { WorkflowRepos.covers(scopes[it.id], repo) }, prodApprover)
+        return (ActionClasses.builtIn + within.customActions()).map { action ->
+            CatalogEntry(action.copy(patterns = within.patternsFor(action, repo)), within.gateFor(action, repo))
+        }
     }
 
     /**
-     * The repositories the gates' declared actions are limited to: the organization's catalogue leaves out a gate
-     * limited to them, theirs has it.
+     * The repositories the gates' declared actions and the limited workflows are limited to: the organization's
+     * catalogue leaves out a gate limited to them, theirs has it.
      *
      * @return The repositories, as first written (case ignored).
      */
     fun repositories(): List<String> = workflows
         .flatMap { workflow -> gates(workflow).flatMap { it.actions.orEmpty() } }
         .flatMap { it.repos }
+        .plus(scopes.values.flatten())
         .distinctBy { it.lowercase() }
 
     /**
@@ -131,6 +142,21 @@ class GatesCatalog(private val workflows: List<Workflow>, private val prodApprov
     /** Matching helpers of the prototype, shared with the rules harness. */
     companion object {
         private const val MIN_ALIAS = 3
+
+        /**
+         * A catalogue of the organization's workflows and its rules' gates, each workflow with its repositories.
+         *
+         * @param docs The workflows, as saved.
+         * @param ruleGates The gates of the rules (never limited).
+         * @param prodApprover The approver of a gate that names none.
+         * @return The catalogue.
+         */
+        fun of(docs: List<WorkflowDoc>, ruleGates: List<Workflow>, prodApprover: String?): GatesCatalog =
+            GatesCatalog(
+                docs.map { it.workflow } + ruleGates,
+                prodApprover,
+                docs.mapNotNull { doc -> doc.repos?.let { doc.workflow.id to it } }.toMap(),
+            )
 
         /**
          * The short names of a repository: `acme-core` → `acme-core`, `core`.

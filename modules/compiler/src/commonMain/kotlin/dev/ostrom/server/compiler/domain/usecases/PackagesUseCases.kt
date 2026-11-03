@@ -313,8 +313,8 @@ class GatesCatalogUseCaseImpl(
     }
 
     private suspend fun catalogue(orgId: Uuid): GatesCatalog {
-        val workflows = repository.workflows(orgId).map { it.doc.workflow } + sources.ruleGates(orgId)
-        return GatesCatalog(workflows, sources.settings(orgId).prodApprover)
+        val docs = repository.workflows(orgId).map { it.doc }
+        return GatesCatalog.of(docs, sources.ruleGates(orgId), sources.settings(orgId).prodApprover)
     }
 }
 
