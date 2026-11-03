@@ -66,8 +66,11 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
 
     override suspend fun fetchAll(sql: String): Result<ResultSet> = inner.fetchAll(sql).also { note(sql, null) }
 
-    override suspend fun fetchAll(statement: Statement): Result<ResultSet> =
-        inner.fetchAll(statement).also { note(statement.sql, statement) }
+    override suspend fun fetchAll(statement: Statement): Result<ResultSet> {
+        // RED, throwaway: every query sent twice, as a query added per row would.
+        if (perRow(statement.sql)) inner.fetchAll(statement).also { note(statement.sql, statement) }
+        return inner.fetchAll(statement).also { note(statement.sql, statement) }
+    }
 
     override suspend fun <T> transaction(f: suspend Transaction.() -> T): T {
         val id = newTransaction()
@@ -95,9 +98,16 @@ internal class RecordingTransaction(
     override suspend fun fetchAll(sql: String): Result<ResultSet> =
         inner.fetchAll(sql).also { driver.note(sql, null, id) }
 
-    override suspend fun fetchAll(statement: Statement): Result<ResultSet> =
-        inner.fetchAll(statement).also { driver.note(statement.sql, statement, id) }
+    override suspend fun fetchAll(statement: Statement): Result<ResultSet> {
+        if (perRow(statement.sql)) inner.fetchAll(statement).also { driver.note(statement.sql, statement, id) }
+        return inner.fetchAll(statement).also { driver.note(statement.sql, statement, id) }
+    }
 }
+
+// RED, throwaway: a read, apart from setting the role or the organization or taking a lock.
+internal fun perRow(sql: String): Boolean =
+    Regex("^[\\s(]*SELECT\\b", RegexOption.IGNORE_CASE).containsMatchIn(sql) &&
+        !Regex("set_config\\(|pg_advisory", RegexOption.IGNORE_CASE).containsMatchIn(sql)
 
 /**
  * The statements of one recording, appended from any thread without a lock: a slot is claimed, then filled.
