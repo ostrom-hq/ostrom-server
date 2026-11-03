@@ -14,7 +14,8 @@ object NoMemberEmails : MemberEmails {
 /** Starts the purchase of a plan: a Stripe Checkout session with automatic tax. */
 interface StartCheckoutUseCase {
     /**
-     * The buyer's e-mail, name and address are asked by Checkout and saved on the customer.
+     * The customer carries the verified e-mail of who pays, so Checkout shows it instead of asking it; the buyer's
+     * name and address are asked by Checkout and saved on the customer.
      *
      * @return The Checkout URL.
      * @throws SubscriptionAlreadyActiveException When a subscription is running.
@@ -28,7 +29,7 @@ class StartCheckoutUseCaseImpl(
     private val stripe: StripeGateway,
     private val settings: BillingSettings,
     private val clock: Clock,
-    @Suppress("UnusedPrivateProperty") private val emails: MemberEmails = NoMemberEmails,
+    private val emails: MemberEmails = NoMemberEmails,
 ) : StartCheckoutUseCase {
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): String {
         caller.requireBillingAdminOf(orgId)
@@ -37,9 +38,18 @@ class StartCheckoutUseCaseImpl(
         val now = clock.now()
         val existing = repository.get(orgId)
         if (existing?.hasLiveSubscription == true) throw SubscriptionAlreadyActiveException()
-        val customerId = existing?.stripeCustomerId ?: stripe.createCustomer(orgId, null, null).also { id ->
-            val base = existing ?: OrgBilling(orgId = orgId, updatedAt = now)
-            repository.save(base.copy(stripeCustomerId = id, updatedAt = now))
+        // Without a verified address (or without the orgs module), Checkout asks for one.
+        val email = emails.emailOf(orgId, caller.memberId)
+        val stored = existing?.stripeCustomerId
+        val customerId = if (stored != null) {
+            // The address may have changed since the customer was made: Checkout shows the current one.
+            email?.let { stripe.updateCustomerEmail(stored, it) }
+            stored
+        } else {
+            stripe.createCustomer(orgId, null, email).also { id ->
+                val base = existing ?: OrgBilling(orgId = orgId, updatedAt = now)
+                repository.save(base.copy(stripeCustomerId = id, updatedAt = now))
+            }
         }
         val quantity = if (interval == BillingInterval.YEAR) {
             maxOf(1, repository.countActivePeople(orgId, billingPeriod(existing, now).start))

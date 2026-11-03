@@ -25,6 +25,7 @@ import dev.ostrom.server.billing.domain.LicenseProvider
 import dev.ostrom.server.billing.domain.ListInvoicesUseCase
 import dev.ostrom.server.billing.domain.ListInvoicesUseCaseImpl
 import dev.ostrom.server.billing.domain.NoLicenseProvider
+import dev.ostrom.server.billing.domain.NoMemberEmails
 import dev.ostrom.server.billing.domain.OpenCustomerPortalUseCase
 import dev.ostrom.server.billing.domain.OpenCustomerPortalUseCaseImpl
 import dev.ostrom.server.billing.domain.OutboxTask
@@ -52,6 +53,7 @@ import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
 import dev.ostrom.server.billing.infrastructure.StripeSignatureVerifier
 import dev.ostrom.server.billing.presentation.BillingRoutesDependencies
 import dev.ostrom.server.billing.presentation.billingRoutes
+import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.logging.Logger
@@ -94,7 +96,9 @@ object BillingModule : ServerModule {
         single { StripeSignatureVerifier(get<BillingConfig>().webhookSecrets, get<Clock>()) }
         single<GetPlanLimitsUseCase> { GetPlanLimitsUseCaseImpl(get(), licenses(), get(), get()) }
         single<GetBillingOverviewUseCase> { GetBillingOverviewUseCaseImpl(get(), get(), get(), get()) }
-        single<StartCheckoutUseCase> { StartCheckoutUseCaseImpl(get(), get(), get(), get()) }
+        single<StartCheckoutUseCase> {
+            StartCheckoutUseCaseImpl(get(), get(), get(), get(), getOrNull<MemberEmails>() ?: NoMemberEmails)
+        }
         single<OpenCustomerPortalUseCase> { OpenCustomerPortalUseCaseImpl(get(), get(), get()) }
         single<SyncSubscriptionUseCase> {
             SyncSubscriptionUseCaseImpl(get(), get(), get(), unknownPriceLogger(get()))
