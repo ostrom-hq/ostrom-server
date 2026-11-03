@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs
 
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.auth.MemberLogins
@@ -13,6 +14,8 @@ import dev.ostrom.server.orgs.domain.AcceptInvitationUseCase
 import dev.ostrom.server.orgs.domain.AcceptInvitationUseCaseImpl
 import dev.ostrom.server.orgs.domain.ChangeRoleUseCase
 import dev.ostrom.server.orgs.domain.ChangeRoleUseCaseImpl
+import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCase
+import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCaseImpl
 import dev.ostrom.server.orgs.domain.CountMembersUseCase
 import dev.ostrom.server.orgs.domain.CountMembersUseCaseImpl
 import dev.ostrom.server.orgs.domain.CreateInviteLinkUseCase
@@ -81,6 +84,7 @@ import dev.ostrom.server.orgs.presentation.InvitationCommands
 import dev.ostrom.server.orgs.presentation.MemberCommands
 import dev.ostrom.server.orgs.presentation.OrgCommands
 import dev.ostrom.server.orgs.presentation.OrgsConfig
+import dev.ostrom.server.orgs.presentation.OrgsGovernanceChange
 import dev.ostrom.server.orgs.presentation.OrgsRoutesDependencies
 import dev.ostrom.server.orgs.presentation.myOrganizationsRoutes
 import dev.ostrom.server.orgs.presentation.orgsRoutes
@@ -89,6 +93,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 /**
@@ -166,9 +171,12 @@ object OrgsModule : ServerModule {
         }
 
         single { OrgCommands(get(), get(), get(), get(), get(), get(), get()) }
-        single { MemberCommands(get(), get(), get(), get(), get()) }
+        single<CheckMemberWriteUseCase> { CheckMemberWriteUseCaseImpl(get(), get(), get()) }
+        single { MemberCommands(get(), get(), get(), get(), get(), get()) }
         single { InvitationCommands(get(), get(), get(), get(), get(), get()) }
         single { OrgsRoutesDependencies(get(), get(), get(), get()) }
+        // The member writes a person's API token asks for, held for the console (contract audit 2, F1).
+        single<GovernanceChange>(named("orgs")) { OrgsGovernanceChange(get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = OrgsMigrations
