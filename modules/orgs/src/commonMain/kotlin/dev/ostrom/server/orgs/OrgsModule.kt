@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs
 
+import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.MemberDirectory
 import dev.ostrom.server.kernel.auth.MemberLogins
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -79,6 +80,7 @@ import dev.ostrom.server.orgs.presentation.InvitationCommands
 import dev.ostrom.server.orgs.presentation.MemberCommands
 import dev.ostrom.server.orgs.presentation.OrgCommands
 import dev.ostrom.server.orgs.presentation.OrgsConfig
+import dev.ostrom.server.orgs.presentation.OrgsGovernanceChange
 import dev.ostrom.server.orgs.presentation.OrgsRoutesDependencies
 import dev.ostrom.server.orgs.presentation.myOrganizationsRoutes
 import dev.ostrom.server.orgs.presentation.orgsRoutes
@@ -87,6 +89,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 
 /**
@@ -165,6 +168,8 @@ object OrgsModule : ServerModule {
         single { MemberCommands(get(), get(), get(), get(), get()) }
         single { InvitationCommands(get(), get(), get(), get(), get(), get()) }
         single { OrgsRoutesDependencies(get(), get(), get(), get()) }
+        // The member writes a person's API token asks for, held for the console (contract audit 2, F1).
+        single<GovernanceChange>(named("orgs")) { OrgsGovernanceChange(get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = OrgsMigrations
