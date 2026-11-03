@@ -9,17 +9,21 @@ import dev.ostrom.server.integrations.github.domain.GitHubCallException
 import dev.ostrom.server.integrations.github.domain.GitHubCiApi
 import dev.ostrom.server.integrations.github.domain.GitHubCiChecks
 import dev.ostrom.server.integrations.github.domain.GitHubCiRun
+import dev.ostrom.server.integrations.github.domain.GitHubContentsApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.domain.GitHubDirectorySync
 import dev.ostrom.server.integrations.github.domain.GitHubInstallation
 import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
+import dev.ostrom.server.integrations.github.domain.GitHubRepositoryReader
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
+import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubContentsApi
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.rules.domain.services.RepositoryReader
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -101,6 +105,31 @@ class GitHubIntegrationModuleRegistrationTest {
         assertSame<Any>(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubManifestApi>())
         assertSame<Any>(configured.koin.get<GitHubApi>(), configured.koin.get<GitHubCiApi>())
         configured.close()
+    }
+
+    @Test
+    fun theRulesAnalysisReadsTheRepositoriesWithTheAppsInstallationTokens() = runTest {
+        val app = koinApplication {
+            allowOverride(true)
+            modules(
+                GitHubIntegrationModule.koinModule,
+                module {
+                    single<Clock> { SettableClock() }
+                    single { GitHubSettings("1", null, null, null) }
+                    single<GitHubAppStore> { MemoryGitHubAppStore() }
+                    single<GitHubRepository> {
+                        MemoryGitHubRepository().apply { installations += GitHubInstallation(ORG, 42, "acme") }
+                    }
+                },
+            )
+        }
+        assertIs<GitHubRepositoryReader>(app.koin.get<RepositoryReader>())
+        val contents = app.koin.get<GitHubContentsApi>()
+        assertIs<HttpGitHubContentsApi>(contents)
+        // The token comes from the App's installation: without its key on this server, nothing is read.
+        val refused = assertFailsWith<GitHubCallException> { contents.tree(42, "acme/api", "main") }
+        assertEquals("The GitHub App is not configured on this server.", refused.message)
+        app.close()
     }
 
     @Test

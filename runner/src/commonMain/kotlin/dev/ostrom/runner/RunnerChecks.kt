@@ -59,9 +59,10 @@ data class CheckReply(
 
 /**
  * The checks of the agent's hooks, run by the runner on the check host (`ostrom-runner check-host`): a container of
- * its own, without the runner token, that mounts the workspace and whose socket only the runner reaches. The runner
- * hashes the script it sends, reads the exit code the check host reports, and tells the server, which records the run
- * as attested by the isolated runner.
+ * its own, without the runner token, that mounts the workspace and is linked to the runner alone ([CheckLink]). The
+ * runner hashes the script it sends, reads the exit code the check host reports, and tells the server, which records
+ * the run as attested by the isolated runner. Checks run one at a time: after each, the check host kills whatever the
+ * script left behind, which would also kill a check running beside it.
  *
  * What this proves, and what it does not: Ostrom launched the script and read its exit code, not that the agent left
  * the workspace untouched. The check runs on the agent's workspace.
@@ -157,7 +158,10 @@ class RunnerChecks(
         }
     }
 
-    /** The check's environment: no token, no variable of the agent, a home of its own outside the workspace. */
+    /**
+     * The check's environment: no token, no variable of the agent, a home outside the workspace (the check host gives
+     * each check a new one, [CheckTerminals]).
+     */
     private fun variables(request: CheckRequest): Map<String, String> = mapOf(
         "PATH" to (environment["PATH"] ?: DEFAULT_PATH),
         "LANG" to (environment["LANG"] ?: "C.UTF-8"),
@@ -217,7 +221,7 @@ class RunnerChecks(
         /** The script was stopped at its time limit. */
         const val TIMEOUT = "timeout"
 
-        private const val PARALLEL = 2
+        private const val PARALLEL = 1
         private val REPORT_TIMEOUT = 3.seconds
         private const val TAIL_CHARACTERS = 4_000
         private const val KEPT_BYTES = 64 * 1024

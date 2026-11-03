@@ -157,8 +157,8 @@ class UseCasesTest {
         assertEquals("cus_1", request.customerId)
         assertEquals("price_ostrom_team_monthly", request.priceId)
         assertNull(request.quantity)
-        assertEquals("https://app.ostrom.run/settings/billing?checkout=success", request.successUrl)
-        assertEquals("https://app.ostrom.run/settings/billing?checkout=canceled", request.cancelUrl)
+        assertEquals("https://app.ostrom.run/billing?checkout=success", request.successUrl)
+        assertEquals("https://app.ostrom.run/billing?checkout=canceled", request.cancelUrl)
         assertEquals("cus_1", world.repository.get(world.org)?.stripeCustomerId)
         world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
         assertEquals(1, world.stripe.customers, "The customer is reused on a second checkout")
@@ -223,7 +223,7 @@ class UseCasesTest {
         assertFailsWith<NoActiveSubscriptionException> { world.portal(world.admin, world.org) }
         world.subscribe()
         assertEquals("https://billing.stripe.com/p/session/test_1", world.portal(world.admin, world.org))
-        assertEquals("portal cus_1 https://app.ostrom.run/settings/billing", world.stripe.calls.last())
+        assertEquals("portal cus_1 https://app.ostrom.run/billing", world.stripe.calls.last())
         assertFailsWith<BillingAdminRequiredException> { world.portal(world.member, world.org) }
         assertFailsWith<BillingNotConfiguredException> {
             World(stripeEnabled = false).let { it.portal(it.admin, it.org) }

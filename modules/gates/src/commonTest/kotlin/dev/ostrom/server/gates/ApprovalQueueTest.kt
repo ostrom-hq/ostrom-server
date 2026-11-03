@@ -15,6 +15,7 @@ import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.domain.models.Viewer
 import dev.ostrom.server.gates.domain.models.ViewerChannel
+import dev.ostrom.server.gates.domain.usecases.GetApprovalUseCaseImpl
 import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.ORG
 import dev.ostrom.server.gates.fakes.OTHER_ORG
@@ -129,6 +130,29 @@ class ApprovalQueueTest {
         assertEquals(listOf(listOf(opened.gate.id)), bench.repository.approverReads, "one read of its approvers")
         val asker = bench.view(user("lyes"), console, opened.of("lyes").request.id).rights
         assertEquals("You asked for this action and cannot approve it: rev-b must say yes.", asker.reason)
+    }
+
+    // PARCOURS 3.3: a session links each of its gates by the gate's id, and the view reads that id too.
+    @Test
+    fun theViewOfAGateIsTheReadersOwnRequestElseItsFirst() = runTest {
+        val bench = GateBench()
+        val opened = bench.opened("lyes", "rev-b")
+        val gateId = opened.gate.id
+        assertEquals(opened.of("rev-b"), bench.view(user("Rev-B"), console, gateId).view, "their own, case ignored")
+        val first = bench.repository.requestsOf(ORG, gateId).first()
+        assertEquals(ApprovalView(first, opened.gate), bench.view(user("dev"), console, gateId).view)
+        assertFailsWith<GateNotFoundException> { bench.view(user("rev-b", OTHER_ORG), console, gateId) }
+    }
+
+    @Test
+    fun anApprovalIsReadByItsGatesIdAsTheReadersRequest() = runTest {
+        val bench = GateBench()
+        val opened = bench.opened("lyes", "rev-b")
+        val read = GetApprovalUseCaseImpl(bench.repository)
+        assertEquals(opened.of("rev-b"), read(user("rev-b"), opened.gate.id))
+        val noPerson = GateActor("rev-b", ORG, ActorKind.USER)
+        assertEquals(opened.of("rev-b"), read(noPerson, opened.gate.id), "the credential's id when it names no person")
+        assertFailsWith<GateNotFoundException> { read(user("rev-b", OTHER_ORG), opened.gate.id) }
     }
 
     @Test

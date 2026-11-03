@@ -15,6 +15,8 @@ import dev.ostrom.server.rules.domain.services.RepositoryReader
 import dev.ostrom.server.rules.domain.services.DecisionSigner
 import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCase
 import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCaseImpl
+import dev.ostrom.server.rules.domain.usecases.ReplayRulesUseCase
+import dev.ostrom.server.rules.domain.usecases.ReplayRulesUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.BulkUpdateRulesUseCase
 import dev.ostrom.server.rules.domain.usecases.BulkUpdateRulesUseCaseImpl
 import dev.ostrom.server.rules.domain.usecases.CreateRuleUseCase
@@ -104,7 +106,8 @@ object RulesModule : ServerModule {
         single<GetAnalysisStateUseCase> { GetAnalysisStateUseCaseImpl(get(), get(), get()) }
         single<GetReplayUseCase> { GetReplayUseCaseImpl(get()) }
         single<AnalyzeOrganizationUseCase> { AnalyzeOrganizationUseCaseImpl(get(), get(), get(), get(), get()) }
-        single { RepositoryAnalysisEngine(get(), get(), get()) }
+        single<ReplayRulesUseCase> { ReplayRulesUseCaseImpl(get(), get(), get(), get(), get()) }
+        single { RepositoryAnalysisEngine(get(), get(), get(), get()) }
         single { AnalysisRoutesDependencies(callerResolver(), get(), get(), get(), get()) }
         single {
             RulesRoutesDependencies(

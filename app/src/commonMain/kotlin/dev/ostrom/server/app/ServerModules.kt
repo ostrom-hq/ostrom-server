@@ -17,6 +17,7 @@ import dev.ostrom.server.integrations.slack.SlackIntegrationModule
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.launches.LaunchesModule
 import dev.ostrom.server.mcprelay.McpRelayModule
+import dev.ostrom.server.notifications.NotificationsModule
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.reports.ReportsModule
@@ -62,4 +63,5 @@ fun serverModules(): List<ServerModule> = listOf(
     ReportsModule,
     // After the modules whose governance writes it holds (rules, compiler, gateway).
     GovernanceModule,
+    NotificationsModule,
 ) + eeModules()

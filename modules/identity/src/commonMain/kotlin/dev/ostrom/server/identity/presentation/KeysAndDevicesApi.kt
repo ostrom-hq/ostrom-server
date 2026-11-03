@@ -3,6 +3,7 @@ package dev.ostrom.server.identity.presentation
 
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.IssuedToken
+import dev.ostrom.server.identity.domain.TokenKind
 import io.ktor.resources.Resource
 import kotlinx.serialization.Serializable
 
@@ -80,14 +81,27 @@ data class ServiceKeyResponse(
 data class ServiceKeysResponse(val items: List<ServiceKeyResponse>)
 
 /**
- * A workstation where the CLI is signed in (contract `Device`): one live CLI token.
+ * A workstation where the CLI is signed in (contract `Device`): one live CLI token, or one live token of
+ * `ostrom login --admin` in the organization the request names.
  *
  * @property id The id, its token's.
  * @property name What the CLI called itself when it signed in.
  * @property lastSeenAt Its last call, precise to five minutes; absent before the first.
+ * @property kind `cli`, or `admin` for the token of `ostrom login --admin`.
+ * @property orgId The organization an `admin` token is bound to; absent for `cli`.
+ * @property scopes What an `admin` token may do, sorted; absent for `cli`.
+ * @property expiresAt When an `admin` token stops working; absent for `cli`.
  */
 @Serializable
-data class DeviceResponse(val id: String, val name: String, val lastSeenAt: String? = null)
+data class DeviceResponse(
+    val id: String,
+    val name: String,
+    val lastSeenAt: String? = null,
+    val kind: String = DEVICE_KIND_CLI,
+    val orgId: String? = null,
+    val scopes: List<String>? = null,
+    val expiresAt: String? = null,
+)
 
 /**
  * The caller's workstations.
@@ -110,5 +124,20 @@ fun ApiToken.toServiceKeyResponse() = ServiceKeyResponse(
 /** Maps a service key just created, with its secret. */
 fun IssuedToken.toCreatedServiceKeyResponse() = token.toServiceKeyResponse().copy(secret = secret)
 
-/** Maps a CLI token to the device that holds it. */
-fun ApiToken.toDeviceResponse() = DeviceResponse(id.toString(), name, lastUsedAt?.toString())
+/** Maps a CLI token, or a token of `ostrom login --admin` with its organization, scopes and expiry, to its device. */
+fun ApiToken.toDeviceResponse(): DeviceResponse {
+    val device = DeviceResponse(id.toString(), name, lastUsedAt?.toString())
+    if (kind != TokenKind.ADMIN) return device
+    return device.copy(
+        kind = DEVICE_KIND_ADMIN,
+        orgId = orgId?.toString(),
+        scopes = scopes.sorted(),
+        expiresAt = expiresAt?.toString(),
+    )
+}
+
+/** The contract's `Device.kind` of a CLI token. */
+const val DEVICE_KIND_CLI: String = "cli"
+
+/** The contract's `Device.kind` of a token of `ostrom login --admin`. */
+const val DEVICE_KIND_ADMIN: String = "admin"

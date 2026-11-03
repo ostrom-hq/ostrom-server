@@ -84,5 +84,6 @@ data class RepositorySnapshot(
  * token or a raw response body.
  *
  * @property message The sentence.
+ * @param cause The failure it comes from, if any.
  */
-class RepositoryReadException(override val message: String) : Exception(message)
+class RepositoryReadException(override val message: String, cause: Throwable? = null) : Exception(message, cause)
