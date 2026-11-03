@@ -13,6 +13,7 @@ import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
 import dev.ostrom.server.gates.presentation.ApprovalAnswer
 import dev.ostrom.server.gates.presentation.ApprovalsPage
 import dev.ostrom.server.gates.presentation.GateScopes
+import dev.ostrom.server.identity.domain.LinkedIdentities
 import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.integrations.github.domain.GateCheck
 import dev.ostrom.server.integrations.github.domain.GitHubApi
@@ -148,7 +149,9 @@ class GitHubPostgresTest {
         // Seals an App the manifest flow would create (none in these tests: the environment names one).
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         // The identity module's users: the GitHub user 7 signed in to Ostrom as dev.
-        single<UsersRepository> { LinkedGitHubUsers(mapOf(7L to "dev")) }
+        val users = LinkedGitHubUsers(mapOf(7L to "dev"))
+        single<UsersRepository> { users }
+        single<LinkedIdentities> { users }
         // The orgs module's lookup: acme is org A, globex org B, by short name or id.
         single<FindOrgUseCase> {
             object : FindOrgUseCase {

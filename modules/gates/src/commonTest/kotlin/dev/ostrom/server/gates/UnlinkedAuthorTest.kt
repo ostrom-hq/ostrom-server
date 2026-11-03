@@ -87,6 +87,9 @@ class UnlinkedAuthorTest {
         val joined = bench.unlinkedPullRequest()
         assertEquals(hook.gate.id, joined.gate.id)
         assertEquals(AUTHOR, bench.repository.gates.getValue(hook.gate.id).unlinkedAuthor)
+        // Once known, the unlinked author stays: a later ask that does not carry it never erases it.
+        assertEquals(hook.gate.id, bench.open(bench.mergeRequest()).gate.id)
+        assertEquals(AUTHOR, bench.repository.gates.getValue(hook.gate.id).unlinkedAuthor)
         assertFailsWith<GitHubLinkRequiredException> { bench.answer(joined, "rev-b") }
     }
 
