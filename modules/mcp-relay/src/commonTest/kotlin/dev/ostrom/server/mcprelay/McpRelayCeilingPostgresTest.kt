@@ -19,12 +19,14 @@ import io.ktor.http.headersOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -74,10 +76,17 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
     fun slowMcpCallsFillingTheirCeilingDoNotBlockAnOrdinaryRead() =
         serverTest(listOf(SecretsModule, McpRelayModule), oneCallAtOnce) { server ->
             with(server) {
-                assign(grafana(), Relay.memberA.memberId.toString(), listOf("query_loki_logs"))
+                assign(grafana(), "all", null)
                 coroutineScope {
                     val slow = async { rpc("grafana", "member-a", toolCall) }
-                    upstreamIn.await()
+                    val reached = select {
+                        upstreamIn.onAwait { true }
+                        slow.onAwait { false }
+                    }
+                    if (!reached) {
+                        val answer = slow.await()
+                        fail("The relay answered before the upstream: ${answer.status} ${answer.bodyAsText()}")
+                    }
                     // The one ordinary place is free: the slow call holds a held place.
                     val read = client.get("$admin/servers") { bearerAuth("admin-a") }
                     assertEquals(HttpStatusCode.OK, read.status, read.bodyAsText())
