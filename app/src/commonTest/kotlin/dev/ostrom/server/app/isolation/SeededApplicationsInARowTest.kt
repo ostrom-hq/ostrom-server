@@ -19,7 +19,8 @@ import kotlin.test.assertTrue
  * On Kotlin/Native, after two isolation benches, a third test application never answered a request: each seeding
  * request waited its full 10 s while the database stayed idle and the test reached it directly, then the test thread
  * itself stopped for good. The JVM answers every one. These tests start the same seeded applications one after the
- * other, printing each request first, so the last printed line names the first one left without an answer.
+ * other, printing each request first, so the last printed line names the first one left without an answer, and the
+ * process's threads after each application has stopped.
  */
 class SeededApplicationsInARowTest {
     private val overrides = module {
@@ -35,7 +36,7 @@ class SeededApplicationsInARowTest {
     }
 
     @Test
-    fun seededApplicationsInARowEachAnswerEveryRequest() = repeat(ROUNDS) { round ->
+    fun seededApplicationsInARowEachAnswerEveryRequest() = rounds("seeded") { round ->
         benchTest(serverModules(), overrides) { server ->
             val party = server.party("r$round")
             party.trace = ::println
@@ -46,7 +47,7 @@ class SeededApplicationsInARowTest {
     }
 
     @Test
-    fun applicationsReadAndRefusedInARowEachAnswerEveryRequest() = repeat(ROUNDS) { round ->
+    fun applicationsReadAndRefusedInARowEachAnswerEveryRequest() = rounds("read and refused") { round ->
         benchTest(serverModules(), overrides) { server ->
             val party = server.party("w$round")
             party.trace = ::println
@@ -60,6 +61,16 @@ class SeededApplicationsInARowTest {
             println("round $round read and refused")
             val all = party.problems + findings + changes
             assertTrue(all.isEmpty(), "round $round:\n${all.joinToString("\n")}")
+        }
+    }
+
+    // Runs [ROUNDS] applications one after the other, printing the process's threads before the first and after each
+    // one has stopped: a count that climbs from one to the next is what server#266 measures on the real server.
+    private fun rounds(kind: String, round: (Int) -> Unit) {
+        println(threadsLine("threads before the first $kind round"))
+        repeat(ROUNDS) {
+            round(it)
+            println(threadsLine("threads after $kind round $it"))
         }
     }
 
