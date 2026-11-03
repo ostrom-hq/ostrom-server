@@ -161,6 +161,8 @@ class OpenGateUseCaseImpl(
         val fresh = lockGate(live.orgId, live.id)
         if (fresh == null || fresh.status != GateStatus.APPROVED) return joined(request, listOfNotNull(fresh), mode)
         val joined = join(fresh, request)
+        // The taking session joins first: `addAskers` links it to the gate (`gates_sessions`), `updateGate` never does.
+        if (joined != fresh) addAskers(joined)
         updateGate(joined.copy(status = GateStatus.CONSUMED, consumedAt = clock.now()))
         return Opened(joined, requestsOf(joined.orgId, joined.id), created = false)
     }
