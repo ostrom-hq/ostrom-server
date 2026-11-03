@@ -3,6 +3,7 @@ package dev.ostrom.server.automations
 
 import dev.ostrom.server.automations.domain.WaitAgent
 import dev.ostrom.server.automations.domain.WaitAgentResolver
+import dev.ostrom.server.automations.fakes.ALICE
 import dev.ostrom.server.automations.fakes.BOB
 import dev.ostrom.server.automations.fakes.FOREIGN_SESSION
 import dev.ostrom.server.automations.fakes.FakeWaitAgents
@@ -138,6 +139,35 @@ class WaitsMcpAgentTest {
 
             val person = client.rpc(ping, UNBOUND, token = "agent")
             assertEquals(HttpStatusCode.OK, person.status, "A person's credential still asks outside a session")
+        }
+
+    @Test
+    fun anAgentTokenAsksOnlyThePersonWhoLaunchedIt() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            val other = client.call("ask_human", """{"title":"Ship it?","assignee":"$ALICE"}""", OWN)
+            assertTrue(other.isError(), other.text())
+            assertEquals("An agent asks only the person who launched it.", other.text())
+            val own = client.call("ask_human", """{"title":"Ship it?","assignee":"$BOB"}""", OWN)
+            assertFalse(own.isError(), own.text())
+        }
+
+    @Test
+    fun anAgentTokenNeitherSeesNorCancelsWhatSomeoneElseAskedItsPerson() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            // alice asks bob, the agent's person, about the agent's session
+            val asked = client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", OWN, "alicekey")
+            assertFalse(asked.isError(), asked.text())
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+
+            assertEquals("No waits.", client.call("list_waits", "{}", OWN).text(), "Not listed to the agent")
+            val read = client.call("get_wait", """{"wait":"$id"}""", OWN)
+            assertTrue(read.isError(), read.text())
+            val cancelled = client.call("cancel_wait", """{"wait":"$id"}""", OWN)
+            assertTrue(cancelled.isError(), cancelled.text())
+            val still = client.get("/api/v1/waits/$id") { bearerAuth("alicekey") }
+            assertTrue("\"open\"" in still.bodyAsText(), "Still open: ${still.bodyAsText()}")
         }
 
     @Test
