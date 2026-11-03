@@ -18,6 +18,7 @@ enum class ErrorKind(val type: String) {
     PAYLOAD_TOO_LARGE("payload_too_large"),
     UNSUPPORTED_MEDIA_TYPE("unsupported_media_type"),
     RATE_LIMITED("rate_limited"),
+    GONE("gone"),
     UNAVAILABLE("unavailable"),
     INTERNAL("internal_error"),
 }

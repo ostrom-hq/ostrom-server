@@ -26,8 +26,6 @@ import dev.ostrom.server.kernel.observability.ProcessMetrics
 import dev.ostrom.server.kernel.observability.TelemetryLogger
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.github.smyrgeorge.sqlx4k.Driver
-import io.ktor.server.cio.CIO
-import io.ktor.server.engine.embeddedServer
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -106,8 +104,7 @@ private fun serve() {
             "server starting",
             mapOf("version" to SERVER_VERSION, "host" to config.host, "port" to config.port, "key_id" to signer.keyId),
         )
-        val engine = embeddedServer(CIO, port = config.port, host = config.host) { configureHttp(server, modules) }
-            .start(wait = false)
+        val engine = serverEngine(config.port, config.host) { configureHttp(server, modules) }.start(wait = false)
         // After the start: Ktor's POSIX shutdown hook calls signal() as the application starts and would replace these
         // handlers. From now on SIGTERM and SIGINT only write to the signal pipe; before, they end a start at once.
         check(ostrom_install_signal_handlers() == 0) { "The SIGTERM and SIGINT handlers could not be installed." }

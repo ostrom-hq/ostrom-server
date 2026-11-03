@@ -89,6 +89,16 @@ interface WorkflowsUseCase {
      * @param id The workflow.
      */
     suspend fun delete(orgId: Uuid, id: String)
+
+    /**
+     * Checks that [raw] is a valid workflow, as [save] would, without saving it: a governance write held for the
+     * console is refused at once rather than when an owner confirms it.
+     *
+     * @param raw The workflow document.
+     *
+     * @throws OstromException When it is not a valid workflow (400).
+     */
+    fun check(raw: JsonObject)
 }
 
 /**
@@ -146,6 +156,10 @@ class WorkflowsUseCaseImpl(
         val change = changeOf(before?.doc, workflow, repos)
         if (change != null) record(orgId, WorkflowDoc(raw, workflow), before?.doc, change, author)
         return saved
+    }
+
+    override fun check(raw: JsonObject) {
+        decode(raw)
     }
 
     override suspend fun delete(orgId: Uuid, id: String) {

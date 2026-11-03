@@ -110,8 +110,13 @@ class FakeSessions(
     override suspend fun gates(orgId: Uuid, id: String): List<SessionGate> = gates
 }
 
-class FakePackages(private val packages: List<RunPackage> = listOf(PACKAGE)) : RunPackages {
+class FakePackages(
+    private val packages: List<RunPackage> = listOf(PACKAGE),
+    private val replaced: Set<String> = emptySet(),
+) : RunPackages {
     override suspend fun find(orgId: Uuid, digest: String): RunPackage? = packages.firstOrNull { it.digest == digest }
+
+    override suspend fun current(orgId: Uuid, pack: RunPackage, startedAt: Instant): Boolean = pack.digest !in replaced
 }
 
 fun access(
