@@ -248,9 +248,6 @@ jobs:
             echo "- scenarios: ostrom-e2e $(git -C e2e rev-parse --short HEAD) ($E2E_REF)"
             echo "- files: \`${FILES:-scenarios/*.e2e.ts}\`, filter: \`${TESTS:-all}\`"
           } >> "$GITHUB_STEP_SUMMARY"
-      # The GitHub App of the bench, as on ostrom-e2e's: a key made for this run only, a test value.
-      - name: Test key of the bench's GitHub App
-        run: echo "E2E_GITHUB_APP_PEM=$(openssl genrsa -traditional 2048 2>/dev/null | awk '{printf "%s\\n", $0}')" >> "$GITHUB_ENV"
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
           IMAGE: ${{ steps.server.outputs.image }}
@@ -298,7 +295,13 @@ jobs:
           OSTROM_ARTIFACTS_CONTENT_ORIGIN=http://localhost:4601
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
-          echo "OSTROM_GITHUB_APP_PEM=$E2E_GITHUB_APP_PEM" >> "$RUNNER_TEMP/server.env"
+          # The bench's GitHub App gets a key made for this run, written straight to the env file: never to $GITHUB_ENV,
+          # whose values every later step prints. One line, its newlines as `\n`, as the server reads it (as
+          # console-journey.yml).
+          openssl genrsa -traditional -out "$RUNNER_TEMP/github-app.pem" 2048
+          printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$(awk '{printf "%s\\n", $0}' "$RUNNER_TEMP/github-app.pem")" \
+            >> "$RUNNER_TEMP/server.env"
+          rm "$RUNNER_TEMP/github-app.pem"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
@@ -319,9 +322,11 @@ jobs:
           OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
           # The fake provider the scenarios start, where the server's gateway and sharing point (step above).
           OSTROM_E2E_FAKE_TOKENS_PORT: "4620"
-          # The fake GitHub (sign-in) and the fake GitHub App the scenarios start, and stripe-mock's webhook secret.
+          # The fake GitHub the scenarios start, where the server points (step above): 4610 for the sign-in with GitHub
+          # (E2E-AUTH-002), 4700 for the App's installations and repositories (E2E-PARC-004, E2E-GH-*).
           OSTROM_E2E_FAKE_GITHUB_PORT: "4610"
           OSTROM_E2E_GITHUB_PORT: "4700"
+          # stripe-mock's webhook secret, as on ostrom-e2e's bench.
           OSTROM_E2E_STRIPE_WEBHOOK_SECRET: whsec_e2e_bench
           # E2E-TC-003/004: the CLI, the fake TeamCode team, and the superuser of this throwaway database (to make an
           # imported account wait for a reconnection and read the org's audit chain), as on ostrom-e2e's bench.

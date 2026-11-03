@@ -7,6 +7,7 @@ import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
+import dev.ostrom.server.sharing.domain.AccountGroups
 import dev.ostrom.server.sharing.domain.AccountSpendReader
 import dev.ostrom.server.sharing.domain.AccountTokenCipher
 import dev.ostrom.server.sharing.domain.AccountTokens
@@ -36,6 +37,7 @@ import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCaseImpl
 import dev.ostrom.server.sharing.domain.ViewSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.ViewSharedAccountUseCaseImpl
+import dev.ostrom.server.sharing.infrastructure.AccountGroupsImpl
 import dev.ostrom.server.sharing.infrastructure.GroupRepositoryImpl
 import dev.ostrom.server.sharing.infrastructure.HttpOAuthRefresher
 import dev.ostrom.server.sharing.infrastructure.ProviderQuotaHeaderParser
@@ -80,9 +82,10 @@ object SharingModule : ServerModule {
         }
         single<QuotaHeaderParser> { ProviderQuotaHeaderParser() }
         single { AccountTokens(get(), get(), get(), get(), get()) }
-        single { SharedAccountPool(get(), get(), get(), get(), spend(), get()) }
+        single<AccountGroups> { AccountGroupsImpl(get()) }
+        single { SharedAccountPool(get(), get(), get(), get(), spend(), get(), get()) }
         single<ShareAccountUseCase> { ShareAccountUseCaseImpl(get(), get(), get()) }
-        single { MemberNames(getOrNull<MemberLogins>() ?: NoMemberLogins) }
+        single { MemberNames(logins(), get()) }
         single<ListSharedAccountsUseCase> {
             ListSharedAccountsUseCaseImpl(get(), get(), get(), spend(), get(), get())
         }
