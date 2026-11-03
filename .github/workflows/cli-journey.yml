@@ -18,7 +18,7 @@ on:
         description: Server image (empty = the newest ghcr.io/ostrom-hq/ostrom-server:sha-<7> of main published)
         default: ""
       cli_ref:
-        description: ostrom-cli ref whose binary and journey run
+        description: ostrom-cli ref whose binary and journey run (ostrom-cli#85 or later, for the --fake-mcp-* flags)
         default: main
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -149,7 +149,8 @@ jobs:
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=127.0.0.1" \
             -addext "subjectAltName=IP:127.0.0.1" -addext "basicConstraints=critical,CA:TRUE" \
             -keyout "$RUNNER_TEMP/fake-mcp/key.pem" -out "$RUNNER_TEMP/fake-mcp/cert.pem"
-          cat /etc/ssl/certs/ca-certificates.crt "$RUNNER_TEMP/fake-mcp/cert.pem" > "$RUNNER_TEMP/fake-mcp/bundle.pem"
+          { cat /etc/ssl/certs/ca-certificates.crt; echo; cat "$RUNNER_TEMP/fake-mcp/cert.pem"; } > "$RUNNER_TEMP/fake-mcp/bundle.pem"
+          openssl verify -CAfile "$RUNNER_TEMP/fake-mcp/bundle.pem" "$RUNNER_TEMP/fake-mcp/cert.pem"
           chmod 0644 "$RUNNER_TEMP/fake-mcp/bundle.pem"
           # The server's non-root user writes the mails (0644); the journey, as the runner's user, reads them.
           mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
@@ -164,12 +165,13 @@ jobs:
           OSTROM_STRIPE_SECRET_KEY=sk_test_cli_e2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_cli_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
-          OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS=true
-          SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          # The fake MCP server's two settings go to this server only, not to the seed run that shares server.env;
+          # SSL_CERT_FILE names the mounted bundle for the image's static curl, whatever its built-in default path.
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             -v "$RUNNER_TEMP/fake-mcp/bundle.pem:/etc/ssl/certs/ca-certificates.crt:ro" \
+            -e OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS=true -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
