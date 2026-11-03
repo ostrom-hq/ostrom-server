@@ -42,7 +42,14 @@ internal fun serverEngine(
         reuseAddress = true
     },
     module = {
-        intercept(ApplicationCallPipeline.Setup) { withContext(Dispatchers.Default) { proceed() } }
+        intercept(ApplicationCallPipeline.Setup) {
+            // Each thread that carries a call takes its pool's name (ThreadNames.kt): io-N here, default-N below.
+            nameThisThread()
+            withContext(Dispatchers.Default) {
+                nameThisThread()
+                proceed()
+            }
+        }
         module()
     },
 )
