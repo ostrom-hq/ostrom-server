@@ -167,7 +167,7 @@ class UseCasesTest {
     }
 
     @Test
-    fun theCustomerCarriesTheVerifiedAddressOfWhoPaysAndFollowsItsChange() = runTest {
+    fun theCustomerCarriesTheVerifiedAddressOfWhoPays() = runTest {
         val world = World()
         world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
         world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
@@ -176,20 +176,36 @@ class UseCasesTest {
             world.stripe.calls.first(),
             "Checkout shows the payer's address instead of asking it",
         )
-        world.emails.addresses[world.admin.memberId] = "ada@new.acme.dev"
+    }
+
+    @Test
+    fun anAddressAlreadySetIsKeptAndAMissingOneIsFilled() = runTest {
+        val world = World()
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
         world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
         assertEquals(1, world.stripe.customers)
-        assertTrue(
-            "updateCustomerEmail cus_1 ada@new.acme.dev" in world.stripe.calls,
-            "A second checkout gives the stored customer the payer's current address",
+        assertEquals(
+            "ada@acme.dev",
+            world.stripe.customerEmails["cus_1"],
+            "A customer without an address gets the payer's",
         )
+        world.stripe.customerEmails["cus_1"] = "compta@acme.dev"
+        world.emails.addresses[world.admin.memberId] = "ada@new.acme.dev"
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertEquals(
+            "compta@acme.dev",
+            world.stripe.customerEmails["cus_1"],
+            "An address set in the portal (an accounting mailbox) is never replaced by a member's",
+        )
+        assertEquals(1, world.stripe.calls.count { it.startsWith("updateCustomerEmail") })
     }
 
     @Test
     fun aRefusedAddressUpdateNeverBlocksThePayment() = runTest {
         val world = World()
-        world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
         world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
         world.stripe.updateEmailFailure = IllegalStateException("customer deleted")
         val url = world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
         assertTrue(url.isNotEmpty(), "Checkout opens with the stored customer")

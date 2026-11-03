@@ -112,6 +112,18 @@ class StripeGatewayImplTest {
     }
 
     @Test
+    fun aCustomersEmailIsReadWithoutParametersAndMayBeMissing() = runTest {
+        val harness = Harness(
+            200 to """{"id":"cus_1","email":"compta@acme.dev"}""",
+            200 to """{"id":"cus_1","email":null}""",
+        )
+        assertEquals("compta@acme.dev", harness.gateway.customerEmail("cus_1"))
+        assertNull(harness.gateway.customerEmail("cus_1"))
+        assertEquals("GET", harness.sent.first().method)
+        assertEquals("/v1/customers/cus_1", harness.sent.first().url)
+    }
+
+    @Test
     fun aRetryReusesTheCustomerKeyButAnotherPayerIsNotRefusedByIt() = runTest {
         val harness = Harness(*Array(4) { 200 to """{"id":"cus_1"}""" })
         for (email in listOf("Ada@acme.dev", "ada@acme.dev", "bob@acme.dev", null)) {

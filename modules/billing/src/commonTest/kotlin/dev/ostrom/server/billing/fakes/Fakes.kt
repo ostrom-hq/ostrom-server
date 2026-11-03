@@ -156,10 +156,18 @@ class FakeStripeGateway : StripeGateway {
         failure?.let { throw it }
     }
 
+    /** Each customer's e-mail, as Stripe holds it (the portal may change it). */
+    val customerEmails = mutableMapOf<String, String?>()
+
     override suspend fun createCustomer(orgId: Uuid, name: String?, email: String?): String {
         record("createCustomer $orgId $name $email")
         customers++
-        return "cus_$customers"
+        return "cus_$customers".also { customerEmails[it] = email }
+    }
+
+    override suspend fun customerEmail(customerId: String): String? {
+        record("customerEmail $customerId")
+        return customerEmails[customerId]
     }
 
     /** Thrown by the address update alone, after it is recorded. */
@@ -168,6 +176,7 @@ class FakeStripeGateway : StripeGateway {
     override suspend fun updateCustomerEmail(customerId: String, email: String) {
         record("updateCustomerEmail $customerId $email")
         updateEmailFailure?.let { throw it }
+        customerEmails[customerId] = email
     }
 
     override suspend fun priceId(lookupKey: String): String {

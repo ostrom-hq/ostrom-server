@@ -87,6 +87,9 @@ class StripeGatewayImpl(
         key = "ostrom-customer-$orgId" + email?.let { "-" + it.lowercase().hashCode().toUInt().toString(16) }.orEmpty(),
     ).requireString("id")
 
+    override suspend fun customerEmail(customerId: String): String? =
+        call(HttpMethod.Get, "/v1/customers/$customerId", emptyList()).string("email")
+
     override suspend fun updateCustomerEmail(customerId: String, email: String) {
         call(HttpMethod.Post, "/v1/customers/$customerId", listOf("email" to email))
     }
@@ -201,8 +204,8 @@ class StripeGatewayImpl(
         val form = params.joinToString("&") { (key, value) ->
             "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
         }
-        // Every GET carries parameters (a lookup key, an expansion or a limit).
-        val query = if (method == HttpMethod.Get) "?$form" else ""
+        // A GET carries its parameters in the query (a lookup key, an expansion or a limit); reading a customer has none.
+        val query = if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
         val url = config.baseUrl.trimEnd('/') + path + query
         val response = client.request(url) {
             this.method = method
