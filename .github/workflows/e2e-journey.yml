@@ -148,7 +148,8 @@ jobs:
           # Test values only, as ostrom-e2e's bench: mails to a directory, the console is the server's own origin, the
           # scenarios' addresses come through the trusted local proxy, Stripe is stripe-mock, and the providers' token
           # endpoint and APIs behind the gateway are the fake provider a scenario starts on port 4620 (BUDGET-002,
-          # SHARE-*), wired as in ostrom-e2e's ci.yml.
+          # SHARE-*), wired as in ostrom-e2e's ci.yml. Expo's push service is the fake one a scenario starts on port 4621
+          # (NOTIFY-*): the approvers' pushes are read there, never sent to a phone.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -164,6 +165,7 @@ jobs:
           OSTROM_SHARING_CODEX_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
           OSTROM_GATEWAY_ANTHROPIC_URL=http://127.0.0.1:4620
           OSTROM_GATEWAY_CODEX_URL=http://127.0.0.1:4620
+          OSTROM_EXPO_PUSH_URL=http://127.0.0.1:4621/--/api/v2/push/send
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
@@ -186,6 +188,8 @@ jobs:
           OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
           # The fake provider the scenarios start, where the server's gateway and sharing point (step above).
           OSTROM_E2E_FAKE_TOKENS_PORT: "4620"
+          # The fake Expo push service the notification scenarios start, where the server's pushes go (step above).
+          OSTROM_E2E_FAKE_EXPO_PORT: "4621"
           # E2E-SWEEP's contract (step « The server image »).
           OSTROM_E2E_SERVED_ROUTES: ${{ runner.temp }}/served-routes.txt
           OSTROM_E2E_OPENAPI: ${{ runner.temp }}/openapi.json
