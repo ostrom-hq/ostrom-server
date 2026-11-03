@@ -32,8 +32,9 @@ accepts it, but a phone shows its receipts as signed by an unknown key.
    chmod 600 instance-key-2.pem
    ```
 
-   With one replica and a writable volume, the server can also create it: point `OSTROM_SIGNING_KEY_FILE` at a path
-   that does not exist yet.
+   Make it with `openssl` and mount it. Do not let the server create it during a rotation: a mistyped
+   `OSTROM_SIGNING_KEY_FILE` would silently create yet another key, and replicas without a shared volume would each
+   create their own.
 
 2. **Keep the current key file.** It becomes the previous key. Configure both files:
 
@@ -51,6 +52,10 @@ accepts it, but a phone shows its receipts as signed by an unknown key.
 
    During a rolling restart, the replicas that still run the old key keep signing with it. Both keys verify.
 
+   A replica that starts on the new key without `OSTROM_PREVIOUS_SIGNING_KEY_FILE` records the key with no rotation and
+   fixes nothing. The first start that names the previous key fills it in. A forgotten variable is mended by
+   restarting with it.
+
 4. **Check the hand-over.** `GET /api/v1/receipts/keys` lists the new key last, with `rotation.kid` set to the previous
    key's id.
 
@@ -65,10 +70,13 @@ accepts it, but a phone shows its receipts as signed by an unknown key.
    key, which stays listed.
 
 Rotate again the same way: each new key is handed over by the key just before it. A phone that skipped a step follows
-the chain, because every key and its rotation stay listed.
+the chain, because every key and its rotation stay listed. The server only checks that it signed with the previous key
+before, not that this key was the latest: handing over from an older key works, and leaves the key in between without
+a successor.
 
 ## A leaked key
 
-A rotation proves only that the holder of the previous key agreed to the new one. If the previous key leaked, whoever
+A rotation proves only that the holder of the previous key agreed to the new one. During a rotation, the previous
+private key sits on the server's disk: step 5 removes it. If the previous key leaked, whoever
 holds it can also hand over a key of their own. Then a rotation does not restore trust: the phones must forget the
 server's pinned keys and pin them again, and the leak must be announced to the organizations of the instance.
