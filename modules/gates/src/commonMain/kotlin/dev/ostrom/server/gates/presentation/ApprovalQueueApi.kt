@@ -92,6 +92,7 @@ data class ApprovalWhat(
  * @property self True when the caller asked for the action.
  * @property canApprove True when their yes would pass now (a stale sign-in aside: the answer route asks for it).
  * @property reason Why not, in plain words.
+ * @property reasonType The key of [reason] when the server names one (`github_link_required`, `self_approval_refused`).
  * @property selfApproval True when their yes would pass as a self-approval (they asked, and are the only approver).
  */
 @Serializable
@@ -100,5 +101,6 @@ data class ApprovalCallerView(
     val self: Boolean,
     val canApprove: Boolean,
     val reason: String? = null,
+    val reasonType: String? = null,
     val selfApproval: Boolean? = null,
 )

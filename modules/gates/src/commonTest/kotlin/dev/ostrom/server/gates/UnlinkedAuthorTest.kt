@@ -41,6 +41,7 @@ class UnlinkedAuthorTest {
         val rights = bench.view(user("rev-b"), console, opened.requests.first { it.approverId == "rev-b" }.id).rights
         assertFalse(rights.canApprove)
         assertEquals(GitHubLinkRequiredException().message, rights.reason)
+        assertEquals("github_link_required", rights.reasonType, "the key a console reads to ask for the link")
         assertFalse(bench.queue(user("rev-b"), console).pending.single().rights.canApprove)
     }
 
@@ -63,6 +64,8 @@ class UnlinkedAuthorTest {
         val opened = bench.unlinkedPullRequest()
 
         assertFailsWith<SelfApprovalRefusedException> { bench.answer(opened, "rev-b") }
+        val request = opened.requests.first { it.approverId == "rev-b" }.id
+        assertEquals("self_approval_refused", bench.view(user("rev-b"), console, request).rights.reasonType)
     }
 
     @Test
