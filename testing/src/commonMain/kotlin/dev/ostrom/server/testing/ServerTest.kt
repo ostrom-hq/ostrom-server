@@ -18,8 +18,18 @@ import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.ApplicationTestBuilder
-import io.ktor.server.testing.testApplication
+import io.ktor.server.testing.runTestApplication
+import io.ktor.test.dispatcher.runTestWithRealTime
 import org.koin.core.module.Module
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+
+/** How long a test may run: Ktor's `testApplication` gives it a minute. */
+private val TEST_TIMEOUT = 1.minutes
+
+/** How long a read bench may run, its tables filled: a minute is too short on a CI runner of a few cores. */
+private val BENCH_TIMEOUT = 5.minutes
 
 /**
  * Runs a test against a real server: a fresh PostgreSQL database (see [TestDatabase]), the kernel, the given
@@ -37,24 +47,50 @@ fun serverTest(
     modules: List<ServerModule>,
     overrides: Module? = null,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
-) = serverTest(modules, overrides, EnvironmentConfigSource(), block)
+) = serverTest(modules, overrides, EnvironmentConfigSource(), block = block)
 
 /**
- * [serverTest] with the test database configuration read from [environment] (the skipped case is tested so).
+ * [serverTest] for a read bench (ReadBench.kt): the same server, within [BENCH_TIMEOUT].
+ *
+ * @param modules The modules under test, in dependency order.
+ * @param overrides Koin definitions replacing real ones.
+ * @param block The bench.
+ */
+fun benchTest(
+    modules: List<ServerModule>,
+    overrides: Module?,
+    block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
+) = serverTest(modules, overrides, EnvironmentConfigSource(), BENCH_TIMEOUT, block)
+
+/**
+ * [serverTest] with the test database configuration read from [environment] (the skipped case is tested so), run as
+ * Ktor's `testApplication` runs it, within [timeout] (a read bench fills its tables first, ReadBench.kt).
  */
 internal fun serverTest(
     modules: List<ServerModule>,
     overrides: Module?,
     environment: ConfigSource,
+    timeout: Duration = TEST_TIMEOUT,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
-) = testApplication {
-    val database = TestDatabase.create(environment) ?: return@testApplication
+) = runTestWithRealTime(EmptyCoroutineContext, timeout) {
+    runTestApplication { serve(modules, overrides, environment, block) }
+}
+
+private suspend fun ApplicationTestBuilder.serve(
+    modules: List<ServerModule>,
+    overrides: Module?,
+    environment: ConfigSource,
+    block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
+) {
+    val database = TestDatabase.create(environment) ?: return
     try {
         val signer = Ed25519InstanceSigner.generate()
         val logger = JsonLogger(LogLevel.WARN)
         database.owner.migrateUnderLock(MigrationRunnerImpl(database.owner, logger), modules)
         database.driver.requireRowLevelSecurity()
-        val kernel = kernelModule(logger, database.driver, signer, environment)
+        // The server's pool records what it sends, for the read benches (ReadBench.kt).
+        val driver = RecordingDriver(database.driver)
+        val kernel = kernelModule(logger, driver, signer, environment)
         val koin = serverKoin(kernel, modules, overrides)
         try {
             val migrations = koin.get<MigrationRunner>()
@@ -65,7 +101,7 @@ internal fun serverTest(
             // the application after the finally below has closed Koin.
             startApplication()
             val client = createClient { install(ContentNegotiation) { json(OstromJson) } }
-            block(TestServer(koin, database.driver, client, database))
+            block(TestServer(koin, driver, client, database))
         } finally {
             koin.close()
         }
