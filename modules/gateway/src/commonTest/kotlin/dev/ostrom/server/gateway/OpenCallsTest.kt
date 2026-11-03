@@ -40,4 +40,27 @@ class OpenCallsTest {
         (1..50).map { async(Dispatchers.Default) { calls.close() } }.awaitAll()
         assertEquals(0, calls.open)
     }
+
+    /** chart-load 41628386596: a replica that kept 146 MiB from earlier calls was OOMKilled under the count ceiling. */
+    @Test
+    fun aReplicaPastItsMemoryCeilingRefusesWithoutTakingAPlace() {
+        var resident: Long? = 100
+        val calls = OpenCalls(max = 5, memoryCeilingBytes = 200, residentBytes = { resident })
+        assertTrue(calls.tryOpen())
+        resident = 200
+        assertFalse(calls.tryOpen(), "At the ceiling a call is refused")
+        assertEquals(1, calls.open, "A refusal takes no place")
+        resident = 199
+        assertTrue(calls.tryOpen())
+        resident = null
+        assertTrue(calls.tryOpen(), "An unreadable memory leaves the count alone to decide")
+        assertEquals(3, calls.open)
+    }
+
+    @Test
+    fun withoutAMemoryCeilingOnlyTheCountDecides() {
+        val calls = OpenCalls(max = 1, memoryCeilingBytes = null, residentBytes = { Long.MAX_VALUE })
+        assertTrue(calls.tryOpen())
+        assertFalse(calls.tryOpen())
+    }
 }

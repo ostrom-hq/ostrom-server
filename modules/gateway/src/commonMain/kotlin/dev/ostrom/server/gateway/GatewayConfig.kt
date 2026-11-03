@@ -14,11 +14,13 @@ import dev.ostrom.server.kernel.config.InvalidConfigException
  * @property keys The instance's provider keys.
  * @property endpoints The provider URLs.
  * @property maxOpenCalls The model calls one replica relays at once (`OSTROM_GATEWAY_MAX_OPEN_CALLS`).
+ * @property memoryCeilingBytes Past this resident memory a replica admits no call; null without a container limit.
  */
 data class GatewayConfig(
     val keys: InstanceProviderKeys,
     val endpoints: ProviderEndpoints,
     val maxOpenCalls: Int = DEFAULT_MAX_OPEN_CALLS,
+    val memoryCeilingBytes: Long? = null,
 ) {
     /** Reading the configuration. */
     companion object {
@@ -31,7 +33,7 @@ data class GatewayConfig(
          * @throws InvalidConfigException When a URL is not http(s), or the ceiling of open calls not an integer from 1
          *   to 100 000.
          */
-        fun from(source: ConfigSource): GatewayConfig {
+        fun from(source: ConfigSource, memoryLimitBytes: Long? = null): GatewayConfig {
             val defaults = ProviderEndpoints()
             return GatewayConfig(
                 keys = InstanceProviderKeys(

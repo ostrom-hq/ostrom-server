@@ -164,4 +164,35 @@ class GatewaySettingsTest {
             assertEquals("OSTROM_GATEWAY_MAX_OPEN_CALLS must be an integer between 1 and 100000.", error.message)
         }
     }
+
+    /** chart-load 41628386596: about 150 MiB kept at rest after load, up to 4 MiB per stream as it opens. */
+    @Test
+    fun theContainerLimitSetsTheCeilingsOfAReplica() {
+        val mib = 1024L * 1024
+        val none = GatewayConfig.from(MapConfigSource(emptyMap()), memoryLimitBytes = null)
+        assertEquals(100, none.maxOpenCalls, "Without a container limit, the fixed default")
+        assertNull(none.memoryCeilingBytes)
+
+        val chart = GatewayConfig.from(MapConfigSource(emptyMap()), memoryLimitBytes = 256 * mib)
+        assertEquals(26, chart.maxOpenCalls, "(256 - 150) / 4")
+        assertEquals(256 * mib * 80 / 100, chart.memoryCeilingBytes)
+        assertEquals(90, GatewayConfig.from(MapConfigSource(emptyMap()), 512 * mib).maxOpenCalls)
+        assertEquals(10, GatewayConfig.from(MapConfigSource(emptyMap()), 128 * mib).maxOpenCalls, "A floor of 10")
+
+        val set = GatewayConfig.from(
+            MapConfigSource(
+                mapOf("OSTROM_GATEWAY_MAX_OPEN_CALLS" to "40", "OSTROM_GATEWAY_MEMORY_CEILING_PERCENT" to "50"),
+            ),
+            memoryLimitBytes = 256 * mib,
+        )
+        assertEquals(40, set.maxOpenCalls, "An explicit ceiling wins over the limit")
+        assertEquals(128 * mib, set.memoryCeilingBytes)
+
+        for (wrong in listOf("0", "101", "half")) {
+            val error = assertFailsWith<InvalidConfigException>(wrong) {
+                GatewayConfig.from(MapConfigSource(mapOf("OSTROM_GATEWAY_MEMORY_CEILING_PERCENT" to wrong)), 256 * mib)
+            }
+            assertEquals("OSTROM_GATEWAY_MEMORY_CEILING_PERCENT must be an integer between 1 and 100.", error.message)
+        }
+    }
 }

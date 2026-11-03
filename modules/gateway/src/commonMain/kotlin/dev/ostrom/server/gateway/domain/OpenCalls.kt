@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gateway.domain
 
+import dev.ostrom.server.kernel.observability.ProcessMemory
 import kotlinx.coroutines.sync.Semaphore
 
 /**
@@ -8,8 +9,14 @@ import kotlinx.coroutines.sync.Semaphore
  * provider connection, a stream to the agent. Held in this replica's memory: with several replicas each bounds its own.
  *
  * @property max The ceiling.
+ * @property memoryCeilingBytes Past this resident memory no call is admitted, whatever the count; null for none.
+ * @property residentBytes Reads the replica's resident memory; null when the system does not say.
  */
-class OpenCalls(val max: Int) {
+class OpenCalls(
+    val max: Int,
+    val memoryCeilingBytes: Long? = null,
+    private val residentBytes: () -> Long? = ProcessMemory::residentBytes,
+) {
     private val places = Semaphore(max)
 
     /**
