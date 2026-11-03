@@ -144,7 +144,7 @@ class ThreadsTest {
             resetting.close()
         }
         val kinds = namePools()
-        println("ROUNDS $variant: base=$base counts=$counts clientErrors=${clientErrors.value} kinds=$kinds")
+        println("ROUNDS $variant: base=$base counts=$counts clientErrors=${clientErrors.load()} kinds=$kinds")
         assertTrue(
             counts.max() - base <= SERVER_THREADS + TOLERANCE,
             "from $base threads before the server, $counts after each round: more than its $SERVER_THREADS. $kinds",
@@ -186,17 +186,17 @@ class ThreadsTest {
         }
     }
 
-    private val clientErrors = kotlin.concurrent.AtomicInt(0)
+    private val clientErrors = AtomicInt(0)
 
     /** Diagnostic: a client the server reset counts, and the round goes on. */
     private suspend fun tolerant(block: suspend () -> Unit) {
         try {
             block()
         } catch (e: kotlinx.io.IOException) {
-            if (clientErrors.addAndGet(1) == 1) println("first client error: $e")
+            if (clientErrors.incrementAndFetch() == 1) println("first client error: $e")
         } catch (e: IllegalStateException) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            if (clientErrors.addAndGet(1) == 1) println("first client error: $e")
+            if (clientErrors.incrementAndFetch() == 1) println("first client error: $e")
         }
     }
 
