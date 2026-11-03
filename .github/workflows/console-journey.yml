@@ -59,8 +59,8 @@ on:
       # Only while ostrom-web is private; a public console is read with the job's token.
       DEPLOY_KEY_WEB:
         required: false
-      # Declared for the job's single list of secrets only: a call always runs on stripe-mock (STRIPE_MODE), so this
-      # secret is never read there.
+      # Declared because the job names it (actionlint checks a called workflow's secrets); a call always runs on
+      # stripe-mock (STRIPE_MODE is mock for any event but a dispatch), so a caller passing it changes nothing.
       STRIPE_TEST_KEY:
         required: false
 
@@ -104,11 +104,25 @@ jobs:
       RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
       # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch or a
       # call from ostrom-web runs what it names, or all of e2e-real.
+      # A dispatch in Stripe's test mode that names no journey runs payment.spec.ts only: the others are written
+      # against stripe-mock.
       SPECS: >-
-        ${{ github.event_name == 'schedule' && 'me.spec.ts signin.spec.ts gates.spec.ts' ||
+        ${{ github.event_name == 'workflow_dispatch' && inputs.stripe == 'test' && inputs.specs == '' && 'payment.spec.ts' ||
+        github.event_name == 'schedule' && 'me.spec.ts signin.spec.ts gates.spec.ts' ||
         github.event_name == 'pull_request' && github.repository == 'ostrom-hq/ostrom-server' && 'me.spec.ts' ||
         inputs.specs }}
     steps:
+      # Stripe's TEST mode only, never a live key: checked before anything is pulled or built.
+      - name: Stripe test key (sk_test_ only)
+        if: env.STRIPE_MODE == 'test'
+        env:
+          STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+        run: |
+          case "$STRIPE_TEST_KEY" in
+            '') echo "::error::the STRIPE_TEST_KEY secret is not set: nothing runs"; exit 1 ;;
+            sk_test_?*) ;;
+            *) echo "::error::STRIPE_TEST_KEY is not a Stripe test-mode secret key (sk_test_): nothing runs"; exit 1 ;;
+          esac
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
       # Called from ostrom-web, the default repository is the caller's: the server is named, at its main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -172,39 +186,31 @@ jobs:
             echo "- cloud session: \`$runner\`, on this runner's Docker"
             echo "- console: ostrom-web $(git -C web rev-parse --short HEAD) ($WEB_REF), built here without mocks"
           } >> "$GITHUB_STEP_SUMMARY"
-      # Stripe's TEST mode (line 6.5, the test card 4242 paid on Stripe's hosted Checkout): never a live key. The
-      # Stripe CLI, pinned by checksum, forwards the test account's events to the server, signed with the secret it
-      # prints; the key and that secret go to a file the server step reads, never to $GITHUB_ENV.
-      - name: Stripe test mode (key checked, events forwarded by the Stripe CLI)
+      # Stripe's TEST mode (line 6.5, the test card 4242 paid on Stripe's hosted Checkout). The Stripe CLI, pinned by
+      # checksum, prints the secret it signs the forwarded events with; the key and that secret go to a file of this
+      # runner only (umask 077) that the server step reads, never to $GITHUB_ENV, and the key goes to the CLI by its
+      # environment, never on a command line.
+      - name: Stripe test mode (the Stripe CLI and its webhook secret)
         if: env.STRIPE_MODE == 'test'
         env:
-          STRIPE_TEST_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+          STRIPE_API_KEY: ${{ secrets.STRIPE_TEST_KEY }}
           STRIPE_CLI_VERSION: 1.55.6
           STRIPE_CLI_SHA256: 1759a13a0c48f15e11979696df7b5958a73a8e6c1b92bea2a3ccb73ea97d5854
         run: |
-          case "$STRIPE_TEST_KEY" in
-            sk_test_?*) ;;
-            *) echo "::error::STRIPE_TEST_KEY is not a Stripe test-mode secret key (sk_test_): nothing runs"; exit 1 ;;
-          esac
+          umask 077
           archive="stripe_${STRIPE_CLI_VERSION}_linux_x86_64.tar.gz"
           curl -fsSL -o "$RUNNER_TEMP/$archive" \
             "https://github.com/stripe/stripe-cli/releases/download/v${STRIPE_CLI_VERSION}/$archive"
           echo "$STRIPE_CLI_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/stripe-cli" && tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/stripe-cli" stripe
-          stripe="$RUNNER_TEMP/stripe-cli/stripe"
-          secret=$("$stripe" listen --api-key "$STRIPE_TEST_KEY" --print-secret)
+          secret=$("$RUNNER_TEMP/stripe-cli/stripe" listen --print-secret 2>"$RUNNER_TEMP/stripe-secret.log") \
+            || { echo "::error::the Stripe CLI gave no webhook secret"; head -n 20 "$RUNNER_TEMP/stripe-secret.log"; exit 1; }
           case "$secret" in whsec_?*) ;; *) echo "::error::the Stripe CLI gave no webhook secret"; exit 1 ;; esac
           echo "::add-mask::$secret"
           {
-            printf 'OSTROM_STRIPE_SECRET_KEY=%s\n' "$STRIPE_TEST_KEY"
+            printf 'OSTROM_STRIPE_SECRET_KEY=%s\n' "$STRIPE_API_KEY"
             printf 'OSTROM_STRIPE_WEBHOOK_SECRET=%s\n' "$secret"
           } > "$RUNNER_TEMP/stripe.env"
-          # The server is not up yet: an event before it is retried by nothing, and none comes before a journey pays.
-          nohup "$stripe" listen --api-key "$STRIPE_TEST_KEY" --skip-update \
-            --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,customer.subscription.created,customer.subscription.updated,customer.subscription.deleted,invoice.paid,invoice.payment_failed,invoice.payment_action_required,invoice.finalized \
-            --forward-to http://127.0.0.1:4600/webhooks/stripe > "$RUNNER_TEMP/stripe-listen.log" 2>&1 &
-          for _ in $(seq 1 30); do grep -q 'Ready!' "$RUNNER_TEMP/stripe-listen.log" && break; sleep 1; done
-          grep -q 'Ready!' "$RUNNER_TEMP/stripe-listen.log" || { echo "::error::stripe listen is not ready"; exit 1; }
           echo "### Stripe: TEST mode (sk_test_), events forwarded by the Stripe CLI $STRIPE_CLI_VERSION" >> "$GITHUB_STEP_SUMMARY"
       # The GitHub App of the journeys: a key made for this run only. The server points at the fake GitHub the journeys
       # start on fixed ports (ostrom-web e2e-real/fakeGithub.ts, as ostrom-e2e's src/fake-github.ts): 4610 for the
@@ -216,6 +222,8 @@ jobs:
           PGPASSWORD: ostrom
           OWNER_URL: postgresql://ostrom_owner:ostrom_owner@localhost:5432/ostrom
         run: |
+          # server.env holds keys: readable by this runner's user only.
+          umask 077
           psql -h localhost -U ostrom -d ostrom_ci -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/database-roles.sql"
           docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
           # The server's non-root user writes the mails (0644); the journeys, as the runner's user, read them.
@@ -283,6 +291,18 @@ jobs:
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
+      # Every event of the test account forwarded to the server once it is ready; the server ignores the types it does
+      # not apply. Limits: the account is shared (another run's events reach this server, which answers unknown_org),
+      # and the CLI retries no forward, so an event the server misses is lost for this run.
+      - name: Stripe events forwarded to the server
+        if: env.STRIPE_MODE == 'test'
+        env:
+          STRIPE_API_KEY: ${{ secrets.STRIPE_TEST_KEY }}
+        run: |
+          nohup "$RUNNER_TEMP/stripe-cli/stripe" listen --skip-update \
+            --forward-to http://127.0.0.1:4600/webhooks/stripe > "$RUNNER_TEMP/stripe-listen.log" 2>&1 &
+          for _ in $(seq 1 30); do grep -q 'Ready!' "$RUNNER_TEMP/stripe-listen.log" && exit 0; sleep 1; done
+          echo "::error::stripe listen is not ready"; head -n 40 "$RUNNER_TEMP/stripe-listen.log"; exit 1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: web/package.json
