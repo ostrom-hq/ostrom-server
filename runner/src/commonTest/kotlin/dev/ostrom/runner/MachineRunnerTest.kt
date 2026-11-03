@@ -4,15 +4,17 @@ package dev.ostrom.runner
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.toByteArray
+import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
-import io.ktor.client.engine.mock.toByteArray
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -21,6 +23,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
@@ -128,7 +131,7 @@ class MachineRunnerTest {
         val lines = mutableListOf<String>()
         var answer: () -> Unit = {}
         val api = object : MachineApi {
-            override suspend fun heartbeat(report: MachineReport?): MachineWork {
+            override suspend fun heartbeat(report: MachineReport?, wait: Duration): MachineWork {
                 assertEquals(null, report, "A runner without Docker reports nothing")
                 beats += testScheduler.currentTime
                 answer()
@@ -191,6 +194,62 @@ class MachineRunnerTest {
     }
 
     @Test
+    fun aWaitingHeartbeatAsksTheServerToHoldItAndAllowsItTheTime() = runTest {
+        val seen = mutableListOf<Pair<String?, Long?>>()
+        val engine = MockEngine { request ->
+            seen += request.url.parameters["wait"] to request.getCapabilityOrNull(HttpTimeoutCapability)
+                ?.requestTimeoutMillis
+            respond("{}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val api = HttpMachineApi(HttpClient(engine) { expectSuccess = false }, MachineConfig("http://s", id, key))
+
+        api.heartbeat(MachineReport(emptyList(), emptyList(), null), 20.seconds)
+        api.heartbeat(MachineReport(emptyList(), emptyList(), null))
+
+        assertEquals(listOf<Pair<String?, Long?>>("20" to 30_000L, null to null), seen)
+    }
+
+    @Test
+    fun aMachineThatWaitsAsksAgainAtOnceAfterAHeldOrFruitfulAnswerAndAtTheIntervalOtherwise() = runTest {
+        val session = Uuid.random()
+        val beats = mutableListOf<Pair<Long, Duration>>()
+        var answer: suspend () -> MachineWork = { MachineWork() }
+        val api = object : MachineApi {
+            override suspend fun heartbeat(report: MachineReport?, wait: Duration): MachineWork {
+                beats += testScheduler.currentTime to wait
+                return answer()
+            }
+        }
+        val sessions = MachineSessions(FakeDockerEngine(), PlanGuard(id, null, null), null) {}
+        val machine = MachineRunner(api, 10.seconds, {}, sessions, 20.seconds, testScheduler.timeSource)
+        val code = async { machine.run() }
+
+        runCurrent()
+        assertEquals(listOf(0L to 20.seconds), beats, "With a report, it may wait")
+        advanceTimeBy(9.seconds)
+        runCurrent()
+        assertEquals(1, beats.size, "Answered at once with nothing: a server that does not wait, at the interval")
+
+        answer = { delay(20.seconds); MachineWork() }
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        advanceTimeBy(20.seconds)
+        runCurrent()
+        assertEquals(listOf(10_000L, 30_000L), beats.drop(1).map { it.first }, "Held for the whole wait: at once")
+
+        val once = mutableListOf(MachineWork(listOf(AssignedExecution(session.toString(), 1, plan(session, 1)))))
+        answer = { once.removeFirstOrNull() ?: MachineWork() }
+        advanceTimeBy(20.seconds)
+        runCurrent()
+        assertEquals(50_000L, beats[3].first)
+        assertEquals(50_000L, beats[4].first, "Handed an execution: at once")
+        advanceTimeBy(10.seconds)
+        runCurrent()
+        assertEquals(60_000L, beats[5].first, "Nothing, at once: at the interval")
+        code.cancel()
+    }
+
+    @Test
     fun aMachineWithDockerReportsWhatItRunsAndAppliesTheAnswerInTheBackground() = runTest {
         val session = Uuid.random()
         val docker = FakeDockerEngine()
@@ -199,7 +258,7 @@ class MachineRunnerTest {
         val handed = AssignedExecution(session.toString(), 1, plan(session, 1))
         var answer: () -> MachineWork = { MachineWork(listOf(handed)) }
         val api = object : MachineApi {
-            override suspend fun heartbeat(report: MachineReport?): MachineWork {
+            override suspend fun heartbeat(report: MachineReport?, wait: Duration): MachineWork {
                 reports += report
                 return answer()
             }
