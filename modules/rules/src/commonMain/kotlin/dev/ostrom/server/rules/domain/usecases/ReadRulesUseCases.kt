@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules.domain.usecases
 
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.rules.domain.models.Decision
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.Rule
@@ -37,7 +38,7 @@ interface ListRulesUseCase {
  */
 class ListRulesUseCaseImpl(private val repository: RulesRepository) : ListRulesUseCase {
     override suspend fun invoke(orgId: Uuid, query: RuleQuery, limit: Int): RulePage {
-        val size = limit.coerceIn(1, ListRulesUseCase.MAX_RULES)
+        val size = Pages.size(limit, ListRulesUseCase.MAX_RULES, ListRulesUseCase.MAX_RULES)
         val read = repository.rules(orgId, query, size + 1)
         val items = read.take(size)
         return RulePage(items, if (read.size > size) RuleCursor.after(items.last()) else null)

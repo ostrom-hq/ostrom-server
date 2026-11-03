@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -107,7 +108,7 @@ interface ListAuditEventsUseCase {
  */
 class ListAuditEventsUseCaseImpl(private val events: AuditRepository) : ListAuditEventsUseCase {
     override suspend fun invoke(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent> =
-        events.list(orgId, actorId, beforeSequence, limit.coerceIn(1, MAX_PAGE))
+        events.list(orgId, actorId, beforeSequence, Pages.size(limit, MAX_PAGE, MAX_PAGE))
 
     private companion object {
         const val MAX_PAGE = 200

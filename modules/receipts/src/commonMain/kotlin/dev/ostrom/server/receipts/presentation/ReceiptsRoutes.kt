@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.receipts.domain.models.ReceiptQuery
@@ -33,7 +34,7 @@ fun Route.receiptsRoutes(dependencies: ReceiptsRoutesDependencies, throttle: Rea
         throttledReads(throttle) {
             get<ReceiptsApi> { params ->
                 val orgId = call.reader(orgs)
-                val limit = (params.limit ?: ReceiptQuery.DEFAULT_PAGE).coerceIn(1, ReceiptQuery.MAX_PAGE)
+                val limit = Pages.size(params.limit, ReceiptQuery.DEFAULT_PAGE, ReceiptQuery.MAX_PAGE)
                 val query = ReceiptQuery(params.subjectKind, params.subjectId, params.before, limit)
                 val items = listReceipts(orgId, query)
                 // A full page may have a next one: its cursor is the last receipt of this one.

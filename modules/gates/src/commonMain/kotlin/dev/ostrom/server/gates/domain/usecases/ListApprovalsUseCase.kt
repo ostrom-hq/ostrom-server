@@ -7,6 +7,7 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
+import dev.ostrom.server.kernel.errors.Pages
 
 /** The approvals a person reads: their inbox, or the organization's recent approvals (the console). */
 interface ListApprovalsUseCase {
@@ -40,7 +41,7 @@ class ListApprovalsUseCaseImpl(
         if (actor.kind != ActorKind.USER) throw OnlyPeopleAnswerException()
         // Second audit L4: requests name people, so "mine" is the caller's person, not its credential.
         val person = actor.personId ?: actor.id
-        return repository.approvals(actor.orgId, person.takeIf { mine }, status, limit.coerceIn(1, MAX_LIMIT))
+        return repository.approvals(actor.orgId, person.takeIf { mine }, status, Pages.size(limit, MAX_LIMIT, MAX_LIMIT))
     }
 
     private companion object {
