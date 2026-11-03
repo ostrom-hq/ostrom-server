@@ -102,6 +102,16 @@ interface GateNotifier {
     suspend fun decided(gate: Gate, requests: List<ApprovalRequest>)
 }
 
+/**
+ * The segment of an agent session open now, as [GateSessions.openSegment] finds it.
+ *
+ * @property id The open segment.
+ * @property launchSegments The segments of the agent session the open segment's launch opened, the open one included,
+ *   oldest first: the launcher reopens one in the same launch after the machine slept, another launch (a resumed
+ *   session) starts its own.
+ */
+data class OpenSegment(val id: String, val launchSegments: List<String>)
+
 /** Guards writes into agent sessions (sessions module). */
 interface GateSessions {
     /**
@@ -127,14 +137,14 @@ interface GateSessions {
      * @param sessionId Any segment of the agent session.
      * @param launchId The launch of the agent token that asks, or null for a person's device: the open segment must be
      *   one of that launch's (audit A12).
-     * @return The open segment.
+     * @return The open segment, and the segments of the session its launch opened.
      * @throws dev.ostrom.server.kernel.errors.OstromException When no segment is open, the session is unknown, or the
      *   open segment is another launch's.
      */
-    suspend fun openSegment(orgId: Uuid, sessionId: String, launchId: String?): String {
+    suspend fun openSegment(orgId: Uuid, sessionId: String, launchId: String?): OpenSegment {
         // A port that keeps no segments knows only the one it is named.
         assertOpen(orgId, sessionId, launchId)
-        return sessionId
+        return OpenSegment(sessionId, listOf(sessionId))
     }
 
     /**

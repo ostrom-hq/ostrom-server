@@ -129,7 +129,7 @@ object FakeWaitAgents : WaitAgentResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
         if (principal.subjectId != LAUNCH) return null
         if (sessionId != LAUNCH_SESSION) throw OstromException(ErrorKind.FORBIDDEN, "This session is not yours.")
-        return WaitAgent(ORG_A, BOB.toString(), LAUNCH_SESSION)
+        return WaitAgent(ORG_A, BOB.toString(), LAUNCH_SESSION, listOf(LAUNCH_SESSION))
     }
 }
 
@@ -188,7 +188,7 @@ class InMemoryWaits : WaitsRepository {
     /** The state and place side of [WaitFilter]. */
     private fun WaitFilter.where(wait: Wait): Boolean = (status == null || wait.status == status) &&
         (sessionId == null || wait.sessionId == sessionId) &&
-        (agentSession == null || wait.sessionId?.let(::agentSessionOf) == agentSession) &&
+        (sessionIds == null || sessionIds.any { it == wait.sessionId }) &&
         (runId == null || wait.runId == runId)
 
     override suspend fun list(filter: WaitFilter, before: Uuid?, limit: Int): List<Wait> {

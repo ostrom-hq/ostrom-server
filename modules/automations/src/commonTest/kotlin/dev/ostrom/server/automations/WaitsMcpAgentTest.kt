@@ -39,15 +39,20 @@ import kotlin.test.assertTrue
  * its own launch's session only, and never reaches the REST waits routes.
  */
 class WaitsMcpAgentTest {
-    /** [FakeWaitAgents], counting its resolutions; [reopened] is the segment the sessions module finds open, if set. */
+    /**
+     * [FakeWaitAgents], counting its resolutions; [reopened] is the segment the sessions module finds open, if set, and
+     * [segments] those of its launch (by default the first one and [reopened]).
+     */
     private class CountingWaitAgents : WaitAgentResolver {
         var resolutions = 0
         var reopened: String? = null
+        var segments: List<String>? = null
 
         override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
             resolutions++
             val agent = FakeWaitAgents.resolve(principal, sessionId)
-            return reopened?.let { agent?.copy(sessionId = it) } ?: agent
+            val open = reopened ?: return agent
+            return agent?.copy(sessionId = open, segments = segments ?: listOf(LAUNCH_SESSION, open))
         }
     }
 
@@ -114,8 +119,14 @@ class WaitsMcpAgentTest {
             val earlier = client.call("get_wait", """{"wait":"$before"}""", OWN)
             assertFalse(earlier.isError(), "What it asked before the sleep is still its own: ${earlier.text()}")
             val listed = client.call("list_waits", "{}", OWN).text().lines().map { it.substringBefore(" ") }
-            assertEquals(listOf(id, before), listed, "Both segments' waits")
+            assertEquals(listOf(id, before), listed, "Both segments' waits: its launch opened both")
             assertEquals("Cancelled wait $before.", client.call("cancel_wait", """{"wait":"$before"}""", OWN).text())
+
+            // Another launch resumed the session: what the first launch asked is not its own.
+            agents.reopened = "$LAUNCH_SESSION~r3"
+            agents.segments = listOf("$LAUNCH_SESSION~r3")
+            assertTrue(client.call("get_wait", """{"wait":"$id"}""", OWN).isError(), "The first launch's wait")
+            assertEquals("No waits.", client.call("list_waits", """{"status":"all"}""", OWN).text())
         }
 
     @Test

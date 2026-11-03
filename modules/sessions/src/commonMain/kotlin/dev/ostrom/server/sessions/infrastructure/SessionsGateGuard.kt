@@ -2,6 +2,7 @@
 package dev.ostrom.server.sessions.infrastructure
 
 import dev.ostrom.server.gates.domain.services.GateSessions
+import dev.ostrom.server.gates.domain.services.OpenSegment
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.sessions.domain.models.SessionClosedException
@@ -21,10 +22,11 @@ class SessionsGateGuard(private val repository: SessionsRepository) : GateSessio
         ensureOpen(repository.get(orgId, sessionId) ?: throw SessionNotFoundException(), launchId)
     }
 
-    override suspend fun openSegment(orgId: Uuid, sessionId: String, launchId: String?): String {
-        val last = repository.lastOf(orgId, sessionId) ?: throw SessionNotFoundException()
+    override suspend fun openSegment(orgId: Uuid, sessionId: String, launchId: String?): OpenSegment {
+        val segments = repository.segmentsOf(orgId, sessionId)
+        val last = segments.lastOrNull() ?: throw SessionNotFoundException()
         ensureOpen(last, launchId)
-        return last.id
+        return OpenSegment(last.id, segments.filter { it.launchId == last.launchId }.map { it.id })
     }
 
     private fun ensureOpen(session: Session, launchId: String?) {

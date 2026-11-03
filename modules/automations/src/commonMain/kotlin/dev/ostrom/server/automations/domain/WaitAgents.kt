@@ -12,8 +12,10 @@ import kotlin.uuid.Uuid
  * @property memberId The member who launched it.
  * @property sessionId The segment of its session open now, whichever of the session's ids the agent named: its waits
  *   are asked there.
+ * @property segments The segments of its session its launch opened, [sessionId] included: the waits asked there are
+ *   its own. Another launch that resumed the session has its own.
  */
-data class WaitAgent(val orgId: Uuid, val memberId: String, val sessionId: String)
+data class WaitAgent(val orgId: Uuid, val memberId: String, val sessionId: String, val segments: List<String>)
 
 /**
  * Reads an agent token for the waits MCP server. The launches module binds it, with the one reading of an agent token

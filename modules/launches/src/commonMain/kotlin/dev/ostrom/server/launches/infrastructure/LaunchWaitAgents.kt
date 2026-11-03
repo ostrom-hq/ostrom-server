@@ -28,8 +28,8 @@ class LaunchWaitAgents(private val agents: LaunchAgents, private val sessions: G
         // Only an agent token is read as a launch: a person's credential or a key never becomes an agent here.
         val found = if (principal.kind == PrincipalKind.AGENT) agents.resolve(principal, null) else null
         return found?.let { (launch, member) ->
-            val segment = sessions.openSegment(launch.orgId, sessionId, launch.id)
-            WaitAgent(member.orgId, member.memberId.toString(), segment)
+            val open = sessions.openSegment(launch.orgId, sessionId, launch.id)
+            WaitAgent(member.orgId, member.memberId.toString(), open.id, open.launchSegments)
         }
     }
 }

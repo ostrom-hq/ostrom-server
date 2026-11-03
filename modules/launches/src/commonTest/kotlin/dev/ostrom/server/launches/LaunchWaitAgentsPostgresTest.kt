@@ -154,6 +154,16 @@ class LaunchWaitAgentsPostgresTest {
                 tool(second, "s-1", "list_waits", "{}").text(),
                 "Another launch never reaches the segment through its first id",
             )
+
+            // Resumed by another launch (`claude --resume` keeps the id): its segment, and only what it asks there.
+            assertEquals(HttpStatusCode.OK, post(agent, "/api/v1/sessions/s-1~r2/end", "{}").status)
+            val resumed = running(ada).agentToken
+            val again = tool(resumed, "s-1", "ask_human", """{"title":"Resumed"}""").text()
+                .substringAfter("wait ").substringBefore(" ")
+            val mine = tool(resumed, "s-1", "list_waits", """{"status":"all"}""").text().lines()
+                .map { it.substringBefore(" ") }
+            assertEquals(listOf(again), mine, "Not what the first launch asked")
+            assertTrue(tool(resumed, "s-1", "get_wait", """{"wait":"$id"}""").isError(), "The first launch's wait")
         }
     }
 

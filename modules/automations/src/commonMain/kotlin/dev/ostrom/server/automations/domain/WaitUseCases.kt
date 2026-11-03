@@ -126,7 +126,7 @@ class AskWaitUseCaseImpl(
  * @property runId Only this run's.
  * @property before The last wait of the previous page.
  * @property limit The page size, 1 to 100 (50).
- * @property agentSession Only this agent session's, in any of its segments.
+ * @property sessionIds Only those of one of these sessions.
  */
 data class WaitQuery(
     val mine: Boolean = false,
@@ -136,7 +136,7 @@ data class WaitQuery(
     val runId: String? = null,
     val before: Uuid? = null,
     val limit: Int? = null,
-    val agentSession: String? = null,
+    val sessionIds: List<String>? = null,
 )
 
 /**
@@ -187,7 +187,7 @@ class ReadWaitsUseCaseImpl(private val repository: WaitsRepository) : ReadWaitsU
         val filter = scope(caller, query).copy(
             status = status,
             sessionId = query.sessionId,
-            agentSession = query.agentSession,
+            sessionIds = query.sessionIds,
             runId = query.runId,
         )
         val items = repository.list(filter, query.before, limit + 1)

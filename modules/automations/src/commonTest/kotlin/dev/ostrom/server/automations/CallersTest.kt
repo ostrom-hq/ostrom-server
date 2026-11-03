@@ -92,6 +92,7 @@ class CallersTest {
             interactive = false,
             agent = true,
             session = LAUNCH_SESSION,
+            segments = listOf(LAUNCH_SESSION),
         )
         assertEquals(expected, FakeWaitAgents.agentWaitCallerOf(agent, LAUNCH_SESSION, WAITS_ASK))
         assertEquals(expected, FakeWaitAgents.agentWaitCallerOf(agent, LAUNCH_SESSION, WAITS_READ))

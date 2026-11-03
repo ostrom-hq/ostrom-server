@@ -58,7 +58,8 @@ class LaunchWaitAgentsTest {
     @Test
     fun anAgentTokenIsThePersonWhoLaunchedItInsideItsLaunchsSession() = runTest {
         launches.create(launch)
-        assertEquals(WaitAgent(ORG, memberOf(ADA.userId).toString(), "s-1"), agents.resolve(agent(), "s-1"))
+        val agent = WaitAgent(ORG, memberOf(ADA.userId).toString(), "s-1", listOf("s-1"))
+        assertEquals(agent, agents.resolve(agent(), "s-1"))
         val expected: List<Triple<Uuid, String, String?>> = listOf(Triple(ORG, "s-1", "lch_1"))
         assertEquals(expected, sessions.checked, "Checked as the gates check it")
     }

@@ -97,6 +97,7 @@ suspend fun WaitAgentResolver.agentWaitCallerOf(
         interactive = false,
         agent = true,
         session = agent.sessionId,
+        segments = agent.segments,
     )
 }
 

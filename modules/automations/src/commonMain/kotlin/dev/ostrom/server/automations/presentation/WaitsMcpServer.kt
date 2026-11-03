@@ -10,7 +10,6 @@ import dev.ostrom.server.automations.domain.WaitNotFoundException
 import dev.ostrom.server.automations.domain.WaitQuery
 import dev.ostrom.server.automations.domain.WaitRef
 import dev.ostrom.server.automations.domain.WaitSpec
-import dev.ostrom.server.automations.domain.agentSessionOf
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -83,8 +82,11 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
     }
 
     private class Bound(val binding: WaitsMcpApi, val callerFor: suspend (String) -> WaitCaller) {
-        /** The agent session the caller acts in: of the segment the server found for an agent token, else named. */
-        fun agentSession(caller: WaitCaller): String? = (caller.session ?: binding.session)?.let(::agentSessionOf)
+        /**
+         * The sessions whose waits are the caller's: the segments the server found for an agent token, else the one
+         * named, or none outside a session.
+         */
+        fun sessions(caller: WaitCaller): List<String>? = caller.segments ?: binding.session?.let(::listOf)
     }
 
     private suspend fun call(id: JsonElement, name: String, arguments: JsonObject, bound: Bound): JsonObject = try {
@@ -114,8 +116,7 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
 
     private suspend fun list(bound: Bound, arguments: ListArguments): String {
         val caller = bound.callerFor(WAITS_READ)
-        val session = bound.agentSession(caller)
-        val query = WaitQuery(status = arguments.status, agentSession = session, runId = bound.binding.run)
+        val query = WaitQuery(status = arguments.status, sessionIds = bound.sessions(caller), runId = bound.binding.run)
         val waits = dependencies.read.list(caller, query).items
         if (waits.isEmpty()) return "No waits."
         return waits.joinToString("\n") { "${it.id}  ${it.status.wire}  ${it.question.title}" }
@@ -128,14 +129,15 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
     }
 
     /**
-     * A wait of this agent's session, in any of its segments (one asked before the launcher reopened it stays the
-     * agent's): a wait of another session is not this agent's to read or cancel.
+     * A wait of this agent's session, in any segment its launch opened (one asked before the launcher reopened it stays
+     * the agent's): a wait of another session, or of another launch's segment, is not this agent's to read or cancel.
      */
     private suspend fun ownWait(bound: Bound, raw: String, scope: String): Wait {
         val caller = bound.callerFor(scope)
         val wait = dependencies.read.get(caller, waitId(raw))
-        return wait.takeIf { it.sessionId?.let(::agentSessionOf) == bound.agentSession(caller) }
-            ?: throw WaitNotFoundException()
+        val sessions = bound.sessions(caller)
+        val own = if (sessions == null) wait.sessionId == null else sessions.any { it == wait.sessionId }
+        return wait.takeIf { own } ?: throw WaitNotFoundException()
     }
 
     private fun describe(wait: Wait): String = JSON.encodeToString(WaitResponse.serializer(), wait.toResponse())

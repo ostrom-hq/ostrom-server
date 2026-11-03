@@ -14,7 +14,7 @@ import kotlin.uuid.Uuid
  * @property status Only those in this state, if set.
  * @property sessionId Only those of this session, if set.
  * @property runId Only those of this run, if set.
- * @property agentSession Only those of this agent session, in any of its segments ([agentSessionOf]), if set.
+ * @property sessionIds Only those of one of these sessions, if set.
  */
 data class WaitFilter(
     val orgId: Uuid,
@@ -24,7 +24,7 @@ data class WaitFilter(
     val status: WaitStatus? = null,
     val sessionId: String? = null,
     val runId: String? = null,
-    val agentSession: String? = null,
+    val sessionIds: List<String>? = null,
 )
 
 /** Where waits are stored. */

@@ -9,7 +9,6 @@ import dev.ostrom.server.automations.domain.WaitFilter
 import dev.ostrom.server.automations.domain.WaitSpec
 import dev.ostrom.server.automations.domain.WaitStatus
 import dev.ostrom.server.automations.domain.WaitsRepository
-import dev.ostrom.server.automations.domain.agentSessionOf
 import dev.ostrom.server.kernel.http.OstromJson
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.ResultSet
@@ -33,7 +32,7 @@ import kotlin.uuid.Uuid
 internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository {
     override suspend fun createWithinLimit(wait: Wait, maxOpen: Int): CreateOutcome = driver.inTenant(wait.orgId) {
         // Serialize the count and the insert of one scope, so that two concurrent asks never both pass the limit.
-        // A session's limit spans its segments: a reopened session does not open MAX_OPEN more.
+        // A session's limit spans its segments: an agent that ends and reopens its session does not open MAX_OPEN more.
         val session = wait.sessionId?.let(::agentSessionOf)
         val scope = if (session == null) "member:${wait.createdBy}" else "session:$session"
         fetchAll(
@@ -112,8 +111,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             AND (CAST(:created_by AS TEXT) IS NULL OR created_by = :created_by)
             AND (CAST(:status AS TEXT) IS NULL OR status = :status)
             AND (CAST(:session_id AS TEXT) IS NULL OR session_id = :session_id)
-            AND (CAST(:agent_session AS TEXT) IS NULL OR session_id = :agent_session
-                OR starts_with(session_id, CAST(:segments AS TEXT)))
+            AND (CAST(:session_ids AS TEXT) IS NULL
+                OR session_id = ANY(string_to_array(CAST(:session_ids AS TEXT), ',')))
             AND (CAST(:run_id AS TEXT) IS NULL OR run_id = :run_id)$cursor
             ORDER BY created_at DESC, id DESC LIMIT :limit
             """,
@@ -123,8 +122,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             .bind("created_by", filter.createdBy)
             .bind("status", filter.status?.wire)
             .bind("session_id", filter.sessionId)
-            .bind("agent_session", filter.agentSession)
-            .bind("segments", filter.agentSession?.let { it + SEGMENT_MARK })
+            // A session id never holds a comma (`SESSION_ID` of the sessions module, `REFERENCE` of the waits).
+            .bind("session_ids", filter.sessionIds?.joinToString(","))
             .bind("run_id", filter.runId)
             .bind("limit", limit)
         if (before != null) statement.bind("before", before)

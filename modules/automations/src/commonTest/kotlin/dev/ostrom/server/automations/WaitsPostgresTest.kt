@@ -117,26 +117,26 @@ class WaitsPostgresTest {
     }
 
     @Test
-    fun anAgentSessionListsTheWaitsOfEachOfItsSegmentsOnly() = serverTest(listOf(AutomationsModule)) { server ->
+    fun aListingNamesTheSessionsItReads() = serverTest(listOf(AutomationsModule)) { server ->
         val repository = server.koin.get<WaitsRepository>()
-        val first = wait(session = "s_1", at = t0)
-        val reopened = wait(session = "s_1~r2", at = t0 + 1.minutes)
-        // Not its segments: a longer id, and one a LIKE pattern's `_` would take for it.
-        val longer = wait(session = "s_10~r2", at = t0 + 2.minutes)
-        val alike = wait(session = "sX1~r2", at = t0 + 3.minutes)
-        for (wait in listOf(first, reopened, longer, alike)) {
+        val first = wait(session = "s-1", at = t0)
+        val reopened = wait(session = "s-1~r2", at = t0 + 1.minutes)
+        val resumed = wait(session = "s-1~r3", at = t0 + 2.minutes)
+        for (wait in listOf(first, reopened, resumed)) {
             assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait, 5))
         }
 
-        val listed = repository.list(WaitFilter(ORG_A, agentSession = "s_1"), null, 10).map { it.id }
-        assertEquals(listOf(reopened.id, first.id), listed)
-        val other = repository.list(WaitFilter(ORG_A, agentSession = "s_10"), null, 10).map { it.id }
-        assertEquals(listOf(longer.id), other)
+        val listed = repository.list(WaitFilter(ORG_A, sessionIds = listOf("s-1", "s-1~r2")), null, 10).map { it.id }
+        assertEquals(listOf(reopened.id, first.id), listed, "Only the sessions named")
+        val one = repository.list(WaitFilter(ORG_A, sessionIds = listOf("s-1~r3")), null, 10).map { it.id }
+        assertEquals(listOf(resumed.id), one)
+        assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, sessionIds = listOf("s-1~r")), null, 10))
 
-        // The open waits' limit spans the session's segments: a reopened session opens no more.
-        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s_1~r3"), 2))
-        assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = "s_1~r3"), 3))
-        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s_1"), 3))
+        // The limit spans the agent session's segments, and only its own: `s-10` and `sX1` are other sessions.
+        assertEquals(CreateOutcome.AT_LIMIT, repository.createWithinLimit(wait(session = "s-1~r4", at = t0), 3))
+        for (other in listOf("s-10~r2", "sX1~r2")) {
+            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait(session = other, at = t0), 3), other)
+        }
     }
 
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)
