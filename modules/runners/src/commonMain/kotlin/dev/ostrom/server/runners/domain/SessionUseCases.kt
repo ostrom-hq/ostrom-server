@@ -167,11 +167,10 @@ class GetCloudSessionUseCaseImpl(
 ) : GetCloudSessionUseCase {
     // a paused, terminated or failed session runs nowhere: no lookup
     override suspend fun invoke(caller: Caller, id: Uuid): CloudSession = repository.ownedBy(caller, id).let {
-        if (it.state in RUNS_NOWHERE) it else it.copy(runnerId = driver.holder(it))
-    }
-
-    private companion object {
-        val RUNS_NOWHERE = setOf(SessionState.PAUSED, SessionState.TERMINATED, SessionState.FAILED)
+        when (it.state) {
+            SessionState.PAUSED, SessionState.TERMINATED, SessionState.FAILED -> it
+            else -> it.copy(runnerId = driver.holder(it))
+        }
     }
 }
 

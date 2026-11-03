@@ -137,6 +137,7 @@ class RegisteredSessionsTest {
     @Test
     fun aSessionNamesTheRunnerThatTookItsExecution() = runTest {
         val a = runner("a")
+        assertNull(driver.holder(session()), "Never started: no execution, no runner")
         val session = starting()
         assertNull(driver.holder(session), "Waiting for a machine: none")
 
