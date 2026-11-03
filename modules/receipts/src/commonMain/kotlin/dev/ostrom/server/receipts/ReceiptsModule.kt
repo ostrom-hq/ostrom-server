@@ -60,6 +60,6 @@ object ReceiptsModule : ServerModule {
     }
 
     override fun routes(route: Route, koin: Koin) {
-        route.receiptsRoutes(koin.get())
+        route.receiptsRoutes(koin.get(), koin.get())
     }
 }
