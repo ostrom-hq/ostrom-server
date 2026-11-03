@@ -121,6 +121,53 @@ class LaunchWaitAgentsPostgresTest {
     }
 
     @Test
+    fun anAgentTokenAsksInTheSegmentItsLauncherReopenedWithoutTheRelay() = serverTest(modules) { server ->
+        with(server) {
+            val ada = person("ada")
+            val agent = running(ada).agentToken
+            val before = tool(agent, "s-1", "ask_human", """{"title":"Before the sleep"}""").text()
+                .substringAfter("wait ").substringBefore(" ")
+            // The launcher's lifeline, not the relay: the segment ends while the machine sleeps, then it reopens it.
+            assertEquals(HttpStatusCode.OK, post(agent, "/api/v1/sessions/s-1/end", "{}").status)
+            val reopened = post(agent, "/api/v1/sessions/s-1/reopen", "{}")
+            assertEquals(HttpStatusCode.OK, reopened.status, reopened.bodyAsText())
+
+            // The relay still names `s-1`, the agent's session id: the server finds the segment open now.
+            val asked = tool(agent, "s-1", "ask_human", """{"title":"Ship it?"}""")
+            assertFalse(asked.isError(), asked.text())
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+            val read = Json.parseToJsonElement(tool(agent, "s-1", "get_wait", """{"wait":"$id"}""").text()).jsonObject
+            assertEquals("s-1~r2", read.getValue("sessionId").jsonPrimitive.content, "Asked in the open segment")
+            val earlier = tool(agent, "s-1~r2", "get_wait", """{"wait":"$before"}""").text()
+            assertEquals(
+                "s-1",
+                Json.parseToJsonElement(earlier).jsonObject.getValue("sessionId").jsonPrimitive.content,
+                "What it asked before the sleep is still its own",
+            )
+            val listed = tool(agent, "s-1", "list_waits", "{}").text().lines().map { it.substringBefore(" ") }
+            assertEquals(listOf(id, before), listed, "Both segments' waits, newest first")
+            assertEquals("Cancelled wait $before.", tool(agent, "s-1", "cancel_wait", """{"wait":"$before"}""").text())
+
+            val second = running(ada, session = "s-2").agentToken
+            assertEquals(
+                "This session is not yours.",
+                tool(second, "s-1", "list_waits", "{}").text(),
+                "Another launch never reaches the segment through its first id",
+            )
+
+            // Resumed by another launch (`claude --resume` keeps the id): its segment, and only what it asks there.
+            assertEquals(HttpStatusCode.OK, post(agent, "/api/v1/sessions/s-1~r2/end", "{}").status)
+            val resumed = running(ada).agentToken
+            val again = tool(resumed, "s-1", "ask_human", """{"title":"Resumed"}""").text()
+                .substringAfter("wait ").substringBefore(" ")
+            val mine = tool(resumed, "s-1", "list_waits", """{"status":"all"}""").text().lines()
+                .map { it.substringBefore(" ") }
+            assertEquals(listOf(again), mine, "Not what the first launch asked")
+            assertTrue(tool(resumed, "s-1", "get_wait", """{"wait":"$id"}""").isError(), "The first launch's wait")
+        }
+    }
+
+    @Test
     fun anAgentTokenReachesNoOtherLaunchsSessionNorAnotherOrganizations() = serverTest(modules) { server ->
         with(server) {
             val ada = person("ada")

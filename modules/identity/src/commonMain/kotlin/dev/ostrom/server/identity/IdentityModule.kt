@@ -123,6 +123,7 @@ import dev.ostrom.server.identity.infrastructure.SecureSecretGenerator
 import dev.ostrom.server.identity.infrastructure.ServiceKeysRepositoryImpl
 import dev.ostrom.server.identity.infrastructure.Sha256SecretHasher
 import dev.ostrom.server.identity.infrastructure.SignInLinksRepositoryImpl
+import dev.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import dev.ostrom.server.identity.infrastructure.UnconfiguredMailSender
 import dev.ostrom.server.identity.infrastructure.LinkedIdentitiesImpl
 import dev.ostrom.server.identity.infrastructure.UsersRepositoryImpl
@@ -200,6 +201,7 @@ object IdentityModule : ServerModule {
         single<AuditRepository> { AuditRepositoryImpl(get()) }
 
         single<AuditLog> { AuditLogImpl(get(), get(), get(), get()) }
+        single { TransactionalAuditLog(get()) }
         single<ServiceKeyAudit> { ServiceKeyAuditImpl(get()) }
         single<GovernanceAudit> { AuditLogGovernanceAudit(get()) }
         single<OrgAuditTrail> { IdentityOrgAuditTrail(get()) }

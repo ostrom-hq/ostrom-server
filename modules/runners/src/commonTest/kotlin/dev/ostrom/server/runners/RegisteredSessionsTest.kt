@@ -83,7 +83,7 @@ class RegisteredSessionsTest {
         val a = runner("a")
         val b = runner("b")
         val session = starting()
-        assertEquals(ExecutionStatus.PENDING, driver.executionStatus(session))
+        assertEquals(ExecutionStatus.QUEUED, driver.executionStatus(session), "No machine took it yet")
 
         val work = beat(a)
 
@@ -263,7 +263,7 @@ class RegisteredSessionsTest {
         val a = runner("a")
         val session = starting()
         assertEquals(MachineWork(emptyList(), emptyList()), heartbeat(a.runner.id, a.key))
-        assertEquals(ExecutionStatus.PENDING, driver.executionStatus(session), "Still waiting for a runner that runs")
+        assertEquals(ExecutionStatus.QUEUED, driver.executionStatus(session), "Still waiting for a runner that runs")
     }
 
     @Test

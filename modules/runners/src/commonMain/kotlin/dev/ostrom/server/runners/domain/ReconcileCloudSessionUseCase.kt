@@ -82,6 +82,15 @@ class ReconcileCloudSessionUseCaseImpl(
             driver.stopExecutions(session)
             return write(session.copy(executionStartedAt = null, phase = "scheduling", updatedAt = now), now)
         }
+        // Waiting for a machine with room, as long as it takes; its start is timed once one takes it.
+        if (status == ExecutionStatus.QUEUED) {
+            if (session.phase == QUEUED_PHASE) return now + WATCH_DELAY
+            return write(session.copy(phase = QUEUED_PHASE, updatedAt = now), now + WATCH_DELAY)
+        }
+        if (session.phase == QUEUED_PHASE) {
+            val taken = session.copy(phase = STARTING_PHASE, executionStartedAt = now, updatedAt = now)
+            return write(taken, now + STEP_DELAY)
+        }
         val failed = status == ExecutionStatus.FAILED || status == ExecutionStatus.ENDED ||
             (status == ExecutionStatus.MISSING && now - startedAt > MISSING_GRACE) || now - startedAt > START_TIMEOUT
         if (!failed) return now + STEP_DELAY
@@ -113,7 +122,7 @@ class ReconcileCloudSessionUseCaseImpl(
             runnerTokenHash = tokens.hash(token),
             runnerStoppedAt = null,
             pausingSince = null,
-            phase = "starting_runner",
+            phase = STARTING_PHASE,
             updatedAt = now,
         )
         // The row commits first: an execution the runtime runs always has its row, never the reverse.
@@ -229,6 +238,12 @@ class ReconcileCloudSessionUseCaseImpl(
     companion object {
         /** A start must report ready within this time, image pull and repository clone included. */
         private val START_TIMEOUT: Duration = 15.minutes
+
+        /** The phase of an execution started, until its runner reports ready. */
+        private const val STARTING_PHASE = "starting_runner"
+
+        /** The phase of an execution that waits for a machine with room ([ExecutionStatus.QUEUED]). */
+        private const val QUEUED_PHASE = "queued"
 
         /** A runner silent for this long is lost; the runners list shows it offline after the same time. */
         internal val HEARTBEAT_LOSS: Duration = 90.seconds

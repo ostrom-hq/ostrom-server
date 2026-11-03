@@ -121,6 +121,14 @@ class WaitsMcpTest {
             assertTrue(client.call("ask_human", """{"title":" "}""").isError())
             val unbound = client.call("ask_human", """{"title":"Alone"}""", path = "/api/v1/waits/mcp")
             assertTrue(unbound.text().startsWith("Asked: wait "))
+            // A wait asked outside a session is read outside one, never from a session.
+            val alone = unbound.text().substringAfter("wait ").substringBefore(" ")
+            assertFalse(client.call("get_wait", """{"wait":"$alone"}""", path = "/api/v1/waits/mcp").isError())
+            val listedAlone = client.call("list_waits", "{}", path = "/api/v1/waits/mcp").text()
+            assertTrue("$alone  open  Alone" in listedAlone, listedAlone)
+            assertEquals("Wait not found.", client.call("get_wait", """{"wait":"$alone"}""").text())
+            val outside = client.call("get_wait", """{"wait":"$id"}""", path = "/api/v1/waits/mcp")
+            assertEquals("Wait not found.", outside.text(), "Nor a session's wait outside a session")
         }
 
     private companion object {

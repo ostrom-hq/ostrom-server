@@ -58,6 +58,11 @@ class InMemorySessions : SessionsRepository {
 
     override suspend fun get(orgId: Uuid, id: String): Session? = rows[orgId to id]
 
+    override suspend fun segmentsOf(orgId: Uuid, id: String): List<Session> {
+        val root = rows[orgId to id]?.rootId
+        return rows.values.filter { it.orgId == orgId && it.rootId == root }.sortedBy { it.segment }
+    }
+
     override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> =
         rows.values.filter { it.orgId == orgId && (query.launchId == null || it.launchId == query.launchId) }
             .sortedByDescending { it.startedAt }

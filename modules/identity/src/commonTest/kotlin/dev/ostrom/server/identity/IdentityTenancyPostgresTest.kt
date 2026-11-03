@@ -10,6 +10,7 @@ import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.testing.TestServer
@@ -20,6 +21,7 @@ import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -169,6 +171,27 @@ class IdentityTenancyPostgresTest {
     private suspend fun refusedAsAppendOnly(what: String, block: suspend () -> Unit) {
         val error = assertFailsWith<SQLError>(what) { block() }
         assertTrue("append-only" in error.message.orEmpty(), "$what: ${error.message}")
+    }
+
+    @Test
+    fun anOrganizationsActionIsRecordedInTheTransactionThatDoesIt() = serverTest(listOf(IdentityModule)) { s ->
+        val first = s.koin.get<AuditLog>().record(AuditEntry(orgA, null, "before", "t", "0"))
+        val audit = s.koin.get<TransactionalAuditLog>()
+
+        // The action fails after its event was written: the event goes with it.
+        assertFails {
+            s.driver.inOrg(orgA) {
+                audit.record(this, AuditEntry(orgA, null, "rolled.back", "t", "1"))
+                error("the action fails")
+            }
+        }
+        val kept = s.driver.inOrg(orgA) { audit.record(this, AuditEntry(orgA, null, "kept", "t", "2")) }
+
+        assertEquals(2L to first.hash, kept.sequence to kept.previousHash, "Chained after the last kept event")
+        assertEquals(listOf("before", "kept"), s.driver.inOrg(orgA) { actions() })
+        assertFailsWith<IllegalArgumentException>("Only an organization's action") {
+            s.driver.inOrg(orgA) { audit.record(this, AuditEntry(null, null, "account", "t", "3")) }
+        }
     }
 
     @Test

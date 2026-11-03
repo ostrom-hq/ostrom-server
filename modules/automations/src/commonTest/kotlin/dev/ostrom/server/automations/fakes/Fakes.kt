@@ -128,7 +128,7 @@ object FakeWaitAgents : WaitAgentResolver {
     override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
         if (principal.subjectId != LAUNCH) return null
         if (sessionId != LAUNCH_SESSION) throw OstromException(ErrorKind.FORBIDDEN, "This session is not yours.")
-        return WaitAgent(ORG_A, BOB.toString())
+        return WaitAgent(ORG_A, BOB.toString(), LAUNCH_SESSION, listOf(LAUNCH_SESSION))
     }
 }
 
@@ -156,15 +156,18 @@ class InMemoryWaits : WaitsRepository {
     var loseNextAnswer = false
     var duplicateNext: Wait? = null
 
-    override suspend fun createWithinLimit(wait: Wait, maxOpen: Int): CreateOutcome {
+    override suspend fun createWithinLimit(wait: Wait, maxOpen: Int, sessions: List<String>): CreateOutcome {
         duplicateNext?.let { earlier ->
             duplicateNext = null
             if (earlier.id != wait.id) waits[earlier.id] = earlier
             return CreateOutcome.DUPLICATE
         }
+        // The named sessions count with the wait's own, as the repository's.
+        val session = wait.sessionId
+        val scope = sessions + listOfNotNull(session)
         val open = waits.values.count {
-            it.orgId == wait.orgId && it.status == WaitStatus.OPEN && it.sessionId == wait.sessionId &&
-                (wait.sessionId != null || it.createdBy == wait.createdBy)
+            it.orgId == wait.orgId && it.status == WaitStatus.OPEN &&
+                if (session == null) it.sessionId == null && it.createdBy == wait.createdBy else it.sessionId in scope
         }
         if (open >= maxOpen) return CreateOutcome.AT_LIMIT
         waits[wait.id] = wait
@@ -185,6 +188,7 @@ class InMemoryWaits : WaitsRepository {
     /** The state and place side of [WaitFilter]. */
     private fun WaitFilter.where(wait: Wait): Boolean = (status == null || wait.status == status) &&
         (sessionId == null || wait.sessionId == sessionId) &&
+        (sessionIds == null || sessionIds.any { it == wait.sessionId }) &&
         (runId == null || wait.runId == runId)
 
     override suspend fun list(filter: WaitFilter, before: Uuid?, limit: Int): List<Wait> {
