@@ -39,7 +39,7 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
     private val upstreamAnswers = CompletableDeferred<Unit>()
 
     /** Answers like the shared fake, but holds every tool call until [upstreamAnswers]. */
-    private val slowMcp = HttpClient(
+    override val fakeMcp: HttpClient = HttpClient(
         MockEngine { request ->
             if (request.method == HttpMethod.Delete) return@MockEngine respond("", HttpStatusCode.OK)
             val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
@@ -67,7 +67,6 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
 
     private val oneCallAtOnce = module {
         includes(overrides)
-        single(McpRelayModule.HTTP_CLIENT) { slowMcp }
         single { CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = 2.seconds)) { null } }
     }
 
