@@ -38,6 +38,9 @@ import kotlin.uuid.Uuid
 /** The Stripe API version every request pins; the same as `ops/stripe/catalog.json` and the webhook endpoint. */
 const val STRIPE_API_VERSION = "2026-09-30.endive"
 
+/** The base of the address print in a customer's idempotency key. */
+private const val HEX = 16
+
 /**
  * Stripe refused a request. The message is Stripe's, which never contains a secret; the body is not kept.
  *
@@ -84,7 +87,7 @@ class StripeGatewayImpl(
         "/v1/customers",
         listOfNotNull(name?.let { "name" to it }, email?.let { "email" to it }, "metadata[org_id]" to orgId.toString()),
         // One key per org and address: a retry dedupes, another payer within Stripe's 24 h is not refused.
-        key = "ostrom-customer-$orgId" + email?.let { "-" + it.lowercase().hashCode().toUInt().toString(16) }.orEmpty(),
+        key = "ostrom-customer-$orgId" + email?.let { "-" + addressPrint(it) }.orEmpty(),
     ).requireString("id")
 
     override suspend fun customerEmail(customerId: String): String? =
@@ -296,6 +299,9 @@ private fun JsonObject.toInvoice(): Invoice {
         pdfUrl = string("invoice_pdf"),
     )
 }
+
+/** A short print of an address, the same in any case: the idempotency key then differs by payer. */
+private fun addressPrint(email: String): String = email.lowercase().hashCode().toUInt().toString(HEX)
 
 private fun JsonObject.requireString(key: String): String =
     string(key) ?: throw StripeApiException(HttpStatusCode.OK.value, null, "Stripe's answer has no $key.")
