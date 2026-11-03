@@ -161,9 +161,9 @@ class OrgsReadsBenchTest {
         }
     }
 
-    // The case that asked for `q`: a team of 5 000, a keystroke every 250 ms, among 10 such organizations (with only two,
-    // one team is half of each table and the planner rightly reads it whole). Each search keeps the read budget on the
-    // median of three trials: the first letter (every member), a prefix of 1 111, and one member.
+    // The case that asked for `q`: a team of 5 000, a keystroke every 250 ms, among 10 such organizations (with two,
+    // one team is half of each table and the planner rightly reads it whole). Each search keeps the read budget on
+    // the median of three trials: the first letter (every member), a prefix of 1 111, and one member.
     @Test
     fun theSearchOfAFiveThousandTeamKeepsItsBudget() = benchTest(listOf(IdentityModule, OrgsModule), null) { server ->
         val owners = (0 until LARGE_ORGS).map { server.owner(it) }
