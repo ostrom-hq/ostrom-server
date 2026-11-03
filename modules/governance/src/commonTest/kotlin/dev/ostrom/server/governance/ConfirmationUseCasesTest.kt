@@ -11,6 +11,7 @@ import dev.ostrom.server.governance.domain.ConfirmationLimitException
 import dev.ostrom.server.governance.domain.ConfirmationManagersOnlyException
 import dev.ostrom.server.governance.domain.ConfirmationNotFoundException
 import dev.ostrom.server.governance.domain.ConfirmationRules
+import dev.ostrom.server.governance.domain.ConfirmationSecrets
 import dev.ostrom.server.governance.domain.ConfirmationStaleException
 import dev.ostrom.server.governance.domain.ConfirmationRecords
 import dev.ostrom.server.governance.domain.ConfirmationStatus
@@ -71,7 +72,8 @@ class ConfirmationUseCasesTest {
     )
     private val expire = ExpireConfirmationsUseCaseImpl(repository, audit, waits, clock)
     private val open = OpenConfirmationUseCaseImpl(repository, members, changes, audit, expire, clock)
-    private val get = GetConfirmationUseCaseImpl(repository, members, expire, waits, clock)
+    private val secrets = ConfirmationSecrets(changes, repository)
+    private val get = GetConfirmationUseCaseImpl(repository, members, expire, waits, clock, secrets)
     private val answer = AnswerConfirmationUseCaseImpl(
         ConfirmationRecords(repository, audit, waits),
         members,
@@ -170,7 +172,7 @@ class ConfirmationUseCasesTest {
         assertFailsWith<ConfirmationNotFoundException> { get(agent, opened.id) }
         // A requester demoted to member still reads their own.
         val demoted = FakeMembers(mapOf("ada" to (orgA to OrgRole.MEMBER)))
-        val reading = GetConfirmationUseCaseImpl(repository, demoted, expire, waits, clock)
+        val reading = GetConfirmationUseCaseImpl(repository, demoted, expire, waits, clock, secrets)
         assertEquals(opened, reading(token("ada"), opened.id))
     }
 
@@ -369,5 +371,23 @@ class ConfirmationUseCasesTest {
         assertFailsWith<IllegalArgumentException> { GovernanceChanges(listOf(FakeChange(), FakeChange())) }
         assertFailsWith<IllegalStateException> { changes.of("rules.update") }
         assertSame(change, changes.of(FakeChange.KIND))
+    }
+
+    @Test
+    fun aResultsSecretIsShownOnceToThePersonWhoAskedAndNeverToTheConfirmer() = runTest {
+        change.secret = true
+        val asked = open(request())
+        assertNull(get(token("ada"), asked.id).result, "Pending: no result yet")
+        val answered = confirm(browser("olga"), asked.id)
+        assertEquals(JsonPrimitive("shown"), answered.result, "The owner who confirmed never reads it")
+        assertEquals(JsonPrimitive("shown"), get(browser("olga"), asked.id).result, "Nor reads it later")
+        assertEquals(JsonPrimitive("never"), repository.rows.getValue(asked.id).result, "Kept for the person who asked")
+        assertEquals(JsonPrimitive("never"), get(token("ada"), asked.id).result, "The person who asked reads it once")
+        assertEquals(JsonPrimitive("shown"), repository.rows.getValue(asked.id).result, "Then it is gone")
+        assertEquals(JsonPrimitive("shown"), get(token("ada"), asked.id).result, "Their second read")
+        // Confirmed by the person who asked, on the console: the answer is their read.
+        val own = open(request(to = "always"))
+        assertEquals(JsonPrimitive("always"), confirm(browser("ada"), own.id).result)
+        assertEquals(JsonPrimitive("shown"), get(token("ada"), own.id).result)
     }
 }

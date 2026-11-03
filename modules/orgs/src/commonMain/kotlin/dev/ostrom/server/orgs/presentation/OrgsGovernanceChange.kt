@@ -7,9 +7,10 @@ import dev.ostrom.server.kernel.auth.GovernancePreview
 import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.http.OstromJson
-import dev.ostrom.server.orgs.domain.InvalidOrgRequestException
+import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCase
 import dev.ostrom.server.orgs.domain.InviteRequest
 import dev.ostrom.server.orgs.domain.MemberProfile
+import dev.ostrom.server.orgs.domain.MemberWrite
 import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.People
 import dev.ostrom.server.orgs.domain.findMember
@@ -29,8 +30,10 @@ import kotlin.uuid.Uuid
  * The writes on the members made with a person's API token, held for a confirmation on the console as the rules' writes
  * are (contract audit 2, F1): changing a role, removing a member, inviting by e-mail and creating an invitation link.
  * A token sits on a developer's machine, where an agent can present it: none of these writes is made by the token
- * itself. Confirmed, each is made as the confirmer's decision, by the same use case as the console's, which checks
- * the confirmer's role and records the change in the audit log under their name.
+ * itself. The route checks the write as the asker's before holding it ([CheckMemberWriteUseCase]), so a confirmer's
+ * role never carries a change the asker could not make. Confirmed, it is made as the confirmer's decision, by the
+ * same use case as the console's, which checks the confirmer's role and records the change in the audit log under
+ * their name.
  *
  * @param members Reads the member a role change or a removal names, for the preview.
  * @param people Finds them by login.
@@ -45,58 +48,63 @@ class OrgsGovernanceChange(
 ) : GovernanceChange {
     override val kinds: Set<String> = setOf(MEMBER_ROLE, MEMBER_REMOVE, MEMBER_INVITE, MEMBER_LINK)
 
-    override suspend fun preview(orgId: Uuid, write: GovernanceWrite): GovernancePreview {
-        val payload = write.payload
-        return when (write.kind) {
-            MEMBER_ROLE -> {
-                val role = payload.role()
-                if (role == OrgRole.OWNER) {
-                    throw InvalidOrgRequestException("Transfer the ownership to make someone owner.")
-                }
-                val target = findMember(members, people, orgId, payload.login())
-                GovernancePreview("Change ${target.login}'s role to ${role.key()}", target.shown(), target.shown(role))
+    override suspend fun preview(orgId: Uuid, write: GovernanceWrite): GovernancePreview =
+        when (val asked = write.memberWrite()) {
+            is MemberWrite.Role -> {
+                val target = findMember(members, people, orgId, asked.login)
+                val summary = "Change ${target.login}'s role to ${asked.role.key()}"
+                GovernancePreview(summary, target.shown(), target.shown(asked.role))
             }
-            MEMBER_REMOVE -> {
-                val target = findMember(members, people, orgId, payload.login())
+            is MemberWrite.Removal -> {
+                val target = findMember(members, people, orgId, asked.login)
                 GovernancePreview("Remove ${target.login} from the organization", target.shown(), null)
             }
-            MEMBER_INVITE -> {
-                val invites = payload.getValue(INVITES)
-                GovernancePreview("Invite ${invites.jsonArray.size} people by e-mail", null, invites)
+            is MemberWrite.Invites -> {
+                val summary = "Invite by e-mail: ${asked.invites.joinToString { it.email }}"
+                GovernancePreview(summary, null, write.payload.getValue(INVITES))
             }
-            // MEMBER_LINK: the governance module only hands this change the kinds it owns.
-            else -> GovernancePreview("Create an invitation link", null, payload)
+            is MemberWrite.Link -> GovernancePreview("Create an invitation link", null, write.payload)
         }
-    }
 
     override suspend fun apply(orgId: Uuid, write: GovernanceWrite, confirmer: GovernanceConfirmer): JsonElement? {
         val userId = confirmer.principal.userId()
-        val payload = write.payload
-        return when (write.kind) {
-            MEMBER_ROLE -> {
-                val changed = commands.changeRole(orgId, userId, payload.login(), payload.role())
+        return when (val asked = write.memberWrite()) {
+            is MemberWrite.Role -> {
+                val changed = commands.changeRole(orgId, userId, asked.login, asked.role)
                 OstromJson.encodeToJsonElement(MemberResponse.Answer, changed.toMemberResponse())
             }
-            MEMBER_REMOVE -> {
-                commands.remove(orgId, userId, payload.login())
+            is MemberWrite.Removal -> {
+                commands.remove(orgId, userId, asked.login)
                 null
             }
-            MEMBER_INVITE -> {
-                val invited = invitations.byEmail(orgId, userId, payload.invites())
+            is MemberWrite.Invites -> {
+                val invited = invitations.byEmail(orgId, userId, asked.invites)
                 OstromJson.encodeToJsonElement(InvitedResponse.serializer(), InvitedResponse(invited))
             }
-            // MEMBER_LINK. Its address carries the link's secret: the confirmation keeps it as its result, which only
-            // the person who asked and the organization's owners and admins read, as they would read the 201.
-            else -> {
-                val maxUses = payload.getValue(MAX_USES).jsonPrimitive.int
-                val issued = invitations.link(orgId, userId, payload.role(), maxUses)
+            // Its address carries the link's secret: shown once, to the person who asked ([shownOnce]).
+            is MemberWrite.Link -> {
+                val issued = invitations.link(orgId, userId, asked.role, asked.maxUses)
                 val response = InvitationLinkResponse(issued.invitation.toInvitationResponse(), issued.url)
                 OstromJson.encodeToJsonElement(InvitationLinkResponse.serializer(), response)
             }
         }
     }
 
-    /** The kinds this change owns, and the payload each route holds. */
+    /**
+     * A link's address is shown once, to the person who asked, as the console shows a link it creates (decision of
+     * 03/11/2026): then only the invitation is kept, marked `shown`, and an owner or an admin never reads the address.
+     */
+    override fun shownOnce(kind: String, result: JsonElement): JsonElement? =
+        if (kind != MEMBER_LINK) {
+            null
+        } else {
+            buildJsonObject {
+                put(INVITATION, result.jsonObject.getValue(INVITATION))
+                put(SHOWN, true)
+            }
+        }
+
+    /** The kinds this change owns, and the payload of each. */
     companion object {
         /** `PATCH /orgs/{org}/members/{login}` (contract `GovernanceChangeKind`). */
         const val MEMBER_ROLE: String = "members.role"
@@ -115,81 +123,70 @@ class OrgsGovernanceChange(
         private const val EMAIL = "email"
         private const val INVITES = "invites"
         private const val MAX_USES = "maxUses"
+        private const val INVITATION = "invitation"
+        private const val SHOWN = "shown"
 
         /**
-         * A role change.
+         * The held write of [write], as the route asked for it.
          *
-         * @param login The member.
-         * @param role Their new role.
+         * @param write The write on the members.
          *
-         * @return The held write.
+         * @return The write the governance module holds.
          */
-        fun role(login: String, role: OrgRole): GovernanceWrite = GovernanceWrite(
-            MEMBER_ROLE,
-            buildJsonObject {
-                put(LOGIN, login)
-                put(ROLE, role.key())
-            },
-        )
-
-        /**
-         * A removal.
-         *
-         * @param login The member.
-         *
-         * @return The held write.
-         */
-        fun removal(login: String): GovernanceWrite =
-            GovernanceWrite(MEMBER_REMOVE, buildJsonObject { put(LOGIN, login) })
-
-        /**
-         * Invitations by e-mail.
-         *
-         * @param invites Who, with which role.
-         *
-         * @return The held write.
-         */
-        fun invites(invites: List<InviteRequest>): GovernanceWrite = GovernanceWrite(
-            MEMBER_INVITE,
-            buildJsonObject {
-                putJsonArray(INVITES) {
-                    for (invite in invites) {
-                        addJsonObject {
-                            put(EMAIL, invite.email)
-                            put(ROLE, invite.role.key())
+        fun of(write: MemberWrite): GovernanceWrite = when (write) {
+            is MemberWrite.Role -> GovernanceWrite(
+                MEMBER_ROLE,
+                buildJsonObject {
+                    put(LOGIN, write.login)
+                    put(ROLE, write.role.key())
+                },
+            )
+            is MemberWrite.Removal -> GovernanceWrite(MEMBER_REMOVE, buildJsonObject { put(LOGIN, write.login) })
+            is MemberWrite.Invites -> GovernanceWrite(
+                MEMBER_INVITE,
+                buildJsonObject {
+                    putJsonArray(INVITES) {
+                        for (invite in write.invites) {
+                            addJsonObject {
+                                put(EMAIL, invite.email)
+                                put(ROLE, invite.role.key())
+                            }
                         }
                     }
-                }
-            },
-        )
+                },
+            )
+            is MemberWrite.Link -> GovernanceWrite(
+                MEMBER_LINK,
+                buildJsonObject {
+                    put(ROLE, write.role.key())
+                    put(MAX_USES, write.maxUses)
+                },
+            )
+        }
 
-        /**
-         * An invitation link.
-         *
-         * @param role The role it gives.
-         * @param maxUses How many people it brings in.
-         *
-         * @return The held write.
-         */
-        fun link(role: OrgRole, maxUses: Int): GovernanceWrite = GovernanceWrite(
-            MEMBER_LINK,
-            buildJsonObject {
-                put(ROLE, role.key())
-                put(MAX_USES, maxUses)
-            },
-        )
+        // The write a held one stands for. The governance module only hands this change the kinds it owns.
+        private fun GovernanceWrite.memberWrite(): MemberWrite = when (kind) {
+            MEMBER_ROLE -> MemberWrite.Role(payload.login(), payload.role())
+            MEMBER_REMOVE -> MemberWrite.Removal(payload.login())
+            MEMBER_INVITE -> MemberWrite.Invites(
+                payload.getValue(INVITES).jsonArray.map {
+                    val invite = it.jsonObject
+                    InviteRequest(invite.getValue(EMAIL).jsonPrimitive.content, invite.role())
+                },
+            )
+            MEMBER_LINK -> MemberWrite.Link(payload.role(), payload.getValue(MAX_USES).jsonPrimitive.int)
+            else -> error("No member write is named $kind.")
+        }
 
         private fun JsonObject.login(): String = getValue(LOGIN).jsonPrimitive.content
 
         private fun JsonObject.role(): OrgRole = roleOf(getValue(ROLE).jsonPrimitive.content)
 
-        private fun JsonObject.invites(): List<InviteRequest> = getValue(INVITES).jsonArray.map {
-            val invite = it.jsonObject
-            InviteRequest(invite.getValue(EMAIL).jsonPrimitive.content, invite.role())
-        }
-
-        // What a role change or a removal replaces, and what it writes: the login and the role, never the address.
+        // What a role change or a removal replaces, and what it writes: the membership's id (a member removed and
+        // invited again is another membership, so a confirmation on the first goes stale), the login and the role,
+        // never the address.
         private fun MemberProfile.shown(role: OrgRole = member.role): JsonObject = buildJsonObject {
+            put("id", member.id.toString())
             put(LOGIN, login)
             put(ROLE, role.key())
         }

@@ -13,6 +13,8 @@ import dev.ostrom.server.orgs.domain.AcceptInvitationUseCase
 import dev.ostrom.server.orgs.domain.AcceptInvitationUseCaseImpl
 import dev.ostrom.server.orgs.domain.ChangeRoleUseCase
 import dev.ostrom.server.orgs.domain.ChangeRoleUseCaseImpl
+import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCase
+import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCaseImpl
 import dev.ostrom.server.orgs.domain.CountMembersUseCase
 import dev.ostrom.server.orgs.domain.CountMembersUseCaseImpl
 import dev.ostrom.server.orgs.domain.CreateInviteLinkUseCase
@@ -165,7 +167,8 @@ object OrgsModule : ServerModule {
         }
 
         single { OrgCommands(get(), get(), get(), get(), get(), get(), get()) }
-        single { MemberCommands(get(), get(), get(), get(), get()) }
+        single<CheckMemberWriteUseCase> { CheckMemberWriteUseCaseImpl(get(), get(), get()) }
+        single { MemberCommands(get(), get(), get(), get(), get(), get()) }
         single { InvitationCommands(get(), get(), get(), get(), get(), get()) }
         single { OrgsRoutesDependencies(get(), get(), get(), get()) }
         // The member writes a person's API token asks for, held for the console (contract audit 2, F1).

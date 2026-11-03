@@ -61,6 +61,7 @@ class AnswerConfirmationUseCaseImpl(
     private val repository = records.repository
     private val audit = records.audit
     private val waits = records.waits
+    private val secrets = ConfirmationSecrets(changes, repository)
 
     override suspend fun invoke(
         confirmer: AuthenticatedPrincipal,
@@ -76,10 +77,12 @@ class AnswerConfirmationUseCaseImpl(
         if (member.role !in ConfirmationRules.MANAGERS) throw ConfirmationManagersOnlyException()
         requirePending(confirmation)
         val by = ConfirmationPerson(confirmer.subjectId, member.memberId)
-        return when (answer) {
+        val answered = when (answer) {
             ConfirmationAnswer.REFUSE -> refuse(confirmation, by)
             ConfirmationAnswer.CONFIRM -> confirm(confirmation, by, GovernanceConfirmer(confirmer, member))
         }
+        // The confirmer reads a secret of the result only when they asked for the write themselves.
+        return secrets.shownTo(answered, confirmer.subjectId)
     }
 
     private suspend fun refuse(confirmation: Confirmation, by: ConfirmationPerson): Confirmation {

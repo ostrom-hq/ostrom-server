@@ -18,13 +18,15 @@ import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
 import dev.ostrom.server.kernel.auth.GovernanceConfirmations
 import dev.ostrom.server.kernel.auth.GovernanceConfirmer
 import dev.ostrom.server.kernel.auth.GovernanceRequest
+import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
-import dev.ostrom.server.orgs.domain.InviteRequest
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.orgs.domain.InviteRequest
+import dev.ostrom.server.orgs.domain.MemberWrite
 import dev.ostrom.server.orgs.presentation.CreateLinkRequest
 import dev.ostrom.server.orgs.presentation.CreateOrgRequest
 import dev.ostrom.server.orgs.presentation.InvitationLinkResponse
@@ -46,6 +48,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -70,9 +73,9 @@ import kotlin.uuid.Uuid
 /**
  * The four writes on the members made with a person's API token (`orgs:write`) are held for a confirmation on the
  * console, as the rules' writes are (contract audit 2, F1): a token on a developer's machine, which an agent can
- * present, never changes a role, removes a member or invites anyone by itself. Confirmed, the write is made as the
- * confirmer's. Real HTTP, real PostgreSQL, the identity and orgs modules, a fake confirmation service that records what
- * it is asked to hold.
+ * present, never changes a role, removes a member or invites anyone by itself. The write is checked as the asker's
+ * before it is held, then made as the confirmer's. Real HTTP, real PostgreSQL, the identity and orgs modules, a fake
+ * confirmation service that records what it is asked to hold.
  */
 class MemberWritesConfirmationPostgresTest {
     private val held = mutableListOf<GovernanceRequest>()
@@ -97,7 +100,7 @@ class MemberWritesConfirmationPostgresTest {
     private class Person(val id: Uuid, val session: StartedSession)
 
     /** Ada owns Acme, Bob is a member of it, Ada has a personal token with `orgs:write`. */
-    private class Team(val ada: Person, val orgId: Uuid, val token: String)
+    private class Team(val ada: Person, val bob: Person, val orgId: Uuid, val token: String)
 
     private suspend fun TestServer.signIn(login: String): Person {
         val user = koin.get<ResolveUserUseCase>()(
@@ -118,6 +121,9 @@ class MemberWritesConfirmationPostgresTest {
         setBody(body)
     }
 
+    private suspend fun TestServer.writer(person: Person): String =
+        koin.get<CreatePersonalTokenUseCase>()(person.id, "laptop", listOf("orgs:read", "orgs:write"), null).secret
+
     private suspend fun TestServer.team(): Team {
         val ada = signIn("ada")
         val org = client.post("/api/v1/orgs") {
@@ -128,56 +134,73 @@ class MemberWritesConfirmationPostgresTest {
             session(ada)
             json(CreateLinkRequest())
         }.body<InvitationLinkResponse>()
+        val bob = signIn("bob")
         client.post("/api/v1/invitations/accept") {
-            session(signIn("bob"))
+            session(bob)
             json(InvitationTokenRequest(link.url.substringAfter("#token=")))
         }
-        val token = koin.get<CreatePersonalTokenUseCase>()(ada.id, "laptop", listOf("orgs:read", "orgs:write"), null)
-        return Team(ada, Uuid.parse(org.id), token.secret)
+        return Team(ada, bob, Uuid.parse(org.id), writer(ada))
     }
 
-    private suspend fun TestServer.roles(team: Team): Map<String, String> =
+    private suspend fun TestServer.members(team: Team): MembersResponse =
         client.get("/api/v1/orgs/acme/members") { session(team.ada) }.body<MembersResponse>()
-            .items.associate { it.login to it.role }
+
+    private suspend fun TestServer.roles(team: Team): Map<String, String> =
+        members(team).items.associate { it.login to it.role }
 
     private suspend fun TestServer.liveInvitations(team: Team): Int =
         client.get("/api/v1/orgs/acme/invitations") { session(team.ada) }.body<InvitationsResponse>().items.size
 
+    // What the preview shows of a member: their membership, login and role, never their address.
+    private suspend fun TestServer.shown(team: Team, login: String, role: String): JsonObject = buildJsonObject {
+        put("id", members(team).items.single { it.login == login }.id)
+        put("login", login)
+        put("role", role)
+    }
 
     private fun confirmer(team: Team) = GovernanceConfirmer(
         browser(team.ada),
         OrgPrincipal(team.orgId, team.ada.id, OrgRole.OWNER),
     )
 
-    private fun browser(person: Person) =
-        AuthenticatedPrincipal(
-            person.id.toString(),
-            PrincipalKind.USER,
-            setOf("orgs:write"),
-            channel = PrincipalChannel.BROWSER,
-        )
+    private fun browser(person: Person) = AuthenticatedPrincipal(
+        person.id.toString(),
+        PrincipalKind.USER,
+        setOf("orgs:write"),
+        channel = PrincipalChannel.BROWSER,
+    )
+
+    private suspend fun TestServer.changeRole(token: String, login: String, role: String): HttpResponse =
+        client.patch("/api/v1/orgs/acme/members/$login") {
+            bearerAuth(token)
+            json(UpdateMemberRequest(role))
+        }
+
+    private suspend fun TestServer.invite(token: String, email: String, role: String): HttpResponse =
+        client.post("/api/v1/orgs/acme/members/invites") {
+            bearerAuth(token)
+            json(InviteRequestBody(listOf(mapOf("email" to email, "role" to role))))
+        }
+
+    private suspend fun TestServer.link(token: String, role: String, maxUses: Int): HttpResponse =
+        client.post("/api/v1/orgs/acme/invitations/links") {
+            bearerAuth(token)
+            json(CreateLinkRequest(role = role, maxUses = maxUses))
+        }
 
     @Test
     fun aTokensFourMemberWritesAreHeldForTheConsoleAndNothingIsWritten() = serverTest(modules, overrides) { server ->
         with(server) {
             val team = team()
             val invitationsBefore = liveInvitations(team)
-            val role = client.patch("/api/v1/orgs/acme/members/bob") {
-                bearerAuth(team.token)
-                json(UpdateMemberRequest("admin"))
-            }
+            val role = changeRole(team.token, "bob", "admin")
             assertEquals(HttpStatusCode.Accepted, role.status, role.bodyAsText())
+            assertEquals("gcf_1", role.body<GovernanceConfirmationPending>().confirmationId)
             val removal = client.delete("/api/v1/orgs/acme/members/bob") { bearerAuth(team.token) }
             assertEquals(HttpStatusCode.Accepted, removal.status, removal.bodyAsText())
-            val invite = client.post("/api/v1/orgs/acme/members/invites") {
-                bearerAuth(team.token)
-                json(InviteRequestBody(listOf(mapOf("email" to "eve@eve.test", "role" to "admin"))))
-            }
+            val invite = invite(team.token, "eve@eve.test", "admin")
             assertEquals(HttpStatusCode.Accepted, invite.status, invite.bodyAsText())
-            val link = client.post("/api/v1/orgs/acme/invitations/links") {
-                bearerAuth(team.token)
-                json(CreateLinkRequest(role = "admin", maxUses = 3))
-            }
+            val link = link(team.token, "admin", 3)
             assertEquals(HttpStatusCode.Accepted, link.status, link.bodyAsText())
             assertEquals(
                 listOf(
@@ -195,7 +218,7 @@ class MemberWritesConfirmationPostgresTest {
     }
 
     @Test
-    fun aTokenIsRefusedBeforeAnythingIsHeldWhenItCannotWrite() = serverTest(modules, overrides) { server ->
+    fun aTokensWriteIsCheckedAsTheAskersBeforeAnythingIsHeld() = serverTest(modules, overrides) { server ->
         with(server) {
             val team = team()
             val readOnly = koin.get<CreatePersonalTokenUseCase>()(team.ada.id, "ro", listOf("orgs:read"), null).secret
@@ -209,12 +232,28 @@ class MemberWritesConfirmationPostgresTest {
             }
             val elsewhere = client.delete("/api/v1/orgs/globex/members/carl") { bearerAuth(team.token) }
             assertEquals(HttpStatusCode.NotFound, elsewhere.status)
-            val badRole = client.patch("/api/v1/orgs/acme/members/bob") {
-                bearerAuth(team.token)
-                json(UpdateMemberRequest("emperor"))
+            // The write's own refusals, before anything is held: a bad role, the owner role, an unknown member, a bad
+            // address, a link for nobody.
+            assertEquals(HttpStatusCode.BadRequest, changeRole(team.token, "bob", "emperor").status)
+            assertEquals(HttpStatusCode.BadRequest, changeRole(team.token, "bob", "owner").status)
+            assertEquals(HttpStatusCode.NotFound, changeRole(team.token, "nobody", "admin").status)
+            assertEquals(HttpStatusCode.BadRequest, invite(team.token, "not-an-address", "member").status)
+            assertEquals(HttpStatusCode.BadRequest, link(team.token, "member", 0).status)
+            // An admin's token asks nothing an admin cannot do, so an owner's confirmation never carries it.
+            val promoted = client.patch("/api/v1/orgs/acme/members/bob") {
+                session(team.ada)
+                json(UpdateMemberRequest("admin"))
             }
-            assertEquals(HttpStatusCode.BadRequest, badRole.status)
+            assertEquals(HttpStatusCode.OK, promoted.status, promoted.bodyAsText())
+            val bobs = writer(team.bob)
+            assertEquals(HttpStatusCode.Forbidden, changeRole(bobs, "ada", "member").status)
+            val removeOwner = client.delete("/api/v1/orgs/acme/members/ada") { bearerAuth(bobs) }
+            assertEquals(HttpStatusCode.Forbidden, removeOwner.status)
+            assertEquals(HttpStatusCode.Forbidden, invite(bobs, "eve@eve.test", "admin").status)
+            assertEquals(HttpStatusCode.Forbidden, link(bobs, "admin", 1).status)
             assertEquals(emptyList(), held)
+            // What an admin may do is held.
+            assertEquals(HttpStatusCode.Accepted, invite(bobs, "eve@eve.test", "member").status)
         }
     }
 
@@ -225,24 +264,21 @@ class MemberWritesConfirmationPostgresTest {
             val invitationsBefore = liveInvitations(team)
             val change = koin.get<GovernanceChange>(named("orgs"))
             assertEquals(setOf("members.role", "members.remove", "members.invite", "members.link"), change.kinds)
-            client.patch("/api/v1/orgs/acme/members/bob") {
-                bearerAuth(team.token)
-                json(UpdateMemberRequest("admin"))
-            }
+            changeRole(team.token, "bob", "admin")
             val role = held.singleOrNull()?.write ?: fail("The token's role change was not held")
             val shown = change.preview(team.orgId, role)
-            assertEquals(member("bob", "member"), shown.before)
-            assertEquals(member("bob", "admin"), shown.after)
+            assertEquals(shown(team, "bob", "member"), shown.before)
+            assertEquals(shown(team, "bob", "admin"), shown.after)
             val made = change.apply(team.orgId, role, confirmer(team))
             assertEquals("admin", made?.jsonObject?.getValue("role")?.jsonPrimitive?.content)
             assertEquals(mapOf("ada" to "owner", "bob" to "admin"), roles(team))
             // What it replaced has changed: the console reads it again and sees the difference.
-            assertEquals(member("bob", "admin"), change.preview(team.orgId, role).before)
+            assertEquals(shown(team, "bob", "admin"), change.preview(team.orgId, role).before)
 
-            val invite = OrgsGovernanceChange.invites(
-                listOf(InviteRequest("eve@eve.test", OrgRole.APPROVER)),
-            )
+            val eve = InviteRequest("eve@eve.test", OrgRole.APPROVER)
+            val invite = OrgsGovernanceChange.of(MemberWrite.Invites(listOf(eve)))
             val invitePreview = change.preview(team.orgId, invite)
+            assertEquals("Invite by e-mail: eve@eve.test", invitePreview.summary)
             assertNull(invitePreview.before)
             assertEquals(
                 "approver",
@@ -252,16 +288,21 @@ class MemberWritesConfirmationPostgresTest {
             val invitedEmails = invited?.jsonObject?.getValue("invited")?.jsonArray?.map { it.jsonPrimitive.content }
             assertEquals(listOf("eve@eve.test"), invitedEmails)
 
-            val link = OrgsGovernanceChange.link(OrgRole.MEMBER, 2)
+            val link = OrgsGovernanceChange.of(MemberWrite.Link(OrgRole.MEMBER, 2))
             val linkPreview = change.preview(team.orgId, link)
             assertNull(linkPreview.before)
             assertEquals(link.payload, linkPreview.after)
             val issued = change.apply(team.orgId, link, confirmer(team))?.jsonObject
             assertTrue(issued?.getValue("url")?.jsonPrimitive?.content.orEmpty().contains("#token="))
             assertEquals(invitationsBefore + 2, liveInvitations(team), "The e-mail invitation and the new link")
+            // Shown once, to the person who asked: then only the invitation is kept, never the address.
+            val shownOnce = change.shownOnce("members.link", issued ?: fail("No link"))?.jsonObject
+            assertEquals(setOf("invitation", "shown"), shownOnce?.keys)
+            assertEquals(issued?.getValue("invitation"), shownOnce?.getValue("invitation"))
+            assertNull(change.shownOnce("members.invite", invited ?: fail("No invitation")), "No secret to hide")
 
-            val removal = OrgsGovernanceChange.removal("bob")
-            assertEquals(member("bob", "admin"), change.preview(team.orgId, removal).before)
+            val removal = OrgsGovernanceChange.of(MemberWrite.Removal("bob"))
+            assertEquals(shown(team, "bob", "admin"), change.preview(team.orgId, removal).before)
             assertNull(change.preview(team.orgId, removal).after)
             assertNull(change.apply(team.orgId, removal, confirmer(team)))
             assertEquals(mapOf("ada" to "owner"), roles(team))
@@ -269,32 +310,23 @@ class MemberWritesConfirmationPostgresTest {
     }
 
     @Test
-    fun aWriteThatCannotBeMadeOpensNoConfirmation() = serverTest(modules, overrides) { server ->
+    fun aWriteThatCannotBeMadeIsRefusedAtTheConsole() = serverTest(modules, overrides) { server ->
         with(server) {
             val team = team()
             val change = koin.get<GovernanceChange>(named("orgs"))
-            // Nobody named so: the preview fails, so the confirmation service refuses to open it.
-            assertFailsWith<OstromException> { change.preview(team.orgId, OrgsGovernanceChange.removal("nobody")) }
-            // Ownership changes hands by a transfer, never by a role.
-            assertFailsWith<OstromException> {
-                change.preview(team.orgId, OrgsGovernanceChange.role("bob", OrgRole.OWNER))
+            // Nobody named so: the preview fails, so the confirmation service refuses to open it, or to confirm it.
+            val nobody = OrgsGovernanceChange.of(MemberWrite.Removal("nobody"))
+            assertFailsWith<OstromException> { change.preview(team.orgId, nobody) }
+            // A kind this change does not own: the governance module never hands it one.
+            assertFailsWith<IllegalStateException> {
+                change.preview(team.orgId, GovernanceWrite("members.unknown", JsonObject(emptyMap())))
             }
             // A confirmer who may not make it: the use case refuses it as the confirmer's.
-            val bob = signIn("bob")
-            val asBob = GovernanceConfirmer(
-                browser(bob),
-                OrgPrincipal(team.orgId, bob.id, OrgRole.MEMBER),
-            )
+            val asBob = GovernanceConfirmer(browser(team.bob), OrgPrincipal(team.orgId, team.bob.id, OrgRole.MEMBER))
             assertFailsWith<OstromException> {
-                change.apply(team.orgId, OrgsGovernanceChange.role("ada", OrgRole.MEMBER), asBob)
+                change.apply(team.orgId, OrgsGovernanceChange.of(MemberWrite.Role("ada", OrgRole.MEMBER)), asBob)
             }
             assertEquals(mapOf("ada" to "owner", "bob" to "member"), roles(team))
         }
     }
-
-    private fun member(login: String, role: String): JsonObject = buildJsonObject {
-        put("login", login)
-        put("role", role)
-    }
-
 }

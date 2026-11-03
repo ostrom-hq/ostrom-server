@@ -88,8 +88,8 @@ data class GovernancePreview(val summary: String, val before: JsonElement?, val 
 data class GovernanceConfirmer(val principal: AuthenticatedPrincipal, val member: OrgPrincipal)
 
 /**
- * The governance writes one module owns (rules, workflows, model policy, members): it previews them when a token asks, and makes
- * them once an owner or an admin confirmed. Each module binds one, named after itself.
+ * The governance writes one module owns (rules, workflows, model policy, members): it previews them when a token asks,
+ * and makes them once an owner or an admin confirmed. Each module binds one, named after itself.
  */
 interface GovernanceChange {
     /** The [GovernanceWrite.kind]s it owns. */
@@ -119,6 +119,18 @@ interface GovernanceChange {
      * @throws OstromException When the write is refused now (a version conflict, a rule deleted meanwhile).
      */
     suspend fun apply(orgId: Uuid, write: GovernanceWrite, confirmer: GovernanceConfirmer): JsonElement?
+
+    /**
+     * The result of a confirmed write of [kind] once its secret was shown (decision of 03/11/2026, "shown once"): the
+     * person who asked reads [result] once, then the governance module keeps this in its place; everyone else, an
+     * owner or an admin, only ever reads this.
+     *
+     * @param kind The write's kind.
+     * @param result What [apply] returned.
+     *
+     * @return The result without its secret, or null when it holds none.
+     */
+    fun shownOnce(kind: String, result: JsonElement): JsonElement? = null
 }
 
 /**

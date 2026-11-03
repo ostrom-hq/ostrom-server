@@ -6,6 +6,7 @@ import dev.ostrom.server.governance.domain.AnswerConfirmationUseCaseImpl
 import dev.ostrom.server.governance.domain.ConfirmationAudit
 import dev.ostrom.server.governance.domain.ConfirmationPeople
 import dev.ostrom.server.governance.domain.ConfirmationRecords
+import dev.ostrom.server.governance.domain.ConfirmationSecrets
 import dev.ostrom.server.governance.domain.ConfirmationWaits
 import dev.ostrom.server.governance.domain.ConfirmationsRepository
 import dev.ostrom.server.governance.domain.ExpireConfirmationsUseCase
@@ -53,7 +54,9 @@ object GovernanceModule : ServerModule {
         single { GovernanceChanges(getAll<GovernanceChange>()) }
         single<ExpireConfirmationsUseCase> { ExpireConfirmationsUseCaseImpl(get(), get(), get(), get()) }
         single<OpenConfirmationUseCase> { OpenConfirmationUseCaseImpl(get(), get(), get(), get(), get(), get()) }
-        single<GetConfirmationUseCase> { GetConfirmationUseCaseImpl(get(), get(), get(), get(), get()) }
+        single<GetConfirmationUseCase> {
+            GetConfirmationUseCaseImpl(get(), get(), get(), get(), get(), ConfirmationSecrets(get(), get()))
+        }
         single<AnswerConfirmationUseCase> {
             AnswerConfirmationUseCaseImpl(ConfirmationRecords(get(), get(), get()), get(), get(), get(), get())
         }
