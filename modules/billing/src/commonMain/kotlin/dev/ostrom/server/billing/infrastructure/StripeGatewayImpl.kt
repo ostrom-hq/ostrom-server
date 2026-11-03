@@ -204,7 +204,7 @@ class StripeGatewayImpl(
         val form = params.joinToString("&") { (key, value) ->
             "${key.encodeURLParameter()}=${value.encodeURLParameter()}"
         }
-        // A GET carries its parameters in the query (a lookup key, an expansion or a limit); reading a customer has none.
+        // A GET carries its parameters in the query (a lookup key, an expansion, a limit); a customer read has none.
         val query = if (method == HttpMethod.Get && form.isNotEmpty()) "?$form" else ""
         val url = config.baseUrl.trimEnd('/') + path + query
         val response = client.request(url) {

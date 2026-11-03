@@ -44,8 +44,8 @@ class StartCheckoutUseCaseImpl(
         val email = emails.emailOf(orgId, caller.memberId)
         val stored = existing?.stripeCustomerId
         val customerId = if (stored != null) {
-            // The address may have changed since the customer was made: Checkout shows the current one.
-            email?.let { updateEmail(stored, it) }
+            // A customer made without an address (none verified then) gets the payer's now.
+            email?.let { fillEmail(stored, it) }
             stored
         } else {
             stripe.createCustomer(orgId, null, email).also { id ->
@@ -71,10 +71,14 @@ class StartCheckoutUseCaseImpl(
         )
     }
 
-    /** The address only spares the payer a field: a refusal (Stripe down, customer deleted) never blocks paying. */
-    private suspend fun updateEmail(customerId: String, email: String) {
+    /**
+     * Fills a missing address only: one already set (an accounting mailbox put in the portal) is never replaced by a
+     * member's. The address only spares the payer a field: a refusal (Stripe down, customer deleted) never blocks
+     * paying.
+     */
+    private suspend fun fillEmail(customerId: String, email: String) {
         try {
-            stripe.updateCustomerEmail(customerId, email)
+            if (stripe.customerEmail(customerId).isNullOrBlank()) stripe.updateCustomerEmail(customerId, email)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
