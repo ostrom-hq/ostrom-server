@@ -11,6 +11,7 @@ import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.session
 import dev.ostrom.server.runners.infrastructure.DisabledRuntimeDriver
 import dev.ostrom.server.runners.infrastructure.DockerApiException
+import dev.ostrom.server.runners.infrastructure.DockerExecutionPlan
 import dev.ostrom.server.runners.infrastructure.DockerRuntimeDriver
 import dev.ostrom.server.runners.infrastructure.DockerSettings
 import dev.ostrom.server.runners.infrastructure.KubernetesRuntimeDriver
@@ -156,6 +157,27 @@ class DockerRuntimeDriverTest {
         driver.startExecution(spec.copy(prompt = null))
         val silent = body(10)["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertFalse(silent.any { it.startsWith("OSTROM_AGENT_PROMPT") })
+    }
+
+    @Test
+    fun aPlanWithoutSecretsIsTheSameExecutionWithoutTheTokenNorTheFirstMessage() = runTest {
+        val plan = DockerExecutionPlan(
+            "ostrom",
+            "http://host.docker.internal:8080",
+            "ghcr.io/ostrom-hq/ostrom-runner:1.2",
+        )
+        driver.ensureWorkspace(session)
+        driver.startExecution(spec)
+        // The same volumes and containers the driver creates, in the same order.
+        assertEquals(plan.volumes(session.id).map { it.body }, (0..2).map(::body))
+        assertEquals(plan.containers(spec).map { it.body }, listOf(3, 5, 7).map(::body))
+        val kept = plan.containers(spec, secrets = false)
+        assertEquals(listOf("$name-agent", "$name-checks", name), kept.map { it.name })
+        assertEquals(plan.containers(spec).take(2), kept.take(2))
+        val env = kept.last().body["Env"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertFalse(env.any { it.startsWith("OSTROM_RUNNER_TOKEN") || it.startsWith("OSTROM_AGENT_PROMPT") })
+        assertTrue("OSTROM_SESSION_ID=${session.id}" in env)
+        assertEquals("DockerObject(name=$name)", plan.containers(spec).last().toString())
     }
 
     @Test
