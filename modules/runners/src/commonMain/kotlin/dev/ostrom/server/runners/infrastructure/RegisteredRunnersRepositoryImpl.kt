@@ -10,6 +10,7 @@ import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asIntOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import kotlinx.serialization.builtins.ListSerializer
@@ -69,11 +70,13 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
         Statement.create(KEY_SQL).bind("id", id),
     ).getOrThrow().firstOrNull()?.let { RegisteredRunnerKey(it.get("org_id").asUuid(), it.get("key_hash").asString()) }
 
-    override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant): Boolean = driver.inTenant(orgId) {
-        execute(
-            Statement.create(TOUCH_SQL).bind("at", at).bind("org_id", orgId).bind("id", id).bind("key_hash", keyHash),
-        ).getOrThrow() > 0
-    }
+    override suspend fun touch(orgId: Uuid, id: Uuid, keyHash: String, at: Instant, capacity: Int?): Boolean =
+        driver.inTenant(orgId) {
+            execute(
+                Statement.create(TOUCH_SQL).bind("at", at).bind("capacity", capacity).bind("org_id", orgId)
+                    .bind("id", id).bind("key_hash", keyHash),
+            ).getOrThrow() > 0
+        }
 
     private fun ResultSet.Row.toRunner() = RegisteredRunner(
         id = get("id").asUuid(),
@@ -85,12 +88,13 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
         registeredBy = get("registered_by").asString(),
         createdAt = get("created_at").asInstant(),
         lastSeenAt = get("last_seen_at").asInstantOrNull(),
+        capacity = get("capacity").asIntOrNull(),
     )
 
     /** The columns and the request-path reads, shared with the query plan test. */
     internal companion object {
         const val COLUMNS: String =
-            "id, org_id, name, labels, version, key_hash, registered_by, created_at, last_seen_at"
+            "id, org_id, name, labels, version, key_hash, registered_by, created_at, last_seen_at, capacity"
 
         /** An organization's runners by name whatever its case, through `runners_registered_name`. */
         const val LIST_SQL: String =
@@ -102,9 +106,13 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
         /** A runner's organization and key hash by its id, through `runners_registered_key` (its primary key). */
         const val KEY_SQL: String = "SELECT org_id, key_hash FROM runners_registered_key(CAST(:id AS UUID))"
 
-        /** A sign of life, written only while the runner has that key; GREATEST keeps the newest (it skips NULL). */
+        /**
+         * A sign of life and the capacity it declares, written only while the runner has that key; GREATEST keeps the
+         * newest (it skips NULL).
+         */
         const val TOUCH_SQL: String =
-            "UPDATE runners_registered SET last_seen_at = GREATEST(last_seen_at, :at) " +
+            "UPDATE runners_registered SET last_seen_at = GREATEST(last_seen_at, :at), " +
+                "capacity = CAST(:capacity AS INTEGER) " +
                 "WHERE org_id = :org_id AND id = :id AND key_hash = :key_hash"
 
         private val LABELS = ListSerializer(String.serializer())

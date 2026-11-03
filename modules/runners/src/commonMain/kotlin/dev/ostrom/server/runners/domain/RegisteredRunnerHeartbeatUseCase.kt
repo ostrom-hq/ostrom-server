@@ -55,7 +55,7 @@ class RegisteredRunnerHeartbeatUseCaseImpl(
         val stored = repository.keyOf(id)
         val matches = constantTimeEquals(hash, if (stored == null) NO_KEY_HASH else stored.keyHash)
         val now = clock.now()
-        if (stored == null || !matches || !repository.touch(stored.orgId, id, hash, now)) {
+        if (stored == null || !matches || !repository.touch(stored.orgId, id, hash, now, report?.capacity)) {
             throw RunnerUnauthenticatedException()
         }
         if (report == null) return MachineWork(emptyList(), emptyList())

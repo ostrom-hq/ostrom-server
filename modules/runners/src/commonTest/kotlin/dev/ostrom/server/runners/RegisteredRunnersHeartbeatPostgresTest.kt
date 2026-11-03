@@ -123,10 +123,11 @@ class RegisteredRunnersHeartbeatPostgresTest {
 
             // Written in its organization, with its key, only; an older sign of life never replaces a newer one.
             val later = clock.now + 30.seconds
-            assertTrue(repository.touch(ORG_A, id, hash, later))
-            assertTrue(repository.touch(ORG_A, id, hash, clock.now))
-            assertFalse(repository.touch(ORG_B, id, hash, later + 30.seconds))
-            assertFalse(repository.touch(ORG_A, id, "another-hash", later + 30.seconds))
+            assertTrue(repository.touch(ORG_A, id, hash, later, null))
+            assertTrue(repository.touch(ORG_A, id, hash, clock.now, 3))
+            assertFalse(repository.touch(ORG_B, id, hash, later + 30.seconds, 9))
+            assertFalse(repository.touch(ORG_A, id, "another-hash", later + 30.seconds, 9))
+            assertEquals(3, repository.list(ORG_A, 10).single().capacity, "The capacity of its last heartbeat")
             val seen = server.driver.inTenant(ORG_A) {
                 fetchAll(Statement.create("SELECT last_seen_at FROM runners_registered")).getOrThrow()
             }.single().get("last_seen_at").asInstant()
