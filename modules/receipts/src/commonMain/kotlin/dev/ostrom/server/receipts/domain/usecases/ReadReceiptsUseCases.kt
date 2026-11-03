@@ -4,11 +4,11 @@ package dev.ostrom.server.receipts.domain.usecases
 import dev.ostrom.core.receipts.ReceiptPublicKey
 import dev.ostrom.core.receipts.ReceiptVerification
 import dev.ostrom.core.receipts.ReceiptVerifierImpl
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.receipts.domain.models.ReceiptKey
 import dev.ostrom.server.receipts.domain.models.ReceiptNotFoundException
 import dev.ostrom.server.receipts.domain.models.ReceiptQuery
 import dev.ostrom.server.receipts.domain.models.StoredReceipt
-
 import dev.ostrom.server.receipts.domain.models.Verification
 import dev.ostrom.server.receipts.domain.repositories.ReceiptsRepository
 import dev.ostrom.server.receipts.domain.services.TrustedReceiptKeys
@@ -61,8 +61,11 @@ interface ListReceiptsUseCase {
  * @param repository The receipts.
  */
 class ListReceiptsUseCaseImpl(private val repository: ReceiptsRepository) : ListReceiptsUseCase {
-    override suspend fun invoke(orgId: Uuid, query: ReceiptQuery): List<StoredReceipt> =
-        repository.list(orgId, query.copy(limit = query.limit.coerceIn(1, ReceiptQuery.MAX_PAGE)))
+    override suspend fun invoke(orgId: Uuid, query: ReceiptQuery): List<StoredReceipt> {
+        val page = repository.list(orgId, query.copy(limit = query.limit.coerceIn(1, ReceiptQuery.MAX_PAGE)))
+        // A `before` that names no receipt of the organization (forged, or another's) is a 400, not an empty page.
+        return Pages.checked("before", query.before, page) { repository.get(orgId, it) != null }
+    }
 }
 
 /** Verifies a receipt against the instance keys, as `ostrom verify` does offline. */

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.receipts
 
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.receipts.domain.models.InvalidReceiptException
 import dev.ostrom.server.receipts.domain.models.ReceiptNotFoundException
 import dev.ostrom.server.receipts.domain.models.ReceiptQuery
@@ -104,6 +105,11 @@ class ReceiptsUseCasesTest {
         assertEquals(ReceiptQuery.MAX_PAGE, receipts.lastQuery?.limit)
         assertEquals("gate", receipts.lastQuery?.subjectKind)
         assertEquals(emptyList(), list(ORG_B, ReceiptQuery()))
+        // After its cursor, none after the last; a receipt the organization does not hold is a 400.
+        val id = receipt.text("id")
+        assertEquals(emptyList(), list(ORG_A, ReceiptQuery(before = id)))
+        assertFailsWith<InvalidPageException> { list(ORG_A, ReceiptQuery(before = "nope")) }
+        assertFailsWith<InvalidPageException> { list(ORG_B, ReceiptQuery(before = id)) }
     }
 
     @Test
