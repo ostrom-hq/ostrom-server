@@ -120,8 +120,8 @@ internal object ReportsQueries {
     }
 
     // The repository of a gate's subject (`owner/name`): the one the command really ran in when the hook read another
-    // (`realRepo`), else the one its session declared (`repo`); none outside a repository. The subject is the gate's own
-    // row, so it is never another organization's.
+    // (`realRepo`), else the one its session declared (`repo`); none outside a repository. The subject is the gate's
+    // own row, so it is never another organization's.
     private const val GATE_REPO = "NULLIF(COALESCE(NULLIF(CAST(g.subject AS JSONB) ->> 'realRepo', ''), " +
         "CAST(g.subject AS JSONB) ->> 'repo'), '')"
 
