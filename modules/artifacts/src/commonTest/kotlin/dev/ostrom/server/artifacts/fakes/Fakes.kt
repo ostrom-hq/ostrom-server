@@ -121,8 +121,12 @@ class InMemoryArtifacts : ArtifactsRepository {
 
     override suspend fun getByLinkSlug(slug: String): Artifact? = artifacts.values.firstOrNull { it.linkSlug == slug }
 
-    override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> =
-        artifacts.values.filter { it.orgId == caller.orgId }.take(limit)
+    // After `before`, the ones that follow it; none after an artifact it does not hold, as the database.
+    override suspend fun listReadable(caller: ArtifactCaller, before: Uuid?, limit: Int): List<Artifact> {
+        val all = artifacts.values.filter { it.orgId == caller.orgId }
+        val at = if (before == null) -1 else all.indexOfFirst { it.id == before }
+        return if (before != null && at < 0) emptyList() else all.drop(at + 1).take(limit)
+    }
 
     override suspend fun versions(orgId: Uuid, artifactId: Uuid): List<ArtifactVersion> =
         versions.values.filter { it.artifactId == artifactId }.sortedByDescending { it.number }
