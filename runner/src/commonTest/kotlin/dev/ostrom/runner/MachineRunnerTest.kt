@@ -126,7 +126,7 @@ class MachineRunnerTest {
                 return MachineWork()
             }
         }
-        val machine = MachineRunner(api, 10.seconds) { lines += it }
+        val machine = MachineRunner(api, 10.seconds, { lines += it })
         val code = async { machine.run() }
 
         runCurrent()
