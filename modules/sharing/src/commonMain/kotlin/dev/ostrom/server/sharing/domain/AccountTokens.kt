@@ -14,7 +14,8 @@ import kotlin.uuid.Uuid
 /**
  * The tokens of the shared accounts, used by the pool only (SECURITY-AUDIT S2-21: they serve the gateway and the org's
  * cloud pods, never a member). Tokens are renewed [REFRESH_MARGIN] before they expire, one refresh per account at a
- * time; a refused refresh token, or an envelope that no longer opens, marks the account RECONNECT_REQUIRED.
+ * time; a refused refresh token, or an envelope that no longer opens, marks the account RECONNECT_REQUIRED, and so
+ * does a long-lived token (no refresh token) once the provider refuses it.
  *
  * A refresh also checks whose tokens they are: the account is shared under a provider account id its owner declared
  * (the CLI, an import), and when the provider names another account in its answer, the account is marked
@@ -79,8 +80,10 @@ class AccountTokens(
     private suspend fun storedTokens(account: SharedAccount): AccountCredentials? =
         accounts.envelope(account.orgId, account.id)?.let { cipher.open(it, account.orgId, account.id) }
 
-    private suspend fun renew(account: SharedAccount, stored: AccountCredentials): AccountCredentials? =
-        when (val result = refresher.refresh(account.provider, stored)) {
+    private suspend fun renew(account: SharedAccount, stored: AccountCredentials): AccountCredentials? {
+        // A long-lived token has nothing to renew it with: refused or expired, its owner enrolls it again.
+        if (stored.refreshToken.isEmpty()) return retire(account)
+        return when (val result = refresher.refresh(account.provider, stored)) {
             is RefreshResult.Renewed -> {
                 unavailableUntil.remove(account.id)
                 renewed(account, stored, result)
@@ -92,6 +95,7 @@ class AccountTokens(
                 stored.takeIf { it.expiresAt > clock.now() }
             }
         }
+    }
 
     private suspend fun renewed(
         account: SharedAccount,

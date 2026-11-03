@@ -73,8 +73,17 @@ val ADMIN_SCOPES: Set<String> = GovernanceScopes.ALL
 /** How long the token of `ostrom login --admin` lives: a working day, after which `ostrom login --admin` again. */
 val ADMIN_TOKEN_LIFETIME: Duration = 8.hours
 
-/** What the token of `ostrom login --admin` grants: what the CLI does, plus the governance writes. */
-val ADMIN_TOKEN_SCOPES: Set<String> = CLI_SCOPES + ADMIN_SCOPES
+/**
+ * The reads the token of `ostrom login --admin` makes to write the governance, which the device's token lacks: the
+ * model policy `ostrom policy set models` reads before it writes it again (it keeps the default and the members'
+ * lists). Reads, not governance scopes: a personal token keeps them, and `ostrom login --admin` does not ask for them
+ * (the browser shows the writes it approves). Only a read of what [ADMIN_SCOPES] write belongs here: `inference:read`
+ * opens `GET /api/v1/policy/models` alone (the inference settings take `inference:admin`).
+ */
+val ADMIN_READ_SCOPES: Set<String> = setOf("inference:read")
+
+/** What the token of `ostrom login --admin` grants: what the CLI does, the governance writes and their reads. */
+val ADMIN_TOKEN_SCOPES: Set<String> = CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES
 
 /** The scope that changes the caller's notification preferences (`PUT /api/v1/me/notifications`). */
 const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"

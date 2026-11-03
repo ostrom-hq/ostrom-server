@@ -2,6 +2,7 @@
 package dev.ostrom.server.orgs
 
 import dev.ostrom.server.kernel.auth.MemberDirectory
+import dev.ostrom.server.kernel.auth.MemberLogins
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.OrgDeletionListener
@@ -66,6 +67,7 @@ import dev.ostrom.server.orgs.infrastructure.IdentityRateLimiter
 import dev.ostrom.server.orgs.infrastructure.InvitationsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MailInvitationMailer
 import dev.ostrom.server.orgs.infrastructure.MemberDirectoryImpl
+import dev.ostrom.server.orgs.infrastructure.MemberLoginsImpl
 import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembershipOrgResolver
 import dev.ostrom.server.orgs.infrastructure.OrgDeletionWorker
@@ -93,7 +95,8 @@ import org.koin.dsl.module
  * [OrgDeletionListener], then erases a deleted organization after 30 days.
  *
  * Other modules use it through the interfaces it binds: [PrincipalOrgResolver] (through the
- * kernel's `requireOrgPrincipal`), [MemberDirectory] (who a wait may be asked of), [CountMembersUseCase] for
+ * kernel's `requireOrgPrincipal`), [MemberDirectory] (who a wait may be asked of), [MemberLogins] (the
+ * people a shared account is lent to, by login), [CountMembersUseCase] for
  * per-seat billing. Until the billing
  * module binds its own [SeatPolicy] here, every organization has the free plan's limit
  * ([FreePlanSeats]).
@@ -114,6 +117,7 @@ object OrgsModule : ServerModule {
         single<SeatPolicy> { FreePlanSeats() }
         single<PrincipalOrgResolver> { MembershipOrgResolver(get(), get()) }
         single<MemberDirectory> { MemberDirectoryImpl(get()) }
+        single<MemberLogins> { MemberLoginsImpl(get(), get()) }
         // Identity has no teams: the QA account (a person, their team, a token) is assembled here.
         single<TestAccountSeeder> { TestAccountSeederImpl(get(), get(), get(), get()) }
         single {

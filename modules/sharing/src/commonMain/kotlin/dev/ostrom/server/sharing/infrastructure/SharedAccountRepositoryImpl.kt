@@ -86,7 +86,8 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
             "UPDATE sharing_accounts SET label = :label, priority = :priority, " +
                 "status = CASE WHEN status IN ($AWAITING_SIGN_IN) THEN status ELSE :status END, " +
                 "max_concurrent = :max_concurrent, utilization_ceiling = :ceiling, " +
-                "monthly_budget_micros = :budget, allowed_members = :allowed, version = version + 1 " +
+                "monthly_budget_micros = :budget, daily_budget_micros = :daily, allowed_members = :allowed, " +
+                "version = version + 1 " +
                 "WHERE org_id = :org_id AND id = :id AND version = COALESCE(:expected, version) " +
                 "RETURNING $ACCOUNT_COLUMNS",
         )
@@ -139,9 +140,9 @@ class SharedAccountRepositoryImpl(private val driver: Driver) : SharedAccountRep
         const val UPSERT =
             "INSERT INTO sharing_accounts (id, org_id, provider, label, email, provider_account_id, " +
                 "owner_member_id, priority, status, max_concurrent, utilization_ceiling, monthly_budget_micros, " +
-                "allowed_members, cooldown_until, envelope, created_at, version) " +
+                "daily_budget_micros, allowed_members, cooldown_until, envelope, created_at, version) " +
                 "VALUES (:id, :org_id, :provider, :label, :email, :provider_account_id, :owner, :priority, " +
-                ":status, :max_concurrent, :ceiling, :budget, :allowed, NULL, :envelope, :created_at, 1) " +
+                ":status, :max_concurrent, :ceiling, :budget, :daily, :allowed, NULL, :envelope, :created_at, 1) " +
                 "ON CONFLICT (org_id, provider, provider_account_id) DO UPDATE SET label = EXCLUDED.label, " +
                 "email = EXCLUDED.email, status = EXCLUDED.status, cooldown_until = NULL, " +
                 "envelope = CASE WHEN sharing_accounts.id = EXCLUDED.id THEN EXCLUDED.envelope " +

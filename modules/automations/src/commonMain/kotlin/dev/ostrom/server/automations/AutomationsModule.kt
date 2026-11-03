@@ -14,12 +14,14 @@ import dev.ostrom.server.automations.domain.AskWaitUseCase
 import dev.ostrom.server.automations.domain.AskWaitUseCaseImpl
 import dev.ostrom.server.automations.domain.ReadWaitsUseCase
 import dev.ostrom.server.automations.domain.ReadWaitsUseCaseImpl
+import dev.ostrom.server.automations.domain.WaitAgentResolver
 import dev.ostrom.server.automations.domain.WaitEvents
 import dev.ostrom.server.automations.domain.WaitsRepository
 import dev.ostrom.server.automations.infrastructure.AutomationScheduler
 import dev.ostrom.server.automations.infrastructure.AutomationsMigrations
 import dev.ostrom.server.automations.infrastructure.AutomationsRepositoryImpl
 import dev.ostrom.server.automations.infrastructure.NoOtherMembers
+import dev.ostrom.server.automations.infrastructure.NoWaitAgents
 import dev.ostrom.server.automations.infrastructure.SilentWaitEvents
 import dev.ostrom.server.automations.infrastructure.UnavailableLauncher
 import dev.ostrom.server.automations.infrastructure.WaitsRepositoryImpl
@@ -43,9 +45,9 @@ import org.koin.dsl.module
  * The automations module: waits ("Waiting for you": a question to a person, asked by an agent with `ask_human` or a
  * member, the first answer wins), and automations, which start a cloud agent session on a cron or a signed webhook.
  *
- * A [MemberDirectory], [WaitEvents] or [AutomationLauncher] bound by another module replaces the defaults: until
- * then a wait is only asked of its asker, no one is told of it, and an automation's runs fail
- * `cloud_sessions_unavailable`.
+ * A [MemberDirectory], [WaitEvents], [AutomationLauncher] or [WaitAgentResolver] bound by another module replaces the
+ * defaults: until then a wait is only asked of its asker, no one is told of it, an automation's runs fail
+ * `cloud_sessions_unavailable`, and no agent token asks through the waits MCP server.
  */
 object AutomationsModule : ServerModule {
     override val name: String = "automations"
@@ -62,7 +64,9 @@ object AutomationsModule : ServerModule {
         }
         single<ReadWaitsUseCase> { ReadWaitsUseCaseImpl(get()) }
         single<AnswerWaitUseCase> { AnswerWaitUseCaseImpl(get(), getOrNull<WaitEvents>() ?: SilentWaitEvents, get()) }
-        single { WaitsRoutesDependencies(get(), get(), get(), get()) }
+        single {
+            WaitsRoutesDependencies(get(), get(), get(), get(), getOrNull<WaitAgentResolver>() ?: NoWaitAgents)
+        }
         single<AutomationsRepository> { AutomationsRepositoryImpl(get()) }
         single<WebhookSecrets> { WebhookSecretsImpl(get()) }
         single<ManageAutomationsUseCase> { ManageAutomationsUseCaseImpl(get(), get(), get()) }

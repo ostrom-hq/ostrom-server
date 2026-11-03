@@ -53,4 +53,10 @@ val SharingMigrations: List<SchemaMigration> = listOf(
         name = "version_sharing_accounts",
         sql = "ALTER TABLE sharing_accounts ADD COLUMN version BIGINT NOT NULL DEFAULT 1",
     ),
+    // The contract's daily allocation (`dailyAllocationUsd`), in USD millionths like the monthly budget.
+    SchemaMigration(
+        version = 4,
+        name = "daily_budget_of_sharing_accounts",
+        sql = "ALTER TABLE sharing_accounts ADD COLUMN daily_budget_micros BIGINT",
+    ),
 )
