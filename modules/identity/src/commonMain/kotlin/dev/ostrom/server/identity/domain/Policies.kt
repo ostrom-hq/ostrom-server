@@ -53,14 +53,15 @@ val NEVER_ON_A_TOKEN: Set<String> = setOf(ANSWER_SCOPE, AGENT_SCOPE, ALL_USER_SC
 /**
  * The scopes the CLI token gets: what `ostrom` does for its user (`ostrom receipts` and `verify` read the receipts of
  * their organization, `ostrom inbox` and `ostrom logs` read the approvals and gates, `ostrom claude` lists the
- * organization's MCP servers, `ostrom init` and `ostrom rules list` read its rules, decisions and gate policy), nothing
+ * organization's MCP servers, `ostrom init` and `ostrom rules list` read its rules, decisions and gate policy,
+ * `ostrom claude --cloud` and `ostrom attach` start, read and attach to the person's cloud sessions), nothing
  * of the console's administration, and neither [ANSWER_SCOPE] nor [WORKFLOWS_WRITE_SCOPE] (S2-04): `ostrom approve`
  * opens the console's page instead. `rules:read` only reads: a rule and the gate policy are written from the console
  * (H1). A CLI token issued before a scope joined this set does not get it: `ostrom login` again.
  */
 val CLI_SCOPES: Set<String> = setOf(
     "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
-    "rules:read",
+    "rules:read", "cloud:read", "cloud:write",
 )
 
 /**
