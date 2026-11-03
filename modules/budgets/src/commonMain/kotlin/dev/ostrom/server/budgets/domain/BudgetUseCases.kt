@@ -18,12 +18,12 @@ object BudgetRules {
     val ALERT_THRESHOLDS: List<Int> = listOf(80, 100)
 
     /**
-     * Refuses a limit out of range; null (no limit) is accepted.
+     * Refuses a limit out of range.
      *
      * @throws InvalidBudgetException When it is negative or too large.
      */
-    fun requireLimit(limitMicros: Long?) {
-        if (limitMicros != null && limitMicros !in 0..MAX_LIMIT_MICROS) throw InvalidBudgetException()
+    fun requireLimit(limitMicros: Long) {
+        if (limitMicros !in 0..MAX_LIMIT_MICROS) throw InvalidBudgetException()
     }
 }
 

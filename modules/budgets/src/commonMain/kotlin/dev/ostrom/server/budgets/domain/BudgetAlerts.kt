@@ -74,7 +74,7 @@ class AuditedBudgetAlerts(private val alerts: BudgetAlerts, private val audit: O
         actor = BUDGETS_ACTOR,
         event = "budget.exceeded",
         subjectType = "budget",
-        subjectId = memberId?.toString() ?: ORGANIZATION,
+        subjectId = if (memberId == null) ORGANIZATION else memberId.toString(),
         details = auditDetails(
             "scope" to if (memberId == null) ORGANIZATION else "member",
             "period" to window.name.lowercase(),
