@@ -118,9 +118,11 @@ One function is not the router's: the member search, `orgs_search_members(org, p
 `ostrom_tenant` alone, inside a request's transaction. It reads three columns of `identity_users`, `id`, `login` and `display_name` (no e-mail, a column grant) and the members
 of one organization through a policy of its own bound to `ostrom.org_id` and to `current_user`; it refuses any other
 organization than the session's, and a session without one. It returns member ids only, in order and paged, under the
-`text_pattern_ops` indexes of `lower(login)` and `lower(display_name)`. Like `ostrom_router`, the deployment creates the role
-before `ostrom-server migrate` and the owner administers it (`ci/database-roles.sql`, the Helm chart): roles are
-global to the cluster, and the owner must be able to hand the function over to one created before.
+`text_pattern_ops` indexes of `lower(login)` and `lower(display_name)`. Roles are global to the cluster. On a new cluster the
+migration creates the role itself (the owner has `CREATEROLE`, and administers the roles it creates), which is how
+`ci/database-roles.sql` and the Helm chart of main run it; a role created before by another role must be
+administered by the owner (`GRANT ostrom_member_search TO <owner> WITH ADMIN OPTION`, as the tests' `TestDatabase`
+and ostrom-helm#42 do), or the migration stops on `permission denied to grant role`, before any grant or function.
 
 ## The audit log is append-only
 
