@@ -115,6 +115,17 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
 | `governance_expired_organizations(now, limit)` | governance | the organizations with confirmations past their 15 minutes, for the sweep | `GovernancePostgresTest` |
 
+One function is not the router's: the member search, `orgs_search_members(org, prefix, after, limit)` (orgs, version
+7; `MemberSearchPostgresTest`). It is owned by **`ostrom_member_search`** (`NOLOGIN`, no RLS bypass) and run by
+`ostrom_tenant` alone, inside a request's transaction. It reads three columns of `identity_users`, `id`, `login` and `display_name` (no e-mail, a column grant) and the members
+of one organization through a policy of its own bound to `ostrom.org_id` and to `current_user`; it refuses any other
+organization than the session's, and a session without one. It returns member ids only, in order and paged, under the
+`text_pattern_ops` indexes of `lower(login)` and `lower(display_name)`. Roles are global to the cluster. On a new cluster the
+migration creates the role itself (the owner has `CREATEROLE`, and administers the roles it creates), which is how
+`ci/database-roles.sql` and the Helm chart of main run it; a role created before by another role must be
+administered by the owner (`GRANT ostrom_member_search TO <owner> WITH ADMIN OPTION`, as the tests' `TestDatabase`
+and ostrom-helm#42 do), or the migration stops on `permission denied to grant role`, before any grant or function.
+
 ## The audit log is append-only
 
 The policies say which organization's rows a query reaches, not what it may do to them, and the serving role holds
