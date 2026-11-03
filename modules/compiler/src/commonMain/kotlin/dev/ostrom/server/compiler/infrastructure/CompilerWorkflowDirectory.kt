@@ -12,5 +12,5 @@ import kotlin.uuid.Uuid
  */
 class CompilerWorkflowDirectory(private val workflows: WorkflowsRepository) : WorkflowDirectory {
     override suspend fun name(orgId: Uuid, workflowId: String): String? =
-        workflows.workflow(orgId, workflowId)?.doc?.workflow?.name
+        workflows.workflow(orgId, workflowId)?.let { it.doc.workflow.name }
 }
