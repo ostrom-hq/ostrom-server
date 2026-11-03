@@ -233,7 +233,8 @@ class WorkflowsUseCaseImpl(
 // `accept` from proposed to accepted, `edit` otherwise; null when nothing that is decided changed.
 private fun changeOf(before: WorkflowDoc?, after: Workflow, repos: List<String>?): String? {
     val same = before != null && strip(before.workflow) == strip(after) && before.repos == repos
-    val accepted = before?.workflow?.status == WorkflowStatus.PROPOSED && after.status == WorkflowStatus.ACCEPTED
+    val proposed = before != null && before.workflow.status == WorkflowStatus.PROPOSED
+    val accepted = proposed && after.status == WorkflowStatus.ACCEPTED
     return when {
         same -> null
         accepted -> "accept"
