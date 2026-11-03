@@ -8,7 +8,7 @@ import dev.ostrom.core.api.models.WorkflowNodeKind
 import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.compiler.domain.models.Authorship
-import dev.ostrom.server.compiler.domain.repositories.WorkflowsRepository
+import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
@@ -54,8 +54,11 @@ import io.ktor.http.isSuccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -67,6 +70,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.time.TimeSource
@@ -151,28 +155,33 @@ class LaunchPathLoadPostgresTest {
         val team = server.team("bea", CONCURRENT)
         server.release(team.org)
         val deadlocksBefore = server.deadlocks()
-        val timings = mutableMapOf<String, MutableList<Duration>>()
+        val calls = Calls()
         val started = TimeSource.Monotonic.markNow()
-        val ended = coroutineScope {
-            team.people.mapIndexed { n, person -> async { server.wholePath(person, n, timings) } }.awaitAll()
+        // Bounded: a call that waits for a connection it never gets is counted as unfinished, not waited for.
+        val ended = withTimeoutOrNull(CONCURRENCY_BUDGET) {
+            coroutineScope {
+                team.people.mapIndexed { n, person -> async { server.wholePath(person, n, calls) } }.awaitAll()
+            }
         }
         val wall = started.elapsedNow()
+        val finished = ended.orEmpty().filterNotNull()
         val contended = server.contendedLaunches(team)
         val deadlocks = server.deadlocks() - deadlocksBefore
         val active = server.activeAgentTokens(team.org.id)
-        val stillActing = ended.count { launch ->
+        val stillActing = finished.count { launch ->
             server.client.post(SESSIONS) { bearer(launch.agentToken); json(session("s-after", launch.launchId)) }
                 .status != HttpStatusCode.Unauthorized
         }
         val report = buildString {
             appendLine("$CONCURRENT launches at once, one organization, one person each; in-process server, pool 4")
-            appendLine("all $CONCURRENT paths in $wall")
-            timings.forEach { (route, times) -> appendLine(line(route, times)) }
+            appendLine("${finished.size} of $CONCURRENT paths whole in $wall (budget $CONCURRENCY_BUDGET)")
+            append(calls.report())
             appendLine(line("launch transaction, 100 callers, pool of 50 (advisory lock wait included)", contended))
             appendLine("deadlocks: $deadlocks; agent tokens still active: $active")
             appendLine("ended agent tokens still accepted: $stillActing")
         }
         write("launch-concurrency", report)
+        assertEquals(CONCURRENT, finished.size, "Every launch goes through its whole path\n$report")
         assertEquals(0L, deadlocks, report)
         assertEquals(0L, active, "Every agent token is revoked once its launch ended (R2b)\n$report")
         assertEquals(0, stillActing, report)
@@ -202,31 +211,51 @@ class LaunchPathLoadPostgresTest {
         assertEquals(0L, active, report)
     }
 
-    // The whole path of one launch, each call timed under its route.
-    private suspend fun TestServer.wholePath(
-        person: Person,
-        n: Int,
-        timings: MutableMap<String, MutableList<Duration>>,
-    ): Started {
-        suspend fun timed(route: String, call: suspend () -> HttpResponse): HttpResponse {
+    /** Each call of the concurrent paths, by route: its time and its status. */
+    private class Calls {
+        private val lock = Mutex()
+        private val times = mutableMapOf<String, MutableList<Duration>>()
+        private val failures = mutableMapOf<String, MutableList<String>>()
+
+        suspend fun <T> timed(route: String, call: suspend () -> HttpResponse, read: suspend (HttpResponse) -> T): T? {
             val start = TimeSource.Monotonic.markNow()
             val answer = call()
             val took = start.elapsedNow()
-            assertTrue(answer.status.isSuccess(), "$route: ${answer.status} ${answer.bodyAsText()}")
-            timings.getOrPut(route) { mutableListOf() } += took
-            return answer
+            val ok = answer.status.isSuccess()
+            val failure = if (ok) null else "${answer.status.value} after $took: ${answer.bodyAsText().take(TEXT)}"
+            lock.withLock {
+                times.getOrPut(route) { mutableListOf() } += took
+                failure?.let { failures.getOrPut(route) { mutableListOf() } += it }
+            }
+            return if (ok) read(answer) else null
         }
-        timed("GET /policy/agents") { client.get(POLICY) { bearer(person.cliToken) } }
-        timed("GET /packages/current") { client.get(PACKAGE) { bearer(person.cliToken) } }
-        val launch = timed("POST /launches") { client.post(LAUNCHES) { bearer(person.cliToken); json(LAUNCH) } }
-            .body<LaunchResponse>()
+
+        fun report(): String = buildString {
+            times.forEach { (route, list) -> appendLine(line(route, list)) }
+            failures.forEach { (route, list) ->
+                appendLine("$route: ${list.size} failed, first: ${list.first()}")
+            }
+        }
+    }
+
+    // The whole path of one launch, each call timed under its route; null once a call fails.
+    private suspend fun TestServer.wholePath(person: Person, n: Int, calls: Calls): Started? {
+        calls.timed("GET /policy/agents", { client.get(POLICY) { bearer(person.cliToken) } }) { } ?: return null
+        calls.timed("GET /packages/current", { client.get(PACKAGE) { bearer(person.cliToken) } }) { } ?: return null
+        val launch = calls.timed(
+            "POST /launches",
+            { client.post(LAUNCHES) { bearer(person.cliToken); json(LAUNCH) } },
+        ) { it.body<LaunchResponse>() } ?: return null
         val token = launch.agentToken
         val sessionId = "s-$n"
-        timed("POST /sessions") { client.post(SESSIONS) { bearer(token); json(session(sessionId, launch.launchId)) } }
-        timed("GET /gates/catalog/signed") { client.get(CATALOG) { bearer(token) } }
-        timed("POST /gates (governed)") { client.post(GATES) { bearer(token); json(ask(sessionId, n)) } }
-        timed("POST /sessions/{id}/end") { client.post("$SESSIONS/$sessionId/end") { bearer(token); json("{}") } }
-        timed("DELETE /launches/{id}") { client.delete("$LAUNCHES/${launch.launchId}") { bearer(token) } }
+        val steps = listOf<Pair<String, suspend () -> HttpResponse>>(
+            "POST /sessions" to { client.post(SESSIONS) { bearer(token); json(session(sessionId, launch.launchId)) } },
+            "GET /gates/catalog/signed" to { client.get(CATALOG) { bearer(token) } },
+            "POST /gates (governed)" to { client.post(GATES) { bearer(token); json(ask(sessionId, n)) } },
+            "POST /sessions/{id}/end" to { client.post("$SESSIONS/$sessionId/end") { bearer(token); json("{}") } },
+            "DELETE /launches/{id}" to { client.delete("$LAUNCHES/${launch.launchId}") { bearer(token) } },
+        )
+        for ((route, call) in steps) calls.timed(route, call) { } ?: return null
         return Started(launch.launchId, token, sessionId)
     }
 
@@ -400,7 +429,7 @@ class LaunchPathLoadPostgresTest {
             foundAt = "2026-11-01T00:00:00.000Z",
         )
         val raw = PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
-        koin.get<WorkflowsRepository>().saveWorkflow(org.id, "release", raw, null, Authorship("load", now))
+        koin.get<CompilerRepository>().saveWorkflow(org.id, "release", raw, null, Authorship("load", now))
     }
 
     // Another organization's launches, agent tokens and sessions, past 20 000 rows each: a scan reads them all.
@@ -465,11 +494,6 @@ class LaunchPathLoadPostgresTest {
         writes.forEach { appendLine(it.headline()) }
     }
 
-    private fun line(route: String, times: List<Duration>): String {
-        val sorted = times.sorted()
-        fun at(q: Double) = sorted[ceil(q * sorted.size).toInt() - 1]
-        return "$route: p50 ${at(P50)}, p95 ${at(P95)}, max ${sorted.last()} (${sorted.size} calls)"
-    }
 
     private fun write(name: String, report: String) {
         SystemFileSystem.createDirectories(Path("build/reports/perf"))
@@ -493,7 +517,10 @@ class LaunchPathLoadPostgresTest {
         const val CONTENDED_POOL = 50
         const val LEAK_PEOPLE = 50
         const val LAUNCHES_EACH = 10
-        const val LEAK_WIDTH = 10
+        // Under the test pool's 4 connections: the leak test measures what is left, not the contention.
+        const val LEAK_WIDTH = 3
+        val CONCURRENCY_BUDGET = 150.seconds
+        const val TEXT = 120
         const val FILLED_ROWS = 20_000
         val FILLED = setOf("launches_launches", "identity_api_tokens", "sessions_sessions")
         const val WRITE_WARM_UPS = 3
@@ -503,6 +530,12 @@ class LaunchPathLoadPostgresTest {
         val SETUP = Regex("set_config\\(|pg_advisory", RegexOption.IGNORE_CASE)
         const val P50 = 0.5
         const val P95 = 0.95
+
+        fun line(route: String, times: List<Duration>): String {
+            val sorted = times.sorted()
+            fun at(q: Double) = sorted[ceil(q * sorted.size).toInt() - 1]
+            return "$route: p50 ${at(P50)}, p95 ${at(P95)}, max ${sorted.last()} (${sorted.size} calls)"
+        }
 
         fun session(id: String, launchId: String) =
             """{"id":"$id","launchId":"$launchId","agent":"claude-code","repo":"$REPO"}"""
