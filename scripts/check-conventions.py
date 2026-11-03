@@ -32,8 +32,8 @@ NOT_COROUTINE_REACHABLE = "not coroutine-reachable:"
 JVM_ONLY_IMPORT = re.compile(r"^\s*import\s+(io\.mockk|org\.slf4j|ch\.qos\.logback|org\.jetbrains\.exposed|java\.|javax\.)")
 FORBIDDEN = [
     (re.compile(r"\bGlobalScope\b"), "GlobalScope: launch in a scope the application owns (section 4.3)"),
-    (re.compile(r"\binstall\(Koin\)|org\.koin\.ktor"), "no koin-ktor plugin: its per-call scope outlives cancelled calls "
-     "(INF-074); build the Koin application in app and pass XxxRoutesDependencies (section 1.5)"),
+    (re.compile(r"\binstall\(Koin\)|org\.koin\.ktor"), "no koin-ktor plugin: its per-call scope outlives cancelled calls"
+     "; build the Koin application in app and pass XxxRoutesDependencies (section 1.5)"),
 ]
 
 
@@ -120,7 +120,7 @@ def check_kotlin(path: str, text: str) -> list:
         index = code.count("\n", 0, catch.start())
         if not justified(index) and not cancellation_handled(code, tokens, catch):
             errors.append(f"{path}:{index + 1}: broad catch without `catch (e: CancellationException) {{ throw e }}` "
-                          f"before it nor ensureActive() in it (section 4.1, INF-019)")
+                          f"before it nor ensureActive() in it (section 4.1)")
     native_or_common = NON_JVM_SOURCE_SET.search(path) is not None
     for index, line in enumerate(code_lines):
         number = index + 1

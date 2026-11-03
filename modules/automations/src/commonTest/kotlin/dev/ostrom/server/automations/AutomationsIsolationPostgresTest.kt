@@ -106,7 +106,7 @@ class AutomationsIsolationPostgresTest {
             for (move in listOf("disable", "webhook/rotate-secret")) {
                 assertEquals(HttpStatusCode.NotFound, client.post("$path/$move") { bearerAuth("carol") }.status, move)
             }
-            val test = TestRunRequest(buildJsonObject { putJsonObject("ticket") { put("number", "SUP-8") } })
+            val test = TestRunRequest(buildJsonObject { putJsonObject("ticket") { put("number", "TKT-8") } })
             val run = client.post("$path/run") {
                 bearerAuth("carol")
                 contentType(ContentType.Application.Json)

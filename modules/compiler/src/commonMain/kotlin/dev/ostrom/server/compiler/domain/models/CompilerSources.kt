@@ -2,6 +2,7 @@
 package dev.ostrom.server.compiler.domain.models
 
 import dev.ostrom.core.api.models.Workflow
+import dev.ostrom.server.compiler.domain.services.WorkflowRepos
 import kotlinx.serialization.json.JsonObject
 import kotlin.time.Instant
 
@@ -12,7 +13,10 @@ import kotlin.time.Instant
  * @property raw The JSON the console saved.
  * @property workflow The same, read into the model.
  */
-data class WorkflowDoc(val raw: JsonObject, val workflow: Workflow)
+data class WorkflowDoc(val raw: JsonObject, val workflow: Workflow) {
+    /** The repositories the workflow is limited to, null for all of them ([WorkflowRepos]). */
+    val repos: List<String>? get() = WorkflowRepos.of(raw)
+}
 
 /**
  * A team rule, read by the rules harness. Its digest is taken on [raw], as stored.

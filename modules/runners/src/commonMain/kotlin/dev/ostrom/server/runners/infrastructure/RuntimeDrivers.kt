@@ -18,13 +18,19 @@ object RuntimeDrivers {
      * Builds the driver.
      *
      * @param config The module's configuration.
+     * @param registered The driver on the registered runners, which needs the database.
      * @param readFile Reads a text file (the Kubernetes service-account token).
      *
      * @return The driver; [DisabledRuntimeDriver] when no runtime is configured.
      */
-    fun create(config: RunnersConfig, readFile: (String) -> String = ::readTextFile): RuntimeDriver =
+    fun create(
+        config: RunnersConfig,
+        registered: () -> RuntimeDriver,
+        readFile: (String) -> String = ::readTextFile,
+    ): RuntimeDriver =
         when (config.driver) {
             RunnersConfig.DriverKind.NONE -> DisabledRuntimeDriver()
+            RunnersConfig.DriverKind.REGISTERED -> registered()
             RunnersConfig.DriverKind.KUBERNETES -> KubernetesRuntimeDriver(
                 client = runtimeHttpClient(config.kubernetes.caFile, KUBERNETES_TIMEOUT_MILLIS),
                 settings = config.kubernetes,

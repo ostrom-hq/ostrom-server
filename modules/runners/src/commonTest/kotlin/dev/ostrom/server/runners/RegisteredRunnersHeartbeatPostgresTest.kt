@@ -64,7 +64,10 @@ class RegisteredRunnersHeartbeatPostgresTest {
 
             val beat = server.heartbeat(runner.id, runner.token)
             assertEquals(HttpStatusCode.OK, beat.status)
-            assertEquals(RegisteredRunnerHeartbeatResponse(emptyList()), beat.body<RegisteredRunnerHeartbeatResponse>())
+            assertEquals(
+                RegisteredRunnerHeartbeatResponse(emptyList(), emptyList(), emptyList()),
+                beat.body<RegisteredRunnerHeartbeatResponse>(),
+            )
             assertEquals("online", server.status("alice"))
             val seen = server.client.get("/api/v1/runners") { bearerAuth("alice") }.body<RunnersPage>().items.single()
             assertEquals(clock.now.toString(), seen.lastSeenAt)

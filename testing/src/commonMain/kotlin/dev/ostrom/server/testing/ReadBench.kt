@@ -115,7 +115,8 @@ internal suspend fun Driver.replay(statements: List<SentStatement>, explain: Boo
 
 private suspend fun Transaction.replay(group: List<SentStatement>, explain: Boolean): List<String> =
     group.mapNotNull { sent ->
-        if (sent.isQuery()) {
+        // A query, apart from setting the organization or taking a lock.
+        if (QUERY.containsMatchIn(sent.sql) && !SETUP.containsMatchIn(sent.sql)) {
             val rows = fetchAll(sent.copy(if (explain) EXPLAIN else "")).getOrThrow()
             if (explain) rows.joinToString("\n") { it.get("QUERY PLAN").asString() } else null
         } else {
@@ -137,8 +138,6 @@ private fun List<SentStatement>.byTransaction(): List<List<SentStatement>> =
 private val QUERY = Regex("^[\\s(]*(SELECT|WITH|VALUES|TABLE)\\b", RegexOption.IGNORE_CASE)
 private val SETUP = Regex("set_config\\(|pg_advisory", RegexOption.IGNORE_CASE)
 
-private fun SentStatement.isQuery(): Boolean = QUERY.containsMatchIn(sql) && !SETUP.containsMatchIn(sql)
-
 // A fresh statement for each run: the server's own is never shared between the concurrent replays.
 private fun SentStatement.copy(prefix: String): Statement {
     val copy = Statement.create(prefix + sql)
@@ -154,12 +153,22 @@ private fun SentStatement.copy(prefix: String): Statement {
  * @param largeTables The tables never to scan.
  */
 fun ReadMeasure.assertWithinBudget(largeTables: Set<String>) {
+    assertNoScan(largeTables)
+    assertTrue(p95 < READ_P95_BUDGET, "$name: database p95 $p95 over $READ_P95_BUDGET:\n${describe()}")
+}
+
+/**
+ * Fails if this route scans any of [largeTables] sequentially: the organization tables the test filled past
+ * 10 000 rows.
+ *
+ * @param largeTables The tables never to scan.
+ */
+fun ReadMeasure.assertNoScan(largeTables: Set<String>) {
     val scanned = largeTables.filter { table ->
         val scan = Regex("Seq Scan on ${Regex.escape(table)}\\b")
         plans.any { scan.containsMatchIn(it) }
     }
     assertTrue(scanned.isEmpty(), "$name scans $scanned:\n${describe()}")
-    assertTrue(p95 < READ_P95_BUDGET, "$name: database p95 $p95 over $READ_P95_BUDGET:\n${describe()}")
 }
 
 /**

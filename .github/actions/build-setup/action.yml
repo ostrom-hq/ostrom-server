@@ -46,7 +46,7 @@ runs:
         path: ~/.konan
         key: konan-${{ runner.os }}-${{ runner.arch }}-${{ inputs.kotlin-version }}-${{ hashFiles('gradle/libs.versions.toml') }}
         restore-keys: konan-${{ runner.os }}-${{ runner.arch }}-${{ inputs.kotlin-version }}-
-    - name: Never serve a test task from the cache (ENG-032)
+    - name: Never serve a test task from the cache
       shell: bash
       run: |
         mkdir -p ~/.gradle/init.d

@@ -74,8 +74,8 @@ data class UpdateAccountPayload(
  * @property spentMicros Equivalent API cost served this month.
  * @property owner The login of the member who shared it ([MemberNames]); empty unless [identityVisible] or when an
  *   admin added it.
- * @property sharedWith The logins of the members it is lent to, sorted; empty for the whole org, and unless
- *   [identityVisible].
+ * @property sharedWith The logins of the members it is lent to and the `group:<id>` of its groups, sorted; empty for
+ *   the whole org, and unless [identityVisible].
  */
 data class SharedAccountView(
     val account: SharedAccount,
@@ -212,7 +212,9 @@ class ListSharedAccountsUseCaseImpl(
         val windows = quotas.byAccount(caller.orgId)
         val since = SharedAccountPool.monthStart(now)
         val accounts = repository.list(caller.orgId)
-        val named = names.of(caller.orgId, accounts.filter { caller.mayChange(it) })
+        val changeable = accounts.filter { caller.mayChange(it) }
+        val named = names.of(caller.orgId, changeable)
+        val groups = names.groupsOf(caller.orgId, changeable)
         return accounts.mapIndexed { index, account ->
             val visible = caller.mayChange(account)
             SharedAccountView(
@@ -232,7 +234,7 @@ class ListSharedAccountsUseCaseImpl(
                 inFlight = pool.inFlight(account.id),
                 spentMicros = spend.spentMicros(account.id, since),
                 owner = if (visible) named.ownerOf(account) else "",
-                sharedWith = if (visible) named.sharedWithOf(account) else emptyList(),
+                sharedWith = if (visible) named.sharedWithOf(account, groups) else emptyList(),
             )
         }
     }
@@ -242,6 +244,7 @@ class ListSharedAccountsUseCaseImpl(
 class ViewSharedAccountUseCaseImpl(private val names: MemberNames) : ViewSharedAccountUseCase {
     override suspend fun invoke(caller: Caller, account: SharedAccount): SharedAccountView {
         val named = names.of(caller.orgId, listOf(account))
+        val groups = names.groupsOf(caller.orgId, listOf(account))
         return SharedAccountView(
             account = account,
             displayLabel = account.label,
@@ -250,7 +253,7 @@ class ViewSharedAccountUseCaseImpl(private val names: MemberNames) : ViewSharedA
             inFlight = 0,
             spentMicros = 0,
             owner = named.ownerOf(account),
-            sharedWith = named.sharedWithOf(account),
+            sharedWith = named.sharedWithOf(account, groups),
         )
     }
 }
@@ -265,8 +268,8 @@ class UpdateSharedAccountUseCaseImpl(
         payload.label?.let(SharingRules::requireLabel)
         val patch = payload.limits
         val patched = if (patch == null) account.limits else patch(account.limits)
-        val members = payload.sharedWith
-        val limits = if (members == null) patched else patched.copy(allowedMembers = names.ids(caller.orgId, members))
+        val sharing = payload.sharedWith?.let { names.sharedWith(caller.orgId, it) }
+        val limits = if (sharing == null) patched else patched.copy(allowedMembers = sharing.members)
         SharingRules.requireLimits(limits)
         payload.priority?.let(SharingRules::requirePriority)
         // RECONNECT_REQUIRED and WRONG_ACCOUNT are left only by sharing again: pausing and resuming must not revive
@@ -284,8 +287,10 @@ class UpdateSharedAccountUseCaseImpl(
             limits = limits,
             status = status,
         )
-        return repository.update(updated, payload.ifVersion)
+        val saved = repository.update(updated, payload.ifVersion)
             ?: throw if (payload.ifVersion == null) AccountNotFoundException() else AccountChangedException()
+        sharing?.let { names.lend(caller.orgId, saved.id, it) }
+        return saved
     }
 }
 
