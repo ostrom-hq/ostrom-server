@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches.infrastructure
 
+import dev.ostrom.server.kernel.database.PurgeDates
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
@@ -14,6 +15,7 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlin.time.Duration
+import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -23,14 +25,21 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
-class PostgresLaunchesRepository(private val driver: Driver) : LaunchesRepository {
+class PostgresLaunchesRepository(
+    private val driver: Driver,
+    private val clock: Clock = Clock.System,
+) : LaunchesRepository {
     override suspend fun create(launch: Launch, limit: LaunchLimit): Duration? =
         driver.withOrganization(launch.orgId) { tx -> limited(tx, launch, limit) }
 
-    // The one deletion across organizations, through the function of LaunchesMigrations version 4.
-    override suspend fun purge(before: Instant): Long = driver.fetchAll(
-        Statement.create("SELECT launches_purge(CAST(:before AS TIMESTAMPTZ)) AS n").bind("before", before),
-    ).getOrThrow().first().get("n").asLong()
+    // The one deletion across organizations, through the function of LaunchesMigrations versions 4 and 5, which
+    // bounds the date to the retention itself.
+    override suspend fun purge(before: Instant): Long {
+        PurgeDates.check(before, clock.now())
+        return driver.fetchAll(
+            Statement.create("SELECT launches_purge(CAST(:before AS TIMESTAMPTZ)) AS n").bind("before", before),
+        ).getOrThrow().first().get("n").asLong()
+    }
 
     private suspend fun limited(tx: Transaction, launch: Launch, limit: LaunchLimit): Duration? {
         // One launch of the organization at a time: the count below then holds until the insert commits.
