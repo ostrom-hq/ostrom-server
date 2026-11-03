@@ -170,11 +170,9 @@ class ApprovalQueueMappersTest {
     @Test
     fun theKeyOfARefusedYesReachesTheConsole() {
         val subject = GateSubject(repo = "acme/api", actionClass = "merge", command = "", scope = "s")
-        val rights = CallerRights("rev-b", false, false, "Link your GitHub account.", reasonType = "github_link_required")
+        val link = "Link your GitHub account."
+        val rights = CallerRights("rev-b", false, false, link, reasonType = "github_link_required")
         val you = screen(gate(subject, null, listOf("lyes"), emptyList()), rights).toViewResponse().you
-        assertEquals(
-            ApprovalCallerView("rev-b", false, false, "Link your GitHub account.", reasonType = "github_link_required"),
-            you,
-        )
+        assertEquals(ApprovalCallerView("rev-b", false, false, link, reasonType = "github_link_required"), you)
     }
 }

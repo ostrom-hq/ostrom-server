@@ -86,7 +86,7 @@ object ApprovalRights {
         return if (!rights.canApprove || refusal == null) {
             rights
         } else {
-            rights.copy(canApprove = false, reason = refusal.message, selfApproval = false)
+            rights.copy(canApprove = false, reason = refusal.message, selfApproval = false, reasonType = refusal.type)
         }
     }
 
