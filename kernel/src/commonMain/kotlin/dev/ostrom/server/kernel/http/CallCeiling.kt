@@ -82,8 +82,7 @@ fun interface CallPlace {
  * once under 512 MiB (CHARGE 41647341533), while 500 approvals, writes bounded by nothing, OOMKilled the server
  * (41644506470). Unset, the ceilings follow the container's limit, read again every 5 s: 150 ordinary calls under
  * 512 MiB, in proportion above and below, at least 16, and 256 without a limit; half the ordinary ceiling of held
- * calls, so that both kinds full stay near the 200 calls measured at 377 MiB; and as many open connections as
- * ordinary calls, an idle connection costing little.
+ * calls, so that both kinds full stay near the 200 calls measured at 377 MiB; and 100 open connections per 512 MiB.
  *
  * @param settings The ceilings the instance sets.
  * @param limitBytes Reads the container's memory limit; null without one.
@@ -109,7 +108,7 @@ class CallsInProgress(
     fun ceiling(kind: CallKind): Int = when (kind) {
         CallKind.SERVED -> settings.served ?: ceilingUnder(currentLimit())
         CallKind.HELD -> settings.held ?: (ceiling(CallKind.SERVED) / HELD_SHARE).coerceAtLeast(1)
-        CallKind.OPEN -> settings.open ?: ceilingUnder(currentLimit())
+        CallKind.OPEN -> settings.open ?: openCeilingUnder(currentLimit())
         CallKind.FREE -> Int.MAX_VALUE
     }
 
@@ -203,6 +202,8 @@ class CallsInProgress(
 
         private const val MIB = 1024L * 1024
         private const val CALLS_UNDER_REFERENCE = 150L
+        private const val OPEN_UNDER_REFERENCE = 100L
+        private const val DEFAULT_OPEN_CEILING = 170
         private const val REFERENCE_MIB = 512L
         private const val MIN_CEILING = 16L
         private const val HELD_SHARE = 2
@@ -216,9 +217,22 @@ class CallsInProgress(
          *
          * @return The ceiling.
          */
-        fun ceilingUnder(limitBytes: Long?): Int = limitBytes?.let {
-            (it / MIB * CALLS_UNDER_REFERENCE / REFERENCE_MIB).coerceIn(MIN_CEILING, Int.MAX_VALUE.toLong()).toInt()
-        } ?: DEFAULT_CEILING
+        fun ceilingUnder(limitBytes: Long?): Int = scaled(limitBytes, CALLS_UNDER_REFERENCE) ?: DEFAULT_CEILING
+
+        /**
+         * The ceiling of open connections under [limitBytes]: 100 per 512 MiB, at least 16, and 170 without a limit.
+         * With 150, the three kinds full at once peaked at 495 MiB under 512 MiB (CHARGE 41668930337).
+         *
+         * @param limitBytes The container's memory limit, null without one.
+         *
+         * @return The ceiling.
+         */
+        fun openCeilingUnder(limitBytes: Long?): Int =
+            scaled(limitBytes, OPEN_UNDER_REFERENCE) ?: DEFAULT_OPEN_CEILING
+
+        private fun scaled(limitBytes: Long?, underReference: Long): Int? = limitBytes?.let {
+            (it / MIB * underReference / REFERENCE_MIB).coerceIn(MIN_CEILING, Int.MAX_VALUE.toLong()).toInt()
+        }
     }
 }
 

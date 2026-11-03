@@ -213,7 +213,7 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_READ_WAITS_IN_FLIGHT` | `256` | 1 to 10 000: how many gate reads (`GET /gates/{id}`, whose `wait` holds the call up to 30 s) one subject holds at once, apart from the reads above; they count in `OSTROM_READS_PER_MINUTE` too. Past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_MAX_CALLS_IN_PROGRESS` | from the memory limit | 1 to 100 000: how many calls this replica runs at once. Past it, a call waits in line for a place, before authentication and before its body is read, then gets a 503 `unavailable` with `Retry-After: 1`; at once when as many calls already wait as the ceiling. Unset, 150 per 512 MiB of container limit (at least 16; 256 without a limit), read again every 5 s (a failed read keeps the last). Held calls and `/health`, `/ready` are not counted |
 | `OSTROM_MAX_HELD_CALLS` | from the memory limit | 1 to 100 000: the same, apart, half the ordinary ceiling when unset (75 per 512 MiB), for the calls that stay open: gate and confirmation waits, inference calls, MCP relay calls |
-| `OSTROM_MAX_OPEN_CONNECTIONS` | from the memory limit | 1 to 100 000: the same, apart, for the connections open as long as their client keeps them: terminal WebSockets, the live usage stream. Unset, as many as the ordinary calls |
+| `OSTROM_MAX_OPEN_CONNECTIONS` | from the memory limit | 1 to 100 000: the same, apart, for the connections open as long as their client keeps them: terminal WebSockets, the live usage stream. Unset, 100 per 512 MiB of container limit (at least 16; 170 without a limit): with 150, the three kinds full at once peaked at 495 MiB under 512 MiB (CHARGE 41668930337) |
 | `OSTROM_CALL_QUEUE_SECONDS` | `5` | 0 to 60: how long a call past its ceiling waits in line for a place before its 503 |
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
@@ -264,11 +264,10 @@ key to set (the ceilings of calls can be set):
   apart under their own ceiling (`OSTROM_MAX_HELD_CALLS`), half the ordinary one, so that both full stay near the 200
   calls measured at 377 MiB: a member who plugs in a slow MCP server fills only those places. The connections open as
   long as their client keeps them (terminal WebSockets, the live usage stream) count apart again
-  (`OSTROM_MAX_OPEN_CONNECTIONS`, as many as the ordinary calls), so that permanent connections never take the waits'
-  places. `/health` and `/ready` are never counted.
+  (`OSTROM_MAX_OPEN_CONNECTIONS`, 100 per 512 MiB), so that permanent connections never take the waits' places. `/health` and `/ready` are never counted.
 
-Without a limit (a plain process), the heap keeps the runtime's own tuning; the ordinary calls and the open
-connections are bounded at 256 each, the calls that wait at 128.
+Without a limit (a plain process), the heap keeps the runtime's own tuning; the ordinary calls are bounded at 256,
+the calls that wait at 128 and the open connections at 170.
 
 ### Module `gateway`
 
