@@ -130,6 +130,8 @@ internal suspend fun Driver.replay(
     for (group in statements.byTransaction()) {
         val tx = begin().getOrThrow()
         try {
+            // RED, throwaway: the indexes removed from the planner's reach, as a dropped index would.
+            for (kind in listOf("indexscan", "bitmapscan", "indexonlyscan")) tx.execute("SET LOCAL enable_$kind = off").getOrThrow()
             plans += tx.replay(group, explain, writes)
         } finally {
             tx.rollback().getOrThrow()
