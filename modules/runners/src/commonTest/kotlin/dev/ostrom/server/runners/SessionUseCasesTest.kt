@@ -20,6 +20,8 @@ import dev.ostrom.server.runners.domain.ListCloudSessionsUseCaseImpl
 import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.RepositorySpec
 import dev.ostrom.server.runners.domain.SessionState
+import dev.ostrom.server.runners.presentation.toResponse
+import dev.ostrom.server.runners.fakes.FakeRuntimeDriver
 import dev.ostrom.server.runners.fakes.FixedPlans
 import dev.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import dev.ostrom.server.runners.fakes.ORG_A
@@ -181,13 +183,26 @@ class SessionUseCasesTest {
 
     @Test
     fun getReturnsOnlyTheCallersSessions() = runTest {
-        val get = GetCloudSessionUseCaseImpl(repository)
+        val get = GetCloudSessionUseCaseImpl(repository, FakeRuntimeDriver())
         val created = create(alice, payload())
 
         assertEquals(created, get(alice, created.id))
         assertFailsWith<CloudSessionNotFoundException> { get(Caller(ORG_A, "mallory"), created.id) }
         assertFailsWith<CloudSessionNotFoundException> { get(Caller(ORG_B, "alice"), created.id) }
         assertFailsWith<CloudSessionNotFoundException> { get(alice, Uuid.random()) }
+    }
+
+    @Test
+    fun getNamesTheRegisteredRunnerTheSessionRunsOn() = runTest {
+        // the contract's CloudSession.runnerId: where a member (or `ostrom claude --cloud`) sees its session placed
+        val machine = Uuid.random()
+        val driver = FakeRuntimeDriver().apply { holder = machine }
+        val created = create(alice, payload())
+
+        val read = GetCloudSessionUseCaseImpl(repository, driver)(alice, created.id)
+        assertEquals(machine, read.runnerId)
+        assertEquals(machine.toString(), read.toResponse().runnerId)
+        assertNull(GetCloudSessionUseCaseImpl(repository, FakeRuntimeDriver())(alice, created.id).runnerId)
     }
 
     @Test
