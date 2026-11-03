@@ -49,7 +49,7 @@ class ExpoPushSender(
                         put("title", message.title)
                         put("body", message.body)
                         put("sound", "default")
-                        // The app's `approvals` channel: it hides the text on a lock screen (Android).
+                        // The app's `requests` channel, which hides the text on a lock screen (Android).
                         put("channelId", APPROVALS_CHANNEL)
                         put("data", JsonObject(message.data.mapValues { JsonPrimitive(it.value) }))
                     },
@@ -105,7 +105,7 @@ private data class ExpoTicket(val status: String = "ok", val details: ExpoTicket
 private data class ExpoTicketDetails(val error: String? = null)
 
 /** The id of the Android notification channel the app creates for the requests (ostrom-app `services/push`). */
-internal const val APPROVALS_CHANNEL = "approvals"
+internal const val APPROVALS_CHANNEL = "requests"
 
 /** The most messages Expo takes in one request. */
 internal const val MAX_BATCH = 100
