@@ -257,4 +257,11 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
             ${tenantTableSql("runners_assignments")}
         """.trimIndent(),
     ),
+    // The sessions a registered runner runs at once at most, from its last heartbeat (null: no limit declared). An
+    // execution is never handed to a runner that already holds as many (RunnerAssignmentsRepositoryImpl).
+    SchemaMigration(
+        version = 7,
+        name = "registered_runner_capacity",
+        sql = "ALTER TABLE runners_registered ADD COLUMN capacity INTEGER",
+    ),
 )

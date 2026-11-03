@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.presentation
 
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.runners.domain.DeleteRunnerUseCase
 import dev.ostrom.server.runners.domain.ListRegisteredRunnersUseCase
@@ -30,6 +31,7 @@ data class RunnerRuntime(val driver: String?, val image: String) {
  * @property registerRunner Registers one.
  * @property deleteRunner Removes one.
  * @property heartbeat A registered runner's sign of life.
+ * @property audit The organization's audit log: a runner registered or removed is written there.
  */
 data class RunnersRoutesDependencies(
     val listRunners: ListRunnersUseCase,
@@ -39,4 +41,5 @@ data class RunnersRoutesDependencies(
     val registerRunner: RegisterRunnerUseCase,
     val deleteRunner: DeleteRunnerUseCase,
     val heartbeat: RegisteredRunnerHeartbeatUseCase,
+    val audit: OrgAuditTrail,
 )

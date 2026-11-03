@@ -3,6 +3,7 @@ package dev.ostrom.server.orgs
 
 import dev.ostrom.server.kernel.auth.GovernanceChange
 import dev.ostrom.server.kernel.auth.MemberDirectory
+import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.auth.MemberLogins
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -70,6 +71,7 @@ import dev.ostrom.server.orgs.infrastructure.IdentityRateLimiter
 import dev.ostrom.server.orgs.infrastructure.InvitationsRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MailInvitationMailer
 import dev.ostrom.server.orgs.infrastructure.MemberDirectoryImpl
+import dev.ostrom.server.orgs.infrastructure.MemberEmailsImpl
 import dev.ostrom.server.orgs.infrastructure.MemberLoginsImpl
 import dev.ostrom.server.orgs.infrastructure.MembersRepositoryImpl
 import dev.ostrom.server.orgs.infrastructure.MembershipOrgResolver
@@ -101,7 +103,8 @@ import org.koin.dsl.module
  *
  * Other modules use it through the interfaces it binds: [PrincipalOrgResolver] (through the
  * kernel's `requireOrgPrincipal`), [MemberDirectory] (who a wait may be asked of), [MemberLogins] (the
- * people a shared account is lent to, by login), [CountMembersUseCase] for
+ * people a shared account is lent to, by login), [MemberEmails] (the address of the person who opens a
+ * Checkout), [CountMembersUseCase] for
  * per-seat billing. Until the billing
  * module binds its own [SeatPolicy] here, every organization has the free plan's limit
  * ([FreePlanSeats]).
@@ -111,7 +114,7 @@ object OrgsModule : ServerModule {
 
     override val koinModule: Module = module {
         single { OrgsConfig.from(get()) }
-        single<OrgsRepository> { OrgsRepositoryImpl(get()) }
+        single<OrgsRepository> { OrgsRepositoryImpl(get(), get()) }
         single<MembersRepository> { MembersRepositoryImpl(get()) }
         single<InvitationsRepository> { InvitationsRepositoryImpl(get()) }
         single<People> { IdentityPeople(get()) }
@@ -123,6 +126,7 @@ object OrgsModule : ServerModule {
         single<PrincipalOrgResolver> { MembershipOrgResolver(get(), get()) }
         single<MemberDirectory> { MemberDirectoryImpl(get()) }
         single<MemberLogins> { MemberLoginsImpl(get(), get()) }
+        single<MemberEmails> { MemberEmailsImpl(get(), get()) }
         // Identity has no teams: the QA account (a person, their team, a token) is assembled here.
         single<TestAccountSeeder> { TestAccountSeederImpl(get(), get(), get(), get()) }
         single {
@@ -134,7 +138,7 @@ object OrgsModule : ServerModule {
         single<CreateOrgUseCase> { CreateOrgUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<GetOrgUseCase> { GetOrgUseCaseImpl(get(), get()) }
         single<UpdateOrgUseCase> { UpdateOrgUseCaseImpl(get(), get(), get()) }
-        single<DeleteOrgUseCase> { DeleteOrgUseCaseImpl(get(), get(), get(), get()) }
+        single<DeleteOrgUseCase> { DeleteOrgUseCaseImpl(get(), get(), get()) }
         // Every module that keeps or bills something of an organization binds a listener (billing).
         single<OrgDeletionsRepository> { OrgDeletionsRepositoryImpl(get()) }
         single<SettleOrgDeletionsUseCase> {

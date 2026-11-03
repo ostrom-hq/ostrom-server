@@ -117,6 +117,44 @@ class BudgetGuardTest {
     }
 
     @Test
+    fun aZeroLimitThatWarnsAlertsAndIsAuditedFromTheFirstCent() = runTest {
+        val audit = mutableListOf<OrgAuditRecord>()
+        val audited = AuditedBudgetAlerts(alerts, OrgAuditTrail { audit += it })
+        val guard = BudgetGuardImpl(repository, spend, audited, clock, logger)
+        repository.otherLimits[orgA to BudgetTarget.Org] = listOf(BudgetLimit(0, action = BudgetAction.WARN))
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member), "A limit that warns never refuses")
+        assertEquals(emptyList(), alerts.alerts, "Nothing spent, nothing to say")
+
+        spend.spent[orgA to null] = 10_000
+        clock.advance(5.seconds)
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member))
+        assertEquals(listOf(80, 100), alerts.alerts.map { it.thresholdPercent }, "The first cent is past nothing")
+        assertEquals(listOf("0", "0.01"), audit.single().details.let { listOf(it["limit_usd"], it["spent_usd"]) })
+    }
+
+    @Test
+    fun aZeroLimitThatStopsAlertsWhatGotPastIt() = runTest {
+        overrideMember(0)
+        spend.spent[orgA to member] = 10_000
+
+        assertEquals(BudgetDecision.Exhausted(BudgetScope.MEMBER, 0, TestCallers.nextMonth), guard.check(orgA, member))
+        assertEquals(listOf(80, 100), alerts.alerts.map { it.thresholdPercent })
+        assertEquals(listOf(10_000L, 10_000L), alerts.alerts.map { it.spentMicros })
+    }
+
+    @Test
+    fun aLimitOfOneMillionthSaysNothingWhileNothingIsSpent() = runTest {
+        overrideMember(1)
+        assertEquals(BudgetDecision.Allowed(1), guard.check(orgA, member))
+        assertEquals(emptyList(), alerts.alerts, "80 % of one millionth rounds to 0, which nothing spent is not past")
+
+        spend.spent[orgA to member] = 1
+        clock.advance(5.seconds)
+        guard.check(orgA, member)
+        assertEquals(listOf(80, 100), alerts.alerts.map { it.thresholdPercent })
+    }
+
+    @Test
     fun aDecisionIsReusedForFiveSecondsThenRecomputed() = runTest {
         overrideMember(1_000)
         spend.spent[orgA to member] = 100

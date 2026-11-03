@@ -35,7 +35,10 @@ class HttpMachineApi(private val client: HttpClient, private val config: Machine
     }
 
     private companion object {
-        /** The answer also has `sessions`, which a runner does not read. */
-        private val WIRE = Json { ignoreUnknownKeys = true }
+        /** The answer also has `sessions`, which a runner does not read; an unknown capacity is left out. */
+        private val WIRE = Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+        }
     }
 }

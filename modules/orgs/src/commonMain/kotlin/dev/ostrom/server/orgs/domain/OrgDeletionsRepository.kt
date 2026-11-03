@@ -39,8 +39,9 @@ interface OrgDeletionsRepository {
 
     /**
      * Erases what the module keeps of a deleted organization for good: its name, its GitHub link,
-     * its settings. The row stays as a tombstone that keeps its short name taken, so a link never
-     * leads to someone else.
+     * its settings, and its short name, taken until now so that it could be restored, and free from
+     * now on (as on GitHub, short names are one space for everybody). The row stays as a tombstone
+     * under a name nobody can choose.
      *
      * @param id The organization.
      * @param at When.

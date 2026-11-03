@@ -20,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -124,6 +125,35 @@ class ReconcileCloudSessionUseCaseTest {
         clock.now = t0 + 61.seconds
         reconcile(missing)
         assertEquals(SessionState.FAILED, stored(missing).state)
+    }
+
+    @Test
+    fun anExecutionQueuedForAMachineNeverTimesOutAndItsStartCountsFromItsTake() = runTest {
+        val queued = put(session().copy(epoch = 1, executionStartedAt = t0, phase = "starting_runner"))
+        driver.status = ExecutionStatus.QUEUED
+
+        // Waiting for a machine with room, as long as it takes: never failed for it, looked at less often.
+        clock.now = t0 + 10.seconds
+        assertEquals(clock.now + 15.seconds, reconcile(queued))
+        assertEquals("queued", stored(queued).phase)
+        clock.now = t0 + 2.hours
+        assertEquals(clock.now + 15.seconds, reconcile(stored(queued)))
+        assertEquals(SessionState.CREATING, stored(queued).state)
+        assertEquals(listOf("status", "status"), driver.calls)
+
+        // A machine takes it: its start is timed from now.
+        driver.status = ExecutionStatus.PENDING
+        assertEquals(clock.now + 2.seconds, reconcile(stored(queued)))
+        val taken = stored(queued)
+        assertEquals("starting_runner", taken.phase)
+        assertEquals(clock.now, taken.executionStartedAt)
+        val takenAt = clock.now
+        clock.now = takenAt + 14.minutes
+        reconcile(stored(queued))
+        assertEquals(SessionState.CREATING, stored(queued).state)
+        clock.now = takenAt + 16.minutes
+        reconcile(stored(queued))
+        assertEquals(SessionState.FAILED, stored(queued).state)
     }
 
     @Test

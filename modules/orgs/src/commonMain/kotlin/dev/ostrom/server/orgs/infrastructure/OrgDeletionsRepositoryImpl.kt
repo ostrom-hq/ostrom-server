@@ -59,8 +59,9 @@ class OrgDeletionsRepositoryImpl(private val driver: Driver) : OrgDeletionsRepos
         driver.inOrg(id) {
             execute(
                     Statement.create(
-                            "UPDATE orgs_organizations SET name = '', github_org_id = NULL, time_zone = 'UTC', " +
-                                "purged_at = :at, deletion_retry_at = NULL WHERE id = :id AND deleted_at IS NOT NULL"
+                            "UPDATE orgs_organizations SET name = '', slug = $PURGED_SLUG, github_org_id = NULL, " +
+                                "time_zone = 'UTC', purged_at = :at, deletion_retry_at = NULL " +
+                                "WHERE id = :id AND deleted_at IS NOT NULL"
                         )
                         .bind("at", at)
                         .bind("id", id)
