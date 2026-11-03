@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package dev.ostrom.server.compiler
+package dev.ostrom.server.testing
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -13,7 +14,7 @@ class ContractSchemaTest {
     private val contract = ContractSchema(
         Json.parseToJsonElement(
             """
-            {
+            {"openapi": "3.1.0", "components": {"schemas": {
               "Catalog": {
                 "type": "object",
                 "properties": {
@@ -22,7 +23,9 @@ class ContractSchemaTest {
                   "waitSeconds": {"type": "integer"},
                   "labels": {"type": "object", "additionalProperties": {"type": "string"}},
                   "extra": {"type": "object", "additionalProperties": true},
-                  "both": {"allOf": [{"${'$'}ref": "#/components/schemas/Ref"}, {"type": "object"}]}
+                  "closed": {"type": "object", "additionalProperties": false},
+                  "both": {"allOf": [{"${'$'}ref": "#/components/schemas/Ref"}, {"type": "object"}]},
+                  "odd": {"type": "file"}
                 },
                 "required": ["actions"]
               },
@@ -39,7 +42,7 @@ class ContractSchemaTest {
               },
               "Ref": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
               "Twice": {"oneOf": [{"type": "string"}, {"type": "string"}]}
-            }
+            }}}
             """,
         ).jsonObject,
     )
@@ -53,49 +56,71 @@ class ContractSchemaTest {
               {"class": "push-main", "enforce": true, "weight": 1.5, "gate": {"id": "g"}, "loose": [1]},
               {"class": "deploy", "weight": null, "gate": null}
             ], "failMode": "closed", "waitSeconds": 300, "labels": {"a": "b"}, "extra": {"any": 1},
-              "both": {"id": "r"}}
+              "closed": {}, "both": {"id": "r"}}
         """
         assertEquals(emptyList(), violations(answer))
         contract.assertMatches("Catalog", Json.parseToJsonElement(answer))
     }
 
     @Test
-    fun eachDriftIsNamedWithItsPath() {
+    fun eachDriftIsNamedWithItsPathAndKind() {
         val found = violations(
             """
             {"actions": [
               {"enforce": "yes", "weight": "1", "gate": {"name": "g"}, "repos": []},
-              {"class": 3, "gate": 1}
-            ], "failMode": "open", "waitSeconds": 1.5, "labels": {"a": 1}, "both": {}, "keywords": []}
+              {"class": 3, "gate": 1, "enforce": null, "weight": []}
+            ], "failMode": "open", "waitSeconds": 1.5, "labels": {"a": 1, "b": {}}, "closed": {"x": 1}, "both": {},
+              "odd": "x", "keywords": []}
             """,
         )
         val expected = listOf(
-            "$.actions[0].class: required",
-            "$.actions[0].enforce:",
-            "$.actions[0].weight:",
-            "$.actions[0].gate: matches no branch",
-            "$.actions[0].repos: sent by the server, not declared",
-            "$.actions[1].class:",
-            "$.actions[1].gate: matches no branch",
-            "$.failMode: \"open\" is not one of",
-            "$.waitSeconds:",
-            "$.labels.a:",
-            "$.both.id: required",
-            "$.keywords: sent by the server, not declared",
+            "$.actions[0].class MISSING",
+            "$.actions[0].enforce TYPE",
+            "$.actions[0].weight TYPE",
+            "$.actions[0].gate TYPE",
+            "$.actions[0].repos UNDECLARED",
+            "$.actions[1].class TYPE",
+            "$.actions[1].gate TYPE",
+            "$.actions[1].enforce TYPE",
+            "$.actions[1].weight TYPE",
+            "$.failMode TYPE",
+            "$.waitSeconds TYPE",
+            "$.labels.a TYPE",
+            "$.labels.b TYPE",
+            "$.closed.x UNDECLARED",
+            "$.both.id MISSING",
+            "$.odd TYPE",
+            "$.keywords UNDECLARED",
         )
-        for (line in expected) assertTrue(found.any { it.startsWith(line) }, "$line in\n${found.joinToString("\n")}")
-        assertTrue(violations("""{"labels": {}}""").single().startsWith("$.actions: required"))
-        assertTrue(violations("""[]""").single().startsWith("$: [] is not object"))
+        val shown = found.map { "${it.path} ${it.kind}" }
+        for (line in expected) assertTrue(line in shown, "$line in\n${found.joinToString("\n")}")
+        assertEquals(expected.size, found.size, found.joinToString("\n"))
+        assertEquals("$.actions[*].class MISSING", found.first { it.kind == DriftKind.MISSING }.key)
+        val failMode = found.first { it.path == "$.failMode" }
+        assertEquals("$.failMode: \"open\" is not one of [\"closed\"]", failMode.toString())
+        assertEquals("$.actions MISSING", violations("""{"labels": {}}""").single().key)
+        assertEquals("$: [] is not object", violations("[]").single().toString())
     }
 
     @Test
-    fun aValueTwoBranchesAcceptIsRefusedAndAnUnknownSchemaFails() {
+    fun aValueTwoBranchesAcceptIsRefused() {
         val twice = contract.violations("Twice", Json.parseToJsonElement("\"x\""))
-        assertEquals(listOf("$: matches more than one branch of oneOf"), twice)
-        assertFailsWith<IllegalStateException> { contract.violations("Missing", Json.parseToJsonElement("{}")) }
+        assertEquals("$: matches more than one branch of oneOf", twice.single().toString())
+    }
+
+    @Test
+    fun aReferenceToNothingFails() {
+        assertFailsWith<IllegalStateException> { contract.violations("Missing", JsonObject(emptyMap())) }
+        assertFailsWith<IllegalStateException> { contract.resolve("#/openapi/version") }
+        assertEquals(setOf("type", "properties", "required"), contract.resolve("#/components/schemas/Ref").keys)
+    }
+
+    @Test
+    fun aMismatchFailsTheTestWithEveryDifference() {
         val failure = assertFailsWith<AssertionError> {
             contract.assertMatches("Catalog", Json.parseToJsonElement("{}"))
         }
         assertTrue("does not match the contract's Catalog" in failure.message.orEmpty())
+        assertTrue("$.actions: required by the contract" in failure.message.orEmpty())
     }
 }
