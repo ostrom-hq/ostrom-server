@@ -79,6 +79,33 @@ object AgentSocket {
         log: (String) -> Unit,
         ready: (String) -> Unit,
         handle: suspend (ByteReadChannel, ByteWriteChannel) -> Unit,
+    ) = accept(selector, path, name, log, ready) { connection ->
+        try {
+            handle(connection.input, connection.output)
+        } finally {
+            connection.close()
+        }
+    }
+
+    /**
+     * Listens on a Unix socket and hands each connection to [take] in its own coroutine, until cancelled; [take] owns
+     * the connection. A socket file left by a previous process is replaced.
+     *
+     * @param selector The socket selector.
+     * @param path The socket's path.
+     * @param name What listens, for the log.
+     * @param log Writes a line to the container's log.
+     * @param ready Called once the socket listens, with its path.
+     * @param take Takes one connection; it catches its own failures.
+     */
+    @Suppress("LongParameterList") // The socket, its log and the handler, named at the call sites.
+    suspend fun accept(
+        selector: SelectorManager,
+        path: String,
+        name: String,
+        log: (String) -> Unit,
+        ready: (String) -> Unit,
+        take: suspend (AgentConnection) -> Unit,
     ) {
         SystemFileSystem.delete(Path(path), mustExist = false)
         val server = aSocket(selector).tcp().bind(UnixSocketAddress(path))
@@ -88,13 +115,7 @@ object AgentSocket {
             coroutineScope {
                 while (true) {
                     val connection = SocketConnection(server.accept())
-                    launch {
-                        try {
-                            handle(connection.input, connection.output)
-                        } finally {
-                            connection.close()
-                        }
-                    }
+                    launch { take(connection) }
                 }
             }
         } finally {
