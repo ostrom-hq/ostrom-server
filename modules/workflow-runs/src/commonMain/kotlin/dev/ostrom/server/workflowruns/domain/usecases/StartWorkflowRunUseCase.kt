@@ -69,10 +69,9 @@ class StartWorkflowRunUseCaseImpl(
         repository.add(actor.orgId, run, now)
         return run
     }
-
-    private companion object {
-        val STARTERS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
-        val RUNNABLE = setOf(WorkflowStatus.ACCEPTED, WorkflowStatus.EDITED)
-        const val MANUAL = "manual"
-    }
 }
+
+// Who starts a run, of which workflows, and the source a run started from the API says.
+private val STARTERS = setOf(OrgRole.OWNER, OrgRole.ADMIN)
+private val RUNNABLE = setOf(WorkflowStatus.ACCEPTED, WorkflowStatus.EDITED)
+private const val MANUAL = "manual"
