@@ -71,7 +71,12 @@ class StoppedApplicationsTest {
         }
     }
 
-    /** The threads of the process waiting in a select or a poll, what a selector loop does; null without /proc. */
+    /**
+     * The threads of the process in `pselect6`, where a selector loop waits (gdb: `pselect64_syscall` under
+     * `SelectorHelper.selectionLoop`); null without /proc. Read from `syscall`, whose first field is the number of the
+     * call in progress: the wait channel's name depends on the kernel (the first version of this test, matching it,
+     * passed on the leak, #344).
+     */
     private fun selecting(): Int? {
         val dir = opendir("/proc/self/task") ?: return null
         val tids = mutableListOf<String>()
@@ -85,8 +90,7 @@ class StoppedApplicationsTest {
             closedir(dir)
         }
         return tids.filterNot { it.startsWith(".") }
-            .map { readFile("/proc/self/task/$it/wchan").orEmpty() }
-            .count { it == "poll_schedule_timeout" || "select" in it }
+            .count { readFile("/proc/self/task/$it/syscall")?.substringBefore(' ') == PSELECT6 }
     }
 
     private fun readFile(path: String): String? {
@@ -107,5 +111,6 @@ class StoppedApplicationsTest {
         const val SETTLE_TURNS = 50
         const val SETTLE_MICROS = 100_000u
         const val BUFFER = 4096
+        const val PSELECT6 = "270" // x86_64, the CI's architecture.
     }
 }
