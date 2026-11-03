@@ -104,8 +104,10 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
         Statement.create(EXPIRED_ORGANIZATIONS).bind("now", now).bind("limit", limit),
     ).getOrThrow().map { it.get("org_id").asUuid() }
 
-    private fun ResultSet.Row.json(column: String): JsonElement? =
-        get(column).asStringOrNull()?.let { Json.parseToJsonElement(it) }?.takeUnless { it is JsonNull }
+    private fun ResultSet.Row.json(column: String): JsonElement? {
+        val text = get(column).asStringOrNull() ?: return null
+        return Json.parseToJsonElement(text).takeUnless { it is JsonNull }
+    }
 
     private fun ResultSet.Row.toConfirmation(): Confirmation {
         val answeredBy = get("answered_by_member").asUuidOrNull()?.let { member ->

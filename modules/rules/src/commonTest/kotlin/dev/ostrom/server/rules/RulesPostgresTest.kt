@@ -307,6 +307,8 @@ class RulesPostgresTest {
                 assertEquals("http://localhost:5173/confirm/${pending.confirmationId}", pending.confirmUrl)
             }
         }
+        val orphan = server.call("POST", "/api/v1/rules", "elevated-stranger", NewRuleRequest("Ship", "Releases"))
+        assertEquals(HttpStatusCode.NotFound, orphan.status, "A token of no organization asks nothing")
         assertEquals(rule, server.call("GET", "/api/v1/rules/$id", "admin-a").body<RuleDto>(), "Nothing written")
         assertEquals(1, server.call("GET", "/api/v1/rules", "admin-a").body<RulesPage>().items.size)
         assertEquals(decided, server.decisions().items.size, "No decision")
@@ -363,6 +365,10 @@ class RulesPostgresTest {
             "Each use of the elevated token is in the audit log, before the action",
         )
         assertEquals(HttpStatusCode.Accepted, server.call("POST", "/api/v1/analysis/start", "admin-a").status)
+        // Started in the name the gates know, else by the membership: without a login, or without a person.
+        for (token in listOf("nameless-a", "unlinked-a")) {
+            assertEquals(HttpStatusCode.Accepted, server.call("POST", "/api/v1/analysis/start", token).status, token)
+        }
         assertEquals(3, audited.size, "The console's starts are not recorded here")
         val held = server.koin.get<GovernanceConfirmations>() as HeldConfirmations
         assertTrue(held.held.isEmpty(), "Starting an analysis is not a held governance write")
@@ -438,7 +444,9 @@ class RulesPostgresTest {
         val rule = { made: JsonElement? -> OstromJson.decodeFromJsonElement(RuleDto.serializer(), checkNotNull(made)) }
         assertEquals("lyes", rule(change.apply(orgA, writes[0], confirmer)).decidedBy)
         assertEquals("rejected", rule(change.apply(orgA, writes[1], confirmer)).status)
-        assertEquals(buildJsonObject { put("updated", 1) }, change.apply(orgA, writes[2], confirmer))
+        // Without a login the gates know, the decision is the membership's.
+        val nameless = confirmer.copy(principal = confirmer.principal.copy(subjectId = "nameless-a"))
+        assertEquals(buildJsonObject { put("updated", 1) }, change.apply(orgA, writes[2], nameless))
         assertEquals(buildJsonObject { put("selfApproval", "never") }, change.apply(orgA, writes[3], confirmer))
         val unlinked = confirmer.copy(principal = confirmer.principal.copy(subjectId = "unlinked-a"))
         assertNull(change.apply(orgA, writes[4], unlinked))

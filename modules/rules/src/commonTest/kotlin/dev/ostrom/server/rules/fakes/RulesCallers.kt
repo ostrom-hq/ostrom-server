@@ -73,6 +73,8 @@ object RulesCallers {
         "stranger" to Person(null, null, PrincipalKind.USER, setOf(RelayScopes.ALL_USER), PrincipalChannel.BROWSER),
         // The tokens of `ostrom login --admin`: all three governance scopes, or only one.
         "elevated-a" to Person(adminA, "lyes", PrincipalKind.USER, GovernanceScopes.ALL),
+        // An elevated token whose person belongs to no organization any more.
+        "elevated-stranger" to Person(null, null, PrincipalKind.USER, GovernanceScopes.ALL),
         "elevated-member-a" to Person(memberA, "mia", PrincipalKind.USER, GovernanceScopes.ALL),
         "policy-writer-a" to Person(adminA, "lyes", PrincipalKind.USER, setOf(GovernanceScopes.POLICY_WRITE)),
         "governing-agent-a" to Person(memberA, "lyes", PrincipalKind.SERVICE, GovernanceScopes.ALL),
