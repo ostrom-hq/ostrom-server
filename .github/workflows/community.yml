@@ -52,6 +52,9 @@ jobs:
             The subject "{subject}" must not start with a capitalized word ("Add ..."): write "feat(cli): add ostrom doctor". Acronyms (API, CLI) are fine.
 
       - name: Developer Certificate of Origin
+        # Runs even when an earlier check failed: one red check never hides another (ostrom-app#35: a wrong title
+        # skipped the license headers, and two files without one reached main).
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -78,12 +81,14 @@ jobs:
           echo "dco: every commit is signed off"
 
       - name: License headers
+        if: ${{ !cancelled() }}
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           python3 .github/scripts/check_spdx.py --base "$BASE"
 
       - name: Workflow security
+        if: ${{ !cancelled() }}
         uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           inputs: .github/
