@@ -68,10 +68,12 @@ class UseGateUseCaseImpl(
     private val sessions: GateSessions,
 ) : UseGateUseCase {
     override suspend fun invoke(actor: GateActor, gateId: Uuid, use: GateUse): Gate {
-        // Signing and the sessions' check never hold the row lock; the transaction below re-reads the gate.
+        // Signing and the sessions' check never hold the row lock; the transaction below re-reads the gate. A shadow or
+        // ungated gate never gets a yes: no session is read for it.
         val before = if (use == GateUse.RELEASE) null else repository.get(actor.orgId, gateId)
         before?.let { receipts.ensureSigned(it) }
-        return move(actor, gateId, use, before == null || inOpenSession(actor, before))
+        val open = before == null || before.status in WITHOUT_YES || inOpenSession(actor, before)
+        return move(actor, gateId, use, open)
     }
 
     private suspend fun inOpenSession(actor: GateActor, gate: Gate): Boolean = gate.sessionIds.any { sessionId ->
@@ -159,6 +161,7 @@ class UseGateUseCaseImpl(
     }
 
     private companion object {
+        val WITHOUT_YES = setOf(GateStatus.SHADOW, GateStatus.UNGATED)
         const val ENDED = "The session that asked for this yes has ended. Ask again in an open session."
         const val EXPIRED = "This yes expired: it waits 15 minutes for its action. Ask again."
         const val RELEASED = "This yes was already released once: use it for this action, or ask again."
