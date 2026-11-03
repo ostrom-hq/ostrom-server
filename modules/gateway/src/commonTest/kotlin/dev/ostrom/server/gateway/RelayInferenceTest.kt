@@ -4,9 +4,13 @@ package dev.ostrom.server.gateway
 import dev.ostrom.server.gateway.domain.AllowAllSpend
 import dev.ostrom.server.gateway.domain.InferenceCall
 import dev.ostrom.server.gateway.domain.InferenceProvider
+import dev.ostrom.server.gateway.domain.InferenceRefusal
+import dev.ostrom.server.gateway.domain.InferenceResponder
 import dev.ostrom.server.gateway.domain.InstanceProviderKeys
 import dev.ostrom.server.gateway.domain.ModelCallObserver
 import dev.ostrom.server.gateway.domain.ModelCallRecord
+import dev.ostrom.server.gateway.domain.ModelCallTrace
+import dev.ostrom.server.gateway.domain.ModelCallTracer
 import dev.ostrom.server.gateway.domain.ModelUsageSink
 import dev.ostrom.server.gateway.domain.NoModelCallObserver
 import dev.ostrom.server.gateway.domain.NoModelUsageSink
@@ -14,6 +18,7 @@ import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.RefusalKind
 import dev.ostrom.server.gateway.domain.RelayInferenceUseCaseImpl
 import dev.ostrom.server.gateway.domain.SpendDecision
+import dev.ostrom.server.gateway.domain.SpendGuard
 import dev.ostrom.server.gateway.domain.SpendRequest
 import dev.ostrom.server.gateway.domain.TokenUsage
 import dev.ostrom.server.gateway.domain.UpstreamAnswer
@@ -370,5 +375,76 @@ class RelayInferenceTest {
                 ),
             ),
         )
+    }
+
+    @Test
+    fun eachCallIsTracedOnceOverItsTriesAndItsTraceEndsWithItsRecord() = runTest {
+        repeat(2) { accounts.share(AccountProvider.CLAUDE, "t$it", clock) }
+        var started = 0
+        val ended = mutableListOf<ModelCallRecord>()
+        val tracer = ModelCallTracer {
+            started++
+            ModelCallTrace { ended += it }
+        }
+        var spend = SpendGuard { SpendDecision.Allowed }
+        val relay = RelayInferenceUseCaseImpl(
+            planner(settings, shared, spend = { spend.check(it) }),
+            FakeUpstream(UpstreamAnswer(429, emptyMap(), source()), eventAnswer()),
+            PriceTable(),
+            { records += it },
+            { },
+            clock,
+            tracer,
+        )
+        relay(Gw.memberA, call(), RecordingResponder())
+        assertEquals(1, started, "One trace for the two tries")
+        assertEquals(records, ended)
+        assertEquals(listOf(200), ended.map { it.status })
+
+        spend = SpendGuard { throw CancellationException("agent gone") }
+        assertFailsWith<CancellationException> { relay(Gw.memberA, call(), RecordingResponder()) }
+        assertEquals(2, started)
+        assertEquals(records, ended, "A call abandoned while planned ends its trace too")
+        assertEquals(listOf(200, 499), ended.map { it.status })
+    }
+
+    @Test
+    fun aCallWhoseAnswerFailsAfterItsPlanIsRecordedOnceAndEndsItsTrace() = runTest {
+        val ended = mutableListOf<ModelCallRecord>()
+        val responder = object : InferenceResponder by RecordingResponder() {
+            override suspend fun refuse(protocol: WireProtocol, refusal: InferenceRefusal) {
+                throw CancellationException("agent gone while answered")
+            }
+        }
+        val relay = RelayInferenceUseCaseImpl(
+            planner(settings, shared, spend = { SpendDecision.Insufficient("Budget left too low for this call") }),
+            FakeUpstream(),
+            PriceTable(),
+            { records += it },
+            { },
+            clock,
+            { ModelCallTrace { ended += it } },
+        )
+        assertFailsWith<CancellationException> { relay(Gw.memberA, call(), responder) }
+        assertEquals(listOf(499 to "cancelled"), records.map { it.status to it.outcome }, "Its hold is settled")
+        assertEquals(records, ended)
+    }
+
+    @Test
+    fun tracingThatFailsToStartNeverFailsTheCall() = runTest {
+        fun relay(tracer: ModelCallTracer) = RelayInferenceUseCaseImpl(
+            planner(settings, shared, keys = InstanceProviderKeys(anthropic = "sk-an")),
+            FakeUpstream(eventAnswer()),
+            PriceTable(),
+            { records += it },
+            { },
+            clock,
+            tracer,
+        )
+        relay(ModelCallTracer { error("tracer down") })(Gw.memberA, call(), RecordingResponder())
+        assertEquals(listOf("ok"), records.map { it.outcome }, "Relayed and recorded, untraced")
+        val gone = relay(ModelCallTracer { throw CancellationException("request gone") })
+        assertFailsWith<CancellationException> { gone(Gw.memberA, call(), RecordingResponder()) }
+        assertEquals(1, records.size, "A cancelled start is no call")
     }
 }

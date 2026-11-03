@@ -16,6 +16,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 import kotlinx.cinterop.toKString
 import kotlinx.coroutines.runBlocking
+import kotlinx.io.IOException
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -35,10 +36,13 @@ import kotlin.time.Clock
  * The entry point of the session image: `ostrom-runner` is the runner (its container holds the runner token),
  * `ostrom-runner agent-host` the agent's side (its own container and uid, without the token, S2-49), and
  * `ostrom-runner check-host` the side that runs the hooks' checks for the runner (its own container, without the
- * token, the workspace mounted, its socket in a directory the agent's container does not mount).
+ * token, the workspace mounted, its socket in a directory the agent's container does not mount). `ostrom-runner
+ * machine` is a registered runner on a machine of the organization: it signs of life with its key until the server
+ * refuses it.
  */
 fun main(args: Array<String>) {
     val environment = readEnvironment()
+    if (args.firstOrNull() == "machine") machine(environment)
     val socket = environment["OSTROM_AGENT_SOCKET"]?.takeIf { it.isNotBlank() } ?: AgentSocket.DEFAULT_PATH
     if (args.firstOrNull() == "agent-host") host(socket, AgentHost(PtyTerminal))
     if (args.firstOrNull() == "check-host") {
@@ -88,6 +92,44 @@ fun main(args: Array<String>) {
     exitProcess(code)
 }
 
+/**
+ * A registered runner (`ostrom-runner machine`): heartbeats with its key until the server refuses it three times in a
+ * row (exit 3) or the machine stops it (SIGTERM, exit 0). A bad configuration, an unreadable key file included, exits
+ * with 2.
+ */
+private fun machine(environment: Map<String, String>): Nothing {
+    signal(SIGTERM, staticCFunction<Int, Unit> { _exit(0) })
+    val config = try {
+        MachineConfig.from(environment) { path ->
+            try {
+                SystemFileSystem.source(Path(path)).buffered().use { it.readString() }
+            } catch (error: IOException) {
+                throw IllegalArgumentException("OSTROM_RUNNER_KEY_FILE cannot be read (${error::class.simpleName}).")
+            }
+        }
+    } catch (error: IllegalArgumentException) {
+        log("invalid configuration: ${error.message}")
+        exitProcess(EXIT_BAD_CONFIGURATION)
+    }
+    log("starting $config")
+    val code = runBlocking {
+        val client = HttpClient(CIO) {
+            expectSuccess = false
+            install(HttpTimeout) {
+                connectTimeoutMillis = CONNECT_TIMEOUT_MILLIS
+                requestTimeoutMillis = CONNECT_TIMEOUT_MILLIS
+            }
+        }
+        try {
+            MachineRunner(HttpMachineApi(client, config), config.interval, ::log).run()
+        } finally {
+            client.close()
+        }
+    }
+    log("exiting with $code")
+    exitProcess(code)
+}
+
 /** A host (agent or checks): serves the runner's terminals on [socket], until the pod stops it (SIGTERM). */
 private fun host(socket: String, host: AgentHost): Nothing {
     // As pid 1 of its container, the host gets no default action for SIGTERM: without this, a stop waits the grace.
@@ -119,6 +161,7 @@ private val KNOWN_VARIABLES = listOf(
     "OSTROM_AGENT_COMMAND", "OSTROM_AGENT_MODEL", "OSTROM_AGENT_PROMPT", "OSTROM_AGENT_PROMPT_FILE",
     "OSTROM_REPOSITORY_URL", "OSTROM_REPOSITORY_REF", "OSTROM_RUNNER_TOKEN", "OSTROM_RUNNER_TOKEN_FILE",
     "OSTROM_WORKSPACE", "OSTROM_AGENT_SOCKET", "OSTROM_RUNNER_CHECKS", "OSTROM_CHECK_HOST_SOCKET",
+    "OSTROM_RUNNER_ID", "OSTROM_RUNNER_KEY", "OSTROM_RUNNER_KEY_FILE", "OSTROM_RUNNER_INTERVAL_SECONDS",
 )
 
 private const val CONNECT_TIMEOUT_MILLIS = 10_000L

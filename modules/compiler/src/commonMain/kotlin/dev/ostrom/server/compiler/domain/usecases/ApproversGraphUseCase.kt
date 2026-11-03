@@ -20,28 +20,33 @@ interface ApproversGraphUseCase {
 }
 
 /**
- * [ApproversGraphUseCase] on [GatesCatalogUseCase]: no other read, so the graph never disagrees with a gate.
+ * [ApproversGraphUseCase] on [GatesCatalogUseCase]: no other read, so the graph never disagrees with a gate. The
+ * organization's graph also has the gates limited to some repositories (PARCOURS 3.3), read from their catalogues.
  *
  * @param catalog The gates catalogue.
  */
 class ApproversGraphUseCaseImpl(private val catalog: GatesCatalogUseCase) : ApproversGraphUseCase {
     override suspend fun invoke(orgId: Uuid, repo: String?): ApproversGraph {
-        val entries = catalog(orgId, repo)
-        val byGate = entries.mapNotNull { entry -> entry.gate?.let { it to entry.action.cls } }
-            .groupBy({ it.first }, { it.second })
-            .map { (gate, actions) -> gate to gate.toApproverGate(actions.distinct().sorted()) }
+        val catalogues = if (repo == null) catalog.everywhere(orgId).values else listOf(catalog(orgId, repo))
+        val byGate = catalogues.flatten()
+            .mapNotNull { entry -> entry.gate?.let { it to entry.action.cls } }
+            .groupBy({ (gate, _) -> gate.workflowId to gate.nodeId })
+            .map { (_, covered) -> covered.first().first.let { it to it.toApproverGate(covered) } }
             .sortedWith(compareBy({ it.second.workflowId }, { it.second.nodeId }))
         val approvers = byGate.flatMap { (gate, view) -> gate.approvers.distinct().map { it to view } }
             .groupBy({ it.first }, { it.second })
             .map { (approver, gates) -> ApproverLine(approver, gates) }
             .sortedBy { it.approver }
+        // An action is ungated when no catalogue has a gate for it, the organization's nor a repository's.
+        val ungated = catalogues.map { entries -> entries.filter { it.gate == null }.map { it.action.cls }.toSet() }
+            .reduce { left, right -> left intersect right }
         return ApproversGraph(
             approvers = approvers,
             unanswered = byGate.filter { it.first.approvers.isEmpty() }.map { it.second },
-            ungated = entries.filter { it.gate == null }.map { it.action.cls }.distinct().sorted(),
+            ungated = ungated.sorted(),
         )
     }
 
-    private fun CatalogGate.toApproverGate(actions: List<String>) =
-        ApproverGate(workflowId, workflowName, nodeId, label, enforce, actions)
+    private fun CatalogGate.toApproverGate(covered: List<Pair<CatalogGate, String>>) =
+        ApproverGate(workflowId, workflowName, nodeId, label, enforce, covered.map { it.second }.distinct().sorted())
 }

@@ -34,6 +34,7 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCase
+import dev.ostrom.server.gates.domain.usecases.GetGateUseCase
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.presentation.AnswerApprovalRequest
 import dev.ostrom.server.gates.presentation.Approval
@@ -444,24 +445,27 @@ class GatesPostgresTest {
 
     @Test
     fun twoHundredWaitingHooksHoldNoConnection() = gatesTest { server ->
-        // The test pool has 4 connections: a wait that held one would stall every other request for its 20 s.
+        // The test pool has 4 connections: a wait that held one would stall every other request for its 30 s.
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         val path = "/api/v1/gates/${opened.gate.id}"
+        val wait = GetGateUseCase.MAX_WAIT
         coroutineScope {
-            val waiting = List(WAITERS) { async { server.call(agent, "$path?wait=20") } }
+            val started = TimeSource.Monotonic.markNow()
+            val waiting = List(WAITERS) { async { server.call(agent, "$path?wait=${wait.inWholeSeconds}") } }
             delay(1.seconds)
             val reads = List(10) {
-                val started = TimeSource.Monotonic.markNow()
+                val readStarted = TimeSource.Monotonic.markNow()
                 assertEquals(HttpStatusCode.OK, server.call("user:a:rev-c", path).status)
-                started.elapsedNow()
+                readStarted.elapsedNow()
             }
             assertTrue(reads.max() < 2.seconds, "a plain read waited behind the waiting ones: $reads")
             assertTrue(waiting.none { it.isCompleted }, "nothing answered yet")
-            val answered = TimeSource.Monotonic.markNow()
             assertEquals(HttpStatusCode.OK, server.answer("user:a:rev-b", opened, "rev-b").status)
             val answers = waiting.awaitAll()
-            assertTrue(answered.elapsedNow() < 5.seconds, "the waits end with the answer: ${answered.elapsedNow()}")
+            // A wait that missed the answer would end only when its own wait runs out. How long the 200 reads after
+            // the answer take depends on the runner (5.4 s once in linuxX64), so the bound is that deadline.
+            assertTrue(started.elapsedNow() < wait, "the waits end with the answer: ${started.elapsedNow()}")
             assertEquals(setOf("approved"), answers.map { it.body<GateResponse>().gate.status }.toSet())
         }
     }
