@@ -149,7 +149,7 @@ class OrgsPostgresTest {
             )
             assertNull(orgs.get(acme.id))
             assertNull(orgs.findBySlug("acme"))
-            assertTrue(orgs.slugTaken("acme"), "A deleted organization keeps its short name")
+            assertTrue(orgs.slugTaken("acme"), "A deleted organization keeps its short name during its days of grace")
             assertEquals(emptyList(), orgs.listOfUser(ada.id))
             assertNull(members.findByUser(acme.id, ada.id))
             assertNull(invitations.findLiveByTokenHash("hash-1", now))
@@ -183,7 +183,7 @@ class OrgsPostgresTest {
             assertNull(tombstone.get("github_org_id").asStringOrNull())
             assertEquals("UTC", tombstone.get("time_zone").asString())
             assertEquals(now + 30.days, tombstone.get("purged_at").asInstant())
-            assertTrue(orgs.slugTaken("acme"), "An erased organization still keeps its short name")
+            assertFalse(orgs.slugTaken("acme"), "An erased organization gives its short name back")
         }
 
     @Test
