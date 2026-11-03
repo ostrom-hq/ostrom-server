@@ -13,15 +13,18 @@ import dev.ostrom.server.billing.domain.LicenseGrant
 import dev.ostrom.server.billing.domain.LicenseProvider
 import dev.ostrom.server.billing.domain.ProcessOutboxUseCase
 import dev.ostrom.server.billing.domain.RecordAgentUsageUseCase
+import dev.ostrom.server.billing.domain.StartCheckoutUseCase
 import dev.ostrom.server.billing.domain.StripeEvent
 import dev.ostrom.server.billing.domain.StripeGateway
 import dev.ostrom.server.billing.fakes.FakeBillingRepository
 import dev.ostrom.server.billing.fakes.FakeLicenseProvider
+import dev.ostrom.server.billing.fakes.FakeMemberEmails
 import dev.ostrom.server.billing.fakes.FakeNotifier
 import dev.ostrom.server.billing.fakes.FixedClock
 import dev.ostrom.server.billing.fakes.NOW
 import dev.ostrom.server.billing.infrastructure.BillingOrgDeletionListener
 import dev.ostrom.server.billing.infrastructure.StripeGatewayImpl
+import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.config.MapConfigSource
 import dev.ostrom.server.kernel.logging.JsonLogger
@@ -99,6 +102,8 @@ class ModuleWiringTest {
             assertEquals(null, koin.get<GetPlanLimitsUseCase>()(ORG).maxPeople, "No license: no people limit")
             koin.get<HandleStripeEventUseCase>()
             koin.get<RecordAgentUsageUseCase>()
+            // Without the orgs module, nobody's address is known: Checkout asks for it.
+            koin.get<StartCheckoutUseCase>()
             assertEquals(0L, koin.get<GetAgentUsageUseCase>()(ORG).agentSeconds)
         }
     }
@@ -111,6 +116,7 @@ class ModuleWiringTest {
             single<LicenseProvider> { license }
             single<BillingNotifier> { FakeNotifier() }
             single<BillingMetrics> { metrics }
+            single<MemberEmails> { FakeMemberEmails() }
         }
         withBillingKoin(emptyMap(), ports) { koin ->
             assertEquals(40, koin.get<GetPlanLimitsUseCase>()(ORG).maxPeople)
@@ -118,6 +124,8 @@ class ModuleWiringTest {
             assertEquals(EventOutcome.IGNORED_UNKNOWN_ORG, koin.get<HandleStripeEventUseCase>()(unknown))
             assertEquals(listOf("evt_1 invoice.paid"), metrics.unknownOrganizations)
             koin.get<RecordAgentUsageUseCase>()
+            // With the orgs module, Checkout reads the payer's verified address.
+            koin.get<StartCheckoutUseCase>()
         }
     }
 }
