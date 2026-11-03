@@ -75,7 +75,7 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
             execute(
                 Statement.create(TOUCH_SQL).bind("at", at).bind("org_id", orgId).bind("id", id)
                     .bind("key_hash", keyHash)
-                    .apply { if (capacity == null) bindNull("capacity", Int::class) else bind("capacity", capacity) },
+                    .let { if (capacity == null) it.bindNull("capacity", Int::class) else it.bind("capacity", capacity) },
             ).getOrThrow() > 0
         }
 
