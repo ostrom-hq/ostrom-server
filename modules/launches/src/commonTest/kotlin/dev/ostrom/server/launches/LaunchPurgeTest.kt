@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
+import dev.ostrom.server.kernel.database.PurgeDateRefusedException
+import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.launches.domain.models.Launch
@@ -9,6 +11,8 @@ import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.fakes.FixedClock
 import dev.ostrom.server.launches.fakes.InMemoryLaunches
 import dev.ostrom.server.testing.serverTest
+import io.github.smyrgeorge.sqlx4k.SQLError
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -16,6 +20,7 @@ import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
@@ -51,6 +56,32 @@ class LaunchPurgeTest {
         assertNull(launches.find(orgB, oldB.id))
         assertEquals(recent, launches.find(orgA, recent.id), "Expired since less than the retention: kept")
         assertEquals(live, launches.find(orgB, live.id))
+    }
+
+    // Audit SERVEUR-3 B3: the purge crosses row-level security for every organization, so the date is bounded twice:
+    // the repository refuses one it cannot be given (a 400), and the function itself never goes past the retention.
+    @Test
+    fun aPurgeNeverDeletesALaunchStillInItsRetentionAndRefusesADateItCannotBound() = serverTest(launchModules()) { s ->
+        val launches = s.koin.get<LaunchesRepository>()
+        val org = Uuid.random()
+        val roomy = LaunchLimit(window = 1.hours, perPerson = 100, perOrg = 100)
+        val old = launch(org, now - 31.days)
+        val kept = launch(org, now - 1.days)
+        listOf(old, kept).forEach { assertNull(launches.create(it, roomy)) }
+
+        // Straight to the function, as the serving role: today deletes only what is past the 30 days.
+        val direct = s.driver.fetchAll("SELECT launches_purge(now()) AS n").getOrThrow()
+        assertEquals(1L, direct.first().get("n").asLong(), "Only the launch expired 31 days ago")
+        assertEquals(kept, launches.find(org, kept.id))
+        for (date in listOf("now() + INTERVAL '1 day'", "'infinity'", "NULL")) {
+            assertFailsWith<SQLError>(date) { s.driver.fetchAll("SELECT launches_purge($date) AS n").getOrThrow() }
+        }
+        for (date in listOf(now + 1.days, Instant.DISTANT_FUTURE, Instant.DISTANT_PAST)) {
+            val refused = assertFailsWith<PurgeDateRefusedException>("$date") { launches.purge(date) }
+            assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
+        }
+        assertEquals(0L, launches.purge(now), "Through the repository too, the retention holds")
+        assertEquals(kept, launches.find(org, kept.id))
     }
 
     @Test

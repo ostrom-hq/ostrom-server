@@ -23,7 +23,7 @@ class LaunchesModuleRegistrationTest {
     @Test
     fun registersUnderItsNameWithDefinitionsThatLoad() {
         assertEquals("launches", LaunchesModule.name)
-        assertEquals(4, LaunchesModule.migrations.size)
+        assertEquals(5, LaunchesModule.migrations.size)
         koinApplication { modules(LaunchesModule.koinModule) }.close()
     }
 
