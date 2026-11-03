@@ -13,4 +13,6 @@ import kotlin.uuid.Uuid
 class LaunchesRunLaunches(private val launches: LaunchesRepository) : RunLaunches {
     override suspend fun cloudSession(orgId: Uuid, launchId: String): Uuid? =
         launches.find(orgId, launchId)?.cloudSessionId
+
+    override suspend fun repo(orgId: Uuid, launchId: String): String? = launches.find(orgId, launchId)?.repo
 }
