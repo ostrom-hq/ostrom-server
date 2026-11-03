@@ -35,12 +35,11 @@ class MachineRunner(
      */
     suspend fun run(): Int = coroutineScope {
         val answers = Channel<MachineWork>(Channel.CONFLATED)
+        // A failed or cancelled loop cancels it with the scope; a refused key ends it here.
         val applier = sessions?.let { machine -> launch { applyAnswers(machine, answers) } }
-        try {
-            beat(answers)
-        } finally {
-            applier?.cancel()
-        }
+        val code = beat(answers)
+        applier?.cancel()
+        code
     }
 
     private suspend fun beat(answers: Channel<MachineWork>): Int {
@@ -83,7 +82,9 @@ class MachineRunner(
         }
 
     private suspend fun applyAnswers(machine: MachineSessions, answers: Channel<MachineWork>) {
-        for (work in answers) {
+        // Until the loop ends and cancels it: nothing closes the channel.
+        while (true) {
+            val work = answers.receive()
             try {
                 machine.apply(work)
             } catch (error: CancellationException) {

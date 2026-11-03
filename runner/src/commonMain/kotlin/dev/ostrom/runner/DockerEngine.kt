@@ -17,8 +17,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.uuid.Uuid
 
 /** The machine's Docker Engine, as a registered runner uses it: only the objects labelled as this runner's. */
@@ -128,7 +127,8 @@ class HttpDockerEngine(private val client: HttpClient, apiUrl: String, runnerId:
         val name = mapOf("name" to container.name)
         var created = call(HttpMethod.Post, "/containers/create", container.body, name)
         if (created.status == HttpStatusCode.NotFound) {
-            pull((container.body["Image"] as? JsonPrimitive)?.contentOrNull.orEmpty())
+            // The plan guard has checked that the image is text.
+            pull(container.body.getValue("Image").jsonPrimitive.content)
             created = call(HttpMethod.Post, "/containers/create", container.body, name)
         }
         // 409: it exists, from a pass cut short.

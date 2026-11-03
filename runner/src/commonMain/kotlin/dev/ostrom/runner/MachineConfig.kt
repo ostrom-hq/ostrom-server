@@ -68,7 +68,8 @@ data class MachineConfig(
             require(seconds == null || seconds in 1..MAX_INTERVAL_SECONDS) {
                 "OSTROM_RUNNER_INTERVAL_SECONDS must be 1 to $MAX_INTERVAL_SECONDS."
             }
-            val docker = optional("OSTROM_DOCKER_API_URL")?.trimEnd('/')?.let { url ->
+            val docker = optional("OSTROM_DOCKER_API_URL")?.let { raw ->
+                val url = raw.trimEnd('/')
                 require(url.startsWith("http://") || url.startsWith("https://")) {
                     "OSTROM_DOCKER_API_URL must be the http(s) URL of the Docker Engine API (a socket proxy)."
                 }
