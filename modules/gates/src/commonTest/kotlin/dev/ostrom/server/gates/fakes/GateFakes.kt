@@ -125,6 +125,7 @@ class InMemoryGatesRepository : GatesRepository {
                 askedVia = gate.askedVia,
                 sessionIds = gate.sessionIds,
                 launchIds = gate.launchIds,
+                unlinkedAuthor = gate.unlinkedAuthor,
             )
             gate.sessionIds.forEach { links += gate.id to it }
         }
