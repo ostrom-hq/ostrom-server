@@ -317,6 +317,17 @@ class OrgsRoutesPostgresTest {
             assertNotNull(Uuid.parseOrNull(bobSeen.id))
             val listed = server.client.get("/api/v1/orgs/acme/members") { session(carl) }.body<MembersResponse>()
             assertEquals(bobSeen.id, listed.items.single { it.login == "bob" }.id)
+            // A member reads their own address only; an owner or an admin reads everyone's (audit 2 of the contract, F2).
+            assertEquals(
+                listOf("ada" to null, "bob" to null, "carl" to "carl@example.com"),
+                listed.items.map { it.login to it.email },
+            )
+            assertNull(bobSeen.email)
+            val byOwner = server.client.get("/api/v1/orgs/acme/members") { session(ada) }.body<MembersResponse>()
+            assertEquals(
+                listOf("ada@example.com", "bob@example.com", "carl@example.com"),
+                byOwner.items.map { it.email },
+            )
             val badRole =
                 server.client.patch("/api/v1/orgs/acme/members/carl") {
                     session(bob)

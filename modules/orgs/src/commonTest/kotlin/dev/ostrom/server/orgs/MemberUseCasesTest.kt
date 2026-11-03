@@ -68,12 +68,30 @@ class MemberUseCasesTest {
         val members = list(org.id, carl.id)
 
         assertEquals(listOf("ada", "bob", "carl", "dana"), members.map { it.login })
-        assertEquals("ada@example.com", members.first().email)
+        assertEquals("ada@example.com", list(org.id, bob.id).first().email)
         assertFailsWith<OrgNotFoundException> { list(org.id, Uuid.random()) }
         val get = GetMemberUseCaseImpl(world.orgs, world.members, world.people)
         assertEquals(OrgRole.ADMIN, get(org.id, carl.id, "bob").member.role)
         assertFailsWith<MemberNotFoundException> { get(org.id, carl.id, "nobody") }
         assertEquals(5, CountMembersUseCaseImpl(world.members)(org.id))
+    }
+
+    @Test
+    fun onlyAnOwnerOrAnAdminSeesTheOtherMembersAddresses() = runTest {
+        val list = ListMembersUseCaseImpl(world.orgs, world.members, world.people)
+        val get = GetMemberUseCaseImpl(world.orgs, world.members, world.people)
+
+        // A member (or a token of theirs: the CLI's, the app's) sees their own address, never the others'.
+        val seenByMember = list(org.id, carl.id).associate { it.login to it.email }
+
+        assertEquals(mapOf("ada" to null, "bob" to null, "carl" to "carl@example.com", "dana" to null), seenByMember)
+        assertNull(get(org.id, carl.id, "ada").email)
+        assertEquals("carl@example.com", get(org.id, carl.id, "carl").email)
+        assertEquals(
+            listOf("ada@example.com", "bob@example.com", "carl@example.com", "dana@example.com"),
+            list(org.id, ada.id).map { it.email },
+        )
+        assertEquals("carl@example.com", get(org.id, bob.id, "carl").email)
     }
 
     @Test
