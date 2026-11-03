@@ -12,14 +12,17 @@ import dev.ostrom.server.kernel.audit.OrgAuditRecord
 import dev.ostrom.server.kernel.audit.auditDetails
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
-import dev.ostrom.server.kernel.auth.auditGovernance
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.auth.confirmsByConsole
+import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.http.bodyLimit
 import dev.ostrom.server.secrets.domain.Caller
+import dev.ostrom.server.secrets.domain.OrgNotFoundException
 import dev.ostrom.server.secrets.domain.RelayScopes
 import dev.ostrom.server.secrets.presentation.mayUse
 import dev.ostrom.server.secrets.presentation.requireCaller
@@ -60,8 +63,8 @@ private val INFERENCE_SCOPES = arrayOf(RelayScopes.AGENT_SESSION, RelayScopes.IN
 /** Who changes the policy and the settings besides a browser session (S2-52, declared): an `inference:admin` key. */
 private val INFERENCE_ADMINS = WriteAccess.tokens(PrincipalKind.SERVICE)
 
-/** Who changes the model policy: an `inference:admin` key, or the token of `ostrom login --admin` (`policy:write`). */
-private val POLICY_WRITERS = WriteAccess.governance(GovernanceScopes.POLICY_WRITE, PrincipalKind.SERVICE)
+/** Who changes the model policy at once, besides a browser session: an `inference:admin` service key. */
+private val POLICY_WRITERS = WriteAccess.tokens(PrincipalKind.SERVICE)
 
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
@@ -74,8 +77,8 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  * Chat Completions), take the member's Ostrom token as `Authorization: Bearer` or `x-api-key`, and answer errors in
  * the provider's shape. An agent session reads the model policy; only `inference:admin` (or a browser session)
  * changes it and reads or changes the settings (SECURITY-AUDIT S2-03), and a token that changes them is a service key
- * (S2-52), or, for the model policy, the token of `ostrom login --admin`: an owner or admin, audited before the
- * write.
+ * (S2-52). A person's token that sets the model policy writes nothing: an owner's or an admin's opens a confirmation
+ * on the console (audit CLI H1).
  *
  * @param dependencies The use cases.
  */
@@ -134,27 +137,26 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
  * @param dependencies The use cases.
  */
 private suspend fun ApplicationCall.putModelPolicy(dependencies: GatewayRoutesDependencies) {
+    val principal = requirePrincipal()
+    if (principal.confirmsByConsole) {
+        // A person's token (the CLI's, elevated or not): an owner's or admin's change, held for the console.
+        val caller = dependencies.callers.resolve(principal, null) ?: throw OrgNotFoundException()
+        caller.requireAdmin()
+        val payload = GatewayGovernanceChange.payload(receive<ModelPolicyDto>())
+        val write = GovernanceWrite(GatewayGovernanceChange.MODEL_POLICY, payload)
+        return holdForConfirmation(caller.orgId, GovernanceScopes.POLICY_WRITE, write)
+    }
     val caller = requireCaller(
         dependencies.callers,
         RelayScopes.INFERENCE_ADMIN,
         GovernanceScopes.POLICY_WRITE,
         writers = POLICY_WRITERS,
     )
-    val principal = requirePrincipal()
-    if (principal.kind == PrincipalKind.USER) {
-        caller.requireAdmin()
-        auditGovernance(principal, GovernanceScopes.POLICY_WRITE)
-    }
+    // A person signed in to the console: an owner or admin, at every request.
+    if (principal.kind == PrincipalKind.USER) caller.requireAdmin()
     val request = receive<ModelPolicyDto>()
     val policy = dependencies.putPolicy(caller, ModelPolicy(request.allowed, request.defaultModel, request.byMember))
-    val details = auditDetails(
-        "allowed" to policy.allowed,
-        "default_model" to policy.default,
-        "members_with_own_list" to policy.byMember.keys,
-    )
-    dependencies.audit.record(
-        OrgAuditRecord(caller.orgId, principal, "inference.policy.changed", "policy", "models", details),
-    )
+    dependencies.audit.record(policy.changedBy(caller.orgId, principal))
     respond(policy.toDto())
 }
 
