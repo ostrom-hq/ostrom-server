@@ -10,6 +10,9 @@ import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
 import org.koin.core.module.Module
 import org.koin.dsl.module
@@ -19,6 +22,7 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.minutes
 
 class TestDatabaseTest {
     private class ProbeModule(override val name: String, override val koinModule: Module) : ServerModule
@@ -132,6 +136,57 @@ class TestDatabaseTest {
         }
     }
 
+    // The lock of TestDatabase.exclusively held in pg_locks, by any test process (a bigint key: classid 0, objsubid 1).
+    private val exclusiveLocksHeld =
+        "SELECT CAST(count(*) AS text) AS value FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 " +
+            "AND objid = ${TestDatabase.EXCLUSIVE_LOCK} AND objsubid = 1 AND granted"
+
+    @Test
+    fun largePoolsTakeTurnsOnTheServerAndSmallOnesNeverWait() = runTest(timeout = BENCHES_AHEAD) {
+        val first = TestDatabase.create() ?: return@runTest
+        val second = checkNotNull(TestDatabase.create())
+        try {
+            val holding = CompletableDeferred<String>()
+            val release = CompletableDeferred<Unit>()
+            val holder = async {
+                first.withRole(poolSize = LARGE_POOL) { _, _ ->
+                    // Taken again at once within, and by a child coroutine: a bench's large pool inside its timing.
+                    coroutineScope {
+                        async { first.exclusively { holding.complete(first.superuser.text(exclusiveLocksHeld)) } }
+                            .await()
+                    }
+                    release.await()
+                }
+            }
+            assertEquals("1", holding.await(), "A single holder of the lock on the server")
+            // Another test database, as another Gradle test process has: its exclusive phase waits for the first one.
+            val refused = CompletableDeferred<Unit>()
+            val waiter = async { second.exclusively(onWait = { refused.complete(Unit) }) { "entered" } }
+            refused.await()
+            assertEquals("small", second.withRole { _, _ -> "small" }, "A small pool never waits")
+            assertFalse(waiter.isCompleted, "Refused while the first one holds the lock, it has not entered")
+            release.complete(Unit)
+            holder.await()
+            assertEquals("entered", waiter.await(), "Then it enters")
+        } finally {
+            second.close()
+            first.close()
+        }
+    }
+
+    @Test
+    fun aPoolLargerThanTheLargestIsRefusedBeforeAnyConnection() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            val refused = assertFailsWith<IllegalArgumentException> {
+                database.withRole(poolSize = TestDatabase.LARGEST_POOL + 1) { _, _ -> error("never opened") }
+            }
+            assertEquals("A pool of 21: at most 20 beside the other tests' pools.", refused.message)
+        } finally {
+            database.close()
+        }
+    }
+
     @Test
     fun aDatabaseThatCannotBeCreatedReleasesItsConnection() = runTest {
         val url = environment["OSTROM_TEST_DATABASE_URL"] ?: return@runTest
@@ -164,5 +219,12 @@ class TestDatabaseTest {
         val first = ProbeModule("first", module { single { "first" } })
         val second = ProbeModule("second", module { single { "second" } })
         assertFails { serverTest(listOf(first, second)) {} }
+    }
+
+    private companion object {
+        // Larger than withRole's default pool of 2: a pool that takes turns.
+        const val LARGE_POOL = 3
+        // The other test processes' benches may hold the lock first, each for its timings: a bench's own timeout.
+        val BENCHES_AHEAD = 5.minutes
     }
 }
