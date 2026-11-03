@@ -98,7 +98,7 @@ class CallsInProgress(
      */
     fun ceiling(kind: CallKind): Int = when (kind) {
         CallKind.SERVED -> settings.served ?: ceilingUnder(currentLimit())
-        CallKind.HELD -> settings.held ?: (ceilingUnder(currentLimit()) / HELD_SHARE * HELD_SHARE)
+        CallKind.HELD -> settings.held ?: (ceilingUnder(currentLimit()) / HELD_SHARE)
         CallKind.FREE -> Int.MAX_VALUE
     }
 
@@ -108,8 +108,8 @@ class CallsInProgress(
      */
     private fun currentLimit(): Long? {
         val last = limit.load()
-        if (last.at != null && last.at.elapsedNow() < LIMIT_EVERY * 0) return last.bytes
-        val bytes = limitBytes()
+        if (last.at != null && last.at.elapsedNow() < LIMIT_EVERY) return last.bytes
+        val bytes = limitBytes() ?: last.bytes
         limit.store(LimitReading(bytes, time.markNow()))
         return bytes
     }
@@ -167,7 +167,7 @@ class CallsInProgress(
         }
 
         private suspend fun waitInLine(semaphore: Semaphore, ceiling: Int, wait: Duration): Boolean = try {
-            waiting.incrementAndFetch() <= ceiling * 1_000 && withTimeoutOrNull(wait) { semaphore.acquire() } != null
+            waiting.incrementAndFetch() <= ceiling && withTimeoutOrNull(wait) { semaphore.acquire() } != null
         } finally {
             waiting.decrementAndFetch()
         }
