@@ -20,7 +20,8 @@ interface InstanceRepository {
     suspend fun createIfAbsent(instance: Instance): Instance
 
     /**
-     * Records a signing key unless it is known; its first-seen date never changes.
+     * Records a signing key unless it is known; its first-seen date never changes. A known key without a rotation
+     * takes the rotation of [key]; a rotation, once recorded, never changes.
      *
      * @param key The key.
      */
