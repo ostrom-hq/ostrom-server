@@ -14,6 +14,7 @@ import dev.ostrom.server.integrations.github.domain.InstallationNotYoursExceptio
 import dev.ostrom.server.integrations.github.domain.InstallationPendingException
 import dev.ostrom.server.integrations.github.domain.WebhookOutcome
 import dev.ostrom.server.integrations.github.domain.installPage
+import dev.ostrom.server.integrations.github.infrastructure.IdentityGitHubAccounts
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlinx.coroutines.CancellationException
@@ -55,6 +56,7 @@ class GitHubInstallOriginsTest {
         GitHubGateChecks(repository, api, "https://console.example", clock),
         logger,
         clock,
+        IdentityGitHubAccounts(LinkedGitHubUsers(emptyMap())),
     )
     private val page = installPage(GITHUB, "ostrom-dev")
     private val installs = GitHubInstalls(repository, repository.origins, api, { page }, clock)

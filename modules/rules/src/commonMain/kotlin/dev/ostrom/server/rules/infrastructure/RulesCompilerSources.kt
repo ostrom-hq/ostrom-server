@@ -12,11 +12,10 @@ import dev.ostrom.server.compiler.domain.models.RuleDoc
 import dev.ostrom.server.compiler.domain.services.CompilerSources
 import dev.ostrom.server.receipts.domain.usecases.isoMillis
 import dev.ostrom.server.rules.domain.models.Rule
-import dev.ostrom.server.rules.domain.models.RuleQuery
 import dev.ostrom.server.rules.domain.models.RuleStatus
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
+import dev.ostrom.server.rules.domain.services.EveryRule
 import dev.ostrom.server.rules.domain.services.RuleDocuments
-import dev.ostrom.server.rules.domain.usecases.ListRulesUseCase
 import kotlin.uuid.Uuid
 
 /**
@@ -33,7 +32,7 @@ class RulesCompilerSources(
     private val defaults: CompilerSources,
 ) : CompilerSources {
     override suspend fun rules(orgId: Uuid): List<RuleDoc> =
-        repository.rules(orgId, RuleQuery(), ListRulesUseCase.MAX_RULES).map { it.toDoc() }
+        EveryRule.of(repository, orgId).map { it.toDoc() }
 
     override suspend fun ruleDecisions(orgId: Uuid): List<DecisionDoc> =
         repository.lastRuleDecisions(orgId).map { decision ->
@@ -53,7 +52,7 @@ class RulesCompilerSources(
     override suspend fun settings(orgId: Uuid): CompilerSettings = defaults.settings(orgId)
 
     override suspend fun ruleGates(orgId: Uuid): List<Workflow> =
-        repository.gatedRules(orgId).mapNotNull { it.toGateWorkflow() }
+        EveryRule.gated(repository, orgId).mapNotNull { it.toGateWorkflow() }
 
     private fun Rule.toDoc(): RuleDoc = RuleDoc(
         raw = RuleDocuments.full(this),

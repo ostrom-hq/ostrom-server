@@ -12,6 +12,15 @@ import kotlinx.serialization.Serializable
 class LaunchesApi
 
 /**
+ * One launch (contract `endLaunch`).
+ *
+ * @property launchId The launch.
+ */
+@Serializable
+@Resource("/api/v1/launches/{launchId}")
+class LaunchApi(val launchId: String)
+
+/**
  * The organization's policy on launches (contract `checkAgentPolicy`).
  *
  * @property agent The agent's name in Ostrom.

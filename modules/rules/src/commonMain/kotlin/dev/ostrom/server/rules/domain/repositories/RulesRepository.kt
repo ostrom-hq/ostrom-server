@@ -22,12 +22,26 @@ interface RulesRepository {
     suspend fun rules(orgId: Uuid, query: RuleQuery, limit: Int): List<Rule>
 
     /**
-     * Lists the rules that put a gate on boundary actions and are not rejected, for the gates catalogue.
+     * Lists a page of every rule of an organization, by id: the order of a key that never changes, so that reading page
+     * after page misses no rule that stays ([dev.ostrom.server.rules.domain.services.EveryRule]).
      *
      * @param orgId The organization.
-     * @return The rules, by id; at most [dev.ostrom.server.rules.domain.usecases.ListRulesUseCase.MAX_RULES].
+     * @param after Only the rules whose id comes after this one, when set.
+     * @param limit At most this many.
+     * @return The rules, by id.
      */
-    suspend fun gatedRules(orgId: Uuid): List<Rule>
+    suspend fun rulesById(orgId: Uuid, after: String?, limit: Int): List<Rule>
+
+    /**
+     * Lists a page of the rules that put a gate on boundary actions and are not rejected, for the gates catalogue
+     * ([dev.ostrom.server.rules.domain.services.EveryRule.gated] reads them all).
+     *
+     * @param orgId The organization.
+     * @param after Only the rules whose id comes after this one, when set.
+     * @param limit At most this many.
+     * @return The rules, by id.
+     */
+    suspend fun gatedRules(orgId: Uuid, after: String?, limit: Int): List<Rule>
 
     /**
      * Lists the last decision on each rule, for the receipts the rules harness cites.
