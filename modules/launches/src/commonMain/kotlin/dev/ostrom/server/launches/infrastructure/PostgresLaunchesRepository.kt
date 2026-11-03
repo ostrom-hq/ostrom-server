@@ -10,6 +10,7 @@ import io.github.smyrgeorge.sqlx4k.ResultSet
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstant
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
 import kotlin.time.Duration
@@ -25,6 +26,11 @@ import kotlin.uuid.Uuid
 class PostgresLaunchesRepository(private val driver: Driver) : LaunchesRepository {
     override suspend fun create(launch: Launch, limit: LaunchLimit): Duration? =
         driver.withOrganization(launch.orgId) { tx -> limited(tx, launch, limit) }
+
+    // The one deletion across organizations, through the function of LaunchesMigrations version 4.
+    override suspend fun purge(before: Instant): Long = driver.fetchAll(
+        Statement.create("SELECT launches_purge(CAST(:before AS TIMESTAMPTZ)) AS n").bind("before", before),
+    ).getOrThrow().first().get("n").asLong()
 
     private suspend fun limited(tx: Transaction, launch: Launch, limit: LaunchLimit): Duration? {
         // One launch of the organization at a time: the count below then holds until the insert commits.

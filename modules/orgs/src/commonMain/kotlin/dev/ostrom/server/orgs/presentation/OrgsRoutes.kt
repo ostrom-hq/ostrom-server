@@ -17,6 +17,7 @@ import dev.ostrom.server.orgs.domain.InvalidOrgRequestException
 import dev.ostrom.server.orgs.domain.Invitation
 import dev.ostrom.server.orgs.domain.InvitationNotFoundException
 import dev.ostrom.server.orgs.domain.InviteRequest
+import dev.ostrom.server.orgs.domain.MAX_MEMBER_PAGE
 import dev.ostrom.server.orgs.domain.MemberProfile
 import dev.ostrom.server.orgs.domain.MemberWrite
 import dev.ostrom.server.orgs.domain.Membership
@@ -111,7 +112,11 @@ private fun Route.memberRoutes(dependencies: OrgsRoutesDependencies) =
     with(dependencies) {
         get<OrgsApi.Org.Members> { params ->
             val (orgId, userId) = member(call, params.parent.org, ORGS_READ)
-            call.respond(MembersResponse(members.list(orgId, userId).map { it.toMemberResponse() }))
+            val after = params.after?.let {
+                Uuid.parseOrNull(it) ?: throw InvalidOrgRequestException("after is a member id.")
+            }
+            val page = members.list(orgId, userId, after, params.limit ?: MAX_MEMBER_PAGE)
+            call.respond(MembersResponse(page.items.map { it.toMemberResponse() }, page.next?.toString()))
         }
         get<OrgsApi.Org.Members.Login> { params ->
             val (orgId, userId) = member(call, params.parent.parent.org, ORGS_READ)

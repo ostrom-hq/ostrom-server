@@ -160,6 +160,35 @@ class ImportSafetyPostgresTest {
         }
     }
 
+    @Test
+    fun aTeamCodeServerNamedLikeOstromsOwnIsReportedBeforeAnythingIsWritten() =
+        serverTest(modules, importOverrides()) { server ->
+            with(server) {
+                val request = TeamCodeImportRequest(
+                    mcpServers = listOf(
+                        TeamCodeMcpServerDto(
+                            "own",
+                            "Ostrom",
+                            "default",
+                            url = "https://ostrom.example.com/mcp",
+                            sharedSecret = "own-token",
+                        ),
+                    ),
+                    memberMap = Importing.members,
+                )
+                val refused = line(
+                    "server",
+                    "ostrom",
+                    SKIPPED,
+                    "Agents would see ostrom as ostrom, Ostrom's own MCP server: rename it in TeamCode.",
+                )
+                val plan = report(request, dryRun = true).items
+                assertEquals(refused, plan.single { it.kind == "server" }, "The plan says it, as the run does")
+                assertEquals(refused, report(request).items.single { it.kind == "server" })
+                assertNull(servers()["ostrom"], "Nothing was declared")
+            }
+        }
+
     /** What an admin and a member create in the console before importing, under the names the import would use. */
     private suspend fun TestServer.createByHand() {
         val createServer = koin.get<CreateMcpServerUseCase>()
