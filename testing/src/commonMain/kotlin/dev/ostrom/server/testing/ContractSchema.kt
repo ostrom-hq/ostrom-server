@@ -53,7 +53,7 @@ data class Violation(val path: String, val kind: DriftKind, val detail: String) 
 /**
  * Checks JSON against the schemas of the ostrom-core contract (`api/openapi.yaml`, as JSON), strictly: every required
  * property present, every property declared, every value of its type, through `$ref` (any local pointer), `oneOf` (a
- * `null` branch included), `allOf`, `enum`, arrays and maps.
+ * `null` branch included), `anyOf`, `allOf`, `enum`, arrays and maps.
  *
  * @param document The whole contract, for its references.
  */
@@ -104,10 +104,12 @@ class ContractSchema(private val document: JsonObject) {
         val ref = schema[REF]?.jsonPrimitive?.content
         val all = schema["allOf"]?.jsonArray
         val one = schema["oneOf"]?.jsonArray
+        val any = schema["anyOf"]?.jsonArray
         return when {
             ref != null -> against(resolve(ref), value, at)
             all != null -> against(merged(all), value, at)
-            one != null -> oneOf(one, value, at)
+            one != null -> branches(one, value, at, exclusive = true)
+            any != null -> branches(any, value, at, exclusive = false)
             else -> enumViolations(schema, value, at) + typed(schema, value, at)
         }
     }
@@ -124,12 +126,15 @@ class ContractSchema(private val document: JsonObject) {
         return JsonObject(rest + mapOf("properties" to JsonObject(properties), "required" to JsonArray(required)))
     }
 
-    private fun oneOf(branches: JsonArray, value: JsonElement, at: String): List<Violation> {
-        val results = branches.map { against(it.jsonObject, value, at) }
-        return when (results.count { it.isEmpty() }) {
-            1 -> emptyList()
-            0 -> listOf(Violation(at, DriftKind.TYPE, "matches no branch of oneOf: ${results.flatten()}"))
-            else -> listOf(Violation(at, DriftKind.TYPE, "matches more than one branch of oneOf"))
+    // `oneOf` (exclusive) takes exactly one branch, `anyOf` at least one.
+    private fun branches(options: JsonArray, value: JsonElement, at: String, exclusive: Boolean): List<Violation> {
+        val results = options.map { against(it.jsonObject, value, at) }
+        val keyword = if (exclusive) "oneOf" else "anyOf"
+        val matched = results.count { it.isEmpty() }
+        return when {
+            matched == 0 -> listOf(Violation(at, DriftKind.TYPE, "matches no branch of $keyword: ${results.flatten()}"))
+            matched > 1 && exclusive -> listOf(Violation(at, DriftKind.TYPE, "matches more than one branch of oneOf"))
+            else -> emptyList()
         }
     }
 
