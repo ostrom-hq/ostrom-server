@@ -82,8 +82,16 @@ data class ReceiptKeyRotation(val kid: String, val signature: String)
  * @property digest The SHA-256 of the canonical body, recomputed.
  * @property kid The key that signed it, when verified.
  * @property reason Why it does not verify, when it does not.
+ * @property orgBound True when its signed body names the organization that verifies it; false for a receipt signed
+ * before receipts named their organization (valid, never shown as bound) and for one that does not verify.
  */
-data class Verification(val ok: Boolean, val digest: String?, val kid: String?, val reason: String?)
+data class Verification(
+    val ok: Boolean,
+    val digest: String?,
+    val kid: String?,
+    val reason: String?,
+    val orgBound: Boolean,
+)
 
 /** The receipt does not exist, or belongs to another organization (the same answer, so nothing leaks). */
 class ReceiptNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Receipt not found.")

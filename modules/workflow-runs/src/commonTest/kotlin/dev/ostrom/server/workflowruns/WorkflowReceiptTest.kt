@@ -18,6 +18,7 @@ import dev.ostrom.server.workflowruns.domain.models.SessionStillOpenException
 import dev.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCaseImpl
 import dev.ostrom.server.workflowruns.domain.usecases.WorkflowReceiptRequest
+import dev.ostrom.server.workflowruns.fakes.ADA
 import dev.ostrom.server.workflowruns.fakes.AGENT
 import dev.ostrom.server.workflowruns.fakes.BOB
 import dev.ostrom.server.workflowruns.fakes.FakeSessions
@@ -56,8 +57,10 @@ class WorkflowReceiptTest {
     private val verifier = object : VerifyReceiptUseCase {
         override suspend fun invoke(orgId: Uuid, id: String): Verification = error("Verified as signed.")
 
-        override suspend fun verify(receipt: JsonObject): Verification =
-            Verification(receipt["signature"]?.jsonPrimitive?.content == "sig", "d", "k1", null)
+        override suspend fun verify(orgId: Uuid, receipt: JsonObject): Verification {
+            assertEquals(ORG, orgId, "Verified for the caller's organization")
+            return Verification(receipt["signature"]?.jsonPrimitive?.content == "sig", "d", "k1", null, true)
+        }
     }
     private val sessions = FakeSessions(
         listOf(session(ended = true)),
@@ -76,8 +79,9 @@ class WorkflowReceiptTest {
             ReportCheckRequest("s-1", "sha256:pkg", "n-check", "sc-1", "sha-good", 0, CheckOutcome.PASSED),
         )
         val receipt = sign(AGENT, request())
-        assertTrue(receipt.verification.ok)
+        assertTrue(receipt.verification.ok && receipt.verification.orgBound)
         val (draft, id) = signed.single()
+        assertEquals("lch_1" to "s-1", draft.text("launchId") to draft.text("sessionId"), "Its launch and session")
         assertEquals("rcpt_workflow_s-1", id, "Signed once per session: asked again, the same receipt")
         val subject = draft.getValue("subject").jsonObject
         assertEquals("workflow" to "s-1@v3", subject.text("kind") to subject.text("id"))
@@ -102,6 +106,15 @@ class WorkflowReceiptTest {
         sign(AGENT, request(agent = "codex", model = "gpt-5.1-codex"))
         val draft = signed.single().first
         assertEquals("codex" to "gpt-5.1-codex", draft.text("agent") to draft.text("model"))
+    }
+
+    @Test
+    fun aSessionOutsideALaunchNamesNoLaunch() = runTest {
+        val unlaunched = FakeSessions(listOf(session(ended = true).copy(launchId = null)))
+        SignWorkflowReceiptUseCaseImpl(access(unlaunched), unlaunched, runs, signer, verifier, ci)(ADA, request())
+        val draft = signed.single().first
+        assertNull(draft["launchId"])
+        assertEquals("s-1", draft.text("sessionId"))
     }
 
     @Test
