@@ -76,6 +76,11 @@ object ContractFixtures {
                         "x-ostrom-event-done": "[DONE]"
                       }
                     }
+                  },
+                  "202": {
+                    "content": {
+                      "text/event-stream": {"x-ostrom-event-data": {"$R": "#/components/schemas/Thing"}}
+                    }
                   }
                 }
               }

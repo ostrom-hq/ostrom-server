@@ -134,6 +134,8 @@ class ContractObserverTest {
         assertEquals("data: [DONE]", client.get("/api/v1/things/stream").bodyAsText().lines().dropLast(2).last())
         assertEquals("""{"items": [{"id": "a"}]}""", client.get("/api/v1/things?as=streamed").bodyAsText())
         client.get("/api/v1/things/stream?as=json")
+        // A status that declares events only: they are read too, and this one lacks its id.
+        client.get("/api/v1/things/stream?as=accepted")
         listOf("drift", "teapot").forEach { client.get("/api/v1/things/stream?as=$it") }
         client.get("/api/v1/things?as=events")
         client.delete("/api/v1/things/a?as=streamed")
@@ -141,6 +143,7 @@ class ContractObserverTest {
 
         val failure = assertFailsWith<AssertionError> { observer.finish() }.message.orEmpty()
         val expected = listOf(
+            "streamThings 202 $.id MISSING",
             "streamThings 200 $.id MISSING",
             "streamThings 200 $.name UNDECLARED",
             "streamThings 200 $ BODY",
@@ -220,6 +223,7 @@ private suspend fun stream(call: RoutingCall) = when (call.request.queryParamete
     "json" -> call.respondText("""{"id": "a"}""", json)
     "drift" -> call.respond(events("data: {\"name\": 1}\n\ndata: {oops\n\n"))
     "teapot" -> call.respond(events("data: {}\n\n", HttpStatusCode(418, "Teapot")))
+    "accepted" -> call.respond(events("data: {}\n\n", HttpStatusCode.Accepted))
     else -> call.respond(events("event: thing\ndata: {\"id\": \"a\"}\n\n: heartbeat\n\ndata: [DONE]\n\n"))
 }
 
