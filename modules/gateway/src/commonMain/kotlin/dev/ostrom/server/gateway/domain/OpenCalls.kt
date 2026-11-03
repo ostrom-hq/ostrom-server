@@ -20,11 +20,16 @@ class OpenCalls(
     private val places = Semaphore(max)
 
     /**
-     * Takes a place, without waiting: a call beyond [max] is refused at once.
+     * Takes a place, without waiting: a call beyond [max], or once the replica's resident memory reaches
+     * [memoryCeilingBytes], is refused at once.
      *
      * @return True when admitted; the caller then calls [close] exactly once.
      */
-    fun tryOpen(): Boolean = places.tryAcquire()
+    fun tryOpen(): Boolean = !pastMemoryCeiling() && places.tryAcquire()
+
+    /** An unreadable memory, or no ceiling, leaves the count alone to decide. */
+    private fun pastMemoryCeiling(): Boolean =
+        memoryCeilingBytes?.let { ceiling -> residentBytes()?.let { it >= ceiling } } == true
 
     /**
      * Gives back a place taken by [tryOpen].

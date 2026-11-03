@@ -251,13 +251,16 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 | `OSTROM_GATEWAY_OPENAI_URL` | `https://api.openai.com` | OpenAI base URL (`/v1/responses`, `/v1/chat/completions`) |
 | `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
 | `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
-| `OSTROM_GATEWAY_MAX_OPEN_CALLS` | `100` | Model calls one replica relays at once, 1 to 100 000. Past it a call is refused at once with 503 (`overloaded_error` for Anthropic clients, `server_error` for OpenAI ones) and `retry-after: 1`, and never reaches the provider |
+| `OSTROM_GATEWAY_MAX_OPEN_CALLS` | from the container limit | Model calls one replica relays at once, 1 to 100 000. Unset, it comes from the container's memory limit (cgroup): (limit - 150 MiB) / 4 MiB, at least 10, so 26 for the chart's 256 MiB; 100 without a limit. Past it a call is refused at once with 503 (`overloaded_error` for Anthropic clients, `server_error` for OpenAI ones) and `retry-after: 1`, and never reaches the provider |
+| `OSTROM_GATEWAY_MEMORY_CEILING_PERCENT` | `80` | 1 to 100: once the replica's resident memory reaches this share of the container limit, a model call is refused the same way, whatever the count. No limit, no memory check |
 
-The ceiling bounds what a replica holds in memory. Each open call keeps its body, a connection to the provider and a
-stream to the agent. Measured by chart-load on the native binary: about 0.9 MiB per open stream with a small body, over
-about 113 MiB at rest. So 100 such calls fit the chart's 256 MiB limit; a large body (up to 32 MiB) adds its size twice
-while the call runs (its bytes and its text). Raise the ceiling only with the limit. Without a ceiling, 200
-streams on two replicas OOMKilled the server (chart-load 41611978908 and 41612342204).
+The two ceilings bound what a replica holds in memory. Each open call keeps its body, a connection to the provider and
+a stream to the agent. Measured by chart-load 41628386596 on the native binary, with a small body: a replica that has
+served calls keeps up to about 150 MiB at rest (a fresh one about 45 MiB), and a stream costs up to 3.4 MiB as it
+opens, 1 to 2 MiB once it runs. Under a count ceiling of 100, a burst of about 50 streams OOMKilled a replica that had
+kept 107 MiB; hence the ceiling from the limit, and the memory check for what the count does not see (memory kept from
+earlier calls, a large body: up to 32 MiB, held twice while the call runs). Without any ceiling, 200 streams on two
+replicas OOMKilled the server (chart-load 41611978908 and 41612342204).
 
 ### Module `governance`
 

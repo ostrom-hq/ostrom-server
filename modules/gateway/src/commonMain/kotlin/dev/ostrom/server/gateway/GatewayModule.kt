@@ -39,6 +39,7 @@ import dev.ostrom.server.kernel.auth.ModelAccess
 import dev.ostrom.server.kernel.config.ConfigSource
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.observability.ProcessMemory
 import dev.ostrom.server.secrets.domain.CallerResolver
 import dev.ostrom.server.secrets.domain.OrgPrincipalCallerResolver
 import io.ktor.client.HttpClient
@@ -69,7 +70,7 @@ object GatewayModule : ServerModule {
     private const val SILENCE_MS = 300_000L
 
     override val koinModule: Module = module {
-        single { GatewayConfig.from(get<ConfigSource>()) }
+        single { GatewayConfig.from(get<ConfigSource>(), ProcessMemory.limitBytes()) }
         single(HTTP_CLIENT) {
             HttpClient {
                 followRedirects = false
@@ -105,7 +106,7 @@ object GatewayModule : ServerModule {
                 tracer = SpanModelCallTracer(get<Telemetry>().tracer),
             )
         }
-        single { OpenCalls(get<GatewayConfig>().maxOpenCalls) }
+        single { get<GatewayConfig>().let { OpenCalls(it.maxOpenCalls, it.memoryCeilingBytes) } }
         single<GetGatewaySettingsUseCase> { GetGatewaySettingsUseCaseImpl(get()) }
         single<PutGatewaySettingsUseCase> { PutGatewaySettingsUseCaseImpl(get()) }
         single<GetModelPolicyUseCase> { GetModelPolicyUseCaseImpl(get()) }
