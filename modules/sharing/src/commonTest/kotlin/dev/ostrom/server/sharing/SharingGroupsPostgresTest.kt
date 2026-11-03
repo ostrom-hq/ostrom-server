@@ -325,6 +325,11 @@ class SharingGroupsPostgresTest {
             )
             assertStatus(
                 HttpStatusCode.BadRequest,
+                send("POST", "kira", "$base/$id/members/liam/pause", pause("+300000-01-01T00:00:00Z")),
+                "until is beyond what the database stores",
+            )
+            assertStatus(
+                HttpStatusCode.BadRequest,
                 send("POST", "kira", "$base/$id/members/liam/pause", buildJsonObject { }),
                 "no until",
             )
