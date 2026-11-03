@@ -59,12 +59,21 @@ class McpRulesTest {
     @Test
     fun ostromIsOstromsOwnServerWhateverItsCaseAndSpaces() {
         // The relay of `ostrom claude` serves `ostrom` itself (the waits): an org server of that name is never reached.
-        for (name in listOf("ostrom", "OSTROM", " Ostrom ", "ostrom\t")) {
+        val spellings = mapOf(
+            "ostrom" to "ostrom",
+            "OSTROM" to "ostrom",
+            " Ostrom " to "ostrom",
+            "ostrom\t" to "ostrom",
+            // Every session package declares it too.
+            "ostrom-workflow" to "ostrom-workflow",
+            "Ostrom-Workflow" to "ostrom-workflow",
+        )
+        for ((name, own) in spellings) {
             val refused = assertFailsWith<InvalidMcpServerException>(name) {
                 McpRules.requireServer(http.copy(name = name))
             }
             assertEquals(
-                "`ostrom` is Ostrom's own MCP server, which every agent already has: choose another name.",
+                "`$own` is Ostrom's own MCP server, which every agent already has: choose another name.",
                 refused.message,
             )
         }

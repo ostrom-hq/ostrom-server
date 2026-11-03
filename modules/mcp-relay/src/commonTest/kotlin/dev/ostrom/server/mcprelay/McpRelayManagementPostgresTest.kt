@@ -17,6 +17,7 @@ import dev.ostrom.server.mcprelay.presentation.McpAssignmentResponse
 import dev.ostrom.server.mcprelay.presentation.McpAssignmentsPage
 import dev.ostrom.server.mcprelay.presentation.McpCallsPage
 import dev.ostrom.server.mcprelay.presentation.McpServerDto
+import dev.ostrom.server.mcprelay.presentation.McpServersPage
 import dev.ostrom.server.mcprelay.presentation.McpSettingsDto
 import dev.ostrom.server.mcprelay.presentation.McpUsageResponse
 import dev.ostrom.server.secrets.SecretsModule
@@ -46,7 +47,7 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
     fun changingAnMcpServerFromTheConsoleNeedsASignInOfLessThanFiveMinutes() =
         serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
             with(server) {
-                val sentry = McpServerDto("sentry", "https://sentry.example.com/mcp", "http")
+                val sentry = McpServerDto("sentry", SENTRY, "http")
                 val path = "$admin/servers/sentry"
                 val stale = listOf(
                     sendJson(HttpMethod.Post, "$admin/servers", sentry, "stale-admin-a"),
@@ -93,7 +94,8 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                 )
                 val put = sendJson(HttpMethod.Put, "$admin/servers/ostrom", McpServerDto("ostrom", SENTRY, "http"))
                 assertEquals(HttpStatusCode.BadRequest, put.status, "Nor created by a PUT")
-                assertTrue(client.get("$admin/servers") { bearerAuth("admin-a") }.bodyAsText().contains("\"sentry\""))
+                val listed = client.get("$admin/servers") { bearerAuth("admin-a") }.body<McpServersPage>().items
+                assertEquals(listOf("sentry"), listed.map { it.name }, "Nothing of the refused names was stored")
             }
         }
 
