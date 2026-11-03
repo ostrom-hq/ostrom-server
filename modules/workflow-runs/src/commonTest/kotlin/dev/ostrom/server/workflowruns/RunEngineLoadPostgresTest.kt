@@ -7,6 +7,7 @@ import dev.ostrom.core.api.models.WorkflowEdge
 import dev.ostrom.core.api.models.WorkflowNode
 import dev.ostrom.core.api.models.WorkflowNodeKind
 import dev.ostrom.core.api.models.WorkflowRun
+import dev.ostrom.server.automations.AutomationsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.Answer
@@ -79,7 +80,7 @@ import kotlin.uuid.Uuid
 class RunEngineLoadPostgresTest {
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
-        RunnersModule, LaunchesModule, WorkflowRunsModule,
+        RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
 
     // No running cap: 10 sessions at once in an organization would pass the free plan's 5.
@@ -161,7 +162,7 @@ class RunEngineLoadPostgresTest {
 
     private fun TestServer.engine(owner: String): TickRunsUseCase {
         val repository = koin.get<RunEngineRepository>()
-        val play = PlayRunUseCaseImpl(repository, koin.get(), koin.get(), clock)
+        val play = PlayRunUseCaseImpl(repository, koin.get(), clock)
         return TickRunsUseCaseImpl(repository, play, clock, koin.get(), owner, BATCH)
     }
 

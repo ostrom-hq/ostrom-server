@@ -84,7 +84,7 @@ class CancelWorkflowRunUseCaseImpl(
         repeat(ATTEMPTS) {
             val run = current(actor.orgId, id)
             val now = clock.now()
-            val next = cancelled(run, now.isoMillis())
+            val next = cancelledRun(run, now.isoMillis())
             val audit = RunAudit("cancelled", auditDetails("by" to actor.id, "node" to run.currentNodeId), person)
             if (engine.write(actor.orgId, RunChange(run, next, null, audit = listOf(audit), dueAt = now))) return next
         }
@@ -97,20 +97,28 @@ class CancelWorkflowRunUseCaseImpl(
         return run
     }
 
-    private fun cancelled(run: WorkflowRun, at: String): WorkflowRun {
-        val visits = run.visits.map { visit ->
-            if (visit.status in UNDER_WAY) {
-                visit.copy(status = RunMoves.FAILED, outcome = CANCELLED, endedAt = at)
-            } else {
-                visit
-            }
-        }
-        return run.copy(status = RunStatus.CANCELLED, currentNodeId = null, visits = visits, endedAt = at)
-    }
-
     private fun requireStarter(actor: GateActor) {
         if (actor.kind != ActorKind.USER || actor.role !in CANCELLERS) throw CancelRunForbiddenException()
     }
+}
+
+/**
+ * A run cancelled: it ends `cancelled`, and its visit under way is `failed` with the outcome `cancelled`.
+ *
+ * @param run The run.
+ * @param at When, to the millisecond.
+ *
+ * @return The run, cancelled.
+ */
+fun cancelledRun(run: WorkflowRun, at: String): WorkflowRun {
+    val visits = run.visits.map { visit ->
+        if (visit.status in UNDER_WAY) {
+            visit.copy(status = RunMoves.FAILED, outcome = CANCELLED, endedAt = at)
+        } else {
+            visit
+        }
+    }
+    return run.copy(status = RunStatus.CANCELLED, currentNodeId = null, visits = visits, endedAt = at)
 }
 
 // How often a cancel reads the run again when the engine changed it meanwhile; who cancels; the runs already ended and

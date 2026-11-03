@@ -37,6 +37,20 @@ interface StartedRunsRepository {
     suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph, audit: RunAudit)
 
     /**
+     * Stores the child run a visit of its parent ([WorkflowRun.parentRunId]) starts, due at once for the engine, with
+     * its audit line, unless that visit already started one: one child per visit, whatever restarts.
+     *
+     * @param orgId The organization.
+     * @param child The child run.
+     * @param seq The parent's visit.
+     * @param graph The graph it plays, copied from its workflow.
+     * @param audit Its audit line, written only when the child is stored.
+     *
+     * @return The id of the visit's child: [child]'s, or the one stored before.
+     */
+    suspend fun addChild(orgId: Uuid, child: WorkflowRun, seq: Int, graph: RunGraph, audit: RunAudit): String
+
+    /**
      * Reads a run.
      *
      * @param orgId The organization.

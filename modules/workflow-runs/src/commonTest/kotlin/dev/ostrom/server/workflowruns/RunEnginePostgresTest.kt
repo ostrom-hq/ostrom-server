@@ -7,6 +7,7 @@ import dev.ostrom.core.api.models.WorkflowEdge
 import dev.ostrom.core.api.models.WorkflowNode
 import dev.ostrom.core.api.models.WorkflowNodeKind
 import dev.ostrom.core.api.models.WorkflowRun
+import dev.ostrom.server.automations.AutomationsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
 import dev.ostrom.server.gates.GatesModule
@@ -107,7 +108,7 @@ import kotlin.uuid.Uuid
 class RunEnginePostgresTest {
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
-        RunnersModule, LaunchesModule, WorkflowRunsModule,
+        RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
 
     // Cloud sessions are closed to every organization unless listed (OSTROM_RUNNERS_ALLOWED_ORGS): the free plan here.
@@ -205,7 +206,7 @@ class RunEnginePostgresTest {
     /** An engine replica on the test's clock; each tick moves the clock past the look a waiting run asked for. */
     private fun TestServer.engine(owner: String = "engine-test"): TickRunsUseCase {
         val repository = koin.get<RunEngineRepository>()
-        val play = PlayRunUseCaseImpl(repository, koin.get(), koin.get(), clock)
+        val play = PlayRunUseCaseImpl(repository, koin.get(), clock)
         return TickRunsUseCaseImpl(repository, play, clock, koin.get(), owner)
     }
 

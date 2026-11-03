@@ -16,6 +16,7 @@ kotlin {
             implementation(project(":modules:launches"))
             implementation(project(":modules:runners"))
             implementation(project(":modules:identity"))
+            implementation(project(":modules:automations"))
             implementation(libs.ostrom.api)
         }
         commonTest.dependencies {

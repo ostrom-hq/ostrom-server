@@ -42,6 +42,9 @@ class StartRunTest {
             audits += audit
         }
 
+        override suspend fun addChild(orgId: Uuid, child: WorkflowRun, seq: Int, graph: RunGraph, audit: RunAudit) =
+            error("A start stores no child run.")
+
         override suspend fun find(orgId: Uuid, id: String): WorkflowRun? =
             stored.firstOrNull { it.first == orgId && it.second.id == id }?.second
 

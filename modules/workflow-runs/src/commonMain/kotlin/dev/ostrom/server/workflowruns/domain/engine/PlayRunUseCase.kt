@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.domain.engine
 
-import dev.ostrom.core.api.models.NodeVisit
 import dev.ostrom.core.api.models.RunStatus
 import dev.ostrom.core.api.models.WorkflowNode
-import dev.ostrom.core.api.models.WorkflowNodeKind
 import dev.ostrom.core.api.models.WorkflowRun
 import dev.ostrom.server.workflowruns.domain.models.RunChange
 import dev.ostrom.server.workflowruns.domain.models.RunRef
 import dev.ostrom.server.workflowruns.domain.repositories.RunEngineRepository
 import dev.ostrom.server.workflowruns.domain.services.AgentRequest
-import dev.ostrom.server.workflowruns.domain.services.AgentState
-import dev.ostrom.server.workflowruns.domain.services.GateRequest
-import dev.ostrom.server.workflowruns.domain.services.GateState
-import dev.ostrom.server.workflowruns.domain.services.RunAgents
-import dev.ostrom.server.workflowruns.domain.services.RunGates
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -37,18 +30,16 @@ interface PlayRunUseCase {
 }
 
 /**
- * [PlayRunUseCase] on the repository, the agent sessions and the gates.
+ * [PlayRunUseCase] on the repository and the players of the node kinds.
  *
  * @param repository The runs.
- * @param agents The agent sessions.
- * @param gates The gates.
+ * @param players The players of the node kinds the server plays.
  * @param clock The clock.
- * @param poll How long a run waiting for an agent or a person waits before its next look.
+ * @param poll How long a run waiting for an agent, a person or a child run waits before its next look.
  */
 class PlayRunUseCaseImpl(
     private val repository: RunEngineRepository,
-    private val agents: RunAgents,
-    private val gates: RunGates,
+    private val players: NodePlayers,
     private val clock: Clock,
     private val poll: Duration = POLL,
 ) : PlayRunUseCase {
@@ -78,91 +69,27 @@ class PlayRunUseCaseImpl(
         }
     }
 
-    // A cancelled run's agent session is ended by the engine, whichever replica sees the cancel first.
+    // What a cancelled run's last visit started (a session, a wait, a child run) is ended by the engine, whichever
+    // replica sees the cancel first.
     private suspend fun settle(ref: RunRef, run: WorkflowRun): Step {
         val last = run.visits.lastOrNull()
-        if (run.status == RunStatus.CANCELLED && last != null && last.kind == WorkflowNodeKind.AGENT) {
-            agents.stop(ref.orgId, sessionOf(run.id, last.seq))
-        }
+        if (run.status == RunStatus.CANCELLED && last != null) players.of(last.kind)?.stop(ref.orgId, run, last)
         return Step.Later(null)
     }
 
-    private suspend fun effect(visit: Visit): Step = when (visit.node.kind) {
-        WorkflowNodeKind.AGENT -> agent(visit)
-        WorkflowNodeKind.GATE ->
-            visit.last.gateId.let { id -> if (id == null) open(visit) else decided(visit, Uuid.parse(id)) }
-        WorkflowNodeKind.TRIGGER -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.NEXT))
-        else -> write(
-            visit.ref,
-            visit.moves.finish(
-                visit.run,
-                RunMoves.FAILED,
-                failed = true,
-                output = "The server does not play ${visit.node.kind.value} nodes yet.",
-            ),
-        )
-    }
-
-    // Conditions rather than a `when` on the nullable state, whose unreachable default Kover counts as a branch.
-    private suspend fun agent(visit: Visit): Step {
-        val sessionId = sessionOf(visit.run.id, visit.last.seq)
-        val state = agents.state(visit.ref.orgId, sessionId)
-        return when {
-            state == null -> {
-                val refusal = agents.start(visit.ref.orgId, AgentRequests.of(visit.run, visit.node, sessionId))
-                if (refusal == null) later() else write(visit.ref, visit.failed(refusal))
-            }
-            state == AgentState.WORKING -> later()
-            state == AgentState.FAILED -> write(visit.ref, visit.failed("The agent session failed to start."))
-            else -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.NEXT))
+    private suspend fun effect(visit: Visit): Step {
+        val player = players.of(visit.node.kind)
+        val change = if (player == null) {
+            visit.failed("The server does not play ${visit.node.kind.value} nodes yet.")
+        } else {
+            player.play(visit)
         }
+        return if (change == null) Step.Later(clock.now() + poll) else write(visit.ref, change)
     }
-
-    private suspend fun open(visit: Visit): Step {
-        val run = visit.run
-        val node = visit.node
-        val request = GateRequest(
-            runId = run.id,
-            seq = visit.last.seq,
-            workflowId = run.workflowId,
-            workflowName = run.workflowName,
-            nodeId = node.id,
-            label = node.label,
-            approvers = node.approvers.orEmpty(),
-            asker = run.startedBy,
-        )
-        val opening = gates.open(visit.ref.orgId, request)
-        val gateId = opening.gateId
-        val change = if (gateId == null) visit.failed("${opening.refusal}") else visit.moves.waiting(run, gateId)
-        return write(visit.ref, change)
-    }
-
-    private suspend fun decided(visit: Visit, gateId: Uuid): Step {
-        val state = gates.state(visit.ref.orgId, gateId)
-        return when {
-            state == null -> write(visit.ref, visit.failed("The gate is gone."))
-            state == GateState.PENDING -> later()
-            state == GateState.APPROVED -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.APPROVED))
-            else -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.REJECTED))
-        }
-    }
-
-    private fun later(): Step = Step.Later(clock.now() + poll)
 
     // A change refused (the run moved meanwhile: a cancel) is read again at once rather than dropped.
     private suspend fun write(ref: RunRef, change: RunChange): Step =
         if (repository.write(ref.orgId, change)) Step.Again else Step.Later(clock.now())
-
-    private fun Visit.failed(output: String): RunChange = moves.finish(run, RunMoves.FAILED, failed = true, output)
-
-    // The visit under way and what playing it needs.
-    private class Visit(
-        val ref: RunRef,
-        val moves: RunMoves,
-        val run: WorkflowRun,
-        val last: NodeVisit,
-        val node: WorkflowNode,
-    )
 
     private sealed interface Step {
         data object Again : Step
@@ -172,7 +99,7 @@ class PlayRunUseCaseImpl(
 
     /** The bounds of a play. */
     companion object {
-        /** How long a run waiting for an agent or a person waits before its next look. */
+        /** How long a run waiting for an agent, a person or a child run waits before its next look. */
         val POLL: Duration = 3.seconds
 
         /** The most changes one play makes before the run is due again: a lease is never held for long. */

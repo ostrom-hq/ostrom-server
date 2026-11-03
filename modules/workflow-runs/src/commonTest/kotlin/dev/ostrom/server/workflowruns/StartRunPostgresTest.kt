@@ -3,6 +3,7 @@ package dev.ostrom.server.workflowruns
 
 import dev.ostrom.core.api.models.RunStatus
 import dev.ostrom.core.api.models.WorkflowRun
+import dev.ostrom.server.automations.AutomationsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.ActorKind
@@ -61,7 +62,7 @@ class StartRunPostgresTest {
     private val orgB = Uuid.parse("0000000b-0000-0000-0000-000000000000")
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
-        RunnersModule, LaunchesModule, WorkflowRunsModule,
+        RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
 
     // Tokens are `<kind>:<org letter>:<id>`: `user` a browser session, `cli` a person's token that writes workflows,
