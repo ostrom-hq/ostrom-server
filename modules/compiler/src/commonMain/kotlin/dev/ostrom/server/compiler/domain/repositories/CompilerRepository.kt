@@ -7,8 +7,11 @@ import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.services.HarnessStamp
 import kotlin.uuid.Uuid
 
-/** The compiler's storage: its workflows and decisions ([WorkflowsRepository]), harnesses, packages, pins, audit. */
-interface CompilerRepository : WorkflowsRepository {
+/**
+ * The compiler's storage: its workflows and decisions ([WorkflowsRepository]), the list of its packages
+ * ([PackageListRepository]), harnesses, packages, pins, audit.
+ */
+interface CompilerRepository : WorkflowsRepository, PackageListRepository {
     /**
      * The version a harness digest already has in a repository.
      *
@@ -43,10 +46,9 @@ interface CompilerRepository : WorkflowsRepository {
      * Lists the packages, newest first.
      *
      * @param orgId The organization.
-     * @param repo Only those of this repository when not null.
      * @return The packages.
      */
-    suspend fun packages(orgId: Uuid, repo: String?): List<StoredPackage>
+    suspend fun packages(orgId: Uuid): List<StoredPackage>
 
     /**
      * Records a package; the first one recorded for a content digest wins.

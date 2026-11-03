@@ -38,7 +38,7 @@ class CompilerRunPackages(private val compiler: CompilerRepository) : RunPackage
         if (compiler.pin(orgId, own.repo)?.contentDigest == own.contentDigest) return true
         val ownAt = Instant.parse(pack.compiledAt)
         // Replaced: another usable package of the repository, compiled after this one and before the session started.
-        return compiler.packages(orgId, null).none { other ->
+        return compiler.packages(orgId).none { other ->
             val at = Instant.parse(other.compiledAt)
             other.envelope.repo == own.repo && !other.revoked && at > ownAt && at <= startedAt
         }

@@ -12,12 +12,14 @@ import dev.ostrom.server.gates.domain.services.GateCheckNeed
 import dev.ostrom.server.gates.domain.services.GateCheckNeeds
 import dev.ostrom.server.gates.domain.services.GateCheckProof
 import dev.ostrom.server.gates.domain.services.GateCheckProofs
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
 import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
+import dev.ostrom.server.gates.fakes.FakeGitHubAccounts
 import dev.ostrom.server.gates.fakes.FakeNotifier
 import dev.ostrom.server.gates.fakes.FakePolicies
 import dev.ostrom.server.gates.fakes.FakeSessions
@@ -27,6 +29,7 @@ import dev.ostrom.server.gates.infrastructure.NoCiChecks
 import dev.ostrom.server.gates.infrastructure.NoGateActors
 import dev.ostrom.server.gates.infrastructure.NoGateCheckNeeds
 import dev.ostrom.server.gates.infrastructure.NoGateCheckProofs
+import dev.ostrom.server.gates.infrastructure.NoGateGitHubAccounts
 import dev.ostrom.server.gates.infrastructure.NoGateNodes
 import dev.ostrom.server.gates.infrastructure.UnavailableGateSessions
 import dev.ostrom.server.gates.infrastructure.UnknownPullRequestHeads
@@ -57,6 +60,9 @@ class GatesModuleRegistrationTest {
         assertIs<NoGateNodes>(app.koin.get<GateNodeResolver>())
         assertIs<UnknownPullRequestHeads>(app.koin.get<PullRequestHeads>())
         assertIs<NoGateActors>(app.koin.get<GateActorResolver>())
+        // Without integrations-github, nobody linked a GitHub account.
+        val gitHub = assertIs<NoGateGitHubAccounts>(app.koin.get<GateGitHubAccounts>())
+        assertEquals(emptyList(), gitHub.gitHubIdsOf("lyes"))
         val ci = assertIs<NoCiChecks>(app.koin.get<CiChecks>())
         // No forge, no proof: the check node stays the workstation's declaration.
         assertNull(ci.latest(Uuid.random(), "o/r", "0123456789abcdef0123456789abcdef01234567", "test"))
@@ -97,9 +103,11 @@ class GatesModuleRegistrationTest {
         val actors = object : GateActorResolver {
             override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? = null
         }
+        val gitHub = FakeGitHubAccounts()
         val app = koinApplication {
             modules(
                 module {
+                    single<GateGitHubAccounts> { gitHub }
                     single<GatePolicies> { policies }
                     single<GateSessions> { sessions }
                     single<GateNodeResolver> { nodes }
@@ -124,6 +132,7 @@ class GatesModuleRegistrationTest {
         assertSame(signer, app.koin.get<GateReceiptSigner>())
         assertSame(notifier, app.koin.get<GateNotifier>())
         assertSame(actors, app.koin.get<GateActorResolver>())
+        assertSame(gitHub, app.koin.get<GateGitHubAccounts>())
         app.close()
     }
 }

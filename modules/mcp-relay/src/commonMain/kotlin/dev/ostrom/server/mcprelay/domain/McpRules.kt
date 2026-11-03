@@ -3,6 +3,7 @@ package dev.ostrom.server.mcprelay.domain
 
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.text.SafePattern
 
 /** Validation of what an admin declares; the MCP host checks the stdio rules again. */
 object McpRules {

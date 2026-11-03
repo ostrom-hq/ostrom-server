@@ -9,6 +9,7 @@ import dev.ostrom.server.rules.domain.models.RuleProposal
 import dev.ostrom.server.rules.domain.models.RuleStrength
 import dev.ostrom.server.rules.domain.services.RepositoryContext.Companion.counted
 import dev.ostrom.server.rules.domain.services.RepositoryContext.Companion.quoted
+import dev.ostrom.server.rules.domain.services.RepositoryContext.Companion.shown
 
 /**
  * The review rules a repository states on GitHub: who CODEOWNERS names for each path, and how its default branch is
@@ -46,7 +47,8 @@ object ReviewInference {
             .distinctBy { it.pattern }
             .asReversed()
         return entries.takeLast(MAX_OWNER_RULES).map {
-            val named = it.owners.joinToString(", ")
+            val named = it.owners.joinToString(", ", transform = ::shown)
+            val pattern = shown(it.pattern)
             val base = RuleInference.proposal(context, "owners:${it.pattern}", "", "rule").copy(
                 group = REVIEWS,
                 sources = listOf(context.file(path)),
@@ -59,16 +61,17 @@ object ReviewInference {
                     why = "CODEOWNERS names them for every file.",
                     confidence = OWNED_GATE,
                 )
-                required -> base.copy(
-                    statement = "A change to `${it.pattern}` in ${context.name} needs a yes from its code owners " +
+                // A pattern a hook could not match in a bounded time is stated, not gated (CodeOwners.gateable).
+                required && CodeOwners.gateable(it.pattern) -> base.copy(
+                    statement = "A change to `$pattern` in ${context.name} needs a yes from its code owners " +
                         "($named).",
                     output = "gate",
-                    why = "CODEOWNERS names them and the protection of `${context.branch}` requires their review.",
+                    why = "CODEOWNERS names them and the protection of `${context.shownBranch}` requires their review.",
                     confidence = OWNED_GATE,
                     gate = ownedGate(context, it.pattern, CodeOwners.logins(it.owners), path),
                 )
                 else -> base.copy(
-                    statement = "In ${context.name}, `${it.pattern}` is reviewed by $named.",
+                    statement = "In ${context.name}, `$pattern` is reviewed by $named.",
                     why = "CODEOWNERS names them: GitHub asks for their review on each pull request that touches it.",
                 )
             }
@@ -80,7 +83,7 @@ object ReviewInference {
             actions = listOf(
                 RuleGateAction(
                     cls = ownedClass(pattern),
-                    label = "Change `$pattern`",
+                    label = "Change `${shown(pattern)}`",
                     patterns = listOf(CodeOwners.gatePattern(pattern)),
                     repos = listOf(context.name),
                     tools = RepositoryContext.editTools,
@@ -106,7 +109,7 @@ object ReviewInference {
      */
     fun branch(context: RepositoryContext): RuleProposal {
         val protection = context.snapshot.protection
-        val branch = context.branch
+        val branch = context.shownBranch
         val statement = "A push to `$branch` of ${context.name} needs a yes."
         val base = RuleInference.proposal(context, "branch", statement, "gate")
             .copy(group = BRANCHES, sources = listOf(context.settings()), gate = pushGate(context))
@@ -135,7 +138,7 @@ object ReviewInference {
             "the checks ${quoted(protection.requiredChecks)} pass".takeIf { protection.requiredChecks.isNotEmpty() },
         )
         val after = if (conditions.isEmpty()) "" else ", which merges after " + conditions.joinToString(" and ")
-        return "Never push to `${context.branch}` of ${context.name}: open a pull request$after."
+        return "Never push to `${context.shownBranch}` of ${context.name}: open a pull request$after."
     }
 
     private fun protectedWhy(branch: String, protection: BranchProtection): String {
@@ -159,7 +162,7 @@ object ReviewInference {
         } else {
             listOf("\\bgit\\s+push\\b[^\\n;&|]*\\b${CodeOwners.literal(context.branch)}\\b")
         }
-        val approvers = CodeOwners.logins(context.defaultOwners)
+        val approvers = context.approvers(context.defaultOwners)
         return RuleGate(
             actions = listOf(RuleGateAction(PUSH_MAIN, PUSH_LABEL, patterns, listOf(context.name), null)),
             approvers = approvers,
