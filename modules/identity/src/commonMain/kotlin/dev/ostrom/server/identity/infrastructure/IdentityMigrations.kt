@@ -355,13 +355,23 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
         name = "magic_links_bound_to_their_browser",
         sql = "ALTER TABLE identity_magic_links ADD COLUMN browser_hash TEXT",
     ),
+    // `/devices` lists an organization's live tokens of `ostrom login --admin` inside it, for its owners and admins:
+    // a partial index on them, so the list never scans the agent tokens and service keys of the same table.
+    SchemaMigration(
+        version = 11,
+        name = "elevated_tokens",
+        sql = """
+            CREATE INDEX identity_api_tokens_elevated ON identity_api_tokens (org_id, created_at DESC)
+                WHERE kind = 'ADMIN' AND revoked_at IS NULL
+        """.trimIndent(),
+    ),
     // The reads the bench measured (IdentityReadsBenchTest): `/audit?actor=` and `/audit?event=` read the whole chain
     // of the organization and kept a line in a thousand (72 and 82 ms of p95 at 20 calls on 10 000 lines); `/devices`
     // read every live token of the person, agents' included, to keep three (43 ms on 5 000). The person's index by kind
     // replaces the one without (every read of a person's live tokens names their kinds). Built in the migration's
     // transaction, not CONCURRENTLY: writes to these tables wait for the build, short on the tables of today.
     SchemaMigration(
-        version = 11,
+        version = 12,
         name = "index_audit_filters_and_devices",
         sql = """
             CREATE INDEX identity_audit_events_chain_actor ON identity_audit_events (chain, actor_id, sequence DESC)
