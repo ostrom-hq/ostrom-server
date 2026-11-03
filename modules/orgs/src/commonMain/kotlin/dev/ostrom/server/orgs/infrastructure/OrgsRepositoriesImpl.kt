@@ -252,8 +252,8 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
         }
 
     // The function returns the page's member ids in order (OrgsMigrations version 7); `after` goes as text, "" for
-    // none. Each id is read by its primary key (LATERAL): a join would plan the function's 1 000 estimated rows
-    // against the whole team, 5 000 members read for a page (CI run 41690554164, p95 68 ms).
+    // none. Each id is read by its primary key (LATERAL, kept from being flattened by its LIMIT): a join plans the
+    // function's 1 000 estimated rows against the whole team, 5 000 members read for a page (CI run 41690554164).
     override suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int): List<Member> =
         driver.inOrg(orgId) {
             fetchAll(
@@ -261,7 +261,7 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
                     "SELECT $MEMBER_COLUMNS FROM orgs_search_members(:org, :prefix, " +
                         "CAST(NULLIF(:after, '') AS UUID), :limit) WITH ORDINALITY s(member_id, n) " +
                         "CROSS JOIN LATERAL (SELECT * FROM orgs_members x WHERE x.id = s.member_id " +
-                        "AND x.org_id = :org) m ORDER BY s.n",
+                        "AND x.org_id = :org LIMIT 1) m ORDER BY s.n",
                 ).bind("org", orgId).bind("prefix", prefix).bind("after", after?.toString() ?: "")
                     .bind("limit", limit),
             ).getOrThrow().map { it.toMember() }

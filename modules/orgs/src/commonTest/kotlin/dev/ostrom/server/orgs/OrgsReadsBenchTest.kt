@@ -182,23 +182,32 @@ class OrgsReadsBenchTest {
             trials.sortedBy { it.p95 }[TRIALS / 2]
         }
         writeReadReport("orgs-search", searches)
-        searches.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }
         server.explainSearch()
+        searches.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }
         server.searchMemory(owners.first())
     }
 
-    // The bench's EXPLAIN shows the function call only: the query inside it, planned with each prefix as the
-    // function's `EXECUTE … USING` plans it, must read neither table whole either.
+    // The bench's EXPLAIN shows the function call only: its two steps, planned with each prefix as its
+    // `EXECUTE … USING` plans them, must read neither table whole either. A rare prefix (at most 1 000 people) reads
+    // their memberships by key, a common one walks the team in order.
     private suspend fun TestServer.explainSearch() {
-        for (q in listOf("u", "user0-4", "user0-4999")) {
-            val plan = database.superuser.fetchAll(
-                "EXPLAIN (ANALYZE, BUFFERS) SELECT m.id FROM orgs_members m " +
-                    "JOIN identity_users u ON u.id = m.user_id WHERE m.org_id = CAST(md5('org0') AS uuid) " +
-                    "AND (lower(u.login) LIKE '$q%' OR " +
-                    "lower(u.display_name) LIKE '$q%') ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}",
-            ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
-            println("== EXPLAIN orgs_search_members q=$q (5 000 members)\n$plan")
-            assertTrue("Seq Scan" !in plan, "q=$q reads a table whole:\n$plan")
+        val org = "CAST(md5('org0') AS uuid)"
+        for ((q, rare) in listOf("u" to false, "user0-4" to true, "user0-4999" to true)) {
+            val named = "lower(u.login) LIKE '$q%' OR lower(u.display_name) LIKE '$q%'"
+            val people = "SELECT u.id FROM identity_users u WHERE $named LIMIT 1001"
+            val page = if (rare) {
+                "SELECT m.id FROM orgs_members m WHERE m.org_id = $org AND m.user_id = ANY (ARRAY($people)) " +
+                    "ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}"
+            } else {
+                "SELECT m.id FROM orgs_members m JOIN identity_users u ON u.id = m.user_id " +
+                    "WHERE m.org_id = $org AND ($named) ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}"
+            }
+            for ((step, sql) in listOf("people" to people, "page" to page)) {
+                val plan = database.superuser.fetchAll("EXPLAIN (ANALYZE, BUFFERS) $sql").getOrThrow()
+                    .joinToString("\n") { it.get("QUERY PLAN").asString() }
+                println("== EXPLAIN orgs_search_members q=$q, $step (5 000 members)\n$plan")
+                assertTrue("Seq Scan" !in plan, "q=$q ($step) reads a table whole:\n$plan")
+            }
         }
     }
 

@@ -88,6 +88,12 @@ private val CROSS_ORGANIZATION_SQL: String =
     """
         .trimIndent()
 
+/**
+ * The most people a prefix may name for the search to read their memberships by key; beyond, it walks the team in
+ * order, where such a prefix matches often and fills a page early.
+ */
+private const val MEMBER_SEARCH_CANDIDATES = 1000
+
 /** The member search's signature, for its handover to `ostrom_member_search`. */
 private const val MEMBER_SEARCH_FUNCTION = "orgs_search_members(UUID, TEXT, UUID, INTEGER)"
 
@@ -99,9 +105,9 @@ private const val MEMBER_SEARCH_FUNCTION = "orgs_search_members(UUID, TEXT, UUID
  * `orgs_members` bound to the session's organization, `SELECT` on three columns of `identity_users`: `id`, `login`,
  * `display_name`) joins them. It refuses an organization that is not the session's (`ostrom.org_id`), escapes the
  * prefix's own wildcards, and returns only member ids, in the members' order, after a member, at most a page. Only
- * `ostrom_tenant` may run it. Its query is planned on each call (`EXECUTE … USING`), so a rare prefix goes through the
- * `text_pattern_ops` indexes and a common one walks the team in order and stops at the page (OrgsReadsBenchTest, 10
- * teams of 5 000).
+ * `ostrom_tenant` may run it. It first reads, by the `text_pattern_ops` indexes, up to 1 001 people the prefix names:
+ * a rare prefix then reads their memberships by key, a common one walks the team in order and stops at the page (left
+ * to choose, the planner walked the team for `user0-4`: CI run 41695887597, p95 64 ms; OrgsReadsBenchTest).
  */
 private val MEMBER_SEARCH_SQL: String =
     """
@@ -125,19 +131,34 @@ private val MEMBER_SEARCH_SQL: String =
     CREATE FUNCTION orgs_search_members(p_org UUID, p_prefix TEXT, p_after UUID, p_limit INTEGER)
         RETURNS TABLE (member_id UUID)
         LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+    DECLARE
+        pattern TEXT := replace(replace(replace(lower(p_prefix), '\', '\\'), '%', '\%'), '_', '\_') || '%';
+        candidates UUID[];
     BEGIN
         IF p_org IS DISTINCT FROM CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID) THEN
             RAISE EXCEPTION 'orgs_search_members: not the session''s organization' USING ERRCODE = '42501';
         END IF;
-        RETURN QUERY EXECUTE
-            'SELECT m.id FROM orgs_members m JOIN identity_users u ON u.id = m.user_id '
-            || 'WHERE m.org_id = $1 AND (lower(u.login) LIKE $2 OR lower(u.display_name) LIKE $2) '
-            || 'AND ($3 IS NULL OR (m.joined_at, m.id) > '
-            || '(SELECT a.joined_at, a.id FROM orgs_members a WHERE a.org_id = $1 AND a.id = $3)) '
-            || 'ORDER BY m.joined_at, m.id LIMIT $4'
-            USING p_org,
-                replace(replace(replace(lower(p_prefix), '\', '\\'), '%', '\%'), '_', '\_') || '%',
-                p_after, p_limit;
+        -- The people the prefix names, by its indexes, at most $MEMBER_SEARCH_CANDIDATES + 1.
+        EXECUTE 'SELECT ARRAY(SELECT u.id FROM identity_users u WHERE lower(u.login) LIKE $1 '
+            || 'OR lower(u.display_name) LIKE $1 LIMIT ' || ($MEMBER_SEARCH_CANDIDATES + 1) || ')'
+            INTO candidates USING pattern;
+        IF cardinality(candidates) <= $MEMBER_SEARCH_CANDIDATES THEN
+            -- A rare prefix: those people's memberships here, by the (org_id, user_id) key.
+            RETURN QUERY SELECT m.id FROM orgs_members m
+                WHERE m.org_id = p_org AND m.user_id = ANY (candidates)
+                AND (p_after IS NULL OR (m.joined_at, m.id) >
+                    (SELECT a.joined_at, a.id FROM orgs_members a WHERE a.org_id = p_org AND a.id = p_after))
+                ORDER BY m.joined_at, m.id LIMIT p_limit;
+        ELSE
+            -- A common prefix: the team in order, each member's person by primary key, until the page is full.
+            RETURN QUERY EXECUTE
+                'SELECT m.id FROM orgs_members m JOIN identity_users u ON u.id = m.user_id '
+                || 'WHERE m.org_id = $1 AND (lower(u.login) LIKE $2 OR lower(u.display_name) LIKE $2) '
+                || 'AND ($3 IS NULL OR (m.joined_at, m.id) > '
+                || '(SELECT a.joined_at, a.id FROM orgs_members a WHERE a.org_id = $1 AND a.id = $3)) '
+                || 'ORDER BY m.joined_at, m.id LIMIT $4'
+                USING p_org, pattern, p_after, p_limit;
+        END IF;
     END;
     $$;
     REVOKE EXECUTE ON FUNCTION $MEMBER_SEARCH_FUNCTION FROM PUBLIC;
