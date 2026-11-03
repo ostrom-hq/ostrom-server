@@ -2,6 +2,7 @@
 package dev.ostrom.server.testing
 
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.ktor.client.request.get
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
