@@ -58,6 +58,7 @@ import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.kernel.signing.InstanceSigner
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
+import dev.ostrom.server.testing.Contract
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
@@ -544,7 +545,7 @@ class CompilerPostgresTest {
         val catalog = server.call("agent:a:l1", "/api/v1/gates/catalog?repo=acme-api").body<JsonObject>()
         assertEquals("closed", catalog.getValue("failMode").jsonPrimitive.content)
         // The real answer, one gated action and ungated ones, against ostrom-core main's contract (WEB-PARCOURS 3344).
-        val contract = ContractSchema.fromEnvironment()
+        val contract = Contract.from(EnvironmentConfigSource())?.schema
         contract?.assertMatches("GateCatalog", catalog)
         val push = catalog.getValue("actions").jsonArray.map { it.jsonObject }
             .first { it.getValue("class").jsonPrimitive.content == "push-main" }

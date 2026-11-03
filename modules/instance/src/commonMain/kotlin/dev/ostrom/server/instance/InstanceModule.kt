@@ -8,8 +8,10 @@ import dev.ostrom.server.instance.domain.GetOrCreateInstanceUseCaseImpl
 import dev.ostrom.server.instance.domain.InstanceRepository
 import dev.ostrom.server.instance.domain.ListSigningKeysUseCase
 import dev.ostrom.server.instance.domain.ListSigningKeysUseCaseImpl
+import dev.ostrom.server.instance.domain.PreviousSigningKey
 import dev.ostrom.server.instance.domain.RegisterCurrentSigningKeyUseCase
 import dev.ostrom.server.instance.domain.RegisterCurrentSigningKeyUseCaseImpl
+import dev.ostrom.server.instance.infrastructure.ConfiguredPreviousSigningKey
 import dev.ostrom.server.instance.infrastructure.InstanceMigrations
 import dev.ostrom.server.instance.infrastructure.InstanceRepositoryImpl
 import dev.ostrom.server.instance.presentation.InstanceRoutesDependencies
@@ -28,7 +30,10 @@ object InstanceModule : ServerModule {
     override val koinModule: Module = module {
         single<InstanceRepository> { InstanceRepositoryImpl(get()) }
         single<GetOrCreateInstanceUseCase> { GetOrCreateInstanceUseCaseImpl(get(), get()) }
-        single<RegisterCurrentSigningKeyUseCase> { RegisterCurrentSigningKeyUseCaseImpl(get(), get(), get()) }
+        single<PreviousSigningKey> { ConfiguredPreviousSigningKey(get()) }
+        single<RegisterCurrentSigningKeyUseCase> {
+            RegisterCurrentSigningKeyUseCaseImpl(get(), get(), get(), get(), get())
+        }
         single<ListSigningKeysUseCase> { ListSigningKeysUseCaseImpl(get()) }
         single<GetCurrentSigningKeyUseCase> { GetCurrentSigningKeyUseCaseImpl(get(), get()) }
         single { InstanceRoutesDependencies(get(), get(), get()) }

@@ -69,8 +69,8 @@ class ImportPostgresTest {
                     line("assignment", "grafana.ro/${otherA.memberId}", PLANNED),
                     line("assignment", "mysql/${memberA.memberId}", PLANNED),
                     line("assignment", "grafana.ro/ghost", SKIPPED, "No Ostrom member is mapped to ghost."),
-                    line("account", "claude/Lyes", SKIPPED, NO_SHARING),
-                    line("account", "codex/Lyes", SKIPPED, NO_SHARING),
+                    line("account", "claude/Lena", SKIPPED, NO_SHARING),
+                    line("account", "codex/Lena", SKIPPED, NO_SHARING),
                 ),
                 report.items,
             )
@@ -114,8 +114,8 @@ class ImportPostgresTest {
             line("assignment", "grafana.ro/${otherA.memberId}", CREATED),
             line("assignment", "mysql/${memberA.memberId}", SKIPPED, NOT_IMPORTED),
             line("assignment", "grafana.ro/ghost", SKIPPED, "No Ostrom member is mapped to ghost."),
-            line("account", "claude/Lyes", SKIPPED, NO_SHARING),
-            line("account", "codex/Lyes", SKIPPED, NO_SHARING),
+            line("account", "claude/Lena", SKIPPED, NO_SHARING),
+            line("account", "codex/Lena", SKIPPED, NO_SHARING),
         )
         assertEquals(expected, report.items)
         assertEquals(listOf(12, 1, 0, 6), listOf(report.created, report.updated, report.unchanged, report.skipped))
@@ -325,8 +325,8 @@ class ImportPostgresTest {
                 val plan = report(Importing.team(), dryRun = true)
                 assertEquals(
                     listOf(
-                        line("account", "claude/Lyes", PLANNED),
-                        line("account", "codex/Lyes", SKIPPED, "This account is already shared."),
+                        line("account", "claude/Lena", PLANNED),
+                        line("account", "codex/Lena", SKIPPED, "This account is already shared."),
                     ),
                     plan.items.takeLast(2),
                     "A dry run makes the importer's checks",
@@ -335,8 +335,8 @@ class ImportPostgresTest {
                 val report = report(Importing.team())
                 assertEquals(
                     listOf(
-                        line("account", "claude/Lyes", CREATED),
-                        line("account", "codex/Lyes", SKIPPED, "This account is already shared."),
+                        line("account", "claude/Lena", CREATED),
+                        line("account", "codex/Lena", SKIPPED, "This account is already shared."),
                     ),
                     report.items.takeLast(2),
                 )
@@ -369,7 +369,7 @@ class ImportPostgresTest {
                 TeamCodeImportRequest(mcpServers = listOf(TeamCodeMcpServerDto("s", "x", "v", stdio = stdio))),
                 TeamCodeImportRequest(mcpServers = listOf(TeamCodeMcpServerDto("s", "x", "v", toolMode = "maybe"))),
                 TeamCodeImportRequest(
-                    accounts = listOf(TeamCodeAccountDto("claude", "c", "Lyes", null, "a", "r", "tomorrow")),
+                    accounts = listOf(TeamCodeAccountDto("claude", "c", "Lena", null, "a", "r", "tomorrow")),
                 ),
             )
             for (request in malformed) {
