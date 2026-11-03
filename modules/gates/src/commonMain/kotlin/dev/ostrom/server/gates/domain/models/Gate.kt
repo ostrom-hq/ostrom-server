@@ -36,6 +36,7 @@ import kotlin.uuid.Uuid
  * @property reservedBy The launch that reserved the yes before running the action.
  * @property reservedAt When it was reserved.
  * @property consumedAt When the action ran and the yes was used up.
+ * @property releasedAt When its reservation was given back, the action not run: a yes is released once.
  * @property createdAt When the gate was opened.
  */
 data class Gate(
@@ -60,6 +61,7 @@ data class Gate(
     val reservedBy: String? = null,
     val reservedAt: Instant? = null,
     val consumedAt: Instant? = null,
+    val releasedAt: Instant? = null,
     val createdAt: Instant,
 ) {
     /**

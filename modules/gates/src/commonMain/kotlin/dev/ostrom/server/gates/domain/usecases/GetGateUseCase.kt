@@ -67,7 +67,7 @@ class GetGateUseCaseImpl(
             stored = read(actor, gateId)
         }
         val gate = receipts.ensureSigned(stored)
-        return viewOf(gate, repository.requestsOf(actor.orgId, gate.id), policies.selfApproval(actor.orgId))
+        return viewOf(gate, repository.requestsOf(actor.orgId, gate.id)) { policies.selfApproval(actor.orgId) }
     }
 
     private suspend fun read(actor: GateActor, gateId: Uuid): Gate {

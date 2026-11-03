@@ -69,4 +69,14 @@ class RunnerChecksTest {
         assertFailsWith<InvalidRunException>("No session named") { report(ORG, cloud, request(null)) }
         assertEquals(emptyList(), runs.checks)
     }
+
+    @Test
+    fun aRunOfAnotherScriptThanThePackagesIsNeverTheRunners() = runTest {
+        // The runner runs the text the hook sends: a script the agent rewrote is run, recorded, and not Ostrom's proof.
+        val rewritten = report(ORG, cloud, request().copy(scriptSha = "sha-of-exit-0"))
+        assertEquals(true, rewritten.tampered)
+        val unhashed = report(ORG, cloud, request().copy(scriptSha = null))
+        assertEquals(listOf(rewritten, unhashed), runs.checks)
+        assertEquals(emptyMap(), runs.attestations(ORG, "s-1"), "Neither run is isolated_runner")
+    }
 }
