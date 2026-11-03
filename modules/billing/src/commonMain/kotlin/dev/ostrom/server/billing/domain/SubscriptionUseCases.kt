@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.billing.domain
 
+import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
+
+/** [MemberEmails] while the orgs module does not bind it: nobody's address is known, Checkout asks for it. */
+object NoMemberEmails : MemberEmails {
+    override suspend fun emailOf(orgId: Uuid, memberId: Uuid): String? = null
+}
 
 /** Starts the purchase of a plan: a Stripe Checkout session with automatic tax. */
 interface StartCheckoutUseCase {
@@ -22,6 +28,7 @@ class StartCheckoutUseCaseImpl(
     private val stripe: StripeGateway,
     private val settings: BillingSettings,
     private val clock: Clock,
+    @Suppress("UnusedPrivateProperty") private val emails: MemberEmails = NoMemberEmails,
 ) : StartCheckoutUseCase {
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): String {
         caller.requireBillingAdminOf(orgId)

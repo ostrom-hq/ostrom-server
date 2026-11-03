@@ -11,6 +11,7 @@ import dev.ostrom.server.billing.domain.BillingSessionRequiredException
 import dev.ostrom.server.billing.domain.Invoice
 import dev.ostrom.server.billing.domain.LicenseGrant
 import dev.ostrom.server.billing.domain.NoActiveSubscriptionException
+import dev.ostrom.server.billing.domain.NoMemberEmails
 import dev.ostrom.server.billing.domain.OrgBilling
 import dev.ostrom.server.billing.domain.PaymentIssue
 import dev.ostrom.server.billing.domain.PaymentIssueKind
@@ -162,6 +163,35 @@ class UseCasesTest {
         assertEquals("cus_1", world.repository.get(world.org)?.stripeCustomerId)
         world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
         assertEquals(1, world.stripe.customers, "The customer is reused on a second checkout")
+    }
+
+    @Test
+    fun theCustomerCarriesTheVerifiedAddressOfWhoPaysAndFollowsItsChange() = runTest {
+        val world = World()
+        world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertEquals(
+            "createCustomer ${world.org} null ada@acme.dev",
+            world.stripe.calls.first(),
+            "Checkout shows the payer's address instead of asking it",
+        )
+        world.emails.addresses[world.admin.memberId] = "ada@new.acme.dev"
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertEquals(1, world.stripe.customers)
+        assertTrue(
+            "updateCustomerEmail cus_1 ada@new.acme.dev" in world.stripe.calls,
+            "A second checkout gives the stored customer the payer's current address",
+        )
+    }
+
+    @Test
+    fun aPayerWithoutAVerifiedAddressLeavesItToCheckout() = runTest {
+        val world = World()
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertEquals("createCustomer ${world.org} null null", world.stripe.calls.first())
+        assertTrue(world.stripe.calls.none { it.startsWith("updateCustomerEmail") })
+        assertNull(NoMemberEmails.emailOf(world.org, world.admin.memberId), "Unbound, nobody's address is known")
     }
 
     @Test

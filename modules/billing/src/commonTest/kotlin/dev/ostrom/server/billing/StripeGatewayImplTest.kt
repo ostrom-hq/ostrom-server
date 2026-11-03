@@ -98,6 +98,16 @@ class StripeGatewayImplTest {
     }
 
     @Test
+    fun aCustomersEmailIsSetOnTheCustomer() = runTest {
+        val harness = Harness(200 to """{"id":"cus_1"}""")
+        harness.gateway.updateCustomerEmail("cus_1", "ada@acme.dev")
+        val sent = harness.sent.single()
+        assertEquals("POST", sent.method)
+        assertEquals("/v1/customers/cus_1", sent.url)
+        assertEquals("email=ada%40acme.dev", sent.body)
+    }
+
+    @Test
     fun aCustomerWithoutNameOrEmailSendsOnlyTheOrganization() = runTest {
         val harness = Harness(200 to """{"id":"cus_2"}""")
         harness.gateway.createCustomer(ORG, null, null)

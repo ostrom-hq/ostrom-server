@@ -86,6 +86,10 @@ class StripeGatewayImpl(
         key = "ostrom-customer-$orgId",
     ).requireString("id")
 
+    override suspend fun updateCustomerEmail(customerId: String, email: String) {
+        call(HttpMethod.Post, "/v1/customers/$customerId", listOf("email" to email))
+    }
+
     override suspend fun priceId(lookupKey: String): String = priceLock.withLock {
         priceIds[lookupKey] ?: run {
             val prices = call(HttpMethod.Get, "/v1/prices", listOf("lookup_keys[0]" to lookupKey, "active" to "true"))
