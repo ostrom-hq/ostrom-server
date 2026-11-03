@@ -89,7 +89,8 @@ class CompleteMobileSignInUseCaseImpl(
         callback: MobileCallback,
     ): MobileCallback = try {
         val identity = oauth.identity(code, attempt.codeVerifier, attempt.nonce, services.callbackUrl(oauth.provider))
-        callback.copy(code = issueCode(resolveUser(identity).id, mobile))
+        val user = resolveUser(identity)
+        callback.copy(code = issueCode(user.id, mobile), login = user.login)
     } catch (_: ProviderRejectedException) {
         callback.copy(error = MOBILE_REFUSED)
     } catch (_: AccountLinkRequiredException) {
