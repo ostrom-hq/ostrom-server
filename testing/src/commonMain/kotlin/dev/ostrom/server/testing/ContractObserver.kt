@@ -13,6 +13,8 @@ import io.ktor.server.application.hooks.ResponseBodyReadyForSend
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
