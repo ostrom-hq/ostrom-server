@@ -709,9 +709,11 @@ class LaunchPathLoadPostgresTest {
         const val ALONE_PATHS = 3
 
         // The round trips of each step of one whole path (statements, and each transaction's BEGIN and COMMIT), in its
-        // order: 4 calls with the CLI's token, 7 with the agent's. Kept: a change of the path changes them here.
+        // order: 4 calls with the CLI's token, 7 with the agent's. Kept: a change of the path changes them here. Each path
+        // alone is a person's first: the policy's call is its CLI token's first use, which the token records
+        // (`identity_token_touch`), and its budget is read cold (BudgetGuard), so both are the same at every run.
         val KEPT_TRIPS = mapOf(
-            "GET /policy/agents" to 17,
+            "GET /policy/agents" to 18,
             "GET /packages/current" to 23,
             "POST /launches" to 28,
             "GET /mcp/servers?mine" to 16,
