@@ -44,13 +44,15 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
             if (request.method == HttpMethod.Delete) return@MockEngine respond("", HttpStatusCode.OK)
             val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
             val result = when (body["method"]!!.jsonPrimitive.content) {
+                "initialize" -> """{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}"""
                 "tools/list" -> """{"tools":[{"name":"query_loki_logs","inputSchema":{}}]}"""
                 "tools/call" -> {
                     upstreamIn.complete(Unit)
                     upstreamAnswers.await()
                     """{"content":[{"type":"text","text":"3 lines"}]}"""
                 }
-                else -> """{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}"""
+                // Notifications, as the shared fake answers them.
+                else -> return@MockEngine respond("", HttpStatusCode.Accepted)
             }
             respond(
                 """{"jsonrpc":"2.0","id":${body["id"]},"result":$result}""",
