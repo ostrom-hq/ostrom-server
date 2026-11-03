@@ -11,6 +11,8 @@ import dev.ostrom.server.budgets.domain.SharedLimit
 import dev.ostrom.server.budgets.presentation.BudgetDto
 import dev.ostrom.server.budgets.presentation.BudgetsPage
 import dev.ostrom.server.budgets.presentation.MyBudgetResponse
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
@@ -39,6 +41,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.seconds
@@ -49,10 +52,12 @@ import kotlin.uuid.Uuid
 class BudgetsPostgresTest {
     private val clock = TestClock()
     private val alerts = RecordingAlerts()
+    private val audit = mutableListOf<OrgAuditRecord>()
     private val overrides: Module = module {
         includes(TestCallers.overrides(clock))
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<BudgetAlerts> { alerts }
+        single<OrgAuditTrail> { OrgAuditTrail { audit += it } }
     }
     private val modules = listOf(SecretsModule, UsageModule, BudgetsModule)
 
@@ -168,8 +173,7 @@ class BudgetsPostgresTest {
         assertEquals(HttpStatusCode.Unauthorized, server.client.get("$base/me").status)
         val refused = listOf(
             BudgetDto("organization", usdPerMonth = -1.0),
-            BudgetDto("organization", usdPerMonth = 1.0, usdPerDay = 1.0),
-            BudgetDto("organization", usdPerMonth = 1.0, hardStop = false),
+            BudgetDto("organization", usdPerDay = -1.0, hardStop = false),
             BudgetDto("workflow", "deploy", 1.0),
             BudgetDto("member", "not-a-uuid", 1.0),
         )
@@ -242,6 +246,90 @@ class BudgetsPostgresTest {
             "A raised limit applies at once",
         )
     }
+
+    @Test
+    fun aMembersBudgetIsByTheDayOrTheMonthStopsOrWarnsAndIsReplacedWhole() = serverTest(modules, overrides) { server ->
+        val daily = BudgetDto("member", member.toString(), usdPerDay = 20.0, hardStop = false)
+        val saved = server.putBudget("admin-a", daily)
+        assertEquals(HttpStatusCode.OK, saved.status, saved.bodyAsText())
+        assertEquals(daily, saved.body<BudgetDto>())
+        val org = BudgetDto("organization", usdPerMonth = 100.0, usdPerDay = 10.0)
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", org).status)
+        assertEquals(listOf(org, daily), server.budgets().items)
+
+        val monthly = BudgetDto("member", member.toString(), usdPerMonth = 5.0)
+        server.putBudget("admin-a", monthly)
+        assertEquals(listOf(org, monthly), server.budgets().items, "Setting a budget replaces the subject's whole")
+        server.putBudget("admin-a", BudgetDto("member", member.toString()))
+        assertEquals(listOf(org), server.budgets().items)
+
+        val changed = audit.filter { it.event == "budget.changed" }.map { it.details }
+        assertEquals(
+            mapOf("scope" to "member", "usd_per_day" to "20.0", "action" to "warn"),
+            changed.first(),
+            "A daily amount and a budget that only warns are in the audit log",
+        )
+        assertEquals(mapOf("scope" to "organization", "usd_per_month" to "100.0", "usd_per_day" to "10.0"), changed[1])
+    }
+
+    @Test
+    fun aDailyBudgetThatStopsRefusesUntilTomorrowAndOneThatWarnsLetsTheCallGoAndIsAudited() =
+        serverTest(modules, overrides) { server ->
+            server.putBudget("admin-a", BudgetDto("member", member.toString(), usdPerDay = 1.0))
+            server.spend(5_000_000, member, at = TestCallers.epoch - 1.days)
+            server.spend(400_000, member)
+            val guard = server.koin.get<BudgetGuard>()
+            assertEquals(
+                BudgetDecision.Allowed(600_000),
+                guard.check(TestCallers.orgA, member),
+                "Yesterday's spend does not count for today",
+            )
+
+            server.spend(600_000, member)
+            clock.advance(5.seconds)
+            val stopped = guard.check(TestCallers.orgA, member)
+            assertIs<BudgetDecision.Exhausted>(stopped)
+            assertEquals(BudgetScope.MEMBER, stopped.scope)
+            assertEquals(1_000_000L, stopped.limitMicros)
+            assertEquals(Instant.parse("2026-10-31T00:00:00Z"), stopped.resetsAt, "Tomorrow, 00:00 UTC")
+
+            assertEquals(
+                HttpStatusCode.OK,
+                server.putBudget("admin-a", BudgetDto("member", member.toString(), usdPerDay = 1.0, hardStop = false))
+                    .status,
+            )
+            assertEquals(
+                BudgetDecision.Allowed(null),
+                guard.check(TestCallers.orgA, member),
+                "A budget that warns never stops a call",
+            )
+            guard.check(TestCallers.orgA, member)
+            val exceeded = audit.filter { it.event == "budget.exceeded" }
+            assertEquals(1, exceeded.size, "Once a day for the limit, however many calls")
+            val line = exceeded.single()
+            assertEquals(TestCallers.orgA, line.orgId)
+            assertEquals("budget" to member.toString(), line.subjectType to line.subjectId)
+            assertEquals(
+                mapOf(
+                    "scope" to "member",
+                    "period" to "day",
+                    "action" to "warn",
+                    "limit_usd" to "1.0",
+                    "spent_usd" to "1.0",
+                    "period_start" to "2026-10-30T00:00:00Z",
+                ),
+                line.details,
+            )
+            assertEquals(listOf(80, 100, 80, 100), alerts.alerts.map { it.thresholdPercent }, "Stopping, then warning")
+
+            clock.advance(1.days)
+            assertEquals(
+                BudgetDecision.Allowed(null),
+                guard.check(TestCallers.orgA, member),
+                "A new day starts from nothing",
+            )
+            assertEquals(1, audit.count { it.event == "budget.exceeded" })
+        }
 
     @Test
     fun anAlertIsMarkedOnceInTheDatabase() = serverTest(modules, overrides) { server ->
