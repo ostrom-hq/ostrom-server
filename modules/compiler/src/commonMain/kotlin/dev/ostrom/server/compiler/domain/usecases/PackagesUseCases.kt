@@ -80,7 +80,7 @@ class CompileSourcesUseCaseImpl(
             serverUrl = "",
             workflows = repository.workflows(orgId).map { it.doc },
             rules = sources.rules(orgId),
-            decisions = repository.decisions(orgId) + sources.ruleDecisions(orgId),
+            decisions = repository.lastDecisions(orgId) + sources.ruleDecisions(orgId),
             repos = sources.repos(orgId),
             prodApprover = settings.prodApprover,
             codePublishers = settings.codePublishers,
