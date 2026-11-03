@@ -142,6 +142,11 @@ class UsagePostgresTest {
         )
         assertEquals(HttpStatusCode.BadRequest, server.declare("member-a", UsageEventRequest("payment", "x")).status)
         assertEquals(HttpStatusCode.BadRequest, server.declare("member-a", UsageEventRequest("skill", "")).status)
+        // Instants the parser reads but PostgreSQL cannot store: a 400, never the database's 500.
+        for (at in listOf("+300000-01-01T00:00:00Z", "-300000-01-01T00:00:00Z")) {
+            val beyond = UsageEventRequest("skill", "deploy", at = at)
+            assertEquals(HttpStatusCode.BadRequest, server.declare("member-a", beyond).status, at)
+        }
         val tooMany = server.declare("member-a", *Array(501) { UsageEventRequest("hook", "Stop") })
         assertEquals(HttpStatusCode.PayloadTooLarge, tooMany.status)
         val tooBig = server.client.post("/api/v1/usage/events") {

@@ -592,9 +592,12 @@ class SharingPostgresTest {
     fun malformedRequestsAreRefused() = serverTest(modules, overrides) { server ->
         with(server) {
             val far = "2027-01-01T00:00:00Z"
+            val beyond = "+300000-01-01T00:00:00Z"
             val requests = listOf(
                 ShareAccountRequest("gemini", "x", null, "id", "a".repeat(10), "b".repeat(10), far),
                 ShareAccountRequest("codex", "x", null, "id", "a".repeat(10), "b".repeat(10), "tomorrow"),
+                // An instant the parser reads but PostgreSQL cannot store: a 400, never the database's 500.
+                ShareAccountRequest("codex", "x", null, "id", "a".repeat(10), "b".repeat(10), beyond),
                 ShareAccountRequest(
                     "codex",
                     "x",

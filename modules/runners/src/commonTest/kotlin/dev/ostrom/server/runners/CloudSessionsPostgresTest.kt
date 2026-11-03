@@ -477,6 +477,14 @@ class CloudSessionsPostgresTest {
                 "Bearer $token",
             ).status,
         )
+        // An instant the parser reads but PostgreSQL cannot store: a 400, never the database's 500.
+        assertEquals(
+            HttpStatusCode.BadRequest,
+            beat(
+                RunnerHeartbeatRequest(starting.id.toString(), 2, lastModelRequestAt = "+300000-01-01T00:00:00Z"),
+                "Bearer $token",
+            ).status,
+        )
 
         // S2-46: the token is checked before the body is read, and the body is capped.
         suspend fun raw(text: String, auth: String) = server.client.post("/api/v1/cloud/runner/heartbeat") {
