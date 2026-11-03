@@ -13,11 +13,12 @@ import dev.ostrom.server.kernel.text.SecretMasks
 
 /**
  * A gated action the hook refused on the workstation without asking the server (audit A6): a push that redirects git
- * away from the repository the gate covers, or a push it cannot read.
+ * or cannot be read, a landing it cannot tell, a program named by a variable, a change to where pushes go, another
+ * repository than the session's, or a gate policy it could not verify.
  *
  * @property sessionId The session segment the agent ran in.
  * @property actionClass The action class of the gate.
- * @property reason `redirected` or `unreadable`.
+ * @property reason One of [ReportLocalDenialUseCaseImpl.REASONS].
  * @property command The command as the hook normalized it.
  * @property repo The repository of the session, or null.
  */
@@ -97,8 +98,16 @@ class ReportLocalDenialUseCaseImpl(
         /** What the line is about: the session. */
         const val SUBJECT: String = "session"
 
-        /** The reasons a hook refuses locally. */
-        val REASONS: Set<String> = setOf("redirected", "unreadable")
+        /** The reasons a hook refuses locally (contract `GateLocalDenial.reason`). */
+        val REASONS: Set<String> = setOf(
+            "redirected",
+            "unreadable",
+            "unknown_landing",
+            "dynamic_command",
+            "git_setting",
+            "foreign_repository",
+            "policy_held",
+        )
 
         /** The longest session id. */
         const val MAX_SESSION_ID: Int = 128

@@ -151,7 +151,8 @@ data class GateAskRequest(
  *
  * @property sessionId The session segment the agent ran in.
  * @property cls The action class of the gate.
- * @property reason `redirected` or `unreadable`.
+ * @property reason Why the hook refused (`redirected`, `unreadable`, `unknown_landing`, `dynamic_command`,
+ *   `git_setting`, `foreign_repository`, `policy_held`).
  * @property command The command as the hook normalized it, secrets removed.
  * @property repo The repository of the session, `owner/name`.
  */
