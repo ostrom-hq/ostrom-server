@@ -39,7 +39,10 @@ interface ListRulesUseCase {
 class ListRulesUseCaseImpl(private val repository: RulesRepository) : ListRulesUseCase {
     override suspend fun invoke(orgId: Uuid, query: RuleQuery, limit: Int): RulePage {
         val size = Pages.size(limit, ListRulesUseCase.MAX_RULES, ListRulesUseCase.MAX_RULES)
-        val read = repository.rules(orgId, query, size + 1)
+        // An `after` that names no rule of the organization (forged, or another's) is a 400, not an empty page.
+        val read = Pages.checked("after", query.after, repository.rules(orgId, query, size + 1)) {
+            repository.rule(orgId, it.id) != null
+        }
         val items = read.take(size)
         return RulePage(items, if (read.size > size) RuleCursor.after(items.last()) else null)
     }
@@ -92,7 +95,9 @@ class ListDecisionsUseCaseImpl(
     private val signDecisions: SignDecisionsUseCase,
 ) : ListDecisionsUseCase {
     override suspend fun invoke(orgId: Uuid, query: DecisionQuery): Pair<List<Decision>, String?> {
-        val rows = repository.decisions(orgId, query.copy(limit = query.limit + 1))
+        // A `before` that names no decision of the organization (forged, or another's) is a 400, not an empty page.
+        val read = repository.decisions(orgId, query.copy(limit = query.limit + 1))
+        val rows = Pages.checked("before", query.before, read) { repository.decision(orgId, it) != null }
         val page = signDecisions(rows.take(query.limit))
         return page to if (rows.size > query.limit) page.last().id else null
     }

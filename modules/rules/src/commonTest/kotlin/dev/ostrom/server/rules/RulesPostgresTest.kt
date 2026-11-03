@@ -218,6 +218,11 @@ class RulesPostgresTest {
         val second = server.decisions(query = "?before=$next")
         assertEquals(listOf("Rule 0"), second.items.map { it.subject.label })
         assertNull(second.next)
+        // After the oldest, nothing; a decision the organization does not hold is a 400.
+        assertEquals(emptyList(), server.decisions(query = "?before=${second.items.single().id}").items)
+        assertEquals(HttpStatusCode.BadRequest, server.call("GET", "/api/v1/decisions?before=nope", "admin-a").status)
+        val ofA = "/api/v1/decisions?before=$next"
+        assertEquals(HttpStatusCode.BadRequest, server.call("GET", ofA, "owner-b").status, "Another organization's")
     }
 
     @Test
