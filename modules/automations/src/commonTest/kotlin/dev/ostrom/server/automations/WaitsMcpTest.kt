@@ -127,6 +127,8 @@ class WaitsMcpTest {
             val listedAlone = client.call("list_waits", "{}", path = "/api/v1/waits/mcp").text()
             assertTrue("$alone  open  Alone" in listedAlone, listedAlone)
             assertEquals("Wait not found.", client.call("get_wait", """{"wait":"$alone"}""").text())
+            val outside = client.call("get_wait", """{"wait":"$id"}""", path = "/api/v1/waits/mcp")
+            assertEquals("Wait not found.", outside.text(), "Nor a session's wait outside a session")
         }
 
     private companion object {
