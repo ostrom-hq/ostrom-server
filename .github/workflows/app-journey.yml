@@ -8,7 +8,8 @@ name: App journey
 # sign-in routes (PKCE, `POST /auth/mobile/token`). The app is built here from ostrom-app with that session (a release
 # APK for an x86_64 emulator), its Maestro flows say yes to one request and no to the other on an Android emulator of
 # this same Linux runner (the server runs on the host, the emulator reaches it at 10.0.2.2), and the job then checks the
-# gates and their receipts through the API. It runs in this repository because its
+# gates and their receipts through the API. A model call through the gateway, to ostrom-e2e's fake provider, spends the
+# organization's tiny budget: the app's Spending tab shows it passed (PARCOURS 3.5). It runs in this repository because its
 # token reads its own GHCR packages, which ostrom-app's cannot yet (as cli-journey.yml and console-journey.yml). On
 # demand, and, off the org's one-`ci`-job rule on purpose (as demo-stack.yml), on a pull request only when the pull
 # request changes this file.
@@ -77,6 +78,39 @@ jobs:
             compose/demo/teamcode/seed.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
+      # ostrom-e2e's fake model provider, the one its scenarios and e2e-journey.yml's start: not written a second time.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-e2e
+          ssh-key: ${{ secrets.DEPLOY_KEY_E2E }}
+          path: e2e
+          sparse-checkout: |
+            package.json
+            src/fake-tokens.ts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # Node 24 runs the fake provider's TypeScript as it is (type stripping), and builds the app later.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Start the fake model provider
+        # The gateway's Anthropic API (OSTROM_GATEWAY_ANTHROPIC_URL): every model call bills 300 000 input tokens, $1.50
+        # at claude-opus-5's $5 per million, past the organization's $0.01 budget that real-server-session.sh sets
+        # (PARCOURS 3.5: the phone shows the budget passed, and the calls refused until the month ends).
+        run: |
+          cat > "$RUNNER_TEMP/fake-provider.mjs" <<'JS'
+          const { FakeTokens } = await import(process.argv[2]);
+          const provider = new FakeTokens();
+          provider.usage = { input_tokens: 300_000, output_tokens: 1 };
+          await provider.start(4620);
+          console.log('The fake model provider listens on 127.0.0.1:4620');
+          JS
+          sed -i 's/^ *//' "$RUNNER_TEMP/fake-provider.mjs"
+          nohup node "$RUNNER_TEMP/fake-provider.mjs" "$PWD/e2e/src/fake-tokens.ts" > "$RUNNER_TEMP/fake-provider.log" 2>&1 &
+          for _ in $(seq 1 30); do curl -sS -o /dev/null 127.0.0.1:4620/ 2>/dev/null && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/fake-provider.log"; exit 1
       - name: Start the fake GitHub
         env:
           PORT: "8080"
@@ -131,7 +165,8 @@ jobs:
           docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
           # The server's non-root user writes the mails (0644); the session script, as the runner's user, reads them.
           mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
-          # Test values only: sign-in mails are written to a directory, Stripe is never called by the flows.
+          # Test values only: sign-in mails are written to a directory, Stripe is never called by the flows, and the
+          # model provider behind the gateway is the fake one started above (its token endpoint too).
           # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
           # stripe-mock refuses a key with another underscore after `sk_test_` (401, as console-journey.yml's did).
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
@@ -149,6 +184,8 @@ jobs:
           OSTROM_READS_PER_MINUTE=6000
           OSTROM_READS_IN_FLIGHT=64
           OSTROM_READ_WAITS_IN_FLIGHT=256
+          OSTROM_GATEWAY_ANTHROPIC_URL=http://127.0.0.1:4620
+          OSTROM_SHARING_CLAUDE_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           echo "OSTROM_GITHUB_CLIENT_SECRET=$FAKE_GITHUB_CLIENT_SECRET" >> "$RUNNER_TEMP/server.env"
@@ -214,11 +251,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-provider: basic
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: app/package-lock.json
       - name: Install the app's dependencies
         working-directory: app
         run: npm ci

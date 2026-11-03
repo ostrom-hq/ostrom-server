@@ -62,7 +62,7 @@ object LaunchesModule : ServerModule {
     override val name: String = "launches"
 
     override val koinModule: Module = module {
-        single<LaunchesRepository> { PostgresLaunchesRepository(get()) }
+        single<LaunchesRepository> { PostgresLaunchesRepository(get(), get()) }
         single<LauncherResolver> { IdentityLauncherResolver(get(), get(), get()) }
         single<AgentTokenService> { IdentityAgentTokens(get(), get()) }
         single<CloudExecutions> { RunnerCloudExecutions(get()) }

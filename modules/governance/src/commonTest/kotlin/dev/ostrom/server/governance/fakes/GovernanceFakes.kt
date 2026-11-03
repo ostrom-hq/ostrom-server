@@ -123,6 +123,9 @@ class FakeChange(override val kinds: Set<String> = setOf(KIND)) : GovernanceChan
     var refuseApply: Exception? = null
     val confirmers: MutableList<GovernanceConfirmer> = mutableListOf()
 
+    /** When set, the result holds a secret, shown once: without it, it reads `shown`. */
+    var secret: Boolean = false
+
     override suspend fun preview(orgId: Uuid, write: GovernanceWrite): GovernancePreview {
         refusePreview?.let { throw it }
         return GovernancePreview("Set it", current, write.payload["to"])
@@ -134,6 +137,9 @@ class FakeChange(override val kinds: Set<String> = setOf(KIND)) : GovernanceChan
         current = write.payload["to"]
         return current
     }
+
+    override fun shownOnce(kind: String, result: JsonElement): JsonElement? =
+        if (secret) JsonPrimitive("shown") else super.shownOnce(kind, result)
 
     companion object {
         const val KIND = "gates.policy"
