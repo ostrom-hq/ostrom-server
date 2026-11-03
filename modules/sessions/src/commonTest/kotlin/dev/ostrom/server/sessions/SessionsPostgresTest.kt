@@ -7,6 +7,7 @@ import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.gates.domain.services.OpenSegment
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
@@ -16,10 +17,12 @@ import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.receipts.ReceiptsModule
+import dev.ostrom.server.sessions.domain.models.SessionNotFoundException
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
 import dev.ostrom.server.sessions.domain.services.SessionCosts
 import dev.ostrom.server.sessions.domain.usecases.SweepStaleSessionsUseCase
 import dev.ostrom.server.sessions.fakes.SettableClock
+import dev.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import dev.ostrom.server.sessions.presentation.SessionDto
 import dev.ostrom.server.sessions.presentation.SessionResponse
 import dev.ostrom.server.sessions.presentation.SessionScopes
@@ -48,6 +51,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -195,6 +199,12 @@ class SessionsPostgresTest {
         assertEquals("s-2", reopened.session.agentSessionId)
         val again = server.call("agent:b:launch-2", "/api/v1/sessions/s-2/reopen", "{}").body<SessionResponse>()
         assertEquals(false to "s-2~r2", again.reopened to again.session.id)
+        val guard = SessionsGateGuard(server.koin.get<SessionsRepository>())
+        val open = guard.openSegment(orgB, "s-2", "launch-2")
+        assertEquals(OpenSegment("s-2~r2", listOf("s-2", "s-2~r2")), open, "Found from the agent's session id")
+        assertFailsWith<SessionNotFoundException>("Another organization's") { guard.openSegment(orgA, "s-2", null) }
+        val foreign = server.koin.get<SessionsRepository>().segmentsOf(orgA, "s-2")
+        assertEquals(emptyList(), foreign, "No segment of another organization")
         assertEquals(
             HttpStatusCode.Forbidden,
             server.call("agent:b:launch-9", "/api/v1/sessions/s-2/reopen", "{}").status,
