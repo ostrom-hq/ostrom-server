@@ -24,8 +24,9 @@ on:
         default: ""
       server_run:
         description: >-
-          Id of a ci.yml run of this repository (a pull request's) whose ostrom-server-image artifact is tested instead
-          of a published image (empty = server_image)
+          Id of a ci.yml run of this repository (a pull request's), its ci-image job passed, whose ostrom-server-image
+          artifact is tested instead of a published image: the artifact is kept one day (empty = server_image; not
+          with server_image)
         default: ""
       cli_ref:
         description: ostrom-cli ref whose binary and journey run (ostrom-cli#85 or later, for the --fake-mcp-* flags)
@@ -95,6 +96,31 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
           path: ostrom-core
           persist-credentials: false
+      # server_run: a ci.yml run of this repository, not a fork's, whose ci-image job passed (its image passed the smoke
+      # tests and was saved). Its roles are those of its head: a pull request whose base changed ci/database-roles.sql
+      # merges main first, as its ci.yml run built the image from that merge.
+      - name: server_run's ci.yml run
+        id: run
+        if: env.SERVER_RUN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -z "$WANTED_IMAGE" ] || { echo "::error::server_image and server_run name two servers: give one"; exit 1; }
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SERVER_RUN" \
+            --jq '"\(.path) \(.head_repository.full_name) \(.head_sha) \(.pull_requests[0].number // "")"')
+          read -r path repository head pull <<< "$run"
+          case "$path" in
+            .github/workflows/ci.yml*) ;;
+            *) echo "::error::run $SERVER_RUN is not a ci.yml run ($path)"; exit 1 ;;
+          esac
+          [ "$repository" = "$GITHUB_REPOSITORY" ] \
+            || { echo "::error::run $SERVER_RUN built $repository's code, not this repository's"; exit 1; }
+          image_job=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SERVER_RUN/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.name == "Binary, images and smoke tests") | .conclusion] | first // ""')
+          [ "$image_job" = success ] \
+            || { echo "::error::run $SERVER_RUN's ci-image job is '$image_job', not success: no image to test"; exit 1; }
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "pull=${pull:+#$pull}" >> "$GITHUB_OUTPUT"
       - if: env.SERVER_RUN != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -106,19 +132,20 @@ jobs:
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
-          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.run.outputs.head }}
+          PULL: ${{ steps.run.outputs.pull }}
         run: |
           main=$(git -C server rev-parse origin/main)
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           image=$WANTED_IMAGE
           if [ -n "$SERVER_RUN" ]; then
-            # a ci.yml run of this repository: its image, built from its head (a pull request's, never published)
-            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SERVER_RUN" --jq '"\(.path) \(.head_sha)"')
-            [ "${run%% *}" = .github/workflows/ci.yml ] || { echo "::error::run $SERVER_RUN is not a ci.yml run"; exit 1; }
-            revision=${run##* }
+            # the image server_run's ci-image saved (a pull request's, never published); its head is a branch of this
+            # public repository, fetched by the checkout
+            revision=$HEAD_SHA
             git -C server cat-file -e "${revision}^{commit}" 2>/dev/null || git -C server fetch --quiet origin "$revision"
             gunzip -c "$RUNNER_TEMP/image/ostrom-server-image.tar.gz" | docker load
             image=ostrom-server:ci
+            source="ci.yml run $SERVER_RUN${PULL:+ of $PULL}, not published"
           elif [ -z "$image" ]; then
             # as console-journey.yml: the newest of main's last commits published (a head whose image failed or is
             # still building is skipped), never `edge`, which names no commit. Any other pull error stops the job.
@@ -138,6 +165,7 @@ jobs:
             docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
           fi
           if [ -z "$SERVER_RUN" ]; then
+            source="published"
             revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
             [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
             git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
@@ -148,7 +176,7 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
-            echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
+            echo "- server: \`$image\` (ostrom-server@${revision:0:7}, $source; main is at ${main:0:7})"
             echo "- CLI: ostrom-cli $(git -C cli rev-parse --short HEAD) ($CLI_REF), built here"
           } >> "$GITHUB_STEP_SUMMARY"
       # Cloud sessions (line 6.2: ostrom claude --cloud and ostrom attach) on this runner's Docker, as in
