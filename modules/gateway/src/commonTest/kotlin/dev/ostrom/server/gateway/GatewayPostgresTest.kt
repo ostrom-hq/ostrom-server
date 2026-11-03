@@ -367,6 +367,8 @@ class GatewayPostgresTest {
             var record = recorded.receive()
             while (record.outcome == "ok") record = recorded.receive()
             assertEquals("upstream_broken", record.outcome)
+            // A call that fails gives its place back too (OSTROM_GATEWAY_MAX_OPEN_CALLS).
+            placeFree()
         }
     }
 
@@ -404,31 +406,7 @@ class GatewayPostgresTest {
                 broken = null
                 placeFree()
                 assertEquals(events, infer("messages", STREAM).bodyAsText())
-                // A call that fails gives its place back too: its provider breaks mid-stream.
-                placeFree()
-                val failing = ByteChannel()
-                broken = failing
-                coroutineScope {
-                    launch {
-                        failing.writeStringUtf8(events.substringBefore("event: content_block_delta"))
-                        failing.flush()
-                        withContext(Dispatchers.Default) {
-                            withTimeout(10.seconds) { while (received.size < 3) delay(5.milliseconds) }
-                            delay(500.milliseconds)
-                        }
-                        failing.cancel(IllegalStateException("connection reset"))
-                    }
-                    val cut = try {
-                        infer("messages", STREAM).bodyAsText()
-                    } catch (_: Exception) {
-                        ""
-                    }
-                    assertFalse("overloaded_error" in cut, "The place was free: the call reached the provider")
-                }
-                broken = null
-                placeFree()
-                assertEquals(events, infer("messages", STREAM).bodyAsText())
-                assertEquals(listOf("ok", "ok", "upstream_broken", "ok"), records.map { it.outcome })
+                assertEquals(listOf("ok", "ok"), records.map { it.outcome })
             }
         }
     }
