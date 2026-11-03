@@ -143,6 +143,8 @@ class RegisteredSessionsTest {
         beat(a)
 
         assertEquals(a.runner.id, driver.holder(session))
+        driver.stopExecutions(session)
+        assertNull(driver.holder(session), "Stopped: no longer the runner's")
     }
 
     @Test

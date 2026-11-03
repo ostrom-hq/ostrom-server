@@ -20,7 +20,6 @@ import dev.ostrom.server.runners.domain.ListCloudSessionsUseCaseImpl
 import dev.ostrom.server.runners.domain.RepositoryCloudUsageMeter
 import dev.ostrom.server.runners.domain.RepositorySpec
 import dev.ostrom.server.runners.domain.SessionState
-import dev.ostrom.server.runners.presentation.toResponse
 import dev.ostrom.server.runners.fakes.FakeRuntimeDriver
 import dev.ostrom.server.runners.fakes.FixedPlans
 import dev.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
@@ -28,6 +27,7 @@ import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.fakes.SettableClock
 import dev.ostrom.server.runners.fakes.session
+import dev.ostrom.server.runners.presentation.toResponse
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -203,6 +203,10 @@ class SessionUseCasesTest {
         assertEquals(machine, read.runnerId)
         assertEquals(machine.toString(), read.toResponse().runnerId)
         assertNull(GetCloudSessionUseCaseImpl(repository, FakeRuntimeDriver())(alice, created.id).runnerId)
+        for (state in listOf(SessionState.PAUSED, SessionState.TERMINATED, SessionState.FAILED)) {
+            repository.sessions[created.id] = repository.sessions.getValue(created.id).copy(state = state)
+            assertNull(GetCloudSessionUseCaseImpl(repository, driver)(alice, created.id).runnerId, "$state runs nowhere")
+        }
     }
 
     @Test

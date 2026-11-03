@@ -52,8 +52,9 @@ class RegisteredRuntimeDriver(
         }
     }
 
+    // a stopped execution (a dropped one is stopped too) is no longer the runner's to run
     override suspend fun holder(session: CloudSession): Uuid? =
-        assignments.find(session.orgId, session.id, session.epoch)?.runnerId
+        assignments.find(session.orgId, session.id, session.epoch)?.takeUnless { it.stopped }?.runnerId
 
     override suspend fun stopExecutions(session: CloudSession) {
         assignments.stop(session.orgId, session.id, clock.now())
