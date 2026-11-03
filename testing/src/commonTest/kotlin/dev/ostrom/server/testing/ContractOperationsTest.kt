@@ -53,7 +53,7 @@ class ContractOperationsTest {
     @Test
     fun onlyASuccessWithAJsonBodyMustBeObserved() {
         val answering = operations.all.filter { it.answersJson }.map { it.id }
-        assertEquals(listOf("listThings", "getThing", "DELETE /api/v1/things/{id}"), answering)
+        assertEquals(listOf("listThings", "getThing", "DELETE /api/v1/things/{id}", "streamThings"), answering)
         assertFalse(operations.all.first { it.id == "failing" }.answersJson, "An error's JSON is not a success")
     }
 
