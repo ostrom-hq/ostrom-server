@@ -67,13 +67,20 @@ class TokenUseCasesTest {
     @Test
     fun aNameWithAControlOrInvisibleCharacterIsRefusedAndAnyOtherKeptAsWritten() = runTest {
         // The name is the creator's: a governance confirmation shows it, so it can never break a line or hide text.
-        val trapped = listOf("ostrom login\nOwner approval", "tab\there", "bell\u0007", "rtl\u202Eevil", "zero\u200Bw")
+        val trapped = listOf(
+            "ostrom login\nOwner approval", "tab\there", "bell\u0007", "rtl\u202Eevil", "zero\u200Bw",
+            "ci\u2028Owner", "para\u2029x", "nbsp\u00A0x", "wide\u3000x", "private\uE000x",
+        )
         for (name in trapped) {
             assertFailsWith<InvalidTokenNameException>(name) { create(userId, name, listOf("orgs:read"), null) }
         }
         val trusted = create(userId, "ostrom login", listOf("orgs:read"), null).token.name
         assertEquals("ostrom login", trusted, "A name like another credential is kept: the console says its type")
         assertEquals("<b>x</b>", create(userId, "<b>x</b>", listOf("orgs:read"), null).token.name)
+        // The joiners Persian, Indic scripts and emoji need are kept.
+        for (name in listOf("\u0645\u06CC\u200C\u062E\u0648\u0627\u0645", "\uD83D\uDC69\u200D\uD83D\uDCBB ci")) {
+            assertEquals(name, create(userId, name, listOf("orgs:read"), null).token.name)
+        }
     }
 
     @Test

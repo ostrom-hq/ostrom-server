@@ -270,6 +270,10 @@ class GovernancePostgresTest {
         val admin = server.ask("ada-token", "everyone").body<GovernanceConfirmationPending>().confirmationId
         val byAdmin = server.read("olga-browser", admin).body<ConfirmationDto>()
         assertEquals("admin" to null, byAdmin.credential to byAdmin.token)
+
+        val events = server.koin.get<AuditRepository>().list(orgA, null, null, 50).map { it.entry }
+        val created = events.first { it.targetId == id && it.action == "governance.confirmation.created" }
+        assertEquals("api_token" to "deploy bot", created.details["credential"] to created.details["tokenName"])
     }
 
     @Test

@@ -77,7 +77,7 @@ class CredentialAuthenticatorImpl(
                 credentialId = stored.id.toString(),
                 orgId = stored.orgId?.toString(),
                 // A governance confirmation names the personal token that asked, never the CLI's (audit 2, F1 bis).
-                personalTokenName = stored.name.takeIf { stored.kind == TokenKind.PERSONAL },
+                personalTokenName = shownTokenName(stored.name).takeIf { stored.kind == TokenKind.PERSONAL },
             )
         }
     }

@@ -97,6 +97,15 @@ class CredentialAuthenticatorTest {
     }
 
     @Test
+    fun aPersonalTokenNamedBeforeTheRuleIsShownWithoutWhatBreaksALineOrHidesText() = runTest {
+        val legacy = token("osp_old", TokenKind.PERSONAL).copy(name = "ostrom login\nOwner\u202E  approval\u200B")
+        tokens.tokens["h(osp_old)"] = legacy
+        assertEquals("ostrom login Owner approval", authenticator.authenticate("osp_old")?.personalTokenName)
+        tokens.tokens["h(osp_old)"] = legacy.copy(name = "\u200B\n")
+        assertEquals("unnamed token", authenticator.authenticate("osp_old")?.personalTokenName)
+    }
+
+    @Test
     fun anAgentTokenWithoutOrganizationHasNoneAndOneWithoutSessionIsACorruptRow() = runTest {
         tokens.tokens["h(osa_c)"] = agentToken("osa_c", setOf(AGENT_SCOPE), session = "run-3").copy(orgId = null)
         val corrupt = agentToken("osa_d", setOf(AGENT_SCOPE), session = "run-4")

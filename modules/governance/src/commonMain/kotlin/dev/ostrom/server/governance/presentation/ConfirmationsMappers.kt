@@ -3,6 +3,7 @@ package dev.ostrom.server.governance.presentation
 
 import dev.ostrom.server.governance.domain.Confirmation
 import dev.ostrom.server.governance.domain.ConfirmationAnswer
+import dev.ostrom.server.governance.domain.ConfirmationCredential
 import dev.ostrom.server.governance.domain.ConfirmationPeople
 import dev.ostrom.server.governance.domain.ConfirmationPerson
 import dev.ostrom.server.kernel.errors.ErrorKind
@@ -30,7 +31,7 @@ internal suspend fun Confirmation.toDto(people: ConfirmationPeople, now: Instant
     after = after ?: JsonNull,
     requestedBy = requestedBy.toDto(people),
     credential = credential.wire,
-    token = tokenId?.let { id -> tokenName?.let { ConfirmationTokenDto(id, it) } },
+    token = tokenOf(this),
     createdAt = createdAt.toString(),
     expiresAt = expiresAt.toString(),
     answeredBy = answeredBy?.toDto(people),
@@ -38,6 +39,14 @@ internal suspend fun Confirmation.toDto(people: ConfirmationPeople, now: Instant
     result = result,
     error = error?.let { ConfirmationErrorDto(it.type, it.message) },
 )
+
+/** The personal token of an `api_token` confirmation, always with it and never with another credential. */
+private fun tokenOf(confirmation: Confirmation): ConfirmationTokenDto? =
+    if (confirmation.credential == ConfirmationCredential.API_TOKEN) {
+        ConfirmationTokenDto(checkNotNull(confirmation.tokenId), checkNotNull(confirmation.tokenName))
+    } else {
+        null
+    }
 
 private suspend fun ConfirmationPerson.toDto(people: ConfirmationPeople): ConfirmationPersonDto {
     val name = people.nameOf(userId)
