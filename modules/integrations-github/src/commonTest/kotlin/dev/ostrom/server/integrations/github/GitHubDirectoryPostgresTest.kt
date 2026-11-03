@@ -12,6 +12,7 @@ import dev.ostrom.server.gates.domain.services.GateReceiptSigner
 import dev.ostrom.server.gates.domain.services.GateSessions
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.integrations.github.domain.GitHubApi
+import dev.ostrom.server.integrations.github.domain.GitHubContentsApi
 import dev.ostrom.server.integrations.github.domain.GitHubAppStore
 import dev.ostrom.server.integrations.github.domain.GitHubDirectory
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
@@ -21,6 +22,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubManifestApi
 import dev.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import dev.ostrom.server.integrations.github.domain.GitHubRepo
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
+import dev.ostrom.server.integrations.github.domain.GitHubRepositoryReader
 import dev.ostrom.server.integrations.github.domain.GitHubTeam
 import dev.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import dev.ostrom.server.integrations.github.infrastructure.GitHubDirectoryQueries
@@ -38,8 +40,20 @@ import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.orgs.domain.FindOrgUseCase
 import dev.ostrom.server.orgs.domain.OrgNotFoundException
+import dev.ostrom.server.rules.domain.models.AnalysisKind
+import dev.ostrom.server.rules.domain.models.AnalysisRun
+import dev.ostrom.server.rules.domain.models.RepositoryListing
+import dev.ostrom.server.rules.domain.models.RepositoryReadException
+import dev.ostrom.server.rules.domain.models.RuleQuery
+import dev.ostrom.server.rules.domain.models.RuleStatus
+import dev.ostrom.server.rules.domain.services.RepositoryReader
+import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCaseImpl
+import dev.ostrom.server.rules.infrastructure.PostgresAnalysisRepository
+import dev.ostrom.server.rules.infrastructure.PostgresRulesRepository
+import dev.ostrom.server.rules.infrastructure.RulesMigrations
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.testing.TestServer
@@ -72,7 +86,9 @@ import kotlinx.io.writeString
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -93,6 +109,7 @@ class GitHubDirectoryPostgresTest {
         repos[43] = listOf(repo("globex-secret"))
         teams[43] = listOf(GitHubTeam("globex-team", "Globex", listOf("spy"), listOf("globex-secret")))
     }
+    private val contentsApi = FakeGitHubContentsApi().acmeApi()
 
     // Tokens are `<kind>:<org letter>:<id>`: `user:a:owner` (a browser session, the instance's administrator),
     // `admin:a:ops` (a browser session), `reader:a:ops` (an API token with `orgs:read`), `agent:a:x` (no scope).
@@ -157,6 +174,7 @@ class GitHubDirectoryPostgresTest {
         single<GitHubApi> { github }
         single<GitHubDirectoryApi> { directoryApi }
         single<GitHubManifestApi> { directoryApi }
+        single<GitHubContentsApi> { contentsApi }
         // The orgs module's lookup: acme is org A, globex org B, by short name or id.
         single<FindOrgUseCase> {
             object : FindOrgUseCase {
@@ -470,6 +488,50 @@ class GitHubDirectoryPostgresTest {
             .decodeFromByteArray(HMAC.Key.Format.RAW, secret.encodeToByteArray())
         val mac = key.signatureGenerator().generateSignature(body.encodeToByteArray())
         return "sha256=" + mac.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+    }
+
+    @Test
+    fun theAnalysisReadsEachOrganizationsRepositoriesThroughItsOwnInstallationOnly() = gitHubTest { server ->
+        server.installBoth()
+        // The module binds the rules analysis's reader: the rules module's default is never used with GitHub.
+        val reader = assertIs<GitHubRepositoryReader>(server.koin.get<RepositoryReader>())
+        val acme = assertIs<RepositoryListing.Connected>(reader.repositories(ORG)).repos
+        assertEquals(listOf("acme/web", "acme/api"), acme.map { "${it.owner}/${it.name}" })
+        val globex = assertIs<RepositoryListing.Connected>(reader.repositories(OTHER_ORG)).repos
+        assertEquals(listOf("globex/globex-secret"), globex.map { "${it.owner}/${it.name}" })
+
+        val api = acme.single { it.name == "api" }
+        assertFailsWith<RepositoryReadException> { reader.tree(OTHER_ORG, api) }
+        assertFailsWith<RepositoryReadException> { reader.file(OTHER_ORG, api, ".github/CODEOWNERS") }
+        assertEquals(emptyList(), contentsApi.reads, "Org B never reads acme's code, through any installation")
+        assertEquals(5, reader.tree(ORG, api).paths.size)
+        assertEquals(setOf(42L), contentsApi.reads.map { it.first }.toSet())
+    }
+
+    @Test
+    fun theEngineProposesRulesFromGitHubForItsOrganizationOnly() = gitHubTest { server ->
+        server.installBoth()
+        // The rules tables, migrated by their owner as `ostrom-server migrate` does; the driver serves them.
+        MigrationRunnerImpl(server.database.owner, RecordingLogger()).migrate("rules", RulesMigrations)
+        val runs = PostgresAnalysisRepository(server.driver)
+        val rules = PostgresRulesRepository(server.driver)
+        val reader = server.koin.get<RepositoryReader>()
+        val acme = assertIs<RepositoryListing.Connected>(reader.repositories(ORG)).repos
+        val run = AnalysisRun(ORG, AnalysisKind.ANALYSIS, "run_1", AnalysisRun.CONNECT, 0.0, null, "lyes", NOW, NOW)
+        runs.transaction(ORG) {
+            lock(AnalysisKind.ANALYSIS)
+            put(run)
+        }
+
+        AnalyzeOrganizationUseCaseImpl(runs, rules, reader, RecordingLogger(), clock)(run, acme)
+
+        assertEquals(AnalysisRun.READY, runs.run(ORG, AnalysisKind.ANALYSIS)?.phase)
+        val proposed = rules.rules(ORG, RuleQuery(), 50)
+        assertTrue(proposed.isNotEmpty(), "CODEOWNERS, migrations and a protected main give rules")
+        assertTrue(proposed.all { it.status == RuleStatus.PROPOSED })
+        assertEquals(emptyList(), rules.rules(OTHER_ORG, RuleQuery(), 50), "Org B sees none of acme's rules")
+        assertNull(runs.run(OTHER_ORG, AnalysisKind.ANALYSIS))
+        assertEquals(setOf(42L), contentsApi.reads.map { it.first }.toSet(), "Only acme's installation read")
     }
 
     private suspend fun QueryExecutor.count(table: String): String =

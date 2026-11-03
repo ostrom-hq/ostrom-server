@@ -219,8 +219,16 @@ class HttpGitHubApi(
         return send(method, path, token, body, timeoutMs)
     }
 
-    // Null when GitHub refuses these permissions to the installation (422): the App was not granted them.
-    private suspend fun installationToken(installationId: Long, permissions: Map<String, String>): String? =
+    /**
+     * An installation token restricted to [permissions], kept until a minute before it expires.
+     *
+     * @param installationId The installation.
+     * @param permissions The permissions it carries, and only them.
+     * @return The token, or null when GitHub refuses these permissions to the installation (422): the App was not
+     *   granted them.
+     * @throws GitHubCallException When GitHub fails or the App is not configured.
+     */
+    internal suspend fun installationToken(installationId: Long, permissions: Map<String, String>): String? =
         lock.withLock {
             val key = installationId to permissions
             tokens[key]?.takeIf { it.expiresAt - clock.now() > REFRESH_BEFORE }?.let { return it.token }
@@ -449,7 +457,7 @@ private const val INSTALLATIONS_PAGE = 100
 // 1,000 installations reachable by one person: beyond, the install is refused rather than read forever.
 private const val INSTALLATIONS_PAGES = 10
 
-private suspend fun HttpClient.exchange(
+internal suspend fun HttpClient.exchange(
     method: HttpMethod,
     url: String,
     path: String,
@@ -467,7 +475,7 @@ private suspend fun HttpClient.exchange(
     throw GitHubCallException("GitHub did not answer ${method.value} $path.", error)
 }
 
-private fun HttpRequestBuilder.headers(token: String?) {
+internal fun HttpRequestBuilder.headers(token: String?) {
     token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
     header(HttpHeaders.Accept, "application/vnd.github+json")
     header("X-GitHub-Api-Version", "2022-11-28")
@@ -487,7 +495,7 @@ private suspend inline fun <reified T> decode(response: HttpResponse, what: Stri
 
 // The path of a repository in GitHub's API, only for a repository's full name: a repository an agent declared never
 // makes the installation's token call another route (AUDIT-SECU-2 B5).
-private fun repoPath(repo: String): String =
+internal fun repoPath(repo: String): String =
     if (isRepositoryName(repo)) "/repos/$repo" else throw GitHubCallException("This is not a repository's full name.")
 
 // The App's own JWT, for the calls made as the App rather than as an installation.
