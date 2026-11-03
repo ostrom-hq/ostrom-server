@@ -355,4 +355,14 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
         name = "magic_links_bound_to_their_browser",
         sql = "ALTER TABLE identity_magic_links ADD COLUMN browser_hash TEXT",
     ),
+    // `/devices` lists an organization's live tokens of `ostrom login --admin` inside it, for its owners and admins:
+    // a partial index on them, so the list never scans the agent tokens and service keys of the same table.
+    SchemaMigration(
+        version = 11,
+        name = "elevated_tokens",
+        sql = """
+            CREATE INDEX identity_api_tokens_elevated ON identity_api_tokens (org_id, created_at DESC)
+                WHERE kind = 'ADMIN' AND revoked_at IS NULL
+        """.trimIndent(),
+    ),
 )

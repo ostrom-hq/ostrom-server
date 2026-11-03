@@ -11,6 +11,7 @@ import dev.ostrom.server.identity.domain.AuditRepository
 import dev.ostrom.server.identity.domain.DeviceAuthorization
 import dev.ostrom.server.identity.domain.DeviceAuthorizationStatus
 import dev.ostrom.server.identity.domain.DeviceAuthorizationsRepository
+import dev.ostrom.server.identity.domain.ElevatedTokensRepository
 import dev.ostrom.server.identity.domain.DuplicateIdentityException
 import dev.ostrom.server.identity.domain.OrgAuditQuery
 import dev.ostrom.server.identity.domain.RateLimiter
@@ -231,6 +232,24 @@ class InMemoryServiceKeysRepository(private val tokens: InMemoryApiTokensReposit
 
     override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean {
         listLive(orgId, at).firstOrNull { it.id == id } ?: return false
+        tokens.tokens.entries.first { it.value.id == id }.let { it.setValue(it.value.copy(revokedAt = at)) }
+        return true
+    }
+}
+
+class InMemoryElevatedTokensRepository(private val tokens: InMemoryApiTokensRepository) : ElevatedTokensRepository {
+    override suspend fun listLive(orgId: Uuid, userId: Uuid?, now: Instant): List<ApiToken> =
+        tokens.tokens.values.filter {
+            it.orgId == orgId && it.kind == TokenKind.ADMIN && (userId == null || it.userId == userId) &&
+                it.revokedAt == null && (it.expiresAt?.let { e -> e > now } ?: true)
+        }
+            .sortedByDescending { it.createdAt }
+
+    override suspend fun get(orgId: Uuid, id: Uuid): ApiToken? =
+        tokens.tokens.values.firstOrNull { it.id == id && it.orgId == orgId && it.kind == TokenKind.ADMIN }
+
+    override suspend fun revoke(orgId: Uuid, id: Uuid, at: Instant): Boolean {
+        get(orgId, id)?.takeIf { it.revokedAt == null } ?: return false
         tokens.tokens.entries.first { it.value.id == id }.let { it.setValue(it.value.copy(revokedAt = at)) }
         return true
     }
