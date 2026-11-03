@@ -42,7 +42,7 @@ interface CloseSessionUseCase {
     suspend operator fun invoke(orgId: Uuid, id: String, end: EndSession): Session
 
     /**
-     * Ends a segment the caller already locked, in the caller's transaction.
+     * Ends an open segment the caller already locked, in the caller's transaction.
      *
      * @param tx The caller's transaction.
      * @param session The locked segment, as read under its lock.
@@ -101,41 +101,45 @@ class CloseSessionUseCaseImpl(
         val gates = sessionGates(orgId, id)
         val inForce = rules.rulesFor(orgId, seen.repo)
         val (claimed, told) = locked(orgId, id) { session ->
+            val written = session.endedAt
             when {
                 session.receiptId != null -> merged(session, end) to null
                 // Another end wrote its time and failed before its receipt: this one signs it, as it was written.
-                session.endedAt != null -> merged(session, end).let { it to it.told() }
-                else -> endedOf(session, endedAt, measured, end) to measured
+                written != null -> merged(session, end).let { it to Told(written, it.told()) }
+                else -> endedOf(session, endedAt, measured, end) to Told(endedAt, measured)
             }
         }
-        val draft = told?.let { draft(claimed, claimed.endedAt ?: endedAt, it, gates, inForce) } ?: return claimed
+        val draft = told?.let { draft(claimed, it.endedAt, it.end, gates, inForce) } ?: return claimed
         val receiptId = (sign(orgId, draft, receiptIdOf(id)).getValue("id") as JsonPrimitive).content
-        return locked(orgId, id) { it.copy(receiptId = it.receiptId ?: receiptId) to null }.first
+        // The receipt's id is the segment's: another end that wrote it first wrote the same.
+        return locked(orgId, id) { it.copy(receiptId = receiptId) to null }.first
     }
+
+    // What an end tells its receipt: the time that was written and what it says.
+    private class Told(val endedAt: Instant, val end: EndSession)
 
     // The segment under its lock, changed and written in one short transaction that asks the pool for nothing else.
     private suspend fun locked(
         orgId: Uuid,
         id: String,
-        change: (Session) -> Pair<Session, EndSession?>,
-    ): Pair<Session, EndSession?> = repository.transaction(orgId) {
+        change: (Session) -> Pair<Session, Told?>,
+    ): Pair<Session, Told?> = repository.transaction(orgId) {
         val session = lock(id) ?: throw SessionNotFoundException()
         change(session).also { (next, _) -> if (next != session) update(next) }
     }
 
+    // Only for an open segment its caller replaces (SessionSegments), one per resume: it still signs inside the
+    // caller's transaction, never in a burst.
     override suspend fun closeLocked(tx: SessionsTransaction, session: Session, end: EndSession): Session {
         val orgId = session.orgId
         val id = session.id
-        val ended = if (session.receiptId != null) {
-            merged(session, end)
-        } else {
-            val endedAt = session.endedAt ?: now()
-            val measured = end.copy(costUsd = costs.costOf(orgId, session.launchId, session.startedAt, endedAt))
-            val draft = draft(session, endedAt, measured, sessionGates(orgId, id), rules.rulesFor(orgId, session.repo))
-            val receipt = sign(orgId, draft, receiptIdOf(id))
-            endedOf(session, endedAt, measured, end).copy(receiptId = (receipt.getValue("id") as JsonPrimitive).content)
-        }
-        if (ended != session) tx.update(ended)
+        val endedAt = now()
+        val measured = end.copy(costUsd = costs.costOf(orgId, session.launchId, session.startedAt, endedAt))
+        val draft = draft(session, endedAt, measured, sessionGates(orgId, id), rules.rulesFor(orgId, session.repo))
+        val receipt = sign(orgId, draft, receiptIdOf(id))
+        val ended = endedOf(session, endedAt, measured, end)
+            .copy(receiptId = (receipt.getValue("id") as JsonPrimitive).content)
+        tx.update(ended)
         return ended
     }
 

@@ -218,5 +218,14 @@ class CloseSessionTest {
         assertEquals(listOf("rcpt_session_s-1"), bench.sign.signed.keys.toList())
     }
 
+    @Test
+    fun aSegmentGoneWhileItsEndReadIsNotFound() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), StartSession(id = "s-1", agent = "claude-code"))
+        bench.costs.meanwhile = { bench.repository.rows.remove(ORG to session.id) }
+        assertFailsWith<SessionNotFoundException> { bench.close(ORG, session.id, EndSession()) }
+        assertEquals(emptyMap(), bench.sign.signed, "Nothing signed for a segment that is gone")
+    }
+
     private fun JsonObject.text(name: String): String = getValue(name).jsonPrimitive.content
 }
