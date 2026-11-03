@@ -4,6 +4,7 @@ package dev.ostrom.server.notifications
 import dev.ostrom.server.notifications.domain.DeletePushDeviceUseCaseImpl
 import dev.ostrom.server.notifications.domain.InvalidPushDeviceException
 import dev.ostrom.server.notifications.domain.MAX_PHONES
+import dev.ostrom.server.notifications.domain.PushCredential
 import dev.ostrom.server.notifications.domain.PushDeviceNotFoundException
 import dev.ostrom.server.notifications.domain.PushRegistration
 import dev.ostrom.server.notifications.domain.RegisterPushDeviceUseCaseImpl
@@ -27,12 +28,14 @@ class PushDevicesUseCasesTest {
     @Test
     fun aPhoneIsRegisteredWithItsTrimmedTokenItsLanguageAndTheTimeAndItsMemberKeepsTheirLatestTen() = runTest {
         val registration = PushRegistration("  ExponentPushToken[abcdefgh-12_3]  ", "expo", "ios", " fr-FR ")
-        val device = register(org, member, registration)
+        val credential = PushCredential(Uuid.random(), Uuid.random(), browser = false)
+        val device = register(org, member, registration, credential)
 
         assertEquals("ExponentPushToken[abcdefgh-12_3]", device.pushToken)
         assertEquals(Triple("expo", "ios", "fr-FR"), Triple(device.provider, device.platform, device.locale))
         assertEquals(org to member, device.orgId to device.memberId)
         assertEquals(clock.now to clock.now, device.createdAt to device.seenAt)
+        assertEquals(credential, device.credential, "The phone is notified through the credential it registered with")
         assertEquals(listOf(device), repository.devices)
         assertEquals(10, MAX_PHONES)
         assertEquals(MAX_PHONES, repository.kept)
@@ -40,8 +43,8 @@ class PushDevicesUseCasesTest {
 
     @Test
     fun aPhoneWithoutALanguageOrWithABlankOneIsRegisteredWithNone() = runTest {
-        val none = register(org, member, PushRegistration("ExpoPushToken[abcdefgh]", "expo", "android", null))
-        val blank = register(org, member, PushRegistration("ExpoPushToken[ijklmnop]", "expo", "android", "  "))
+        val none = register(org, member, PushRegistration("ExpoPushToken[abcdefgh]", "expo", "android", null), null)
+        val blank = register(org, member, PushRegistration("ExpoPushToken[ijklmnop]", "expo", "android", "  "), null)
 
         assertNull(none.locale)
         assertNull(blank.locale)
@@ -58,14 +61,16 @@ class PushDevicesUseCasesTest {
             PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", "not a language"),
         )
         for (registration in refused) {
-            assertFailsWith<InvalidPushDeviceException>(registration.toString()) { register(org, member, registration) }
+            assertFailsWith<InvalidPushDeviceException>(registration.toString()) {
+                register(org, member, registration, null)
+            }
         }
         assertTrue(repository.devices.isEmpty(), "Nothing registered")
     }
 
     @Test
     fun onlyTheMembersOwnPhoneIsRemovedAndOnlyOnce() = runTest {
-        val device = register(org, member, PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", null))
+        val device = register(org, member, PushRegistration("ExponentPushToken[abcdefgh]", "expo", "ios", null), null)
 
         assertFailsWith<PushDeviceNotFoundException> { remove(org, Uuid.random(), device.id) }
         assertFailsWith<PushDeviceNotFoundException> { remove(Uuid.random(), member, device.id) }
@@ -77,12 +82,13 @@ class PushDevicesUseCasesTest {
     @Test
     fun aDeletedOrganizationsPhonesAreRemovedAtOnceAndAgainAtThePurge() = runTest {
         val listener = PushDevicesOrgDeletionListener(repository)
-        val other = register(Uuid.random(), member, PushRegistration("ExpoPushToken[otherorg]", "expo", "ios", null))
-        register(org, member, PushRegistration("ExpoPushToken[deleted1]", "expo", "ios", null))
+        val other =
+            register(Uuid.random(), member, PushRegistration("ExpoPushToken[otherorg]", "expo", "ios", null), null)
+        register(org, member, PushRegistration("ExpoPushToken[deleted1]", "expo", "ios", null), null)
 
         listener.deleted(org)
         assertEquals(listOf(other), repository.devices)
-        register(org, member, PushRegistration("ExpoPushToken[deleted2]", "expo", "ios", null))
+        register(org, member, PushRegistration("ExpoPushToken[deleted2]", "expo", "ios", null), null)
         listener.purge(org)
         assertEquals(listOf(other), repository.devices)
     }

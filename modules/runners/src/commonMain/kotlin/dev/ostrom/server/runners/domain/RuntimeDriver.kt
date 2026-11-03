@@ -38,6 +38,16 @@ interface RuntimeDriver {
     suspend fun executionStatus(session: CloudSession): ExecutionStatus
 
     /**
+     * The registered runner the session's current execution was handed to, or null: while it waits for one, and
+     * where executions run on the cluster or this server's Docker, which no registered runner holds.
+     *
+     * @param session The session.
+     *
+     * @return The runner's id, or null.
+     */
+    suspend fun holder(session: CloudSession): Uuid? = null
+
+    /**
      * Stops and removes every execution of the session, whatever its epoch, and their credentials.
      *
      * @param session The session.
