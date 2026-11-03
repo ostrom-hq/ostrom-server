@@ -83,7 +83,7 @@ class RegisteredSessionsTest {
         val a = runner("a")
         val b = runner("b")
         val session = starting()
-        assertEquals(ExecutionStatus.PENDING, driver.executionStatus(session))
+        assertEquals(ExecutionStatus.QUEUED, driver.executionStatus(session), "No machine took it yet")
 
         val work = beat(a)
 
@@ -132,6 +132,62 @@ class RegisteredSessionsTest {
         val taken = beat(b)
         assertEquals(listOf(2L), taken.executions.map { it.epoch })
         assertEquals(JsonNull, taken.executions.single().plan!!.containers.single().body["prompt"], "First one only")
+    }
+
+    @Test
+    fun aRunnerBackAfterBeingDeclaredLostDestroysWhatItHeldAndNeverRunsItAgain() = runTest {
+        val a = runner("a")
+        val b = runner("b")
+        val session = starting()
+        beat(a, report(session, MachineExecutionState.RUNNING))
+        beat(a, report(session, MachineExecutionState.RUNNING))
+        clock.now += 91.seconds
+        beat(b)
+        assertEquals(ExecutionStatus.HOST_LOST, driver.executionStatus(session))
+        driver.stopExecutions(session)
+        val next = sessions.sessions.getValue(session.id).copy(epoch = 2, state = SessionState.RESUMING)
+        sessions.put(next)
+        driver.startExecution(next.executionSpec("reconciler"))
+        assertEquals(listOf(2L), beat(b).executions.map { it.epoch })
+
+        // a comes back with the execution and the workspace it had: it must delete both, and gets nothing to run.
+        val back = beat(a, report(session, MachineExecutionState.RUNNING))
+        assertEquals(MachineWork(emptyList(), emptyList()), back)
+        assertEquals(ExecutionStatus.PENDING, driver.executionStatus(next), "b's execution, not a's report")
+        assertEquals(listOf(session.id), beat(b).workspaces, "The workspace is b's now")
+    }
+
+    @Test
+    fun aRunnerBackBeforeAnyoneTookTheNextExecutionKeepsItsWorkspace() = runTest {
+        val a = runner("a")
+        val session = starting()
+        beat(a, report(session, MachineExecutionState.RUNNING))
+        beat(a, report(session, MachineExecutionState.RUNNING))
+        clock.now += 91.seconds
+        assertEquals(ExecutionStatus.HOST_LOST, driver.executionStatus(session))
+        driver.stopExecutions(session)
+        val next = sessions.sessions.getValue(session.id).copy(epoch = 2, state = SessionState.RESUMING)
+        sessions.put(next)
+        driver.startExecution(next.executionSpec("reconciler"))
+
+        // Nobody took epoch 2: a, back, keeps the workspace it has and is given the new execution, never the old one.
+        val back = beat(a, report(session, MachineExecutionState.RUNNING))
+        assertEquals(listOf(2L), back.executions.map { it.epoch })
+        assertEquals(listOf(session.id), back.workspaces)
+    }
+
+    @Test
+    fun aSessionNamesTheRunnerThatTookItsExecution() = runTest {
+        val a = runner("a")
+        assertNull(driver.holder(session()), "Never started: no execution, no runner")
+        val session = starting()
+        assertNull(driver.holder(session), "Waiting for a machine: none")
+
+        beat(a)
+
+        assertEquals(a.runner.id, driver.holder(session))
+        driver.stopExecutions(session)
+        assertNull(driver.holder(session), "Stopped: no longer the runner's")
     }
 
     @Test
@@ -207,7 +263,7 @@ class RegisteredSessionsTest {
         val a = runner("a")
         val session = starting()
         assertEquals(MachineWork(emptyList(), emptyList()), heartbeat(a.runner.id, a.key))
-        assertEquals(ExecutionStatus.PENDING, driver.executionStatus(session), "Still waiting for a runner that runs")
+        assertEquals(ExecutionStatus.QUEUED, driver.executionStatus(session), "Still waiting for a runner that runs")
     }
 
     @Test

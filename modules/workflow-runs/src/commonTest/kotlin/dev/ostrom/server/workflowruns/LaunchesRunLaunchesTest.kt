@@ -13,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 class LaunchesRunLaunchesTest {
@@ -38,6 +39,8 @@ class LaunchesRunLaunchesTest {
 
         override suspend fun find(orgId: Uuid, id: String): Launch? =
             stored.firstOrNull { it.orgId == orgId && it.id == id }
+
+        override suspend fun purge(before: Instant): Long = error("Never written here.")
     }
 
     @Test

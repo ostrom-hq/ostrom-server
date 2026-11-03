@@ -36,6 +36,16 @@ interface SessionsRepository {
     suspend fun get(orgId: Uuid, id: String): Session?
 
     /**
+     * Reads the segments of the agent session a segment belongs to, without locking them; the last one is open, when
+     * one is. One query, whichever of the session's segments [id] names.
+     *
+     * @param orgId The organization.
+     * @param id Any segment of the agent session.
+     * @return Its segments, by number; none when the organization has no segment [id].
+     */
+    suspend fun segmentsOf(orgId: Uuid, id: String): List<Session>
+
+    /**
      * Lists segments, newest first.
      *
      * @param orgId The organization.

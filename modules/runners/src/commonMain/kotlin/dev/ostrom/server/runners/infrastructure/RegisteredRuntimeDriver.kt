@@ -10,6 +10,7 @@ import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import dev.ostrom.server.runners.domain.RuntimeDriver
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /**
  * [RuntimeDriver] on the organization's registered runners (`ostrom-runner machine`): the server creates nothing
@@ -44,12 +45,16 @@ class RegisteredRuntimeDriver(
         val seenAt = assignment?.runnerSeenAt
         return when {
             assignment == null -> ExecutionStatus.MISSING
-            assignment.runnerId == null -> ExecutionStatus.PENDING
+            assignment.runnerId == null -> ExecutionStatus.QUEUED
             seenAt == null || seenAt < onlineSince(clock.now()) -> ExecutionStatus.HOST_LOST
             // Pending, or not reported yet.
             else -> STATUS_OF[assignment.state] ?: ExecutionStatus.PENDING
         }
     }
+
+    // a stopped execution (a dropped one is stopped too) is no longer the runner's to run
+    override suspend fun holder(session: CloudSession): Uuid? =
+        assignments.find(session.orgId, session.id, session.epoch)?.takeUnless { it.stopped }?.runnerId
 
     override suspend fun stopExecutions(session: CloudSession) {
         assignments.stop(session.orgId, session.id, clock.now())

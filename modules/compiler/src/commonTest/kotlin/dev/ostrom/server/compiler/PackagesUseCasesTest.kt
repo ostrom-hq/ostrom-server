@@ -100,6 +100,25 @@ class PackagesUseCasesTest {
     }
 
     @Test
+    fun aPackageServedAsPinnedReadsItsPinAndItsPackageOnce() = runTest {
+        // Every `ostrom <agent>` asks the current package: the pin and the package are read once each, never again
+        // to answer what the publication already knows (perf pass of the launch, 03/11/2026).
+        save(tests("w1"))
+        publish(org, "acme-api", "https://acme.example", "dev-a")
+        repository.reads = 0
+        val again = publish(org, "acme-api", "https://acme.example", "dev-a", byAgent = true)
+        assertTrue(again.pinned)
+        assertEquals(2, repository.reads, "one package by digest, one pin")
+
+        sources.settings = CompilerSettings(manualPin = true)
+        save(tests("w1", command = "make check"))
+        repository.reads = 0
+        val manual = publish(org, "acme-api", "https://acme.example", "dev-a", byAgent = true)
+        assertTrue(manual.pinned)
+        assertEquals(3, repository.reads, "the new content, the pin, the pinned package")
+    }
+
+    @Test
     fun theAutomaticPinFollowsANewContentAndTheManualPinStays() = runTest {
         save(tests("w1"))
         val first = publish(org, null, "https://acme.example", "dev-a")
@@ -114,7 +133,7 @@ class PackagesUseCasesTest {
         val third = publish(org, null, "https://acme.example", "dev-c")
         assertEquals(second.stored, third.stored, "a manual pin serves the pinned version")
         assertTrue(third.pinned)
-        assertEquals(3, repository.packages(org, null).size)
+        assertEquals(3, repository.packages(org).size)
     }
 
     @Test

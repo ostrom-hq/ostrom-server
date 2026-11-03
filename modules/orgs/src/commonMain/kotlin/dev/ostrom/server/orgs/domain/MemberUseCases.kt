@@ -36,6 +36,18 @@ internal fun profileOf(member: Member, person: Person) =
     MemberProfile(member, person.login, person.displayName, person.avatarUrl, person.email)
 
 /**
+ * The profile as [viewer] may see it: an owner or an admin sees every member's e-mail address, any other member only
+ * their own, so that a member's token (the CLI's, the app's, a personal one with `orgs:read`) never lists the team's
+ * addresses. The login and the name stay visible to every member.
+ *
+ * @receiver The member's full profile.
+ * @param viewer The caller's membership.
+ * @return The profile, without the address when [viewer] may not see it.
+ */
+internal fun MemberProfile.seenBy(viewer: Member): MemberProfile =
+    if (viewer.role in MANAGER_ROLES || viewer.userId == member.userId) this else copy(email = null)
+
+/**
  * Whether [caller] may change or remove [target]: owners and admins manage the other roles; only
  * the owner manages admins; nobody manages the owner (the ownership moves by transfer).
  *
@@ -57,9 +69,11 @@ interface ListMembersUseCase {
      *
      * @param orgId The organization.
      * @param userId The caller, a member.
+     * @param after The member the page starts after, the previous page's `next`.
+     * @param limit The most members, 1 to [MAX_MEMBER_PAGE].
      * @return The members, oldest first.
      */
-    suspend operator fun invoke(orgId: Uuid, userId: Uuid): List<MemberProfile>
+    suspend operator fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int): MemberPage
 }
 
 /**
@@ -74,11 +88,15 @@ class ListMembersUseCaseImpl(
     private val members: MembersRepository,
     private val people: People,
 ) : ListMembersUseCase {
-    override suspend fun invoke(orgId: Uuid, userId: Uuid): List<MemberProfile> {
-        requireMembership(orgs, members, orgId, userId)
-        val list = members.list(orgId)
+    override suspend fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int): MemberPage {
+        val viewer = requireMembership(orgs, members, orgId, userId).member
+        if (limit !in 1..MAX_MEMBER_PAGE) throw InvalidOrgRequestException("limit is 1 to $MAX_MEMBER_PAGE.")
+        // One more than the page says whether another follows.
+        val read = members.page(orgId, after, limit + 1)
+        val list = read.take(limit)
         val byId = people.getMany(list.map { it.userId }).associateBy { it.id }
-        return list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
+        val items = list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it).seenBy(viewer) } }
+        return MemberPage(items, if (read.size > limit) list.last().id else null)
     }
 }
 
@@ -108,8 +126,8 @@ class GetMemberUseCaseImpl(
     private val people: People,
 ) : GetMemberUseCase {
     override suspend fun invoke(orgId: Uuid, userId: Uuid, login: String): MemberProfile {
-        requireMembership(orgs, members, orgId, userId)
-        return findMember(members, people, orgId, login)
+        val viewer = requireMembership(orgs, members, orgId, userId).member
+        return findMember(members, people, orgId, login).seenBy(viewer)
     }
 }
 

@@ -43,8 +43,14 @@ on:
         type: string
         default: main
 
+# Called by ci.yml (`image_artifact`), the group is the calling run's own: GitHub keeps one run in progress and one
+# waiting per group, so a shared group cancelled the waiting e2e of every `core_ref` run on main (all
+# `Build-refs/heads/main-workflow_dispatch`, core#104, #110, #93) and of main's intermediate commits, even with
+# cancel-in-progress false. ci.yml's own concurrency still cancels a pull request's older run. By hand, one per ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  group: >-
+    ${{ inputs.image_artifact && format('e2e-journey-call-{0}', github.run_id)
+    || format('e2e-journey-{0}-{1}', github.ref, github.event_name) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -262,7 +268,8 @@ jobs:
           # scenarios' addresses come through the trusted local proxy, Stripe is stripe-mock, and the providers' token
           # endpoint and APIs behind the gateway are the fake provider a scenario starts on port 4620 (BUDGET-002,
           # SHARE-*), GitHub and the GitHub App are the fakes the scenarios start on 4610 and 4700, and the read limits
-          # (#181) are those of a bench, wired as in ostrom-e2e's ci.yml.
+          # (#181) are those of a bench, wired as in ostrom-e2e's ci.yml. Expo's push service is the fake one a scenario
+          # starts on port 4621 (NOTIFY-*): the approvers' pushes are read there, never sent to a phone.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -293,6 +300,7 @@ jobs:
           OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
           OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_e2e
           OSTROM_ARTIFACTS_CONTENT_ORIGIN=http://localhost:4601
+          OSTROM_EXPO_PUSH_URL=http://127.0.0.1:4621/--/api/v2/push/send
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           # The bench's GitHub App gets a key made for this run, written straight to the env file: never to $GITHUB_ENV,
@@ -335,6 +343,8 @@ jobs:
           OSTROM_E2E_TEAMCODE_PASSWORD: teamcode-ro
           OSTROM_E2E_TEAMCODE_KEY_FILE: ${{ env.TEAMCODE == 'true' && format('{0}/helm/compose/demo/teamcode/key.txt', github.workspace) || '' }}
           OSTROM_E2E_DATABASE_ADMIN_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom
+          # The fake Expo push service the notification scenarios start, where the server's pushes go (step above).
+          OSTROM_E2E_FAKE_EXPO_PORT: "4621"
           # E2E-SWEEP's contract (step « The server image »).
           OSTROM_E2E_SERVED_ROUTES: ${{ runner.temp }}/served-routes.txt
           OSTROM_E2E_OPENAPI: ${{ runner.temp }}/openapi.json

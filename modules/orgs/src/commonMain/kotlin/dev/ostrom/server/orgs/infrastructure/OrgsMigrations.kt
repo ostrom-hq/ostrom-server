@@ -263,4 +263,19 @@ val OrgsMigrations: List<SchemaMigration> =
                 ALTER POLICY orgs_invitations_router ON orgs_invitations USING (current_user = 'ostrom_router')
             """.trimIndent(),
         ),
+        // The short name of a deleted organization stays taken for its 30 days of grace, so that it
+        // can be restored, and is given back when it is erased: the erased ones before this version
+        // give theirs back now. A purged row keeps a name no one can choose (`~` and its id).
+        SchemaMigration(
+            version = 6,
+            name = "orgs_purged_short_names_released",
+            sql = """
+                ALTER TABLE orgs_organizations NO FORCE ROW LEVEL SECURITY;
+                UPDATE orgs_organizations SET slug = $PURGED_SLUG WHERE purged_at IS NOT NULL;
+                ALTER TABLE orgs_organizations FORCE ROW LEVEL SECURITY
+            """.trimIndent(),
+        ),
     )
+
+/** The short name an erased organization keeps, in SQL: `~` and its id, outside the pattern of the short names. */
+internal const val PURGED_SLUG = "'~' || CAST(id AS TEXT)"

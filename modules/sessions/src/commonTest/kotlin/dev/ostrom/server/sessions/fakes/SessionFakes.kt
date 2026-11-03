@@ -58,6 +58,11 @@ class InMemorySessions : SessionsRepository {
 
     override suspend fun get(orgId: Uuid, id: String): Session? = rows[orgId to id]
 
+    override suspend fun segmentsOf(orgId: Uuid, id: String): List<Session> {
+        val root = rows[orgId to id]?.rootId
+        return rows.values.filter { it.orgId == orgId && it.rootId == root }.sortedBy { it.segment }
+    }
+
     override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> =
         rows.values.filter { it.orgId == orgId && (query.launchId == null || it.launchId == query.launchId) }
             .sortedByDescending { it.startedAt }
@@ -112,8 +117,12 @@ class FakeCosts : SessionCosts {
     /** The launch and the window each close asked about. */
     val asked = mutableListOf<Triple<String?, Instant, Instant>>()
 
+    /** Runs once, the first time a cost is asked: what happens while a close reads before its lock. */
+    var meanwhile: (suspend () -> Unit)? = null
+
     override suspend fun costOf(orgId: Uuid, launchId: String?, from: Instant, to: Instant): Double? {
         asked += Triple(launchId, from, to)
+        meanwhile?.also { meanwhile = null }?.invoke()
         return cost
     }
 }
@@ -123,7 +132,11 @@ class FakeSign :
     GetReceiptUseCase {
     val signed = linkedMapOf<String, JsonObject>()
 
+    /** How many of the next signatures fail, as a database that went away would. */
+    var failing = 0
+
     override suspend fun invoke(orgId: Uuid, draft: JsonObject, id: String?): JsonObject {
+        if (failing > 0) error("signing failed (${failing--} left)")
         val receiptId = id ?: error("sessions always give the id")
         return signed.getOrPut(receiptId) { JsonObject(draft + ("id" to JsonPrimitive(receiptId))) }
     }

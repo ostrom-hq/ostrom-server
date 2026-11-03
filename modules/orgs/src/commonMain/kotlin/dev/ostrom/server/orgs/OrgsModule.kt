@@ -109,7 +109,7 @@ object OrgsModule : ServerModule {
 
     override val koinModule: Module = module {
         single { OrgsConfig.from(get()) }
-        single<OrgsRepository> { OrgsRepositoryImpl(get()) }
+        single<OrgsRepository> { OrgsRepositoryImpl(get(), get()) }
         single<MembersRepository> { MembersRepositoryImpl(get()) }
         single<InvitationsRepository> { InvitationsRepositoryImpl(get()) }
         single<People> { IdentityPeople(get()) }
@@ -133,7 +133,7 @@ object OrgsModule : ServerModule {
         single<CreateOrgUseCase> { CreateOrgUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<GetOrgUseCase> { GetOrgUseCaseImpl(get(), get()) }
         single<UpdateOrgUseCase> { UpdateOrgUseCaseImpl(get(), get(), get()) }
-        single<DeleteOrgUseCase> { DeleteOrgUseCaseImpl(get(), get(), get(), get()) }
+        single<DeleteOrgUseCase> { DeleteOrgUseCaseImpl(get(), get(), get()) }
         // Every module that keeps or bills something of an organization binds a listener (billing).
         single<OrgDeletionsRepository> { OrgDeletionsRepositoryImpl(get()) }
         single<SettleOrgDeletionsUseCase> {

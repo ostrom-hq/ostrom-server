@@ -10,6 +10,7 @@ import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
+import dev.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.testing.TestServer
@@ -20,6 +21,7 @@ import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -172,6 +174,27 @@ class IdentityTenancyPostgresTest {
     }
 
     @Test
+    fun anOrganizationsActionIsRecordedInTheTransactionThatDoesIt() = serverTest(listOf(IdentityModule)) { s ->
+        val first = s.koin.get<AuditLog>().record(AuditEntry(orgA, null, "before", "t", "0"))
+        val audit = s.koin.get<TransactionalAuditLog>()
+
+        // The action fails after its event was written: the event goes with it.
+        assertFails {
+            s.driver.inOrg(orgA) {
+                audit.record(this, AuditEntry(orgA, null, "rolled.back", "t", "1"))
+                error("the action fails")
+            }
+        }
+        val kept = s.driver.inOrg(orgA) { audit.record(this, AuditEntry(orgA, null, "kept", "t", "2")) }
+
+        assertEquals(2L to first.hash, kept.sequence to kept.previousHash, "Chained after the last kept event")
+        assertEquals(listOf("before", "kept"), s.driver.inOrg(orgA) { actions() })
+        assertFailsWith<IllegalArgumentException>("Only an organization's action") {
+            s.driver.inOrg(orgA) { audit.record(this, AuditEntry(null, null, "account", "t", "3")) }
+        }
+    }
+
+    @Test
     fun theAuditLogIsAppendOnlyForEveryRole() = serverTest(listOf(IdentityModule)) { s ->
         s.seed()
         val rewrite = "UPDATE identity_audit_events SET action = 'forged'"
@@ -246,6 +269,30 @@ class IdentityTenancyPostgresTest {
         }
 
     @Test
+    fun thePurgeDeletesOnlyTheAgentTokensExpiredBeforeItsDateOfEveryOrganization() =
+        serverTest(listOf(IdentityModule)) { s ->
+            val ada = VerifiedIdentity(IdentityProvider.GITHUB, "1", null, false, "Ada")
+            val user = s.koin.get<ResolveUserUseCase>()(ada)
+            val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
+            val tokens = s.koin.get<ApiTokensRepository>()
+            fun token(name: String, org: Uuid?, kind: TokenKind, expiresAt: Instant) = ApiToken(
+                Uuid.random(), user.id, org, name, kind, setOf(AGENT_SCOPE), "osa_x",
+                "run-$name".takeIf { org != null }, expiresAt - 1.days, expiresAt, null, null,
+            )
+            tokens.create(token("old-a", orgA, TokenKind.AGENT, now - 8.days), "hash-old-a")
+            tokens.create(token("old-b", orgB, TokenKind.AGENT, now - 9.days), "hash-old-b")
+            tokens.create(token("recent", orgA, TokenKind.AGENT, now - 6.days), "hash-recent")
+            tokens.create(token("live", orgB, TokenKind.AGENT, now + 1.days), "hash-live")
+            tokens.create(token("cli", null, TokenKind.CLI, now - 30.days), "hash-cli")
+
+            assertEquals(2L, tokens.purgeAgentTokens(now - 7.days), "The two agent tokens expired before the date")
+            assertEquals(0L, tokens.purgeAgentTokens(now - 7.days), "Nothing left to purge")
+            val left = s.database.superuser.fetchAll("SELECT name AS v FROM identity_api_tokens ORDER BY name")
+                .getOrThrow().map { it.get("v").asString() }
+            assertEquals(listOf("cli", "live", "recent"), left, "Other kinds and agent tokens still recent stay")
+        }
+
+    @Test
     fun theTokenFunctionsBelongToTheRouterAndPutTheTemporarySchemaLast() = serverTest(listOf(IdentityModule)) { s ->
         val functions = s.driver.fetchAll(
             "SELECT p.proname AS v FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner WHERE p.proname LIKE " +
@@ -255,7 +302,12 @@ class IdentityTenancyPostgresTest {
         ).getOrThrow().map { it.get("v").asString() }.sorted()
 
         assertEquals(
-            listOf("identity_revoke_agent_session_tokens", "identity_token_by_hash", "identity_token_touch"),
+            listOf(
+                "identity_purge_agent_tokens",
+                "identity_revoke_agent_session_tokens",
+                "identity_token_by_hash",
+                "identity_token_touch",
+            ),
             functions,
         )
     }
