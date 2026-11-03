@@ -47,6 +47,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -219,6 +220,34 @@ class RegisteredSessionsPostgresTest {
     }
 
     @Test
+    fun aHeartbeatWaitsWhatItAsksWithinTheBoundsThenAnswers() = serverTest(listOf(RunnersModule), overrides) { server ->
+        val machine = server.register("dana", "machine")
+        val report = RegisteredRunnerHeartbeatRequest()
+        suspend fun timed(wait: Int?): Duration {
+            val mark = TimeSource.Monotonic.markNow()
+            val response = server.beat(machine.id, machine.token, report, wait)
+            assertEquals(HttpStatusCode.OK, response.status)
+            return mark.elapsedNow()
+        }
+        assertTrue(timed(-5) < 1.seconds, "Below the bounds: no wait")
+        assertTrue(timed(1) >= 1.seconds, "Nothing to hand over: it waits")
+        assertTrue(timed(null) < 1.seconds, "Absent: no wait")
+    }
+
+    @Test
+    fun hasWorkUntilTheExecutionIsHandedOver() = serverTest(listOf(RunnersModule), overrides) { server ->
+        val sessions = server.koin.get<CloudSessionsRepository>()
+        val assignments = server.koin.get<RunnerAssignmentsRepository>()
+        val machine = server.register("dana", "machine")
+        assertFalse(assignments.hasWork(ORG_A))
+        val asked = session().also { assertTrue(sessions.createWithinCap(it, 1)) }
+        server.koin.get<ReconcileCloudSessionUseCase>()(sessions.getById(asked.id)!!)
+        assertTrue(assignments.hasWork(ORG_A), "Queued")
+        assertEquals(1, server.work(machine.id, machine.token).executions.size)
+        assertFalse(assignments.hasWork(ORG_A), "Handed over")
+    }
+
+    @Test
     fun runnersAskingAtOnceNeverTakeTheSameExecution() = serverTest(listOf(RunnersModule), overrides) { server ->
         val sessions = server.koin.get<CloudSessionsRepository>()
         val reconcile = server.koin.get<ReconcileCloudSessionUseCase>()
@@ -381,7 +410,8 @@ class RegisteredSessionsPostgresTest {
         id: String,
         key: String,
         report: RegisteredRunnerHeartbeatRequest? = null,
-    ): HttpResponse = client.post("/api/v1/runners/$id/heartbeat") {
+        wait: Int? = null,
+    ): HttpResponse = client.post("/api/v1/runners/$id/heartbeat" + (wait?.let { "?wait=$it" } ?: "")) {
         bearerAuth(key)
         if (report != null) {
             contentType(ContentType.Application.Json)

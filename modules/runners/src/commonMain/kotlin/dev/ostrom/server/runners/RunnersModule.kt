@@ -50,6 +50,7 @@ import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCase
 import dev.ostrom.server.runners.domain.RunnerHeartbeatUseCaseImpl
 import dev.ostrom.server.runners.domain.RunnerTokens
+import dev.ostrom.server.runners.domain.RunnerWorkSignals
 import dev.ostrom.server.runners.domain.RuntimeDriver
 import dev.ostrom.server.runners.domain.TerminalActivity
 import dev.ostrom.server.runners.domain.TerminalTickets
@@ -59,6 +60,7 @@ import dev.ostrom.server.runners.infrastructure.CloudSessionAutomationLauncher
 import dev.ostrom.server.runners.infrastructure.CloudSessionsRepositoryImpl
 import dev.ostrom.server.runners.infrastructure.DockerExecutionPlan
 import dev.ostrom.server.runners.infrastructure.InMemoryTerminalTickets
+import dev.ostrom.server.runners.infrastructure.InProcessRunnerWorkSignals
 import dev.ostrom.server.runners.infrastructure.ReconcilerWorker
 import dev.ostrom.server.runners.infrastructure.RegisteredRunnersRepositoryImpl
 import dev.ostrom.server.runners.infrastructure.RegisteredRuntimeDriver
@@ -114,7 +116,11 @@ object RunnersModule : ServerModule {
             val config = get<RunnersConfig>()
             DockerExecutionPlan(null, config.serverUrl, config.runnerImage)
         }
-        single<RuntimeDriver> { RuntimeDrivers.create(get(), { RegisteredRuntimeDriver(get(), get()) }) }
+        single<RunnerWorkSignals> {
+            val assignments = get<RunnerAssignmentsRepository>()
+            InProcessRunnerWorkSignals({ assignments.hasWork(it) }, get())
+        }
+        single<RuntimeDriver> { RuntimeDrivers.create(get(), { RegisteredRuntimeDriver(get(), get(), get()) }) }
         single<CreateCloudSessionUseCase> {
             MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get()), get())
         }
@@ -135,7 +141,7 @@ object RunnersModule : ServerModule {
         single<RegisterRunnerUseCase> { RegisterRunnerUseCaseImpl(get(), get(), get()) }
         single<DeleteRunnerUseCase> { DeleteRunnerUseCaseImpl(get()) }
         single<RegisteredRunnerHeartbeatUseCase> {
-            RegisteredRunnerHeartbeatUseCaseImpl(get(), get(), get(), get(), get(), get())
+            RegisteredRunnerHeartbeatUseCaseImpl(get(), get(), get(), get(), get(), get(), get())
         }
         single {
             val config = get<RunnersConfig>()
@@ -164,5 +170,7 @@ object RunnersModule : ServerModule {
         val worker = koin.get<ReconcilerWorker>()
         // Undispatched: the loop is running, up to its first query, when the server starts serving.
         scope.launch(start = CoroutineStart.UNDISPATCHED) { worker.run() }
+        val signals = koin.get<RunnerWorkSignals>()
+        scope.launch { signals.watch() }
     }
 }

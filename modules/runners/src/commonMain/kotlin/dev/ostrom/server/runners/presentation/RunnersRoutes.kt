@@ -26,6 +26,7 @@ import io.ktor.server.resources.post
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 /**
@@ -74,7 +75,7 @@ fun Route.runnersRoutes(dependencies: RunnersRoutesDependencies) = with(dependen
         val id = Uuid.parseOrNull(params.parent.id) ?: throw RunnerUnauthenticatedException()
         val json = call.request.contentType().match(ContentType.Application.Json)
         val report = if (json) call.receive<RegisteredRunnerHeartbeatRequest>().toReport() else null
-        val work = heartbeat(id, key, report)
+        val work = heartbeat(id, key, report, (params.wait ?: 0).coerceIn(0, MAX_WAIT_SECONDS).seconds)
         // A plan holds a runner token.
         call.response.header(HttpHeaders.CacheControl, "no-store")
         call.respond(work.toResponse())
@@ -96,6 +97,12 @@ private fun RegisteredRunnerHeartbeatRequest.toReport() = MachineReport(
         }
     },
 )
+
+/**
+ * The longest a heartbeat waits for work: well inside the 90 s after which a runner is offline, and under the read
+ * timeouts of the proxies in front of the server.
+ */
+private const val MAX_WAIT_SECONDS = 25
 
 /** The most sessions a registered runner may declare it runs at once. */
 private const val MAX_CAPACITY = 256
