@@ -8,6 +8,7 @@ import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
+import dev.ostrom.server.kernel.database.storableInstantOrNull
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
@@ -40,7 +41,6 @@ import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import io.ktor.server.routing.delete as routeDelete
 import io.ktor.server.routing.get as routeGet
@@ -254,11 +254,7 @@ private suspend fun McpRelayRoutesDependencies.serverId(caller: Caller, name: St
 /** `<instant>` (every call before it) or `<instant>/<id>`, the `next` of a page. */
 private fun String.toCallCursor(): McpCallCursor {
     val id = substringAfter('/', missingDelimiterValue = "")
-    val startedAt = try {
-        Instant.parse(substringBefore('/'))
-    } catch (_: IllegalArgumentException) {
-        null
-    }
+    val startedAt = storableInstantOrNull(substringBefore('/'))
     val cursorId = if (id.isEmpty()) null else Uuid.parseOrNull(id) ?: invalidCursor()
     return McpCallCursor(startedAt ?: invalidCursor(), cursorId)
 }

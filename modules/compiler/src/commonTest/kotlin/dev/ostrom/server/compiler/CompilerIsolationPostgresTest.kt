@@ -47,6 +47,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.koin.dsl.module
@@ -196,5 +197,30 @@ class CompilerIsolationPostgresTest {
         assertEquals(workflowBefore, server.call("user:a:lead", workflowPath).body<JsonObject>(), "Unchanged by B")
         val listed = server.call("user:a:lead", "/api/v1/workflows").workflowItems()
         assertEquals(listOf(workflowBefore), listed, "A still lists its workflow, unchanged")
+    }
+
+    private suspend fun TestServer.gatedActions(token: String, repo: String): List<String> =
+        call(token, "/api/v1/gates/catalog?repo=$repo").body<JsonObject>().getValue("actions").jsonArray
+            .map { it.jsonObject }
+            .filter { it["gate"] != null && it["gate"] !is JsonNull }
+            .map { it.getValue("class").toString() }
+
+    /**
+     * A star in `repos` (R6) stands for any owner, and still never reaches another organization: the console writes
+     * one for the owner of a repository of the organization, and a session of B in a repository of the same name is
+     * served B's catalogue only. The organization bounds the workflows read, before any repository is matched.
+     */
+    @Test
+    fun aWorkflowLimitedToAnyOwnerOfANameNeverReachesAnotherOrganization() = compilerTest { server ->
+        val limited = JsonObject(release() + ("repos" to JsonArray(listOf(JsonPrimitive("*/web")))))
+        assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", limited).status)
+
+        assertTrue(server.gatedActions("agent:a:l1", "acme/web").isNotEmpty(), "A's own web repository is gated")
+        assertEquals(emptyList(), server.gatedActions("agent:a:l1", "acme/api"), "Outside its repos, nothing")
+        assertEquals(emptyList(), server.gatedActions("agent:b:l1", "acme/web"), "B, same owner and name: nothing")
+        assertEquals(emptyList(), server.gatedActions("agent:b:l1", "umbra/web"), "B, its own web: nothing")
+        val a = server.call("agent:a:l1", "/api/v1/packages/current?repo=acme/web").body<PackageEnvelope>()
+        val b = server.call("agent:b:l1", "/api/v1/packages/current?repo=acme/web").body<PackageEnvelope>()
+        assertNotEquals(a.contentDigest, b.contentDigest, "B's package for the same name is not A's")
     }
 }
