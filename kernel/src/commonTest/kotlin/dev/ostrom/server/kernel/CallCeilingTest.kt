@@ -16,10 +16,13 @@ import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -252,6 +255,21 @@ class CallCeilingTest {
             assertBusy(refused, refused.bodyAsText())
             assertEquals(HttpStatusCode.OK, client.get("/health").status, "the probes are never counted")
             assertEquals(HttpStatusCode.OK, client.get("/ready").status)
+            release.complete(Unit)
+            assertEquals("served", first.await())
+        }
+    }
+
+    @Test
+    fun aStreamRefusedPastTheCeilingIsTold503InJsonNot406() = ceilingTest { probe, release ->
+        // CHARGE 41672759077: the live stream asks `Accept: text/event-stream`; the refusal, an ApiError left to
+        // content negotiation, found no converter for that type and went out as a 406 with an empty body.
+        coroutineScope {
+            val first = async { client.get("/probe/served").bodyAsText() }
+            probe.servedIn.await()
+            val refused = client.get("/probe/quick") { header(HttpHeaders.Accept, "text/event-stream") }
+            assertBusy(refused, refused.bodyAsText())
+            assertEquals(ContentType.Application.Json, refused.contentType()?.withoutParameters())
             release.complete(Unit)
             assertEquals("served", first.await())
         }
