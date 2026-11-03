@@ -195,6 +195,19 @@ class ChecksTest {
     }
 
     @Test
+    fun aSessionNeverReportsUnderAnOlderVersionOfItsRepositorysPackage() = runTest {
+        // AUDIT-SECU-RUNNER-2 R3b: the pinned package, or the latest when the session started, and no other.
+        val older = ReportCheckUseCaseImpl(
+            access(packages = FakePackages(replaced = setOf(PACKAGE.digest))),
+            runs,
+            FixedClock(),
+        )
+        assertFailsWith<RunPackageMismatchException> { older(AGENT, request()) }
+        assertTrue(runs.checks.isEmpty())
+        assertEquals("s-1", report(AGENT, request()).sessionId, "The package its repository serves")
+    }
+
+    @Test
     fun aMalformedReportIsRefused() = runTest {
         assertFailsWith<InvalidRunException> { report(AGENT, request(durationMs = -1)) }
         assertFailsWith<InvalidRunException> { report(AGENT, request().copy(head = "a\nb")) }

@@ -134,4 +134,17 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
             ALTER POLICY sessions_sessions_router ON sessions_sessions USING (current_user = 'ostrom_router')
         """.trimIndent(),
     ),
+    // The filters of `GET /sessions` (SessionsReadsBenchTest): by developer and the open ones, newest first, read the
+    // organization's recent sessions and kept those that matched (4 995 read for a rare developer's 5). Not by
+    // repository: a repository keeps a large share of the sessions, and every index is written again at each heartbeat
+    // (`last_seen_at` is indexed, no update is HOT). Built in the migration's transaction, not CONCURRENTLY: session
+    // writes wait for the build, short on the tables of today.
+    SchemaMigration(
+        6,
+        "index_sessions_filters",
+        """
+        CREATE INDEX sessions_by_dev ON sessions_sessions (org_id, dev, started_at DESC, id DESC);
+        CREATE INDEX sessions_open ON sessions_sessions (org_id, started_at DESC, id DESC) WHERE ended_at IS NULL
+        """.trimIndent(),
+    ),
 )

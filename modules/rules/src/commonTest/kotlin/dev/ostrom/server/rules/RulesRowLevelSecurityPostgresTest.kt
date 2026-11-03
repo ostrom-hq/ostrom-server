@@ -15,6 +15,7 @@ import dev.ostrom.server.rules.domain.models.RuleGateAction
 import dev.ostrom.server.rules.domain.models.RuleQuery
 import dev.ostrom.server.rules.domain.models.RuleSource
 import dev.ostrom.server.rules.domain.models.RuleStatus
+import dev.ostrom.server.rules.domain.services.EveryRule.PAGE
 import dev.ostrom.server.rules.fakes.RecordingLogger
 import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.fakes.RulesFixtures.orgA
@@ -154,8 +155,9 @@ class RulesRowLevelSecurityPostgresTest {
             insertRule(RulesFixtures.rule("rule_c", orgB, status = RuleStatus.ACCEPTED).copy(gate = gate))
             insertDecision(decision("dec_b", orgB))
         }
-        assertEquals(listOf("rule_a", "rule_b"), rules.gatedRules(orgA).map { it.id }, "Rejected or gateless: no gate")
-        assertEquals(listOf("rule_c"), rules.gatedRules(orgB).map { it.id })
+        val gatedA = rules.gatedRules(orgA, null, PAGE).map { it.id }
+        assertEquals(listOf("rule_a", "rule_b"), gatedA, "Rejected or gateless: no gate")
+        assertEquals(listOf("rule_c"), rules.gatedRules(orgB, null, PAGE).map { it.id })
         assertEquals(listOf("dec_2", "dec_3"), rules.lastRuleDecisions(orgA).map { it.id }, "The last one per rule")
         assertEquals(listOf("dec_b"), rules.lastRuleDecisions(orgB).map { it.id })
     }

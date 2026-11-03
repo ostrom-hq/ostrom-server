@@ -22,7 +22,8 @@ import io.ktor.server.routing.Route
 import kotlin.uuid.Uuid
 
 /**
- * The waits API under `/api/v1/waits` ("Waiting for you"), and the agents' MCP server at `/api/v1/waits/mcp`.
+ * The waits API under `/api/v1/waits` ("Waiting for you"), and the agents' MCP server at `/api/v1/waits/mcp`. An
+ * agent token reaches only the MCP server, bound to one of its launch's sessions; the REST routes refuse it.
  *
  * @param dependencies The use cases.
  */
@@ -30,8 +31,8 @@ fun Route.waitsRoutes(dependencies: WaitsRoutesDependencies) = with(dependencies
     val mcp = WaitsMcpServer(dependencies)
     authenticated {
         post<WaitsMcpApi> { params ->
-            val principal = call.requirePrincipal()
-            val reply = mcp.handle(call.receiveText(), params) { scope -> orgResolver.waitCallerOf(principal, scope) }
+            val callers = mcpCallers(call.requirePrincipal(), params)
+            val reply = mcp.handle(call.receiveText(), params, callers)
             if (reply == null) {
                 call.respond(HttpStatusCode.Accepted)
             } else {

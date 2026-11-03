@@ -1,6 +1,6 @@
 # detekt overrides for Ostrom (docs/CONVENTIONS.md section 8). Used with `buildUponDefaultConfig = true`: only the
-# differences from detekt 1.23.8's defaults are listed. Derived from the ControlResell fleet configuration
-# (controlresell-ci/detekt/detekt.yml, ENG-043) and flareon's. No baseline: every finding fails the build.
+# differences from detekt 1.23.8's defaults are listed. Derived from the configuration of the maintainers' other
+# Kotlin projects and flareon's. No baseline: every finding fails the build.
 
 build:
   maxIssues: 0

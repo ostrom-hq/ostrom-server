@@ -139,7 +139,8 @@ class RulesCompilerSourcesTest {
     fun aRuleTheRepositoryReturnsWithoutAGateGatesNothing() = runTest {
         val gated = RulesFixtures.rule("rule_a", status = RuleStatus.ACCEPTED).copy(gate = gate(null, listOf("mia")))
         val loose: RulesRepository = object : RulesRepository by repository {
-            override suspend fun gatedRules(orgId: Uuid): List<Rule> = listOf(RulesFixtures.rule("rule_x"), gated)
+            override suspend fun gatedRules(orgId: Uuid, after: String?, limit: Int): List<Rule> =
+                listOf(RulesFixtures.rule("rule_x"), gated)
         }
         assertEquals(listOf("rule:rule_a"), RulesCompilerSources(loose, defaults).ruleGates(org).map { it.id })
     }
