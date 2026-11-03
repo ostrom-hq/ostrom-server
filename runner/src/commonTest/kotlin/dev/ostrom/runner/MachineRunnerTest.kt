@@ -194,6 +194,14 @@ class MachineRunnerTest {
     }
 
     @Test
+    fun aLostWaitingHeartbeatStaysInsideTheNinetySecondsBeforeOffline() {
+        // Last sign of life at the start of a held heartbeat; the next one is lost after its whole timeout; the one
+        // after comes at the longest interval.
+        val worst = MachineRunner.WAIT + (MachineRunner.WAIT + HttpMachineApi.WAIT_SLACK) + 30.seconds
+        assertTrue(worst < 90.seconds, "$worst")
+    }
+
+    @Test
     fun aWaitingHeartbeatAsksTheServerToHoldItAndAllowsItTheTime() = runTest {
         val seen = mutableListOf<Pair<String?, Long?>>()
         val engine = MockEngine { request ->
