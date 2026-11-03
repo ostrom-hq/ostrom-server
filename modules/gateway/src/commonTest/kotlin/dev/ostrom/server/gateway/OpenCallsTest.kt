@@ -8,6 +8,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -23,6 +24,10 @@ class OpenCallsTest {
         assertEquals(1, calls.open)
         assertTrue(calls.tryOpen())
         assertFalse(calls.tryOpen())
+        calls.close()
+        calls.close()
+        assertFailsWith<IllegalStateException>("A close without an open never raises the ceiling") { calls.close() }
+        assertEquals(0, calls.open)
     }
 
     /** chart-load 41612342204 opened 200 streams in under half a second: the ceiling holds when they race. */

@@ -185,11 +185,11 @@ private fun modelList(policy: ModelPolicy, caller: Caller): JsonObject {
 }
 
 private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies, protocol: WireProtocol) {
-    val (caller, principal) = call.inferenceCaller(dependencies, protocol) ?: return
-    // A place is taken before the body is read and given back once the answer is relayed to its end: what one call
-    // holds in memory (its body, the open connection to the provider, the stream to the agent) is bounded per replica.
-    // Beyond it the agent is told to retry, as a provider says it when overloaded. Without it a replica was OOMKilled
-    // under the chart's 256 MiB while 200 streams were open (chart-load 41611978908).
+    // A place is taken first and given back once the answer is relayed to its end: what one call holds in memory (its
+    // body, the open connection to the provider, the stream to the agent) is bounded per replica. Beyond it the agent
+    // is told to retry, as a provider says it when overloaded, before any database read: a refusal stays cheap for a
+    // replica at its ceiling. Without it a replica was OOMKilled under the chart's 256 MiB while 200 streams were open
+    // (chart-load 41611978908). The refusals are counted with every answer, as 503s of the route.
     if (!dependencies.openCalls.tryOpen()) {
         val refusal = InferenceRefusal(
             RefusalKind.OVERLOADED,
@@ -200,18 +200,14 @@ private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies
         return
     }
     try {
-        relayCall(dependencies, protocol, caller, principal)
+        relayCall(dependencies, protocol)
     } finally {
         dependencies.openCalls.close()
     }
 }
 
-private suspend fun RoutingContext.relayCall(
-    dependencies: GatewayRoutesDependencies,
-    protocol: WireProtocol,
-    caller: Caller,
-    principal: AuthenticatedPrincipal,
-) {
+private suspend fun RoutingContext.relayCall(dependencies: GatewayRoutesDependencies, protocol: WireProtocol) {
+    val (caller, principal) = call.inferenceCaller(dependencies, protocol) ?: return
     // The kernel cuts the body at MAX_INFERENCE_REQUEST_BYTES, chunked or not; the refusal is in the provider's shape.
     val bytes = try {
         call.receiveChannel().readRemaining().readByteArray()

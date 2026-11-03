@@ -401,20 +401,43 @@ class GatewayPostgresTest {
                     first.await()
                 }
                 broken = null
-                // The place comes back as the first call's route ends, just after its answer does.
-                val again = withContext(Dispatchers.Default) {
-                    withTimeout(10.seconds) {
-                        var answer = infer("messages", STREAM)
-                        while (answer.status == HttpStatusCode.ServiceUnavailable) {
-                            delay(10.milliseconds)
-                            answer = infer("messages", STREAM)
+                assertEquals(events, admittedOnceFree().bodyAsText())
+                // A call that fails gives its place back too: its provider breaks mid-stream.
+                val failing = ByteChannel()
+                broken = failing
+                coroutineScope {
+                    launch {
+                        failing.writeStringUtf8(events.substringBefore("event: content_block_delta"))
+                        failing.flush()
+                        withContext(Dispatchers.Default) {
+                            withTimeout(10.seconds) { while (received.size < 3) delay(5.milliseconds) }
+                            delay(500.milliseconds)
                         }
-                        answer
+                        failing.cancel(IllegalStateException("connection reset"))
+                    }
+                    try {
+                        infer("messages", STREAM).bodyAsText()
+                    } catch (_: Exception) {
+                        ""
                     }
                 }
-                assertEquals(HttpStatusCode.OK, again.status)
-                assertEquals(events, again.bodyAsText())
+                broken = null
+                assertEquals(events, admittedOnceFree().bodyAsText())
+                assertEquals(listOf("ok", "ok", "upstream_broken", "ok"), records.map { it.outcome })
             }
+        }
+    }
+
+    /** The next call, admitted as soon as the place is back: the route ends just after its answer does. */
+    private suspend fun TestServer.admittedOnceFree(): HttpResponse = withContext(Dispatchers.Default) {
+        withTimeout(10.seconds) {
+            var answer = infer("messages", STREAM)
+            while (answer.status == HttpStatusCode.ServiceUnavailable) {
+                delay(10.milliseconds)
+                answer = infer("messages", STREAM)
+            }
+            assertEquals(HttpStatusCode.OK, answer.status, answer.bodyAsText())
+            answer
         }
     }
 

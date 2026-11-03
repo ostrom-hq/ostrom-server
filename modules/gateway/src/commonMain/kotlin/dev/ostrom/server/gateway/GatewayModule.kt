@@ -2,7 +2,6 @@
 package dev.ostrom.server.gateway
 
 import dev.ostrom.core.telemetry.Telemetry
-import dev.ostrom.server.gateway.domain.OpenCalls
 import dev.ostrom.server.gateway.domain.AllowAllSpend
 import dev.ostrom.server.gateway.domain.BudgetCheck
 import dev.ostrom.server.gateway.domain.GatewaySettingsRepository
@@ -16,6 +15,7 @@ import dev.ostrom.server.gateway.domain.ModelCallObserver
 import dev.ostrom.server.gateway.domain.ModelUsageSink
 import dev.ostrom.server.gateway.domain.NoModelCallObserver
 import dev.ostrom.server.gateway.domain.NoModelUsageSink
+import dev.ostrom.server.gateway.domain.OpenCalls
 import dev.ostrom.server.gateway.domain.PolicyModelAccess
 import dev.ostrom.server.gateway.domain.PriceTable
 import dev.ostrom.server.gateway.domain.PutGatewaySettingsUseCase
@@ -103,6 +103,7 @@ object GatewayModule : ServerModule {
                 tracer = SpanModelCallTracer(get<Telemetry>().tracer),
             )
         }
+        single { OpenCalls(get<GatewayConfig>().maxOpenCalls) }
         single<GetGatewaySettingsUseCase> { GetGatewaySettingsUseCaseImpl(get()) }
         single<PutGatewaySettingsUseCase> { PutGatewaySettingsUseCaseImpl(get()) }
         single<GetModelPolicyUseCase> { GetModelPolicyUseCaseImpl(get()) }
@@ -119,7 +120,7 @@ object GatewayModule : ServerModule {
                 putPolicy = get(),
                 clock = get(),
                 audit = get(),
-                openCalls = OpenCalls(get<GatewayConfig>().maxOpenCalls),
+                openCalls = get(),
             )
         }
     }
