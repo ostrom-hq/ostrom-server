@@ -107,6 +107,8 @@ class NodePlayers(agents: RunAgents, gates: RunGates, waits: RunWaits, children:
         WorkflowNodeKind.TRIGGER to TriggerPlayer,
         WorkflowNodeKind.AGENT to AgentPlayer(agents),
         WorkflowNodeKind.GATE to GatePlayer(gates),
+        WorkflowNodeKind.WAIT to WaitPlayer(waits),
+        WorkflowNodeKind.WORKFLOW to ChildPlayer(children),
     )
 
     /**

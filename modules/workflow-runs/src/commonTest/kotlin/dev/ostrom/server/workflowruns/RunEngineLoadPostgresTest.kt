@@ -3,12 +3,17 @@ package dev.ostrom.server.workflowruns
 
 import dev.ostrom.core.api.models.NodeRun
 import dev.ostrom.core.api.models.RunStatus
+import dev.ostrom.core.api.models.WaitAction
+import dev.ostrom.core.api.models.WaitSpec
 import dev.ostrom.core.api.models.WorkflowEdge
 import dev.ostrom.core.api.models.WorkflowNode
 import dev.ostrom.core.api.models.WorkflowNodeKind
 import dev.ostrom.core.api.models.WorkflowRun
 import dev.ostrom.server.automations.AutomationsModule
+import dev.ostrom.server.automations.domain.AnswerWaitUseCase
+import dev.ostrom.server.automations.domain.WaitCaller
 import dev.ostrom.server.compiler.CompilerModule
+import dev.ostrom.server.compiler.domain.usecases.WorkflowsUseCase
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.AnswerChannel
@@ -21,6 +26,7 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.launches.LaunchesModule
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Invitation
@@ -56,6 +62,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import kotlinx.serialization.json.jsonObject
 import org.koin.dsl.module
 import kotlin.math.ceil
 import kotlin.test.Test
@@ -75,7 +82,9 @@ import kotlin.uuid.Uuid
  * organizations, played at once by 4 replicas that lease them through `workflow_runs_claim_due`, while their sessions
  * end and their gates are answered all together. Every run ends `succeeded`, each visit is played once (its key
  * inserted once), each agent node starts one cloud session, and PostgreSQL counts no deadlock. The figures (wall time,
- * pass p50 and p95 of each phase) are written to `build/reports/perf/run-engine-concurrency.txt`.
+ * pass p50 and p95 of each phase) are written to `build/reports/perf/run-engine-concurrency.txt`. The same for 100
+ * runs of a `wait` → `workflow` workflow, whose waits are answered all together and whose child runs are played by the
+ * same replicas: `build/reports/perf/run-nodes-concurrency.txt`.
  */
 class RunEngineLoadPostgresTest {
     private val modules = listOf(
@@ -95,8 +104,8 @@ class RunEngineLoadPostgresTest {
 
     private val clock = FixedClock(Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds() + 1_000))
 
-    /** An organization's owner, who starts its runs and approves their gates. */
-    private class Owner(val login: String, val org: Org)
+    /** An organization's owner, who starts its runs, and the member who approves their gates and answers waits. */
+    private class Owner(val login: String, val org: Org, val approver: Uuid)
 
     /** The passes of the replicas, by phase. */
     private class Passes {
@@ -145,6 +154,59 @@ class RunEngineLoadPostgresTest {
         assertEquals(0L, deadlocks, report)
     }
 
+    @Test
+    fun aHundredRunsThroughWaitsAndChildRunsEndOnceWithoutDeadlock() = benchTest(modules, overrides) { server ->
+        val owners = List(ORGS) { server.owner("nodes-$it") }
+        owners.forEach { server.childWorkflow(it) }
+        val runs = owners.flatMap { owner -> List(RUNS_EACH) { owner to server.queued(owner, NODES) } }
+        val replicas = List(REPLICAS) { server.engine("engine-nodes-$it") }
+        val passes = Passes()
+        val deadlocksBefore = server.deadlocks()
+        val started = TimeSource.Monotonic.markNow()
+
+        replicas.round("wait nodes ask their questions", passes)
+        coroutineScope { runs.map { (owner, run) -> async { server.answer(owner, run) } }.awaitAll() }
+        replicas.round("waits answered, child runs started and played", passes)
+        replicas.round("child runs ended, runs ended", passes)
+
+        val wall = started.elapsedNow()
+        val ended = runs.map { (owner, run) -> server.stored(owner.org.id, run.id) }
+        val orgs = owners.map { it.org.id }
+        val visitKeys = server.count("workflow_runs_visits", orgs)
+        val waits = server.count("automations_waits", orgs)
+        val succeeded = "parent_run_id IS NOT NULL AND status = 'succeeded' AND "
+        val children = server.count("workflow_runs_started", orgs, succeeded)
+        val deadlocks = server.deadlocks() - deadlocksBefore
+        val report = buildString {
+            appendLine("$ORGS organizations x $RUNS_EACH runs (wait -> workflow), $REPLICAS replicas; pool 4")
+            appendLine("${ended.count { it.status == RunStatus.SUCCEEDED }} of ${runs.size} runs succeeded in $wall")
+            passes.times.forEach { (phase, times) -> appendLine(line(phase, times)) }
+            appendLine("visit keys: $visitKeys (expected ${runs.size * 3}); waits: $waits; children ended: $children")
+            appendLine("deadlocks: $deadlocks")
+        }
+        write("run-nodes-concurrency", report)
+        assertEquals(List(runs.size) { RunStatus.SUCCEEDED }, ended.map { it.status }, report)
+        assertEquals(List(runs.size) { listOf("ship", "next") }, ended.map { r -> r.visits.map { it.outcome } })
+        assertEquals(runs.size * 3L, visitKeys, report)
+        assertEquals(runs.size.toLong(), waits, report)
+        assertEquals(runs.size.toLong(), children, report)
+        assertEquals(0L, deadlocks, report)
+    }
+
+    // The workflow the workflow nodes call: a trigger, accepted.
+    private suspend fun TestServer.childWorkflow(owner: Owner) {
+        val document = """{"id":"build","name":"Build","domain":"git","nodes":[{"id":"t","kind":"trigger",""" +
+            """"label":"Built"}],"edges":[],"start":"t","status":"accepted","foundAt":"2026-11-03T10:00:00Z"}"""
+        val raw = OstromJson.parseToJsonElement(document).jsonObject
+        koin.get<WorkflowsUseCase>().save(owner.org.id, raw, null, owner.login, true)
+    }
+
+    private suspend fun TestServer.answer(owner: Owner, run: WorkflowRun) {
+        val waitId = Uuid.parse(assertNotNull(stored(owner.org.id, run.id).visits.last().waitId))
+        val caller = WaitCaller(owner.org.id, owner.approver.toString(), admin = false, interactive = true)
+        koin.get<AnswerWaitUseCase>().answer(caller, waitId, "ship", emptyMap())
+    }
+
     // One step of every run: the replicas pass together, again until none finds a run due; each pass is timed.
     private suspend fun List<TickRunsUseCase>.round(phase: String, passes: Passes) {
         clock.now += STEP
@@ -182,11 +244,12 @@ class RunEngineLoadPostgresTest {
         val invitation =
             Invitation(Uuid.random(), org.id, null, OrgRole.MEMBER, user.id, now, now + 1.hours, null, 0, null)
         invitations.create(invitation, "hash-" + Uuid.random().toHexString())
-        assertTrue(invitations.accept(invitation, Member(Uuid.random(), org.id, approver.id, OrgRole.MEMBER, now), now))
-        return Owner(login, org)
+        val member = Member(Uuid.random(), org.id, approver.id, OrgRole.MEMBER, now)
+        assertTrue(invitations.accept(invitation, member, now))
+        return Owner(login, org, member.id)
     }
 
-    private suspend fun TestServer.queued(owner: Owner): WorkflowRun {
+    private suspend fun TestServer.queued(owner: Owner, graph: RunGraph = GRAPH): WorkflowRun {
         val now = clock.now() - 1.seconds
         val run = WorkflowRun(
             id = "wfr_" + Uuid.random().toHexString(),
@@ -199,7 +262,7 @@ class RunEngineLoadPostgresTest {
             inputs = mapOf("branch" to "main"),
             startedAt = now.isoMillis(),
         )
-        koin.get<StartedRunsRepository>().add(owner.org.id, run, now, GRAPH, RunAudit("started"))
+        koin.get<StartedRunsRepository>().add(owner.org.id, run, now, graph, RunAudit("started"))
         return run
     }
 
@@ -225,9 +288,11 @@ class RunEngineLoadPostgresTest {
         "SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()",
     ).getOrThrow().first().get("deadlocks").asString().toLong()
 
-    private suspend fun TestServer.count(table: String, orgs: List<Uuid>): Long = database.superuser.fetchAll(
-        "SELECT COUNT(*) AS n FROM $table WHERE org_id IN (" + orgs.joinToString { "CAST('$it' AS uuid)" } + ")",
-    ).getOrThrow().first().get("n").asString().toLong()
+    private suspend fun TestServer.count(table: String, orgs: List<Uuid>, where: String = ""): Long =
+        database.superuser.fetchAll(
+            "SELECT COUNT(*) AS n FROM $table WHERE $where org_id IN (" +
+                orgs.joinToString { "CAST('$it' AS uuid)" } + ")",
+        ).getOrThrow().first().get("n").asString().toLong()
 
     private fun write(name: String, report: String) {
         SystemFileSystem.createDirectories(Path("build/reports/perf"))
@@ -256,6 +321,21 @@ class RunEngineLoadPostgresTest {
                 WorkflowNode("review", WorkflowNodeKind.GATE, "Review", approvers = listOf(APPROVER)),
             ),
             edges = listOf(WorkflowEdge("build", "review"), WorkflowEdge("review", null, on = "approved")),
+        )
+
+        val NODES = RunGraph(
+            start = "ask",
+            nodes = listOf(
+                WorkflowNode(
+                    id = "ask",
+                    kind = WorkflowNodeKind.WAIT,
+                    label = "Ask",
+                    approvers = listOf(APPROVER),
+                    wait = WaitSpec("Ship it?", actions = listOf(WaitAction("ship", "Ship"))),
+                ),
+                WorkflowNode("call", WorkflowNodeKind.WORKFLOW, "Build", workflowId = "build"),
+            ),
+            edges = listOf(WorkflowEdge("ask", "call", on = "ship")),
         )
 
         fun line(phase: String, times: List<Duration>): String {
