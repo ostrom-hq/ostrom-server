@@ -29,13 +29,14 @@ import dev.ostrom.server.billing.fakes.stripeSubscription
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
-import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.test.runTest
 
 class UseCasesTest {
     // Limits ------------------------------------------------------------------------------------------------------
@@ -182,6 +183,21 @@ class UseCasesTest {
             "updateCustomerEmail cus_1 ada@new.acme.dev" in world.stripe.calls,
             "A second checkout gives the stored customer the payer's current address",
         )
+    }
+
+    @Test
+    fun aRefusedAddressUpdateNeverBlocksThePayment() = runTest {
+        val world = World()
+        world.emails.addresses[world.admin.memberId] = "ada@acme.dev"
+        world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        world.stripe.updateEmailFailure = IllegalStateException("customer deleted")
+        val url = world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        assertTrue(url.isNotEmpty(), "Checkout opens with the stored customer")
+        assertEquals(listOf("cus_1 IllegalStateException"), world.emailFailures)
+        world.stripe.updateEmailFailure = CancellationException("stop")
+        assertFailsWith<CancellationException> {
+            world.checkout(world.admin, world.org, Plan.TEAM, BillingInterval.MONTH)
+        }
     }
 
     @Test

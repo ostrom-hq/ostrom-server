@@ -3,6 +3,7 @@ package dev.ostrom.server.billing.domain
 
 import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -29,7 +30,8 @@ class StartCheckoutUseCaseImpl(
     private val stripe: StripeGateway,
     private val settings: BillingSettings,
     private val clock: Clock,
-    private val emails: MemberEmails = NoMemberEmails,
+    private val emails: MemberEmails,
+    private val emailUpdateFailed: (String, Exception) -> Unit,
 ) : StartCheckoutUseCase {
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, plan: Plan, interval: BillingInterval): String {
         caller.requireBillingAdminOf(orgId)
@@ -43,7 +45,7 @@ class StartCheckoutUseCaseImpl(
         val stored = existing?.stripeCustomerId
         val customerId = if (stored != null) {
             // The address may have changed since the customer was made: Checkout shows the current one.
-            email?.let { stripe.updateCustomerEmail(stored, it) }
+            email?.let { updateEmail(stored, it) }
             stored
         } else {
             stripe.createCustomer(orgId, null, email).also { id ->
@@ -67,6 +69,17 @@ class StartCheckoutUseCaseImpl(
                 cancelUrl = "$page?checkout=canceled",
             ),
         )
+    }
+
+    /** The address only spares the payer a field: a refusal (Stripe down, customer deleted) never blocks paying. */
+    private suspend fun updateEmail(customerId: String, email: String) {
+        try {
+            stripe.updateCustomerEmail(customerId, email)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            emailUpdateFailed(customerId, error)
+        }
     }
 }
 

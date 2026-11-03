@@ -162,8 +162,12 @@ class FakeStripeGateway : StripeGateway {
         return "cus_$customers"
     }
 
+    /** Thrown by the address update alone, after it is recorded. */
+    var updateEmailFailure: Exception? = null
+
     override suspend fun updateCustomerEmail(customerId: String, email: String) {
         record("updateCustomerEmail $customerId $email")
+        updateEmailFailure?.let { throw it }
     }
 
     override suspend fun priceId(lookupKey: String): String {

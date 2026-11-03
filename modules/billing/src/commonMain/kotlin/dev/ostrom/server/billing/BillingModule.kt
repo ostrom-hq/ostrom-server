@@ -97,7 +97,14 @@ object BillingModule : ServerModule {
         single<GetPlanLimitsUseCase> { GetPlanLimitsUseCaseImpl(get(), licenses(), get(), get()) }
         single<GetBillingOverviewUseCase> { GetBillingOverviewUseCaseImpl(get(), get(), get(), get()) }
         single<StartCheckoutUseCase> {
-            StartCheckoutUseCaseImpl(get(), get(), get(), get(), getOrNull<MemberEmails>() ?: NoMemberEmails)
+            StartCheckoutUseCaseImpl(
+                get(),
+                get(),
+                get(),
+                get(),
+                getOrNull<MemberEmails>() ?: NoMemberEmails,
+                customerEmailFailureLogger(get()),
+            )
         }
         single<OpenCustomerPortalUseCase> { OpenCustomerPortalUseCaseImpl(get(), get(), get()) }
         single<SyncSubscriptionUseCase> {
@@ -146,6 +153,12 @@ object BillingModule : ServerModule {
 internal fun outboxFailureLogger(logger: Logger): (OutboxTask, Exception) -> Unit = { task, error ->
     val fields = mapOf("task_id" to task.id, "kind" to task.kind.key, "error" to error::class.simpleName)
     logger.warn("stripe task failed", fields)
+}
+
+/** Logs a customer whose address Stripe did not update, by its id and error class: Checkout goes on without it. */
+internal fun customerEmailFailureLogger(logger: Logger): (String, Exception) -> Unit = { customerId, error ->
+    val fields = mapOf("customer_id" to customerId, "error" to error::class.simpleName)
+    logger.warn("stripe customer email not updated", fields)
 }
 
 /** Logs a subscription whose price is not in the catalog: it keeps its previous plan until someone looks. */

@@ -52,7 +52,10 @@ internal class World(stripeEnabled: Boolean = true) {
     val limits = GetPlanLimitsUseCaseImpl(repository, license, settings, clock)
     val overview = GetBillingOverviewUseCaseImpl(repository, limits, settings, clock)
     val emails = FakeMemberEmails()
-    val checkout = StartCheckoutUseCaseImpl(repository, stripe, settings, clock, emails)
+    val emailFailures = mutableListOf<String>()
+    val checkout = StartCheckoutUseCaseImpl(repository, stripe, settings, clock, emails) { customer, error ->
+        emailFailures += "$customer ${error::class.simpleName}"
+    }
     val portal = OpenCustomerPortalUseCaseImpl(repository, stripe, settings)
     val unknownPrices = mutableListOf<Pair<String, String?>>()
     val sync = SyncSubscriptionUseCaseImpl(repository, stripe, clock) { id, key -> unknownPrices += id to key }

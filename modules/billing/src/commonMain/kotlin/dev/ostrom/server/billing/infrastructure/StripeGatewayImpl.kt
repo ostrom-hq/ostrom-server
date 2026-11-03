@@ -83,7 +83,8 @@ class StripeGatewayImpl(
         HttpMethod.Post,
         "/v1/customers",
         listOfNotNull(name?.let { "name" to it }, email?.let { "email" to it }, "metadata[org_id]" to orgId.toString()),
-        key = "ostrom-customer-$orgId",
+        // One key per org and address: a retry dedupes, another payer within Stripe's 24 h is not refused.
+        key = "ostrom-customer-$orgId" + email?.let { "-" + it.lowercase().hashCode().toUInt().toString(16) }.orEmpty(),
     ).requireString("id")
 
     override suspend fun updateCustomerEmail(customerId: String, email: String) {
