@@ -194,6 +194,8 @@ class CloseSessionUseCaseImpl(
                 },
             )
             put("initiator", session.dev)
+            session.launchId?.let { put("launchId", it) }
+            put("sessionId", session.id)
             put("agent", session.agent)
             (end.model ?: session.model)?.let { put("model", it) }
             end.costUsd?.let { put("costUsd", it) }

@@ -16,6 +16,7 @@ import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.withNulls
+import dev.ostrom.server.receipts.domain.models.Verification
 import dev.ostrom.server.receipts.presentation.requireReceiptReader
 import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.sessions.presentation.SessionScopes
@@ -81,9 +82,7 @@ fun Route.workflowRunsRoutes(dependencies: WorkflowRunsRoutesDependencies) = wit
             val body = call.receive<WorkflowReceiptRequestBody>()
             val request = WorkflowReceiptRequest(params.id, body.digest, body.agent, body.model)
             val signed = signWorkflowReceipt(actor, request)
-            val verification = signed.verification
-            val dto = VerificationDto(verification.ok, verification.digest, verification.kid, verification.reason)
-            call.respond(WorkflowReceiptResponse(signed.receipt, dto))
+            call.respond(WorkflowReceiptResponse(signed.receipt, signed.verification.toDto()))
         }
         get<ReceiptBundleApi> { params ->
             call.respond(bundle(bundleReader(call), params.id).toJson())
@@ -163,6 +162,8 @@ private fun ReceiptBundle.toJson(): JsonObject = buildJsonObject {
     )
     put("exportedAt", exportedAt)
 }
+
+private fun Verification.toDto() = VerificationDto(ok, digest, kid, reason, orgBound)
 
 /** The format of a receipt bundle, which `ostrom verify` reads. */
 const val BUNDLE_FORMAT: String = "ostrom.receipt-bundle/1"

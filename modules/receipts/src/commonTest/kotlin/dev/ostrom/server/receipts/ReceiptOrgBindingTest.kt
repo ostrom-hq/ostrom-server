@@ -14,8 +14,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
-// The organization is inside the signed body: the instance key is the same for every organization, so without it two
-// organizations with the same sources in the same minute signed the same bytes, and one's receipt passed for the other's.
+// The organization is inside the signed body: the instance key is the same for every organization, so without it
+// two organizations with the same sources in the same minute signed the same bytes, and one's receipt passed for the
+// other's.
 class ReceiptOrgBindingTest {
     private val receipts = FakeReceipts()
     private val instance = SeedSigner(hex(GoldenVectors.SEED_HEX))
@@ -43,6 +44,39 @@ class ReceiptOrgBindingTest {
         assertEquals("This receipt was signed for another organization.", asB.reason)
         assertTrue(verify(ORG_A, HARNESS).ok, "It stays A's")
     }
+
+    @Test
+    fun theDraftNamesItsLaunchAndSessionInsideTheSignedBody() = runTest {
+        val bound = mapOf("launchId" to str("lch_1"), "sessionId" to str("s-1"))
+        val draft = JsonObject(draft("s-1", "session") + bound)
+        val receipt = sign(ORG_A, draft)
+        assertEquals("lch_1" to "s-1", receipt.text("launchId") to receipt.text("sessionId"))
+        assertTrue(verify(ORG_A, receipt.text("id")).orgBound)
+        val moved = JsonObject(receipt + ("sessionId" to str("s-2")))
+        assertFalse(verify.verify(ORG_A, moved).ok, "Signed: another session breaks the signature")
+        assertFalse(verify.verify(ORG_A, moved).orgBound, "A receipt that does not verify is bound to nothing")
+    }
+
+    @Test
+    fun anOrganizationThatIsNotATextIsAnotherOrganization() = runTest {
+        val fields = mapOf("orgId" to JsonPrimitive(1), "id" to str("rcpt_1"), "createdAt" to str("x"))
+        val body = JsonObject(draft() + fields)
+        val outcome = verify.verify(ORG_A, InstanceReceiptSigner(instance).sign(body))
+        assertFalse(outcome.ok)
+        assertFalse(outcome.orgBound)
+        assertEquals("This receipt was signed for another organization.", outcome.reason)
+    }
+
+    @Test
+    fun aReceiptSignedBeforeTheOrganizationVerifiesUnbound() = runTest {
+        val body = JsonObject(draft() + mapOf("id" to str("rcpt_old"), "createdAt" to str("x")))
+        val outcome = verify.verify(ORG_B, InstanceReceiptSigner(instance).sign(body))
+        assertTrue(outcome.ok, "Its signature still holds")
+        assertFalse(outcome.orgBound, "Never shown as bound")
+        assertEquals(null, outcome.reason)
+    }
+
+    private fun str(value: String) = JsonPrimitive(value)
 
     private companion object {
         const val HARNESS = "rcpt_harness_1.0.0"
