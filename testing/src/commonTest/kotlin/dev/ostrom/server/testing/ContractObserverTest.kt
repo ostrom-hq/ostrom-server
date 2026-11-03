@@ -200,7 +200,7 @@ private suspend fun remove(call: RoutingCall) = when (call.request.queryParamete
 // or not, or with a status the contract does not declare.
 private suspend fun stream(call: RoutingCall) = when (call.request.queryParameters["as"]) {
     "json" -> call.respondText("""{"id": "a"}""", json)
-    "drift" -> call.respond(events("data: {\"name\": 1}\n\ndata: oops\n\n"))
+    "drift" -> call.respond(events("data: {\"name\": 1}\n\ndata: {oops\n\n"))
     "teapot" -> call.respond(events("data: {}\n\n", HttpStatusCode(418, "Teapot")))
     else -> call.respond(events("event: thing\ndata: {\"id\": \"a\"}\n\n: heartbeat\n\ndata: [DONE]\n\n"))
 }
