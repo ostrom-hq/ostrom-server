@@ -2,8 +2,11 @@
 package dev.ostrom.server.workflowruns.infrastructure
 
 import dev.ostrom.core.api.models.WorkflowRun
+import dev.ostrom.server.identity.infrastructure.TransactionalAuditLog
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.kernel.http.OstromJson
+import dev.ostrom.server.workflowruns.domain.models.RunAudit
+import dev.ostrom.server.workflowruns.domain.models.RunGraph
 import dev.ostrom.server.workflowruns.domain.repositories.RunsQuery
 import dev.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -16,17 +19,28 @@ import kotlin.uuid.Uuid
  * transaction scoped to one organization by `ostrom.org_id`, which row level security enforces.
  *
  * @param driver The connection pool.
+ * @param audit The organization's signed audit log, written in the transaction that starts a run.
  */
-class PostgresStartedRunsRepository(private val driver: Driver) : StartedRunsRepository {
-    override suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant) {
+class PostgresStartedRunsRepository(
+    private val driver: Driver,
+    private val audit: TransactionalAuditLog,
+) : StartedRunsRepository {
+    override suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph, audit: RunAudit) {
         driver.withOrganization(orgId) { tx ->
             tx.execute(
                 Statement.create(StartedRunQueries.INSERT).bind("org_id", orgId).bind("id", run.id)
                     .bind("workflow_id", run.workflowId).bind("status", run.status.value)
-                    .bind("started_at", startedAt)
-                    .bind("body", OstromJson.encodeToString(WorkflowRun.serializer(), run)),
+                    .bind("started_at", startedAt).bind("due_at", startedAt)
+                    .bind("body", OstromJson.encodeToString(WorkflowRun.serializer(), run))
+                    .bind("graph", OstromJson.encodeToString(RunGraph.serializer(), graph)),
             ).getOrThrow()
+            this.audit.recordRun(tx, orgId, run.id, audit)
         }
+    }
+
+    override suspend fun find(orgId: Uuid, id: String): WorkflowRun? = driver.withOrganization(orgId) { tx ->
+        tx.fetchAll(Statement.create(StartedRunQueries.FIND).bind("org_id", orgId).bind("id", id)).getOrThrow()
+            .firstOrNull()?.let { OstromJson.decodeFromString(WorkflowRun.serializer(), it.get("body").asString()) }
     }
 
     override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = driver.withOrganization(orgId) { tx ->
@@ -42,10 +56,14 @@ class PostgresStartedRunsRepository(private val driver: Driver) : StartedRunsRep
 
 /** The SQL of [PostgresStartedRunsRepository], also read by the query plans test. */
 object StartedRunQueries {
-    /** Stores a run. */
+    /** Stores a run, due at once for the engine. */
     const val INSERT: String =
-        "INSERT INTO workflow_runs_started (org_id, id, workflow_id, status, started_at, body) " +
-            "VALUES (:org_id, :id, :workflow_id, :status, :started_at, CAST(:body AS JSONB))"
+        "INSERT INTO workflow_runs_started (org_id, id, workflow_id, status, started_at, body, graph, next_step_at) " +
+            "VALUES (:org_id, :id, :workflow_id, :status, :started_at, CAST(:body AS JSONB), CAST(:graph AS JSONB), " +
+            ":due_at)"
+
+    /** One run. */
+    const val FIND: String = "SELECT body FROM workflow_runs_started WHERE org_id = :org_id AND id = :id"
 
     /**
      * A page of runs, newest first.

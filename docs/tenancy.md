@@ -109,6 +109,7 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `runners_claim_due(owner, until, now, limit)` | runners | leases the due sessions of every organization to one reconciler (`FOR UPDATE SKIP LOCKED`) | `CloudSessionsPostgresTest` |
 | `runners_release(id, owner, has_next, next_at)` | runners | ends a reconciler's lease, keeping a look asked for meanwhile | `CloudSessionsPostgresTest` |
 | `runners_registered_key(id)` | runners | a registered runner's organization and key hash, for its heartbeat | `RegisteredRunnersHeartbeatPostgresTest` |
+| `workflow_runs_claim_due(owner, until, now, limit)` | workflow-runs | leases the runs of workflows due now, of every organization, to one engine replica (`FOR UPDATE SKIP LOCKED`); everything else of a run is read and written in its organization | `RunEnginePostgresTest` |
 | `billing_customer_org(customer)` | billing | an organization by its Stripe customer, for the webhook | `BillingPostgresTest` |
 | `billing_claim_due_tasks(now, lease, limit)` | billing | leases the due outbox tasks of every organization (`FOR UPDATE SKIP LOCKED`) | `BillingPostgresTest` |
 | `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |

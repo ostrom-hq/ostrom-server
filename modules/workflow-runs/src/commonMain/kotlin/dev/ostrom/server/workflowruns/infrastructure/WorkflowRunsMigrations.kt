@@ -11,6 +11,71 @@ private fun policy(table: String) = """
         WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID));
 """.trimIndent()
 
+private const val CLAIM_FUNCTION = "workflow_runs_claim_due(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER)"
+
+/**
+ * Version 4: the server plays the runs. Each run keeps the graph it copied at its start and when the engine looks at
+ * it next (`next_step_at`, null once nothing is left to play); a replica leases it (`lease_owner`, `lease_until`).
+ * Each visit begun has its key (organization, run, `seq`), inserted once: a visit is never begun twice, whatever
+ * restarts. Leasing the runs due crosses organizations, so it is one narrow `SECURITY DEFINER` function owned by
+ * `ostrom_router` (`NOLOGIN`, never a member of the serving role), with `pg_temp` last in its `search_path` and
+ * executable by the serving role only: it sets the lease of the runs due (`FOR UPDATE SKIP LOCKED`) and returns their
+ * organization and id, nothing else. Everything else is read and written in the run's organization's transaction.
+ * The runs started before have no graph: queued, they are due at once and fail with nothing to play.
+ */
+private val ENGINE_SQL: String =
+    """
+    ALTER TABLE workflow_runs_started ADD COLUMN graph JSONB;
+    ALTER TABLE workflow_runs_started ADD COLUMN next_step_at TIMESTAMPTZ;
+    ALTER TABLE workflow_runs_started ADD COLUMN lease_owner TEXT;
+    ALTER TABLE workflow_runs_started ADD COLUMN lease_until TIMESTAMPTZ;
+    UPDATE workflow_runs_started SET next_step_at = started_at WHERE status IN ('queued', 'running', 'waiting');
+    CREATE INDEX workflow_runs_started_due ON workflow_runs_started (next_step_at) WHERE next_step_at IS NOT NULL;
+    CREATE TABLE workflow_runs_visits (
+        org_id UUID NOT NULL,
+        run_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        node_id TEXT NOT NULL,
+        at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (org_id, run_id, seq)
+    );
+    ${policy("workflow_runs_visits")}
+    DO $$ BEGIN
+        CREATE ROLE ostrom_router NOLOGIN NOSUPERUSER NOBYPASSRLS;
+    EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+    END $$;
+    DO $$ BEGIN
+        GRANT ostrom_router TO CURRENT_USER;
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END $$;
+    GRANT USAGE ON SCHEMA public TO ostrom_router;
+    CREATE POLICY workflow_runs_started_router_read ON workflow_runs_started FOR SELECT TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    CREATE POLICY workflow_runs_started_router_lease ON workflow_runs_started FOR UPDATE TO ostrom_router
+        USING (current_user = 'ostrom_router');
+    GRANT SELECT, UPDATE ON workflow_runs_started TO ostrom_router;
+    CREATE FUNCTION workflow_runs_claim_due(p_owner TEXT, p_until TIMESTAMPTZ, p_now TIMESTAMPTZ, p_limit INTEGER)
+        RETURNS TABLE (run_id TEXT, org_id UUID)
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        UPDATE workflow_runs_started r SET lease_owner = p_owner, lease_until = p_until
+        WHERE (r.org_id, r.id) IN (
+            SELECT d.org_id, d.id FROM workflow_runs_started d WHERE d.next_step_at <= p_now
+            AND (d.lease_until IS NULL OR d.lease_until < p_now) ORDER BY d.next_step_at LIMIT p_limit
+            FOR UPDATE SKIP LOCKED
+        ) RETURNING r.id, r.org_id;
+    $$;
+    REVOKE EXECUTE ON FUNCTION $CLAIM_FUNCTION FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION $CLAIM_FUNCTION TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION $CLAIM_FUNCTION OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
 /**
  * The workflow-runs schema: each row keeps the contract's JSON as it was answered (`body`), with the columns its reads
  * filter on. Rows are isolated by organization in the database itself: row level security is forced (the owner
@@ -88,4 +153,5 @@ val WorkflowRunsMigrations: List<SchemaMigration> = listOf(
         ${policy("workflow_runs_started")}
         """.trimIndent(),
     ),
+    SchemaMigration(4, "play_runs", ENGINE_SQL),
 )
