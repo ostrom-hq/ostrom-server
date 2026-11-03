@@ -18,7 +18,7 @@ import dev.ostrom.server.kernel.text.SecretMasks
  *
  * @property sessionId The session segment the agent ran in.
  * @property actionClass The action class of the gate.
- * @property reason One of [ReportLocalDenialUseCaseImpl.REASONS].
+ * @property reason One of the reasons of the contract's `GateLocalDenial.reason`.
  * @property command The command as the hook normalized it.
  * @property repo The repository of the session, or null.
  */
@@ -98,8 +98,8 @@ class ReportLocalDenialUseCaseImpl(
         /** What the line is about: the session. */
         const val SUBJECT: String = "session"
 
-        /** The reasons a hook refuses locally (contract `GateLocalDenial.reason`). */
-        val REASONS: Set<String> = setOf(
+        /** The reasons a hook refuses locally (contract `GateLocalDenial.reason`), private: no getter. */
+        private val REASONS: Set<String> = setOf(
             "redirected",
             "unreadable",
             "unknown_landing",
