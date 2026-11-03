@@ -44,7 +44,7 @@ class MemberSearchPostgresTest {
     @Test
     fun theSearchKeepsToTheSessionsOrganizationAndReadsThePrefixAsAValue() =
         serverTest(listOf(IdentityModule, OrgsModule)) { server ->
-            val orgs = OrgsRepositoryImpl(server.driver)
+            val orgs = OrgsRepositoryImpl(server.driver, server.koin.get())
             val acme = org("acme")
             val globex = org("globex")
             val owners = listOf(acme, globex).map { org ->
