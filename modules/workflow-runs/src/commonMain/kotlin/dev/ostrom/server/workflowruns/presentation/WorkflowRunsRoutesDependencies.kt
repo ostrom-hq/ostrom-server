@@ -2,6 +2,7 @@
 package dev.ostrom.server.workflowruns.presentation
 
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.kernel.auth.ServiceKeyAudit
 import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCase
@@ -25,6 +26,7 @@ import dev.ostrom.server.workflowruns.domain.usecases.SignWorkflowReceiptUseCase
  * @property checkRunnerToken Checks a runner token before its call's body is read (S2-46).
  * @property authenticateRunner Reads the cloud session of a runner's current execution.
  * @property reportRunnerCheck Records a check run the runner reports.
+ * @property serviceKeys Audits the calls of a service key, the CI's caller of `reportCheck` and `signWorkflowReceipt`.
  */
 data class WorkflowRunsRoutesDependencies(
     val actors: GateActorResolver,
@@ -37,4 +39,5 @@ data class WorkflowRunsRoutesDependencies(
     val checkRunnerToken: CheckRunnerTokenUseCase,
     val authenticateRunner: AuthenticateRunnerUseCase,
     val reportRunnerCheck: ReportRunnerCheckUseCase,
+    val serviceKeys: ServiceKeyAudit,
 )

@@ -8,6 +8,8 @@ import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.http.ReadThrottle
+import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.sessions.domain.models.EndSession
 import dev.ostrom.server.sessions.domain.models.GateAnswer
 import dev.ostrom.server.sessions.domain.models.Session
@@ -27,24 +29,27 @@ import io.ktor.server.routing.Route
  * from the credential, never from the body.
  *
  * @param dependencies The use cases.
+ * @param throttle Bounds the reads per caller (AUDIT-SECU-LECTURES M1): the list and a session's thread.
  */
-fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies) = with(dependencies) {
+fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
     authenticated {
         post<SessionsApi> {
             val actor = call.actor(actors, SessionScopes.writing)
             val body = call.receive<StartSessionRequest>()
             call.respond(get.view(start(actor, body.toStart())).toResponse())
         }
-        get<SessionsApi> { params ->
-            val actor = call.actor(actors, SessionScopes.reading)
-            val limit = (params.limit ?: PAGE).coerceIn(1, SessionQuery.PAGE)
-            val query = SessionQuery(params.repo, params.dev, params.open, params.before, null, limit)
-            val items = list(actor, query)
-            val next = if (items.size == query.limit) items.last().id else null
-            call.respond(SessionsPage(items.map { it.toDto() }, next))
-        }
-        get<SessionsApi.Id> { params ->
-            call.respond(get(call.actor(actors, SessionScopes.reading), params.id).toResponse())
+        throttledReads(throttle) {
+            get<SessionsApi> { params ->
+                val actor = call.actor(actors, SessionScopes.reading)
+                val limit = (params.limit ?: PAGE).coerceIn(1, SessionQuery.PAGE)
+                val query = SessionQuery(params.repo, params.dev, params.open, params.before, null, limit)
+                val items = list(actor, query)
+                val next = if (items.size == query.limit) items.last().id else null
+                call.respond(SessionsPage(items.map { it.toDto() }, next))
+            }
+            get<SessionsApi.Id> { params ->
+                call.respond(get(call.actor(actors, SessionScopes.reading), params.id).toResponse())
+            }
         }
         post<SessionsApi.Id.Alive> { params ->
             val session = alive(call.actor(actors, SessionScopes.writing), params.parent.id)

@@ -5,6 +5,8 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.http.ReadThrottle
+import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.receipts.domain.models.ReceiptQuery
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.resources.get
@@ -17,26 +19,30 @@ import kotlin.uuid.Uuid
  * people of their organization only, with a receipts scope (S2-47), the organization coming from the credential.
  *
  * @param dependencies The use cases.
+ * @param throttle Bounds the reads of receipts per caller (AUDIT-SECU-LECTURES M1).
  */
-fun Route.receiptsRoutes(dependencies: ReceiptsRoutesDependencies) = with(dependencies) {
+fun Route.receiptsRoutes(dependencies: ReceiptsRoutesDependencies, throttle: ReadThrottle) = with(dependencies) {
     get<ReceiptsApi.Keys> {
         call.respond(ReceiptKeysResponse(listKeys().map { PublicKeyResponse(it.kid, it.algorithm, it.publicKeyPem) }))
     }
     authenticated {
-        get<ReceiptsApi> { params ->
-            val orgId = call.reader(orgs)
-            val limit = (params.limit ?: ReceiptQuery.DEFAULT_PAGE).coerceIn(1, ReceiptQuery.MAX_PAGE)
-            val items = listReceipts(orgId, ReceiptQuery(params.subjectKind, params.subjectId, params.before, limit))
-            // A full page may have a next one: its cursor is the last receipt of this one.
-            val next = if (items.size == limit) items.last().id else null
-            call.respond(ReceiptsPage(items.map { it.body }, next))
-        }
-        get<ReceiptsApi.Id> { params ->
-            call.respond(getReceipt(call.reader(orgs), params.id))
-        }
-        get<ReceiptsApi.Id.Verify> { params ->
-            val outcome = verifyReceipt(call.reader(orgs), params.parent.id)
-            call.respond(VerificationResponse(outcome.ok, outcome.digest, outcome.kid, outcome.reason))
+        throttledReads(throttle) {
+            get<ReceiptsApi> { params ->
+                val orgId = call.reader(orgs)
+                val limit = (params.limit ?: ReceiptQuery.DEFAULT_PAGE).coerceIn(1, ReceiptQuery.MAX_PAGE)
+                val query = ReceiptQuery(params.subjectKind, params.subjectId, params.before, limit)
+                val items = listReceipts(orgId, query)
+                // A full page may have a next one: its cursor is the last receipt of this one.
+                val next = if (items.size == limit) items.last().id else null
+                call.respond(ReceiptsPage(items.map { it.body }, next))
+            }
+            get<ReceiptsApi.Id> { params ->
+                call.respond(getReceipt(call.reader(orgs), params.id))
+            }
+            get<ReceiptsApi.Id.Verify> { params ->
+                val outcome = verifyReceipt(call.reader(orgs), params.parent.id)
+                call.respond(VerificationResponse(outcome.ok, outcome.digest, outcome.kid, outcome.reason))
+            }
         }
     }
 }
