@@ -93,6 +93,15 @@ class WaitUseCasesTest {
     }
 
     @Test
+    fun anAgentNeverAnswersEvenTheQuestionItAskedItsPerson() = runTest {
+        val agent = bob.copy(interactive = false, agent = true)
+        val asked = ask.ask(agent, AskWait(review), null).wait
+        val refused = assertFailsWith<WaitForbiddenException> { answers.answer(agent, asked.id, "done", emptyMap()) }
+        assertEquals("An agent never answers a wait: its person does.", refused.message)
+        assertEquals(WaitStatus.OPEN, repository.waits.getValue(asked.id).status)
+    }
+
+    @Test
     fun malformedAsksAreRefused() = runTest {
         assertFailsWith<InvalidWaitException> { ask.ask(bob, AskWait(review, kind = "turn_failed"), null) }
         assertFailsWith<InvalidWaitException> { ask.ask(bob, AskWait(review, sessionId = "a b"), null) }

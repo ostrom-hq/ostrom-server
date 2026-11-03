@@ -39,6 +39,7 @@ interface AskWaitUseCase {
      *
      * @throws InvalidWaitException When the question, its session or the key is malformed.
      * @throws InvalidAssigneeException When the assignee is not an active member.
+     * @throws AgentAssigneeRefusedException When an agent token asks someone other than its person.
      * @throws WaitLimitException When too many waits are open for the session or the caller.
      */
     suspend fun ask(caller: WaitCaller, request: AskWait, idempotencyKey: String?): AskedWait
@@ -80,8 +81,8 @@ class AskWaitUseCaseImpl(
 
     private suspend fun newWait(caller: WaitCaller, request: AskWait, key: String?): Wait {
         requireWait(request.kind == null || request.kind == HUMAN_REQUEST) { "kind is $HUMAN_REQUEST." }
-        requireWait(request.sessionId == null || REFERENCE.matches(request.sessionId)) { "sessionId is malformed." }
-        requireWait(request.runId == null || REFERENCE.matches(request.runId)) { "runId is malformed." }
+        requireWait(request.sessionId == null || WaitRules.REFERENCE.matches(request.sessionId)) { "sessionId is malformed." }
+        requireWait(request.runId == null || WaitRules.REFERENCE.matches(request.runId)) { "runId is malformed." }
         val assignee = request.assignee ?: caller.memberId
         if (caller.agent && assignee != caller.memberId) throw AgentAssigneeRefusedException()
         if (assignee != caller.memberId && !members.isActiveMember(caller.orgId, assignee)) {
@@ -111,8 +112,6 @@ class AskWaitUseCaseImpl(
         const val MAX_OPEN = 20
         const val MAX_OPEN_ALONE = 100
         private val KEY = Regex("[\\x21-\\x7e]{1,200}")
-        // a session's id, or the segment `<id>~r<n>` a resumed session opens (the sessions module)
-        private val REFERENCE = Regex("[A-Za-z0-9._:~-]{1,200}")
     }
 }
 
@@ -148,14 +147,15 @@ data class WaitPage(val items: List<Wait>, val next: Uuid?)
 /** Reading waits. */
 interface ReadWaitsUseCase {
     /**
-     * A wait the caller may read: its assignee, its asker or an administrator.
+     * A wait the caller may read: its assignee, its asker or an administrator; for an agent token, only a wait its
+     * person asked.
      *
      * @throws WaitNotFoundException Otherwise.
      */
     suspend fun get(caller: WaitCaller, id: Uuid): Wait
 
     /**
-     * The waits a query names.
+     * The waits a query names; for an agent token, the waits its person asked, whatever `mine` and `assignee` say.
      *
      * @throws InvalidWaitException When the query is malformed.
      * @throws WaitForbiddenException When a member who is no administrator lists someone else's.
@@ -211,7 +211,8 @@ interface AnswerWaitUseCase {
      * Answers a wait. The first answer wins; the same member sending the same answer again gets the wait back.
      *
      * @throws WaitNotFoundException When the caller may not read it.
-     * @throws WaitForbiddenException When the caller is not its assignee nor an administrator who signed in.
+     * @throws WaitForbiddenException When the caller is an agent token (an agent never answers), or is not its
+     *   assignee nor an administrator who signed in.
      * @throws WaitClosedException When another answer won, or it was cancelled.
      * @throws InvalidWaitAnswerException When the answer does not fit the question.
      */
@@ -245,6 +246,7 @@ class AnswerWaitUseCaseImpl(
         action: String,
         values: Map<String, JsonElement>,
     ): Wait {
+        if (caller.agent) throw WaitForbiddenException("An agent never answers a wait: its person does.")
         val wait = visibleWait(repository, caller, id)
         if (wait.assignee != caller.memberId && !caller.actsAsAdmin) {
             throw WaitForbiddenException("Only the member asked answers this wait.")

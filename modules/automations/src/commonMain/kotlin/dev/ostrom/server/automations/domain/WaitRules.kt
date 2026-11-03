@@ -28,7 +28,8 @@ internal object WaitRules {
     val DONE = WaitAction("done", "Done")
 
     private val ID = Regex("[A-Za-z][A-Za-z0-9_]{0,63}")
-    private val REF_ID = Regex("[A-Za-z0-9._:~-]{1,200}") // `~`: a resumed session's segment, `<id>~r<n>`
+    /** A session's or a run's id, or an artifact's: `~` for the segment `<id>~r<n>` a resumed session opens. */
+    internal val REFERENCE = Regex("[A-Za-z0-9._:~-]{1,200}")
     private val STYLES = setOf("primary", "secondary", "danger")
     private val REF_KINDS = setOf("artifact", "session", "url")
 
@@ -64,7 +65,7 @@ internal object WaitRules {
                 "A url ref is an https address."
             }
         } else {
-            requireWait(REF_ID.matches(ref.id.orEmpty())) { "An ${ref.kind} ref names its id." }
+            requireWait(REFERENCE.matches(ref.id.orEmpty())) { "An ${ref.kind} ref names its id." }
         }
     }
 
