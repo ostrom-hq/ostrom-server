@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel.signing
 
+import dev.ostrom.server.kernel.config.InvalidConfigException
 import dev.ostrom.server.kernel.platform.createPrivateFile
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.buffered
@@ -10,6 +11,7 @@ import kotlinx.io.files.SystemTemporaryDirectory
 import kotlinx.io.readString
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -55,6 +57,22 @@ class Ed25519InstanceSignerTest {
         } finally {
             deleteTree(Path(directory, "nested"))
             SystemFileSystem.delete(directory)
+        }
+    }
+
+    // The previous key of a rotation is only read: a missing file is a configuration error, never a new key.
+    @Test
+    fun loadReadsAnExistingKeyAndNeverCreatesOne() = runTest {
+        val directory = temporaryDirectory()
+        val path = Path(directory, "previous-key.pem").toString()
+        try {
+            val missing = assertFailsWith<InvalidConfigException> { Ed25519InstanceSigner.load(path) }
+            assertEquals("Signing key file $path does not exist.", missing.message)
+            assertFalse(SystemFileSystem.exists(Path(path)))
+            val created = Ed25519InstanceSigner.loadOrCreate(path)
+            assertEquals(created.keyId, Ed25519InstanceSigner.load(path).keyId)
+        } finally {
+            deleteTree(directory)
         }
     }
 

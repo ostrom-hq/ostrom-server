@@ -57,8 +57,23 @@ data class ReceiptQuery(
  * @property kid The key id, the first 16 hex characters of the SHA-256 of the SPKI DER.
  * @property algorithm `ed25519`.
  * @property publicKeyPem The SPKI PEM.
+ * @property rotation How the key it replaced handed it over, or null.
  */
-data class ReceiptKey(val kid: String, val algorithm: String, val publicKeyPem: String)
+data class ReceiptKey(
+    val kid: String,
+    val algorithm: String,
+    val publicKeyPem: String,
+    val rotation: ReceiptKeyRotation? = null,
+)
+
+/**
+ * A receipt key handed over by the key it replaces (docs/receipt-key-rotation.md).
+ *
+ * @property kid The previous key's id.
+ * @property signature The previous key's Ed25519 signature (base64) over `ostrom-receipt-key-rotation/v1\n` and the
+ * hex of the new key's 32 raw bytes.
+ */
+data class ReceiptKeyRotation(val kid: String, val signature: String)
 
 /**
  * The outcome of a verification, what `ostrom verify` would say offline with the same keys.
