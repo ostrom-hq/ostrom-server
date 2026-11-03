@@ -18,6 +18,7 @@ import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -73,13 +74,16 @@ class MemberSearchPostgresTest {
             assertEquals(0, found(globex, "a"), "Another organization's members are never found")
 
             // Asked for another organization than the session's, or without one: refused.
-            val other = server.driver.inOrg(globex.id) { fetchAll(search(acme.id)) }
-            assertTrue(other.isFailure, "Another organization than the session's")
-            val none = server.driver.transaction {
-                execute("SET LOCAL ROLE ostrom_tenant").getOrThrow()
-                fetchAll(search(acme.id))
+            // The function raises, which aborts the transaction: the whole call fails.
+            val other = assertFails { server.driver.inOrg(globex.id) { fetchAll(search(acme.id)).getOrThrow() } }
+            assertTrue("not the session's organization" in other.message.orEmpty(), "Another organization")
+            val none = assertFails {
+                server.driver.transaction {
+                    execute("SET LOCAL ROLE ostrom_tenant").getOrThrow()
+                    fetchAll(search(acme.id)).getOrThrow()
+                }
             }
-            assertTrue(none.isFailure, "A session without an organization")
+            assertTrue("not the session's organization" in none.message.orEmpty(), "A session without one")
 
             // Owned by its own role, its search_path fixed, run by the tenant role only.
             val function = server.database.superuser.fetchAll(
