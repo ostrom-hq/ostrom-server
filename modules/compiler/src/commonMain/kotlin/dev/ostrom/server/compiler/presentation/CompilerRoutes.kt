@@ -3,6 +3,7 @@ package dev.ostrom.server.compiler.presentation
 
 import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.api.models.WorkflowStatus
+import dev.ostrom.server.compiler.domain.models.ListedPackage
 import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
 import dev.ostrom.server.compiler.domain.usecases.catalogJson
@@ -66,7 +67,7 @@ private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = wit
     }
     get<PackagesApi> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
-        call.respond(PackagesPage(repository.packages(actor.orgId, params.repo).map { summary(actor, it) }))
+        call.respond(PackagesPage(repository.listPackages(actor.orgId, params.repo).map { it.toSummary() }))
     }
     post<PackagesApi.Preview> {
         val actor = actorOf(call, CompilerScopes.readingPackages)
@@ -173,6 +174,19 @@ private suspend fun CompilerRoutesDependencies.summary(actor: GateActor, stored:
     revokedBy = stored.revokedBy,
     revokeReason = stored.revokeReason,
     counts = stored.counts,
+)
+
+private fun ListedPackage.toSummary() = PackageSummary(
+    version = version,
+    digest = digest,
+    contentDigest = contentDigest,
+    repo = repo,
+    compiledAt = compiledAt,
+    pinned = pinned,
+    revoked = revoked,
+    revokedBy = revokedBy,
+    revokeReason = revokeReason,
+    counts = counts,
 )
 
 private fun statusOf(value: String): WorkflowStatus =

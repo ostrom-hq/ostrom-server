@@ -99,4 +99,14 @@ val CompilerMigrations: List<SchemaMigration> = listOf(
         CREATE INDEX compiler_audit_recent ON compiler_audit (org_id, seq DESC);
         """.trimIndent() + "\n" + TABLES.joinToString("\n", transform = ::isolated).removeSuffix(";"),
     ),
+    // The lists in the order they answer (CompilerReadsBenchTest): the workflows by creation, one repository's
+    // packages newest first. Built in the migration's transaction, not CONCURRENTLY: both tables are small today.
+    SchemaMigration(
+        2,
+        "list_indexes",
+        """
+        CREATE INDEX compiler_workflows_by_creation ON compiler_workflows (org_id, created_at, id);
+        CREATE INDEX compiler_packages_by_repo ON compiler_packages (org_id, repo, compiled_at DESC, content_digest)
+        """.trimIndent(),
+    ),
 )

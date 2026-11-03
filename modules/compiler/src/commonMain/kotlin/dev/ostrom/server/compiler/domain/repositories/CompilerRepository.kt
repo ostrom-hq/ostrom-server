@@ -7,8 +7,11 @@ import dev.ostrom.server.compiler.domain.models.StoredPackage
 import dev.ostrom.server.compiler.domain.services.HarnessStamp
 import kotlin.uuid.Uuid
 
-/** The compiler's storage: its workflows and decisions ([WorkflowsRepository]), harnesses, packages, pins, audit. */
-interface CompilerRepository : WorkflowsRepository {
+/**
+ * The compiler's storage: its workflows and decisions ([WorkflowsRepository]), the list of its packages
+ * ([PackageListRepository]), harnesses, packages, pins, audit.
+ */
+interface CompilerRepository : WorkflowsRepository, PackageListRepository {
     /**
      * The version a harness digest already has in a repository.
      *

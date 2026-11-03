@@ -39,6 +39,7 @@ import kotlinx.serialization.json.jsonObject
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /**
@@ -122,16 +123,19 @@ class CompilerReadsBenchTest {
         assertEquals(1, sent.map { it.size }.distinct().size, "Statements: ${sent.map { it.size }}")
 
         val reads = listOf(
-            Read("/api/v1/workflows", PER_ORG),
-            Read("/api/v1/workflows?status=accepted", PER_ORG),
-            Read(PACKAGES[0], PER_ORG),
-            Read(PACKAGES[1], PER_ORG / REPOS),
+            Read("/api/v1/workflows", PER_ORG, "compiler_workflows_by_creation"),
+            Read("/api/v1/workflows?status=accepted", PER_ORG, "compiler_workflows_by_creation"),
+            Read(PACKAGES[0], PER_ORG, "compiler_packages_recent"),
+            Read(PACKAGES[1], PER_ORG / REPOS, "compiler_packages_by_repo"),
         )
         val measures = reads.map { read ->
             server.measureRead("GET ${read.path}") { get(read.path) { bearerAuth("lead") } }
         }
         writeReadReport("compiler", measures)
         measures.forEach { it.assertWithinBudget(setOf("compiler_workflows", "compiler_packages")) }
+        reads.zip(measures).forEach { (read, measure) ->
+            assertTrue(measure.plans.any { read.index in it }, measure.describe())
+        }
         reads.forEach { read ->
             val page = server.client.get(read.path) { bearerAuth("lead") }
             val items = when {
@@ -149,8 +153,9 @@ class CompilerReadsBenchTest {
      *
      * @property path The route and its filters.
      * @property items The rows of its answer.
+     * @property index The index its plan must name (CompilerMigrations version 2, or the first).
      */
-    private data class Read(val path: String, val items: Int)
+    private data class Read(val path: String, val items: Int, val index: String)
 
     private companion object {
         const val ORGS = 10

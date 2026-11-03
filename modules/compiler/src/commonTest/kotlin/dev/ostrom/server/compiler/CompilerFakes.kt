@@ -4,6 +4,7 @@ package dev.ostrom.server.compiler
 import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompilerSettings
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
+import dev.ostrom.server.compiler.domain.models.ListedPackage
 import dev.ostrom.server.compiler.domain.models.PackageAudit
 import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.RuleDoc
@@ -75,6 +76,16 @@ internal class MemoryCompilerRepository : CompilerRepository {
         packages.filterKeys { it.first == orgId }.values
             .filter { repo == null || it.envelope.repo == repo }
             .sortedByDescending { it.compiledAt }
+
+    override suspend fun listPackages(orgId: Uuid, repo: String?): List<ListedPackage> =
+        packages(orgId, repo).map { stored ->
+            val envelope = stored.envelope
+            ListedPackage(
+                envelope.version, envelope.digest, envelope.contentDigest, envelope.repo, stored.compiledAt,
+                stored.counts, stored.revoked, stored.revokedBy, stored.revokeReason,
+                pinned = pins[orgId to envelope.repo]?.contentDigest == envelope.contentDigest,
+            )
+        }
 
     override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage =
         packages.getOrPut(orgId to stored.envelope.contentDigest) { stored }
