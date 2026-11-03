@@ -115,9 +115,11 @@ import kotlin.uuid.Uuid
  * Three measures, written to `build/reports/perf/launch-*.txt`:
  * - each route alone, on tables filled past 20 000 rows by another organization: its database p95 at 20 concurrent
  *   callers, its queries and its plans, none of which scans a filled table;
- * - 100 launches at once in one organization, each person its own: the wall time of each route, every call answered,
- *   no deadlock, and every agent token refused once its launch ended; then the launch's own transaction (its advisory
- *   lock, its two counts and its insert) by 100 callers on a pool of 20, the contention the in-process server hides;
+ * - 100 launches at once in one organization, each person its own, twice: on a pool of 10 connections, a deployment's
+ *   default, where the budget is judged, then on the test's pool of 4, a stress figure. The wall time of each route,
+ *   every call answered, no deadlock, and every agent token refused once its launch ended; then one more path alone,
+ *   the statements and round trips of each step; then the launch's own transaction (its advisory lock, its two counts
+ *   and its insert) by 100 callers on a pool of 20, the contention the in-process server hides;
  * - 1 000 launches ended in two organizations: no agent token left active, and the rows each one leaves.
  */
 class LaunchPathLoadPostgresTest {
@@ -212,17 +214,17 @@ class LaunchPathLoadPostgresTest {
         val deadlocksBefore = server.deadlocks()
         val packages = server.koin.get<CompiledPackages>()
         val compiledBefore = packages.compilations
-        val calls = Calls()
+        // The budget is judged on a deployment's pool; the test's own pool of 4 is published as a stress figure.
+        val deployed = Round("on a pool of $SERVING_POOL connections, a deployment's default (the budget's)", 0)
+        val stress = Round("on the test's pool of $TEST_POOL connections (stress)", 2 * CONCURRENT)
         // Timed alone on the server: no other test process's bench times or loads it meanwhile (exclusively).
-        val (finished, wall, contended) = server.database.exclusively {
-            val started = TimeSource.Monotonic.markNow()
-            // Bounded: a call that waits for a connection it never gets is counted as unfinished, not waited for.
-            val ended = withTimeoutOrNull(CONCURRENCY_BUDGET) {
-                coroutineScope {
-                    team.people.mapIndexed { n, person -> async { server.wholePath(person, n, calls) } }.awaitAll()
-                }
+        val contended = server.database.exclusively {
+            server.database.withRole(poolSize = SERVING_POOL) { role, pool ->
+                server.database.superuser.execute("GRANT ${server.database.servingRole} TO $role").getOrThrow()
+                server.driver.through(pool) { server.hundredPaths(team, deployed) }
             }
-            Triple(ended.orEmpty().filterNotNull(), started.elapsedNow(), server.contendedLaunches(team))
+            server.hundredPaths(team, stress)
+            server.contendedLaunches(team)
         }
         val compilations = packages.compilations - compiledBefore
         // The statements of one more whole path, alone on the server: what each step costs the database.
@@ -230,24 +232,24 @@ class LaunchPathLoadPostgresTest {
         server.wholePath(team.people.first(), CONCURRENT, alone)
         val deadlocks = server.deadlocks() - deadlocksBefore
         val active = server.activeAgentTokens(team.org.id)
-        val stillActing = finished.count { launch ->
+        val stillActing = (deployed.finished + stress.finished).count { launch ->
             server.client.post(SESSIONS) { bearer(launch.agentToken); json(session("s-after", launch.launchId)) }
                 .status != HttpStatusCode.Unauthorized
         }
         val report = buildString {
-            appendLine("$CONCURRENT launches at once, one organization, one person each; in-process server, pool 4")
-            appendLine("${finished.size} of $CONCURRENT paths whole in $wall (budget $CONCURRENCY_BUDGET)")
-            append(calls.report())
+            listOf(deployed, stress).forEach { append(it.report()) }
             appendLine("one more path alone, per step: its time, statements and round trips to the database")
             append(alone.statementsReport())
             val transaction = "launch transaction, 100 callers, pool of $CONTENDED_POOL (advisory lock wait included)"
             appendLine(line(transaction, contended))
             appendLine("deadlocks: $deadlocks; agent tokens still active: $active")
             appendLine("ended agent tokens still accepted: $stillActing")
-            appendLine("packages compiled for the $CONCURRENT reads of GET /packages/current: $compilations")
+            appendLine("packages compiled for the ${2 * CONCURRENT} reads of GET /packages/current: $compilations")
         }
         write("launch-concurrency", report)
-        assertEquals(CONCURRENT, finished.size, "Every launch goes through its whole path\n$report")
+        listOf(deployed, stress).forEach {
+            assertEquals(CONCURRENT, it.finished.size, "Every launch goes through its whole path\n$report")
+        }
         assertEquals(STEPS, alone.steps(), "The path alone goes through every step\n$report")
         assertEquals(0L, deadlocks, report)
         assertEquals(0L, active, "Every agent token is revoked once its launch ended (R2b)\n$report")
@@ -277,6 +279,35 @@ class LaunchPathLoadPostgresTest {
             rows.entries.joinToString("\n") { (table, n) -> "rows left in $table: $n" }
         write("launch-leaks", report)
         assertEquals(0L, active, report)
+    }
+
+    /**
+     * 100 whole paths at once, [label] the pool they ran on: their calls, the launches that went through and the time
+     * all took. Their session ids and gate commits start at [first], apart from another round's.
+     */
+    private class Round(val label: String, val first: Int) {
+        val calls = Calls()
+        var finished: List<Started> = emptyList()
+        var wall: Duration = Duration.ZERO
+
+        fun report(): String = buildString {
+            appendLine("$CONCURRENT launches at once, one organization, one person each, $label")
+            appendLine("${finished.size} of $CONCURRENT paths whole in $wall (budget $CONCURRENCY_BUDGET)")
+            append(calls.report())
+        }
+    }
+
+    // Bounded: a call that waits for a connection it never gets is counted as unfinished, not waited for.
+    private suspend fun TestServer.hundredPaths(team: Team, round: Round) {
+        val started = TimeSource.Monotonic.markNow()
+        val ended = withTimeoutOrNull(CONCURRENCY_BUDGET) {
+            coroutineScope {
+                team.people.mapIndexed { n, person -> async { wholePath(person, round.first + n, round.calls) } }
+                    .awaitAll()
+            }
+        }
+        round.finished = ended.orEmpty().filterNotNull()
+        round.wall = started.elapsedNow()
     }
 
     /**
@@ -643,6 +674,9 @@ class LaunchPathLoadPostgresTest {
         const val PEOPLE_FOR_ROUTES = 10
         const val MEASURED_CALLS = 30
         const val CONCURRENT = 100
+        // The server's pool in a deployment (OSTROM_DATABASE_MAX_CONNECTIONS by default), and in a test (TestDatabase).
+        const val SERVING_POOL = 10
+        const val TEST_POOL = 4
         // TestDatabase.LARGEST_POOL: 50 ran CI's PostgreSQL out of connections beside the other tests' pools.
         const val CONTENDED_POOL = 20
         const val LEAK_PEOPLE = 50

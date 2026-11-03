@@ -46,7 +46,7 @@ private const val TRANSACTION_ENDS = 2
  *
  * Recorded: `execute` and `fetchAll`, on the pool and inside [transaction], the only ways the server reaches the
  * database (`begin`, `transactionCatching` and the flows of `fetch` are passed through unrecorded: no server code
- * uses them on a read route).
+ * uses them on a read route). The same three are what [through] sends to another pool.
  *
  * @param inner The pool.
  */
@@ -54,6 +54,28 @@ private const val TRANSACTION_ENDS = 2
 class RecordingDriver(private val inner: Driver) : Driver by inner {
     private val sent = AtomicReference<Recording?>(null)
     private val transactions = AtomicInt(0)
+    private val routed = AtomicReference<Driver?>(null)
+
+    // The pool the server's statements go to: [inner], or the one [through] gives meanwhile.
+    private val target: Driver get() = routed.load() ?: inner
+
+    /**
+     * Runs [block] with the server's statements sent to [pool] instead of the test's own pool of 4: a load test then
+     * measures the server on a pool the size of a deployment's (`OSTROM_DATABASE_MAX_CONNECTIONS`, 10 by default),
+     * opened by [TestDatabase.withRole] only for its timed phase. A transaction begun before keeps its connection.
+     *
+     * @param pool A pool connected as a role granted the serving role.
+     * @param block The work.
+     * @return What [block] returns.
+     */
+    suspend fun <T> through(pool: Driver, block: suspend () -> T): T {
+        check(routed.compareAndSet(null, pool)) { "The server's statements already go to another pool." }
+        try {
+            return block()
+        } finally {
+            routed.store(null)
+        }
+    }
 
     /**
      * Runs [block] and returns the statements sent meanwhile, by [block] and by anything else running then (a
@@ -79,19 +101,19 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
         sent.load()?.add(SentStatement(sql, statement, transaction ?: newTransaction(), transaction != null))
     }
 
-    override suspend fun execute(sql: String): Result<Long> = inner.execute(sql).also { note(sql, null) }
+    override suspend fun execute(sql: String): Result<Long> = target.execute(sql).also { note(sql, null) }
 
     override suspend fun execute(statement: Statement): Result<Long> =
-        inner.execute(statement).also { note(statement.sql, statement) }
+        target.execute(statement).also { note(statement.sql, statement) }
 
-    override suspend fun fetchAll(sql: String): Result<ResultSet> = inner.fetchAll(sql).also { note(sql, null) }
+    override suspend fun fetchAll(sql: String): Result<ResultSet> = target.fetchAll(sql).also { note(sql, null) }
 
     override suspend fun fetchAll(statement: Statement): Result<ResultSet> =
-        inner.fetchAll(statement).also { note(statement.sql, statement) }
+        target.fetchAll(statement).also { note(statement.sql, statement) }
 
     override suspend fun <T> transaction(f: suspend Transaction.() -> T): T {
         val id = newTransaction()
-        return inner.transaction { RecordingTransaction(this, this@RecordingDriver, id).f() }
+        return target.transaction { RecordingTransaction(this, this@RecordingDriver, id).f() }
     }
 }
 

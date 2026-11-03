@@ -86,6 +86,22 @@ class ReadBenchTest {
     }
 
     @Test
+    fun theServersStatementsGoToAnotherPoolOnlyWhileRouted() = serverTest(emptyList()) { server ->
+        val driver = server.driver
+        val who = "SELECT current_user AS who"
+        suspend fun user() = driver.fetchAll(who).getOrThrow().first().get("who").asString()
+        server.database.withRole(poolSize = ROUTED_POOL) { role, pool ->
+            driver.through(pool) {
+                assertEquals(role, user(), "On the pool given")
+                val inTransaction = driver.transaction { fetchAll(who).getOrThrow().first().get("who").asString() }
+                assertEquals(role, inTransaction, "A transaction too")
+                assertFailsWith<IllegalStateException> { driver.through(pool) { } }
+            }
+            assertEquals(server.database.servingRole, user(), "Back on the test's own pool")
+        }
+    }
+
+    @Test
     fun everyWayToSendAStatementIsRecordedOnlyWhileRecording() = serverTest(emptyList()) { server ->
         val driver = server.driver
         driver.fetchAll("SELECT 0").getOrThrow()
@@ -144,3 +160,6 @@ class ReadBenchTest {
         assertTrue("Result" in plans.single(), plans.single())
     }
 }
+
+// Above the 2 of withRole by default: the routed pool is opened alone, as a load test opens it.
+private const val ROUTED_POOL = 3
