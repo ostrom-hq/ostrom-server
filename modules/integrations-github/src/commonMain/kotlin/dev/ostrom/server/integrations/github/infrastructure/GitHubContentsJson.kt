@@ -43,7 +43,8 @@ internal object GitHubContentsJson {
      */
     fun protectionOf(classic: Branch, rules: List<BranchRule>): BranchProtection {
         val reviews = rules.filter { it.type == "pull_request" }.map { it.parameters }
-        val approvals = reviews.maxOfOrNull { it.int("required_approving_review_count") } ?: 0
+        // The strictest ruleset wins; none asks for no approval.
+        val approvals = reviews.map { it.int("required_approving_review_count") }.fold(0, ::maxOf)
         val checks = classic.protection.requiredStatusChecks.contexts +
             rules.filter { it.type == "required_status_checks" }.flatMap { contexts(it.parameters) }
         return BranchProtection(
