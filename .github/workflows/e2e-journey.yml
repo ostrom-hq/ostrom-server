@@ -6,9 +6,10 @@ name: E2E journey
 # ostrom-e2e builds main from its Dockerfile, which proves an e2e pull request, not the image that ships. It runs in
 # this repository because its token reads its own GHCR packages, which ostrom-e2e's cannot yet (as cli-journey.yml).
 # On demand; and, called by ci.yml's ci-e2e on every pull request and every main commit, against the image ci-image
-# built (`image_artifact`): ostrom-e2e main's sweep, every scenario but the TeamCode import (its CLI takes ten minutes
-# to build: ostrom-e2e's own CI plays it) and a short k6 of the gates, so that a change of an answer fails before the
-# merge (AGENTS.md, « End-to-end before the merge »).
+# built (`image_artifact`): ostrom-e2e main's sweep, every scenario but the TeamCode import, and a short k6 of the
+# gates, so that a change of an answer fails before the merge (AGENTS.md, « End-to-end before the merge »). The CLI
+# takes ten minutes to build: the import and the jalon's CLI scenarios are left to ostrom-e2e's CI, the latter skipped
+# by name in the summary.
 on:
   workflow_dispatch:
     inputs:
@@ -340,7 +341,7 @@ jobs:
           # Called by ci-e2e: the TeamCode import is left to ostrom-e2e's CI (the CLI's native build), said in the summary.
           if [ "$CALLED" = "true" ]; then
             mapfile -t files < <(printf '%s\n' "${files[@]}" | grep -vx 'scenarios/import.e2e.ts')
-            echo "- left out: \`scenarios/import.e2e.ts\` (E2E-TC-*, played by ostrom-e2e's CI with the CLI it builds)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- left out: \`scenarios/import.e2e.ts\` (E2E-TC-*); the jalon's CLI scenarios skip by name: ostrom-e2e's CI plays both with the CLI it builds" >> "$GITHUB_STEP_SUMMARY"
           fi
           for f in "${files[@]}"; do
             [ -f "$f" ] || { echo "::error::no scenario file $f in ostrom-e2e@$E2E_REF"; exit 1; }
@@ -362,6 +363,17 @@ jobs:
           }
           jq -r --arg t "$TESTS" '.testResults[].assertionResults[] | select(.fullName | test($t))
             | "- \(.status): \(.fullName)"' "$RUNNER_TEMP/journey.json" >> "$GITHUB_STEP_SUMMARY"
+      # A skipped scenario is named with its reason (a probe that finds a route not served yet, the CLI not built here),
+      # never silent: the list goes to the run's summary.
+      - name: Skipped scenarios, by name and reason
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/journey.json" ] || exit 0
+          {
+            echo "### Skipped scenarios"
+            jq -r '.testResults[].assertionResults[] | select(.status == "skipped" or .status == "pending") | "- \(.fullName)"' \
+              "$RUNNER_TEMP/journey.json"
+          } >> "$GITHUB_STEP_SUMMARY"
       # Called by ci-e2e: a short k6 of the gates, as ostrom-e2e's CI runs it. The load setup must succeed: a k6 that
       # cannot start is a failure here, never a skip.
       - if: env.CALLED == 'true' && !cancelled()
