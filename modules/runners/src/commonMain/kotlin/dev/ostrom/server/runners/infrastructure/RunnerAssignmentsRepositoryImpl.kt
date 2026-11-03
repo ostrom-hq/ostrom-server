@@ -132,23 +132,35 @@ class RunnerAssignmentsRepositoryImpl(private val driver: Driver) : RunnerAssign
                 "FROM runners_assignments a LEFT JOIN runners_registered r " +
                 "ON r.org_id = a.org_id AND r.id = a.runner_id"
 
-        /** A new execution, for the runner of the session's latest one while it is online, for anyone otherwise. */
+        /** Whether runner `r` holds fewer executions not stopped than the capacity it declared (none: no limit). */
+        private const val ROOM_SQL: String =
+            "(r.capacity IS NULL OR r.capacity > (SELECT COUNT(*) FROM runners_assignments h " +
+                "WHERE h.org_id = r.org_id AND h.runner_id = r.id AND h.stopped_at IS NULL))"
+
+        /**
+         * A new execution, for the runner of the session's latest one while it is online and has room, for anyone
+         * otherwise.
+         */
         const val ASSIGN_SQL: String =
             "INSERT INTO runners_assignments (session_id, epoch, org_id, runner_id, created_at) " +
                 "SELECT CAST(:session_id AS UUID), CAST(:epoch AS BIGINT), CAST(:org_id AS UUID), (" +
                 "SELECT a.runner_id FROM runners_assignments a JOIN runners_registered r " +
                 "ON r.org_id = a.org_id AND r.id = a.runner_id WHERE a.org_id = :org_id " +
-                "AND a.session_id = :session_id AND r.last_seen_at >= :online_since ORDER BY a.epoch DESC LIMIT 1" +
+                "AND a.session_id = :session_id AND r.last_seen_at >= :online_since AND $ROOM_SQL " +
+                "ORDER BY a.epoch DESC LIMIT 1" +
                 "), CAST(:now AS TIMESTAMPTZ) ON CONFLICT (session_id, epoch) DO NOTHING"
 
         /**
-         * The oldest waiting execution, taken by one runner only even when two ask at once, and one at most: the
-         * pick is a materialized CTE, run once. As `WHERE … IN (SELECT … LIMIT 1 FOR UPDATE SKIP LOCKED)`,
+         * The oldest waiting execution, taken by one runner only even when two ask at once, one at most, and only
+         * while the runner has room (its heartbeats come one after another: its count does not race with itself).
+         * The pick is a materialized CTE, run once: as `WHERE … IN (SELECT … LIMIT 1 FOR UPDATE SKIP LOCKED)`,
          * PostgreSQL may run the subquery again for each row it scans, and a heartbeat then took several.
          */
         const val TAKE_SQL: String =
             "WITH pick AS MATERIALIZED (SELECT session_id, epoch FROM runners_assignments WHERE org_id = :org_id " +
-                "AND runner_id IS NULL AND stopped_at IS NULL ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) " +
+                "AND runner_id IS NULL AND stopped_at IS NULL " +
+                "AND EXISTS (SELECT 1 FROM runners_registered r WHERE r.org_id = :org_id AND r.id = :runner_id " +
+                "AND $ROOM_SQL) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) " +
                 "UPDATE runners_assignments a SET runner_id = :runner_id FROM pick " +
                 "WHERE a.session_id = pick.session_id AND a.epoch = pick.epoch"
 
