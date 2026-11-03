@@ -217,5 +217,12 @@ class LinkedGitHubUsers(private val linked: Map<Long, String>) : UsersRepository
 
     override suspend fun listIssuers(userId: Uuid): List<String> = unused()
 
+    override suspend fun subjectsOf(login: String, issuer: String): List<String> =
+        if (issuer != IdentityProvider.GITHUB.key) {
+            emptyList()
+        } else {
+            linked.filterValues { it.equals(login, ignoreCase = true) }.keys.map { it.toString() }
+        }
+
     private fun unused(): Nothing = error("The GitHub integration only reads a user by their GitHub account.")
 }

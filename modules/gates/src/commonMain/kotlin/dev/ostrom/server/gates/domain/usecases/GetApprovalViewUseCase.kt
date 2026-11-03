@@ -2,11 +2,13 @@
 package dev.ostrom.server.gates.domain.usecases
 
 import dev.ostrom.server.gates.domain.models.ActorKind
+import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.ApprovalRights
 import dev.ostrom.server.gates.domain.models.ApprovalScreen
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateNotFoundException
 import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
+import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.Viewer
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
@@ -49,6 +51,8 @@ class GetApprovalViewUseCaseImpl(
         // The approval is one of its gate's requests: the gate always has approvers.
         val approvers = repository.approversOf(actor.orgId, listOf(view.gate.id)).getValue(view.gate.id)
         val policy = policies.selfApproval(actor.orgId)
-        return ApprovalScreen(view, ApprovalRights.of(person, viewer, view, approvers, policy))
+        val rights = ApprovalRights.of(person, viewer, view, approvers, policy)
+        if (!SelfApproval.needsLink(view.gate, Answer.YES, policy)) return ApprovalScreen(view, rights)
+        return ApprovalScreen(view, ApprovalRights.linked(rights, view.gate, approvers, gitHub.gitHubIdsOf(person)))
     }
 }

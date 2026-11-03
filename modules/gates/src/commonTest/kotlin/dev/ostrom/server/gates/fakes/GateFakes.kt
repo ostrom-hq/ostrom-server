@@ -172,7 +172,7 @@ class IdentityDigester : GateDigester {
 class FakeGitHubAccounts : GateGitHubAccounts {
     val ids = mutableMapOf<String, Long>()
 
-    override suspend fun gitHubIdOf(login: String): Long? = ids[login]
+    override suspend fun gitHubIdsOf(login: String): List<Long> = listOfNotNull(ids[login])
 }
 
 class FakePolicies(var policy: SelfApprovalPolicy = SelfApprovalPolicy.DEFAULT) : GatePolicies {

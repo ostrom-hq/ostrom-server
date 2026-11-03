@@ -94,6 +94,13 @@ class UsersRepositoryImpl(private val driver: Driver) : UsersRepository {
             .bind("id", userId),
     ).getOrThrow().map { it.get("issuer").asString() }
 
+    override suspend fun subjectsOf(login: String, issuer: String): List<String> = driver.fetchAll(
+        Statement.create(
+            "SELECT i.subject FROM identity_users u JOIN identity_identities i ON i.user_id = u.id " +
+                "WHERE u.login = :login AND i.issuer = :issuer ORDER BY i.subject LIMIT 50",
+        ).bind("login", login.lowercase()).bind("issuer", issuer),
+    ).getOrThrow().map { it.get("subject").asString() }
+
     private companion object {
         const val USER_COLUMNS = "u.id, u.login, u.display_name, u.primary_email, u.avatar_url, u.created_at"
     }

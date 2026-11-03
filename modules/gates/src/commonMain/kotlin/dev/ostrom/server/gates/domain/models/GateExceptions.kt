@@ -45,8 +45,8 @@ class SelfApprovalRefusedException(val others: List<String>) : OstromException(
  */
 class GitHubLinkRequiredException : OstromException(
     ErrorKind.FORBIDDEN,
-    "This pull request's author has no GitHub account linked in Ostrom: link your own GitHub account in My account to " +
-        "approve it.",
+    "This pull request's author has no GitHub account linked in Ostrom: link your own GitHub account in My account " +
+        "to approve it.",
     "github_link_required",
 )
 

@@ -2,6 +2,7 @@
 package dev.ostrom.server.gates.domain.usecases
 
 import dev.ostrom.server.gates.domain.models.ActorKind
+import dev.ostrom.server.gates.domain.models.Answer
 import dev.ostrom.server.gates.domain.models.ApprovalInbox
 import dev.ostrom.server.gates.domain.models.ApprovalRights
 import dev.ostrom.server.gates.domain.models.ApprovalScreen
@@ -9,6 +10,7 @@ import dev.ostrom.server.gates.domain.models.ApprovalView
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.OnlyPeopleAnswerException
 import dev.ostrom.server.gates.domain.models.RequestStatus
+import dev.ostrom.server.gates.domain.models.SelfApproval
 import dev.ostrom.server.gates.domain.models.Viewer
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
@@ -53,8 +55,18 @@ class GetApprovalQueueUseCaseImpl(
             .take(RECENT_LIMIT)
         val approvers = repository.approversOf(orgId, (pending + recent).map { it.gate.id }.distinct())
         val policy = policies.selfApproval(orgId)
+        // The reader's GitHub account, read once and only for a pull request whose author is linked to nobody.
+        val linking = (pending + recent).any { SelfApproval.needsLink(it.gate, Answer.YES, policy) }
+        val gitHubIds = if (linking) gitHub.gitHubIdsOf(person) else emptyList()
         val screen = { view: ApprovalView ->
-            ApprovalScreen(view, ApprovalRights.of(person, viewer, view, approvers.getValue(view.gate.id), policy))
+            val gateApprovers = approvers.getValue(view.gate.id)
+            val rights = ApprovalRights.of(person, viewer, view, gateApprovers, policy)
+            val linked = if (SelfApproval.needsLink(view.gate, Answer.YES, policy)) {
+                ApprovalRights.linked(rights, view.gate, gateApprovers, gitHubIds)
+            } else {
+                rights
+            }
+            ApprovalScreen(view, linked)
         }
         return ApprovalInbox(person, viewer, pending.map(screen), recent.map(screen))
     }

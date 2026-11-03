@@ -112,7 +112,7 @@ class ChannelsGateNotifier(channels: () -> List<GateChannel>, private val logger
 
 /** Without integrations-github, nobody linked a GitHub account (and no pull request opens a gate). */
 class NoGateGitHubAccounts : GateGitHubAccounts {
-    override suspend fun gitHubIdOf(login: String): Long? = null
+    override suspend fun gitHubIdsOf(login: String): List<Long> = emptyList()
 }
 
 /** Without the identity module, no credential belongs to an organization. */

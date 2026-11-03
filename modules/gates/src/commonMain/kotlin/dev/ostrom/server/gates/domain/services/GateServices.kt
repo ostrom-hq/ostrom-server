@@ -37,12 +37,12 @@ interface GatePolicies {
 /** The GitHub account each person linked, owned by integrations-github (Q-GATES-G1). */
 fun interface GateGitHubAccounts {
     /**
-     * Reads the GitHub account a person linked.
+     * Reads the GitHub accounts a person linked.
      *
      * @param login The person's Ostrom login.
-     * @return The GitHub account id, or null when they linked none.
+     * @return The GitHub account ids; empty when they linked none.
      */
-    suspend fun gitHubIdOf(login: String): Long?
+    suspend fun gitHubIdsOf(login: String): List<Long>
 }
 
 /** Signs the receipt of a decided gate (receipts module). */

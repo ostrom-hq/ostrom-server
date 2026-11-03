@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates.domain.models
 
+import dev.ostrom.server.kernel.errors.OstromException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -143,6 +144,35 @@ object SelfApproval {
             Verdict.Refused(others)
         }
     }
+
+    /**
+     * Whether a yes on [gate] needs the answerer's GitHub account (Q-GATES-G1 a): the gate of a pull request whose
+     * author no Ostrom person linked, under the `never` policy.
+     *
+     * @param gate The gate.
+     * @param answer Yes or no: a no needs nothing.
+     * @param policy The organization's setting.
+     * @return True when [linkRefusal] must be asked with the answerer's GitHub account.
+     */
+    fun needsLink(gate: Gate, answer: Answer, policy: SelfApprovalPolicy): Boolean =
+        gate.unlinkedAuthor != null && answer == Answer.YES && policy == SelfApprovalPolicy.NEVER
+
+    /**
+     * Why a yes that [needsLink] is refused: the answerer linked no GitHub account, or linked the author's.
+     *
+     * @param gate The gate.
+     * @param approvers The gate's approvers.
+     * @param answerer Who answers.
+     * @param gitHubIds The GitHub accounts the answerer linked.
+     * @return The refusal, or null when the yes passes.
+     */
+    fun linkRefusal(gate: Gate, approvers: List<String>, answerer: String, gitHubIds: List<Long>): OstromException? =
+        when {
+            gitHubIds.isEmpty() -> GitHubLinkRequiredException()
+            gate.unlinkedAuthor in gitHubIds ->
+                SelfApprovalRefusedException(othersThan(gate.askedBy + answerer, approvers))
+            else -> null
+        }
 
     /**
      * Who can still say yes among [pendingApprovers]: those who did not ask; if nobody else is left and the

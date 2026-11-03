@@ -120,6 +120,11 @@ class InMemoryUsersRepository : UsersRepository {
 
     override suspend fun listIssuers(userId: Uuid): List<String> =
         identities.filterValues { it == userId }.keys.map { it.first }.distinct().sorted()
+
+    override suspend fun subjectsOf(login: String, issuer: String): List<String> {
+        val user = users.values.firstOrNull { it.login == login.lowercase() } ?: return emptyList()
+        return identities.filter { it.value == user.id && it.key.first == issuer }.keys.map { it.second }.sorted()
+    }
 }
 
 class InMemoryWebSessionsRepository : WebSessionsRepository {

@@ -98,6 +98,10 @@ class AnswerGateUseCaseImpl(
                 is SelfApproval.Verdict.Refused -> throw SelfApprovalRefusedException(verdict.others)
                 is SelfApproval.Verdict.Allowed -> verdict.selfApproved
             }
+            if (SelfApproval.needsLink(gate, answer, policy)) {
+                SelfApproval.linkRefusal(gate, requests.map { it.approverId }, person, gitHub.gitHubIdsOf(person))
+                    ?.let { throw it }
+            }
             val now = clock.now()
             StepUp.check(answer, actor.authenticatedAt, now)
             val answered = answered(requests, request.id, answer, channel, now)

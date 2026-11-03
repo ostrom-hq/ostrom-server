@@ -70,6 +70,7 @@ class UnlinkedAuthorTest {
         val bench = never()
         val refused = bench.unlinkedPullRequest()
         assertEquals(GateStatus.REJECTED, bench.answer(refused, "rev-b", Answer.NO).gate.status)
+        assertFalse(bench.queue(user("rev-b"), console).recent.single().rights.canApprove, "answered already")
 
         val sole = GateBench()
         val opened = sole.unlinkedPullRequest()
