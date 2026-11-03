@@ -11,8 +11,16 @@ import kotlinx.serialization.json.jsonPrimitive
  * @property json The schema of its `application/json` body, or null when it declares none (no body, or another type).
  * @property other True when it declares a body of another type too (`text/plain`…): a body that is not JSON is then
  * one of its forms, not a drift.
+ * @property events The schema of each `data:` of its server-sent events (`x-ostrom-event-data` of its
+ * `text/event-stream`), or null when it declares none.
+ * @property done The `data:` that ends its events without being one (`x-ostrom-event-done`, `[DONE]`), or null.
  */
-data class ContractResponse(val json: JsonObject?, val other: Boolean = false)
+data class ContractResponse(
+    val json: JsonObject?,
+    val other: Boolean = false,
+    val events: JsonObject? = null,
+    val done: String? = null,
+)
 
 /**
  * An operation of the contract.
@@ -41,6 +49,15 @@ data class ContractOperation(
      * @return The response, or null when the operation does not declare it.
      */
     fun response(status: Int): ContractResponse? = responses[status.toString()] ?: responses["default"]
+
+    /**
+     * Whether an answer with [status] is worth reading when it comes as a stream: a status the operation does not
+     * declare (a drift), or one that declares a JSON body or events.
+     *
+     * @param status The HTTP status.
+     * @return True when the answer is checked.
+     */
+    fun reads(status: Int): Boolean = response(status).let { it == null || it.json != null || it.events != null }
 }
 
 /**
@@ -91,7 +108,13 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
                 val response = reference ?: value.jsonObject
                 val content = response["content"]?.jsonObject.orEmpty()
                 val json = content[JSON]?.let { it.jsonObject["schema"] }
-                ContractResponse(json?.let { it.jsonObject }, other = content.keys.any { it != JSON })
+                val stream = content[EVENT_STREAM]?.jsonObject.orEmpty()
+                ContractResponse(
+                    json?.let { it.jsonObject },
+                    other = content.keys.any { it != JSON },
+                    events = stream[EVENT_DATA]?.jsonObject,
+                    done = stream[EVENT_DONE]?.let { it.jsonPrimitive.content },
+                )
             },
         )
 
@@ -107,4 +130,7 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
 
 private const val REF = "\$ref"
 private const val JSON = "application/json"
+private const val EVENT_STREAM = "text/event-stream"
+private const val EVENT_DATA = "x-ostrom-event-data"
+private const val EVENT_DONE = "x-ostrom-event-done"
 private val METHODS = setOf("get", "put", "post", "delete", "patch")

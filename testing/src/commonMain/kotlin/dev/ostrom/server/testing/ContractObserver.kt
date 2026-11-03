@@ -3,6 +3,7 @@ package dev.ostrom.server.testing
 
 import dev.ostrom.server.kernel.config.ConfigSource
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.isSuccess
@@ -11,11 +12,19 @@ import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.hooks.ResponseBodyReadyForSend
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.writer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.Buffer
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
+import kotlinx.io.readByteArray
 import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlinx.serialization.SerializationException
@@ -102,17 +111,31 @@ class ContractObserver(
     private val seen = mutableSetOf<String>()
     private val drifts = mutableListOf<Drift>()
 
-    /** The plugin that hands every answer to [observe]; a streamed one (no bytes in hand) is left aside. */
+    // The copies of streamed answers, each one observed once its stream ends; [finish] waits for them.
+    private val streams = SupervisorJob()
+
+    /**
+     * The plugin that hands every answer to [observe]. A streamed one (a channel, or a writer) that the contract
+     * checks ([ContractOperation.reads]) is copied as it goes to the client and observed once it ends: the JSON the
+     * gateway relays, the server-sent events of an inference.
+     */
     val plugin: ApplicationPlugin<Unit> = createApplicationPlugin("ContractObserver") {
         on(ResponseBodyReadyForSend) { call, content ->
+            val method = call.request.httpMethod.value
+            val path = call.request.path()
+            val status = (content.status ?: call.response.status() ?: HttpStatusCode.OK).value
             val body = when (content) {
                 is OutgoingContent.ByteArrayContent -> content.bytes()
                 is OutgoingContent.NoContent -> ByteArray(0)
                 else -> null
             }
-            if (body != null) {
-                val status = content.status ?: call.response.status() ?: HttpStatusCode.OK
-                observe(call.request.httpMethod.value, call.request.path(), status.value, content.contentType, body)
+            val streamed = content is OutgoingContent.ReadChannelContent ||
+                content is OutgoingContent.WriteChannelContent
+            when {
+                body != null -> observe(method, path, status, content.contentType, body)
+                streamed && reads(method, path, status) -> transformBodyTo(
+                    Copied(content, CoroutineScope(streams)) { observe(method, path, status, content.contentType, it) },
+                )
             }
         }
     }
@@ -143,6 +166,8 @@ class ContractObserver(
      * Writes what this server saw to the reports, then fails on every drift [KnownDrifts] does not list.
      */
     suspend fun finish() {
+        withTimeoutOrNull(STREAMS_MILLIS) { streams.children.toList().joinAll() }
+        streams.children.forEach { it.cancel() }
         val (operations, found) = lock.withLock { seen.toSet() to drifts.toList() }
         if (contract != null) {
             val lines = operations.map { "seen $it" } + found.map { "drift ${it.key} | $it" }
@@ -170,9 +195,12 @@ class ContractObserver(
         // A 500 is the unforeseen (ENG-007): no operation declares it, its body is still the contract's ApiError.
         val response = operation.response(status) ?: UNFORESEEN.takeIf { status == INTERNAL }
         val json = type?.match(ContentType.Application.Json) == true
+        val stream = type?.match(ContentType.Text.EventStream) == true
         val declared = response?.json
+        val events = response?.events
         return when {
             response == null -> listOf(Violation("$", DriftKind.STATUS, "status $status is not declared"))
+            stream && events != null -> eventViolations(schema, events, response.done, body)
             declared == null && json && body.isNotEmpty() -> listOf(body("JSON where the contract declares none"))
             declared == null -> emptyList()
             else -> declaredViolations(schema, declared, response.other, json, body)
@@ -187,7 +215,7 @@ class ContractObserver(
         json: Boolean,
         body: ByteArray,
     ): List<Violation> {
-        val parsed = if (json && body.isNotEmpty()) parsed(body) else null
+        val parsed = if (json && body.isNotEmpty()) parsed(body.decodeToString()) else null
         return when {
             !json && other -> emptyList()
             !json || body.isEmpty() -> listOf(body("no JSON body where the contract declares one"))
@@ -196,18 +224,73 @@ class ContractObserver(
         }
     }
 
-    private fun parsed(body: ByteArray) = try {
-        Json.parseToJsonElement(body.decodeToString())
+    // Each `data:` of server-sent events against [events], but [done], which ends them; one event per `data:` line.
+    private fun eventViolations(schema: ContractSchema, events: JsonObject, done: String?, body: ByteArray) =
+        body.decodeToString().lines()
+            .filter { it.startsWith(DATA) }
+            .map { it.removePrefix(DATA).removePrefix(" ") }
+            .filter { it != done }
+            .flatMap { data -> parsed(data)?.let { schema.violations(events, it) } ?: listOf(body(NOT_JSON_EVENT)) }
+
+    // Whether a streamed answer is checked: a served operation's, with a status it does not declare or that it reads.
+    private fun reads(method: String, path: String, status: Int): Boolean =
+        contract?.let { it.operations.match(method, path) }?.takeIf { it.served }?.reads(status) == true
+
+    private fun parsed(text: String) = try {
+        Json.parseToJsonElement(text)
     } catch (_: SerializationException) {
         null
     }
 
     private fun body(detail: String) = Violation("$", DriftKind.BODY, detail)
+}
 
+/**
+ * A streamed answer passed on to the client as it comes, and copied: [observed] gets the whole copy once it ends.
+ *
+ * @param original The answer, a channel or a writer.
+ * @param scope Where the copy runs, and the writer's when the answer is one.
+ * @param observed What to do with the whole answer.
+ */
+private class Copied(
+    private val original: OutgoingContent,
+    private val scope: CoroutineScope,
+    private val observed: suspend (ByteArray) -> Unit,
+) : OutgoingContent.ReadChannelContent() {
+    override val contentType: ContentType? get() = original.contentType
+    override val contentLength: Long? get() = original.contentLength
+    override val status: HttpStatusCode? get() = original.status
+    override val headers: Headers get() = original.headers
+
+    override fun readFrom(): ByteReadChannel {
+        val source = when (val content = original) {
+            is OutgoingContent.ReadChannelContent -> content.readFrom()
+            else -> scope.writer { (content as OutgoingContent.WriteChannelContent).writeTo(channel) }.channel
+        }
+        return scope.writer {
+            val copy = Buffer()
+            val chunk = ByteArray(CHUNK)
+            while (true) {
+                val read = source.readAvailable(chunk, 0, chunk.size)
+                if (read == -1) break
+                channel.writeFully(chunk, 0, read)
+                channel.flush()
+                copy.write(chunk, 0, read)
+            }
+            observed(copy.readByteArray())
+        }.channel
+    }
 }
 
 private const val REPORTS = "build/reports/contract"
 private const val INTERNAL = 500
+private const val DATA = "data:"
+private const val NOT_JSON_EVENT = "a data: that is not JSON"
+private const val CHUNK = 8192
+
+// How long [ContractObserver.finish] waits for the streamed answers still being copied (a client that stopped
+// reading one leaves it unfinished).
+private const val STREAMS_MILLIS = 10_000L
 private val UNFORESEEN = ContractResponse(JsonObject(mapOf("\$ref" to JsonPrimitive("#/components/schemas/ApiError"))))
 
 // One file per test process: the module's test tasks never write to the same one.
