@@ -31,8 +31,9 @@ import kotlinx.serialization.json.putJsonObject
  * The tools a gate watches are not replayed: the history holds the actions the hooks already classed.
  *
  * An item stays small however many rules cover the action (a replay holds up to 1 000 of them, stored and served
- * whole): it lists at most [MAX_LISTED] rules and approvers, with their counts, each statement cut to
- * [MAX_STATEMENT] characters, and its `why` names at most [MAX_NAMED] of each. The rule's id leads to the whole rule.
+ * whole, on a pod of 256 Mi): it lists at most [MAX_LISTED] rules, each with at most [MAX_NAMED]
+ * approvers and its statement cut to [MAX_STATEMENT] characters, at most [MAX_APPROVERS] approvers, with the counts of
+ * both, and its `why` names at most [MAX_NAMED] of each. The rule's id leads to the whole rule.
  */
 object GateReplay {
     /** The outcomes, as the items say them. */
@@ -44,16 +45,19 @@ object GateReplay {
     /** Nobody could have said yes. */
     const val BLOCKED: String = "blocked"
 
-    /** The rules, and the approvers, an item lists at most. */
-    const val MAX_LISTED: Int = 10
+    /** The rules an item lists at most. */
+    const val MAX_LISTED: Int = 5
+
+    /** The approvers an item lists at most. */
+    const val MAX_APPROVERS: Int = 10
 
     /** The characters of a statement an item keeps; a longer one ends with `…`. */
-    const val MAX_STATEMENT: Int = 280
+    const val MAX_STATEMENT: Int = 120
 
-    /** The rules, and the approvers, a `why` names at most. */
+    /** The approvers of a listed rule, and the rules and approvers a `why` names, at most. */
     const val MAX_NAMED: Int = 3
 
-    private const val NAMED_STATEMENT = 120
+    private const val NAMED_STATEMENT = 60
 
     /**
      * Prepares rules for replay: their patterns compiled once, a pattern that does not compile left out.
@@ -132,7 +136,7 @@ object GateReplay {
                 covering.take(MAX_LISTED).forEach { addJsonObject { rule(it) } }
             }
             put("approverCount", may.size)
-            putJsonArray("approvers") { may.take(MAX_LISTED).forEach { add(it) } }
+            putJsonArray("approvers") { may.take(MAX_APPROVERS).forEach { add(it) } }
             put("why", why(outcome, covering, may, approvers))
             put("simulation", true)
         }
@@ -142,7 +146,7 @@ object GateReplay {
         put("id", replayed.rule.id)
         put("statement", cut(replayed.rule.statement, MAX_STATEMENT))
         put("status", replayed.rule.status.value)
-        putJsonArray("approvers") { replayed.gate.approvers.forEach { add(it) } }
+        putJsonArray("approvers") { replayed.gate.approvers.take(MAX_NAMED).forEach { add(it) } }
     }
 
     private fun why(outcome: String, covering: List<ReplayedRule>, may: List<String>, approvers: List<String>): String {

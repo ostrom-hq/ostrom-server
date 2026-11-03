@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules
 
+import dev.ostrom.server.gates.domain.models.Gate
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
+import dev.ostrom.server.gates.domain.repositories.GateHistory
 import dev.ostrom.server.rules.domain.models.AnalysisKind
 import dev.ostrom.server.rules.domain.models.AnalysisRun
 import dev.ostrom.server.rules.domain.models.RuleStatus
@@ -16,6 +18,11 @@ import dev.ostrom.server.rules.fakes.ReplayFixtures.gated
 import dev.ostrom.server.rules.fakes.ReplayFixtures.push
 import dev.ostrom.server.rules.fakes.RulesFixtures
 import dev.ostrom.server.rules.fakes.TestClock
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -23,6 +30,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
 
 /** [ReplayRulesUseCaseImpl]: the organization's gated rules replayed on its last 30 days of boundary actions. */
 class ReplayRulesUseCaseTest {
@@ -111,6 +120,36 @@ class ReplayRulesUseCaseTest {
             failed?.failure?.reason,
         )
         assertEquals(emptyList(), history.reads)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun aServerReplaysOneOrganizationAtATime() = runTest {
+        val orgB = RulesFixtures.orgB
+        rules.rules[org to "rule_a"] = gated(id = "rule_a")
+        rules.rules[orgB to "rule_b"] = gated(id = "rule_b", orgId = orgB)
+        val release = CompletableDeferred<Unit>()
+        val reads = mutableListOf<Uuid>()
+        val held = object : GateHistory {
+            override suspend fun recent(orgId: Uuid, since: Instant, limit: Int): List<Gate> {
+                reads += orgId
+                if (orgId == org) release.await()
+                return emptyList()
+            }
+        }
+        val server = ReplayRulesUseCaseImpl(runs, rules, held, RecordingLogger(), TestClock())
+        val runB = run.copy(orgId = orgB)
+        runs.runs[org to AnalysisKind.REPLAY] = run
+        runs.runs[orgB to AnalysisKind.REPLAY] = runB
+        val first = launch { server(run) }
+        runCurrent()
+        val second = launch { server(runB) }
+        runCurrent()
+        assertEquals(listOf(org), reads, "B waits for A's replay to end")
+        release.complete(Unit)
+        joinAll(first, second)
+        assertEquals(listOf(org, orgB), reads)
+        assertEquals(AnalysisRun.READY, runs.runs[orgB to AnalysisKind.REPLAY]?.phase)
     }
 
     private fun JsonObject.outcome() = getValue("outcome").jsonPrimitive.content

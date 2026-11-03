@@ -181,4 +181,12 @@ class GateReplayTest {
         assertEquals(listOf(byLyes, byBob, merge).map { it.id.toString() }, items.map { it.text("gateId") })
         assertEquals(listOf(GateReplay.ASKED, GateReplay.BLOCKED, GateReplay.PASSED), items.map { it.text("outcome") })
     }
+
+    @Test
+    fun aListedRuleNamesAFewOfItsApprovers() {
+        val item = replay(action(), listOf(gated(approvers = listOf("a1", "a2", "a3", "a4"))))
+        val rule = item.getValue("rules").jsonArray.single().jsonObject
+        assertEquals(listOf("a1", "a2", "a3"), rule.texts("approvers"))
+        assertEquals("4", item.text("approverCount"))
+    }
 }

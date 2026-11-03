@@ -9,6 +9,8 @@ import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.services.EveryRule
 import dev.ostrom.server.rules.domain.services.GateReplay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 
@@ -47,8 +49,12 @@ class ReplayRulesUseCaseImpl(
 ) : ReplayRulesUseCase {
     private val runs = RunRecorder(analyses, clock, logger)
 
+    // One replay at a time on a server: the engine's two workers may both take one, and a replay of 1 000 actions
+    // under 1 500 rules raises a pod's resident memory by tens of MiB (ReplayLoadPostgresTest), on a limit of 256 Mi.
+    private val oneAtATime = Mutex()
+
     override suspend fun invoke(run: AnalysisRun) {
-        runs.execute(run, "replay") { replay(run) }
+        oneAtATime.withLock { runs.execute(run, "replay") { replay(run) } }
     }
 
     private suspend fun replay(run: AnalysisRun) {

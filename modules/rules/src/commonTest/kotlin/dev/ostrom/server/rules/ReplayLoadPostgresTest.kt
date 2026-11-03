@@ -97,6 +97,10 @@ class ReplayLoadPostgresTest {
             assertTrue(plans.none { "Seq Scan on gates_gates" in it || "Seq Scan on rules_rules" in it }, report)
             assertTrue(stored < MAX_STORED, "Items over ${mib(MAX_STORED.toLong())}:\n$report")
             assertTrue(took < MAX_DURATION, "Over $MAX_DURATION:\n$report")
+            // A pod rests at about 112 Mi of its 256 (JOURNAL 03/11, relay leg of chart-load): a replay, one at a time
+            // on a server, leaves it 44 Mi for its requests.
+            val growth = memory.peak() - before
+            assertTrue(growth < MAX_GROWTH, "Resident memory up by over ${mib(MAX_GROWTH)}:\n$report")
         }
 
     @Test
@@ -215,7 +219,8 @@ class ReplayLoadPostgresTest {
         const val REVIEWERS = 50
         const val STATEMENT_LENGTH = 2_000
         const val STATEMENT_REPEAT = 60
-        const val MAX_STORED = 16 * 1024 * 1024
+        const val MAX_STORED = 4 * 1024 * 1024
+        const val MAX_GROWTH = 100L * 1024 * 1024
         const val MIB = 1024 * 1024
         val MAX_DURATION: Duration = 30.seconds
         val SAMPLE_EVERY: Duration = 0.01.seconds
