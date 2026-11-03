@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches.domain.usecases
 
+import dev.ostrom.server.kernel.workflows.WorkflowDirectory
 import dev.ostrom.server.launches.domain.models.CreatedLaunch
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
 import dev.ostrom.server.launches.domain.models.Launch
@@ -33,6 +34,7 @@ interface CreateLaunchUseCase {
      * @throws InvalidLaunchException When the repository, the agent's name or the model's is malformed.
      * @throws LaunchRefusedException When the organization's policy refuses the person or the model.
      * @throws LaunchRateLimitedException When the person or the organization launched too many agents lately.
+     * @throws LaunchWorkflowNotFoundException When the workflow it names is not one of the organization's.
      */
     suspend operator fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch
 }
@@ -45,6 +47,7 @@ interface CreateLaunchUseCase {
  * @param tokens Issues the agent token.
  * @param clock The clock.
  * @param limit How many launches a window takes, per person and per organization.
+ * @param workflows The organization's workflows, which a launch may name; null, none is known.
  */
 class CreateLaunchUseCaseImpl(
     private val repository: LaunchesRepository,
@@ -52,6 +55,7 @@ class CreateLaunchUseCaseImpl(
     private val tokens: AgentTokenService,
     private val clock: Clock,
     private val limit: LaunchLimit = LaunchLimit.DEFAULT,
+    private val workflows: WorkflowDirectory? = null,
 ) : CreateLaunchUseCase {
     override suspend fun invoke(launcher: Launcher, request: NewLaunch): CreatedLaunch {
         val repo = request.repo
@@ -61,6 +65,7 @@ class CreateLaunchUseCaseImpl(
         // A malformed name is the client's mistake (400); a refusal, the organization's answer (403).
         policy.malformed(request.agent, request.model)?.let { throw InvalidLaunchException(it) }
         policy.refusal(launcher, request.agent, request.model)?.let { throw LaunchRefusedException(it) }
+        request.workflowId?.let { workflows?.name(launcher.orgId, it) }
         val now = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
         val launch = Launch(
             id = "lch_" + Uuid.random().toHexString(),

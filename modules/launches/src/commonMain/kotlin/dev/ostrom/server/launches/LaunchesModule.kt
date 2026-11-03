@@ -72,7 +72,7 @@ object LaunchesModule : ServerModule {
         single<WaitAgentResolver> { LaunchWaitAgents(get(), get()) }
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get(), get()) }
-        single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }
+        single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get(), workflows = getOrNull()) }
         single<OpenRunnerLaunchUseCase> { OpenRunnerLaunchUseCaseImpl(get(), get()) }
         single<EndLaunchUseCase> { EndLaunchUseCaseImpl(get()) }
         single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
