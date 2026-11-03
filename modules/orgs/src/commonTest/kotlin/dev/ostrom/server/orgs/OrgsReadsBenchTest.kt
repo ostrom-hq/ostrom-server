@@ -183,7 +183,23 @@ class OrgsReadsBenchTest {
         }
         writeReadReport("orgs-search", searches)
         searches.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }
+        server.explainSearch()
         server.searchMemory(owners.first())
+    }
+
+    // The bench's EXPLAIN shows the function call only: the query inside it, planned with each prefix as the
+    // function's `EXECUTE … USING` plans it, must read neither table whole either.
+    private suspend fun TestServer.explainSearch() {
+        for (q in listOf("u", "user0-4", "user0-4999")) {
+            val plan = database.superuser.fetchAll(
+                "EXPLAIN (ANALYZE, BUFFERS) SELECT m.id FROM orgs_members m " +
+                    "JOIN identity_users u ON u.id = m.user_id WHERE m.org_id = CAST(md5('org0') AS uuid) " +
+                    "AND (lower(u.login) LIKE '$q%' OR " +
+                    "lower(u.display_name) LIKE '$q%') ORDER BY m.joined_at, m.id LIMIT ${PAGE + 1}",
+            ).getOrThrow().joinToString("\n") { it.get("QUERY PLAN").asString() }
+            println("== EXPLAIN orgs_search_members q=$q (5 000 members)\n$plan")
+            assertTrue("Seq Scan" !in plan, "q=$q reads a table whole:\n$plan")
+        }
     }
 
     // The memory of a search, through the whole call, where the platform counts it (the JVM): the bytes allocated per

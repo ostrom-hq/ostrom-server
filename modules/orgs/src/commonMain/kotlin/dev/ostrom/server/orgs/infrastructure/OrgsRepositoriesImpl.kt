@@ -237,6 +237,20 @@ class MembersRepositoryImpl(private val driver: Driver) : MembersRepository {
             fetchAll(statement).getOrThrow().map { it.toMember() }
         }
 
+    // The function returns the page's member ids in order (OrgsMigrations version 7); `after` goes as text, "" for
+    // none.
+    override suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int): List<Member> =
+        driver.inOrg(orgId) {
+            fetchAll(
+                Statement.create(
+                    "SELECT $MEMBER_COLUMNS FROM orgs_search_members(:org, :prefix, " +
+                        "CAST(NULLIF(:after, '') AS UUID), :limit) WITH ORDINALITY s(member_id, n) " +
+                        "JOIN orgs_members m ON m.org_id = :org AND m.id = s.member_id ORDER BY s.n",
+                ).bind("org", orgId).bind("prefix", prefix).bind("after", after?.toString() ?: "")
+                    .bind("limit", limit),
+            ).getOrThrow().map { it.toMember() }
+        }
+
     override suspend fun count(orgId: Uuid): Int =
         driver.inOrg(orgId) {
             fetchAll(

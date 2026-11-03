@@ -9,7 +9,6 @@ import dev.ostrom.server.identity.domain.RateLimiter
 import dev.ostrom.server.identity.domain.SecretGenerator
 import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.User
-import dev.ostrom.server.identity.domain.UserPrefixSearch
 import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.orgs.domain.INVITATION_LIFETIME
 import dev.ostrom.server.orgs.domain.InvitationMailer
@@ -27,15 +26,12 @@ import kotlin.uuid.Uuid
  * [People] on the identity module's users.
  *
  * @param users The identity module's users.
- * @param search The identity module's prefix search.
  */
-class IdentityPeople(private val users: UsersRepository, private val search: UserPrefixSearch) : People {
+class IdentityPeople(private val users: UsersRepository) : People {
     override suspend fun get(id: Uuid): Person? = users.get(id)?.toPerson()
 
     override suspend fun getMany(ids: Collection<Uuid>): List<Person> =
         users.getMany(ids).map { it.toPerson() }
-
-    override suspend fun matching(ids: Collection<Uuid>, prefix: String): Set<Uuid> = search.matching(ids, prefix)
 
     override suspend fun findByLogin(login: String): Person? = users.findByLogin(login)?.toPerson()
 

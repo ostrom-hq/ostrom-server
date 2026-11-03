@@ -81,33 +81,20 @@ class ListMembersUseCaseImpl(
     override suspend fun invoke(orgId: Uuid, userId: Uuid, after: Uuid?, limit: Int, query: String?): MemberPage {
         requireMembership(orgs, members, orgId, userId)
         if (limit !in 1..MAX_MEMBER_PAGE) throw InvalidOrgRequestException("limit is 1 to $MAX_MEMBER_PAGE.")
-        if (query != null) {
-            if (query.length !in 1..MAX_MEMBER_QUERY) {
-                throw InvalidOrgRequestException("q is 1 to $MAX_MEMBER_QUERY characters.")
-            }
-            return search(orgId, after, limit, query.lowercase())
+        if (query != null && query.length !in 1..MAX_MEMBER_QUERY) {
+            throw InvalidOrgRequestException("q is 1 to $MAX_MEMBER_QUERY characters.")
         }
-        // One more than the page says whether another follows.
-        val read = members.page(orgId, after, limit + 1)
+        // One more than the page says whether another follows. The search runs under its indexes in the database
+        // (OrgsMigrations version 7; 10 teams of 5 000 in OrgsReadsBenchTest): only the page is read either way.
+        val read = if (query == null) {
+            members.page(orgId, after, limit + 1)
+        } else {
+            members.search(orgId, query, after, limit + 1)
+        }
         val list = read.take(limit)
         val byId = people.getMany(list.map { it.userId }).associateBy { it.id }
         val items = list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
         return MemberPage(items, if (read.size > limit) list.last().id else null)
-    }
-
-    // The search reads the team's members (bounded by its seats), asks the identity module which of them the prefix
-    // names in one query, and reads the people of the page only: three queries (OrgsReadsBenchTest, 5 000 members).
-    private suspend fun search(orgId: Uuid, after: Uuid?, limit: Int, prefix: String): MemberPage {
-        val all = members.list(orgId)
-        val from = if (after == null) 0 else all.indexOfFirst { it.id == after } + 1
-        if (after != null && from == 0) return MemberPage(emptyList(), null)
-        val following = all.drop(from)
-        val named = people.matching(following.map { it.userId }, prefix)
-        val found = following.filter { it.userId in named }
-        val page = found.take(limit)
-        val byId = people.getMany(page.map { it.userId }).associateBy { it.id }
-        val items = page.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it) } }
-        return MemberPage(items, if (found.size > limit) page.last().id else null)
     }
 }
 

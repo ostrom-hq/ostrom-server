@@ -115,6 +115,17 @@ interface MembersRepository {
     suspend fun page(orgId: Uuid, after: Uuid?, limit: Int): List<Member>
 
     /**
+     * A page of the members whose login or name starts with [prefix], whatever the case, oldest first.
+     *
+     * @param orgId The organization.
+     * @param prefix The start of the login or name, a value: its own `%` and `_` match only themselves.
+     * @param after The member the page starts after; an unknown one gives an empty page.
+     * @param limit The most members.
+     * @return The members.
+     */
+    suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int): List<Member>
+
+    /**
      * How many members the organization has.
      *
      * @param orgId The organization.

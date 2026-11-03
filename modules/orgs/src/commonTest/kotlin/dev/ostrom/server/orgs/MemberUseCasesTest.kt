@@ -12,10 +12,10 @@ import dev.ostrom.server.orgs.domain.MAX_MEMBER_PAGE
 import dev.ostrom.server.orgs.domain.MAX_MEMBER_QUERY
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.MemberNotFoundException
+import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.NotAllowedException
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgNotFoundException
-import dev.ostrom.server.orgs.domain.People
 import dev.ostrom.server.orgs.domain.Person
 import dev.ostrom.server.orgs.domain.RemoveMemberUseCaseImpl
 import dev.ostrom.server.orgs.fakes.OrgsWorld
@@ -92,10 +92,11 @@ class MemberUseCasesTest {
         assertNull(afterBob.next)
         assertTrue(list(org.id, carl.id, Uuid.random(), 2, "d").items.isEmpty())
         // A person deleted between the search and the read of the page is not shown.
-        val vanished = object : People by world.people {
-            override suspend fun matching(ids: Collection<Uuid>, prefix: String) = ids.toSet()
+        val vanished = object : MembersRepository by world.members {
+            override suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int) =
+                world.members.page(orgId, after, limit)
         }
-        val listWithAVanished = ListMembersUseCaseImpl(world.orgs, world.members, vanished)
+        val listWithAVanished = ListMembersUseCaseImpl(world.orgs, vanished, world.people)
         assertEquals(4, listWithAVanished(org.id, carl.id, null, 10, "z").items.size)
         for (query in listOf("", "x".repeat(MAX_MEMBER_QUERY + 1))) {
             assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, null, 2, query) }
