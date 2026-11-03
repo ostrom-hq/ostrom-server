@@ -102,8 +102,15 @@ class UsageDailyTotalsPostgresTest {
             "WHERE cost_micros % 2 = 1").getOrThrow()
         server.assertTotalsAreTheLedgers("an update by another role than the organization's")
 
+        owner.execute("UPDATE usage_events SET cost_micros = 0 WHERE session_id = 'moved'").getOrThrow()
+        server.assertTotalsAreTheLedgers("an update that brings calls to zero")
+
+        // The backfill as version 7 runs it: by the router, under the ledger's forced policies.
         owner.execute("DELETE FROM usage_daily").getOrThrow()
-        owner.execute(DAILY_TOTALS_OF_THE_LEDGER).getOrThrow()
+        server.database.owner.transaction {
+            execute("SET LOCAL ROLE ostrom_router").getOrThrow()
+            execute(DAILY_TOTALS_OF_THE_LEDGER).getOrThrow()
+        }
         server.assertTotalsAreTheLedgers("the totals version 7 writes from the ledger")
 
         assertFails("An organization never writes its totals") {

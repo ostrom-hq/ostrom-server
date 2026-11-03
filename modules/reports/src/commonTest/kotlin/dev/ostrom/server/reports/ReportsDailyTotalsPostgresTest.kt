@@ -9,7 +9,6 @@ import dev.ostrom.server.instance.InstanceModule
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
-import dev.ostrom.server.reports.domain.dayOf
 import dev.ostrom.server.reports.domain.startOf
 import dev.ostrom.server.reports.infrastructure.ReportsQueries
 import dev.ostrom.server.reports.infrastructure.SpendingRanges
@@ -21,7 +20,6 @@ import dev.ostrom.server.testing.serverTest
 import dev.ostrom.server.usage.UsageModule
 import dev.ostrom.server.usage.domain.UsageRepository
 import io.github.smyrgeorge.sqlx4k.Statement
-import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlinx.datetime.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -89,8 +87,7 @@ class ReportsDailyTotalsPostgresTest {
                 // The same query with no whole day: every hour of the window added up from the calls.
                 val calls = Statement.create(ReportsQueries.spending(member = member != null)).bind("org_id", ORG_A)
                 member?.let { calls.bind("member_id", it) }
-                val end = dayOf(to)
-                val expected = rows(SpendingRanges(end to end, from to to, to to to).bindTo(calls))
+                val expected = rows(SpendingRanges.allHours(from, to).bindTo(calls))
                 assertTrue(expected.isNotEmpty(), "$step, $name: the window has spending")
                 assertEquals(expected, rows(spendingStatement(ORG_A, member, from, to)), "$step, $name, $member")
             }

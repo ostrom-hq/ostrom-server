@@ -47,8 +47,20 @@ internal data class SpendingRanges(
         fun of(from: Instant, to: Instant): SpendingRanges {
             val first = dayOf(from).let { if (startOf(it) == from) it else it.plus(1, DateTimeUnit.DAY) }
             val end = dayOf(to)
-            if (first >= end) return SpendingRanges(end to end, from to to, to to to)
+            if (first >= end) return allHours(from, to)
             return SpendingRanges(first to end, from to startOf(first), startOf(end) to to)
+        }
+
+        /**
+         * The window from [from] to [to] with no whole day: every hour of it added up from the calls (no day, and
+         * an empty tail), as a window inside one day is read.
+         *
+         * @param from The start.
+         * @param to The end.
+         * @return Its parts.
+         */
+        fun allHours(from: Instant, to: Instant): SpendingRanges = dayOf(to).let { end ->
+            SpendingRanges(end to end, from to to, to to to)
         }
     }
 }

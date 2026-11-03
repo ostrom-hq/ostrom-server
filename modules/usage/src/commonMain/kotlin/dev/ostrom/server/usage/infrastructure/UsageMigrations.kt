@@ -58,29 +58,29 @@ internal const val DAILY_TOTALS_OF_THE_LEDGER: String =
         "SELECT org_id, CAST(at AT TIME ZONE 'UTC' AS DATE), member_id, session_id, launch_id, SUM(cost_micros) " +
         "FROM usage_events WHERE cost_micros > 0 GROUP BY 1, 2, 3, 4, 5"
 
-/** The key of a daily total, in the order every writer locks the totals: two writers never wait on each other. */
+/** The key of a daily total, in the order every writer locks the totals: two writers never deadlock. */
 private const val DAILY_KEY = "org_id, day, member_id, session_id, launch_id"
 
-/** The calls of a transition table added up by [DAILY_KEY], in its order. */
-private fun dailySums(calls: String) =
+/** The calls of a transition table that cost something, by [DAILY_KEY], their cost signed. */
+private fun signedCalls(calls: String, sign: String) =
     "SELECT c.org_id, CAST(c.at AT TIME ZONE 'UTC' AS DATE) AS day, c.member_id, c.session_id, c.launch_id, " +
-        "SUM(c.cost_micros) AS cost_micros FROM $calls c WHERE c.cost_micros > 0 GROUP BY 1, 2, 3, 4, 5 " +
-        "ORDER BY 1, 2, 3, 4, 5"
+        "${sign}c.cost_micros AS cost_micros FROM $calls c WHERE c.cost_micros > 0"
 
-/** Adds the calls of a transition table to their totals. */
-private fun addCalls(calls: String) =
-    "INSERT INTO usage_daily AS d ($DAILY_KEY, cost_micros) ${dailySums(calls)} ON CONFLICT ($DAILY_KEY) " +
+/**
+ * Adds the calls of [added] to their totals and takes those of [removed] away, in one upsert through the key's
+ * unique index, in key order; then drops the totals a removal brought to zero, among those of its days.
+ */
+private fun applyCalls(added: String?, removed: String?): String {
+    val signed = listOfNotNull(added?.let { signedCalls(it, "") }, removed?.let { signedCalls(it, "-") })
+    val upsert = "INSERT INTO usage_daily AS d ($DAILY_KEY, cost_micros) SELECT $DAILY_KEY, SUM(cost_micros) " +
+        "FROM (${signed.joinToString(" UNION ALL ")}) s GROUP BY 1, 2, 3, 4, 5 HAVING SUM(cost_micros) <> 0 " +
+        "ORDER BY 1, 2, 3, 4, 5 ON CONFLICT ($DAILY_KEY) " +
         "DO UPDATE SET cost_micros = d.cost_micros + EXCLUDED.cost_micros;"
-
-/** Takes the calls of a transition table from their totals, locked in key order first, and drops a total at zero. */
-private fun removeCalls(calls: String): String {
-    val same = "d.org_id = o.org_id AND d.day = o.day AND d.member_id IS NOT DISTINCT FROM o.member_id AND " +
-        "d.session_id IS NOT DISTINCT FROM o.session_id AND d.launch_id IS NOT DISTINCT FROM o.launch_id"
-    return "PERFORM 1 FROM usage_daily d JOIN (${dailySums(calls)}) o ON $same " +
-        "ORDER BY d.org_id, d.day, d.member_id, d.session_id, d.launch_id FOR UPDATE OF d; " +
-        "UPDATE usage_daily d SET cost_micros = d.cost_micros - o.cost_micros FROM (${dailySums(calls)}) o " +
-        "WHERE $same; " +
-        "DELETE FROM usage_daily d USING (${dailySums(calls)}) o WHERE $same AND d.cost_micros <= 0;"
+    val drop = removed?.let {
+        " DELETE FROM usage_daily d WHERE d.cost_micros <= 0 AND (d.org_id, d.day) IN " +
+            "(SELECT c.org_id, CAST(c.at AT TIME ZONE 'UTC' AS DATE) FROM $it c);"
+    }.orEmpty()
+    return upsert + drop
 }
 
 /** A trigger function of the totals, run as `ostrom_router` whoever writes the ledger. */
@@ -103,9 +103,11 @@ private val DAILY_FUNCTIONS = listOf("usage_daily_add", "usage_daily_remove", "u
  * the role that writes: an insert adds its calls, a delete (the retention purge among others) takes them away, an
  * update does both, a truncate empties them. Their functions run as `ostrom_router` (`SECURITY DEFINER`, the module's
  * pattern since version 4), the only role that writes the totals: an organization reads its own and changes none.
- * Every writer locks the totals in key order, so two never deadlock; calls of one session and day wait for each
- * other's commit on their total. The ledger is locked against writes while the totals of the calls recorded before
- * are written, by the router, which reads every organization's calls inside its role; writes wait meanwhile.
+ * Every write, an update's old and new keys together, reaches the totals in one upsert in key order through their
+ * unique index, so two writers never deadlock; calls of one session and day wait for each other's commit on their
+ * total. The ledger is locked against writes while the totals of the calls recorded before are written, by the
+ * router, which reads every organization's calls inside its role: writes wait for one pass over the ledger, short on
+ * the ledgers of today, and no call is counted twice or missed.
  */
 private val DAILY_TOTALS_SQL: String = listOf(
     """
@@ -128,9 +130,9 @@ private val DAILY_TOTALS_SQL: String = listOf(
         USING (current_user = 'ostrom_router') WITH CHECK (current_user = 'ostrom_router');
     GRANT SELECT, INSERT, UPDATE, DELETE ON usage_daily TO ostrom_router;
     """.trimIndent(),
-    dailyFunction("usage_daily_add", addCalls("usage_events_added")),
-    dailyFunction("usage_daily_remove", removeCalls("usage_events_removed")),
-    dailyFunction("usage_daily_change", removeCalls("usage_events_removed") + " " + addCalls("usage_events_added")),
+    dailyFunction("usage_daily_add", applyCalls("usage_events_added", null)),
+    dailyFunction("usage_daily_remove", applyCalls(null, "usage_events_removed")),
+    dailyFunction("usage_daily_change", applyCalls("usage_events_added", "usage_events_removed")),
     dailyFunction("usage_daily_clear", "DELETE FROM usage_daily;"),
     "GRANT CREATE ON SCHEMA public TO ostrom_router;",
     DAILY_FUNCTIONS.joinToString("\n") {
