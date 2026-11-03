@@ -511,13 +511,6 @@ class CompilerPostgresTest {
         val restored = server.call("user:a:lead", restorePath, "POST").body<PackageSummary>()
         assertFalse(restored.revoked)
         assertNull(restored.revokedBy)
-        // The organization's package, pinned under `*`: the list says what its status says.
-        val organization = server.call("agent:a:l1", "/api/v1/packages/current").body<PackageEnvelope>()
-        val listedOrganization = server.call("user:a:lead", "/api/v1/packages").body<PackagesPage>().items
-            .single { it.repo == null }
-        val organizationStatus = "/api/v1/packages/${organization.contentDigest}/status"
-        assertEquals(server.call("user:a:x", organizationStatus).body<PackageSummary>(), listedOrganization)
-        assertEquals(organization.pinned, listedOrganization.pinned)
 
         val audit = server.call("user:a:lead", "/api/v1/packages/audit?limit=500").body<AuditPage>().items
         val events = listOf("package.restored", "package.revoked", "package.pinned", "package.compiled")
@@ -525,6 +518,13 @@ class CompilerPostgresTest {
         assertEquals(1, server.call("user:a:lead", "/api/v1/packages/audit?limit=1").body<AuditPage>().items.size)
         assertEquals(4, server.call("user:a:lead", "/api/v1/packages/audit").body<AuditPage>().items.size)
         assertTrue(server.call("user:b:lead", "/api/v1/packages/audit").body<AuditPage>().items.isEmpty())
+        // After the audit, which it adds to: the organization's package, pinned under `*`, listed as its status says.
+        val organization = server.call("agent:a:l1", "/api/v1/packages/current").body<PackageEnvelope>()
+        val listedOrganization = server.call("user:a:lead", "/api/v1/packages").body<PackagesPage>().items
+            .single { it.repo == null }
+        val organizationStatus = "/api/v1/packages/${organization.contentDigest}/status"
+        assertEquals(server.call("user:a:x", organizationStatus).body<PackageSummary>(), listedOrganization)
+        assertEquals(organization.pinned, listedOrganization.pinned)
 
         val preview = server.call("user:a:lead", "/api/v1/packages/preview", "POST", PreviewRequest("acme-api"))
             .body<JsonObject>()
