@@ -72,7 +72,11 @@ class UseGateUseCaseImpl(
         // ungated gate never gets a yes: no session is read for it.
         val before = if (use == GateUse.RELEASE) null else repository.get(actor.orgId, gateId)
         before?.let { receipts.ensureSigned(it) }
-        val open = before == null || before.status in WITHOUT_YES || inOpenSession(actor, before)
+        val open = when {
+            before == null -> true
+            before.status == GateStatus.SHADOW || before.status == GateStatus.UNGATED -> true
+            else -> inOpenSession(actor, before)
+        }
         return move(actor, gateId, use, open)
     }
 
@@ -128,10 +132,13 @@ class UseGateUseCaseImpl(
 
     // An approved yes covers its action only signed, within its lifetime, and in an open session that asked for it.
     private fun usable(gate: Gate, now: Instant, open: Boolean): Gate {
-        if (gate.receiptId == null) throw GateNotUsableException(UNSIGNED)
-        if (gate.yesExpired(now)) throw GateNotUsableException(EXPIRED)
-        if (!open) throw GateNotUsableException(ENDED)
-        return gate
+        val refusal = when {
+            gate.receiptId == null -> UNSIGNED
+            gate.yesExpired(now) -> EXPIRED
+            !open -> ENDED
+            else -> return gate
+        }
+        throw GateNotUsableException(refusal)
     }
 
     // A yes goes back in play once: a second release would let reserve, launch and release loop until it expires.
@@ -161,7 +168,6 @@ class UseGateUseCaseImpl(
     }
 
     private companion object {
-        val WITHOUT_YES = setOf(GateStatus.SHADOW, GateStatus.UNGATED)
         const val ENDED = "The session that asked for this yes has ended. Ask again in an open session."
         const val EXPIRED = "This yes expired: it waits 15 minutes for its action. Ask again."
         const val RELEASED = "This yes was already released once: use it for this action, or ask again."
