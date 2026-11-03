@@ -161,7 +161,8 @@ class OrgsReadsBenchTest {
         }
     }
 
-    // The case that asked for `q`: a team of 5 000, a keystroke every 250 ms. Each search keeps the read budget on the
+    // The case that asked for `q`: a team of 5 000, a keystroke every 250 ms, among 10 such organizations (with only two,
+    // one team is half of each table and the planner rightly reads it whole). Each search keeps the read budget on the
     // median of three trials: the first letter (every member), a prefix of 1 111, and one member.
     @Test
     fun theSearchOfAFiveThousandTeamKeepsItsBudget() = benchTest(listOf(IdentityModule, OrgsModule), null) { server ->
@@ -182,10 +183,30 @@ class OrgsReadsBenchTest {
         }
         writeReadReport("orgs-search", searches)
         searches.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }
+        server.searchMemory(owners.first())
+    }
+
+    // The memory of a search, through the whole call, where the platform counts it (the JVM): the bytes allocated per
+    // search over 20 in a row, and the heap's peak meanwhile. Printed for the PR; bounded so a regression shows.
+    private suspend fun TestServer.searchMemory(owner: StartedSession) {
+        for (q in listOf("u", "user0-4")) {
+            val path = "/api/v1/orgs/org0/members?q=$q&limit=$PAGE"
+            client.get(path) { session(owner) }
+            resetHeapPeak()
+            val before = allocatedBytes() ?: return
+            repeat(MEMORY_CALLS) { assertTrue(client.get(path) { session(owner) }.status.isSuccess()) }
+            val perSearch = ((allocatedBytes() ?: before) - before) / MEMORY_CALLS
+            println("memory q=$q (5 000 members): ${perSearch / KIB} KiB allocated per search, heap peak " +
+                "${(heapPeakBytes() ?: 0) / KIB / KIB} MiB")
+            assertTrue(perSearch < MAX_SEARCH_BYTES, "q=$q allocates $perSearch bytes per search")
+        }
     }
 
     private companion object {
-        const val LARGE_ORGS = 2
+        const val KIB = 1024L
+        const val MEMORY_CALLS = 20
+        const val MAX_SEARCH_BYTES = 64L * 1024 * 1024
+        const val LARGE_ORGS = 10
         const val LARGE_TEAM = 5_000
         const val TRIALS = 3
         const val MAX_QUERY = 100
