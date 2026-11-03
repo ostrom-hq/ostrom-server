@@ -131,12 +131,10 @@ class ContractObserver(
                 is OutgoingContent.NoContent -> ByteArray(0)
                 else -> null
             }
-            val streamed = content is OutgoingContent.ReadChannelContent ||
-                content is OutgoingContent.WriteChannelContent
             when {
                 body != null -> observe(method, path, status, content.contentType, body)
-                streamed && reads(method, path, status) -> transformBodyTo(
-                    Copied(content, CoroutineScope(streams)) { observe(method, path, status, content.contentType, it) },
+                reads(method, path, status) -> transformBodyTo(
+                    copied(content, CoroutineScope(streams)) { observe(method, path, status, content.contentType, it) },
                 )
             }
         }
@@ -232,7 +230,10 @@ class ContractObserver(
             .filter { it.startsWith(DATA) }
             .map { it.removePrefix(DATA).removePrefix(" ") }
             .filter { it != done }
-            .flatMap { data -> parsed(data)?.let { schema.violations(events, it) } ?: listOf(body(NOT_JSON_EVENT)) }
+            .flatMap { data ->
+                val event = parsed(data)
+                if (event == null) listOf(body(NOT_JSON_EVENT)) else schema.violations(events, event)
+            }
 
     // Whether a streamed answer is checked: a served operation's, with a status it does not declare or that it reads.
     private fun reads(method: String, path: String, status: Int): Boolean =
@@ -245,6 +246,23 @@ class ContractObserver(
     }
 
     private fun body(detail: String) = Violation("$", DriftKind.BODY, detail)
+}
+
+/**
+ * A streamed answer (a channel, or a writer) copied as it goes to the client; any other (a protocol upgrade) as it is.
+ *
+ * @param content The answer.
+ * @param scope Where the copy runs.
+ * @param observed What to do with the whole answer, once it ends.
+ * @return The answer to send.
+ */
+internal fun copied(
+    content: OutgoingContent,
+    scope: CoroutineScope,
+    observed: suspend (ByteArray) -> Unit,
+): OutgoingContent = when (content) {
+    is OutgoingContent.ReadChannelContent, is OutgoingContent.WriteChannelContent -> Copied(content, scope, observed)
+    else -> content
 }
 
 /**

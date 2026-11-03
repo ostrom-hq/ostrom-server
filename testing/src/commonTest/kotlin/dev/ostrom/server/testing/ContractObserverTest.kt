@@ -22,11 +22,15 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readString
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -34,6 +38,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /** [ContractObserver] checks every answer of a server against the contract, and [Contract.from] finds the contract. */
 class ContractObserverTest {
@@ -146,6 +151,19 @@ class ContractObserverTest {
         assertTrue("a data: that is not JSON" in failure, failure)
         val seen = report(reports).lines().filter { it.startsWith("seen") }.sorted()
         assertEquals(listOf("seen listThings", "seen streamThings"), seen, "Each answer is read to its end")
+    }
+
+    @Test
+    fun anUpgradeIsNeitherCopiedNorObserved() {
+        val upgrade = object : OutgoingContent.ProtocolUpgrade() {
+            override suspend fun upgrade(
+                input: ByteReadChannel,
+                output: ByteWriteChannel,
+                engineContext: CoroutineContext,
+                userContext: CoroutineContext,
+            ): Job = Job()
+        }
+        assertSame(upgrade, copied(upgrade, CoroutineScope(Job())) { fail("Never observed") })
     }
 
     @Test
