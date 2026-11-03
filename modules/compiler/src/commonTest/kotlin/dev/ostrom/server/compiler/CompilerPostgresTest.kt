@@ -304,9 +304,9 @@ class CompilerPostgresTest {
         assertEquals(1, server.call("user:a:dev", "/api/v1/workflows?repo=acme-api").body<WorkflowsPage>().items.size)
         assertEquals(HttpStatusCode.OK, server.call("user:a:dev", "/api/v1/workflows/release").status)
 
-        val decisions = server.koin.get<CompilerRepository>().decisions(orgA)
-        assertEquals(listOf("dev", "lead"), decisions.map { it.by })
-        val receipt = server.koin.get<GetReceiptUseCase>()(orgA, assertNotNull(decisions.last().receiptId))
+        val decisions = server.koin.get<CompilerRepository>().lastDecisions(orgA)
+        assertEquals(listOf("lead"), decisions.map { it.by }, "The last decision on release, not dev's before it")
+        val receipt = server.koin.get<GetReceiptUseCase>()(orgA, assertNotNull(decisions.single().receiptId))
         assertEquals("workflow", receipt.getValue("subject").jsonObject.getValue("kind").jsonPrimitive.content)
         val answer = receipt.getValue("decisions").jsonArray.single().jsonObject
         assertEquals("accept", answer.getValue("result").jsonPrimitive.content)
@@ -428,7 +428,10 @@ class CompilerPostgresTest {
         assertNull(deleting.after)
         assertNull(change.apply(orgA, delete, lead))
         assertEquals(HttpStatusCode.NotFound, server.call("user:a:lead", path).status)
-        val by = server.koin.get<CompilerRepository>().decisions(orgA).map { it.by }
+        val by = server.database.superuser.fetchAll(
+            "SELECT decided_by FROM compiler_decisions WHERE org_id = '0000000a-0000-0000-0000-000000000000' " +
+                "ORDER BY decided_at, id",
+        ).getOrThrow().map { it.get("decided_by").asString() }
         assertEquals(listOf("lead", lead.member.memberId.toString()), by.take(2), "By the gates, else the member")
 
         // An invalid workflow is refused when it is asked, not when an owner confirms it.
@@ -615,7 +618,12 @@ class CompilerPostgresTest {
 
         val decision = DecisionDoc("dec_1", "workflow", "w", "lead", "2026-10-30T08:00:00.000Z", null)
         repository.addDecision(orgA, decision)
-        assertEquals(listOf(decision), repository.decisions(orgA))
+        assertEquals(emptyList(), repository.lastDecisions(orgA), "A decision on no existing workflow is not cited")
+        server.database.superuser.execute(
+            "INSERT INTO compiler_workflows (org_id, id, doc, version, updated_by, updated_at, created_at) " +
+                "VALUES ('0000000a-0000-0000-0000-000000000000', 'w', '{}', 1, 'lead', now(), now())",
+        ).getOrThrow()
+        assertEquals(listOf(decision), repository.lastDecisions(orgA))
 
         val meta = JsonObject(mapOf("repo" to JsonPrimitive("acme-api")))
         val line = PackageAudit("aud_1", "2026-10-30T08:00:00.000Z", "package.pinned", "lead", "p1", meta)
@@ -711,9 +719,8 @@ class CompilerPostgresTest {
         ).getOrThrow()
         assertEquals(HttpStatusCode.Created, server.call("user:a:lead", "/api/v1/workflows", "POST", release()).status)
 
-        val last = server.koin.get<CompilerRepository>().decisions(orgA)
-            .filter { it.subjectId == "release" }
-            .maxBy { it.at }
+        val last = server.koin.get<CompilerRepository>().lastDecisions(orgA).single()
+        assertEquals("release", last.subjectId)
         assertEquals("lead", last.by)
     }
 }
