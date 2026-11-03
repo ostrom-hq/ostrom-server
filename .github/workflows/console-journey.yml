@@ -291,15 +291,20 @@ jobs:
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
-      # Every event of the test account forwarded to the server once it is ready; the server ignores the types it does
-      # not apply. Limits: the account is shared (another run's events reach this server, which answers unknown_org),
+      # The test account's events of the types the server applies (StripeEventUseCases; the CLI forwards nothing without
+      # a list), forwarded once the server is ready. Limits: the account is shared (another run's events reach this server, which answers unknown_org),
       # and the CLI retries no forward, so an event the server misses is lost for this run.
       - name: Stripe events forwarded to the server
         if: env.STRIPE_MODE == 'test'
         env:
           STRIPE_API_KEY: ${{ secrets.STRIPE_TEST_KEY }}
         run: |
-          nohup "$RUNNER_TEMP/stripe-cli/stripe" listen --skip-update \
+          events=checkout.session.completed,checkout.session.async_payment_succeeded
+          events=$events,checkout.session.async_payment_failed,customer.subscription.created
+          events=$events,customer.subscription.updated,customer.subscription.deleted,customer.subscription.paused
+          events=$events,customer.subscription.resumed,invoice.paid,invoice.payment_failed
+          events=$events,invoice.payment_action_required,invoice.finalized
+          nohup "$RUNNER_TEMP/stripe-cli/stripe" listen --skip-update --events "$events" \
             --forward-to http://127.0.0.1:4600/webhooks/stripe > "$RUNNER_TEMP/stripe-listen.log" 2>&1 &
           for _ in $(seq 1 30); do grep -q 'Ready!' "$RUNNER_TEMP/stripe-listen.log" && exit 0; sleep 1; done
           echo "::error::stripe listen is not ready"; head -n 40 "$RUNNER_TEMP/stripe-listen.log"; exit 1
