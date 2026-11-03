@@ -5,6 +5,7 @@ import dev.ostrom.server.gateway.domain.InferenceProvider
 import dev.ostrom.server.gateway.domain.ModelCallObserver
 import dev.ostrom.server.gateway.domain.ModelCallRecord
 import dev.ostrom.server.gateway.domain.ModelUsageSink
+import dev.ostrom.server.gateway.domain.OpenCalls
 import dev.ostrom.server.gateway.domain.SpendDecision
 import dev.ostrom.server.gateway.domain.SpendGuard
 import dev.ostrom.server.gateway.domain.TokenUsage
@@ -401,8 +402,10 @@ class GatewayPostgresTest {
                     first.await()
                 }
                 broken = null
-                assertEquals(events, admittedOnceFree().bodyAsText())
+                placeFree()
+                assertEquals(events, infer("messages", STREAM).bodyAsText())
                 // A call that fails gives its place back too: its provider breaks mid-stream.
+                placeFree()
                 val failing = ByteChannel()
                 broken = failing
                 coroutineScope {
@@ -415,30 +418,28 @@ class GatewayPostgresTest {
                         }
                         failing.cancel(IllegalStateException("connection reset"))
                     }
-                    try {
+                    val cut = try {
                         infer("messages", STREAM).bodyAsText()
                     } catch (_: Exception) {
                         ""
                     }
+                    assertFalse("overloaded_error" in cut, "The place was free: the call reached the provider")
                 }
                 broken = null
-                assertEquals(events, admittedOnceFree().bodyAsText())
+                placeFree()
+                assertEquals(events, infer("messages", STREAM).bodyAsText())
                 assertEquals(listOf("ok", "ok", "upstream_broken", "ok"), records.map { it.outcome })
             }
         }
     }
 
-    /** The next call, admitted as soon as the place is back: the route ends just after its answer does. */
-    private suspend fun TestServer.admittedOnceFree(): HttpResponse = withContext(Dispatchers.Default) {
-        withTimeout(10.seconds) {
-            var answer = infer("messages", STREAM)
-            while (answer.status == HttpStatusCode.ServiceUnavailable) {
-                delay(10.milliseconds)
-                answer = infer("messages", STREAM)
-            }
-            assertEquals(HttpStatusCode.OK, answer.status, answer.bodyAsText())
-            answer
-        }
+    /**
+     * Waits for every place to be back: the route gives it back just after its answer ends, so a call made at once
+     * could still be refused.
+     */
+    private suspend fun TestServer.placeFree() = withContext(Dispatchers.Default) {
+        val calls = koin.get<OpenCalls>()
+        withTimeout(10.seconds) { while (calls.open > 0) delay(5.milliseconds) }
     }
 
     @Test
