@@ -15,6 +15,7 @@ import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.kernel.http.throttledWaits
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -36,6 +37,14 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrot
         post<GatesApi> {
             val actor = actors.actorOf(call.requirePrincipal(), GateScopes.asking)
             call.respond(ask(actor, call.receive<GateAskRequest>().toAskGate()).toResponse(actor))
+        }
+        // Audit A6: the hook refused on the workstation and says so after the fact; the refusal stands whatever
+        // this answers.
+        post<GatesApi.LocalDenials> {
+            val principal = call.requirePrincipal()
+            val actor = actors.actorOf(principal, GateScopes.asking)
+            localDenial(actor, principal, call.receive<GateLocalDenial>().toLocalDenial())
+            call.respond(HttpStatusCode.Accepted)
         }
         // A hook waits here for its answer, at most 30 s, instead of asking again every second. Its waits are counted
         // apart from the reads: an agent waiting on many gates keeps its reads (AUDIT-SECU-LECTURES M1).
