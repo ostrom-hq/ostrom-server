@@ -170,7 +170,7 @@ class WorkflowsUseCaseImpl(
 
     override suspend fun delete(orgId: Uuid, id: String) {
         get(orgId, id)
-        val pinned = repository.packages(orgId, null).filter { !it.revoked }.any { stored ->
+        val pinned = repository.packages(orgId).filter { !it.revoked }.any { stored ->
             val pin = repository.pin(orgId, stored.envelope.repo)
             pin?.contentDigest == stored.envelope.contentDigest && compiles(stored.envelope.payload, id)
         }
