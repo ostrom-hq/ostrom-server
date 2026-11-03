@@ -88,7 +88,8 @@ ask_check() {
   docker exec -i iso-agent python3 -c '
 import json, socket, sys
 request = {"sessionId": "s-iso", "digest": "sha256:iso", "nodeId": "n-iso", "scriptId": "iso",
-           "script": sys.argv[1], "directory": "/workspace", "timeoutMs": 60000}
+           "script": sys.argv[1], "directory": sys.argv[2] if len(sys.argv) > 2 else "/workspace",
+           "timeoutMs": 60000}
 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 client.connect("/run/ostrom/checks.sock")
 client.sendall((json.dumps(request) + "\n").encode())
@@ -99,7 +100,7 @@ while not reply.endswith(b"\n"):
         break
     reply += chunk
 print(reply.decode().strip())
-' "$1"
+' "$@"
 }
 for _ in $(seq 1 30); do
   docker exec iso-agent test -S /run/ostrom/checks.sock && break
@@ -176,3 +177,11 @@ case "$tail_text" in
 esac
 if docker exec iso-checks pgrep -f "sleep 50[7]" > /dev/null; then fail "A process of a check outlived it."; fi
 echo "R4: the runner keeps its link socket, a check leaves no process, no home and no descriptor to the next one."
+
+# R7 (audit runner 2): a link the agent leaves in the workspace never takes a check outside it.
+docker exec iso-agent ln -s / /workspace/up
+reply=$(ask_check 'pwd; echo ran' /workspace/up)
+test "$(field exit)" = 126 || fail "A check ran through a link out of the workspace: $reply"
+case "$(field outputTail)" in *ran*) fail "The check's script ran outside the workspace: $reply" ;; esac
+docker exec iso-agent rm /workspace/up
+echo "R7: a check's folder is its real path, inside the workspace only."
