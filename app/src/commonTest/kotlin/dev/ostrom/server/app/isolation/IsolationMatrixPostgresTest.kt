@@ -82,6 +82,8 @@ class IsolationMatrixPostgresTest {
         val cases = casesNaming(ISOLATION_REGISTRY, LAUNCH_SEEDS)
         // The other launch is of the agent's own organization: a 403 may say it exists, a success is the finding.
         val matrix = IsolationMatrix(direct(), cases, a.values + other, other.values.toSet(), strict = false)
+        // These two benches stopped on Kotlin/Native without a word (run 41694116498): each call is printed first.
+        matrix.trace = ::println
         val changes = matrix.watch(a.browser) { matrix.run(agent) }
         val missing = LAUNCH_SEEDS.filter { it != Seed.APPROVAL && it != Seed.WAIT && it !in other }
         report(a.problems + missing.map { "second launch: no $it" } + matrix.findings + changes, matrix)
@@ -92,6 +94,7 @@ class IsolationMatrixPostgresTest {
         val a = server.party("a")
         server.seed(a, spends = false)
         val matrix = IsolationMatrix(direct(), ISOLATION_REGISTRY, a.values, emptySet())
+        matrix.trace = ::println
         val anonymous = a.credentials.first()
         val findings = SERVICE_KEY_ROUTES.keys.flatMap { scope ->
             val secret = server.token(a.owner.user, a.org, TokenKind.SERVICE, setOf(scope)).second

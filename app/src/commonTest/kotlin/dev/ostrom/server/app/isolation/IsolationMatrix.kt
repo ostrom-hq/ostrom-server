@@ -89,6 +89,9 @@ internal class IsolationMatrix(
 
     /** How many requests the matrix sent. */
     var requests = 0
+
+    /** Told each call before it is sent, when set: the last one names the call a hung test stopped on. */
+    var trace: ((String) -> Unit)? = null
         private set
 
     /** Runs every case against every credential, reads before writes and creating writes last (see [order]). */
@@ -103,7 +106,8 @@ internal class IsolationMatrix(
      * by route. A route whose value B lacks is left out (its seed is reported missing by [attack]).
      */
     suspend fun reads(credential: Credential): Map<String, Answer> =
-        registry.entries.filter { (route, case) -> route.startsWith("GET ") && case is Case.Target }
+        // A stream never ends: its answer is no snapshot.
+        registry.entries.filter { (route, case) -> route.startsWith("GET ") && case is Case.Target && !case.stream }
             .mapNotNull { (route, case) ->
                 resolve(route, case as Case.Target)?.let { route to call(route, it, credential) }
             }.toMap()
@@ -199,6 +203,7 @@ internal class IsolationMatrix(
     /** Sends [resolved] as [credential]; a call with no answer in [CALL_TIMEOUT] is a [NO_ANSWER]. */
     internal suspend fun call(route: String, resolved: Resolved, credential: Credential): Answer {
         requests++
+        trace?.invoke("${route.substringBefore(' ')} ${resolved.path} [${credential.name}]")
         val request = client.prepareRequest(resolved.path) {
             method = HttpMethod.parse(route.substringBefore(' '))
             credential.apply(this)

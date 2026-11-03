@@ -8,11 +8,13 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Seeds a [party] through the API as its people and tokens do. A step that fails is written in the party's problems
@@ -32,15 +34,22 @@ internal class Seeder(private val server: TestServer, private val party: Party) 
         body: String? = null,
         expected: Int = CREATED,
     ): JsonElement? {
-        val response = server.client.request(route.substringAfter(' ')) {
-            method = HttpMethod.parse(route.substringBefore(' '))
-            credential.apply(this)
-            body?.let {
-                contentType(ContentType.Application.Json)
-                setBody(it)
+        val answered = withTimeoutOrNull(SEND_TIMEOUT) {
+            val response = server.client.request(route.substringAfter(' ')) {
+                method = HttpMethod.parse(route.substringBefore(' '))
+                credential.apply(this)
+                body?.let {
+                    contentType(ContentType.Application.Json)
+                    setBody(it)
+                }
             }
+            response to response.bodyAsText()
         }
-        val text = response.bodyAsText()
+        if (answered == null) {
+            party.problems += "seed ${party.marker} $step: $route did not answer in $SEND_TIMEOUT"
+            return null
+        }
+        val (response, text) = answered
         if (response.status.value != expected) {
             party.problems += "seed ${party.marker} $step: $route answers ${response.status.value}, not $expected: " +
                 text.take(PROBLEM_LENGTH)
@@ -78,6 +87,9 @@ internal class Seeder(private val server: TestServer, private val party: Party) 
     private companion object {
         const val CREATED = 201
         const val PROBLEM_LENGTH = 300
+
+        /** How long one seeding request may take: a hung one is a problem of the seed, not a hung test. */
+        val SEND_TIMEOUT = 10.seconds
     }
 }
 
