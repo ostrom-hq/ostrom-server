@@ -81,6 +81,14 @@ class PostgresGitHubDirectoryRepository(private val driver: Driver) : GitHubDire
         fetch(keyset(GitHubDirectoryQueries.teams(after != null), orgId, after, limit)).map { it.toTeam() }
     }
 
+    override suspend fun hasRepo(orgId: Uuid, name: String): Boolean = scoped(orgId) {
+        fetch(Statement.create(GitHubDirectoryQueries.REPO).bind("org", orgId).bind("key", name)).isNotEmpty()
+    }
+
+    override suspend fun hasTeam(orgId: Uuid, slug: String): Boolean = scoped(orgId) {
+        fetch(Statement.create(GitHubDirectoryQueries.TEAM).bind("org", orgId).bind("key", slug)).isNotEmpty()
+    }
+
     private fun keyset(sql: String, orgId: Uuid, after: String?, limit: Int): Statement {
         val statement = Statement.create(sql).bind("org", orgId).bind("limit", limit)
         return if (after == null) statement else statement.bind("after", after)
@@ -150,6 +158,12 @@ internal object GitHubDirectoryQueries {
     const val STATE = "SELECT synced_at, checked_at FROM github_directory_syncs WHERE org_id = :org"
     private const val REPO_COLUMNS = "name, description, language, default_branch, archived, pushed_at, owners"
     private const val TEAM_COLUMNS = "slug, name, members, repos"
+
+    /** One repository by its key, to check a cursor. */
+    const val REPO = "SELECT name FROM github_repos WHERE org_id = :org AND name = :key"
+
+    /** One team by its key, to check a cursor. */
+    const val TEAM = "SELECT slug FROM github_teams WHERE org_id = :org AND slug = :key"
 
     fun repos(cursor: Boolean): String = keyset("$REPO_COLUMNS FROM github_repos", "name", cursor)
 

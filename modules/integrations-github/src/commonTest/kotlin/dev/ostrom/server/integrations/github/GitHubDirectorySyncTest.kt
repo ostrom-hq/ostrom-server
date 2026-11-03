@@ -47,6 +47,9 @@ class GitHubDirectorySyncTest {
         assertEquals(emptyList(), repos(ORG, null, null).items)
         assertEquals(emptyList(), teams(ORG, null, null).items)
         assertEquals(0, api.reads)
+        // No page was ever given: a cursor is refused.
+        assertFailsWith<dev.ostrom.server.kernel.errors.InvalidPageException> { repos(ORG, "api", null) }
+        assertFailsWith<dev.ostrom.server.kernel.errors.InvalidPageException> { teams(ORG, "backend", null) }
     }
 
     @Test
@@ -59,6 +62,11 @@ class GitHubDirectorySyncTest {
         assertNull(first.next)
         assertEquals(listOf("backend", "platform"), teams(ORG, null, null).items.map { it.slug })
         assertEquals(1, api.reads, "The second list is served from the database")
+        // After the last row, nothing; after a name the directory does not hold, a 400.
+        assertEquals(emptyList(), repos(ORG, "web", null).items)
+        assertEquals(emptyList(), teams(ORG, "platform", null).items)
+        assertFailsWith<dev.ostrom.server.kernel.errors.InvalidPageException> { repos(ORG, "zzz", null) }
+        assertFailsWith<dev.ostrom.server.kernel.errors.InvalidPageException> { teams(ORG, "zzz", null) }
     }
 
     @Test

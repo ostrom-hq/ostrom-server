@@ -74,6 +74,12 @@ class MemoryGitHubDirectoryRepository : GitHubDirectoryRepository {
 
     override suspend fun teams(orgId: Uuid, after: String?, limit: Int) = directories[orgId]?.teams.orEmpty()
         .sortedBy { it.slug }.filter { after == null || it.slug > after }.take(limit)
+
+    override suspend fun hasRepo(orgId: Uuid, name: String) =
+        directories[orgId]?.repos.orEmpty().any { it.name == name }
+
+    override suspend fun hasTeam(orgId: Uuid, slug: String) =
+        directories[orgId]?.teams.orEmpty().any { it.slug == slug }
 }
 
 /** The stored App in memory: one App, single-use states. */
