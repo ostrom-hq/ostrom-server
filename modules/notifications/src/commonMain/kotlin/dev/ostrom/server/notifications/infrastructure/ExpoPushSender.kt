@@ -10,6 +10,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
@@ -50,18 +51,21 @@ class ExpoPushSender(
                 )
             }
         }
-        val status = try {
-            http.post(url) {
-                accessToken?.let { header(HttpHeaders.Authorization, "Bearer $it") }
-                contentType(ContentType.Application.Json)
-                setBody(body.toString())
-            }.status
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            throw PushNotSentException("Expo did not answer.")
-        }
+        val status = answer(body.toString()) ?: throw PushNotSentException("Expo did not answer.")
         if (!status.isSuccess()) throw PushNotSentException("Expo refused (${status.value}).")
+    }
+
+    /** Expo's status for [body], or null when it did not answer (connection, timeout). */
+    private suspend fun answer(body: String): HttpStatusCode? = try {
+        http.post(url) {
+            accessToken?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }.status
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
     }
 }
 

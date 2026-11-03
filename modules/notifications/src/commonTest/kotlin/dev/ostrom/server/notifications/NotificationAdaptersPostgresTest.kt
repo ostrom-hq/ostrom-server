@@ -92,9 +92,11 @@ class NotificationAdaptersPostgresTest {
         val credentials = server.koin.get<LiveCredentials>()
         val tokens = server.koin.get<ApiTokensRepository>()
         val ann = server.user("ann-n", "ann@example.com", verified = true)
-        // The kind does not matter to liveness; a phone app's token would also need its unlock key (identity's check).
+        // The kind does not matter to liveness; a phone app's token would also need its unlock key (identity's
+        // check).
         fun token(expiresAt: Instant?) = ApiToken(
-            Uuid.random(), ann.id, null, "app", TokenKind.PERSONAL, emptySet(), "hint", null, now, expiresAt, null, null,
+            Uuid.random(), ann.id, null, "app", TokenKind.PERSONAL, emptySet(), "hint", null, now, expiresAt,
+            null, null,
         )
         suspend fun live(id: Uuid, browser: Boolean = false) =
             credentials.live(ann.id, PushCredential(ann.id, id, browser))
