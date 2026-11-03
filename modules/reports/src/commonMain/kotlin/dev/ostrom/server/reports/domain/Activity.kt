@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.reports.domain
 
+import dev.ostrom.server.kernel.database.storableInstantOrNull
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlin.time.Instant
@@ -83,11 +84,7 @@ data class ActivityCursor(val at: Instant, val id: String) {
         fun of(wire: String): ActivityCursor {
             val at = wire.substringBefore(SEPARATOR, "")
             val id = wire.substringAfter(SEPARATOR, "")
-            val instant = try {
-                Instant.parse(at)
-            } catch (e: IllegalArgumentException) {
-                throw InvalidCursorException(e)
-            }
+            val instant = storableInstantOrNull(at) ?: throw InvalidCursorException(null)
             if (id.isEmpty()) throw InvalidCursorException(null)
             return ActivityCursor(instant, id)
         }
