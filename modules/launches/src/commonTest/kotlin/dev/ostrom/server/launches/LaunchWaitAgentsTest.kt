@@ -23,6 +23,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -37,7 +38,7 @@ class LaunchWaitAgentsTest {
         Launch("lch_1", ORG, ADA.userId, "ada", "acme/api", "claude-code", null, started, started + 24.hours)
 
     /** The sessions module's guard: `s-1` is an open session of `lch_1`; it records each check. */
-    private val sessions = object : GateSessions {
+    private class RecordingSessions : GateSessions {
         val checked = mutableListOf<Triple<Uuid, String, String?>>()
 
         override suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?) {
@@ -47,6 +48,8 @@ class LaunchWaitAgentsTest {
             }
         }
     }
+
+    private val sessions = RecordingSessions()
     private val agents = LaunchWaitAgents(LaunchAgents(launchers, launches, clock, executions), sessions)
 
     private fun agent(subject: String = "lch_1") =
@@ -56,7 +59,8 @@ class LaunchWaitAgentsTest {
     fun anAgentTokenIsThePersonWhoLaunchedItInsideItsLaunchsSession() = runTest {
         launches.create(launch)
         assertEquals(WaitAgent(ORG, memberOf(ADA.userId).toString(), "lch_1"), agents.resolve(agent(), "s-1"))
-        assertEquals(listOf(Triple(ORG, "s-1", "lch_1")), sessions.checked, "Checked as the gates check it")
+        val expected: List<Triple<Uuid, String, String?>> = listOf(Triple(ORG, "s-1", "lch_1"))
+        assertEquals(expected, sessions.checked, "Checked as the gates check it")
     }
 
     @Test
@@ -72,6 +76,6 @@ class LaunchWaitAgentsTest {
         clock.now = launch.expiresAt
         assertNull(agents.resolve(agent(), "s-1"), "Expired")
         assertNull(agents.resolve(agent("lch_2"), "s-1"), "Another launch")
-        assertEquals(emptyList(), sessions.checked)
+        assertTrue(sessions.checked.isEmpty(), "No session is read for a token that is nobody")
     }
 }
