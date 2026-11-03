@@ -81,6 +81,8 @@ sealed interface LeaseResult {
  * @param parser Reads quota headers.
  * @param spend What each account served this month.
  * @param clock The time.
+ * @param groups The accounts lent to the member through their groups: an account that does not name the member serves
+ *   them when one of their groups, where they are not paused, holds it.
  */
 class SharedAccountPool(
     private val accounts: SharedAccountRepository,
@@ -89,6 +91,7 @@ class SharedAccountPool(
     private val parser: QuotaHeaderParser,
     private val spend: AccountSpendReader,
     private val clock: Clock,
+    private val groups: AccountGroups = NoAccountGroups,
 ) {
     private val mutex = Mutex()
     private val inFlight = mutableMapOf<Uuid, Int>()
@@ -120,9 +123,8 @@ class SharedAccountPool(
     /** One try: a lease, a refusal, or null when the chosen account could not renew its tokens (now in [tried]). */
     private suspend fun attempt(request: Request, tried: MutableSet<Uuid>): LeaseResult? {
         val now = clock.now()
-        val usable = accounts.ready(request.orgId, request.provider).filter {
-            it.id !in tried && it.limits.allowedMembers?.contains(request.memberId) != false
-        }
+        val ready = accounts.ready(request.orgId, request.provider).filter { it.id !in tried }
+        val usable = groups.allowed(request.orgId, request.memberId, ready, now)
         val candidates = candidates(request.orgId, usable, now)
         val chosen = take(candidates.open, request.sessionKey, now)
         return when {
@@ -288,3 +290,19 @@ private fun cooldownEnd(observed: List<QuotaWindow>, headers: Map<String, String
 }
 
 private fun refused(reason: String, retryAt: Instant?) = LeaseResult.Refused(PoolRefusal(reason, retryAt))
+
+/**
+ * The accounts of [ready] that [memberId] may use: lent to the whole org, to them by name, or to a group they are in
+ * and not paused in at [now]. The groups are read only when an account names others than the member.
+ */
+private suspend fun AccountGroups.allowed(
+    orgId: Uuid,
+    memberId: Uuid,
+    ready: List<SharedAccount>,
+    now: Instant,
+): List<SharedAccount> {
+    val named = ready.filter { it.limits.allowedMembers?.contains(memberId) != false }
+    if (named.size == ready.size) return ready
+    val lent = lentTo(orgId, memberId, now)
+    return ready.filter { it in named || it.id in lent }
+}
