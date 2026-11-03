@@ -267,6 +267,15 @@ interface ApiTokensRepository {
      * @return How many tokens were revoked.
      */
     suspend fun revokeOfAgentSession(agentSessionId: String, at: Instant): Long
+
+    /**
+     * Deletes the agent tokens expired before [before], of every organization: revoked or not, none acts any more.
+     *
+     * @param before The expiry before which an agent token is deleted.
+     *
+     * @return How many were deleted.
+     */
+    suspend fun purgeAgentTokens(before: Instant): Long
 }
 
 /**

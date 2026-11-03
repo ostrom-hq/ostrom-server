@@ -72,7 +72,7 @@ class MemberUseCasesTest {
 
         assertEquals(listOf("ada", "bob", "carl", "dana"), members.map { it.login })
         assertNull(whole.next)
-        assertEquals("ada@example.com", members.first().email)
+        assertEquals("ada@example.com", list(org.id, bob.id, null, MAX_MEMBER_PAGE).items.first().email)
         assertFailsWith<OrgNotFoundException> { list(org.id, Uuid.random(), null, MAX_MEMBER_PAGE) }
         // Two at a time, each page after the previous one's next; the ghost (no person) is read, not shown.
         val first = list(org.id, carl.id, null, 2)
@@ -90,6 +90,24 @@ class MemberUseCasesTest {
         assertEquals(OrgRole.ADMIN, get(org.id, carl.id, "bob").member.role)
         assertFailsWith<MemberNotFoundException> { get(org.id, carl.id, "nobody") }
         assertEquals(5, CountMembersUseCaseImpl(world.members)(org.id))
+    }
+
+    @Test
+    fun onlyAnOwnerOrAnAdminSeesTheOtherMembersAddresses() = runTest {
+        val list = ListMembersUseCaseImpl(world.orgs, world.members, world.people)
+        val get = GetMemberUseCaseImpl(world.orgs, world.members, world.people)
+
+        // A member (or a token of theirs: the CLI's, the app's) sees their own address, never the others'.
+        val seenByMember = list(org.id, carl.id, null, MAX_MEMBER_PAGE).items.associate { it.login to it.email }
+
+        assertEquals(mapOf("ada" to null, "bob" to null, "carl" to "carl@example.com", "dana" to null), seenByMember)
+        assertNull(get(org.id, carl.id, "ada").email)
+        assertEquals("carl@example.com", get(org.id, carl.id, "carl").email)
+        assertEquals(
+            listOf("ada@example.com", "bob@example.com", "carl@example.com", "dana@example.com"),
+            list(org.id, ada.id, null, MAX_MEMBER_PAGE).items.map { it.email },
+        )
+        assertEquals("carl@example.com", get(org.id, bob.id, "carl").email)
     }
 
     @Test
