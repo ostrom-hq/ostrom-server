@@ -284,6 +284,14 @@ interface GatesCatalogUseCase {
      * @return The catalogue, in order.
      */
     suspend operator fun invoke(orgId: Uuid, repo: String?): List<CatalogEntry>
+
+    /**
+     * The catalogue of the organization and of every repository a gate is limited to, from the same reads.
+     *
+     * @param orgId The organization.
+     * @return Each catalogue by repository, null for the organization's.
+     */
+    suspend fun everywhere(orgId: Uuid): Map<String?, List<CatalogEntry>> = mapOf(null to invoke(orgId, null))
 }
 
 /**
@@ -297,9 +305,16 @@ class GatesCatalogUseCaseImpl(
     private val repository: CompilerRepository,
     private val sources: CompilerSources,
 ) : GatesCatalogUseCase {
-    override suspend fun invoke(orgId: Uuid, repo: String?): List<CatalogEntry> {
+    override suspend fun invoke(orgId: Uuid, repo: String?): List<CatalogEntry> = catalogue(orgId).catalog(repo)
+
+    override suspend fun everywhere(orgId: Uuid): Map<String?, List<CatalogEntry>> {
+        val catalogue = catalogue(orgId)
+        return (listOf(null) + catalogue.repositories()).associateWith { catalogue.catalog(it) }
+    }
+
+    private suspend fun catalogue(orgId: Uuid): GatesCatalog {
         val workflows = repository.workflows(orgId).map { it.doc.workflow } + sources.ruleGates(orgId)
-        return GatesCatalog(workflows, sources.settings(orgId).prodApprover).catalog(repo)
+        return GatesCatalog(workflows, sources.settings(orgId).prodApprover)
     }
 }
 

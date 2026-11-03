@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.launches.domain.models.Launcher
 import kotlin.time.Duration
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Turns a person's credential into the [Launcher] it acts as (the identity and orgs modules, bound here). */
@@ -79,4 +80,22 @@ interface LaunchModelRules {
      * @return The refusal, or null when the model is allowed.
      */
     suspend fun refusal(launcher: Launcher, model: String): String?
+}
+
+/**
+ * Whether the launch a cloud session's runner opened still belongs to the session's current execution
+ * (AUDIT-SECU-RUNNER-2 R2): its agent token acts only while that execution runs, never after the session is paused,
+ * deleted or restarted, whatever the token's own expiry.
+ */
+fun interface CloudExecutions {
+    /**
+     * Tells whether the execution is current.
+     *
+     * @param orgId The launch's organization.
+     * @param cloudSessionId The cloud session that opened the launch.
+     * @param openedAt When the launch was opened.
+     *
+     * @return True while the session holds the execution that was running when the launch was opened.
+     */
+    suspend fun current(orgId: Uuid, cloudSessionId: Uuid, openedAt: Instant): Boolean
 }

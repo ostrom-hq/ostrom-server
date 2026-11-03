@@ -62,7 +62,9 @@ object WorkflowRunsModule : ServerModule {
         single<RunLaunches> { LaunchesRunLaunches(get()) }
         single<ReportRunnerCheckUseCase> { ReportRunnerCheckUseCaseImpl(get(), get(), get()) }
         single<GateCheckProofs> { RunsGateCheckProofs(get()) { get() } }
-        single { WorkflowRunsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single {
+            WorkflowRunsRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        }
     }
 
     override val migrations: List<SchemaMigration> = WorkflowRunsMigrations

@@ -2,6 +2,7 @@
 package dev.ostrom.server.rules.presentation
 
 import dev.ostrom.server.gates.domain.services.GateActorResolver
+import dev.ostrom.server.kernel.auth.ServiceKeyAudit
 import dev.ostrom.server.rules.domain.usecases.BulkUpdateRulesUseCase
 import dev.ostrom.server.rules.domain.usecases.CreateRuleUseCase
 import dev.ostrom.server.rules.domain.usecases.DeleteRuleUseCase
@@ -27,6 +28,7 @@ import dev.ostrom.server.secrets.domain.CallerResolver
  * @property listDecisions Lists the decisions.
  * @property getGatePolicy Reads the self-approval policy.
  * @property setGatePolicy Sets it.
+ * @property serviceKeys Audits the calls of a service key, which reads the rules for its organization's CI.
  */
 data class RulesRoutesDependencies(
     val callers: CallerResolver,
@@ -40,4 +42,5 @@ data class RulesRoutesDependencies(
     val listDecisions: ListDecisionsUseCase,
     val getGatePolicy: GetGatePolicyUseCase,
     val setGatePolicy: SetGatePolicyUseCase,
+    val serviceKeys: ServiceKeyAudit,
 )
