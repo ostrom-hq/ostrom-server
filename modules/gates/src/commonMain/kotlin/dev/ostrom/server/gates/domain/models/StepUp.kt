@@ -33,7 +33,7 @@ object StepUp {
      * @throws StepUpRequiredException A 403 asking to sign in again.
      * @throws BoundUnlockRequiredException A 403 asking the app to unlock again for this request.
      */
-    fun check(answer: Answer, authenticatedAt: Instant?, now: Instant, bound: Boolean? = null) {
+    fun check(answer: Answer, authenticatedAt: Instant?, now: Instant, bound: Boolean?) {
         if (answer == Answer.NO) return
         if (authenticatedAt == null || now - authenticatedAt > WITHIN) throw StepUpRequiredException()
         if (bound == false) throw BoundUnlockRequiredException()
