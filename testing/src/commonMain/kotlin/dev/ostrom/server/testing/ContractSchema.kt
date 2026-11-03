@@ -100,8 +100,6 @@ class ContractSchema(private val document: JsonObject) {
         return target as? JsonObject ?: error("The contract has nothing at $ref")
     }
 
-    private fun reference(ref: String) = JsonObject(mapOf(REF to JsonPrimitive(ref)))
-
     private fun against(schema: JsonObject, value: JsonElement, at: String): List<Violation> {
         val ref = schema[REF]?.jsonPrimitive?.content
         val all = schema["allOf"]?.jsonArray
@@ -132,15 +130,6 @@ class ContractSchema(private val document: JsonObject) {
             1 -> emptyList()
             0 -> listOf(Violation(at, DriftKind.TYPE, "matches no branch of oneOf: ${results.flatten()}"))
             else -> listOf(Violation(at, DriftKind.TYPE, "matches more than one branch of oneOf"))
-        }
-    }
-
-    private fun enumViolations(schema: JsonObject, value: JsonElement, at: String): List<Violation> {
-        val enum = schema["enum"]?.jsonArray
-        return if (enum == null || value in enum) {
-            emptyList()
-        } else {
-            listOf(Violation(at, DriftKind.TYPE, "$value is not one of $enum"))
         }
     }
 
@@ -179,24 +168,33 @@ class ContractSchema(private val document: JsonObject) {
             else -> listOf(Violation(at, DriftKind.UNDECLARED, "sent by the server, not declared by the contract"))
         }
     }
+}
 
-    private fun matches(type: String, value: JsonElement): Boolean {
-        // JsonNull is a primitive that is not a string, and none of these reads `null`.
-        val scalar = (value as? JsonPrimitive)?.takeIf { !it.isString }
-        return when (type) {
-            "null" -> value is JsonNull
-            "object" -> value is JsonObject
-            "array" -> value is JsonArray
-            "string" -> value is JsonPrimitive && value.isString
-            "boolean" -> scalar?.booleanOrNull != null
-            "integer" -> scalar?.longOrNull != null
-            "number" -> scalar?.doubleOrNull != null
-            else -> false
-        }
+private const val REF = "\$ref"
+private const val SCHEMAS = "#/components/schemas/"
+
+private fun reference(ref: String) = JsonObject(mapOf(REF to JsonPrimitive(ref)))
+
+private fun enumViolations(schema: JsonObject, value: JsonElement, at: String): List<Violation> {
+    val enum = schema["enum"]?.jsonArray
+    return if (enum == null || value in enum) {
+        emptyList()
+    } else {
+        listOf(Violation(at, DriftKind.TYPE, "$value is not one of $enum"))
     }
+}
 
-    private companion object {
-        const val REF = "\$ref"
-        const val SCHEMAS = "#/components/schemas/"
+private fun matches(type: String, value: JsonElement): Boolean {
+    // JsonNull is a primitive that is not a string, and none of these reads `null`.
+    val scalar = (value as? JsonPrimitive)?.takeIf { !it.isString }
+    return when (type) {
+        "null" -> value is JsonNull
+        "object" -> value is JsonObject
+        "array" -> value is JsonArray
+        "string" -> value is JsonPrimitive && value.isString
+        "boolean" -> scalar?.booleanOrNull != null
+        "integer" -> scalar?.longOrNull != null
+        "number" -> scalar?.doubleOrNull != null
+        else -> false
     }
 }
