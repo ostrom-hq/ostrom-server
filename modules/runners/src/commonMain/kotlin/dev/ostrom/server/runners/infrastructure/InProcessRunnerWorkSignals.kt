@@ -2,6 +2,7 @@
 package dev.ostrom.server.runners.infrastructure
 
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import dev.ostrom.server.runners.domain.RunnerWorkSignals
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -22,16 +23,17 @@ import kotlin.uuid.Uuid
  * heartbeats waiting here, never once per runner. A burst larger than the buffer drops the oldest wake-ups, which the
  * next look makes up for.
  *
- * @param hasWork Whether an organization has an execution queued, or assigned and not handed over yet.
+ * @param assignments Whether an organization has an execution queued, or assigned and not handed over yet.
  * @param logger Where a failed look is reported.
- * @param lookEvery Between two looks at the database.
+ * @param lookEvery Between two looks at the database: the longest a session queued on another instance waits for
+ *   its machine's heartbeat to look.
  * @param maxWaiting The heartbeats that may wait on this instance at once: each holds a request, never a database
  *   connection.
  */
 class InProcessRunnerWorkSignals(
-    private val hasWork: suspend (Uuid) -> Boolean,
+    private val assignments: RunnerAssignmentsRepository,
     private val logger: Logger,
-    private val lookEvery: Duration = LOOK_EVERY,
+    private val lookEvery: Duration = 1.seconds,
     private val maxWaiting: Int = MAX_WAITING,
 ) : RunnerWorkSignals {
     private val arrivals =
@@ -72,7 +74,7 @@ class InProcessRunnerWorkSignals(
     internal suspend fun look() {
         for (orgId in mutex.withLock { waiting.keys.toList() }) {
             val found = try {
-                hasWork(orgId)
+                assignments.hasWork(orgId)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -85,9 +87,6 @@ class InProcessRunnerWorkSignals(
 
     /** Defaults of the enclosing type. */
     companion object {
-        /** Between two looks: the longest a session queued on another instance waits for its machine. */
-        val LOOK_EVERY: Duration = 1.seconds
-
         /** The heartbeats one instance holds at once by default. */
         const val MAX_WAITING = 1_000
 

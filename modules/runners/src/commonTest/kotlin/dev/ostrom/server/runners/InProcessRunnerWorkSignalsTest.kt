@@ -3,6 +3,8 @@ package dev.ostrom.server.runners
 
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
+import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
+import dev.ostrom.server.runners.fakes.InMemoryRunnerAssignments
 import dev.ostrom.server.runners.fakes.ORG_A
 import dev.ostrom.server.runners.fakes.ORG_B
 import dev.ostrom.server.runners.infrastructure.InProcessRunnerWorkSignals
@@ -17,7 +19,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 class InProcessRunnerWorkSignalsTest {
@@ -32,8 +33,17 @@ class InProcessRunnerWorkSignalsTest {
     private val logger = RecordingLogger()
     private val looked = mutableListOf<Uuid>()
 
-    private fun signals(maxWaiting: Int = 10, hasWork: (Uuid) -> Boolean = { false }) =
-        InProcessRunnerWorkSignals({ looked += it; hasWork(it) }, logger, 1.seconds, maxWaiting)
+    private fun signals(maxWaiting: Int = 10, work: (Uuid) -> Boolean = { false }) =
+        InProcessRunnerWorkSignals(
+            object : RunnerAssignmentsRepository by InMemoryRunnerAssignments() {
+                override suspend fun hasWork(orgId: Uuid): Boolean {
+                    looked += orgId
+                    return work(orgId)
+                }
+            },
+            logger,
+            maxWaiting = maxWaiting,
+        )
 
     @Test
     fun workArrivingWakesTheHeartbeatsOfItsOrganizationOnly() = runTest {

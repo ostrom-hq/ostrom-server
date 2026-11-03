@@ -116,10 +116,7 @@ object RunnersModule : ServerModule {
             val config = get<RunnersConfig>()
             DockerExecutionPlan(null, config.serverUrl, config.runnerImage)
         }
-        single<RunnerWorkSignals> {
-            val assignments = get<RunnerAssignmentsRepository>()
-            InProcessRunnerWorkSignals({ assignments.hasWork(it) }, get())
-        }
+        single<RunnerWorkSignals> { InProcessRunnerWorkSignals(get(), get()) }
         single<RuntimeDriver> { RuntimeDrivers.create(get(), { RegisteredRuntimeDriver(get(), get(), get()) }) }
         single<CreateCloudSessionUseCase> {
             MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get()), get())
