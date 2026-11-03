@@ -23,8 +23,9 @@ private fun OrgPrincipal.requireKeyAdmin(): OrgPrincipal {
 }
 
 /**
- * Creates a service key of an organization: a token of the organization, not of a person, with the scopes and lifetime
- * a personal token takes. Only its SHA-256 is stored; its secret exists once, in the answer.
+ * Creates a service key of an organization: a token of the organization, not of a person, with some of
+ * [SERVICE_KEY_SCOPES] and the lifetime a personal token takes. Only its SHA-256 is stored; its secret exists once, in
+ * the answer.
  */
 interface CreateServiceKeyUseCase {
     /**
@@ -33,12 +34,12 @@ interface CreateServiceKeyUseCase {
      * @param member The member creating it, in its organization.
      * @param userId The person behind [member], recorded as its creator and in the audit log.
      * @param name Its label.
-     * @param scopes What it allows (at least one).
+     * @param scopes What it allows: at least one of [SERVICE_KEY_SCOPES], nothing else.
      * @param lifetime How long it lives (1 to 366 days), or null for a key that does not expire.
      *
      * @return The key and its secret, shown once.
      *
-     * @throws ServiceKeysAdminRequiredException, InvalidTokenNameException, InvalidScopesException,
+     * @throws ServiceKeysAdminRequiredException, InvalidTokenNameException, InvalidServiceKeyScopesException,
      *   InvalidTokenLifetimeException, TooManyServiceKeysException
      */
     suspend operator fun invoke(
@@ -78,7 +79,10 @@ class CreateServiceKeyUseCaseImpl(
         val orgId = member.requireKeyAdmin().orgId
         val label = name.trim()
         if (label.isEmpty() || label.length > MAX_NAME) throw InvalidTokenNameException()
-        val validScopes = validateScopes(scopes)
+        val validScopes = scopes.toSet()
+        if (validScopes.isEmpty() || !SERVICE_KEY_SCOPES.containsAll(validScopes)) {
+            throw InvalidServiceKeyScopesException()
+        }
         if (lifetime != null && (lifetime < 1.days || lifetime > MAX_TOKEN_LIFETIME)) {
             throw InvalidTokenLifetimeException()
         }

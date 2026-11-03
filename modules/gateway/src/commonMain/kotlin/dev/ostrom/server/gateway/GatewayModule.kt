@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gateway
 
+import dev.ostrom.core.telemetry.Telemetry
 import dev.ostrom.server.gateway.domain.AllowAllSpend
 import dev.ostrom.server.gateway.domain.BudgetCheck
 import dev.ostrom.server.gateway.domain.GatewaySettingsRepository
@@ -28,6 +29,7 @@ import dev.ostrom.server.gateway.infrastructure.GatewayMigrations
 import dev.ostrom.server.gateway.infrastructure.GatewaySettingsRepositoryImpl
 import dev.ostrom.server.gateway.infrastructure.KtorInferenceUpstream
 import dev.ostrom.server.gateway.infrastructure.MeteredModelCallObserver
+import dev.ostrom.server.gateway.infrastructure.SpanModelCallTracer
 import dev.ostrom.server.gateway.presentation.GatewayGovernanceChange
 import dev.ostrom.server.gateway.presentation.GatewayRoutesDependencies
 import dev.ostrom.server.gateway.presentation.gatewayRoutes
@@ -99,6 +101,7 @@ object GatewayModule : ServerModule {
                 usage = getOrNull<ModelUsageSink>() ?: NoModelUsageSink,
                 observer = MeteredModelCallObserver(get(), getOrNull<ModelCallObserver>() ?: NoModelCallObserver),
                 clock = get(),
+                tracer = SpanModelCallTracer(get<Telemetry>().tracer),
             )
         }
         single<GetGatewaySettingsUseCase> { GetGatewaySettingsUseCaseImpl(get()) }

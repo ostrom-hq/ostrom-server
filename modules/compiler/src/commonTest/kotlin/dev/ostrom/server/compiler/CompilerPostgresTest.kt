@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.compiler
 
+import dev.ostrom.core.api.models.GateAction
 import dev.ostrom.core.api.models.NodeRun
 import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.api.models.Workflow
@@ -217,6 +218,36 @@ class CompilerPostgresTest {
             name = "Release acme-api",
         )
         return PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+    }
+
+    // A gate whose only declared action is limited to acme-api: rev-b answers deploys there, nowhere else.
+    private fun apiDeploys(): JsonObject {
+        val deploy = GateAction("deploy", "Deploy", patterns = emptyList(), repos = listOf("acme-api"))
+        val gate = node("g", GATE, label = "Deploy", approvers = listOf("rev-b"), actions = listOf(deploy))
+        val workflow = workflow("deploys", listOf(node("t", TRIGGER, label = "deploy"), gate), chain("t", "g"))
+        return PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
+    }
+
+    // PARCOURS 3.3: the organization's view left out a gate limited to one repository (`covers(repos, null)`).
+    @Test
+    fun theOrganizationsApproversHaveAGateLimitedToOneRepository() = compilerTest { server ->
+        server.call("user:a:lead", "/api/v1/workflows", "POST", release())
+        server.call("user:a:lead", "/api/v1/workflows", "POST", apiDeploys())
+
+        val org = server.call("user:a:lead", "/api/v1/gates/approvers").body<ApproversGraphResponse>()
+        assertEquals(listOf("lead", "rev-b"), org.approvers.map { it.approver })
+        val revB = org.approvers.single { it.approver == "rev-b" }
+        assertEquals(listOf("deploys" to listOf("deploy")), revB.gates.map { it.workflowId to it.actions })
+        val lead = org.approvers.single { it.approver == "lead" }
+        assertEquals(listOf("release"), lead.gates.map { it.workflowId }, "rev-b's gate is not the lead's")
+        assertFalse("deploy" in org.ungated, "a gate covers deploys in acme-api")
+
+        val api = server.call("user:a:lead", "/api/v1/gates/approvers?repo=acme-api").body<ApproversGraphResponse>()
+        assertEquals(listOf("lead", "rev-b"), api.approvers.map { it.approver })
+        val web = server.call("user:a:lead", "/api/v1/gates/approvers?repo=acme-web").body<ApproversGraphResponse>()
+        assertEquals(listOf("lead"), web.approvers.map { it.approver }, "outside acme-api, rev-b answers nothing")
+        val otherOrg = server.call("user:b:lead", "/api/v1/gates/approvers").body<ApproversGraphResponse>()
+        assertTrue(otherOrg.approvers.isEmpty(), "org B sees nobody of org A")
     }
 
     @Test

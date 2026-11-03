@@ -81,11 +81,12 @@ const val NOTIFICATIONS_WRITE_SCOPE = "notifications:write"
 
 /**
  * The scopes of the phone app's token: what the app shows (the person, their organizations, the approvals and their
- * receipts, the usage) and does (answer a gate, register for push, set its notifications). Nothing of the console's
- * administration, no workflow write, no token management.
+ * receipts, the spending, the activity feed) and does (answer a gate, register for push, set its notifications).
+ * Nothing of the console's administration, no workflow write, no token management.
  */
 val MOBILE_SCOPES: Set<String> = setOf(
-    "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", NOTIFICATIONS_WRITE_SCOPE,
+    "profile:read", "orgs:read", "gates:read", ANSWER_SCOPE, "receipts:read", "usage:read", "activity:read",
+    NOTIFICATIONS_WRITE_SCOPE,
 )
 
 /**
@@ -114,7 +115,8 @@ fun mobileScopes(stored: ApiToken, now: Instant): Set<String> {
  * The scopes a stored token grants when it is used, checked again at each request (defense in depth: a row written
  * before S2-04, or by hand, cannot grant more): an agent token only [AGENT_SCOPE], a CLI token at most [CLI_SCOPES],
  * the token of `ostrom login --admin` at most [ADMIN_TOKEN_SCOPES], the app's token at most [MOBILE_SCOPES], a
- * personal token or a service key what it lists minus [NEVER_ON_A_TOKEN] and [ADMIN_SCOPES].
+ * personal token what it lists minus [NEVER_ON_A_TOKEN] and [ADMIN_SCOPES], a service key at most
+ * [SERVICE_KEY_SCOPES] (none of which is a governance scope).
  *
  * @param kind The kind of the token.
  * @param stored The scopes its row lists.
@@ -126,7 +128,8 @@ fun grantedScopes(kind: TokenKind, stored: Set<String>): Set<String> = when (kin
     TokenKind.CLI -> stored intersect CLI_SCOPES
     TokenKind.ADMIN -> stored intersect ADMIN_TOKEN_SCOPES
     TokenKind.MOBILE -> stored intersect MOBILE_SCOPES
-    TokenKind.PERSONAL, TokenKind.SERVICE -> stored - NEVER_ON_A_TOKEN - ADMIN_SCOPES
+    TokenKind.PERSONAL -> stored - NEVER_ON_A_TOKEN - ADMIN_SCOPES
+    TokenKind.SERVICE -> stored intersect SERVICE_KEY_SCOPES
 }
 
 /** At most this many scopes on one token. */
@@ -197,6 +200,19 @@ class InvalidTokenNameException : OstromException(ErrorKind.INVALID_REQUEST, "A 
 /** The organization already has [MAX_SERVICE_KEYS_PER_ORG] live service keys. */
 class TooManyServiceKeysException :
     OstromException(ErrorKind.CONFLICT, "Too many live service keys: delete one before creating another.")
+
+/**
+ * The scopes a service key may hold: what a CI calls, nothing else. `sessions:write` reports a check (`reportCheck`)
+ * and signs an ended session's workflow receipt (`signWorkflowReceipt`); `rules:read` reads the rules (`listRules`,
+ * `getRule`). No other route admits a key: never a governance write, a token, a member or billing.
+ */
+val SERVICE_KEY_SCOPES: Set<String> = setOf("sessions:write", "rules:read")
+
+/** A service key asks for a scope it may not hold: 400. */
+class InvalidServiceKeyScopesException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "A service key holds ${SERVICE_KEY_SCOPES.joinToString(" or ")}, or both.",
+)
 
 /** The service key is absent, another organization's, or already deleted. */
 class ServiceKeyNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Service key not found.")

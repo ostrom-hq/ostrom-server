@@ -74,9 +74,11 @@ rolls back on any failure.
 What must run before or across organizations (resolving a token, sign-in, creating an organization, invitations,
 billing webhooks…) goes through narrow `SECURITY DEFINER` functions, each listed here with its test. They are owned
 by **`ostrom_router`** (`NOLOGIN`, owner of no table, never a member of the serving role), reach the rows through a
-policy `TO ostrom_router` of their tables, and set `search_path = pg_catalog, public, pg_temp` (`pg_temp` last, so
-a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLIC` and granted to `ostrom_app` only
-(audit S2-60).
+policy `TO ostrom_router` of their tables whose rule is `current_user = 'ostrom_router'`, true only inside those
+functions (the owner, a member of `ostrom_router` to hand the functions over, does not pass it: RLS audit R9,
+`SchemaTenancyPostgresTest.everyRouterPolicyHoldsOnlyInsideTheRoutersFunctions`), and set
+`search_path = pg_catalog, public, pg_temp` (`pg_temp` last, so a temporary object never stands in for theirs).
+`EXECUTE` is revoked from `PUBLIC` and granted to `ostrom_app` only (audit S2-60).
 
 | Function | Module | What it touches | Test |
 |---|---|---|---|
@@ -108,6 +110,23 @@ a temporary object never stands in for theirs). `EXECUTE` is revoked from `PUBLI
 | `billing_claim_due_tasks(now, lease, limit)` | billing | leases the due outbox tasks of every organization (`FOR UPDATE SKIP LOCKED`) | `BillingPostgresTest` |
 | `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
 | `governance_expired_organizations(now, limit)` | governance | the organizations with confirmations past their 15 minutes, for the sweep | `GovernancePostgresTest` |
+
+## The audit log is append-only
+
+The policies say which organization's rows a query reaches, not what it may do to them, and the serving role holds
+`UPDATE` and `DELETE` on every table through the default privileges. For `identity_audit_events`, the signed log, that
+is not enough: one statement-level trigger (identity migration 9) refuses `UPDATE`, `DELETE` and `TRUNCATE` with an
+error, whatever rows the statement reaches, for every role that runs it. It is enabled `ALWAYS`, so
+`session_replication_role = replica` does not skip it.
+
+What it does not stop: the owner (the migrations' role, which serves no request) and a superuser can drop or disable
+the trigger, then change the table. Against them the defence is detection: `GET /api/v1/audit` checks every line it
+serves against its hash, its signature and the line before it. Erasing the newest lines of a chain is not detected
+yet (no anchor outside the table).
+
+No request erases an audit line, an organization's deletion included. Removing lines (a legal erasure request) is an
+operation by hand: the owner disables the trigger in a transaction, deletes, and enables it `ALWAYS` again; the lines
+after the erased ones then read `unlinked`.
 
 ## Known exceptions
 

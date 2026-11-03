@@ -145,6 +145,31 @@ object NoModelCallObserver : ModelCallObserver {
     override suspend fun observe(call: ModelCallRecord) = Unit
 }
 
+/** Traces each relayed call, from before its first try to its record, as a span of the request that made it. */
+fun interface ModelCallTracer {
+    /**
+     * Starts the trace of a call, in the caller's trace.
+     *
+     * @return What ends it.
+     */
+    suspend fun start(): ModelCallTrace
+}
+
+/** The trace of one call. */
+fun interface ModelCallTrace {
+    /**
+     * Ends it with the call's record: its model, provider, tokens, cost and outcome, never its prompt nor its answer.
+     *
+     * @param call The record.
+     */
+    fun end(call: ModelCallRecord)
+}
+
+/** Traces nothing: tests that do not look at the traces. */
+object NoModelCallTracer : ModelCallTracer {
+    override suspend fun start(): ModelCallTrace = ModelCallTrace { }
+}
+
 /**
  * One call asking to spend: what it may cost at most, held against the budgets until its cost is recorded.
  *

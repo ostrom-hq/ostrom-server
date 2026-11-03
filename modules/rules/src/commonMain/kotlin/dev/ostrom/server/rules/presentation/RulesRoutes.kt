@@ -6,6 +6,7 @@ import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.WriteAccess
+import dev.ostrom.server.kernel.auth.admitServiceKey
 import dev.ostrom.server.kernel.auth.auditGovernance
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.confirmsByConsole
@@ -21,6 +22,7 @@ import dev.ostrom.server.secrets.domain.OrgNotFoundException
 import dev.ostrom.server.secrets.presentation.requireCaller
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.resources.delete
 import io.ktor.server.resources.get
@@ -39,15 +41,17 @@ import kotlin.uuid.Uuid
  * with `gates:read`); only an owner or admin writes, decides or deletes a rule and sets the policy (CONVENTIONS 16.2).
  * Signed in to the console, the write is made at once; with a person's token (the CLI's, elevated by `ostrom login
  * --admin` or not), it is held until an owner or an admin confirms it on the console (202, audit CLI H1): an agent
- * running on the developer's machine can present that token. An agent, a device or a service is always refused.
+ * running on the developer's machine can present that token. An agent or a device is always refused. A service key
+ * with [RuleScopes.READ] reads the rules of its own organization for its CI (`listRules`, `getRule`), each call audited
+ * in its name; it reads neither the decisions nor the policy, and never writes.
  *
  * @param dependencies The use cases.
  */
 fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies) {
     authenticated {
         get<RulesApi> { filters ->
-            val caller = call.requireCaller(callers, RuleScopes.READ)
-            call.respond(RulesPage(listRules(caller.orgId, filters.toQuery()).map { it.toDto() }))
+            val orgId = call.readerOrg(this@with, "listRules")
+            call.respond(RulesPage(listRules(orgId, filters.toQuery()).map { it.toDto() }))
         }
         post<RulesApi> {
             val writer = call.writer(this@with)
@@ -57,8 +61,7 @@ fun Route.rulesRoutes(dependencies: RulesRoutesDependencies) = with(dependencies
             }
         }
         get<RulesApi.Id> { path ->
-            val caller = call.requireCaller(callers, RuleScopes.READ)
-            call.respond(getRule(caller.orgId, path.id).toDto())
+            call.respond(getRule(call.readerOrg(this@with, "getRule"), path.id).toDto())
         }
         patch<RulesApi.Id> { path ->
             val writer = call.writer(this@with)
@@ -111,6 +114,14 @@ private sealed interface Writer {
     /** A person's token, an owner or admin of [orgId]: the write waits for a confirmation. */
     class Held(val orgId: Uuid, val scope: String) : Writer
 }
+
+/**
+ * The organization whose rules a caller reads: a service key's own with [RuleScopes.READ], audited; a member's, or a
+ * token's with that scope, as on the other reads.
+ */
+private suspend fun ApplicationCall.readerOrg(dependencies: RulesRoutesDependencies, operation: String): Uuid =
+    requirePrincipal().admitServiceKey(dependencies.serviceKeys, RuleScopes.READ, operation, request.path())
+        ?: requireCaller(dependencies.callers, RuleScopes.READ).orgId
 
 /**
  * The person who decides an action that is not a held governance write (starting an analysis or a replay): signed in
