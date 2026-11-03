@@ -95,9 +95,11 @@ class ReadBenchTest {
 
     @Test
     fun writesAreExplainedOnlyWhenAsked() = serverTest(emptyList()) { server ->
+        // The owner creates the table, as a migration would; the serving role writes it by default privileges.
+        val owner = server.database.owner
+        owner.execute("CREATE TABLE bench_writes (n INTEGER PRIMARY KEY, seen INTEGER)").getOrThrow()
+        owner.execute("INSERT INTO bench_writes VALUES (1, 0)").getOrThrow()
         val driver = server.database.driver
-        driver.execute("CREATE TABLE bench_writes (n INTEGER PRIMARY KEY, seen INTEGER)").getOrThrow()
-        driver.execute("INSERT INTO bench_writes VALUES (1, 0)").getOrThrow()
         val sent = listOf("UPDATE bench_writes SET seen = 1 WHERE n = 1", "SELECT seen FROM bench_writes WHERE n = 1")
             .map { SentStatement(it, Statement.create(it), 1) }
 
