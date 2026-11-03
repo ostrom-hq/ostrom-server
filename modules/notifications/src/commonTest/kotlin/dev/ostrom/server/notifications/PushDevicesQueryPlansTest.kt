@@ -3,7 +3,10 @@ package dev.ostrom.server.notifications
 
 import dev.ostrom.server.kernel.database.withOrganization
 import dev.ostrom.server.notifications.infrastructure.DELETE_SQL
+import dev.ostrom.server.notifications.infrastructure.FORGET_BROWSERS_SQL
+import dev.ostrom.server.notifications.infrastructure.FORGET_CREDENTIAL_SQL
 import dev.ostrom.server.notifications.infrastructure.KEEP_LATEST_SQL
+import dev.ostrom.server.notifications.infrastructure.OF_MEMBER_SQL
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import kotlin.test.Test
@@ -12,8 +15,8 @@ import kotlin.uuid.Uuid
 
 /**
  * The phones' writes under `EXPLAIN ANALYZE`, on the serving role with row-level security, over a table where one
- * member's phones are a small part of the rows: trimming a member's phones and removing one read an index, never a
- * scan of the table.
+ * member's phones are a small part of the rows: trimming a member's phones, removing one, reading them to notify the
+ * member and forgetting those of a credential that ended read an index, never a scan of the table.
  */
 class PushDevicesQueryPlansTest {
     private val orgA = Uuid.parse("00000000-0000-4000-8000-0000000000a1")
@@ -23,9 +26,9 @@ class PushDevicesQueryPlansTest {
     // No `::` cast and no colon at all: the driver would read `:x` as a named parameter.
     private fun seed(org: Uuid, owner: String, count: Int, prefix: String): String =
         "INSERT INTO notifications_push_devices (org_id, id, member_id, push_token, provider, platform, locale, " +
-            "created_at, seen_at) SELECT CAST('$org' AS uuid), gen_random_uuid(), $owner, " +
-            "'ExpoPushToken[$prefix' || i || ']', 'expo', 'ios', NULL, now() - i * INTERVAL '1 minute', " +
-            "now() - i * INTERVAL '1 minute' FROM generate_series(1, $count) AS i"
+            "created_at, seen_at, user_id, credential_id, browser) SELECT CAST('$org' AS uuid), gen_random_uuid(), " +
+            "$owner, 'ExpoPushToken[$prefix' || i || ']', 'expo', 'ios', NULL, now() - i * INTERVAL '1 minute', " +
+            "now() - i * INTERVAL '1 minute', $owner, gen_random_uuid(), i % 2 = 0 FROM generate_series(1, $count) AS i"
 
     @Test
     fun trimmingAndRemovingAMembersPhonesReadTheirIndexes() = serverTest(listOf(NotificationsModule)) { server ->
@@ -36,13 +39,18 @@ class PushDevicesQueryPlansTest {
         fixtures.execute(seed(orgA, "CAST('$member' AS uuid)", 12, "m")).getOrThrow()
         fixtures.execute("VACUUM ANALYZE notifications_push_devices").getOrThrow()
 
+        // The member is also the person of the seeded rows (`user_id`): the same id serves both lookups.
+        fun explain(sql: String) = Statement.create("EXPLAIN (ANALYZE, BUFFERS) $sql").bind("org_id", orgA)
         val statements = listOf(
-            Statement.create("EXPLAIN (ANALYZE, BUFFERS) $KEEP_LATEST_SQL").bind("keep", 10),
-            Statement.create("EXPLAIN (ANALYZE, BUFFERS) $DELETE_SQL").bind("id", Uuid.random()),
+            explain(KEEP_LATEST_SQL).bind("member_id", member).bind("keep", 10),
+            explain(DELETE_SQL).bind("member_id", member).bind("id", Uuid.random()),
+            explain(OF_MEMBER_SQL).bind("member_id", member),
+            explain(FORGET_CREDENTIAL_SQL).bind("user_id", member).bind("credential_id", Uuid.random()),
+            explain(FORGET_BROWSERS_SQL).bind("user_id", member),
         )
         for (statement in statements) {
             val plan = server.driver.withOrganization(orgA) { tx ->
-                tx.fetchAll(statement.bind("org_id", orgA).bind("member_id", member)).getOrThrow()
+                tx.fetchAll(statement).getOrThrow()
                     .joinToString("\n") { it.get("QUERY PLAN").asString() }
             }
             assertFalse("Seq Scan on notifications_push_devices" in plan, "A scan of the table:\n$plan")

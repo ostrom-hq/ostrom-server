@@ -76,7 +76,7 @@ private fun Route.packagesRoutes(dependencies: CompilerRoutesDependencies) = wit
         val actor = actorOf(call, CompilerScopes.readingPackages)
         val limit = (params.limit ?: MAX_AUDIT).coerceIn(1, MAX_AUDIT)
         val lines = repository.auditLog(actor.orgId, limit)
-        call.respond(AuditPage(lines.map { AuditEvent(it.id, it.at, it.event, it.actor, it.subject, it.meta) }))
+        call.respond(AuditPage(lines.map { it.toAuditEvent() }))
     }
     get<PackagesApi.Digest> { params ->
         val actor = actorOf(call, CompilerScopes.readingPackages)
