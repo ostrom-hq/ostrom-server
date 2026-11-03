@@ -13,7 +13,7 @@ inputs:
   build-cache:
     description: >-
       The job's name in the key of Gradle's build cache (jvm, native, image): restored from main's latest, saved by
-      the job on main or a manual run, never a pull request (actions/cache/save after its Gradle steps).
+      the job on main only, by a push or a manual run (actions/cache/save after its Gradle steps).
     required: true
 runs:
   using: composite
@@ -47,8 +47,9 @@ runs:
         cache-provider: basic
     # Gradle's build cache, task outputs by their inputs (tests are never cached, below). setup-gradle's basic cache
     # keys ~/.gradle/caches on the build files only, so its build-cache-1 stayed frozen: 12 of 400 tasks came from it
-    # (run 41663816307). This one moves with main: each green main run saves it, every run restores the latest
-    # it can read.
+    # (run 41663816307). This one moves with main: each green main run saves it, every run restores main's latest.
+    # Only main writes it: at ~1.9 GB a save against the repository's 10 GB, saves from twenty active branches would
+    # evict main's within hours. A pull request restores, read-only.
     - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.gradle/caches/build-cache-1

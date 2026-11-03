@@ -139,8 +139,8 @@ jobs:
         run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Gradle's build cache, saved from main or a manual run (never a pull request)
-        if: success() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.gradle/caches/build-cache-1
@@ -209,8 +209,8 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Gradle's build cache, saved from main or a manual run (never a pull request)
-        if: success() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.gradle/caches/build-cache-1
@@ -421,8 +421,8 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Gradle's build cache, saved from main or a manual run (never a pull request)
-        if: success() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+      - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.gradle/caches/build-cache-1
