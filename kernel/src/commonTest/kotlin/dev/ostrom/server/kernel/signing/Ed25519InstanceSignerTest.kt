@@ -9,6 +9,7 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.files.SystemTemporaryDirectory
 import kotlinx.io.readString
+import kotlinx.io.writeString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -71,6 +72,24 @@ class Ed25519InstanceSignerTest {
             assertFalse(SystemFileSystem.exists(Path(path)))
             val created = Ed25519InstanceSigner.loadOrCreate(path)
             assertEquals(created.keyId, Ed25519InstanceSigner.load(path).keyId)
+        } finally {
+            deleteTree(directory)
+        }
+    }
+
+    // A key file that is not an Ed25519 private key stops the start with its path, current key or previous one.
+    @Test
+    fun aCorruptedKeyFileIsAConfigurationErrorNamingIt() = runTest {
+        val directory = temporaryDirectory()
+        val path = Path(directory, "instance-key.pem").toString()
+        try {
+            SystemFileSystem.createDirectories(directory)
+            val corrupted = "-----BEGIN PRIVATE KEY-----\nbm9wZQ==\n"
+            SystemFileSystem.sink(Path(path)).buffered().use { it.writeString(corrupted) }
+            val message = "Signing key file $path is not an Ed25519 private key in PKCS#8 PEM."
+            val current = assertFailsWith<InvalidConfigException> { Ed25519InstanceSigner.loadOrCreate(path) }
+            assertEquals(message, current.message)
+            assertEquals(message, assertFailsWith<InvalidConfigException> { Ed25519InstanceSigner.load(path) }.message)
         } finally {
             deleteTree(directory)
         }

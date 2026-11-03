@@ -3,6 +3,7 @@ package dev.ostrom.server.usage
 
 import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.usage.domain.Admission
+import dev.ostrom.server.usage.domain.DailySpendLimits
 import dev.ostrom.server.usage.domain.SpendAdmissionImpl
 import dev.ostrom.server.usage.domain.SpendHold
 import dev.ostrom.server.usage.domain.SpendLimits
@@ -107,5 +108,67 @@ class SpendAdmissionTest {
         assertEquals(listOf(LogLevel.WARN to "usage event not recorded"), logger.events)
         repository.failure = CancellationException("caller gone")
         assertFailsWith<CancellationException> { recorder.settle(modelEvent(costMicros = 1)) }
+    }
+
+    @Test
+    fun aDailyLimitCountsTheDaysSpendAndTheCallsInFlightAfterTheMonths() {
+        val today = TestCallers.epoch - 12.hours
+        val orgDay = SpendLimits(null, null, DailySpendLimits(today, orgMicros = 1_000, memberMicros = null))
+        assertTrue(orgDay.any)
+        assertEquals(Admission.Admitted, orgDay.admit(SpendTotals(orgSpent = 9_000, orgDaySpent = 500), 500))
+        assertEquals(
+            Admission.Exhausted(SpendScope.ORG, 1_000, daily = true),
+            orgDay.admit(SpendTotals(orgDaySpent = 1_000), 0),
+        )
+        assertEquals(
+            Admission.Insufficient(SpendScope.ORG, 1_000, 200, daily = true),
+            orgDay.admit(SpendTotals(orgDaySpent = 500, orgHeld = 300), 201),
+            "A call in flight counts against the day",
+        )
+
+        val memberDay = SpendLimits(null, null, DailySpendLimits(today, orgMicros = null, memberMicros = 100))
+        assertEquals(
+            Admission.Exhausted(SpendScope.MEMBER, 100, daily = true),
+            memberDay.admit(SpendTotals(memberDaySpent = 100), 0),
+        )
+        assertEquals(
+            Admission.Insufficient(SpendScope.MEMBER, 100, 40, daily = true),
+            memberDay.admit(SpendTotals(memberDaySpent = 50, memberHeld = 10), 41),
+        )
+        assertEquals(Admission.Admitted, memberDay.admit(SpendTotals(memberDaySpent = 50, memberHeld = 10), 40))
+
+        val all = SpendLimits(10_000, 5_000, DailySpendLimits(today, orgMicros = 1_000, memberMicros = 100))
+        assertEquals(
+            Admission.Exhausted(SpendScope.ORG, 10_000),
+            all.admit(SpendTotals(orgSpent = 10_000, orgDaySpent = 1_000), 0),
+            "The month's before the day's",
+        )
+        assertEquals(
+            Admission.Exhausted(SpendScope.ORG, 1_000, daily = true),
+            all.admit(SpendTotals(orgDaySpent = 1_000, memberSpent = 5_000), 0),
+            "The org's before the member's",
+        )
+        assertEquals(
+            Admission.Exhausted(SpendScope.MEMBER, 5_000),
+            all.admit(SpendTotals(memberSpent = 5_000, memberDaySpent = 100), 0),
+        )
+        assertEquals(
+            Admission.Insufficient(SpendScope.ORG, 10_000, 1),
+            all.admit(SpendTotals(orgSpent = 9_999, orgDaySpent = 999), 2),
+            "A short month answers before a short day",
+        )
+    }
+
+    @Test
+    fun aDailyLimitIsAdmittedOnTheDaysSpend() = runTest {
+        val yesterday = modelEvent(costMicros = 900, memberId = member, at = since - 1.hours)
+        repository.insert(TestCallers.orgA, listOf(yesterday))
+        val limits = SpendLimits(null, null, DailySpendLimits(since, orgMicros = null, memberMicros = 1_000))
+        assertEquals(Admission.Admitted, admission.admit(hold(1_000), limits, since), "Before the day: not counted")
+        assertEquals(
+            Admission.Insufficient(SpendScope.MEMBER, 1_000, 0, daily = true),
+            admission.admit(hold(1), limits, since),
+            "The call admitted holds the whole day",
+        )
     }
 }

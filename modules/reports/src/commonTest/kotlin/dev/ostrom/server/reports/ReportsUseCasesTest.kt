@@ -6,6 +6,7 @@ import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.reports.domain.ActivityCursor
 import dev.ostrom.server.reports.domain.ActivityItem
 import dev.ostrom.server.reports.domain.ActivityKind
+import dev.ostrom.server.reports.domain.ExceededBudget
 import dev.ostrom.server.reports.domain.GetSpendingUseCaseImpl
 import dev.ostrom.server.reports.domain.InvalidCursorException
 import dev.ostrom.server.reports.domain.InvalidPeriodException
@@ -97,6 +98,16 @@ class ReportsUseCasesTest {
             SpendingPeriod.MONTH,
         )
         assertEquals(20L, report.budgetMicros)
+    }
+
+    @Test
+    fun theBudgetsPastTheirLimitAreListedWhateverThePeriod() = runTest {
+        val past = ExceededBudget(member, daily = true, stops = false, limitMicros = 400_000, since = NOW)
+        val budgets = FakeBudgets(100, 20, listOf(past))
+        val viewer = Viewer(ORG_A, member, wholeOrganization = false)
+        val report = GetSpendingUseCaseImpl(repository, budgets, clock)(viewer, SpendingPeriod.WEEK)
+        assertEquals(listOf(past), report.exceeded)
+        assertEquals(listOf(viewer to NOW), budgets.exceededAsked)
     }
 
     @Test
