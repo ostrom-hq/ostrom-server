@@ -99,6 +99,8 @@ data class SpendingTotals(
  * @property budgetMicros The monthly budget that applies to the viewer, on the month only.
  * @property totals The lines, each sorted by cost, largest first.
  * @property daily Every day of the period up to today, zero included.
+ * @property exceeded The budgets the viewer sees that are spent past their limit, today or this month, whatever the
+ *   period.
  */
 data class SpendingReport(
     val period: SpendingPeriod,
@@ -108,6 +110,7 @@ data class SpendingReport(
     val budgetMicros: Long?,
     val totals: SpendingTotals,
     val daily: List<SpendingDay>,
+    val exceeded: List<ExceededBudget> = emptyList(),
 )
 
 /**

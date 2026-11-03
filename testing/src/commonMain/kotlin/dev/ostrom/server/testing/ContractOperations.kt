@@ -9,8 +9,10 @@ import kotlinx.serialization.json.jsonPrimitive
  * What an operation of the contract answers with one status.
  *
  * @property json The schema of its `application/json` body, or null when it declares none (no body, or another type).
+ * @property other True when it declares a body of another type too (`text/plain`…): a body that is not JSON is then
+ * one of its forms, not a drift.
  */
-data class ContractResponse(val json: JsonObject?)
+data class ContractResponse(val json: JsonObject?, val other: Boolean = false)
 
 /**
  * An operation of the contract.
@@ -87,8 +89,9 @@ class ContractOperations(schema: ContractSchema, document: JsonObject) {
             responses = operation["responses"]?.jsonObject.orEmpty().mapValues { (_, value) ->
                 val reference = value.jsonObject[REF]?.let { schema.resolve(it.jsonPrimitive.content) }
                 val response = reference ?: value.jsonObject
-                val json = response["content"]?.let { it.jsonObject[JSON] }?.let { it.jsonObject["schema"] }
-                ContractResponse(json?.let { it.jsonObject })
+                val content = response["content"]?.jsonObject.orEmpty()
+                val json = content[JSON]?.let { it.jsonObject["schema"] }
+                ContractResponse(json?.let { it.jsonObject }, other = content.keys.any { it != JSON })
             },
         )
 

@@ -2,9 +2,11 @@
 package dev.ostrom.server.budgets
 
 import dev.ostrom.server.budgets.domain.BudgetDecisionCache
+import dev.ostrom.server.budgets.domain.BudgetLimit
+import dev.ostrom.server.budgets.domain.BudgetTarget
 import dev.ostrom.server.budgets.domain.BudgetsRepository
 import dev.ostrom.server.budgets.domain.LedgerSpendGuard
-import dev.ostrom.server.budgets.domain.SharedLimit
+import dev.ostrom.server.budgets.presentation.BudgetDto
 import dev.ostrom.server.gateway.domain.SpendDecision
 import dev.ostrom.server.gateway.domain.SpendGuard
 import dev.ostrom.server.gateway.domain.SpendRequest
@@ -18,6 +20,12 @@ import dev.ostrom.server.usage.domain.UsageEvent
 import dev.ostrom.server.usage.domain.UsageKind
 import dev.ostrom.server.usage.domain.UsageRecorder
 import dev.ostrom.server.usage.domain.UsageRepository
+import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.put
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -28,6 +36,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -64,7 +73,8 @@ class SpendGuardPostgresTest {
     fun theLimitHoldsToTheMicroUnderTwentyCallsAtOnce() = serverTest(modules, overrides) { server ->
         assertIs<LedgerSpendGuard>(server.koin.get<SpendGuard>())
         assertEquals(SpendDecision.Allowed, server.koin.get<SpendGuard>().check(request(1_000_000)), "No limit yet")
-        server.koin.get<BudgetsRepository>().putSharedLimit(TestCallers.orgA, SharedLimit.ORG, 10_000, clock.now())
+        val limit = listOf(BudgetLimit(10_000))
+        server.koin.get<BudgetsRepository>().replaceLimits(TestCallers.orgA, BudgetTarget.Org, limit, clock.now())
         // As the limit's use cases do: the cached "no limit" is forgotten at once on this replica.
         server.koin.get<BudgetDecisionCache>().invalidate(TestCallers.orgA)
 
@@ -90,4 +100,55 @@ class SpendGuardPostgresTest {
         assertTrue(exhausted.message.startsWith(LedgerSpendGuard.EXHAUSTED), exhausted.message)
         assertEquals(Instant.parse("2026-11-01T00:00:00Z"), exhausted.resetsAt)
     }
+
+    @Test
+    fun aDailyLimitThatStopsRefusesTheCallsOfTheDayUntilMidnightAndOneThatWarnsRefusesNone() =
+        serverTest(modules, overrides) { server ->
+            suspend fun put(budget: BudgetDto) = assertEquals(
+                HttpStatusCode.OK,
+                server.client.put("/api/v1/budgets") {
+                    bearerAuth("admin-a")
+                    contentType(ContentType.Application.Json)
+                    setBody(budget)
+                }.status,
+            )
+            put(BudgetDto("member", member.toString(), usdPerDay = 0.01))
+            // Yesterday's spend is far past the daily limit: it does not count today.
+            val yesterday = now - 1.days
+            val old = UsageEvent(
+                Uuid.random(),
+                TestCallers.orgA,
+                member,
+                UsageKind.MODEL,
+                "m",
+                costMicros = 50_000,
+                at = yesterday,
+            )
+            server.koin.get<UsageRecorder>().record(old)
+            val guard = server.koin.get<SpendGuard>()
+
+            val short = guard.check(request(20_000))
+            assertIs<SpendDecision.Insufficient>(short)
+            assertTrue(short.message.startsWith(LedgerSpendGuard.INSUFFICIENT), short.message)
+            assertTrue("of your $0.01 daily limit" in short.message, short.message)
+
+            val call = request(4_000)
+            assertEquals(SpendDecision.Allowed, guard.check(call))
+            server.answered(call, 10_000)
+            val after = server.atOnce(List(3) { request(1) })
+            assertEquals(3, after.filterIsInstance<SpendDecision.Exhausted>().size, after.toString())
+            val exhausted = after.first() as SpendDecision.Exhausted
+            assertEquals(
+                "Daily budget reached: your limit of $0.01 a day is spent; it resets on 2026-10-31.",
+                exhausted.message,
+            )
+            assertEquals(Instant.parse("2026-10-31T00:00:00Z"), exhausted.resetsAt)
+
+            put(BudgetDto("member", member.toString(), usdPerDay = 0.01, hardStop = false))
+            assertEquals(
+                SpendDecision.Allowed,
+                guard.check(request(20_000)),
+                "Past the limit, a budget that warns lets it go",
+            )
+        }
 }
