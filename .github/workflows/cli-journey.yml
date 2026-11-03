@@ -29,7 +29,9 @@ on:
           with server_image)
         default: ""
       cli_ref:
-        description: ostrom-cli ref whose binary and journey run (ostrom-cli#85 or later, for the --fake-mcp-* flags)
+        description: >-
+          ostrom-cli ref whose binary and journey run (ostrom-cli#121 or later: the run fails without its 6.6, the
+          TeamCode import)
         default: main
       runner_image:
         description: Cloud session image the server starts on this runner's Docker (empty = latest)
@@ -76,7 +78,7 @@ jobs:
       # 6.6 (ostrom import teamcode): the demo's fake TeamCode team (ostrom-helm compose/demo/teamcode), in the demo's
       # MySQL 8.4, as e2e-journey.yml has it.
       teamcode-db:
-        image: mysql:8.4
+        image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
         env: { MYSQL_ROOT_PASSWORD: teamcode-root, MYSQL_DATABASE: teamcode }
         ports: ['3307:3306']
         options: >-
@@ -124,16 +126,25 @@ jobs:
       - name: Fake TeamCode team in MySQL (helm compose/demo/teamcode)
         env:
           TEAMCODE_DIR: helm/compose/demo/teamcode
+          MYSQL_IMAGE: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
         run: |
-          sql() { docker run --rm -i --network host -e MYSQL_PWD=teamcode-root mysql:8.4 mysql -h127.0.0.1 -P3307 -uroot "$@"; }
+          sql() { docker run --rm -i --network host -e MYSQL_PWD=teamcode-root "$MYSQL_IMAGE" mysql -h127.0.0.1 -P3307 -uroot "$@"; }
           sql teamcode < "$TEAMCODE_DIR/01-schema.sql"
           sql teamcode < "$TEAMCODE_DIR/02-seed.sql"
           docker run --rm --network host -v "$PWD/$TEAMCODE_DIR:/teamcode:ro" -e MYSQL_HOST=127.0.0.1 -e MYSQL_TCP_PORT=3307 \
             -e MYSQL_ROOT_PASSWORD=teamcode-root -e MYSQL_DATABASE=teamcode -e TEAMCODE_RO_PASSWORD=teamcode-ro \
-            mysql:8.4 sh /teamcode/03-readonly.sh
+            "$MYSQL_IMAGE" sh /teamcode/03-readonly.sh
           # `ostrom import teamcode` reads TeamCode with the mysql client on the PATH
           command -v mysql || { sudo apt-get update -q && sudo apt-get install -yq mysql-client; }
-          MYSQL_PWD=teamcode-ro mysql -h127.0.0.1 -P3307 -uteamcode_ro teamcode -N -e "SELECT COUNT(*) FROM variants WHERE team_id = 'default'"
+          # the team as 6.6 expects it, read by teamcode_ro (helm's check.sh, without its docker exec): members, MCP
+          # variants, assignments, tool policies, accounts
+          counts=$(MYSQL_PWD=teamcode-ro mysql -h127.0.0.1 -P3307 -uteamcode_ro teamcode -N -e "SELECT CONCAT_WS(' ',
+            (SELECT COUNT(*) FROM members WHERE team_id='default'),
+            (SELECT COUNT(*) FROM variants WHERE team_id='default' AND kind='MCP'),
+            (SELECT COUNT(*) FROM variant_assignments WHERE team_id='default' AND kind='MCP'),
+            (SELECT COUNT(*) FROM mcp_tool_policies WHERE team_id='default'),
+            (SELECT COUNT(*) FROM accounts WHERE team_id='default'))")
+          [ "$counts" = "3 4 5 2 3" ] || { echo "::error::fake TeamCode team: $counts, expected 3 4 5 2 3"; exit 1; }
       # server_run: a ci.yml run of this repository, not a fork's, whose ci-image job passed (its image passed the smoke
       # tests and was saved). Its roles are those of its head: a pull request whose base changed ci/database-roles.sql
       # merges main first, as its ci.yml run built the image from that merge.
@@ -306,6 +317,7 @@ jobs:
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
       - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt, ostrom mcp)
+        id: journey
         working-directory: cli
         env:
           IMAGE: ${{ steps.server.outputs.image }}
@@ -350,7 +362,8 @@ jobs:
       # Never optional (no continue-on-error, no condition, no input to turn it off): ostrom-cli's 6.6 skips itself
       # without the TeamCode team, and only this step keeps such a run from being green.
       - name: 6.6 ostrom import teamcode played and passed
-        if: always()
+        # whenever the journey ran, passed or failed; a run stopped before it says its own error
+        if: ${{ !cancelled() && steps.journey.outcome != 'skipped' }}
         run: |
           python3 -I - "$RUNNER_TEMP/journey.json" <<'PY'
           import json, sys
@@ -358,10 +371,16 @@ jobs:
               steps = json.load(open(sys.argv[1]))["steps"]
           except (OSError, ValueError, KeyError) as error:
               sys.exit(f"::error::no journey report: {error}")
-          status = [s["status"] for s in steps if s["step"] == "6.6"]
-          if status != ["ok"]:
-              sys.exit(f"::error::6.6 ostrom import teamcode: {status or 'not in the journey'}, not ok")
-          print("6.6 ostrom import teamcode: ok")
+          # exactly one 6.6, with checks, every one ok: a step that returned before its checks is no proof
+          found = [s for s in steps if s["step"] == "6.6"]
+          if len(found) != 1:
+              sys.exit(f"::error::6.6 ostrom import teamcode: {len(found)} steps in the journey, not one")
+          step = found[0]
+          checks = step.get("checks") or []
+          failed = [c["what"] for c in checks if not c.get("ok")]
+          if step["status"] != "ok" or not checks or failed:
+              sys.exit(f"::error::6.6 ostrom import teamcode: {step['status']}, {len(checks)} checks, failed: {failed}")
+          print(f"6.6 ostrom import teamcode: ok, {len(checks)} checks")
           PY
       - name: Server logs
         if: always()
