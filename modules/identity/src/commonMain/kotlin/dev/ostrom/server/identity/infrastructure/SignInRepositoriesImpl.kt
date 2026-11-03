@@ -69,22 +69,30 @@ class OAuthAttemptsRepositoryImpl(private val driver: Driver) : OAuthAttemptsRep
  * @param driver The database.
  */
 class MagicLinksRepositoryImpl(private val driver: Driver) : MagicLinksRepository {
-    override suspend fun create(link: MagicLink, tokenHash: String) {
+    override suspend fun create(link: MagicLink, tokenHash: String, browserHash: String) {
         driver.execute(
             Statement.create(
-                "INSERT INTO identity_magic_links (id, token_hash, email, redirect_path, created_at, expires_at) " +
-                    "VALUES (:id, :token, :email, :redirect, :created, :expires)",
+                "INSERT INTO identity_magic_links " +
+                    "(id, token_hash, email, redirect_path, created_at, expires_at, browser_hash) " +
+                    "VALUES (:id, :token, :email, :redirect, :created, :expires, :browser)",
             ).bind("id", link.id).bind("token", tokenHash).bind("email", link.email).bind("redirect", link.redirectPath)
-                .bind("created", link.createdAt).bind("expires", link.expiresAt),
+                .bind("created", link.createdAt).bind("expires", link.expiresAt).bind("browser", browserHash),
         ).getOrThrow()
     }
 
-    override suspend fun consume(tokenHash: String, now: Instant): MagicLink? = driver.fetchAll(
+    // A link of before the browser binding (browser_hash NULL) matches no browser: ask for a new one.
+    override suspend fun consume(tokenHash: String, browserHash: String, now: Instant): MagicLink? = driver.fetchAll(
         Statement.create(
             "UPDATE identity_magic_links SET used_at = :now WHERE token_hash = :token AND used_at IS NULL " +
-                "AND expires_at > :now RETURNING $LINK_COLUMNS",
-        ).bind("token", tokenHash).bind("now", now),
+                "AND expires_at > :now AND browser_hash = :browser RETURNING $LINK_COLUMNS",
+        ).bind("token", tokenHash).bind("now", now).bind("browser", browserHash),
     ).getOrThrow().firstOrNull()?.toLink()
+
+    override suspend fun pending(tokenHash: String, now: Instant): Boolean = driver.fetchAll(
+        Statement.create(
+            "SELECT 1 FROM identity_magic_links WHERE token_hash = :token AND used_at IS NULL AND expires_at > :now",
+        ).bind("token", tokenHash).bind("now", now),
+    ).getOrThrow().firstOrNull() != null
 
     private fun ResultSet.Row.toLink() = MagicLink(
         id = get("id").asUuid(),

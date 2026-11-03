@@ -15,9 +15,9 @@ interface RulesRepository {
      * Lists rules.
      *
      * @param orgId The organization.
-     * @param query The filters.
+     * @param query The filters, and the rule the list starts after.
      * @param limit At most this many.
-     * @return The rules, by group then id.
+     * @return The rules, by group then id, every filter applied before the limit.
      */
     suspend fun rules(orgId: Uuid, query: RuleQuery, limit: Int): List<Rule>
 

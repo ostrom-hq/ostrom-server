@@ -349,4 +349,10 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE identity_audit_events ENABLE ALWAYS TRIGGER identity_audit_events_append_only
         """.trimIndent(),
     ),
+    // Web audit n°2 M4: an e-mailed link signs in only in the browser that asked for it (the SHA-256 of its nonce).
+    SchemaMigration(
+        version = 10,
+        name = "magic_links_bound_to_their_browser",
+        sql = "ALTER TABLE identity_magic_links ADD COLUMN browser_hash TEXT",
+    ),
 )

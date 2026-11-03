@@ -32,6 +32,7 @@ import dev.ostrom.server.testing.serverTest
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.encodeURLParameter
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
@@ -172,6 +173,17 @@ class RulesPostgresTest {
             server.call("POST", "/api/v1/rules/bulk", "admin-a", BulkRulesRequest(listOf("rule_1"), "maybe")).status,
         )
         assertEquals(HttpStatusCode.BadRequest, server.call("GET", "/api/v1/rules?status=maybe", "admin-a").status)
+
+        // A page at a time: `next` is the `after` of the following page, absent on the last one.
+        val first = server.call("GET", "/api/v1/rules?limit=2", "reader-a").body<RulesPage>()
+        assertEquals(listOf("rule_2", "rule_3"), first.items.map { it.id })
+        val next = assertNotNull(first.next, "More rules follow")
+        val last = server.call("GET", "/api/v1/rules?limit=2&after=${next.encodeURLParameter()}", "reader-a")
+            .body<RulesPage>()
+        assertEquals(listOf("rule_1"), last.items.map { it.id })
+        assertNull(last.next, "The last page")
+        assertNull(server.call("GET", "/api/v1/rules", "reader-a").body<RulesPage>().next, "1 000 by default")
+        assertEquals(HttpStatusCode.BadRequest, server.call("GET", "/api/v1/rules?after=nope", "admin-a").status)
     }
 
     @Test

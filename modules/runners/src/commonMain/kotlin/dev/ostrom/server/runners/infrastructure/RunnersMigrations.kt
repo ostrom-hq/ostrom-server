@@ -220,4 +220,15 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         sql = ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL,
     ),
     SchemaMigration(version = 4, name = "registered_runner_key", sql = REGISTERED_RUNNER_ORG_SQL),
+    // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+    // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+    SchemaMigration(
+        version = 5,
+        name = "runners_router_policies_inside_functions_only",
+        sql = """
+            ALTER POLICY runners_session_routes_router ON runners_session_routes USING (current_user = 'ostrom_router')
+                WITH CHECK (current_user = 'ostrom_router');
+            ALTER POLICY runners_registered_router ON runners_registered USING (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
 )

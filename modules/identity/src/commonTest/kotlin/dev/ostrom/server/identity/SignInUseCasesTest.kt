@@ -9,6 +9,7 @@ import dev.ostrom.server.identity.domain.InvalidEmailException
 import dev.ostrom.server.identity.domain.InvalidMagicLinkException
 import dev.ostrom.server.identity.domain.InvalidSignInStateException
 import dev.ostrom.server.identity.domain.LinkIdentityUseCaseImpl
+import dev.ostrom.server.identity.domain.MagicLinkOtherBrowserException
 import dev.ostrom.server.identity.domain.Mail
 import dev.ostrom.server.identity.domain.MailNotSentException
 import dev.ostrom.server.identity.domain.ProviderNotConfiguredException
@@ -39,6 +40,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -178,7 +180,7 @@ class SignInUseCasesTest {
 
     @Test
     fun aMagicLinkIsSentThenSignsInOnce() = runTest {
-        request(" Ada@Example.com ", "/settings", "1.2.3.4")
+        assertEquals("laptop", request(" Ada@Example.com ", "/settings", "1.2.3.4", "laptop"))
 
         val sent = mail.sent.single()
         assertEquals("ada@example.com", sent.to)
@@ -186,36 +188,52 @@ class SignInUseCasesTest {
         assertEquals(listOf("magic-link:1.2.3.4", "magic-link-to:ada@example.com"), limiter.keys)
         assertEquals(clock.now + 15.minutes, links.links.getValue("h(secret1)").expiresAt)
 
-        val signedIn = verify("secret1")
+        val signedIn = verify("secret1", "laptop")
         assertEquals("/settings", signedIn.redirectPath)
         assertEquals("ada@example.com", signedIn.user.primaryEmail)
         assertEquals(listOf("email"), users.listIssuers(signedIn.user.id))
-        assertFailsWith<InvalidMagicLinkException> { verify("secret1") }
+        assertFailsWith<InvalidMagicLinkException> { verify("secret1", "laptop") }
     }
 
     @Test
     fun aMagicLinkSignsInTheAccountThatVerifiedTheSameAddress() = runTest {
         val existing = resolve(VerifiedIdentity(IdentityProvider.GITHUB, "7", "ada@example.com", true, "Ada"))
-        request("ada@example.com", null, "ip")
+        request("ada@example.com", null, "ip", "laptop")
 
-        assertEquals(existing.id, verify("secret1").user.id)
+        assertEquals(existing.id, verify("secret1", "laptop").user.id)
     }
 
     @Test
     fun anExpiredUnknownOrOversizedLinkIsRefused() = runTest {
-        request("ada@example.com", null, "ip")
+        request("ada@example.com", null, "ip", "laptop")
         clock.now += 16.minutes
 
-        assertFailsWith<InvalidMagicLinkException> { verify("secret1") }
-        assertFailsWith<InvalidMagicLinkException> { verify("nope") }
-        assertFailsWith<InvalidMagicLinkException> { verify("") }
-        assertFailsWith<InvalidMagicLinkException> { verify("x".repeat(129)) }
+        assertFailsWith<InvalidMagicLinkException> { verify("secret1", "laptop") }
+        assertFailsWith<InvalidMagicLinkException> { verify("nope", "laptop") }
+        assertFailsWith<InvalidMagicLinkException> { verify("", "laptop") }
+        assertFailsWith<InvalidMagicLinkException> { verify("x".repeat(129), "laptop") }
+    }
+
+    @Test
+    fun aLinkSignsInOnlyInTheBrowserThatAskedForItAndEachOfItsLinksDoes() = runTest {
+        val nonce = request("ada@example.com", null, "ip", null)
+        assertEquals("secret1", nonce, "A browser without a nonce gets one")
+        for (other in listOf(null, "", "phone", "x".repeat(129))) {
+            assertFailsWith<MagicLinkOtherBrowserException> { verify("secret2", other) }
+        }
+        assertEquals(nonce, request("ada@example.com", null, "ip", nonce), "The same browser keeps its nonce")
+        assertNotEquals("secret1", request("ada@example.com", null, "ip", "x".repeat(129)), "An oversized one is new")
+        assertNotEquals("", request("ada@example.com", null, "ip", ""), "An empty one too")
+
+        assertEquals("ada@example.com", verify("secret2", nonce).user.primaryEmail, "Still usable where asked for")
+        assertEquals("ada@example.com", verify("secret3", nonce).user.primaryEmail)
+        assertFailsWith<InvalidMagicLinkException> { verify("secret2", "phone") }
     }
 
     @Test
     fun linkRequestsAreLimitedPerClientLoudlyAndPerRecipientSilently() = runTest {
         limiter.allow = false
-        assertFailsWith<RateLimitedException> { request("ada@example.com", null, "ip") }
+        assertFailsWith<RateLimitedException> { request("ada@example.com", null, "ip", null) }
 
         val perRecipient = RequestMagicLinkUseCaseImpl(
             methods, links, mail,
@@ -229,21 +247,21 @@ class SignInUseCasesTest {
             ),
             { to, link -> Mail(to, "s", link, link) }, { it },
         )
-        perRecipient("ada@example.com", null, "ip")
+        assertEquals("secret1", perRecipient("ada@example.com", null, "ip", null), "A nonce all the same")
         assertTrue(mail.sent.isEmpty())
         assertTrue(links.links.isEmpty())
     }
 
     @Test
     fun linkRequestsCheckTheAddressAndTheConfiguration() = runTest {
-        assertFailsWith<InvalidEmailException> { request("not-an-email", null, "ip") }
+        assertFailsWith<InvalidEmailException> { request("not-an-email", null, "ip", null) }
         val unconfigured = RequestMagicLinkUseCaseImpl(
             SignInMethods(emptyMap(), email = false), links, mail, services,
             { to, link -> Mail(to, "s", link, link) }, { it },
         )
-        assertFailsWith<ProviderNotConfiguredException> { unconfigured("ada@example.com", null, "ip") }
+        assertFailsWith<ProviderNotConfiguredException> { unconfigured("ada@example.com", null, "ip", null) }
         mail.fail = true
-        assertFailsWith<MailNotSentException> { request("ada@example.com", null, "ip") }
+        assertFailsWith<MailNotSentException> { request("ada@example.com", null, "ip", null) }
     }
 
     @Test

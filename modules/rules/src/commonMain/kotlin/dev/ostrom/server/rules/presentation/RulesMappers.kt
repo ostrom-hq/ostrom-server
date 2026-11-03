@@ -7,6 +7,7 @@ import dev.ostrom.server.rules.domain.models.Decision
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.NewRule
 import dev.ostrom.server.rules.domain.models.Rule
+import dev.ostrom.server.rules.domain.models.RuleCursor
 import dev.ostrom.server.rules.domain.models.RuleGate
 import dev.ostrom.server.rules.domain.models.RuleGateAction
 import dev.ostrom.server.rules.domain.models.RuleGateCheck
@@ -100,12 +101,13 @@ fun GatePolicyDto.toPolicy(): SelfApprovalPolicy = SelfApprovalValues.of(selfApp
  * The filters of a list.
  *
  * @return The query.
- * @throws InvalidRuleException When the status is unknown.
+ * @throws InvalidRuleException When the status is unknown, or the cursor is not one a page gave.
  */
 fun RulesApi.toQuery(): RuleQuery = RuleQuery(
     repo = repo?.trim().orEmpty().ifEmpty { null },
     status = status?.let(::ruleStatusOf),
     group = group,
+    after = after?.let(RuleCursor::of),
 )
 
 /**

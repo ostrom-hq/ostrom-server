@@ -119,4 +119,13 @@ val ArtifactsMigrations: List<SchemaMigration> = listOf(
         name = "artifacts_routes_under_row_level_security",
         sql = ROUTES_UNDER_ROW_LEVEL_SECURITY_SQL,
     ),
+    // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+    // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+    SchemaMigration(
+        version = 3,
+        name = "artifacts_router_policies_inside_functions_only",
+        sql = """
+            ALTER POLICY artifacts_routes_router ON artifacts_routes USING (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
 )

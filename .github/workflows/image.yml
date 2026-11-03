@@ -101,6 +101,7 @@ jobs:
     outputs:
       digest: ${{ steps.index.outputs.digest }}
     permissions:
+      actions: write # dispatch demo-stack.yml once the image is out
       contents: read
       packages: write
     steps:
@@ -224,24 +225,17 @@ jobs:
             echo
             echo "Tags:"; printf '%s\n' "${{ steps.meta.outputs.tags }}" | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
-
-  # The image just published, run whole in ostrom-helm's local demo stack with the customer's journey (demo-stack.yml),
-  # in a run of its own: this run says only whether the image is published. Called here (workflow_call), the demo
-  # shared this run's conclusion: a newer merge's demo cancelling it (demo-stack's concurrency group) or a red step of
-  # the journey turned an Image run whose image was published `cancelled` or `failure` (runs of f0ff932 to 6249c88,
-  # 02/11). The smoke test above still blocks publication; the demo never does.
-  demo:
-    needs: image
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      actions: write # dispatch demo-stack.yml
-    steps:
+      # The image just published, run whole in ostrom-helm's local demo stack with the customer's journey
+      # (demo-stack.yml), dispatched in a run of its own: this run says only whether the image is published. A step of
+      # this job, not a job of its own: a job waits for a runner, and on a full runner pool the Image runs of 02/11
+      # 23:47-00:09 stayed `queued` for many minutes after their image was out (sha-88fe664 published at 00:09, its run
+      # still queued on the demo job), which read as "nothing published". The smoke test above blocks publication; the
+      # demo never does.
       - name: Demo of the image just published, in its own run
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          DIGEST: ${{ needs.image.outputs.digest }}
+          DIGEST: ${{ steps.index.outputs.digest }}
         run: |
           gh workflow run demo-stack.yml --repo "$GITHUB_REPOSITORY" --ref main \
             -f server_image="${IMAGE}@${DIGEST}" -f after_merge=true

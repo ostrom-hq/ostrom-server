@@ -2,7 +2,7 @@
 # A session runs it three times (S2-49): `ostrom-runner agent-host` as UID 1000 runs the agent, with the workspace;
 # `ostrom-runner` as UID 1001 holds the runner token and talks to the server; `ostrom-runner check-host` as UID 1000,
 # in a container of its own with the workspace, runs the hooks' checks for the runner. The agent and the runner share
-# only the socket directory /run/ostrom (group 2000); the runner and the check host only /run/ostrom-check. Contract with the server (modules/runners): /usr/local/bin/ostrom-runner, those UIDs and
+# only the socket directory /run/ostrom (group 2000); the runner and the check host only /run/ostrom-check, where the runner listens and the check host links to it. Contract with the server (modules/runners): /usr/local/bin/ostrom-runner, those UIDs and
 # that group, /bin/sh, git and bash. Build context (ci/session-image-context.sh): bin/ostrom-runner and, when
 # available, bin/ostrom; agents/ (package.json, package-lock.json); npm-cache/ (empty or a warm npm cache).
 FROM node:22-bookworm-slim
