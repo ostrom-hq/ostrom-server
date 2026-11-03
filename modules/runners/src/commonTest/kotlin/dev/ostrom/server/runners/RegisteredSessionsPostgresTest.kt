@@ -78,7 +78,9 @@ class RegisteredSessionsPostgresTest {
             suspend fun fresh() = sessions.getById(created.id)!!
 
             reconcile(fresh())
-            assertEquals(ExecutionStatus.PENDING, driver.executionStatus(fresh()))
+            assertEquals(ExecutionStatus.QUEUED, driver.executionStatus(fresh()))
+            reconcile(fresh())
+            assertEquals("queued", fresh().phase, "Waiting for a machine")
             val silent = server.beat(b.id, b.token).body<RegisteredRunnerHeartbeatResponse>()
             assertEquals(emptyList(), silent.executions, "A runner that reports nothing runs no session")
 
