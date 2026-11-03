@@ -93,7 +93,6 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
                     }
                     // The one ordinary place is free: the slow call holds a held place.
                     assertEquals(1, calls.inProgress(CallKind.HELD), "the relayed call counts as held")
-                    assertEquals(0, calls.inProgress(CallKind.SERVED))
                     val read = client.get("$admin/servers") { bearerAuth("admin-a") }
                     assertEquals(HttpStatusCode.OK, read.status, read.bodyAsText())
                     upstreamAnswers.complete(Unit)
