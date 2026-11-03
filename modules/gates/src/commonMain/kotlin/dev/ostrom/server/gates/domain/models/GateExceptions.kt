@@ -5,6 +5,7 @@ import dev.ostrom.core.api.models.CheckAttestation
 import dev.ostrom.server.gates.domain.services.GateCheckProof
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import kotlin.time.Instant
 
 /** The gate or request does not exist, or belongs to another organization (the same answer, so nothing leaks). */
 class GateNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Gate not found.")
@@ -152,3 +153,17 @@ private fun why(proof: GateCheckProof): String = when (val attestation = proof.a
     CheckAttestation.WORKSTATION_DECLARED -> "was only declared by the workstation (workstation_declared)"
     else -> "failed in its last attested run (${attestation.value})"
 }
+
+/**
+ * The session ended while the gate was asked: its end has read its gates for its signed receipt, and nothing more is
+ * added to it (AUDIT-SERVEUR-3 B2). The same answer as the sessions module's for a closed session (a 409 whose message
+ * starts with `session closed:`, read by the launchers).
+ *
+ * @param sessionId The session segment.
+ * @param endedAt When it ended.
+ */
+class GateSessionClosedException(sessionId: String, endedAt: Instant) : OstromException(
+    ErrorKind.CONFLICT,
+    "session closed: $sessionId ended at $endedAt; its receipt is signed and nothing more is added to it. Reopen a " +
+        "segment (POST /api/v1/sessions/$sessionId/reopen) and send it there.",
+)

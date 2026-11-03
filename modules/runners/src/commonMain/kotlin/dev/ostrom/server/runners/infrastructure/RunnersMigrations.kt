@@ -264,4 +264,12 @@ val RunnersMigrations: List<SchemaMigration> = listOf(
         name = "registered_runner_capacity",
         sql = "ALTER TABLE runners_registered ADD COLUMN capacity INTEGER",
     ),
+    // What a waiting heartbeat's look reads, once a second per organization (InProcessRunnerWorkSignals): the
+    // executions not handed over yet, a handful at any time, whatever the history.
+    SchemaMigration(
+        version = 8,
+        name = "runner_assignments_undelivered",
+        sql = "CREATE INDEX runners_assignments_undelivered ON runners_assignments (org_id) " +
+            "WHERE delivered_at IS NULL AND stopped_at IS NULL",
+    ),
 )

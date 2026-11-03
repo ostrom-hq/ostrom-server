@@ -39,6 +39,7 @@ interface GetConfirmationUseCase {
  * @param expire Writes the expiry of the overdue ones first.
  * @param waits Wakes the waiting read.
  * @param clock The time.
+ * @param secrets Shows a result's secret once, to the person who asked.
  */
 class GetConfirmationUseCaseImpl(
     private val repository: ConfirmationsRepository,
@@ -46,6 +47,7 @@ class GetConfirmationUseCaseImpl(
     private val expire: ExpireConfirmationsUseCase,
     private val waits: ConfirmationWaits,
     private val clock: Clock,
+    private val secrets: ConfirmationSecrets,
 ) : GetConfirmationUseCase {
     override suspend fun invoke(viewer: AuthenticatedPrincipal, id: String, wait: Duration): Confirmation {
         // A person only: an agent, a device or a service never reads what an owner is asked to confirm.
@@ -61,7 +63,7 @@ class GetConfirmationUseCaseImpl(
             confirmation = look(member.orgId, id)
         }
         if (confirmation.status != confirmation.statusAt(clock.now())) confirmation = read(member.orgId, id)
-        return confirmation
+        return secrets.shownTo(confirmation, viewer)
     }
 
     private suspend fun read(orgId: Uuid, id: String): Confirmation {

@@ -26,7 +26,7 @@ import org.koin.dsl.module
  *
  * @param kernel The kernel definitions ([kernelModule]).
  * @param modules The functional modules.
- * @param overrides Test-only replacements (fakes), loaded last with overrides allowed.
+ * @param overrides Test-only replacements (fakes), loaded before anything is built, with overrides allowed.
  *
  * @return The Koin instance; close it when the server stops.
  */
@@ -35,6 +35,9 @@ fun serverKoin(kernel: Module, modules: List<ServerModule>, overrides: Module? =
         allowOverride(false)
         modules(listOf(kernel) + modules.map { it.koinModule })
     }.koin
+    // Overrides first: the checks below build what they find, and a real binding built and then overridden is never
+    // dropped when Koin closes, so the next test of the same module would reuse it (and its closed pool).
+    if (overrides != null) koin.loadModules(listOf(overrides), allowOverride = true)
     if (koin.getOrNull<TokenAuthenticator>() == null) {
         koin.loadModules(listOf(module { single<TokenAuthenticator> { RejectingTokenAuthenticator() } }))
     }
@@ -50,6 +53,5 @@ fun serverKoin(kernel: Module, modules: List<ServerModule>, overrides: Module? =
     if (koin.getOrNull<PhoneUnlockProofs>() == null) {
         koin.loadModules(listOf(module { single<PhoneUnlockProofs> { RejectingPhoneUnlockProofs() } }))
     }
-    if (overrides != null) koin.loadModules(listOf(overrides), allowOverride = true)
     return koin
 }

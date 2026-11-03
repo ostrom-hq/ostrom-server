@@ -5,6 +5,7 @@ import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.sessions.domain.models.Session
 import dev.ostrom.server.workflowruns.domain.models.RunPackage
+import dev.ostrom.server.workflowruns.domain.models.RunWorkflow
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -100,4 +101,17 @@ interface RunLaunches {
      * @return The repository, or null when the launch names none or is unknown.
      */
     suspend fun repo(orgId: Uuid, launchId: String): String?
+}
+
+/** The organization's workflows (the compiler module), as a run starts them. */
+interface RunWorkflows {
+    /**
+     * Reads a workflow.
+     *
+     * @param orgId The organization.
+     * @param id The workflow.
+     *
+     * @return The workflow, or null when the organization has none of that id.
+     */
+    suspend fun find(orgId: Uuid, id: String): RunWorkflow?
 }
