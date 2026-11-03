@@ -18,7 +18,7 @@ internal object ReportsQueries {
      * never.
      *
      * The ledger is first added up by member, session, launch and day (`calls`), then joined: a session's calls are
-     * joined once per day, not once per call (1 s for 49 000 calls a month, ReportsReadsBenchTest).
+     * joined once per day, not once per call (ReportsReadsBenchTest measures it).
      *
      * @param member Whether one member's spending only.
      * @return The statement.
