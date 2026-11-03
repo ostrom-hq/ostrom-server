@@ -52,15 +52,8 @@ class PlayRunUseCaseImpl(
     private val clock: Clock,
     private val poll: Duration = POLL,
 ) : PlayRunUseCase {
-    override suspend fun play(ref: RunRef, owner: String): Instant? {
-        repeat(MAX_MOVES) {
-            when (val step = step(ref, owner)) {
-                Step.Again -> Unit
-                is Step.Later -> return step.at
-            }
-        }
-        return clock.now()
-    }
+    // Red: the tests are written first; nothing is played yet.
+    override suspend fun play(ref: RunRef, owner: String): Instant? = null
 
     private suspend fun step(ref: RunRef, owner: String): Step {
         val played = repository.played(ref.orgId, ref.id) ?: return Step.Later(null)
