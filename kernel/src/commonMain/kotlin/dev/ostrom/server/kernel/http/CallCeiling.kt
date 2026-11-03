@@ -24,7 +24,6 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.incrementAndFetch
-import kotlin.concurrent.atomics.updateAndFetch
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -113,7 +112,7 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
      *
      * @return Their number; 0 for [CallKind.FREE], never counted.
      */
-    fun inProgress(kind: CallKind): Long = placesOf(kind)?.running?.load() ?: 0
+    fun inProgress(kind: CallKind): Long = placesOf(kind)?.let { it.running.load() } ?: 0
 
     private fun placesOf(kind: CallKind): Places? = when (kind) {
         CallKind.SERVED -> served
@@ -144,8 +143,11 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
             }
         }
 
-        private fun lineOf(ceiling: Int): Line = line.updateAndFetch { now ->
-            if (now.ceiling == ceiling) now else Line(ceiling, Semaphore(ceiling))
+        // Two calls that see a new ceiling at once may each start a line: the call on the line that is not kept still
+        // gives its place back to its own semaphore, and the next calls take the line kept.
+        private fun lineOf(ceiling: Int): Line {
+            val now = line.load()
+            return if (now.ceiling == ceiling) now else Line(ceiling, Semaphore(ceiling)).also { line.store(it) }
         }
     }
 
