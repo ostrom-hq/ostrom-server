@@ -61,7 +61,7 @@ class HooksMissingPostgresTest {
         val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
         koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
         suspend fun token(kind: TokenKind, scopes: Set<String>): String {
-            val secret = "osc_" + Uuid.random().toHexString()
+            val secret = (if (kind == TokenKind.CLI) "osc_" else "osp_") + Uuid.random().toHexString()
             val token = ApiToken(
                 Uuid.random(), user.id, org.id, "cli", kind, scopes, "hint", null, now, now + 1.hours, null,
                 null,

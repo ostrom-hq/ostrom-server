@@ -76,7 +76,7 @@ class CatalogGateNodesTest {
     @Test
     fun theStampOfTheGatesIsTheDigestOfThePinnedPackage() = runTest {
         val pins = MemoryCompilerRepository()
-        val withPins = CatalogGateNodes({ error("no catalogue read") }, { pins })
+        val withPins = CatalogGateNodes({ pins }) { error("no catalogue read") }
         assertNull(withPins.policyStamp(org, "acme/api"), "No pinned package yet")
         pins.pins[org to "acme/api"] = PackagePin("sha-1", "compiler (auto pin)", Instant.parse("2026-11-03T10:00:00Z"))
         assertEquals("sha-1", withPins.policyStamp(org, "acme/api"))
