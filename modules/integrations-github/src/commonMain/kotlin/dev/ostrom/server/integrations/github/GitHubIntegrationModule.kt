@@ -12,6 +12,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubAppSourceImpl
 import dev.ostrom.server.integrations.github.domain.GitHubAppStore
 import dev.ostrom.server.integrations.github.domain.GitHubCiApi
 import dev.ostrom.server.integrations.github.domain.GitHubCiChecks
+import dev.ostrom.server.integrations.github.domain.GitHubContentsApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryApi
 import dev.ostrom.server.integrations.github.domain.GitHubDirectoryRepository
 import dev.ostrom.server.integrations.github.domain.GitHubDirectorySync
@@ -22,6 +23,7 @@ import dev.ostrom.server.integrations.github.domain.GitHubManifestTarget
 import dev.ostrom.server.integrations.github.domain.GitHubOriginsRepository
 import dev.ostrom.server.integrations.github.domain.GitHubPullRequestHeads
 import dev.ostrom.server.integrations.github.domain.GitHubRepository
+import dev.ostrom.server.integrations.github.domain.GitHubRepositoryReader
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCase
 import dev.ostrom.server.integrations.github.domain.HandleWebhookUseCaseImpl
 import dev.ostrom.server.integrations.github.domain.InstanceAdmins
@@ -36,6 +38,7 @@ import dev.ostrom.server.integrations.github.infrastructure.GitHubAppSetup
 import dev.ostrom.server.integrations.github.infrastructure.GitHubMigrations
 import dev.ostrom.server.integrations.github.infrastructure.GitHubSettings
 import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubApi
+import dev.ostrom.server.integrations.github.infrastructure.HttpGitHubContentsApi
 import dev.ostrom.server.integrations.github.infrastructure.OrgsOrgReferences
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubAppStore
 import dev.ostrom.server.integrations.github.infrastructure.PostgresGitHubDirectoryRepository
@@ -52,6 +55,7 @@ import dev.ostrom.server.integrations.github.presentation.gitHubManifestRoutes
 import dev.ostrom.server.integrations.github.presentation.gitHubRoutes
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.rules.domain.services.RepositoryReader
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.server.routing.Route
@@ -71,7 +75,9 @@ val GITHUB_HTTP = named("github-http")
  * The integrations-github module: the GitHub App installed per organization, its webhooks, the head of a pull
  * request read from GitHub for the gates ([PullRequestHeads]), and the `ostrom-gate` check run ([GateChannel]); each
  * organization's directory (repositories and teams) read from its installation and kept in the database; and the
- * manifest flow, which creates the instance's App when the environment names none. Its settings come from the
+ * manifest flow, which creates the instance's App when the environment names none; and the rules analysis's
+ * [RepositoryReader], which reads the files, CODEOWNERS and branch protection of the installation's
+ * repositories. Its settings come from the
  * environment (`OSTROM_GITHUB_*`, `OSTROM_PUBLIC_URL`, `OSTROM_INSTANCE_ADMINS`).
  */
 object GitHubIntegrationModule : ServerModule {
@@ -110,6 +116,13 @@ object GitHubIntegrationModule : ServerModule {
         single<GitHubDirectoryApi> { get<HttpGitHubApi>() }
         single<GitHubManifestApi> { get<HttpGitHubApi>() }
         single<GitHubCiApi> { get<HttpGitHubApi>() }
+        single<GitHubContentsApi> {
+            val api = get<HttpGitHubApi>()
+            val apiUrl = get<GitHubSettings>().apiUrl
+            HttpGitHubContentsApi(get(GITHUB_HTTP), apiUrl, get()) { id, wanted -> api.installationToken(id, wanted) }
+        }
+        // The rules analysis reads each organization's repositories through its own installation, read-only.
+        single<RepositoryReader> { GitHubRepositoryReader(get(), get(), get(), get<GitHubSettings>().webUrl) }
         single<GitHubDirectoryRepository> { PostgresGitHubDirectoryRepository(get()) }
         single { GitHubDirectorySync(get(), get(), get(), get(), get()) }
         single<ListGitHubReposUseCase> { ListGitHubReposUseCaseImpl(get(), get()) }

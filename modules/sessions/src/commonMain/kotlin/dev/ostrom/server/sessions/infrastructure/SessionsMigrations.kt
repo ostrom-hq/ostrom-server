@@ -125,10 +125,19 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
         REVOKE CREATE ON SCHEMA public FROM ostrom_router
         """.trimIndent(),
     ),
+    // RLS audit R9: the router's policies hold only inside its own functions, as identity's
+    // do; the owner, a member of `ostrom_router` to hand them over, no longer passes them.
+    SchemaMigration(
+        version = 5,
+        name = "sessions_router_policies_inside_functions_only",
+        sql = """
+            ALTER POLICY sessions_sessions_router ON sessions_sessions USING (current_user = 'ostrom_router')
+        """.trimIndent(),
+    ),
     // The filters of `GET /sessions` (SessionsReadsBenchTest): by developer, by repository and the open ones, newest
     // first, read the organization's recent sessions and kept those that matched (4 995 read for 5 kept).
     SchemaMigration(
-        5,
+        6,
         "index_sessions_filters",
         """
         CREATE INDEX sessions_by_dev ON sessions_sessions (org_id, dev, started_at DESC, id DESC);
