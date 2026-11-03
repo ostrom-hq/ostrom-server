@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.workflowruns.infrastructure
 
+import dev.ostrom.core.api.models.WaitSpec as NodeWaitSpec
 import dev.ostrom.server.automations.domain.AnswerWaitUseCase
 import dev.ostrom.server.automations.domain.AskWait
 import dev.ostrom.server.automations.domain.AskWaitUseCase
@@ -86,7 +87,8 @@ class AutomationsRunWaits(
 
     // The node's question as the waits take it, or null when it names a field type they do not know.
     private fun question(request: WaitRequest): WaitSpec? = try {
-        OstromJson.decodeFromString(WaitSpec.serializer(), OstromJson.encodeToString(request.question))
+        val node = OstromJson.encodeToString(NodeWaitSpec.serializer(), request.question)
+        OstromJson.decodeFromString(WaitSpec.serializer(), node)
     } catch (ignored: SerializationException) {
         null
     }

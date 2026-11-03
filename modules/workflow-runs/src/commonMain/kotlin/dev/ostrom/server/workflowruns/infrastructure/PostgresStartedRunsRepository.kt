@@ -48,7 +48,7 @@ class PostgresStartedRunsRepository(
                     .bind("body", OstromJson.encodeToString(WorkflowRun.serializer(), child))
                     .bind("graph", OstromJson.encodeToString(RunGraph.serializer(), graph))
                     .bind("parent_run_id", "${child.parentRunId}").bind("parent_seq", seq),
-            ).getOrThrow().isNotEmpty()
+            ).getOrThrow().firstOrNull() != null
             if (stored) this.audit.recordRun(tx, orgId, child.id, audit)
             tx.fetchAll(
                 Statement.create(StartedRunQueries.CHILD).bind("org_id", orgId)
