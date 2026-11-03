@@ -12,7 +12,7 @@ internal object GatesQueries {
 
     const val GATE_COLUMNS = "id, org_id, gate_key, subject, node, label, mode, status, asked_by, asked_via, " +
         "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, self_approved, receipt_id, " +
-        "reserved_by, reserved_at, consumed_at, released_at, created_at"
+        "reserved_by, reserved_at, consumed_at, released_at, created_at, unlinked_author"
     const val REQUEST_COLUMNS =
         "id, gate_id, org_id, position, approver_id, status, answered_at, channel, created_at"
 

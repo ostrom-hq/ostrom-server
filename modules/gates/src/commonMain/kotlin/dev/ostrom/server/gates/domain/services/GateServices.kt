@@ -34,6 +34,17 @@ interface GatePolicies {
     suspend fun selfApproval(orgId: Uuid): SelfApprovalPolicy
 }
 
+/** The GitHub account each person linked, owned by integrations-github (Q-GATES-G1). */
+fun interface GateGitHubAccounts {
+    /**
+     * Reads the GitHub accounts a person linked.
+     *
+     * @param login The person's Ostrom login.
+     * @return The GitHub account ids; empty when they linked none.
+     */
+    suspend fun gitHubIdsOf(login: String): List<Long>
+}
+
 /** Signs the receipt of a decided gate (receipts module). */
 interface GateReceiptSigner {
     /**

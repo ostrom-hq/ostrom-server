@@ -16,6 +16,7 @@ import dev.ostrom.server.gates.domain.services.GateCheckNeeds
 import dev.ostrom.server.gates.domain.services.GateCheckProof
 import dev.ostrom.server.gates.domain.services.GateCheckProofs
 import dev.ostrom.server.gates.domain.services.GateChannel
+import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.GateNotifier
 import dev.ostrom.server.gates.domain.services.GatePolicies
@@ -107,6 +108,11 @@ class ChannelsGateNotifier(channels: () -> List<GateChannel>, private val logger
         /** How long one channel may take to hear of a gate event. */
         val CHANNEL_TIMEOUT: Duration = 5.seconds
     }
+}
+
+/** Without integrations-github, nobody linked a GitHub account (and no pull request opens a gate). */
+class NoGateGitHubAccounts : GateGitHubAccounts {
+    override suspend fun gitHubIdsOf(login: String): List<Long> = emptyList()
 }
 
 /** Without the identity module, no credential belongs to an organization. */

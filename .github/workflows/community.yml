@@ -21,7 +21,8 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -51,7 +52,10 @@ jobs:
           subjectPatternError: >-
             The subject "{subject}" must not start with a capitalized word ("Add ..."): write "feat(cli): add ostrom doctor". Acronyms (API, CLI) are fine.
 
+      # This step and the next two run even when an earlier check failed, once the tree is checked out: one red
+      # check never hides another (ostrom-app#35: a wrong title skipped the license headers).
       - name: Developer Certificate of Origin
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -78,12 +82,14 @@ jobs:
           echo "dco: every commit is signed off"
 
       - name: License headers
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           python3 .github/scripts/check_spdx.py --base "$BASE"
 
       - name: Workflow security
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           inputs: .github/

@@ -12,10 +12,8 @@ object KnownDrifts {
     private const val STATUS = "Contract: the server answers this status, the operation does not declare it."
     private const val SUCCESS = "The server's success status is not the contract's (200 against 201)."
     private const val CONTENT = "The content origin refuses without the contract's JSON error."
-    private const val AUDIT = "The package audit's meta holds counts where the contract says strings."
     private const val STRIPE = "Contract: ignored_unknown_org is missing from the webhook outcome's enum."
     private const val JSON_RPC = "Contract: the MCP relay refuses with a JSON-RPC error, the contract says ApiError."
-    private const val RECEIPT = "The approval's receipt lacks properties the contract requires."
     private const val PROPERTY = "Contract: the server sends this property, the contract does not declare it."
 
     /** Each drift's key ([Drift.key]) and why it waits. */
@@ -72,16 +70,6 @@ object KnownDrifts {
             "getArtifactContent 404 $ BODY",
         ),
         waiting(
-            AUDIT,
-            "listPackageAudit 200 $.items[*].meta.enforcedScripts TYPE",
-            "listPackageAudit 200 $.items[*].meta.files TYPE",
-            "listPackageAudit 200 $.items[*].meta.hooks TYPE",
-            "listPackageAudit 200 $.items[*].meta.nodes TYPE",
-            "listPackageAudit 200 $.items[*].meta.notifications TYPE",
-            "listPackageAudit 200 $.items[*].meta.scripts TYPE",
-            "listPackageAudit 200 $.items[*].meta.workflows TYPE",
-        ),
-        waiting(
             STRIPE,
             "receiveStripeWebhook 200 $.outcome TYPE",
         ),
@@ -95,15 +83,6 @@ object KnownDrifts {
             "relayMcp 404 $.error.type MISSING",
             "relayMcp 404 $.id UNDECLARED",
             "relayMcp 404 $.jsonrpc UNDECLARED",
-        ),
-        waiting(
-            RECEIPT,
-            "answerApproval 200 $.receipt.createdAt MISSING",
-            "answerApproval 200 $.receipt.decisions MISSING",
-            "answerApproval 200 $.receipt.initiator MISSING",
-            "answerApproval 200 $.receipt.rules MISSING",
-            "answerApproval 200 $.receipt.signature MISSING",
-            "answerApproval 200 $.receipt.subject MISSING",
         ),
         waiting(
             PROPERTY,
