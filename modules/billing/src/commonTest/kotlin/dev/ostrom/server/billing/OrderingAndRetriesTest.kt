@@ -165,6 +165,16 @@ class OrderingAndRetriesTest {
     }
 
     @Test
+    fun aCustomerAddressNotUpdatedIsLoggedWithoutItsMessage() {
+        val lines = mutableListOf<String>()
+        customerEmailFailureLogger(recording(lines))("cus_1", IllegalStateException("ada@acme.dev refused"))
+        assertEquals(
+            listOf("WARN stripe customer email not updated {customer_id=cus_1, error=IllegalStateException}"),
+            lines,
+        )
+    }
+
+    @Test
     fun anUnknownPriceIsLoggedAsAnError() {
         val lines = mutableListOf<String>()
         unknownPriceLogger(recording(lines))("sub_1", null)

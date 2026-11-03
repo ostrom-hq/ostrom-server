@@ -28,6 +28,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
@@ -75,7 +76,10 @@ class StripeGatewayImplTest {
         )
         assertEquals(STRIPE_API_VERSION, sent.headers.getValue("Stripe-Version"))
         assertEquals("2026-09-30.endive", STRIPE_API_VERSION)
-        assertEquals("ostrom-customer-$ORG", sent.headers.getValue("Idempotency-Key"), "One customer per organization")
+        assertTrue(
+            sent.headers.getValue("Idempotency-Key").startsWith("ostrom-customer-$ORG-"),
+            "One customer per organization and address",
+        )
     }
 
     @Test
@@ -95,6 +99,40 @@ class StripeGatewayImplTest {
     fun aSubscriptionWithoutCustomerIsRefused() = runTest {
         val harness = Harness(200 to """{"id":"sub_1","status":"active"}""")
         assertFailsWith<IllegalArgumentException> { harness.gateway.getSubscription("sub_1") }
+    }
+
+    @Test
+    fun aCustomersEmailIsSetOnTheCustomer() = runTest {
+        val harness = Harness(200 to """{"id":"cus_1"}""")
+        harness.gateway.updateCustomerEmail("cus_1", "ada@acme.dev")
+        val sent = harness.sent.single()
+        assertEquals("POST", sent.method)
+        assertEquals("/v1/customers/cus_1", sent.url)
+        assertEquals("email=ada%40acme.dev", sent.body)
+    }
+
+    @Test
+    fun aCustomersEmailIsReadWithoutParametersAndMayBeMissing() = runTest {
+        val harness = Harness(
+            200 to """{"id":"cus_1","email":"compta@acme.dev"}""",
+            200 to """{"id":"cus_1","email":null}""",
+        )
+        assertEquals("compta@acme.dev", harness.gateway.customerEmail("cus_1"))
+        assertNull(harness.gateway.customerEmail("cus_1"))
+        assertEquals("GET", harness.sent.first().method)
+        assertEquals("/v1/customers/cus_1", harness.sent.first().url)
+    }
+
+    @Test
+    fun aRetryReusesTheCustomerKeyButAnotherPayerIsNotRefusedByIt() = runTest {
+        val harness = Harness(*Array(4) { 200 to """{"id":"cus_1"}""" })
+        for (email in listOf("Ada@acme.dev", "ada@acme.dev", "bob@acme.dev", null)) {
+            harness.gateway.createCustomer(ORG, null, email)
+        }
+        val keys = harness.sent.map { it.headers.getValue("Idempotency-Key") }
+        assertEquals(keys[0], keys[1], "The same address in another case is the same customer")
+        assertNotEquals(keys[1], keys[2], "Stripe would refuse the same key with another address for 24 h")
+        assertEquals("ostrom-customer-$ORG", keys[3])
     }
 
     @Test
