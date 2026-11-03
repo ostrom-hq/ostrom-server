@@ -45,6 +45,14 @@ class ReadBenchTest {
     }
 
     @Test
+    fun theDatabaseTimeIsWhatPostgresReports() {
+        val plan = "Result  (actual time=0.002..0.002)\nPlanning Time: 0.500 ms\nExecution Time: 1.25 ms"
+        val plans = listOf(plan, "Result")
+        assertEquals(1.75.milliseconds, databaseTime(plans))
+        assertEquals(0.milliseconds, databaseTime(emptyList()))
+    }
+
+    @Test
     fun aRouteThatFailsIsNotMeasured() = serverTest(emptyList()) { server ->
         val failure = assertFailsWith<IllegalStateException> { server.measureRead("GET /nowhere") { get("/nowhere") } }
         assertTrue("404" in failure.message.orEmpty(), failure.message)

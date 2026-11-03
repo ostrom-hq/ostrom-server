@@ -11,8 +11,8 @@ import kotlin.time.Duration
  * @property statements The statements of one call, in order: their number is the queries per call.
  * @property plans The `EXPLAIN (ANALYZE, BUFFERS)` of each query among them, on the serving role with row-level
  *   security, in the organization the call set.
- * @property latencies The database time of one call, sorted: its statements replayed by [CONCURRENT_CALLS] callers at
- *   once, each transaction as the call ran it.
+ * @property latencies The database time of one call, sorted: the planning and execution times PostgreSQL reports for
+ *   its queries, replayed by [CONCURRENT_CALLS] callers at once, each transaction as the call ran it.
  * @property http The median of a whole call through the in-process test server, one at a time, for information: it
  *   includes the test engine and the JSON, not what the database costs.
  */
@@ -41,7 +41,8 @@ class ReadMeasure(
     fun describe(): String = buildString {
         appendLine("== $name")
         appendLine(
-            "queries per call: $queries; database p50 $p50, p95 $p95 ($calls calls, $CONCURRENT_CALLS concurrent); " +
+            "queries per call: $queries; database p50 $p50, p95 $p95 ($calls calls, $CONCURRENT_CALLS concurrent, " +
+                "PostgreSQL's planning and execution time); " +
                 "whole call in process $http",
         )
         statements.forEach { appendLine("-- ${it.sql}") }

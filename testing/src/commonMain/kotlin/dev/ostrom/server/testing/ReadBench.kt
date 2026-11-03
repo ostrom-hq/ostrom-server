@@ -3,6 +3,7 @@ package dev.ostrom.server.testing
 
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.Transaction
 import io.ktor.client.HttpClient
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -35,12 +36,14 @@ private const val EXPLAIN = "EXPLAIN (ANALYZE, BUFFERS) "
  * Measures a read route of this test server: [WARM_UP_CALLS] calls first (each must succeed); the median of
  * [HTTP_CALLS] whole calls one at a time; the statements of one call (the fewest of [RECORDINGS] recordings, so that a
  * background job running meanwhile is not counted), replayed under `EXPLAIN (ANALYZE, BUFFERS)` as the serving role;
- * then the database time of a call, its statements replayed by [CONCURRENT_CALLS] callers at once on a pool of as
- * many connections ([CALLS_EACH] replays each), every transaction of the call replayed as one and rolled back.
+ * then the database time of a call: its statements replayed by [CONCURRENT_CALLS] callers at once on a pool of as
+ * many connections ([CALLS_EACH] replays each), every transaction of the call replayed as one and rolled back, and
+ * the planning and execution times PostgreSQL reports for its queries added up.
  *
- * The in-process test server serves its calls one after another: its latency under concurrent calls measures the
- * test engine, not the database (`GET /health`, one `SELECT 1`, has a p95 near 90 ms there). The budget is held on the
- * database time; the HTTP p95 of a deployment is k6's (ostrom-e2e, `chart-load`).
+ * The time is the database's own, not the test's: the in-process test server serves its calls one after another, and
+ * a client clock around 20 concurrent replays on a CI runner of a few cores measures the decoding and the scheduling
+ * of the test (`SELECT 1` reached a p95 of 210 ms there). The HTTP p95 of a deployment is k6's (ostrom-e2e,
+ * `chart-load`).
  *
  * @param name The route and its case.
  * @param call One call.
@@ -59,14 +62,25 @@ suspend fun TestServer.measureRead(name: String, call: suspend HttpClient.() -> 
         coroutineScope {
             (1..CONCURRENT_CALLS).map {
                 async {
-                    pool.replay(statements, explain = false)
-                    List(CALLS_EACH) { timed { pool.replay(statements, explain = false) } }
+                    pool.replay(statements, explain = true)
+                    List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true)) }
                 }
             }.awaitAll().flatten().sorted()
         }
     }
     return ReadMeasure(name, statements, plans, latencies, http)
 }
+
+private val PLAN_TIME = Regex("^(Planning|Execution) Time: ([0-9.]+) ms$", RegexOption.MULTILINE)
+
+/**
+ * The time PostgreSQL spent on [plans]: the planning and execution times each one reports, added up.
+ *
+ * @param plans Plans of `EXPLAIN (ANALYZE, …)`.
+ * @return Their time.
+ */
+internal fun databaseTime(plans: List<String>): Duration =
+    plans.sumOf { plan -> PLAN_TIME.findAll(plan).sumOf { it.groupValues[2].toDouble() } }.milliseconds
 
 private inline fun timed(block: () -> Unit): Duration {
     val start = TimeSource.Monotonic.markNow()
@@ -89,20 +103,24 @@ internal suspend fun Driver.replay(statements: List<SentStatement>, explain: Boo
     for (group in statements.byTransaction()) {
         val tx = begin().getOrThrow()
         try {
-            for (sent in group) {
-                if (sent.isQuery()) {
-                    val rows = tx.fetchAll(sent.copy(if (explain) EXPLAIN else "")).getOrThrow()
-                    if (explain) plans += rows.joinToString("\n") { it.get("QUERY PLAN").asString() }
-                } else {
-                    tx.execute(sent.copy("")).getOrThrow()
-                }
-            }
+            plans += tx.replay(group, explain)
         } finally {
             tx.rollback().getOrThrow()
         }
     }
     return plans
 }
+
+private suspend fun Transaction.replay(group: List<SentStatement>, explain: Boolean): List<String> =
+    group.mapNotNull { sent ->
+        if (sent.isQuery()) {
+            val rows = fetchAll(sent.copy(if (explain) EXPLAIN else "")).getOrThrow()
+            if (explain) rows.joinToString("\n") { it.get("QUERY PLAN").asString() } else null
+        } else {
+            execute(sent.copy("")).getOrThrow()
+            null
+        }
+    }
 
 private fun List<SentStatement>.byTransaction(): List<List<SentStatement>> =
     fold(mutableListOf<MutableList<SentStatement>>()) { groups, sent ->
@@ -130,8 +148,7 @@ private fun SentStatement.copy(prefix: String): Statement {
 
 /**
  * Fails unless this route keeps the budget of a read page: a database p95 under [READ_P95_BUDGET], and no sequential
- * scan of
- * any of [largeTables], the organization tables the test filled past 10 000 rows.
+ * scan of any of [largeTables], the organization tables the test filled past 10 000 rows.
  *
  * @param largeTables The tables never to scan.
  */
