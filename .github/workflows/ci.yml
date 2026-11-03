@@ -107,6 +107,7 @@ jobs:
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: jvm
       - run: python3 scripts/check-conventions.py
       # Ktor's CIO client has no TLS on Kotlin/Native, and with two engines linked Ktor gives CIO to every engine-less
       # HttpClient { }: one CIO in a shipped source set of the server and every https call fails (ostrom-server#89).
@@ -138,6 +139,12 @@ jobs:
         run: ./gradlew --continue detekt jvmTest koverXmlReport koverVerify
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main or a manual run (never a pull request)
+        if: success() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-jvm-${{ github.sha }}
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
@@ -191,6 +198,7 @@ jobs:
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: native
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
@@ -201,6 +209,12 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main or a manual run (never a pull request)
+        if: success() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-native-${{ github.sha }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -230,6 +244,7 @@ jobs:
         with:
           core-deploy-key: ${{ secrets.DEPLOY_KEY_CORE }}
           kotlin-version: ${{ env.KOTLIN_VERSION }}
+          build-cache: image
       # From here, two Gradle workers at a time: several Kotlin/Native compilations and links at once exhaust the
       # runner's memory (#13, exit 143 while linking linuxArm64).
       - name: Two Gradle workers for the native builds
@@ -406,6 +421,12 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gradle's build cache, saved from main or a manual run (never a pull request)
+        if: success() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.gradle/caches/build-cache-1
+          key: gradle-build-cache-image-${{ github.sha }}
 
   # ostrom-e2e main (the isolation sweep, every scenario but the TeamCode import, a short k6 of the gates) against the
   # image ci-image built: a pull request that changes an answer fails here, before the merge, and brings its e2e fix

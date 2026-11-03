@@ -10,6 +10,11 @@ inputs:
   kotlin-version:
     description: The Kotlin version, part of the Kotlin/Native cache key.
     required: true
+  build-cache:
+    description: >-
+      The job's name in the key of Gradle's build cache (jvm, native, image): restored from main's latest, saved by
+      the job on main or a manual run, never a pull request (actions/cache/save after its Gradle steps).
+    required: true
 runs:
   using: composite
   steps:
@@ -40,6 +45,15 @@ runs:
     - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       with:
         cache-provider: basic
+    # Gradle's build cache, task outputs by their inputs (tests are never cached, below). setup-gradle's basic cache
+    # keys ~/.gradle/caches on the build files only, so its build-cache-1 stayed frozen: 12 of 400 tasks came from it
+    # (run 41663816307). This one moves with main: each green main run saves it, every run restores the latest
+    # it can read.
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.gradle/caches/build-cache-1
+        key: gradle-build-cache-${{ inputs.build-cache }}-${{ github.sha }}
+        restore-keys: gradle-build-cache-${{ inputs.build-cache }}-
     # The Kotlin/Native toolchain and its dependencies (~1 GB) are not in the Gradle cache.
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
