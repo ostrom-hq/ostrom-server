@@ -123,20 +123,20 @@ class AskWaitUseCaseImpl(
  * @property assignee `all`, or a member, for an administrator; the caller's own otherwise.
  * @property status `open` (the default), `resolved`, `cancelled` or `all`.
  * @property sessionId Only this session's.
- * @property agentSession Only this agent session's, in any of its segments.
  * @property runId Only this run's.
  * @property before The last wait of the previous page.
  * @property limit The page size, 1 to 100 (50).
+ * @property agentSession Only this agent session's, in any of its segments.
  */
 data class WaitQuery(
     val mine: Boolean = false,
     val assignee: String? = null,
     val status: String? = null,
     val sessionId: String? = null,
-    val agentSession: String? = null,
     val runId: String? = null,
     val before: Uuid? = null,
     val limit: Int? = null,
+    val agentSession: String? = null,
 )
 
 /**
