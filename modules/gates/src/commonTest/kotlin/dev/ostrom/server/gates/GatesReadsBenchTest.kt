@@ -26,6 +26,7 @@ import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.call.body
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
+import io.ktor.http.isSuccess
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,9 +38,10 @@ import kotlin.uuid.Uuid
 
 /**
  * `GET /api/v1/approvals/queue` on 10 organizations of 2 000 gates each, two approval requests per gate: the queue of
- * the approver of every gate (100 pending, the page's maximum) and of one of 20 reviewers (rev-1, who has pending
- * requests, so that the pending gates are read too). Each keeps the read budget (ReadBench.kt); its queries, plans
- * and p95 are written to `build/reports/perf/gates.txt`.
+ * the approver of every gate (100 pending, the page's maximum), of the busiest of 20 reviewers (rev-1, 100 pending)
+ * and of a reviewer with nothing waiting (rev-5). Each returns its pending requests, keeps the read budget
+ * (ReadBench.kt) and sends a handful of queries; its queries, plans and p95 are written to
+ * `build/reports/perf/gates.txt`.
  */
 class GatesReadsBenchTest {
     private val orgs = List(ORGS) { Uuid.fromLongs(0, it.toLong() + 1) }
@@ -95,16 +97,17 @@ class GatesReadsBenchTest {
             Triple("rev-5, a reviewer with nothing waiting", "rev-5@acme.test", 0),
         )
         val measures = readers.map { (who, person, pending) ->
-            val queue = server.client.get("/api/v1/approvals/queue") { bearerAuth(person) }.body<ApprovalQueue>()
-            assertEquals(pending, queue.pending.size, who)
+            val response = server.client.get("/api/v1/approvals/queue") { bearerAuth(person) }
+            assertTrue(response.status.isSuccess(), "$who: ${response.status}")
+            assertEquals(pending, response.body<ApprovalQueue>().pending.size, who)
             server.measureRead("GET /api/v1/approvals/queue ($who)") {
                 get("/api/v1/approvals/queue") { bearerAuth(person) }
             }
         }
         writeReadReport("gates", measures)
-        measures.forEach { it.assertWithinBudget(setOf("gates_gates", "gates_requests", "gates_sessions")) }
-        // No N+1: a page of 100 requests sends fewer queries than a tenth of its items.
-        measures.forEach { assertTrue(it.queries < PENDING_PAGE / 10, it.describe()) }
+        measures.forEach { it.assertWithinBudget(setOf("gates_gates", "gates_requests")) }
+        // No N+1: a page of 100 requests sends a handful of queries, as a page of none does.
+        measures.forEach { assertTrue(it.queries <= MAX_QUERIES, it.describe()) }
     }
 
     // acme's gates, requests and session links copied into [org], ids renamed: one org written through the repository
@@ -156,6 +159,9 @@ class GatesReadsBenchTest {
 
         // The queue's page of pending requests (GetApprovalQueueUseCaseImpl).
         const val PENDING_PAGE = 100
+
+        // Seven queries per read today (#206), one of margin.
+        const val MAX_QUERIES = 8
         const val KEYS = 300
         const val SESSIONS = 1_000
         const val APPROVERS = 20
