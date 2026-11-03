@@ -38,11 +38,13 @@ class RegisteredRunnersRepositoryImpl(private val driver: Driver) : RegisteredRu
                 Statement.create(COUNT_SQL).bind("org_id", runner.orgId),
             ).getOrThrow().first().get("n").asLong()
             if (count >= max) return@inTenant RunnerRegistrationOutcome.LIMIT_REACHED
+            // No capacity yet: a runner declares it at its heartbeats.
             val inserted = execute(
                 Statement.create(
                     """
                     INSERT INTO runners_registered ($COLUMNS) VALUES (:id, :org_id, :name, :labels, :version,
-                    :key_hash, :registered_by, :created_at, :last_seen_at) ON CONFLICT (org_id, lower(name)) DO NOTHING
+                    :key_hash, :registered_by, :created_at, :last_seen_at, NULL)
+                    ON CONFLICT (org_id, lower(name)) DO NOTHING
                     """,
                 ).bind("id", runner.id).bind("org_id", runner.orgId).bind("name", runner.name)
                     .bind("labels", Json.encodeToString(LABELS, runner.labels)).bind("version", runner.version)
