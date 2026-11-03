@@ -75,7 +75,7 @@ class WorkflowsUseCaseTest {
             JsonArray(listOf(JsonPrimitive("Tests: runs `make test`"), JsonPrimitive("Tell: tells slack:#rel"))),
             after["runs"],
         )
-        val decision = repository.decisions(org).single()
+        val decision = repository.lastDecisions(org).single()
         assertEquals("rcpt_wf_1", decision.receiptId)
         assertEquals("workflow", decision.subjectKind)
         assertEquals("release", decision.subjectId)

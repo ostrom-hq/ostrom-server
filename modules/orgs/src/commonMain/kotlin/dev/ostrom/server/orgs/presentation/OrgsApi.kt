@@ -39,10 +39,12 @@ class OrgsApi {
          * The members.
          *
          * @property parent The organization.
+         * @property limit The most members of the page, 1 to 1000; 1000 without it.
+         * @property after The previous page's `next`.
          */
         @Serializable
         @Resource("members")
-        class Members(val parent: Org) {
+        class Members(val parent: Org, val limit: Int? = null, val after: String? = null) {
             /**
              * One member, by login.
              *
@@ -252,8 +254,9 @@ data class MemberResponse(
  * A list of members.
  *
  * @property items The members.
+ * @property next The `after` of the next page, absent when no member follows.
  */
-@Serializable data class MembersResponse(val items: List<MemberResponse>)
+@Serializable data class MembersResponse(val items: List<MemberResponse>, val next: String? = null)
 
 /**
  * A live invitation.

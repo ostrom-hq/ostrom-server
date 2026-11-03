@@ -141,7 +141,8 @@ class HandleWebhookUseCaseImpl(
     private suspend fun askFor(installation: GitHubInstallation, repo: String, pull: Pull): GateView? {
         // The author as their approvers are named: by their Ostrom login, never only their GitHub one, which may differ
         // (an account opened by e-mail, a login taken): else they would say yes to their own merge (G1).
-        val author = pull.user.id?.let { accounts.loginOf(it) } ?: pull.user.login
+        val linked = pull.user.id?.let { accounts.loginOf(it) }
+        val author = linked ?: pull.user.login
         val actor = GateActor("github", installation.orgId, ActorKind.SERVICE, personId = author)
         val asked = AskGate(
             sessionId = null,
@@ -156,6 +157,8 @@ class HandleWebhookUseCaseImpl(
             pullRequest = pull.number,
             diff = null,
             via = AskedVia.CI,
+            // Linked to nobody: under the never policy, only an approver who linked another GitHub account says yes.
+            unlinkedAuthor = pull.user.id.takeIf { linked == null },
         )
         return try {
             ask(actor, asked)
