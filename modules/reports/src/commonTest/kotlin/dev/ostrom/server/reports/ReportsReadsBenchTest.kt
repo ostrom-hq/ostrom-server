@@ -10,7 +10,7 @@ import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.sessions.SessionsModule
-import dev.ostrom.server.testing.assertWithinBudget
+import dev.ostrom.server.testing.assertReportWithinBudget
 import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
@@ -79,7 +79,7 @@ class ReportsReadsBenchTest {
         ).map { (name, token, path) -> server.measureRead(name) { get(path) { bearerAuth(token) } } }
         writeReadReport("reports", measures)
         measures.forEach { measure ->
-            measure.assertWithinBudget(setOf("usage_events", "usage_daily", "sessions_sessions"))
+            measure.assertReportWithinBudget(setOf("usage_events", "usage_daily", "sessions_sessions"))
             // The ledger is added up before the joins: no step of the plan runs once per call of the window (the
             // session lookup by launch did before the sums), only once per session and day.
             val loops = measure.plans.flatMap { plan -> LOOPS.findAll(plan).map { it.groupValues[1].toInt() } }
