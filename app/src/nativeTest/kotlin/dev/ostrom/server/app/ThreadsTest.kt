@@ -144,6 +144,7 @@ class ThreadsTest {
             resetting.close()
         }
         val kinds = namePools()
+        println("ROUNDS $variant: base=$base counts=$counts kinds=$kinds")
         assertTrue(
             counts.max() - base <= SERVER_THREADS + TOLERANCE,
             "from $base threads before the server, $counts after each round: more than its $SERVER_THREADS. $kinds",
@@ -155,21 +156,33 @@ class ThreadsTest {
         )
     }
 
-    /** Diagnostic: the same rounds while the collector pauses the threads that allocate past a small target. */
+    private var variant = "plain"
+
+    /** Diagnostic: the rounds with 40 MiB held live under a 48 MiB target, autotune off, the pause on. */
     @Test
-    fun underATightHeap() {
+    fun underHeapPressureWithThePause() = underPressure(pause = true)
+
+    /** Diagnostic: the same pressure, the pause off. */
+    @Test
+    fun underHeapPressureWithoutThePause() = underPressure(pause = false)
+
+    private fun underPressure(pause: Boolean) {
+        variant = "pressure, pause=$pause"
         val target = GC.targetHeapBytes
-        val max = GC.maxHeapBytes
-        val pause = GC.pauseOnTargetHeapOverflow
+        val autotune = GC.autotune
+        val paused = GC.pauseOnTargetHeapOverflow
+        val ballast = List(40) { ByteArray(1 shl 20) { it.toByte() } }
         try {
             GC.collect()
+            GC.autotune = false
             GC.targetHeapBytes = 48L shl 20
-            GC.pauseOnTargetHeapOverflow = true
+            GC.pauseOnTargetHeapOverflow = pause
             streamsAndWaitsCutByTheirClientsLeaveNoThreadBehind()
         } finally {
-            GC.pauseOnTargetHeapOverflow = pause
-            GC.maxHeapBytes = max
+            GC.pauseOnTargetHeapOverflow = paused
+            GC.autotune = autotune
             GC.targetHeapBytes = target
+            println("ballast ${ballast.sumOf { it.size }}")
         }
     }
 
