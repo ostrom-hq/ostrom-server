@@ -59,6 +59,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -139,6 +140,9 @@ class GatewayPostgresTest {
     /** The content type of the JSON answers; null for none. */
     private var jsonType: String? = "application/json"
 
+    /** `OSTROM_GATEWAY_MAX_OPEN_CALLS`, read as the server starts; the default when null. */
+    private var maxOpenCalls: String? = null
+
     private val authenticator = module {
         single<SecretCipher> { AesGcmSecretCipher(ByteArray(32) { 7 }) }
         single<TokenAuthenticator> {
@@ -190,7 +194,7 @@ class GatewayPostgresTest {
                     "OSTROM_GATEWAY_OPENAI_URL" to "https://openai.test",
                     "OSTROM_GATEWAY_OPENROUTER_URL" to "https://openrouter.test/api",
                     "OSTROM_GATEWAY_CODEX_URL" to "https://codex.test",
-                ),
+                ) + listOfNotNull(maxOpenCalls?.let { "OSTROM_GATEWAY_MAX_OPEN_CALLS" to it }),
             )
         }
         single<ModelUsageSink> {
@@ -362,6 +366,55 @@ class GatewayPostgresTest {
             var record = recorded.receive()
             while (record.outcome == "ok") record = recorded.receive()
             assertEquals("upstream_broken", record.outcome)
+        }
+    }
+
+    /**
+     * chart-load 41611978908: a replica relaying 200 streams was OOMKilled under the chart's 256 MiB. Past its ceiling
+     * a replica refuses at once, in the provider's shape, and takes calls again as soon as one ends.
+     */
+    @Test
+    fun pastItsCeilingAReplicaRefusesAsAnOverloadedProviderDoes() = run {
+        maxOpenCalls = "1"
+        serverTest(modules, overrides) { server ->
+            with(server) {
+                shareClaude()
+                val upstream = ByteChannel()
+                broken = upstream
+                coroutineScope {
+                    // The first call holds the replica's only place: its provider sent one event and keeps the stream.
+                    val first = async { infer("messages", STREAM).bodyAsText() }
+                    upstream.writeStringUtf8(events.substringBefore("event: content_block_delta"))
+                    upstream.flush()
+                    withContext(Dispatchers.Default) {
+                        withTimeout(10.seconds) { while (received.isEmpty()) delay(5.milliseconds) }
+                    }
+                    val shapes = listOf("messages" to "overloaded_error", "chat/completions" to "server_error")
+                    for ((path, type) in shapes) {
+                        val refused = infer(path, STREAM)
+                        assertEquals(HttpStatusCode.ServiceUnavailable, refused.status, path)
+                        assertEquals(type, errorField(refused, "type"), path)
+                        assertEquals("1", refused.headers["retry-after"], path)
+                    }
+                    assertEquals(1, received.size, "A refused call never reaches the provider")
+                    upstream.close()
+                    first.await()
+                }
+                broken = null
+                // The place comes back as the first call's route ends, just after its answer does.
+                val again = withContext(Dispatchers.Default) {
+                    withTimeout(10.seconds) {
+                        var answer = infer("messages", STREAM)
+                        while (answer.status == HttpStatusCode.ServiceUnavailable) {
+                            delay(10.milliseconds)
+                            answer = infer("messages", STREAM)
+                        }
+                        answer
+                    }
+                }
+                assertEquals(HttpStatusCode.OK, again.status)
+                assertEquals(events, again.bodyAsText())
+            }
         }
     }
 
@@ -641,3 +694,6 @@ class GatewayPostgresTest {
             }
         }
 }
+
+/** A streamed Anthropic call. */
+private const val STREAM = """{"model":"claude-opus-5","stream":true}"""

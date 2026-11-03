@@ -3,6 +3,7 @@ package dev.ostrom.server.gateway.presentation
 
 import dev.ostrom.server.gateway.domain.GetGatewaySettingsUseCase
 import dev.ostrom.server.gateway.domain.GetModelPolicyUseCase
+import dev.ostrom.server.gateway.domain.OpenCalls
 import dev.ostrom.server.gateway.domain.PutGatewaySettingsUseCase
 import dev.ostrom.server.gateway.domain.PutModelPolicyUseCase
 import dev.ostrom.server.gateway.domain.RelayInferenceUseCase
@@ -23,6 +24,7 @@ import kotlin.time.Clock
  * @property putPolicy Changes it.
  * @property clock The time.
  * @property audit Writes a change of the policy or the settings to the organization's audit log.
+ * @property openCalls The model calls this replica relays at once.
  */
 data class GatewayRoutesDependencies(
     val tokens: TokenAuthenticator,
@@ -34,4 +36,5 @@ data class GatewayRoutesDependencies(
     val putPolicy: PutModelPolicyUseCase,
     val clock: Clock,
     val audit: OrgAuditTrail,
+    val openCalls: OpenCalls,
 )

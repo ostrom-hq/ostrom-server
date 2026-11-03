@@ -2,6 +2,7 @@
 package dev.ostrom.server.gateway
 
 import dev.ostrom.core.telemetry.Telemetry
+import dev.ostrom.server.gateway.domain.OpenCalls
 import dev.ostrom.server.gateway.domain.AllowAllSpend
 import dev.ostrom.server.gateway.domain.BudgetCheck
 import dev.ostrom.server.gateway.domain.GatewaySettingsRepository
@@ -118,6 +119,7 @@ object GatewayModule : ServerModule {
                 putPolicy = get(),
                 clock = get(),
                 audit = get(),
+                openCalls = OpenCalls(get<GatewayConfig>().maxOpenCalls),
             )
         }
     }

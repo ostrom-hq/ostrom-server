@@ -42,6 +42,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlin.time.Duration.Companion.seconds
 import io.ktor.server.routing.get as routeGet
 import io.ktor.server.routing.post as routePost
 
@@ -65,6 +66,9 @@ private val POLICY_WRITERS = WriteAccess.governance(GovernanceScopes.POLICY_WRIT
 
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
+
+/** When an agent refused for [RefusalKind.OVERLOADED] may retry. */
+private val OVERLOADED_RETRY = 1.seconds
 
 /** The agent headers never passed down, not even to the planner: its credentials. */
 private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
@@ -182,6 +186,32 @@ private fun modelList(policy: ModelPolicy, caller: Caller): JsonObject {
 
 private suspend fun RoutingContext.infer(dependencies: GatewayRoutesDependencies, protocol: WireProtocol) {
     val (caller, principal) = call.inferenceCaller(dependencies, protocol) ?: return
+    // A place is taken before the body is read and given back once the answer is relayed to its end: what one call
+    // holds in memory (its body, the open connection to the provider, the stream to the agent) is bounded per replica.
+    // Beyond it the agent is told to retry, as a provider says it when overloaded. Without it a replica was OOMKilled
+    // under the chart's 256 MiB while 200 streams were open (chart-load 41611978908).
+    if (!dependencies.openCalls.tryOpen()) {
+        val refusal = InferenceRefusal(
+            RefusalKind.OVERLOADED,
+            "This Ostrom server is relaying as many model calls as it can hold; retry shortly.",
+            dependencies.clock.now() + OVERLOADED_RETRY,
+        )
+        KtorInferenceResponder(call, dependencies.clock).refuse(protocol, refusal)
+        return
+    }
+    try {
+        relayCall(dependencies, protocol, caller, principal)
+    } finally {
+        dependencies.openCalls.close()
+    }
+}
+
+private suspend fun RoutingContext.relayCall(
+    dependencies: GatewayRoutesDependencies,
+    protocol: WireProtocol,
+    caller: Caller,
+    principal: AuthenticatedPrincipal,
+) {
     // The kernel cuts the body at MAX_INFERENCE_REQUEST_BYTES, chunked or not; the refusal is in the provider's shape.
     val bytes = try {
         call.receiveChannel().readRemaining().readByteArray()

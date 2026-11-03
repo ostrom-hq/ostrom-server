@@ -92,6 +92,9 @@ enum class RefusalKind(val status: Int, val anthropicType: String, val openAiTyp
 
     /** The provider could not be reached. */
     UPSTREAM_UNREACHABLE(BAD_GATEWAY, "api_error", "server_error"),
+
+    /** This replica already relays as many calls as it may hold in memory. */
+    OVERLOADED(SERVICE_UNAVAILABLE, "overloaded_error", "server_error"),
 }
 
 /**

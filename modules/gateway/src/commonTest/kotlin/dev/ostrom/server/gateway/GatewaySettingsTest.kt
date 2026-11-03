@@ -151,4 +151,17 @@ class GatewaySettingsTest {
         assertEquals("OSTROM_GATEWAY_OPENROUTER_URL must be an http(s) URL.", error.message)
         assertFalse("sk-an" in custom.toString(), "Keys never printed")
     }
+
+    @Test
+    fun theOpenCallsOfAReplicaAreBoundedAndConfigurable() {
+        assertEquals(100, GatewayConfig.from(MapConfigSource(emptyMap())).maxOpenCalls)
+        val set = GatewayConfig.from(MapConfigSource(mapOf("OSTROM_GATEWAY_MAX_OPEN_CALLS" to "40")))
+        assertEquals(40, set.maxOpenCalls)
+        for (wrong in listOf("0", "-1", "lots", "100001")) {
+            val error = assertFailsWith<InvalidConfigException>(wrong) {
+                GatewayConfig.from(MapConfigSource(mapOf("OSTROM_GATEWAY_MAX_OPEN_CALLS" to wrong)))
+            }
+            assertEquals("OSTROM_GATEWAY_MAX_OPEN_CALLS must be an integer between 1 and 100000.", error.message)
+        }
+    }
 }

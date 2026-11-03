@@ -13,10 +13,18 @@ import dev.ostrom.server.kernel.config.InvalidConfigException
  *
  * @property keys The instance's provider keys.
  * @property endpoints The provider URLs.
+ * @property maxOpenCalls The model calls one replica relays at once (`OSTROM_GATEWAY_MAX_OPEN_CALLS`).
  */
-data class GatewayConfig(val keys: InstanceProviderKeys, val endpoints: ProviderEndpoints) {
+data class GatewayConfig(
+    val keys: InstanceProviderKeys,
+    val endpoints: ProviderEndpoints,
+    val maxOpenCalls: Int = DEFAULT_MAX_OPEN_CALLS,
+) {
     /** Reading the configuration. */
     companion object {
+        /** See docs/MODULES.md: what the chart's 256 MiB limit holds, measured by chart-load. */
+        const val DEFAULT_MAX_OPEN_CALLS = 100
+
         /**
          * Reads `OSTROM_GATEWAY_*`.
          *
