@@ -4,6 +4,7 @@ package dev.ostrom.server.launches.domain.repositories
 import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import kotlin.time.Duration
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** Storage of the launches, isolated by organization. */
@@ -28,4 +29,13 @@ interface LaunchesRepository {
      * @return The launch, or null when it is not one of the organization's.
      */
     suspend fun find(orgId: Uuid, id: String): Launch?
+
+    /**
+     * Deletes the launches expired before [before], of every organization: none of them acts any more.
+     *
+     * @param before The expiry before which a launch is deleted.
+     *
+     * @return How many were deleted.
+     */
+    suspend fun purge(before: Instant): Long
 }
