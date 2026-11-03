@@ -167,7 +167,25 @@ class WaitsMcpAgentTest {
             val cancelled = client.call("cancel_wait", """{"wait":"$id"}""", OWN)
             assertTrue(cancelled.isError(), cancelled.text())
             val still = client.get("/api/v1/waits/$id") { bearerAuth("alicekey") }
-            assertTrue("\"open\"" in still.bodyAsText(), "Still open: ${still.bodyAsText()}")
+            val status = Json.parseToJsonElement(still.bodyAsText()).jsonObject.getValue("status").jsonPrimitive.content
+            assertEquals("open", status, "Still open")
+        }
+
+    @Test
+    fun anAgentTokenSeesAndCancelsWhatItsPersonAskedSomeoneElse() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            // bob, the agent's person, asks alice from the console about the agent's session; alice asks bob too
+            val asked = client.call("ask_human", """{"title":"Review it?","assignee":"$ALICE"}""", OWN, "bob")
+            val id = asked.text().substringAfter("wait ").substringBefore(" ")
+            client.call("ask_human", """{"title":"Why this change?","assignee":"$BOB"}""", OWN, "alicekey")
+
+            assertTrue(client.call("list_waits", "{}", OWN).text().startsWith("$id  open  Review it?"))
+            assertEquals(1, client.call("list_waits", "{}", OWN).text().lines().size, "Only what its person asked")
+            assertFalse(client.call("get_wait", """{"wait":"$id"}""", OWN).isError())
+            assertEquals("Cancelled wait $id.", client.call("cancel_wait", """{"wait":"$id"}""", OWN).text())
+            val person = client.call("list_waits", """{"status":"all"}""", OWN, "bob").text().lines()
+            assertEquals(2, person.size, "A person's credential still sees what it was asked: $person")
         }
 
     @Test

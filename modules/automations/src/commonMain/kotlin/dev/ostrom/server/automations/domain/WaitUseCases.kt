@@ -83,6 +83,7 @@ class AskWaitUseCaseImpl(
         requireWait(request.sessionId == null || REFERENCE.matches(request.sessionId)) { "sessionId is malformed." }
         requireWait(request.runId == null || REFERENCE.matches(request.runId)) { "runId is malformed." }
         val assignee = request.assignee ?: caller.memberId
+        if (caller.agent && assignee != caller.memberId) throw AgentAssigneeRefusedException()
         if (assignee != caller.memberId && !members.isActiveMember(caller.orgId, assignee)) {
             throw InvalidAssigneeException()
         }
@@ -188,6 +189,7 @@ class ReadWaitsUseCaseImpl(private val repository: WaitsRepository) : ReadWaitsU
         val others = query.assignee != null && query.assignee != caller.memberId && !query.mine
         if (others && !caller.admin) throw WaitForbiddenException("Only an administrator lists someone else's waits.")
         return when {
+            caller.agent -> WaitFilter(caller.orgId, createdBy = caller.memberId)
             query.mine -> WaitFilter(caller.orgId, assignee = caller.memberId)
             query.assignee == null -> WaitFilter(caller.orgId, involving = caller.memberId)
             query.assignee == ALL -> WaitFilter(caller.orgId)
@@ -281,9 +283,15 @@ class AnswerWaitUseCaseImpl(
     }
 }
 
-/** A wait the caller may read: its assignee, its asker or an administrator; otherwise not found. */
+/**
+ * A wait the caller may read: its assignee, its asker or an administrator; for an agent token, only a wait its person
+ * asked (never one someone else asked of its person). Otherwise not found.
+ */
 private suspend fun visibleWait(repository: WaitsRepository, caller: WaitCaller, id: Uuid): Wait {
-    val wait = repository.get(caller.orgId, id)
-        ?.takeIf { caller.admin || it.assignee == caller.memberId || it.createdBy == caller.memberId }
+    val wait = repository.get(caller.orgId, id)?.takeIf { it.createdBy == caller.memberId || mayReadAsked(caller, it) }
     return wait ?: throw WaitNotFoundException()
 }
+
+/** Whether [caller] reads [wait] as its assignee or an administrator: never an agent token. */
+private fun mayReadAsked(caller: WaitCaller, wait: Wait): Boolean =
+    !caller.agent && (caller.admin || wait.assignee == caller.memberId)

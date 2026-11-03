@@ -181,6 +181,7 @@ class InMemoryWaits : WaitsRepository {
             it.orgId == filter.orgId &&
                 (filter.assignee == null || it.assignee == filter.assignee) &&
                 (filter.involving == null || it.assignee == filter.involving || it.createdBy == filter.involving) &&
+                (filter.createdBy == null || it.createdBy == filter.createdBy) &&
                 (filter.status == null || it.status == filter.status) &&
                 (filter.sessionId == null || it.sessionId == filter.sessionId) &&
                 (filter.runId == null || it.runId == filter.runId)
