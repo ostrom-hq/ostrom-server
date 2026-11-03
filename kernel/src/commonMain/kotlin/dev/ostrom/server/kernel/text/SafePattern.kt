@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package dev.ostrom.server.mcprelay.domain
+package dev.ostrom.server.kernel.text
 
 /**
- * Whether a `matches` pattern is safe to run on an agent's arguments. The regular expressions of Kotlin/Native
- * backtrack, and an admin's pattern runs on text the agent chooses, on every call: a repeated group that itself
- * repeats (`(a+)+`), a repeated group with overlapping branches (`(a|aa)+`) or a back-reference can take exponential
- * time. Those are refused when the policy is saved, and so is a pattern with more than two unbounded repeats
- * (`.*.*.*`, cubic): what remains is at most quadratic, and the text is bounded by
- * [ArgumentCondition.MAX_MATCHED_LENGTH].
+ * Whether a pattern an admin wrote is safe to run on text an agent chooses: an MCP `matches` condition on every
+ * call, a gate's pattern in the rules replay. The regular expressions of Kotlin/Native backtrack: a repeated group
+ * that itself repeats (`(a+)+`), a repeated group with overlapping branches (`(a|aa)+`) or a back-reference can take
+ * exponential time. Those are refused when the policy or the rule is saved, and so is a pattern with more than two
+ * unbounded repeats (`.*.*.*`, cubic): what remains is at most quadratic, on a text each caller bounds.
  */
 object SafePattern {
     private const val MAX_UNBOUNDED = 2

@@ -2,11 +2,16 @@
 package dev.ostrom.server.notifications.presentation
 
 import dev.ostrom.server.identity.domain.NOTIFICATIONS_WRITE_SCOPE
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.auth.PrincipalChannel
+import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireScope
+import dev.ostrom.server.notifications.domain.PushCredential
 import dev.ostrom.server.notifications.domain.PushDeviceNotFoundException
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -28,7 +33,8 @@ fun Route.pushDevicesRoutes(dependencies: PushDevicesRoutesDependencies) = with(
     authenticated {
         post<PushDevicesApi, PushDeviceRequest> { _, body ->
             val member = call.phoneOwner(orgs)
-            val device = registerPhone(member.orgId, member.memberId, body.toRegistration())
+            val credential = call.requirePrincipal().pushCredential()
+            val device = registerPhone(member.orgId, member.memberId, body.toRegistration(), credential)
             call.respond(HttpStatusCode.Created, device.toDto())
         }
         delete<PushDevicesApi.Id> { params ->
@@ -38,6 +44,15 @@ fun Route.pushDevicesRoutes(dependencies: PushDevicesRoutesDependencies) = with(
             call.respond(HttpStatusCode.NoContent)
         }
     }
+}
+
+// The credential the phone is notified through: a person's app token or browser session. A principal without one, or
+// not a person's, registers a phone nothing is ever pushed to.
+internal fun AuthenticatedPrincipal.pushCredential(): PushCredential? {
+    val user = Uuid.parseOrNull(subjectId)
+    val id = credentialId?.let(Uuid::parseOrNull)
+    if (kind != PrincipalKind.USER || user == null || id == null) return null
+    return PushCredential(user, id, channel == PrincipalChannel.BROWSER)
 }
 
 // The scope first (SECURITY-AUDIT S2-03): a credential that may not register learns nothing about its organization.

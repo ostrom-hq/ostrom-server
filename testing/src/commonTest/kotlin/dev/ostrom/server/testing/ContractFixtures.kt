@@ -53,7 +53,13 @@ object ContractFixtures {
                 "operationId": "exportThings", "x-ostrom-status": "served",
                 "responses": {
                   "200": {"content": {"text/csv": {"schema": {"type": "string"}}}},
-                  "202": {"content": {"application/json": {}}}
+                  "202": {"content": {"application/json": {}}},
+                  "404": {
+                    "content": {
+                      "text/plain": {"schema": {"type": "string"}},
+                      "application/json": {"schema": {"$R": "#/components/schemas/ApiError"}}
+                    }
+                  }
                 }
               }
             },

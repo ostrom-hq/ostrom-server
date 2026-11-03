@@ -124,12 +124,14 @@ data class MobileCode(
  * @property state The app's state, returned unchanged.
  * @property code The one-time code, on success.
  * @property error Why it failed (`access_denied`, `refused`, `link_required`), otherwise.
+ * @property login Who signed in, with the code: the page that asks before going back to the app names them.
  */
 data class MobileCallback(
     val redirectUri: String,
     val state: String,
     val code: String? = null,
     val error: String? = null,
+    val login: String? = null,
 )
 
 /**

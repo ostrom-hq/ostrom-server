@@ -118,7 +118,7 @@ object RunnersModule : ServerModule {
         single<CreateCloudSessionUseCase> {
             MeteredCreateCloudSession(CreateCloudSessionUseCaseImpl(get(), get(), get(), get()), get())
         }
-        single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get()) }
+        single<GetCloudSessionUseCase> { GetCloudSessionUseCaseImpl(get(), get()) }
         single<ListCloudSessionsUseCase> { ListCloudSessionsUseCaseImpl(get()) }
         single<ChangeCloudSessionUseCase> { ChangeCloudSessionUseCaseImpl(get(), get(), get(), get()) }
         single<CheckRunnerTokenUseCase> { CheckRunnerTokenUseCaseImpl(get(), get()) }

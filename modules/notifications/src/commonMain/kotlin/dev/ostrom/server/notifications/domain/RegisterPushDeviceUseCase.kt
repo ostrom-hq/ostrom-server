@@ -12,12 +12,18 @@ interface RegisterPushDeviceUseCase {
      * @param orgId The organization the member acts in.
      * @param memberId The member.
      * @param registration The phone.
+     * @param credential The credential it registers with: the phone is notified while it works.
      *
      * @return The device.
      *
      * @throws InvalidPushDeviceException When it is not an Expo push token of an iOS or Android phone.
      */
-    suspend operator fun invoke(orgId: Uuid, memberId: Uuid, registration: PushRegistration): PushDevice
+    suspend operator fun invoke(
+        orgId: Uuid,
+        memberId: Uuid,
+        registration: PushRegistration,
+        credential: PushCredential?,
+    ): PushDevice
 }
 
 /**
@@ -30,14 +36,20 @@ class RegisterPushDeviceUseCaseImpl(
     private val repository: PushDevicesRepository,
     private val clock: Clock,
 ) : RegisterPushDeviceUseCase {
-    override suspend fun invoke(orgId: Uuid, memberId: Uuid, registration: PushRegistration): PushDevice {
+    override suspend fun invoke(
+        orgId: Uuid,
+        memberId: Uuid,
+        registration: PushRegistration,
+        credential: PushCredential?,
+    ): PushDevice {
         val token = registration.pushToken.trim()
         val locale = registration.locale.orEmpty().trim().ifEmpty { null }
         val valid = PUSH_TOKEN.matches(token) && registration.provider == EXPO &&
             registration.platform in PLATFORMS && (locale == null || LOCALE.matches(locale))
         if (!valid) throw InvalidPushDeviceException()
         val now = clock.now()
-        val device = PushDevice(Uuid.random(), orgId, memberId, token, EXPO, registration.platform, locale, now, now)
+        val device =
+            PushDevice(Uuid.random(), orgId, memberId, token, EXPO, registration.platform, locale, now, now, credential)
         return repository.save(device, MAX_PHONES)
     }
 }

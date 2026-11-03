@@ -20,7 +20,7 @@ interface GetSpendingUseCase {
  * cost), never what a client declares, the same ones the budgets stop on.
  *
  * @param repository The reads.
- * @param budgets The monthly budgets.
+ * @param budgets The budgets: the monthly one, and those exceeded.
  * @param clock The time.
  */
 class GetSpendingUseCaseImpl(
@@ -49,6 +49,7 @@ class GetSpendingUseCaseImpl(
                 byDay = totals.byDay,
             ),
             daily = daysBetween(first, today).map { SpendingDay(it, spent[it] ?: 0) },
+            exceeded = budgets.exceeded(viewer, now),
         )
     }
 

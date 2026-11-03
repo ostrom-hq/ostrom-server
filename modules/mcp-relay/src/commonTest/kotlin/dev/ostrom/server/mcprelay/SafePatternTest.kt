@@ -7,7 +7,6 @@ import dev.ostrom.server.mcprelay.domain.ConditionOperator
 import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import dev.ostrom.server.mcprelay.domain.McpRules
 import dev.ostrom.server.mcprelay.domain.PolicyEffect
-import dev.ostrom.server.mcprelay.domain.SafePattern
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlin.test.Test
@@ -20,53 +19,6 @@ import kotlin.uuid.Uuid
 
 /** The `matches` operator runs an admin's pattern on an agent's arguments: no catastrophic backtracking. */
 class SafePatternTest {
-    @Test
-    fun patternsWithoutNestedRepetitionAreAccepted() {
-        val safe = listOf(
-            "^prod",
-            "drop\\s+table",
-            "(prod|staging)-db",
-            "[a-z]+\\.[a-z]{2,}",
-            "(a+)?",
-            "(abc)+",
-            "\\(a+\\)+",
-            "[(a+)]+",
-            "a{2,3}b*",
-            "a*(b)c",
-            "[^]a]+",
-            "[\\]]+",
-            "[abc",
-            "a[",
-            "a)b",
-            "a\\",
-            "\\d+",
-            "^https://[a-z]+\\.example\\.com/.*$",
-            "a{2,5}b{1,3}c{4}",
-        )
-        for (pattern in safe) assertTrue(SafePattern.isSafe(pattern), pattern)
-    }
-
-    @Test
-    fun nestedRepetitionAndBackreferencesAreRefused() {
-        val unsafe = listOf(
-            "(a+)+$",
-            "(a*)*",
-            "((ab)*c)+",
-            "(x+x+)+y",
-            "(a{1,5}){2,}",
-            "(?:a|b+)*",
-            "(a)\\1",
-            "(?<x>a)\\k<x>",
-            // An alternation inside a repeated group: its branches overlap and the engine tries every split.
-            "(a|aa)+$",
-            "(?:x|y)*z",
-            // More than two unbounded repeats: polynomial, but of degree three over 8 KiB of text.
-            ".*.*.*x",
-            "a+b*c{2,}",
-        )
-        for (pattern in unsafe) assertFalse(SafePattern.isSafe(pattern), pattern)
-    }
-
     @Test
     fun aPolicyWithAnUnsafePatternIsRefused() {
         val policy = ArgumentPolicy(

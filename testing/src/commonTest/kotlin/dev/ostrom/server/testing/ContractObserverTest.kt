@@ -12,6 +12,7 @@ import io.ktor.server.application.install
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
+import io.ktor.server.routing.RoutingCall
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -64,10 +65,17 @@ class ContractObserverTest {
                     else -> call.respond(HttpStatusCode.NoContent)
                 }
             }
-            get("/api/v1/things/export") { call.respondBytesWriter(ContentType.Text.CSV) { writeStringUtf8("a") } }
+            get("/api/v1/things/export") { export(call) }
             delete("/api/v1/things/{id}") { call.respondText("""{"x": 1}""", json) }
             get("/health") { call.respondText("""{"x": 1}""", json) }
         }
+    }
+
+    // The export: a CSV, or a 404 in plain text or in JSON, which the contract both declares.
+    private suspend fun export(call: RoutingCall) = when (call.request.queryParameters["as"]) {
+        "missing" -> call.respondText("Not found", status = HttpStatusCode.NotFound)
+        "missing-json" -> call.respondText("""{"error": {}}""", json, HttpStatusCode.NotFound)
+        else -> call.respondBytesWriter(ContentType.Text.CSV) { writeStringUtf8("a") }
     }
 
     private fun report(directory: Path): String = SystemFileSystem.list(directory).single().let { file ->
@@ -114,6 +122,8 @@ class ContractObserverTest {
         val observer = ContractObserver(ContractFixtures.contract, emptySet(), reports.toString())
         things(observer)
         client.get("/api/v1/things")
+        // A 404 that declares plain text and JSON: either is one of its forms.
+        listOf("missing", "missing-json").forEach { client.get("/api/v1/things/export?as=$it") }
         observer.finish()
         assertEquals("seen listThings\n", report(reports))
     }

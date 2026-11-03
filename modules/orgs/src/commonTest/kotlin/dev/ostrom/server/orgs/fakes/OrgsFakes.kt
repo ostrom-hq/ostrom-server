@@ -137,6 +137,12 @@ class FakeMembers(private val store: OrgsStore) : MembersRepository {
     override suspend fun list(orgId: Uuid): List<Member> =
         store.members.values.filter { it.orgId == orgId }.sortedBy { it.joinedAt }
 
+    override suspend fun page(orgId: Uuid, after: Uuid?, limit: Int): List<Member> {
+        val ordered = list(orgId).sortedWith(compareBy({ it.joinedAt }, { it.id.toString() }))
+        val start = if (after == null) 0 else ordered.indexOfFirst { it.id == after }
+        return if (start < 0) emptyList() else ordered.drop(if (after == null) 0 else start + 1).take(limit)
+    }
+
     override suspend fun count(orgId: Uuid): Int = list(orgId).size
 
     override suspend fun changeRole(orgId: Uuid, memberId: Uuid, role: OrgRole) {
