@@ -147,13 +147,14 @@ jobs:
           # Test values only: sign-in mails are written to a directory, the console is the server's own origin (the
           # page of ostrom login's code), Stripe is never called by the journey.
           # Read limits (AUDIT-SECU-LECTURES M1) set explicitly: a journey reads in bursts, never a flood.
+          # stripe-mock refuses a key with another underscore after `sk_test_` (401, as console-journey.yml's did).
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
           OSTROM_MAIL_DIR=/var/lib/ostrom/mail
           OSTROM_PUBLIC_URL=http://127.0.0.1:4600
           OSTROM_CONSOLE_URL=http://127.0.0.1:4600
-          OSTROM_STRIPE_SECRET_KEY=sk_test_cli_e2e
+          OSTROM_STRIPE_SECRET_KEY=sk_test_clie2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_cli_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
           OSTROM_READS_PER_MINUTE=6000
