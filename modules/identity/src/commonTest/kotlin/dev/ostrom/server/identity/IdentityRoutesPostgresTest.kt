@@ -50,6 +50,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 /** The identity routes end to end: real HTTP through the kernel, real PostgreSQL, real credentials. */
@@ -317,7 +319,10 @@ class IdentityRoutesPostgresTest {
         assertEquals(400 to "slow_down", server.pollDevice(codes.deviceCode).refusal())
 
         val shown = server.client.get("/api/v1/auth/device?userCode=${codes.userCode}") { session(started) }
-        assertEquals("laptop", shown.body<DeviceAuthorizationResponse>().clientName)
+            .body<DeviceAuthorizationResponse>()
+        assertEquals("laptop", shown.clientName)
+        // When the CLI asked (web audit 2, W3): the request's whole lifetime before it expires.
+        assertEquals(10.minutes, Instant.parse(shown.expiresAt) - Instant.parse(shown.requestedAt))
         assertEquals(HttpStatusCode.BadRequest, server.client.get("/api/v1/auth/device") { session(started) }.status)
         val answered = server.client.post("/api/v1/auth/device/answer") {
             session(started)
