@@ -30,7 +30,8 @@ import kotlin.uuid.Uuid
  * The organizations, their members and their invitations under forced row-level security (RLS audit R5), like every
  * other tenant table: a request sees and changes only the rows of the organization its transaction names, and what
  * crosses organizations (a user's organizations, an invitation found by its link before its holder is a member) goes
- * through the `ostrom_router` functions.
+ * through the `ostrom_router` functions. The tables' owner is bound the same way: the router's policies hold only
+ * inside the router's functions (RLS audit R9).
  */
 class OrgsForcedRowLevelSecurityPostgresTest {
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
@@ -85,6 +86,12 @@ class OrgsForcedRowLevelSecurityPostgresTest {
             }
             assertEquals(0L, renamed, "Globex cannot rename Acme")
             assertEquals(acme, orgs.get(acme.id))
+
+            // The owner, a member of ostrom_router to hand it the functions, is bound like a request (RLS audit R9):
+            // the router's policies hold only inside its functions (`current_user = 'ostrom_router'`).
+            val owner = server.database.owner
+            assertEquals(listOf(0L, 0L, 0L), owner.counts(null), "The owner sees nothing without an organization")
+            assertEquals(listOf(1L, 1L, 1L), owner.counts(acme.id), "The owner sees Acme's rows only in Acme")
 
             // The paths across organizations still work, through the ostrom_router functions.
             assertEquals(listOf(Membership(acme, adaOwner)), orgs.listOfUser(ada.id))

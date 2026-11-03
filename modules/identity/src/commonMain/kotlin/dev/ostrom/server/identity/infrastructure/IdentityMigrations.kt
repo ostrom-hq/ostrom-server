@@ -349,11 +349,17 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
             ALTER TABLE identity_audit_events ENABLE ALWAYS TRIGGER identity_audit_events_append_only
         """.trimIndent(),
     ),
+    // Web audit n°2 M4: an e-mailed link signs in only in the browser that asked for it (the SHA-256 of its nonce).
+    SchemaMigration(
+        version = 10,
+        name = "magic_links_bound_to_their_browser",
+        sql = "ALTER TABLE identity_magic_links ADD COLUMN browser_hash TEXT",
+    ),
     // The reads the bench measured (IdentityReadsBenchTest): `/audit?actor=` and `/audit?event=` read the whole chain
     // of the organization and kept a line in a thousand (72 and 82 ms of p95 at 20 calls on 10 000 lines); `/devices`
     // read every live token of the person, agents' included, to keep three (43 ms on 5 000).
     SchemaMigration(
-        version = 10,
+        version = 11,
         name = "index_audit_filters_and_devices",
         sql = """
             CREATE INDEX identity_audit_events_chain_actor ON identity_audit_events (chain, actor_id, sequence DESC);

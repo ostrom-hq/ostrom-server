@@ -225,13 +225,18 @@ interface RequestMagicLinkUseCase {
      * @param email The address, as typed.
      * @param redirect The console path to return to; anything unsafe becomes `/`.
      * @param source Who is asking (the client address), for the rate limit.
+     * @param browserNonce The nonce the asking browser already holds from an earlier link, if any: kept, so that each
+     *   link it asked for works in it.
+     *
+     * @return The browser's nonce, which only that browser keeps (a cookie): the link signs in only where it is
+     *   presented (web audit n°2 M4). Given even when the recipient's silent limit sends nothing.
      *
      * @throws InvalidEmailException When the address is not valid.
      * @throws ProviderNotConfiguredException When no mail sender is configured.
      * @throws RateLimitedException When the client asks for too many links.
      * @throws MailNotSentException When the mail provider fails.
      */
-    suspend operator fun invoke(email: String, redirect: String?, source: String)
+    suspend operator fun invoke(email: String, redirect: String?, source: String, browserNonce: String?): String
 }
 
 /**
@@ -252,7 +257,7 @@ class RequestMagicLinkUseCaseImpl(
     private val template: (to: String, link: String) -> Mail,
     private val linkUrl: (token: String) -> String,
 ) : RequestMagicLinkUseCase {
-    override suspend fun invoke(email: String, redirect: String?, source: String) {
+    override suspend fun invoke(email: String, redirect: String?, source: String, browserNonce: String?): String {
         val limiter = services.limiter
         if (!methods.email) throw ProviderNotConfiguredException()
         val address = normalizeEmail(email)
@@ -261,17 +266,20 @@ class RequestMagicLinkUseCaseImpl(
         }
         // Per recipient, the limit is silent: an error would tell a stranger the address is being used, and a flood
         // of e-mails to one person stops at a few.
-        if (!limiter.tryAcquire("magic-link-to:$address", RECIPIENT_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) return
+        val nonce = browserNonce?.takeIf { it.length in 1..MAX_NONCE } ?: services.generator.secret()
+        if (!limiter.tryAcquire("magic-link-to:$address", RECIPIENT_LIMIT, LIMIT_WINDOW_MINUTES.minutes)) return nonce
         val token = services.generator.secret()
         val now = services.clock.nowMillis()
         val link = MagicLink(Uuid.random(), address, safeRedirectPath(redirect), now, now + MAGIC_LINK_LIFETIME)
-        links.create(link, services.hasher.hash(token))
+        links.create(link, services.hasher.hash(token), services.hasher.hash(nonce))
         mail.send(template(address, linkUrl(token)))
+        return nonce
     }
 
     private companion object {
         const val SOURCE_LIMIT = 10
         const val RECIPIENT_LIMIT = 3
+        const val MAX_NONCE = 128
         const val LIMIT_WINDOW_MINUTES = 15
     }
 }
@@ -282,12 +290,14 @@ interface VerifyMagicLinkUseCase {
      * Uses a link (once): the address is proven, so the user is found by it, or created.
      *
      * @param token The token of the link.
+     * @param browserNonce The nonce of the browser presenting it (its cookie), null when it holds none.
      *
      * @return The user, a new browser session and where to go.
      *
      * @throws InvalidMagicLinkException When the link is unknown, used or expired.
+     * @throws MagicLinkOtherBrowserException When the link is valid but another browser asked for it: it is not used.
      */
-    suspend operator fun invoke(token: String): CompletedSignIn
+    suspend operator fun invoke(token: String, browserNonce: String?): CompletedSignIn
 }
 
 /**
@@ -306,9 +316,16 @@ class VerifyMagicLinkUseCaseImpl(
     private val startSession: StartWebSessionUseCase,
     private val clock: Clock,
 ) : VerifyMagicLinkUseCase {
-    override suspend fun invoke(token: String): CompletedSignIn {
+    override suspend fun invoke(token: String, browserNonce: String?): CompletedSignIn {
         if (token.isEmpty() || token.length > MAX_TOKEN) throw InvalidMagicLinkException()
-        val link = links.consume(hasher.hash(token), clock.nowMillis()) ?: throw InvalidMagicLinkException()
+        val tokenHash = hasher.hash(token)
+        val now = clock.nowMillis()
+        val presented = browserNonce?.takeIf { it.length in 1..MAX_TOKEN }
+        val link = presented?.let { links.consume(tokenHash, hasher.hash(it), now) }
+        // A link still usable here was asked for by another browser: told so, and kept for that browser.
+        if (link == null) {
+            throw if (links.pending(tokenHash, now)) MagicLinkOtherBrowserException() else InvalidMagicLinkException()
+        }
         val user = resolveUser(VerifiedIdentity(IdentityProvider.EMAIL, link.email, link.email, true))
         return CompletedSignIn(user, startSession(user.id), link.redirectPath)
     }
