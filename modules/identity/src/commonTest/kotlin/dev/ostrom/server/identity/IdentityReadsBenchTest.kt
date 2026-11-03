@@ -11,12 +11,13 @@ import dev.ostrom.server.kernel.auth.OrgProfile
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.testing.assertWithinBudget
-import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.benchTest
+import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.get
 import org.koin.dsl.module
 import kotlin.test.Test
+import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 /**
@@ -83,12 +84,17 @@ class IdentityReadsBenchTest {
             "GET /api/v1/audit?actor=ada (10 lines of 10 000)" to "/api/v1/audit?actor=ada",
             "GET /api/v1/audit?event=org.renamed (5 lines of 10 000)" to "/api/v1/audit?event=org.renamed",
             "GET /api/v1/audit?before=5000" to "/api/v1/audit?before=5000",
+            "GET /api/v1/audit?actor=ada&before=5000 (an actor's older page)" to "/api/v1/audit?actor=ada&before=5000",
             "GET /api/v1/devices (3 among 5 000 live tokens)" to "/api/v1/devices",
         ).map { (name, path) ->
             server.measureRead(name) { get(path) { browserSession(session.secret, null) } }
         }
         writeReadReport("identity", measures)
         measures.forEach { it.assertWithinBudget(setOf("identity_audit_events", "identity_api_tokens")) }
+        // Each filter reads through its own index (IdentityMigrations version 11), not the chain's.
+        listOf(1 to "identity_audit_events_chain_actor", 2 to "identity_audit_events_chain_action")
+            .plus(listOf(4 to "identity_audit_events_chain_actor", 5 to "identity_api_tokens_user_kind"))
+            .forEach { (at, index) -> assertTrue(measures[at].plans.any { index in it }, measures[at].describe()) }
     }
 
     private companion object {
