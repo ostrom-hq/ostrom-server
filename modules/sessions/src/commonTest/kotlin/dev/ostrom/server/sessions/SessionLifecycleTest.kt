@@ -27,6 +27,7 @@ import dev.ostrom.server.sessions.fakes.agent
 import dev.ostrom.server.sessions.fakes.user
 import dev.ostrom.server.sessions.infrastructure.SessionsGateGuard
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -83,6 +84,27 @@ class SessionLifecycleTest {
         assertFailsWith<SessionNotFoundException> { bench.seen(agent(), "nope", "skill", "x", "hook") }
         assertNull(bench.repository.get(ORG, session.id)?.endedAt)
         assertEquals("rcpt_session_s-1", bench.end(user("lyes"), session.id, EndSession()).receiptId)
+    }
+
+    @Test
+    fun anEndReadsItsSegmentOnceAndAnswersWithTheGatesAndTheReceiptItSigned() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), start)
+        val gate = SessionGate(Uuid.random(), "push-main", GateMode.ENFORCED, GateStatus.APPROVED, null, emptyList())
+        bench.gates.gates[session.id] = listOf(gate)
+        val before = bench.repository.gets
+        val view = bench.end.view(agent(), session.id, EndSession(exitCode = 0))
+        // Perf pass of the launch: each read is a transaction of its own on PostgreSQL.
+        assertEquals(1, bench.repository.gets - before, "The segment is read once before its lock, not twice")
+        assertEquals(0, bench.gates.listed, "The gates the end listed under its lock are its answer's")
+        assertEquals(0, bench.sign.reads, "The receipt it signed is its answer's")
+        assertEquals(bench.get.view(view.session), view, "The same view as GET /sessions/{id} gives")
+        assertEquals(listOf(gate.id.toString()), view.gates)
+        assertEquals("rcpt_session_${session.id}", view.receipt?.get("id")?.jsonPrimitive?.content)
+        // An end of a segment already signed reads its view: it signed nothing.
+        assertEquals(view, bench.end.view(agent(), session.id, EndSession(exitCode = 0)))
+        assertEquals(2, bench.gates.listed)
+        assertEquals(2, bench.sign.reads)
     }
 
     @Test

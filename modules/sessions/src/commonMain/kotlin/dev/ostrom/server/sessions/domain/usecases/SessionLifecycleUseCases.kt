@@ -11,6 +11,7 @@ import dev.ostrom.server.sessions.domain.models.SessionAccess
 import dev.ostrom.server.sessions.domain.models.SessionClosedException
 import dev.ostrom.server.sessions.domain.models.SessionNotFoundException
 import dev.ostrom.server.sessions.domain.models.SessionResumedElsewhereException
+import dev.ostrom.server.sessions.domain.models.SessionView
 import dev.ostrom.server.sessions.domain.models.StartSession
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
 import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
@@ -59,6 +60,9 @@ interface EndSessionUseCase {
      * @return The ended segment.
      */
     suspend operator fun invoke(actor: GateActor, id: String, end: EndSession): Session
+
+    /** Red only: the end, then its view read again, as the route does on main. */
+    suspend fun view(actor: GateActor, id: String, end: EndSession): SessionView
 }
 
 /**
@@ -70,7 +74,11 @@ interface EndSessionUseCase {
 class EndSessionUseCaseImpl(
     private val repository: SessionsRepository,
     private val close: CloseSessionUseCase,
+    private val views: GetSessionUseCase,
 ) : EndSessionUseCase {
+    override suspend fun view(actor: GateActor, id: String, end: EndSession): SessionView =
+        views.view(invoke(actor, id, end))
+
     override suspend fun invoke(actor: GateActor, id: String, end: EndSession): Session {
         val session = repository.get(actor.orgId, id) ?: throw SessionNotFoundException()
         SessionAccess.ensureOwner(actor, session)
