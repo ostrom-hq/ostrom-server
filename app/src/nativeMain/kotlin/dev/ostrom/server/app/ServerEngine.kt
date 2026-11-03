@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.app
 
+import io.ktor.server.application.ApplicationCallPipeline
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import io.ktor.server.application.Application
 import io.ktor.server.cio.CIO
 import io.ktor.server.cio.CIOApplicationEngine
@@ -32,5 +35,10 @@ internal fun serverEngine(
         }
         reuseAddress = true
     },
-    module = module,
+    module = {
+        // perf/race-memory-dispatch only: run every call on Dispatchers.Default (as many threads as cores) instead of
+        // CIO's Dispatchers.IO (up to 64), to see whether the burst's memory follows the threads that allocate.
+        intercept(ApplicationCallPipeline.Setup) { withContext(Dispatchers.Default) { proceed() } }
+        module()
+    },
 )
