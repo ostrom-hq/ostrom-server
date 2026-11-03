@@ -49,6 +49,8 @@ class IsolationMatrixPostgresTest {
         )
     }
 
+    // Left out of this reproduction only (server#331): SeededApplicationsInARowTest replays it from a fresh process.
+    @Ignore
     @Test
     fun noCredentialOfAnOrganizationReadsChangesOrDetectsAnothersResources() =
         benchTest(serverModules(), overrides) { server ->
@@ -61,6 +63,8 @@ class IsolationMatrixPostgresTest {
             report(a.problems + b.problems + matrix.findings + changes, matrix)
         }
 
+    // Left out of this reproduction only (server#331): SeededApplicationsInARowTest replays it from a fresh process.
+    @Ignore
     @Test
     fun aSimpleMemberMakesNoneOfTheWritesReservedToOwnersAndAdmins() =
         benchTest(serverModules(), overrides) { server ->
