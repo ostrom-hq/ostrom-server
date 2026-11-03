@@ -138,8 +138,9 @@ class InMemoryCloudSessionsRepository : CloudSessionsRepository {
     override suspend fun list(orgId: Uuid, ownerId: String, before: Uuid?, limit: Int): List<CloudSession> {
         val all = sessions.values.filter { it.orgId == orgId && it.ownerId == ownerId }
             .sortedWith(compareByDescending<CloudSession> { it.createdAt }.thenByDescending { it.id.toString() })
+        // None after a session it does not hold, as the database.
         val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
-        return all.drop(start).take(limit)
+        return if (before != null && start == 0) emptyList() else all.drop(start).take(limit)
     }
 
     override suspend fun executions(orgId: Uuid, ownerId: String, limit: Int): List<CloudSession> =
