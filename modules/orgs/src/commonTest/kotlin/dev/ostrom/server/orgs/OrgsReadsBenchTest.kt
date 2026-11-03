@@ -126,7 +126,41 @@ class OrgsReadsBenchTest {
         }
     }
 
+    // WEB's console searches the members on the server: a prefix of the login or the name, whatever the case, paged.
+    @Test
+    fun theSearchKeepsTheMembersItsPrefixStarts() = benchTest(listOf(IdentityModule, OrgsModule), null) { server ->
+        val owner = server.owner(0)
+        membersOf(0, PAGED_MEMBERS).forEach { server.database.superuser.execute(it).getOrThrow() }
+        val base = "/api/v1/orgs/org0/members"
+        // Members 4, 40 to 49 and 400 to 499: login `user0-4…`, name `User 4…`.
+        val expected = (2..PAGED_MEMBERS).filter { it.toString().startsWith("4") }.map { "user0-$it" }.toSet()
+
+        for (q in listOf("USER0-4", "User 4")) {
+            val seen = mutableListOf<String>()
+            var after: String? = null
+            var pages = 0
+            do {
+                val query = "?q=${q.encodeURLParameter()}&limit=$PAGE" +
+                    (after?.let { "&after=${it.encodeURLParameter()}" } ?: "")
+                val page = server.client.get(base + query) { session(owner) }.body<JsonObject>()
+                seen += page.getValue("items").jsonArray.map { it.jsonObject.getValue("login").jsonPrimitive.content }
+                after = page["next"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.content
+                pages++
+            } while (after != null && pages <= PAGED_MEMBERS / PAGE)
+            assertEquals(expected, seen.toSet(), q)
+            assertEquals(expected.size, seen.size, "Each member once for $q")
+            assertEquals(2, pages, q)
+        }
+        val none = server.client.get("$base?q=nobody") { session(owner) }.body<JsonObject>()
+        assertTrue(none.getValue("items").jsonArray.isEmpty())
+        assertTrue(none["next"] == null || none["next"] is JsonNull)
+        for (query in listOf("q=", "q=" + "x".repeat(MAX_QUERY + 1))) {
+            assertEquals(HttpStatusCode.BadRequest, server.client.get("$base?$query") { session(owner) }.status, query)
+        }
+    }
+
     private companion object {
+        const val MAX_QUERY = 100
         const val PAGE = 100
         const val PAGED_MEMBERS = 500
 
