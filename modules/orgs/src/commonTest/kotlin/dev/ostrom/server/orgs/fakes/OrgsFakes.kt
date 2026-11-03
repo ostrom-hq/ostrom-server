@@ -43,7 +43,7 @@ class OrgsStore {
     val invitations = mutableMapOf<Uuid, Pair<Invitation, String>>()
 }
 
-class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
+class FakeOrgs(private val store: OrgsStore, private val audit: OrgAudit) : OrgsRepository {
     override suspend fun create(
         org: Org,
         owner: Member,
@@ -72,17 +72,25 @@ class FakeOrgs(private val store: OrgsStore) : OrgsRepository {
     var updates = 0
 
     override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
+        if (id in store.deleted) return
         updates++
         val org = store.orgs.getValue(id)
         store.orgs[id] = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
     }
 
-    override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) {
+    /** Whether [delete] fails, as a database that goes down in the middle of it: nothing is written. */
+    var deleteFails = false
+
+    override suspend fun delete(id: Uuid, at: Instant, event: OrgEvent, purgeAfter: Instant): Boolean {
+        check(!deleteFails) { "database down" }
+        if (id in store.deleted) return false
         store.deleted += id
         store.purgeAfter[id] = purgeAfter
         store.orgs[id] = store.orgs.getValue(id).copy(freeClaim = null)
         store.members.values.removeAll { it.orgId == id }
         store.invitations.values.removeAll { it.first.orgId == id }
+        audit.record(event)
+        return true
     }
 
     override suspend fun listOfUser(userId: Uuid): List<Membership> =
@@ -123,7 +131,7 @@ class FakeOrgDeletions(private val store: OrgsStore) : OrgDeletionsRepository {
     override suspend fun erase(id: Uuid, at: Instant) {
         store.erased += id
         retryAt.remove(id)
-        store.orgs[id] = store.orgs.getValue(id).copy(name = "", githubOrgId = null, timeZone = "UTC")
+        store.orgs[id] = store.orgs.getValue(id).copy(name = "", slug = "~$id", githubOrgId = null, timeZone = "UTC")
     }
 }
 
@@ -251,6 +259,10 @@ class FakeSeats(var limit: Int = 5, val paying: MutableSet<Uuid> = mutableSetOf(
     override suspend fun isPaying(orgId: Uuid): Boolean = orgId in paying
 }
 
+/** The deletion of [orgId] by [actorId], as the use case records it. */
+fun orgDeleted(orgId: Uuid, actorId: Uuid = Uuid.random()) =
+    OrgEvent(orgId, actorId, "org.deleted", "org", orgId.toString())
+
 class RecordingAudit : OrgAudit {
     val events = mutableListOf<Pair<String, Map<String, String>>>()
 
@@ -283,13 +295,13 @@ class RecordingMailer : InvitationMailer {
 class OrgsWorld {
     val clock = SettableClock()
     val store = OrgsStore()
-    val orgs = FakeOrgs(store)
+    val audit = RecordingAudit()
+    val orgs = FakeOrgs(store, audit)
     val deletions = FakeOrgDeletions(store)
     val people = FakePeople()
     val members = FakeMembers(store, people)
     val invitations = FakeInvitations(store)
     val seats = FakeSeats()
-    val audit = RecordingAudit()
     val tokens = FakeTokens()
     val limiter = FakeLimiter()
     val mailer = RecordingMailer()

@@ -47,6 +47,12 @@ class InMemoryLaunches : LaunchesRepository {
 
     override suspend fun find(orgId: Uuid, id: String): Launch? =
         launches.firstOrNull { it.orgId == orgId && it.id == id }
+
+    override suspend fun purge(before: Instant): Long {
+        val gone = launches.filter { it.expiresAt < before }
+        launches -= gone.toSet()
+        return gone.size.toLong()
+    }
 }
 
 /** The people of [launchers], by user id; [roles] their role now (the launcher's role when not set). */

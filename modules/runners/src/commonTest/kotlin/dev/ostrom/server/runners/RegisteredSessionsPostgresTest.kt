@@ -4,7 +4,9 @@ package dev.ostrom.server.runners
 import dev.ostrom.server.runners.domain.CloudSessionsRepository
 import dev.ostrom.server.runners.domain.DesiredState
 import dev.ostrom.server.runners.domain.ExecutionStatus
+import dev.ostrom.server.runners.domain.MachineReport
 import dev.ostrom.server.runners.domain.ReconcileCloudSessionUseCase
+import dev.ostrom.server.runners.domain.RunnerAssignmentsRepository
 import dev.ostrom.server.runners.domain.RunnerTokens
 import dev.ostrom.server.runners.domain.RuntimeDriver
 import dev.ostrom.server.runners.domain.SessionState
@@ -30,6 +32,9 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -134,6 +139,58 @@ class RegisteredSessionsPostgresTest {
         }
 
     @Test
+    fun runnersAskingAtOnceNeverTakeTheSameExecution() = serverTest(listOf(RunnersModule), overrides) { server ->
+        val sessions = server.koin.get<CloudSessionsRepository>()
+        val reconcile = server.koin.get<ReconcileCloudSessionUseCase>()
+        val machines = List(RACERS) { server.register("dana", "machine-$it") }
+        val waiting = List(WAITING) { session().also { assertTrue(sessions.createWithinCap(it, RACERS)) } }
+        waiting.forEach { reconcile(sessions.getById(it.id)!!) }
+
+        // Every runner's exchange at once, on the pool (the test server serves its HTTP calls one after another),
+        // twice: each execution goes to one runner, one execution per runner and heartbeat.
+        val assignments = server.koin.get<RunnerAssignmentsRepository>()
+        repeat(2) {
+            coroutineScope {
+                machines.map { machine ->
+                    async { assignments.exchange(ORG_A, Uuid.parse(machine.id), MachineReport()).size }
+                }.awaitAll()
+            }.forEach { held -> assertTrue(held <= 2, "One more execution per heartbeat at most") }
+        }
+        val holders = machines.flatMap { machine ->
+            server.work(machine.id, machine.token).executions.map { it.sessionId to machine.id }
+        }
+        assertEquals(waiting.map { it.id.toString() }.toSet(), holders.map { it.first }.toSet())
+        assertEquals(WAITING, holders.size, "No execution held twice: $holders")
+    }
+
+    @Test
+    fun aRunnerBackAfterItsSessionMovedDeletesItsWorkspace() = serverTest(listOf(RunnersModule), overrides) { server ->
+        val sessions = server.koin.get<CloudSessionsRepository>()
+        val reconcile = server.koin.get<ReconcileCloudSessionUseCase>()
+        val a = server.register("dana", "machine-a")
+        val b = server.register("dana", "machine-b")
+        val created = session()
+        assertTrue(sessions.createWithinCap(created, 10))
+        reconcile(sessions.getById(created.id)!!)
+        val id = created.id.toString()
+        val running = RegisteredRunnerHeartbeatRequest(listOf(ReportedExecutionDto(id, 1, "running")), listOf(id))
+        server.work(a.id, a.token, running)
+        server.work(a.id, a.token, running)
+
+        clock.now += 91.seconds
+        server.work(b.id, b.token)
+        reconcile(sessions.getById(created.id)!!)
+        reconcile(sessions.getById(created.id)!!)
+        assertEquals(listOf(2L), server.work(b.id, b.token).executions.map { it.epoch })
+
+        // a comes back: nothing to run, and the workspace it still holds is b's session now, to delete.
+        val back = server.work(a.id, a.token, running)
+        assertEquals(emptyList(), back.executions)
+        assertEquals(emptyList(), back.workspaces)
+        assertEquals(listOf(id), server.work(b.id, b.token).workspaces)
+    }
+
+    @Test
     fun anotherOrganizationsRunnerNeverSeesTheExecution() = serverTest(listOf(RunnersModule), overrides) { server ->
         val sessions = server.koin.get<CloudSessionsRepository>()
         val reconcile = server.koin.get<ReconcileCloudSessionUseCase>()
@@ -170,6 +227,11 @@ class RegisteredSessionsPostgresTest {
     }
 
     private fun created() = Uuid.random().toString()
+
+    private companion object {
+        const val RACERS = 10
+        const val WAITING = 3
+    }
 
     private suspend fun TestServer.register(token: String, name: String): RegisteredRunnerDto {
         val response = client.post("/api/v1/runners") {

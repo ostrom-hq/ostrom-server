@@ -93,5 +93,16 @@ class MemberSearchPostgresTest {
             assertTrue("search_path=pg_catalog, public, pg_temp" in function.get("config").asString())
             assertTrue(function.get("tenant").asBoolean())
             assertFalse(function.get("router").asBoolean(), "No other role: EXECUTE is revoked from PUBLIC")
+
+            // Its role reads three columns of identity_users, never an e-mail or anything else of a user.
+            val columns = server.database.superuser.fetchAll(
+                "SELECT has_column_privilege('ostrom_member_search', 'identity_users', 'primary_email', 'SELECT') " +
+                    "OR has_table_privilege('ostrom_member_search', 'identity_user_emails', 'SELECT') AS email, " +
+                    "has_table_privilege('ostrom_member_search', 'identity_users', 'SELECT') AS whole, " +
+                    "has_column_privilege('ostrom_member_search', 'identity_users', 'login', 'SELECT') AS login",
+            ).getOrThrow().single()
+            assertFalse(columns.get("email").asBoolean(), "The search's role reads no e-mail")
+            assertFalse(columns.get("whole").asBoolean(), "The search's role reads no whole row of identity_users")
+            assertTrue(columns.get("login").asBoolean())
         }
 }

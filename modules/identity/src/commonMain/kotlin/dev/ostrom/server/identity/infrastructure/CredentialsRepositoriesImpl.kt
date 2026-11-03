@@ -182,6 +182,12 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
         ).bind("session", agentSessionId).bind("at", at),
     ).getOrThrow().first().get("revoked").asLong()
 
+    // The one deletion across organizations, through the function of IdentityMigrations version 14.
+    override suspend fun purgeAgentTokens(before: Instant): Long = driver.fetchAll(
+        Statement.create("SELECT identity_purge_agent_tokens(CAST(:before AS TIMESTAMPTZ)) AS n")
+            .bind("before", before),
+    ).getOrThrow().first().get("n").asLong()
+
     private companion object {
         const val TOKEN_COLUMNS = "id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, " +
             "expires_at, last_used_at, revoked_at, authenticated_at"

@@ -4,6 +4,7 @@ package dev.ostrom.server.compiler
 import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompilerSettings
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
+import dev.ostrom.server.compiler.domain.models.ListedPackage
 import dev.ostrom.server.compiler.domain.models.PackageAudit
 import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.RuleDoc
@@ -55,7 +56,12 @@ internal class MemoryCompilerRepository : CompilerRepository {
 
     override suspend fun deleteWorkflow(orgId: Uuid, id: String): Boolean = workflows.remove(orgId to id) != null
 
-    override suspend fun decisions(orgId: Uuid): List<DecisionDoc> = decisions[orgId].orEmpty()
+    override suspend fun workflowCount(orgId: Uuid): Int = workflows.keys.count { it.first == orgId }
+
+    override suspend fun lastDecisions(orgId: Uuid): List<DecisionDoc> = decisions[orgId].orEmpty()
+        .filter { (orgId to it.subjectId) in workflows }
+        .groupBy { it.subjectId }
+        .map { (_, taken) -> taken.maxBy { it.at } }
 
     override suspend fun addDecision(orgId: Uuid, decision: DecisionDoc) {
         decisions.getOrPut(orgId) { mutableListOf() } += decision
@@ -67,14 +73,26 @@ internal class MemoryCompilerRepository : CompilerRepository {
     override suspend fun saveHarness(orgId: Uuid, repo: String?, digest: String, stamp: HarnessStamp): HarnessStamp =
         harnesses.getOrPut(Triple(orgId, repo, digest)) { stamp }
 
+    /** The reads of a package by digest and of a pin, as the database would count them. */
+    var reads = 0
+
     override suspend fun findPackage(orgId: Uuid, digest: String): StoredPackage? =
         packages.filterKeys { it.first == orgId }.values
             .firstOrNull { it.envelope.digest == digest || it.envelope.contentDigest == digest }
+            .also { reads++ }
 
-    override suspend fun packages(orgId: Uuid, repo: String?): List<StoredPackage> =
-        packages.filterKeys { it.first == orgId }.values
-            .filter { repo == null || it.envelope.repo == repo }
-            .sortedByDescending { it.compiledAt }
+    override suspend fun packages(orgId: Uuid): List<StoredPackage> =
+        packages.filterKeys { it.first == orgId }.values.sortedByDescending { it.compiledAt }
+
+    override suspend fun listPackages(orgId: Uuid, repo: String?): List<ListedPackage> =
+        packages(orgId).filter { repo == null || it.envelope.repo == repo }.map { stored ->
+            val envelope = stored.envelope
+            ListedPackage(
+                envelope.version, envelope.digest, envelope.contentDigest, envelope.repo, stored.compiledAt,
+                stored.counts, stored.revoked, stored.revokedBy, stored.revokeReason,
+                pinned = pins[orgId to envelope.repo]?.contentDigest == envelope.contentDigest,
+            )
+        }
 
     override suspend fun savePackage(orgId: Uuid, stored: StoredPackage): StoredPackage =
         packages.getOrPut(orgId to stored.envelope.contentDigest) { stored }
@@ -83,7 +101,7 @@ internal class MemoryCompilerRepository : CompilerRepository {
         packages[orgId to stored.envelope.contentDigest] = stored
     }
 
-    override suspend fun pin(orgId: Uuid, repo: String?): PackagePin? = pins[orgId to repo]
+    override suspend fun pin(orgId: Uuid, repo: String?): PackagePin? = pins[orgId to repo].also { reads++ }
 
     override suspend fun setPin(orgId: Uuid, repo: String?, pin: PackagePin?) {
         if (pin == null) pins.remove(orgId to repo) else pins[orgId to repo] = pin

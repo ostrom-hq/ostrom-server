@@ -38,6 +38,8 @@ import kotlin.uuid.Uuid
  * @property pausingSince When the session entered `pausing`, for the pause deadline.
  * @property model The model the agent starts with, if chosen.
  * @property prompt The first message the agent receives at the first start, if any.
+ * @property runnerId The registered runner its current execution was handed to: named on a read of the session
+ *   ([GetCloudSessionUseCase]), never stored with it; null on the cluster's or this server's Docker.
  */
 data class CloudSession(
     val id: Uuid,
@@ -66,6 +68,7 @@ data class CloudSession(
     val pausingSince: Instant? = null,
     val model: String? = null,
     val prompt: String? = null,
+    val runnerId: Uuid? = null,
 )
 
 /**

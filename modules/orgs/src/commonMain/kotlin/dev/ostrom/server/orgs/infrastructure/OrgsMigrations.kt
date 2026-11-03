@@ -96,11 +96,12 @@ private const val MEMBER_SEARCH_FUNCTION = "orgs_search_members(UUID, TEXT, UUID
  *
  * The login and the name live in `identity_users`, which the tenant role does not read: a `SECURITY DEFINER` function
  * owned by `ostrom_member_search` (`NOLOGIN`, no bypass of the row level security, a policy of its own on
- * `orgs_members` bound to the session's organization, `SELECT` on `identity_users` only) joins them. It refuses an
- * organization that is not the session's (`ostrom.org_id`), escapes the prefix's own wildcards, and returns only
- * member ids, in the members' order, after a member, at most a page. Only `ostrom_tenant` may run it. Its query is
- * planned on each call (`EXECUTE … USING`), so a rare prefix goes through the `text_pattern_ops` indexes and a common
- * one walks the team in order and stops at the page (OrgsReadsBenchTest, 10 teams of 5 000).
+ * `orgs_members` bound to the session's organization, `SELECT` on three columns of `identity_users`: `id`, `login`,
+ * `display_name`) joins them. It refuses an organization that is not the session's (`ostrom.org_id`), escapes the
+ * prefix's own wildcards, and returns only member ids, in the members' order, after a member, at most a page. Only
+ * `ostrom_tenant` may run it. Its query is planned on each call (`EXECUTE … USING`), so a rare prefix goes through the
+ * `text_pattern_ops` indexes and a common one walks the team in order and stops at the page (OrgsReadsBenchTest, 10
+ * teams of 5 000).
  */
 private val MEMBER_SEARCH_SQL: String =
     """
@@ -120,7 +121,7 @@ private val MEMBER_SEARCH_SQL: String =
         USING (current_user = 'ostrom_member_search'
             AND org_id = CAST(NULLIF(current_setting('ostrom.org_id', true), '') AS UUID));
     GRANT SELECT ON orgs_members TO ostrom_member_search;
-    GRANT SELECT ON identity_users TO ostrom_member_search;
+    GRANT SELECT (id, login, display_name) ON identity_users TO ostrom_member_search;
     CREATE FUNCTION orgs_search_members(p_org UUID, p_prefix TEXT, p_after UUID, p_limit INTEGER)
         RETURNS TABLE (member_id UUID)
         LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
@@ -322,6 +323,20 @@ val OrgsMigrations: List<SchemaMigration> =
                 ALTER POLICY orgs_invitations_router ON orgs_invitations USING (current_user = 'ostrom_router')
             """.trimIndent(),
         ),
-        // Version 6 is server#259's; the second of the two to merge takes main + 1.
+        // The short name of a deleted organization stays taken for its 30 days of grace, so that it
+        // can be restored, and is given back when it is erased: the erased ones before this version
+        // give theirs back now. A purged row keeps a name no one can choose (`~` and its id).
+        SchemaMigration(
+            version = 6,
+            name = "orgs_purged_short_names_released",
+            sql = """
+                ALTER TABLE orgs_organizations NO FORCE ROW LEVEL SECURITY;
+                UPDATE orgs_organizations SET slug = $PURGED_SLUG WHERE purged_at IS NOT NULL;
+                ALTER TABLE orgs_organizations FORCE ROW LEVEL SECURITY
+            """.trimIndent(),
+        ),
         SchemaMigration(version = 7, name = "orgs_member_search", sql = MEMBER_SEARCH_SQL),
     )
+
+/** The short name an erased organization keeps, in SQL: `~` and its id, outside the pattern of the short names. */
+internal const val PURGED_SLUG = "'~' || CAST(id AS TEXT)"
