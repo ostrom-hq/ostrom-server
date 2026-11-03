@@ -41,10 +41,11 @@ class OrgsApi {
          * @property parent The organization.
          * @property limit The most members of the page, 1 to 1000; 1000 without it.
          * @property after The previous page's `next`.
+         * @property q Only the members whose login or name starts with it, whatever the case.
          */
         @Serializable
         @Resource("members")
-        class Members(val parent: Org, val limit: Int? = null, val after: String? = null) {
+        class Members(val parent: Org, val limit: Int? = null, val after: String? = null, val q: String? = null) {
             /**
              * One member, by login.
              *

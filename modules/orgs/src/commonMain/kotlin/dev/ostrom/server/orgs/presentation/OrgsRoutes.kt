@@ -114,7 +114,7 @@ private fun Route.memberRoutes(dependencies: OrgsRoutesDependencies) =
             val after = params.after?.let {
                 Uuid.parseOrNull(it) ?: throw InvalidOrgRequestException("after is a member id.")
             }
-            val page = members.list(orgId, userId, after, params.limit ?: MAX_MEMBER_PAGE)
+            val page = members.list(orgId, userId, after, params.limit ?: MAX_MEMBER_PAGE, params.q)
             call.respond(MembersResponse(page.items.map { it.toMemberResponse() }, page.next?.toString()))
         }
         get<OrgsApi.Org.Members.Login> { params ->

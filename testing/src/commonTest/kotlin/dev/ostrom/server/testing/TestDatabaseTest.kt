@@ -103,6 +103,8 @@ class TestDatabaseTest {
             assertEquals("false", database.driver.text(member("ostrom_router")), "Never granted to the serving role")
             assertEquals("true", database.owner.text(member("ostrom_tenant", "MEMBER WITH ADMIN OPTION")))
             assertEquals("true", database.owner.text(member("ostrom_router", "MEMBER WITH ADMIN OPTION")))
+            assertEquals("false", database.driver.text(member("ostrom_member_search")), "Never the serving role's")
+            assertEquals("true", database.owner.text(member("ostrom_member_search", "MEMBER WITH ADMIN OPTION")))
         } finally {
             database.close()
         }
