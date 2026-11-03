@@ -11,14 +11,17 @@ import dev.ostrom.server.identity.domain.ResolveUserUseCase
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.infrastructure.TransactionalAuditLog
+import dev.ostrom.server.kernel.database.PurgeDateRefusedException
 import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.inOrg
+import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.SQLError
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asBoolean
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -290,6 +293,41 @@ class IdentityTenancyPostgresTest {
             val left = s.database.superuser.fetchAll("SELECT name AS v FROM identity_api_tokens ORDER BY name")
                 .getOrThrow().map { it.get("v").asString() }
             assertEquals(listOf("cli", "live", "recent"), left, "Other kinds and agent tokens still recent stay")
+        }
+
+    // Audit SERVEUR-3 B3: the purge crosses row-level security for every organization, so the date is bounded twice:
+    // the repository refuses one it cannot be given (a 400), and the function itself never goes past the retention.
+    @Test
+    fun aPurgeNeverDeletesAnAgentTokenStillInItsRetentionAndRefusesADateItCannotBound() =
+        serverTest(listOf(IdentityModule)) { s ->
+            val ada = VerifiedIdentity(IdentityProvider.GITHUB, "1", null, false, "Ada")
+            val user = s.koin.get<ResolveUserUseCase>()(ada)
+            val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
+            val tokens = s.koin.get<ApiTokensRepository>()
+            fun agent(name: String, expiresAt: Instant) = ApiToken(
+                Uuid.random(), user.id, orgA, name, TokenKind.AGENT, setOf(AGENT_SCOPE), "osa_x", "run-$name",
+                expiresAt - 1.days, expiresAt, null, null,
+            )
+            tokens.create(agent("old", now - 8.days), "hash-old")
+            tokens.create(agent("kept", now - 1.days), "hash-kept")
+            val everyName = "SELECT name AS v FROM identity_api_tokens ORDER BY name"
+            suspend fun names() = s.database.superuser.fetchAll(everyName).getOrThrow().map { it.get("v").asString() }
+
+            // Straight to the function, as the serving role: today deletes only what is past the 7 days.
+            val direct = s.driver.fetchAll("SELECT identity_purge_agent_tokens(now()) AS n").getOrThrow()
+            assertEquals(1L, direct.first().get("n").asLong(), "Only the token expired 8 days ago")
+            assertEquals(listOf("kept"), names())
+            for (date in listOf("now() + INTERVAL '1 day'", "'infinity'", "NULL")) {
+                assertFailsWith<SQLError>(date) {
+                    s.driver.fetchAll("SELECT identity_purge_agent_tokens($date) AS n").getOrThrow()
+                }
+            }
+            for (date in listOf(now + 1.days, Instant.DISTANT_FUTURE, Instant.DISTANT_PAST)) {
+                val refused = assertFailsWith<PurgeDateRefusedException>("$date") { tokens.purgeAgentTokens(date) }
+                assertEquals(ErrorKind.INVALID_REQUEST, refused.kind)
+            }
+            assertEquals(0L, tokens.purgeAgentTokens(now), "Through the repository too, the retention holds")
+            assertEquals(listOf("kept"), names())
         }
 
     @Test
