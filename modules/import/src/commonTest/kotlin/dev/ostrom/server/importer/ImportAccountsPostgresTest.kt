@@ -455,6 +455,10 @@ class ImportAccountsPostgresTest {
             val at = Instant.parse("2026-10-30T12:00:00Z")
             return AuditEvent(Uuid.random(), entries.size.toLong(), entry, at, null, "hash", "signature", "key")
         }
+
+        override fun sign(entry: AuditEntry): suspend (String?, Long) -> AuditEvent = { previous, sequence ->
+            AuditEvent(Uuid.random(), sequence, entry, Instant.fromEpochMilliseconds(0), previous, "hash", "sig", "key")
+        }
     }
 
     /** The org's accounts, then [afterRead] once: a change made right after a run read them. */

@@ -34,6 +34,7 @@ import dev.ostrom.server.launches.presentation.LaunchResponse
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.runners.RunnersModule
@@ -456,7 +457,8 @@ class WorkflowRunsPostgresTest {
             val cliBundle = server.call(ada.cliToken, "/api/v1/receipts/rcpt_session_s-1/bundle")
             assertEquals(HttpStatusCode.NotFound, cliBundle.status, cliBundle.bodyAsText())
             // A credential of no organization: its person left it.
-            server.koin.get<OrgsRepository>().delete(ada.org.id, now)
+            val deleted = OrgEvent(ada.org.id, Uuid.random(), "org.deleted", "org", ada.org.id.toString())
+            server.koin.get<OrgsRepository>().delete(ada.org.id, now, deleted)
             assertEquals(HttpStatusCode.NotFound, server.call(ada.cliToken, "/api/v1/checks").status)
             assertEquals(
                 HttpStatusCode.NotFound,
