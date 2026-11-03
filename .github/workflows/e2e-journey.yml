@@ -78,6 +78,20 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_E2E }}
           path: e2e
           persist-credentials: false
+      # E2E-SWEEP reads the contract (ostrom-core main's OpenAPI and api/contract/served-routes.txt) and the routes the
+      # image serves (core's scripts/served-routes.py on the image's own sources): without them it is skipped (run
+      # 41549184819, E2E-SWEEP-005), as in ostrom-e2e's ci.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: core-contract
+          sparse-checkout: |
+            api/openapi.yaml
+            api/contract
+            scripts/served-routes.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: The server image (the newest sha-<7> of main published, unless named)
         id: server
         env:
@@ -108,6 +122,12 @@ jobs:
           git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
             || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
+          # The routes this image serves, read on its own sources, then the contract's: E2E-SWEEP's served routes.
+          git -C server worktree add --detach "$RUNNER_TEMP/server-at-image" "$revision" >/dev/null
+          python3 core-contract/scripts/served-routes.py "$RUNNER_TEMP/server-at-image" > "$RUNNER_TEMP/served-by-server.txt"
+          cat core-contract/api/contract/served-routes.txt "$RUNNER_TEMP/served-by-server.txt" > "$RUNNER_TEMP/served-routes.txt"
+          yq -o=json core-contract/api/openapi.yaml > "$RUNNER_TEMP/openapi.json"
+          wc -l "$RUNNER_TEMP/served-by-server.txt" "$RUNNER_TEMP/served-routes.txt" "$RUNNER_TEMP/openapi.json"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           {
             echo "### Images"
@@ -166,6 +186,9 @@ jobs:
           OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
           # The fake provider the scenarios start, where the server's gateway and sharing point (step above).
           OSTROM_E2E_FAKE_TOKENS_PORT: "4620"
+          # E2E-SWEEP's contract (step « The server image »).
+          OSTROM_E2E_SERVED_ROUTES: ${{ runner.temp }}/served-routes.txt
+          OSTROM_E2E_OPENAPI: ${{ runner.temp }}/openapi.json
         run: |
           pnpm install --frozen-lockfile
           # The files named, or every scenario file; a filter runs its scenarios only; the json report says which ran.
