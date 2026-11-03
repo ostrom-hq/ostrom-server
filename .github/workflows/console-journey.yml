@@ -120,8 +120,6 @@ jobs:
       # The GitHub App of the journeys: a key made for this run only. The server points at the fake GitHub the journeys
       # start on fixed ports (ostrom-web e2e-real/fakeGithub.ts, as ostrom-e2e's src/fake-github.ts): 4610 for the
       # sign-in with GitHub, 4700 for the App's installations and repositories. Nothing reaches the real GitHub.
-      - name: Test key of the journeys' GitHub App
-        run: echo "E2E_GITHUB_APP_PEM=$(openssl genrsa -traditional 2048 2>/dev/null | awk '{printf "%s\\n", $0}')" >> "$GITHUB_ENV"
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
           IMAGE: ${{ steps.server.outputs.image }}
@@ -160,7 +158,12 @@ jobs:
           OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_web_journey
           OSTROM_WEB_ORIGIN=http://localhost:4173
           ENV
-          printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$E2E_GITHUB_APP_PEM" >> "$RUNNER_TEMP/server.env"
+          # The journeys' GitHub App gets a key made for this run, written straight to the env file: never to
+          # $GITHUB_ENV, whose values every later step prints. One line, its newlines as `\n`, as the server reads it.
+          openssl genrsa -traditional -out "$RUNNER_TEMP/github-app.pem" 2048
+          printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$(awk '{printf "%s\\n", $0}' "$RUNNER_TEMP/github-app.pem")" \
+            >> "$RUNNER_TEMP/server.env"
+          rm "$RUNNER_TEMP/github-app.pem"
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
