@@ -73,6 +73,12 @@ class BudgetsRepositoryImpl(private val driver: Driver) : BudgetsRepository {
             is BudgetTarget.Member -> MEMBER to target.memberId
         }
         driver.inTenant(orgId) {
+            // One write of a subject at a time: without it, a second write's DELETE skips the rows the first one
+            // inserts meanwhile, and the subject keeps a mix of both writes' windows and actions.
+            fetchAll(
+                Statement.create("SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) l")
+                    .bind("key", "budgets_limits:$orgId:$scope:${memberId ?: ""}"),
+            ).getOrThrow()
             execute(
                 Statement.create(
                     "DELETE FROM budgets_limits WHERE org_id = :org_id AND scope = :scope " +
