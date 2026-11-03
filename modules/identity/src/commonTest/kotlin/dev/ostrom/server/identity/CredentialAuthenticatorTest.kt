@@ -80,6 +80,7 @@ class CredentialAuthenticatorTest {
         assertEquals(
             AuthenticatedPrincipal(
                 userId.toString(), PrincipalKind.USER, setOf("orgs:read"), stored.id.toString(), null,
+                personalTokenName = "t",
             ),
             authenticator.authenticate("osp_a"),
         )
@@ -92,6 +93,7 @@ class CredentialAuthenticatorTest {
         val principal = authenticator.authenticate("osc_a")
         assertEquals(PrincipalKind.USER, principal?.kind)
         assertEquals(orgId.toString(), principal?.orgId)
+        assertEquals(null, principal?.personalTokenName, "Only a personal token is named")
     }
 
     @Test
