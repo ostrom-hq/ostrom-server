@@ -54,9 +54,15 @@ class InMemorySessions : SessionsRepository {
     val locks = mutableListOf<String>()
     var staleCutoff: Instant? = null
 
+    /** The reads of a segment outside a transaction, each one a round trip of its own. */
+    var gets = 0
+
     override suspend fun <T> transaction(orgId: Uuid, block: suspend SessionsTransaction.() -> T): T = Tx(orgId).block()
 
-    override suspend fun get(orgId: Uuid, id: String): Session? = rows[orgId to id]
+    override suspend fun get(orgId: Uuid, id: String): Session? {
+        gets++
+        return rows[orgId to id]
+    }
 
     override suspend fun segmentsOf(orgId: Uuid, id: String): List<Session> {
         val root = rows[orgId to id]?.rootId
@@ -102,7 +108,13 @@ class FakeSessionGates : ListSessionGatesUseCase {
     /** The sessions the end closed on the gates' side, with the time it gave, in order. */
     val closed = mutableListOf<Pair<String, Instant>>()
 
-    override suspend fun invoke(orgId: Uuid, sessionId: String): List<SessionGate> = gates[sessionId].orEmpty()
+    /** The lists of a session's gates outside its end. */
+    var listed = 0
+
+    override suspend fun invoke(orgId: Uuid, sessionId: String): List<SessionGate> {
+        listed++
+        return gates[sessionId].orEmpty()
+    }
 
     override suspend fun close(orgId: Uuid, sessionId: String, endedAt: Instant): List<SessionGate> {
         closed += sessionId to endedAt
@@ -155,7 +167,13 @@ class FakeSign :
         return signed.getOrPut(receiptId) { JsonObject(draft + ("id" to JsonPrimitive(receiptId))) }
     }
 
-    override suspend fun invoke(orgId: Uuid, id: String): JsonObject = signed.getValue(id)
+    /** The reads of a stored receipt. */
+    var reads = 0
+
+    override suspend fun invoke(orgId: Uuid, id: String): JsonObject {
+        reads++
+        return signed.getValue(id)
+    }
 }
 
 class RecordingLogger : Logger {
@@ -181,11 +199,11 @@ class SessionBench {
     val meter = MeterImpl(Clock.System)
     val segments = SessionSegments(close, clock, OstromMetrics(meter))
     val start = StartSessionUseCaseImpl(repository, segments)
-    val end = EndSessionUseCaseImpl(repository, close)
+    val get = GetSessionUseCaseImpl(repository, gates, sign)
+    val end = EndSessionUseCaseImpl(repository, close, get)
     val alive = SessionAliveUseCaseImpl(repository, clock)
     val reopen = ReopenSessionUseCaseImpl(repository, segments)
     val seen = ReportSeenUseCaseImpl(repository, clock)
-    val get = GetSessionUseCaseImpl(repository, gates, sign)
     val list = ListSessionsUseCaseImpl(repository)
     val sweep = SweepStaleSessionsUseCaseImpl(repository, close, clock, logger)
 }

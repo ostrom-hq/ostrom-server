@@ -14,6 +14,7 @@ import dev.ostrom.server.sessions.domain.models.SessionNotFoundException
 import dev.ostrom.server.sessions.domain.models.SessionQuery
 import dev.ostrom.server.sessions.domain.models.SessionView
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
+import kotlinx.serialization.json.JsonObject
 
 /** Reads a session with its gates and receipt. */
 interface GetSessionUseCase {
@@ -33,6 +34,16 @@ interface GetSessionUseCase {
      * @return Its view.
      */
     suspend fun view(session: Session): SessionView
+
+    /**
+     * The view of a segment from gates and a receipt its caller already holds (an end that just signed them).
+     *
+     * @param session The segment.
+     * @param gates Its gates, oldest first.
+     * @param receipt Its receipt, or null.
+     * @return Its view.
+     */
+    fun viewOf(session: Session, gates: List<SessionGate>, receipt: JsonObject?): SessionView
 }
 
 /**
@@ -53,15 +64,15 @@ class GetSessionUseCaseImpl(
         return view(session)
     }
 
-    override suspend fun view(session: Session): SessionView {
-        val gates = sessionGates(session.orgId, session.id)
-        return SessionView(
-            session = session,
-            gates = gates.map { it.id.toString() },
-            receipt = session.receiptId?.let { receipts(session.orgId, it) },
-            answers = gates.mapNotNull(::answerOf),
-        )
-    }
+    override suspend fun view(session: Session): SessionView =
+        viewOf(session, sessionGates(session.orgId, session.id), session.receiptId?.let { receipts(session.orgId, it) })
+
+    override fun viewOf(session: Session, gates: List<SessionGate>, receipt: JsonObject?): SessionView = SessionView(
+        session = session,
+        gates = gates.map { it.id.toString() },
+        receipt = receipt,
+        answers = gates.mapNotNull(::answerOf),
+    )
 }
 
 /** A yes stays a yes once the session reserved it or ran the action. */

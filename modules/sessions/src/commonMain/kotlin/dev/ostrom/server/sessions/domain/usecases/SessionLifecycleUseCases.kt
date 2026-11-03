@@ -11,6 +11,7 @@ import dev.ostrom.server.sessions.domain.models.SessionAccess
 import dev.ostrom.server.sessions.domain.models.SessionClosedException
 import dev.ostrom.server.sessions.domain.models.SessionNotFoundException
 import dev.ostrom.server.sessions.domain.models.SessionResumedElsewhereException
+import dev.ostrom.server.sessions.domain.models.SessionView
 import dev.ostrom.server.sessions.domain.models.StartSession
 import dev.ostrom.server.sessions.domain.repositories.SessionsRepository
 import dev.ostrom.server.sessions.domain.repositories.SessionsTransaction
@@ -59,22 +60,47 @@ interface EndSessionUseCase {
      * @return The ended segment.
      */
     suspend operator fun invoke(actor: GateActor, id: String, end: EndSession): Session
+
+    /**
+     * Ends the segment as [invoke] does, and gives its view (`POST /sessions/{id}/end` answers it): from the gates and
+     * the receipt the end just signed with, read again only when another end signed them.
+     *
+     * @param actor The caller, the session's person.
+     * @param id The segment.
+     * @param end What the end says.
+     * @return The ended segment, its gates and its receipt.
+     */
+    suspend fun view(actor: GateActor, id: String, end: EndSession): SessionView
 }
 
 /**
- * [EndSessionUseCase]: the owner check, then [CloseSessionUseCase].
+ * [EndSessionUseCase]: the owner check, then [CloseSessionUseCase] on the segment the check read.
  *
  * @param repository The sessions.
  * @param close Ends and signs.
+ * @param views The view of a segment.
  */
 class EndSessionUseCaseImpl(
     private val repository: SessionsRepository,
     private val close: CloseSessionUseCase,
+    private val views: GetSessionUseCase,
 ) : EndSessionUseCase {
-    override suspend fun invoke(actor: GateActor, id: String, end: EndSession): Session {
+    override suspend fun invoke(actor: GateActor, id: String, end: EndSession): Session = closed(actor, id, end).session
+
+    override suspend fun view(actor: GateActor, id: String, end: EndSession): SessionView {
+        val closed = closed(actor, id, end)
+        val signed = closed.signed
+        return if (signed == null) {
+            views.view(closed.session)
+        } else {
+            views.viewOf(closed.session, signed.gates, signed.receipt)
+        }
+    }
+
+    private suspend fun closed(actor: GateActor, id: String, end: EndSession): ClosedSession {
         val session = repository.get(actor.orgId, id) ?: throw SessionNotFoundException()
         SessionAccess.ensureOwner(actor, session)
-        return close(actor.orgId, id, end)
+        return close.close(actor.orgId, session, end)
     }
 }
 

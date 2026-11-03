@@ -58,8 +58,10 @@ fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies, throttle: Rea
         post<SessionsApi.Id.End> { params ->
             val body = call.receive<EndSessionRequest>()
             // S2-48: `costUsd` of the request is never read; the server measures the cost.
-            val end = EndSession(tools = body.tools, model = body.model, source = body.source, exitCode = body.exitCode)
-            call.respond(get.view(end(call.actor(actors, SessionScopes.writing), params.parent.id, end)).toResponse())
+            val ending =
+                EndSession(tools = body.tools, model = body.model, source = body.source, exitCode = body.exitCode)
+            // The end answers with the gates and the receipt it signed with, not read again (perf pass of the launch).
+            call.respond(end.view(call.actor(actors, SessionScopes.writing), params.parent.id, ending).toResponse())
         }
         post<SessionsApi.Id.Reopen> { params ->
             val reopened = reopen(call.actor(actors, SessionScopes.writing), params.parent.id)

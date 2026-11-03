@@ -27,6 +27,23 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
+/**
+ * What an end gives back: the segment, and [signed] when this end signed its receipt, so that its answer shows the
+ * gates and the receipt without reading them again (perf pass of the launch: `POST /sessions/{id}/end`).
+ *
+ * @property session The ended segment.
+ * @property signed The gates and the receipt this end signed with; null when another end signed them.
+ */
+data class ClosedSession(val session: Session, val signed: SignedEnd?)
+
+/**
+ * The gates an end listed under the session's lock and the receipt it signed with them.
+ *
+ * @property gates The gates of the segment, oldest first.
+ * @property receipt The stored receipt.
+ */
+data class SignedEnd(val gates: List<SessionGate>, val receipt: JsonObject)
+
 /** Ends a segment and signs its receipt, whoever asks: its launcher, or the sweep for a lost one. */
 interface CloseSessionUseCase {
     /**
@@ -40,6 +57,17 @@ interface CloseSessionUseCase {
      * @return The ended segment.
      */
     suspend operator fun invoke(orgId: Uuid, id: String, end: EndSession): Session
+
+    /**
+     * Ends a segment its caller already read (the owner check of [EndSessionUseCase]) as [invoke] does, without
+     * reading it again: it is read once more under its lock.
+     *
+     * @param orgId The organization.
+     * @param seen The segment as its caller read it.
+     * @param end What the end says.
+     * @return The ended segment, with the gates and the receipt when this end signed it.
+     */
+    suspend fun close(orgId: Uuid, seen: Session, end: EndSession): ClosedSession
 
     /**
      * Ends an open segment the caller already locked, in the caller's transaction.
@@ -79,17 +107,18 @@ class CloseSessionUseCaseImpl(
     // reads come first, the end is written under the lock, the gates are read once it is written (each in a short
     // transaction of their own), the receipt is signed after, and its id written last: an end that fails in between
     // leaves a segment ended without its receipt, which the next end signs.
-    override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session {
-        val seen = repository.get(orgId, id) ?: throw SessionNotFoundException()
-        return if (seen.receiptId != null) {
-            locked(orgId, id) { merged(it, end) to null }.first
+    override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session =
+        close(orgId, repository.get(orgId, id) ?: throw SessionNotFoundException(), end).session
+
+    override suspend fun close(orgId: Uuid, seen: Session, end: EndSession): ClosedSession =
+        if (seen.receiptId != null) {
+            ClosedSession(locked(orgId, seen.id) { merged(it, end) to null }.first, null)
         } else {
             signed(orgId, seen, end)
         }
-    }
 
     // The end of a segment without its receipt yet: read, written, signed, then its receipt's id written.
-    private suspend fun signed(orgId: Uuid, seen: Session, end: EndSession): Session {
+    private suspend fun signed(orgId: Uuid, seen: Session, end: EndSession): ClosedSession {
         val id = seen.id
         val endedAt = seen.endedAt ?: now()
         val measured = end.copy(
@@ -110,14 +139,16 @@ class CloseSessionUseCaseImpl(
             }
         }
         // Not `told?.let { … } ?: return`: Kover counts the null of a draft that is never null.
-        if (told == null) return claimed
+        if (told == null) return ClosedSession(claimed, null)
         // The gates once the end is written, under the session's lock on the gates' side (AUDIT-SERVEUR-3 B2): a gate
         // the gates accepted is read here, and the gates refuse any later one.
         val gates = sessionGates.close(orgId, id, told.endedAt)
         val draft = draft(claimed, told.endedAt, told.end, gates, inForce)
-        val receiptId = (sign(orgId, draft, receiptIdOf(id)).getValue("id") as JsonPrimitive).content
+        val receipt = sign(orgId, draft, receiptIdOf(id))
+        val receiptId = (receipt.getValue("id") as JsonPrimitive).content
         // The receipt's id is the segment's: another end that wrote it first wrote the same.
-        return locked(orgId, id) { it.copy(receiptId = receiptId) to null }.first
+        val ended = locked(orgId, id) { it.copy(receiptId = receiptId) to null }.first
+        return ClosedSession(ended, SignedEnd(gates, receipt))
     }
 
     // What an end tells its receipt: the time that was written and what it says.
