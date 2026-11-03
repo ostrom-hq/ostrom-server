@@ -189,7 +189,7 @@ data class RevokeRequest(val reason: String)
  * @property event What.
  * @property actor Who.
  * @property subject The package version.
- * @property meta Details.
+ * @property meta Details, every value a string as the contract says (a count reads `"3"`); an unknown one is absent.
  */
 @Serializable
 data class AuditEvent(
@@ -198,7 +198,7 @@ data class AuditEvent(
     val event: String,
     val actor: String,
     val subject: String,
-    val meta: JsonObject,
+    val meta: Map<String, String>,
 )
 
 /**

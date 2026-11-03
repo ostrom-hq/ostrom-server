@@ -142,5 +142,7 @@ val GatesMigrations: List<SchemaMigration> = listOf(
             ALTER POLICY gates_gates_router ON gates_gates USING (current_user = 'ostrom_router')
         """.trimIndent(),
     ),
+    // Q-GATES-G1 (a): a pull request's author whom no Ostrom person linked, by GitHub account id.
+    SchemaMigration(7, "gates_unlinked_author", "ALTER TABLE gates_gates ADD COLUMN unlinked_author BIGINT"),
 )
 
