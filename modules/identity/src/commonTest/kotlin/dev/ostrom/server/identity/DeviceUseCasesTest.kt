@@ -73,10 +73,11 @@ class DeviceUseCasesTest {
         assertEquals(CLI_SCOPES, approved.token.token.scopes)
         // S2-04: the CLI token can neither answer a gate nor edit a workflow (an agent on the machine can read it);
         // it reads its organization's receipts (`ostrom receipts`, `verify`), approvals and gates (`ostrom inbox`,
-        // `ostrom logs`), MCP servers (`ostrom claude`) and rules (`ostrom init`, `ostrom rules list`), writing none.
+        // `ostrom logs`), MCP servers (`ostrom claude`) and rules (`ostrom init`, `ostrom rules list`), writing none;
+        // it starts, reads and attaches to its person's cloud sessions (`ostrom claude --cloud`, `ostrom attach`).
         val expected = setOf(
             "profile:read", "orgs:read", "workflows:read", "sessions:write", "receipts:read", "gates:read", "mcp:read",
-            "rules:read",
+            "rules:read", "cloud:read", "cloud:write",
         )
         assertEquals(expected, approved.token.token.scopes)
         assertEquals("osc_secret2", approved.token.secret)
