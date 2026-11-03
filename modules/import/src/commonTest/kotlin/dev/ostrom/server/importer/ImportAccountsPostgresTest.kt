@@ -62,8 +62,8 @@ class ImportAccountsPostgresTest {
     private fun account(provider: String, id: String, disabled: Boolean = false, run: Int = 1) = TeamCodeAccountDto(
         provider = provider,
         providerAccountId = id,
-        label = "Lyes $id",
-        email = "lyes@example.com",
+        label = "Lena $id",
+        email = "lena@example.com",
         accessToken = "access-$id-token-$run",
         refreshToken = "refresh-$id-token-$run",
         expiresAt = "2026-11-01T00:00:00Z",
@@ -111,10 +111,10 @@ class ImportAccountsPostgresTest {
             val unknown = "Ostrom shares claude and codex accounts, not gemini."
             assertEquals(
                 listOf(
-                    line("account", "claude/Lyes claude-1", CREATED),
-                    line("account", "codex/Lyes codex-1", CREATED),
-                    line("account", "gemini/Lyes gemini-1", SKIPPED, unknown),
-                    line("account", "claude/Lyes claude-3", CREATED),
+                    line("account", "claude/Lena claude-1", CREATED),
+                    line("account", "codex/Lena codex-1", CREATED),
+                    line("account", "gemini/Lena gemini-1", SKIPPED, unknown),
+                    line("account", "claude/Lena claude-3", CREATED),
                 ),
                 accountLines(
                     account("claude", "claude-1"),
@@ -132,9 +132,9 @@ class ImportAccountsPostgresTest {
             // A second run, TeamCode's tokens having changed: what the org shares already is left alone.
             assertEquals(
                 listOf(
-                    line("account", "claude/Lyes claude-1", UNCHANGED),
-                    line("account", "codex/Lyes codex-1", UNCHANGED),
-                    line("account", "claude/Lyes claude-2", CREATED),
+                    line("account", "claude/Lena claude-1", UNCHANGED),
+                    line("account", "codex/Lena codex-1", UNCHANGED),
+                    line("account", "claude/Lena claude-2", CREATED),
                 ),
                 accountLines(
                     account("claude", "claude-1", run = 2).copy(providerAccountId = " CLAUDE-1 "),
@@ -160,10 +160,10 @@ class ImportAccountsPostgresTest {
                     account("codex", "codex-3"),
                     account("codex", "codex-2"),
                 )
-                val cap = line("account", "codex/Lyes codex-3", SKIPPED, "An organization shares at most 100 accounts.")
+                val cap = line("account", "codex/Lena codex-3", SKIPPED, "An organization shares at most 100 accounts.")
                 fun lines(vararg actions: ImportAction): List<ImportItemDto> =
                     listOf("codex-1", "codex-1", "codex-2", "codex-3", "codex-2").zip(actions)
-                        .map { (id, action) -> if (id == "codex-3") cap else line("account", "codex/Lyes $id", action) }
+                        .map { (id, action) -> if (id == "codex-3") cap else line("account", "codex/Lena $id", action) }
 
                 assertEquals(
                     lines(PLANNED, PLANNED, PLANNED, SKIPPED, UNCHANGED),
@@ -192,8 +192,8 @@ class ImportAccountsPostgresTest {
                     account("claude", "claude-5", run = 2).copy(refreshToken = "offline-claude-5-token"),
                     account("claude", "claude-6", run = 2).copy(label = ""),
                 )
-                val names = listOf("Renamed in TeamCode", "Lyes claude-2", "Lyes claude-3", "Lyes claude-4")
-                    .map { "claude/$it" } + listOf("claude/Lyes claude-5")
+                val names = listOf("Renamed in TeamCode", "Lena claude-2", "Lena claude-3", "Lena claude-4")
+                    .map { "claude/$it" } + listOf("claude/Lena claude-5")
                 val unnamed = line("account", "claude/", SKIPPED, "A label is 1 to 120 printable characters.")
                 val all = arrayOf("claude-1", "claude-2", "claude-3", "claude-4", "claude-5")
                 val waiting = AccountStatus.RECONNECT_REQUIRED
@@ -229,7 +229,7 @@ class ImportAccountsPostgresTest {
                     "Revived; off; revived off; refused tokens never stored; untested ones neither",
                 )
                 assertEquals("renewed-access-claude-1-token-2", accessToken("claude-1"), "TeamCode's, renewed")
-                assertEquals("Lyes claude-1", accounts().getValue("claude-1").label, "Its label stays the org's")
+                assertEquals("Lena claude-1", accounts().getValue("claude-1").label, "Its label stays the org's")
                 assertEquals("access-claude-2-token-1", accessToken("claude-2"), "Turning it off keeps its tokens")
                 assertEquals("access-claude-4-token-1", accessToken("claude-4"))
                 val event = audit.entries.single()
@@ -312,8 +312,8 @@ class ImportAccountsPostgresTest {
                 val changed = "The account changed meanwhile: nothing was overwritten. Try again."
                 assertEquals(
                     listOf(
-                        line("account", "claude/Lyes claude-1", SKIPPED, changed),
-                        line("account", "claude/Lyes claude-2", SKIPPED, changed),
+                        line("account", "claude/Lena claude-1", SKIPPED, changed),
+                        line("account", "claude/Lena claude-2", SKIPPED, changed),
                     ),
                     accountLines(
                         account("claude", "claude-1", run = 2),
@@ -357,9 +357,9 @@ class ImportAccountsPostgresTest {
                 val changed = "The account changed meanwhile: nothing was overwritten. Try again."
                 assertEquals(
                     listOf(
-                        line("account", "claude/Lyes claude-1", UPDATED),
-                        line("account", "claude/Lyes claude-2", SKIPPED, changed),
-                        line("account", "claude/Lyes claude-3", SKIPPED, changed),
+                        line("account", "claude/Lena claude-1", UPDATED),
+                        line("account", "claude/Lena claude-2", SKIPPED, changed),
+                        line("account", "claude/Lena claude-3", SKIPPED, changed),
                     ),
                     accountLines(
                         account("claude", "claude-1", run = 2),
@@ -390,9 +390,9 @@ class ImportAccountsPostgresTest {
                 // renew but the provider does not say whose they are. Neither may stand behind the org's account.
                 assertEquals(
                     listOf(
-                        line("account", "claude/Lyes claude-1", SKIPPED, NOT_THIS_ACCOUNT),
-                        line("account", "claude/Lyes claude-2", SKIPPED, NOT_THIS_ACCOUNT),
-                        line("account", "claude/Lyes claude-3", UPDATED),
+                        line("account", "claude/Lena claude-1", SKIPPED, NOT_THIS_ACCOUNT),
+                        line("account", "claude/Lena claude-2", SKIPPED, NOT_THIS_ACCOUNT),
+                        line("account", "claude/Lena claude-3", UPDATED),
                     ),
                     accountLines(
                         account("claude", "claude-1", run = 2).copy(refreshToken = "refresh-claude-9-token-2"),
@@ -425,8 +425,8 @@ class ImportAccountsPostgresTest {
                 val report = report(Importing.team())
                 assertEquals(
                     listOf(
-                        line("account", "claude/Lyes", SKIPPED, "Unreadable."),
-                        line("account", "codex/Lyes", SKIPPED, "Unreadable."),
+                        line("account", "claude/Lena", SKIPPED, "Unreadable."),
+                        line("account", "codex/Lena", SKIPPED, "Unreadable."),
                     ),
                     report.items.filter { it.kind == "account" },
                 )
@@ -438,7 +438,7 @@ class ImportAccountsPostgresTest {
     /** claude-[id]'s owner signing in again. */
     private fun owners(id: String) = ShareAccountPayload(
         AccountProvider.CLAUDE,
-        "Lyes $id",
+        "Lena $id",
         null,
         id,
         "access-owner-$id-token",
