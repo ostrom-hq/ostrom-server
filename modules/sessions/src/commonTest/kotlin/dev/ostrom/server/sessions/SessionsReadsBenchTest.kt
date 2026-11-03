@@ -60,7 +60,8 @@ class SessionsReadsBenchTest {
     private fun sessionsOf(org: Uuid) =
         "INSERT INTO sessions_sessions (org_id, id, root_id, segment, launch_id, agent, dev, repo, started_at, " +
             "ended_at, last_seen_at, cost_usd) SELECT CAST('$org' AS uuid), 's' || i, 's' || i, 0, 'lch' || i, " +
-            "'claude-code', CASE WHEN i % 1000 = 0 THEN 'ada' ELSE 'dev' || (i % 30) END, 'acme/r' || (i % 20), " +
+            "'claude-code', CASE WHEN i % 1000 = 0 THEN 'ada' ELSE 'dev' || (i % 30) END, " +
+            "CASE WHEN i % 1000 = 1 THEN 'acme/rare' ELSE 'acme/r' || (i % 20) END, " +
             "now() - i * INTERVAL '10 minutes', CASE WHEN i % 50 <> 0 THEN now() - i * INTERVAL '10 minutes' + " +
             "INTERVAL '5 minutes' END, now() - i * INTERVAL '10 minutes', 0.5 " +
             "FROM generate_series(1, $SESSIONS_PER_ORG) AS i"
@@ -74,22 +75,27 @@ class SessionsReadsBenchTest {
         orgs.forEach { fixtures.execute(sessionsOf(it)).getOrThrow() }
         fixtures.execute("VACUUM ANALYZE sessions_sessions").getOrThrow()
 
-        val measures = listOf(
-            "GET /api/v1/sessions" to "/api/v1/sessions",
-            "GET /api/v1/sessions?before=s2500" to "/api/v1/sessions?before=s2500",
-            "GET /api/v1/sessions?dev=dev7 (167 of 5 000)" to "/api/v1/sessions?dev=dev7",
-            "GET /api/v1/sessions?dev=ada (5 of 5 000)" to "/api/v1/sessions?dev=ada",
-            "GET /api/v1/sessions?open=true (100 of 5 000)" to "/api/v1/sessions?open=true",
-            "GET /api/v1/sessions?repo=acme/r3" to "/api/v1/sessions?repo=acme/r3",
-            "GET /api/v1/sessions/{id}" to "/api/v1/sessions/s2500",
-        ).map { (name, path) -> server.measureRead(name) { get(path) { bearerAuth("lyes") } } }
+        // Path, what it reads, and the index its plan must name (SessionsMigrations version 6), if any.
+        val reads = listOf(
+            Triple("/api/v1/sessions", "", null),
+            Triple("/api/v1/sessions?before=s2500", "", null),
+            Triple("/api/v1/sessions?dev=dev7", " (167 of 5 000)", "sessions_by_dev"),
+            Triple("/api/v1/sessions?dev=ada", " (5 of 5 000)", "sessions_by_dev"),
+            Triple("/api/v1/sessions?open=true", " (100 of 5 000)", "sessions_open"),
+            Triple("/api/v1/sessions?repo=acme/r3", "", null),
+            Triple("/api/v1/sessions?repo=acme/rare", " (5 of 5 000, no index)", null),
+            Triple("/api/v1/sessions/s2500", " (one session)", null),
+        )
+        val measures = reads.map { (path, note, _) ->
+            server.measureRead("GET $path$note") { get(path) { bearerAuth("lyes") } }
+        }
         writeReadReport("sessions", measures)
         measures.forEach { it.assertWithinBudget(setOf("sessions_sessions")) }
-        // No N+1: a page of 50 sends the queries of a page of 5. The filters read through their indexes (version 6).
+        // No N+1: a page of 50 sends the queries of a page of 5.
         val lists = measures.dropLast(1)
         assertEquals(1, lists.map { it.queries }.distinct().size, lists.joinToString("\n") { it.describe() })
-        listOf(3 to "sessions_by_dev", 4 to "sessions_open").forEach { (at, index) ->
-            assertTrue(measures[at].plans.any { index in it }, measures[at].describe())
+        reads.zip(measures).forEach { (read, measure) ->
+            read.third?.let { index -> assertTrue(measure.plans.any { index in it }, measure.describe()) }
         }
     }
 
