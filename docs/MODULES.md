@@ -250,10 +250,10 @@ key to set (the ceilings of calls can be set):
 - Calls run on `Dispatchers.Default`, one thread per core. Ktor's CIO runs them on `Dispatchers.IO`, whose threads (up
   to 64) start on demand and never end, each with memory of its own: a burst of 100 unauthenticated requests took the
   server from 63 to 121 threads and OOMKilled it under 512 MiB (CHARGE 41637506577).
-- The Kotlin heap is bounded: the collector starts at a quarter of the limit, its target grows to 45 % at most, and a
-  thread that allocates past the target waits for the collection (`heap_max_mib` in the "server starting" log). A
-  burst adds its memory in a second or two and the collector gives it back 10 to 15 s later (chart-load 41639797095,
-  from `/proc/<pid>/smaps`).
+- The Kotlin/Native collector keeps its defaults, with no target, maximum or pause set from the limit. A heap budget
+  that paused the threads allocating past its target grew Dispatchers.IO round after round and OOMKilled the server
+  at the third round of a burst under 512 MiB (CHARGE e2e 41693127618); without it, the same rounds stayed at 102
+  threads and peaked at 450 MiB (bisection, JOURNAL 03/11). The image's smoke test checks it.
 
 - Calls at once are bounded (`OSTROM_MAX_CALLS_IN_PROGRESS`): each costs memory while it runs, about 1 MiB more past
   100 at once, so 500 approvals at once still OOMKilled the server under 512 MiB once the heap was bounded, where 200

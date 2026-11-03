@@ -23,9 +23,7 @@ import dev.ostrom.server.kernel.logging.LogLevel
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.kernelModule
 import dev.ostrom.server.kernel.module.serverKoin
-import dev.ostrom.server.kernel.observability.HeapBudget
 import dev.ostrom.server.kernel.observability.OstromMetrics
-import dev.ostrom.server.kernel.observability.ProcessMemory
 import dev.ostrom.server.kernel.observability.ProcessMetrics
 import dev.ostrom.server.kernel.observability.TelemetryLogger
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
@@ -48,7 +46,6 @@ private const val EXIT_FAILURE = 1
 private const val EXIT_USAGE = 2
 private const val STOP_GRACE_MILLIS = 5_000L
 private const val STOP_TIMEOUT_MILLIS = 15_000L
-private const val MIB_SHIFT = 20
 
 /**
  * The `ostrom-server` binary (commands in [parseCommand], configuration keys in docs/MODULES.md). Exits with 2 on an
@@ -83,7 +80,6 @@ private fun serve() {
     val logger = TelemetryLogger(JsonLogger(config.logLevel), telemetry, config.logLevel)
     val metrics = OstromMetrics(telemetry.meter)
     ProcessMetrics.register(telemetry.meter)
-    val heap = HeapBudget.under(ProcessMemory.limitBytes())?.also(::applyHeapBudget)
     if (source["OSTROM_DATABASE_MIGRATION_URL"] != null) {
         logger.warn("the serving process received the migration credentials: give them to `migrate` only")
     }
@@ -115,7 +111,6 @@ private fun serve() {
                 "host" to config.host,
                 "port" to config.port,
                 "key_id" to signer.keyId,
-                "heap_max_mib" to heap?.let { it.maxBytes shr MIB_SHIFT },
                 // What the collector was left with: the image's smoke test refuses a pause or a bounded heap.
                 "gc_pause" to GC.pauseOnTargetHeapOverflow,
                 "gc_heap_bounded" to (GC.maxHeapBytes != Long.MAX_VALUE),
