@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules
 
+import dev.ostrom.server.gates.domain.repositories.GateHistory
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.RejectingPrincipalOrgResolver
 import dev.ostrom.server.kernel.logging.Logger
@@ -15,6 +16,7 @@ import dev.ostrom.server.rules.domain.services.RepositoryReader
 import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCase
 import dev.ostrom.server.rules.fakes.FakeAnalysisEngine
 import dev.ostrom.server.rules.fakes.FakeAnalysisRepository
+import dev.ostrom.server.rules.fakes.FakeGateHistory
 import dev.ostrom.server.rules.fakes.FakeRepositoryReader
 import dev.ostrom.server.rules.fakes.FakeRulesRepository
 import dev.ostrom.server.rules.fakes.RecordingLogger
@@ -117,12 +119,14 @@ class RulesModuleRegistrationTest {
         app.close()
     }
 
-    // The kernel's logger and clock and the stores the engine's definitions read, without a database.
+    // The kernel's logger and clock and the stores the engine's definitions read (the gates' history is the gates
+    // module's), without a database.
     private fun kernel() = module {
         single<Logger> { RecordingLogger() }
         single<Clock> { TestClock() }
         single<AnalysisRepository> { FakeAnalysisRepository() }
         single<RulesRepository> { FakeRulesRepository() }
+        single<GateHistory> { FakeGateHistory() }
     }
 
     @Test
