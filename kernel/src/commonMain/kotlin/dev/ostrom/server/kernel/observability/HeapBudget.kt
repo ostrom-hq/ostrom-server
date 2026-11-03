@@ -18,6 +18,11 @@ data class HeapBudget(val targetBytes: Long, val maxBytes: Long) {
          *
          * @param limitBytes The container's memory limit, null without one (no budget then: the runtime's own tuning).
          */
-        fun under(limitBytes: Long?): HeapBudget? = null
+        fun under(limitBytes: Long?): HeapBudget? =
+            limitBytes?.let { HeapBudget(targetBytes = it / TARGET_SHARE, maxBytes = it / WHOLE * MAX_PERCENT) }
+
+        private const val TARGET_SHARE = 4L
+        private const val MAX_PERCENT = 45L
+        private const val WHOLE = 100L
     }
 }

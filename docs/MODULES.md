@@ -260,7 +260,11 @@ served calls keeps up to about 150 MiB at rest (a fresh one about 45 MiB), and a
 opens, 1 to 2 MiB once it runs. Under a count ceiling of 100, a burst of about 50 streams OOMKilled a replica that had
 kept 107 MiB; hence the ceiling from the limit, and the memory check for what the count does not see (memory kept from
 earlier calls, a large body: up to 32 MiB, held twice while the call runs). Without any ceiling, 200 streams on two
-replicas OOMKilled the server (chart-load 41611978908 and 41612342204).
+replicas OOMKilled the server (chart-load 41611978908 and 41612342204). Under the same limit the server also bounds its
+Kotlin heap: the collector starts at a quarter of the limit and its target grows to 45 % at most, and a thread that
+allocates past the target waits for the collection (`heap_max_mib` in the "server starting" log). Without it, a burst of
+100 requests OOMKilled replicas that held 26 streams each (chart-load 41632955665): the memory check reads the memory
+before the burst, not during it.
 
 ### Module `governance`
 
