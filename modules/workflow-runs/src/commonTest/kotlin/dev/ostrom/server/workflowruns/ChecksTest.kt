@@ -19,6 +19,7 @@ import dev.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCaseImpl
 import dev.ostrom.server.workflowruns.fakes.ADA
 import dev.ostrom.server.workflowruns.fakes.AGENT
 import dev.ostrom.server.workflowruns.fakes.BOB
+import dev.ostrom.server.workflowruns.fakes.FakeLaunches
 import dev.ostrom.server.workflowruns.fakes.FakePackages
 import dev.ostrom.server.workflowruns.fakes.FakeSessions
 import dev.ostrom.server.workflowruns.fakes.FixedClock
@@ -133,13 +134,45 @@ class ChecksTest {
     }
 
     @Test
+    fun aSessionReportsOnlyUnderThePackageOfItsLaunchsRepository() = runTest {
+        // AUDIT-SECU-RUNNER-2 R3: the package decides which checks judge the session, so the agent does not choose it.
+        fun reporting(launchRepo: String? = null, sessionRepo: String? = "acme/api", packRepo: String? = "acme/api") =
+            ReportCheckUseCaseImpl(
+                access(
+                    FakeSessions(listOf(session(repo = sessionRepo))),
+                    FakePackages(listOf(PACKAGE.copy(envelope = envelope(repo = packRepo)))),
+                    FakeLaunches(repos = launchRepo?.let { mapOf("lch_1" to it) }.orEmpty()),
+                ),
+                runs,
+                FixedClock(),
+            )
+        assertEquals("s-1", reporting(launchRepo = "https://github.com/Acme/api.git")(AGENT, request()).sessionId)
+        assertFailsWith<RunPackageMismatchException>("The launch's repository wins over the session's") {
+            reporting(launchRepo = "acme/docs")(AGENT, request())
+        }
+        assertFailsWith<RunPackageMismatchException>("Another repository's package") {
+            reporting(sessionRepo = "acme/docs")(AGENT, request())
+        }
+        assertFailsWith<RunPackageMismatchException>("An organization-wide package") {
+            reporting(packRepo = null)(AGENT, request())
+        }
+        assertEquals("s-1", reporting(sessionRepo = "")(AGENT, request()).sessionId, "A session naming no repository")
+        // A person's own session, of no launch: the repository it declares.
+        val own = FakeSessions(listOf(session(repo = "acme/docs").copy(launchId = null)))
+        assertFailsWith<RunPackageMismatchException> {
+            ReportCheckUseCaseImpl(access(own), runs, FixedClock())(ADA, request())
+        }
+        assertEquals(2, runs.checks.size)
+    }
+
+    @Test
     fun aPersonReportsOutsideASessionAsThemselvesInThePackagesRepository() = runTest {
         val run = report(BOB, request(sessionId = null))
-        assertEquals("bob" to "acme/pkg", run.dev to run.repo)
+        assertEquals("bob" to "acme/api", run.dev to run.repo)
         assertNull(run.sessionId)
         val noRepo = FakeSessions(listOf(session(repo = null)))
         val inPackage = ReportCheckUseCaseImpl(access(noRepo), runs, FixedClock())(AGENT, request())
-        assertEquals("ada" to "acme/pkg", inPackage.dev to inPackage.repo, "A session without a repository")
+        assertEquals("ada" to "acme/api", inPackage.dev to inPackage.repo, "A session without a repository")
     }
 
     @Test

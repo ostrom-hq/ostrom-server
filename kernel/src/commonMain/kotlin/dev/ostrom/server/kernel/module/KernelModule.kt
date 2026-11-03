@@ -8,6 +8,7 @@ import dev.ostrom.server.kernel.database.MigrationRunner
 import dev.ostrom.server.kernel.database.MigrationRunnerImpl
 import dev.ostrom.server.kernel.http.DatabaseHealthCheck
 import dev.ostrom.server.kernel.http.HealthCheck
+import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.Readiness
 import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.network.TrustedProxies
@@ -52,6 +53,8 @@ fun kernelModule(
     // Validated at start by ServerConfig.from: read again here so that tests set it through the ConfigSource.
     single { TrustedProxies.parse(config["OSTROM_TRUSTED_PROXIES"], config["OSTROM_CLIENT_ADDRESS_HEADER"]) }
     single { Readiness() }
+    // AUDIT-SECU-LECTURES M1: one limiter for every costly read route, validated at start like the proxies above.
+    single { ReadThrottle(get(), ServerConfig.readLimits(config), ReadThrottle.MAX_SUBJECTS) }
     single<MigrationRunner> { MigrationRunnerImpl(get(), get()) }
     single<HealthCheck>(named("database")) { DatabaseHealthCheck(get()) }
 }

@@ -254,6 +254,25 @@ class SessionsPostgresTest {
     }
 
     @Test
+    fun aPageSizeOutOfItsBoundsIsBroughtBackOrRefusedNeverAFailure() = sessionsTest { server ->
+        // AUDIT-SECU-LECTURES: a huge or negative limit is brought within 1 to 100; one that is no Int is a 400.
+        for (n in 1..3) {
+            clock.now += 1.minutes
+            server.start("agent:a:launch-$n", "s-$n")
+        }
+        val huge = server.call("user:a:rev-b", "/api/v1/sessions?limit=1000000").body<SessionsPage>()
+        assertEquals(3, huge.items.size)
+        val negative = server.call("user:a:rev-b", "/api/v1/sessions?limit=-5").body<SessionsPage>()
+        assertEquals(listOf("s-3"), negative.items.map { it.id }, "brought up to one")
+        for (wrong in listOf("99999999999", "abc", "1.5")) {
+            val refused = server.call("user:a:rev-b", "/api/v1/sessions?limit=$wrong")
+            assertEquals(HttpStatusCode.BadRequest, refused.status, wrong)
+            // The fixed message only: never the parser's, which would quote the value.
+            assertTrue("The request is malformed." in refused.bodyAsText(), refused.bodyAsText())
+        }
+    }
+
+    @Test
     fun theDatabaseItselfKeepsOrganizationsApart() = sessionsTest { server ->
         server.start("agent:a:launch-1", "s-1")
         val count = "SELECT COUNT(*) AS n FROM sessions_sessions"

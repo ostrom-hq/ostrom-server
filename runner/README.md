@@ -30,6 +30,32 @@ runner's container only, as variables the kubelet reads from the execution's Sec
 no file, in no volume, and not in the pod's spec. The check host is a second native sidecar. The pod does not share
 its process namespace. On Docker, the driver runs the same three containers.
 
+## A registered runner on a machine (`ostrom-runner machine`)
+
+An owner or an admin registers a machine of the organization with `POST /api/v1/runners`; the answer shows the
+runner's key once. On that machine, `ostrom-runner machine` signs of life with it on
+`POST /api/v1/runners/{id}/heartbeat`, at once and then every 20 s, so `GET /api/v1/runners` shows it `online`
+(offline 90 s after its last heartbeat):
+
+```sh
+docker run -d --name ostrom-machine \
+  -e OSTROM_SERVER_URL=https://ostrom.example.com \
+  -e OSTROM_RUNNER_ID=<id> -e OSTROM_RUNNER_KEY_FILE=/run/ostrom/key -v /etc/ostrom/key:/run/ostrom/key:ro \
+  ghcr.io/ostrom-hq/ostrom-runner machine
+```
+
+| Variable | |
+|---|---|
+| `OSTROM_SERVER_URL` | the server, `http(s)://` |
+| `OSTROM_RUNNER_ID` | the registered runner |
+| `OSTROM_RUNNER_KEY` or `OSTROM_RUNNER_KEY_FILE` | its key; the file is better, the key is never logged |
+| `OSTROM_RUNNER_INTERVAL_SECONDS` | between heartbeats, 1 to 30 (20 by default): a lost heartbeat stays inside the 90 s |
+
+A heartbeat that fails (server unreachable, 5xx) is logged with its cause and retried at the next interval. When the
+server refuses the key three times in a row (401: the runner was removed, or its key replaced; a single 401 may come
+from a proxy), the process ends with code 3. A bad configuration, an unreadable key file included, ends it with code 2,
+a stop (SIGTERM) with 0. No session runs on a registered runner yet: the heartbeat's `sessions` is empty.
+
 ## Checks run by the runner (`isolated_runner`)
 
 In a cloud session, the agent's hook does not run a package check itself: it asks the runner on
