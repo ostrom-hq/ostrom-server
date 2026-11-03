@@ -96,12 +96,12 @@ class Ed25519InstanceSigner private constructor(
             return of(privateKey, privateKey.getPublicKey())
         }
 
-        // Not suspending: no cancellation to let through. Whatever the library or the file system says, the start
-        // stops on a configuration error that names the file.
+        // Whatever the library or the file system says, the start stops on a configuration error that names the file.
         private fun decode(file: Path): EdDSA.PrivateKey = try {
             val pem = SystemFileSystem.source(file).buffered().use { it.readString() }
             edDsa.privateKeyDecoder(EdDSA.Curve.Ed25519)
                 .decodeFromByteArrayBlocking(EdDSA.PrivateKey.Format.PEM, pem.encodeToByteArray())
+            // not coroutine-reachable: nothing in this block suspends, no cancellation passes through it.
         } catch (error: Exception) {
             throw InvalidConfigException("Signing key file $file is not an Ed25519 private key in PKCS#8 PEM.", error)
         }
