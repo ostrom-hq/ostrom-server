@@ -38,6 +38,8 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
+private const val SENTRY = "https://sentry.example.com/mcp"
+
 /** Assignments, policies, settings and the journal managed over HTTP, and the repository on its own. */
 class McpRelayManagementPostgresTest : RelayPostgresHarness() {
     @Test
@@ -73,6 +75,25 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
                 }
                 assertEquals(McpSettingsDto("ostrom"), client.get("$admin/settings") { bearerAuth("admin-a") }.body())
                 assertEquals(HttpStatusCode.NoContent, client.delete(path) { bearerAuth("admin-a") }.status)
+            }
+        }
+
+    @Test
+    fun noMcpServerIsNamedOstromWhateverItsCaseAndSpaces() =
+        serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
+            with(server) {
+                for (name in listOf("ostrom", "OSTROM", " ostrom ")) {
+                    val created = sendJson(HttpMethod.Post, "$admin/servers", McpServerDto(name, SENTRY, "http"))
+                    assertEquals(HttpStatusCode.BadRequest, created.status, name)
+                    assertTrue("Ostrom's own MCP server" in created.bodyAsText(), created.bodyAsText())
+                }
+                assertEquals(
+                    HttpStatusCode.Created,
+                    sendJson(HttpMethod.Post, "$admin/servers", McpServerDto("sentry", SENTRY, "http")).status,
+                )
+                val put = sendJson(HttpMethod.Put, "$admin/servers/ostrom", McpServerDto("ostrom", SENTRY, "http"))
+                assertEquals(HttpStatusCode.BadRequest, put.status, "Nor created by a PUT")
+                assertTrue(client.get("$admin/servers") { bearerAuth("admin-a") }.bodyAsText().contains("\"sentry\""))
             }
         }
 

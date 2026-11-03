@@ -57,6 +57,21 @@ class McpRulesTest {
     }
 
     @Test
+    fun ostromIsOstromsOwnServerWhateverItsCaseAndSpaces() {
+        // The relay of `ostrom claude` serves `ostrom` itself (the waits): an org server of that name is never reached.
+        for (name in listOf("ostrom", "OSTROM", " Ostrom ", "ostrom\t")) {
+            val refused = assertFailsWith<InvalidMcpServerException>(name) {
+                McpRules.requireServer(http.copy(name = name))
+            }
+            assertEquals(
+                "`ostrom` is Ostrom's own MCP server, which every agent already has: choose another name.",
+                refused.message,
+            )
+        }
+        McpRules.requireServer(http.copy(name = "ostrom-docs"))
+    }
+
+    @Test
     fun aCredentialHeaderIsWellFormedAndNotAProtocolHeader() {
         refused(http.copy(credentialHeader = "X Api"))
         refused(http.copy(credentialHeader = "Cookie"))
