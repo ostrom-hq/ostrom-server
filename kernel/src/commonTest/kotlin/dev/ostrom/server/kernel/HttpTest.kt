@@ -426,6 +426,7 @@ class HttpTest {
             ErrorKind.PAYLOAD_TOO_LARGE to 413,
             ErrorKind.UNSUPPORTED_MEDIA_TYPE to 415,
             ErrorKind.RATE_LIMITED to 429,
+            ErrorKind.GONE to 410,
             ErrorKind.UNAVAILABLE to 503,
             ErrorKind.INTERNAL to 500,
         )
