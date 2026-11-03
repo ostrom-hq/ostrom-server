@@ -172,17 +172,17 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
             "from Waiting for you; you never answer a wait yourself."
 
         private val TOOLS: JsonArray = buildJsonArray {
-            add(tool("ask_human", "Ask the session's owner (or another member) and wait for the answer.", ASK_SCHEMA))
-            add(tool("list_waits", "This session's waits (open by default).", LIST_SCHEMA))
-            add(tool("get_wait", "One of this session's waits, with its answer.", WAIT_SCHEMA))
-            add(tool("cancel_wait", "Withdraw one of this session's open waits.", WAIT_SCHEMA))
+            add(tool("ask_human", "Ask the session's owner and wait for the answer.", ASK_SCHEMA))
+            add(tool("list_waits", "This session's waits you asked (open by default).", LIST_SCHEMA))
+            add(tool("get_wait", "One of this session's waits you asked, with its answer.", WAIT_SCHEMA))
+            add(tool("cancel_wait", "Withdraw one of this session's open waits you asked.", WAIT_SCHEMA))
         }
 
         private val ASK_SCHEMA get() = schema(
             required = listOf("title"),
             "title" to string("The question, 1 to 200 characters."),
             "body" to string("Markdown: the context the person needs."),
-            "assignee" to string("A member id; the session's owner by default."),
+            "assignee" to string("A member id; the session's owner by default, and the only one an agent asks."),
             "fields" to array(
                 schema(
                     required = listOf("id", "type", "label"),
