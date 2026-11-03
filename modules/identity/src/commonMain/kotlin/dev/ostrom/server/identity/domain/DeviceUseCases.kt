@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.domain
 
+import dev.ostrom.server.kernel.network.formatIpAddress
+import dev.ostrom.server.kernel.network.parseIpAddress
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
@@ -24,6 +26,31 @@ const val USER_CODE_ALPHABET = "BCDFGHJKMNPQRSTVWXZ"
 /** How many letters a user code has. */
 const val USER_CODE_LETTERS = 8
 
+/** The bytes of an IPv4 address [approximateNetwork] keeps: a /24. */
+private const val IPV4_NETWORK_BYTES = 3
+
+/** The bytes of an IPv6 address [approximateNetwork] keeps: a /48, what one site is given. */
+private const val IPV6_NETWORK_BYTES = 6
+
+/** The bytes of an IPv4 address. */
+private const val IPV4_BYTES = 4
+
+/**
+ * The network an address belongs to, coarse enough to tell where a request came from without naming the machine:
+ * its /24 for IPv4 (`203.0.113.0/24`), its /48 for IPv6 (`2001:db8:abcd::/48`). An IPv4-mapped IPv6 address is read
+ * as IPv4.
+ *
+ * @param address The client address, as the server resolved it behind its trusted proxies.
+ *
+ * @return The network, or null when [address] is not an IP address.
+ */
+fun approximateNetwork(address: String): String? {
+    val bytes = parseIpAddress(address) ?: return null
+    val kept = if (bytes.size == IPV4_BYTES) IPV4_NETWORK_BYTES else IPV6_NETWORK_BYTES
+    val network = ByteArray(bytes.size) { if (it < kept) bytes[it] else 0 }
+    return formatIpAddress(network) + "/" + kept * Byte.SIZE_BITS
+}
+
 /** Device logins one address may start per [DEVICE_RATE_WINDOW]. */
 private const val DEVICE_STARTS_PER_WINDOW = 10
 
@@ -39,7 +66,8 @@ interface StartDeviceAuthorizationUseCase {
      * Starts it.
      *
      * @param clientName What the CLI says it is, shown to the user before they approve (trimmed, 100 characters).
-     * @param source Who asks (the client address), for the rate limit.
+     * @param source Who asks (the client address), for the rate limit; its network ([approximateNetwork]) is kept
+     *   and shown before the yes.
      * @param scopes Null or empty for the ordinary sign-in; every one of [ADMIN_SCOPES] for `ostrom login --admin`.
      *
      * @return The authorization and its device code.
@@ -92,6 +120,7 @@ class StartDeviceAuthorizationUseCaseImpl(
             expiresAt = now + DEVICE_CODE_LIFETIME,
             lastPolledAt = null,
             scopes = asked,
+            requestedFrom = approximateNetwork(source),
         )
         authorizations.create(authorization, hasher.hash(deviceCode))
         return StartedDeviceAuthorization(authorization, deviceCode)

@@ -239,6 +239,9 @@ enum class DeviceAuthorizationStatus { PENDING, APPROVED, DENIED, CONSUMED }
  * @property scopes The governance write scopes `ostrom login --admin` asks for ([ADMIN_SCOPES]), shown before the
  *   yes (its token also holds their reads, [ADMIN_READ_SCOPES]); empty for the ordinary sign-in.
  * @property approvingOrgId The organization whose owner or admin approved them, which the token is bound to.
+ * @property requestedFrom The network the CLI asked from ([approximateNetwork]), shown before the yes so that an
+ *   approval of someone else's code shows (web audit 2, W3); null when the address was not an IP address, or for a
+ *   request started before the server kept it.
  */
 data class DeviceAuthorization(
     val id: Uuid,
@@ -251,6 +254,7 @@ data class DeviceAuthorization(
     val lastPolledAt: Instant?,
     val scopes: Set<String> = emptySet(),
     val approvingOrgId: Uuid? = null,
+    val requestedFrom: String? = null,
 )
 
 /**

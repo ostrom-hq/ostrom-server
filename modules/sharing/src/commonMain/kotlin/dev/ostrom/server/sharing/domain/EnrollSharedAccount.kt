@@ -58,7 +58,7 @@ interface EnrollSharedAccountUseCase {
  * sharing again kept, through [update] (admins and its owner only).
  *
  * @param secrets Reads the secret.
- * @param names Reads the members it is lent to.
+ * @param names Reads the members and groups it is lent to, and lends it to those groups.
  * @param share Shares it.
  * @param update Applies the form's sharing to an account enrolled again.
  */
@@ -69,7 +69,8 @@ class EnrollSharedAccountUseCaseImpl(
     private val update: UpdateSharedAccountUseCase,
 ) : EnrollSharedAccountUseCase {
     override suspend fun invoke(caller: Caller, payload: EnrollAccountPayload): SharedAccount {
-        val members = names.ids(caller.orgId, payload.sharedWith)
+        val sharing = names.sharedWith(caller.orgId, payload.sharedWith)
+        val members = sharing.members
         val secret = secrets.read(caller, payload.credentialSecret) ?: throw SecretNotFoundException()
         val daily = payload.dailyBudgetMicros
         val account = share(
@@ -86,11 +87,16 @@ class EnrollSharedAccountUseCaseImpl(
             ),
         )
         val kept = account.limits
-        if (kept.allowedMembers == members && kept.dailyBudgetMicros == daily) return account
-        val sharing = UpdateAccountPayload(
-            limits = { it.copy(allowedMembers = members, dailyBudgetMicros = daily) },
-            ifVersion = account.version,
-        )
-        return update(caller, account.id, sharing)
+        val shared = if (kept.allowedMembers == members && kept.dailyBudgetMicros == daily) {
+            account
+        } else {
+            val change = UpdateAccountPayload(
+                limits = { it.copy(allowedMembers = members, dailyBudgetMicros = daily) },
+                ifVersion = account.version,
+            )
+            update(caller, account.id, change)
+        }
+        names.lend(caller.orgId, shared.id, sharing)
+        return shared
     }
 }

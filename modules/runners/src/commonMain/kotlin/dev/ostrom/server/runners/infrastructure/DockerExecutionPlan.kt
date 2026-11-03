@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.infrastructure
 
+import dev.ostrom.server.runners.domain.ExecutionPlan
+import dev.ostrom.server.runners.domain.ExecutionPlanner
 import dev.ostrom.server.runners.domain.ExecutionSpec
+import dev.ostrom.server.runners.domain.PlannedObject
 import dev.ostrom.server.runners.domain.RuntimeNames
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
@@ -19,7 +22,7 @@ import kotlin.uuid.Uuid
  * checks in another, and only the runner's container has the token (S2-49).
  *
  * Bodies of the Engine API (`POST /volumes/create`, `POST /containers/create`), computed once here for whoever creates
- * them: [DockerRuntimeDriver] on the server's own engine.
+ * them: [DockerRuntimeDriver] on the server's own engine, or a registered runner on its machine ([plan]).
  *
  * @param network The containers' network, or null for the engine's default.
  * @param serverUrl The URL the runner reaches the server at.
@@ -29,7 +32,9 @@ class DockerExecutionPlan(
     private val network: String?,
     private val serverUrl: String,
     private val runnerImage: String,
-) {
+) : ExecutionPlanner {
+    override fun plan(spec: ExecutionSpec): ExecutionPlan = ExecutionPlan(volumes(spec.sessionId), containers(spec))
+
     /**
      * The session's volumes, workspace first.
      *
@@ -37,9 +42,9 @@ class DockerExecutionPlan(
      *
      * @return Their names and creation bodies.
      */
-    fun volumes(sessionId: Uuid): List<DockerObject> =
+    fun volumes(sessionId: Uuid): List<PlannedObject> =
         listOf(RuntimeNames.workspace(sessionId), socketVolume(sessionId), checkVolume(sessionId)).map { name ->
-            DockerObject(
+            PlannedObject(
                 name,
                 buildJsonObject {
                     put("Name", name)
@@ -58,12 +63,12 @@ class DockerExecutionPlan(
      *
      * @return Their names and creation bodies.
      */
-    fun containers(spec: ExecutionSpec, secrets: Boolean = true): List<DockerObject> {
+    fun containers(spec: ExecutionSpec, secrets: Boolean = true): List<PlannedObject> {
         val name = RuntimeNames.execution(spec.sessionId, spec.epoch)
         return listOf(
-            DockerObject(agentContainer(name), agentManifest(spec)),
-            DockerObject(checkContainer(name), checkManifest(spec)),
-            DockerObject(name, runnerManifest(spec, secrets)),
+            PlannedObject(agentContainer(name), agentManifest(spec)),
+            PlannedObject(checkContainer(name), checkManifest(spec)),
+            PlannedObject(name, runnerManifest(spec, secrets)),
         )
     }
 
@@ -175,17 +180,6 @@ class DockerExecutionPlan(
         /** The volume of a session's agent socket. */
         fun socketVolume(sessionId: Uuid): String = "${RuntimeNames.workspace(sessionId)}-socket"
     }
-}
-
-/**
- * A volume or a container to create on a Docker Engine.
- *
- * @property name Its name.
- * @property body The Engine API's creation body.
- */
-data class DockerObject(val name: String, val body: JsonObject) {
-    /** The body may hold the runner's token: never printed. */
-    override fun toString(): String = "DockerObject(name=$name)"
 }
 
 /** Which of an execution's containers. */

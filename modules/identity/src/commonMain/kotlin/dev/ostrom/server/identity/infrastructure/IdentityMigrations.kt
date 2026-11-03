@@ -381,4 +381,11 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
                 WHERE revoked_at IS NULL
         """.trimIndent(),
     ),
+    // Web audit n°2 W3: the network an `ostrom login` was asked from (a /24 or a /48, never the address), shown by
+    // the console before the yes. Null for the requests started before it, which expire within ten minutes.
+    SchemaMigration(
+        version = 13,
+        name = "device_authorizations_requested_from",
+        sql = "ALTER TABLE identity_device_authorizations ADD COLUMN requested_from TEXT",
+    ),
 )

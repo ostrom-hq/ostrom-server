@@ -118,20 +118,22 @@ object PackageCompiler {
     }
 
     /**
-     * The workflows that apply to a repository: those whose gate covers one of its actions, those that name it, and
-     * those whose gate declares it; all of them for the organization.
+     * The workflows that apply to a repository; all of them for the organization. A workflow that lists its
+     * repositories (`repos`, [WorkflowRepos]) applies to them only (R6). One that lists none applies when its gate
+     * covers one of the repository's actions, when it names the repository, or when its gate declares it.
      *
      * @param inputs The organization's sources.
      * @return The workflows, in their order.
      */
     fun workflowsFor(inputs: CompileInputs): List<WorkflowDoc> {
-        val all = inputs.workflows
-        val repo = inputs.repo ?: return all
+        val repo = inputs.repo ?: return inputs.workflows
+        val all = inputs.workflows.filter { WorkflowRepos.covers(it.repos, repo) }
         val catalog = GatesCatalog(all.map { it.workflow } + inputs.ruleGates, inputs.prodApprover).catalog(repo)
         val viaGate = catalog.mapNotNull { it.gate?.workflowId }.toSet()
         return all.filter { doc ->
             val workflow = doc.workflow
-            workflow.id in viaGate ||
+            doc.repos != null ||
+                workflow.id in viaGate ||
                 compileAliases(repo).any { GatesCatalog.mentions(text(workflow), it) } ||
                 gateActions(workflow).any { action -> action.repos.any { it.equals(repo, ignoreCase = true) } }
         }
@@ -189,8 +191,7 @@ object PackageCompiler {
     ): CompiledBody {
         val repo = inputs.repo
         val docs = workflows.sortedWith(compareBy(JsText.localeOrder) { it.workflow.id })
-        val gates = inputs.workflows.map { it.workflow } + inputs.ruleGates
-        val catalog = GatesCatalog(gates, inputs.prodApprover).catalog(repo)
+        val catalog = GatesCatalog.of(inputs.workflows, inputs.ruleGates, inputs.prodApprover).catalog(repo)
         val state = CompileState(inputs, catalog)
         docs.forEach { state.add(it.workflow) }
 

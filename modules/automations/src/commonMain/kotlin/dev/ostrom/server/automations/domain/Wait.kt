@@ -190,8 +190,16 @@ data class Wait(
  * @property admin Whether they administer the organization.
  * @property interactive Whether they signed in themselves (not a key nor an agent's credential): only then does an
  *   administrator answer or cancel a wait asked of someone else.
+ * @property agent Whether an agent token acts for its person, on the waits MCP server: it asks only that person, and
+ *   reads and cancels only the waits its person asked, never one someone else asked of its person.
  */
-data class WaitCaller(val orgId: Uuid, val memberId: String, val admin: Boolean, val interactive: Boolean) {
+data class WaitCaller(
+    val orgId: Uuid,
+    val memberId: String,
+    val admin: Boolean,
+    val interactive: Boolean,
+    val agent: Boolean = false,
+) {
     /** Whether this caller acts as an administrator here. */
     val actsAsAdmin: Boolean get() = admin && interactive
 }
