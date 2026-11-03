@@ -47,7 +47,7 @@ fun serverTest(
     modules: List<ServerModule>,
     overrides: Module? = null,
     block: suspend ApplicationTestBuilder.(TestServer) -> Unit,
-) = serverTest(modules, overrides, EnvironmentConfigSource(), block)
+) = serverTest(modules, overrides, EnvironmentConfigSource(), block = block)
 
 /**
  * [serverTest] for a read bench (ReadBench.kt): the same server, within [BENCH_TIMEOUT].
