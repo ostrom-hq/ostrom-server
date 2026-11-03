@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.budgets.domain
 
+import dev.ostrom.server.kernel.workflows.WorkflowDirectory
 import dev.ostrom.server.secrets.domain.Caller
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
@@ -55,16 +56,22 @@ interface SetBudgetUseCase {
  * @param cache Forgets cached decisions when a limit changes.
  * @param clock The time of the change.
  * @param getBudgets Reads the limits afterwards.
+ * @param workflows The org's workflows, which a workflow budget names; null, none is known.
  */
 class SetBudgetUseCaseImpl(
     private val repository: BudgetsRepository,
     private val cache: BudgetDecisionCache,
     private val clock: Clock,
     private val getBudgets: GetBudgetsUseCase,
+    private val workflows: WorkflowDirectory? = null,
 ) : SetBudgetUseCase {
     override suspend fun invoke(caller: Caller, target: BudgetTarget, limits: List<BudgetLimit>): BudgetOverview {
         caller.requireAdmin()
         limits.forEach { BudgetRules.requireLimit(it.micros) }
+        // A limit is set only on one of the org's workflows; removing one never asks (its workflow may be gone).
+        (target as? BudgetTarget.Workflow)?.takeIf { limits.isNotEmpty() }
+            ?.takeIf { workflows?.name(caller.orgId, it.workflowId) == null }
+            ?.let { throw BudgetWorkflowNotFoundException() }
         repository.replaceLimits(caller.orgId, target, limits, clock.now())
         cache.invalidate(caller.orgId)
         return getBudgets(caller)

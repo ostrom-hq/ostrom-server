@@ -46,8 +46,8 @@ class LedgerSpendGuard(
             is BudgetDecision.Exhausted ->
                 Admission.Exhausted(cached.scope.toSpendScope(), cached.limitMicros, cached.window == BudgetWindow.DAY)
             else -> admission.admit(
-                SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros),
-                repository.limits(request.orgId, request.memberId).stopping(day.start),
+                SpendHold(request.orgId, request.memberId, request.callId, request.reserveMicros, request.workflowId),
+                repository.limits(request.orgId, request.memberId, request.workflowId).stopping(day.start),
                 month.start,
             )
         }
@@ -58,8 +58,15 @@ class LedgerSpendGuard(
     private fun BudgetLimits.stopping(dayStart: Instant): SpendLimits {
         val orgDay = org.stopping(BudgetWindow.DAY)
         val memberDay = member.stopping(BudgetWindow.DAY)
-        val daily = DailySpendLimits(dayStart, orgDay, memberDay).takeUnless { orgDay == null && memberDay == null }
-        return SpendLimits(org.stopping(BudgetWindow.MONTH), member.stopping(BudgetWindow.MONTH), daily)
+        val workflowDay = workflow.stopping(BudgetWindow.DAY)
+        val daily = DailySpendLimits(dayStart, orgDay, memberDay, workflowDay)
+            .takeUnless { orgDay == null && memberDay == null && workflowDay == null }
+        return SpendLimits(
+            org.stopping(BudgetWindow.MONTH),
+            member.stopping(BudgetWindow.MONTH),
+            daily,
+            workflow.stopping(BudgetWindow.MONTH),
+        )
     }
 
     private fun List<BudgetLimit>.stopping(window: BudgetWindow): Long? =

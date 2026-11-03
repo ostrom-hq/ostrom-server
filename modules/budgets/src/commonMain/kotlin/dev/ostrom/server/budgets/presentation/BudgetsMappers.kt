@@ -22,6 +22,10 @@ fun BudgetDto.toTarget(): BudgetTarget {
     return when (scope.lowercase()) {
         ORGANIZATION, "org" -> BudgetTarget.Org
         MEMBER -> if (id == null) BudgetTarget.DefaultMember else BudgetTarget.Member(id.toMemberId())
+        WORKFLOW -> BudgetTarget.Workflow(
+            id?.takeIf { it.isNotBlank() }
+                ?: throw InvalidBudgetRequestException("The subject of a workflow budget is the workflow's id."),
+        )
         else -> throw InvalidBudgetRequestException("The scope of a budget is organization, member or workflow.")
     }
 }

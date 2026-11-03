@@ -133,6 +133,10 @@ data class SpendLimits(
                 SpendScope.MEMBER, memberMicros, daily?.memberMicros,
                 totals.memberSpent, totals.memberDaySpent, totals.memberHeld,
             ),
+            Side(
+                SpendScope.WORKFLOW, workflowMicros, daily?.workflowMicros,
+                totals.workflowSpent, totals.workflowDaySpent, totals.workflowHeld,
+            ),
         )
         return sides.firstNotNullOfOrNull { it.reached() }
             ?: sides.firstNotNullOfOrNull { it.short(reserveMicros) }

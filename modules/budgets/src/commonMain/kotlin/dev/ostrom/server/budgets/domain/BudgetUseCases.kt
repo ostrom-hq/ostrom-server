@@ -122,7 +122,7 @@ class GetMyBudgetUseCaseImpl(
             spentMicros = spent,
             remainingMicros = limit?.let { (it - spent).coerceAtLeast(0) },
             resetsAt = period.end,
-            decision = guard.check(caller.orgId, caller.memberId),
+            decision = guard.check(caller.orgId, caller.memberId, caller.workflowId),
         )
     }
 }

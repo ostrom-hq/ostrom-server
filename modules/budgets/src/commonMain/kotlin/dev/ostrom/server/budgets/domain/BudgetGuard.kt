@@ -128,8 +128,8 @@ class BudgetGuardImpl(
     }
 
     private suspend fun evaluate(key: MemberKey, now: Instant, readAt: Long): BudgetDecision {
-        val (orgId, memberId) = key
-        val limits = repository.limits(orgId, memberId)
+        val (orgId, memberId, workflowId) = key
+        val limits = repository.limits(orgId, memberId, workflowId)
         val org = Subject(orgId, null, BudgetScope.ORG)
         val member = Subject(orgId, memberId, BudgetScope.MEMBER)
         val measured = limits.org.map { limit ->
@@ -138,7 +138,7 @@ class BudgetGuardImpl(
         } + limits.member.map { limit ->
             val period = limit.window.periodOf(now)
             Measured(member, limit, period, spend.spentMicros(orgId, memberId, period.start))
-        }
+        } + workflowId?.let { measuredWorkflow(orgId, it, limits.workflow, now) }.orEmpty()
         val month = BudgetPeriod.of(now).start
         for (each in measured) alertCrossings(each, month, now)
         val stopping = measured.filter { it.limit.action == BudgetAction.BLOCK }
@@ -151,6 +151,14 @@ class BudgetGuardImpl(
             window = reached.limit.window,
         )
     }
+
+    /** A workflow's limits, measured on the spend of the calls of the launches that play it. */
+    private suspend fun measuredWorkflow(orgId: Uuid, workflowId: String, limits: List<BudgetLimit>, now: Instant) =
+        limits.map { limit ->
+            val period = limit.window.periodOf(now)
+            val subject = Subject(orgId, null, BudgetScope.WORKFLOW, workflowId)
+            Measured(subject, limit, period, spend.workflowSpentMicros(orgId, workflowId, period.start))
+        }
 
     private suspend fun orgSpent(orgId: Uuid, period: BudgetPeriod, now: Instant, readAt: Long): Long {
         val key = SpendKey(orgId, period)

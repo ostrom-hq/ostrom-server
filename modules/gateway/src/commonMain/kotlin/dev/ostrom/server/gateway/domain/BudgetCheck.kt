@@ -35,7 +35,7 @@ class BudgetCheck(
      */
     suspend fun check(caller: Caller, callId: Uuid, protocol: WireProtocol, body: RequestBody): SpendDecision {
         val reserve = reserveMicros(protocol.keyProvider(body.model), body)
-        return guard.check(SpendRequest(caller.orgId, caller.memberId, callId, reserve))
+        return guard.check(SpendRequest(caller.orgId, caller.memberId, callId, reserve, caller.workflowId))
     }
 
     /**

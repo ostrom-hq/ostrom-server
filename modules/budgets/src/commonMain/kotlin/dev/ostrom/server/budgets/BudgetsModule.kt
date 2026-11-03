@@ -51,7 +51,7 @@ object BudgetsModule : ServerModule {
         single<SpendGuard> { LedgerSpendGuard(get(), get(), get(), get()) }
         single<GetBudgetsUseCase> { GetBudgetsUseCaseImpl(get(), get(), get()) }
         single<GetMyBudgetUseCase> { GetMyBudgetUseCaseImpl(get(), get(), get(), get()) }
-        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get()) }
+        single<SetBudgetUseCase> { SetBudgetUseCaseImpl(get(), get(), get(), get(), workflows = getOrNull()) }
         single { BudgetsRoutesDependencies(callerResolver(), get(), get(), get(), get()) }
     }
 
