@@ -2,10 +2,12 @@
 package dev.ostrom.server.sharing.presentation
 
 import dev.ostrom.server.secrets.domain.CallerResolver
+import dev.ostrom.server.sharing.domain.EnrollSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.ListSharedAccountsUseCase
 import dev.ostrom.server.sharing.domain.RemoveSharedAccountUseCase
 import dev.ostrom.server.sharing.domain.ShareAccountUseCase
 import dev.ostrom.server.sharing.domain.UpdateSharedAccountUseCase
+import dev.ostrom.server.sharing.domain.ViewSharedAccountUseCase
 import kotlin.time.Clock
 
 /**
@@ -17,6 +19,8 @@ import kotlin.time.Clock
  * @property update Changes one.
  * @property remove Removes one.
  * @property clock The time of the capacity answer.
+ * @property enroll Enrolls an account from a secret (the contract's body).
+ * @property view Names the people of an account just written.
  */
 data class SharingRoutesDependencies(
     val callers: CallerResolver,
@@ -25,4 +29,6 @@ data class SharingRoutesDependencies(
     val update: UpdateSharedAccountUseCase,
     val remove: RemoveSharedAccountUseCase,
     val clock: Clock,
+    val enroll: EnrollSharedAccountUseCase,
+    val view: ViewSharedAccountUseCase,
 )

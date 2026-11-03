@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -67,9 +68,10 @@ sealed interface LeaseResult {
 
 /**
  * The org's pool of shared personal accounts, as TeamCode runs it: an account serves when READY, out of cool-down,
- * under its own limits (concurrency, utilization ceiling of every current window, monthly budget) and allowed for the
- * member. Among those, a session sticks to its account (the provider's prompt cache lives there), otherwise the least
- * used account wins, then the higher priority. An account whose tokens cannot be renewed is skipped for the next one.
+ * under its own limits (concurrency, utilization ceiling of every current window, monthly and daily budgets) and
+ * allowed for the member. Among those, a session sticks to its account (the provider's prompt cache lives there),
+ * otherwise the least used account wins, then the higher priority. An account whose tokens cannot be renewed is
+ * skipped for the next one.
  *
  * Concurrency and affinity are per replica, in memory.
  *
@@ -79,7 +81,10 @@ sealed interface LeaseResult {
  * @param parser Reads quota headers.
  * @param spend What each account served this month.
  * @param clock The time.
+ * @param groups The accounts lent to the member through their groups: an account that does not name the member serves
+ *   them when one of their groups, where they are not paused, holds it.
  */
+@Suppress("LongParameterList") // One port per owner: accounts, windows, tokens, headers, spend, time, groups.
 class SharedAccountPool(
     private val accounts: SharedAccountRepository,
     private val windows: QuotaWindowRepository,
@@ -87,6 +92,7 @@ class SharedAccountPool(
     private val parser: QuotaHeaderParser,
     private val spend: AccountSpendReader,
     private val clock: Clock,
+    private val groups: AccountGroups = NoAccountGroups,
 ) {
     private val mutex = Mutex()
     private val inFlight = mutableMapOf<Uuid, Int>()
@@ -118,9 +124,8 @@ class SharedAccountPool(
     /** One try: a lease, a refusal, or null when the chosen account could not renew its tokens (now in [tried]). */
     private suspend fun attempt(request: Request, tried: MutableSet<Uuid>): LeaseResult? {
         val now = clock.now()
-        val usable = accounts.ready(request.orgId, request.provider).filter {
-            it.id !in tried && it.limits.allowedMembers?.contains(request.memberId) != false
-        }
+        val ready = accounts.ready(request.orgId, request.provider).filter { it.id !in tried }
+        val usable = groups.allowed(request.orgId, request.memberId, ready, now)
         val candidates = candidates(request.orgId, usable, now)
         val chosen = take(candidates.open, request.sessionKey, now)
         return when {
@@ -166,10 +171,14 @@ class SharedAccountPool(
         val cooling = account.cooldownUntil?.takeIf { it > now }
         val full = current.filter { it.utilization >= account.limits.utilizationCeiling }
         val budget = account.limits.monthlyBudgetMicros
+        val daily = account.limits.dailyBudgetMicros
+        val dayStart = CivilCalendar.dayStart(now)
         return when {
             cooling != null -> Standing.Closed(cooling)
             full.isNotEmpty() -> Standing.Closed(full.map(QuotaWindow::endsAt).max())
             budget != null && spend.spentMicros(account.id, monthStart) >= budget -> Standing.Closed(null)
+            // Its daily allocation spent, the account opens again with the next UTC day.
+            daily != null && spend.spentMicros(account.id, dayStart) >= daily -> Standing.Closed(dayStart + 1.days)
             else -> Standing.Open(current.maxOfOrNull { it.utilization } ?: 0.0)
         }
     }
@@ -282,3 +291,19 @@ private fun cooldownEnd(observed: List<QuotaWindow>, headers: Map<String, String
 }
 
 private fun refused(reason: String, retryAt: Instant?) = LeaseResult.Refused(PoolRefusal(reason, retryAt))
+
+/**
+ * The accounts of [ready] that [memberId] may use: lent to the whole org, to them by name, or to a group they are in
+ * and not paused in at [now]. The groups are read only when an account names others than the member.
+ */
+private suspend fun AccountGroups.allowed(
+    orgId: Uuid,
+    memberId: Uuid,
+    ready: List<SharedAccount>,
+    now: Instant,
+): List<SharedAccount> {
+    val named = ready.filter { it.limits.allowedMembers?.contains(memberId) != false }
+    if (named.size == ready.size) return ready
+    val lent = lentTo(orgId, memberId, now)
+    return ready.filter { it in named || it.id in lent }
+}

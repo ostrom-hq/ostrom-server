@@ -90,7 +90,7 @@ suspend fun WaitAgentResolver.agentWaitCallerOf(
 ): WaitCaller {
     if (scope !in AGENT_WAIT_SCOPES) throw MissingWaitScopeException(scope)
     val agent = resolve(principal, sessionId) ?: throw principal.outsideOrganization()
-    return WaitCaller(orgId = agent.orgId, memberId = agent.memberId, admin = false, interactive = false)
+    return WaitCaller(orgId = agent.orgId, memberId = agent.memberId, admin = false, interactive = false, agent = true)
 }
 
 /**

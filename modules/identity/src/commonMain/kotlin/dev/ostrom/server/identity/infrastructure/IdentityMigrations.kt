@@ -365,4 +365,27 @@ val IdentityMigrations: List<SchemaMigration> = listOf(
                 WHERE kind = 'ADMIN' AND revoked_at IS NULL
         """.trimIndent(),
     ),
+    // The reads the bench measured (IdentityReadsBenchTest): `/audit?actor=` and `/audit?event=` read the whole chain
+    // of the organization and kept a line in a thousand (72 and 82 ms of p95 at 20 calls on 10 000 lines); `/devices`
+    // read every live token of the person, agents' included, to keep three (43 ms on 5 000). The person's index by kind
+    // comes beside the one without, which `/tokens` keeps: it lists several kinds in one creation order. Built in the
+    // migration's transaction, not CONCURRENTLY: writes to these tables wait for the build, short on today's tables.
+    SchemaMigration(
+        version = 12,
+        name = "index_audit_filters_and_devices",
+        sql = """
+            CREATE INDEX identity_audit_events_chain_actor ON identity_audit_events (chain, actor_id, sequence DESC)
+                WHERE actor_id IS NOT NULL;
+            CREATE INDEX identity_audit_events_chain_action ON identity_audit_events (chain, action, sequence DESC);
+            CREATE INDEX identity_api_tokens_user_kind ON identity_api_tokens (user_id, kind, created_at DESC, id)
+                WHERE revoked_at IS NULL
+        """.trimIndent(),
+    ),
+    // Web audit n°2 W3: the network an `ostrom login` was asked from (a /24 or a /48, never the address), shown by
+    // the console before the yes. Null for the requests started before it, which expire within ten minutes.
+    SchemaMigration(
+        version = 13,
+        name = "device_authorizations_requested_from",
+        sql = "ALTER TABLE identity_device_authorizations ADD COLUMN requested_from TEXT",
+    ),
 )

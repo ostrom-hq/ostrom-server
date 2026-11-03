@@ -64,7 +64,7 @@ object Importing {
     val modules = listOf(SecretsModule, McpRelayModule, ImportModule)
 
     /**
-     * A TeamCode team like Lyes's: Grafana in two variants (the full one denies tools, the read-only one is an
+     * A typical TeamCode team: Grafana in two variants (the full one denies tools, the read-only one is an
      * allowlist), Discord per member, MySQL as a stdio command, and a shared Claude account.
      */
     @Suppress("LongParameterList") // One knob per change a test makes in TeamCode.
@@ -73,13 +73,13 @@ object Importing {
         grafanaUrl: String = "https://g.example.com/mcp",
         readOnly: List<String> = listOf("query_loki_logs"),
         denied: List<String> = listOf("update_dashboard"),
-        lyesDiscordToken: String? = "d-lyes-token",
+        lenaDiscordToken: String? = "d-lena-token",
         discordPerMember: Boolean = true,
         extraServers: List<TeamCodeMcpServerDto> = emptyList(),
     ) = TeamCodeImportRequest(
         members = listOf(
-            TeamCodeMemberDto("m1", "lyes"),
-            TeamCodeMemberDto("m2", "vivien"),
+            TeamCodeMemberDto("m1", "lena"),
+            TeamCodeMemberDto("m2", "vera"),
             TeamCodeMemberDto("m3", "ghost"),
         ),
         mcpServers = listOf(
@@ -126,7 +126,7 @@ object Importing {
         assignments = listOf(
             TeamCodeAssignmentDto("m1", "v-full"),
             TeamCodeAssignmentDto("m2", "v-full", memberSecret = "stray-secret"),
-            TeamCodeAssignmentDto("m1", "v-discord", memberSecret = lyesDiscordToken),
+            TeamCodeAssignmentDto("m1", "v-discord", memberSecret = lenaDiscordToken),
             TeamCodeAssignmentDto("m2", "v-discord"),
             TeamCodeAssignmentDto("m2", "v-ro"),
             TeamCodeAssignmentDto("m3", "v-ro"),
@@ -142,8 +142,8 @@ object Importing {
     private fun account(provider: String) = TeamCodeAccountDto(
         provider = provider,
         providerAccountId = "$provider-1",
-        label = "Lyes",
-        email = "lyes@example.com",
+        label = "Lena",
+        email = "lena@example.com",
         accessToken = "access-$provider",
         refreshToken = "refresh-$provider",
         expiresAt = "2026-11-01T00:00:00Z",

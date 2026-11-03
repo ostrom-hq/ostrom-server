@@ -41,7 +41,7 @@ class GateBench {
     val open = OpenGateUseCaseImpl(repository, sessions, policies, notifier, IdentityDigester(), clock, needs, proofs)
     val changes = InProcessGateChanges()
     val answer = AnswerGateUseCaseImpl(repository, policies, receipts, notifier, clock, changes)
-    val use = UseGateUseCaseImpl(repository, receipts, clock)
+    val use = UseGateUseCaseImpl(repository, receipts, clock, sessions)
     val get = GetGateUseCaseImpl(repository, policies, receipts, changes)
     val approvals = ListApprovalsUseCaseImpl(repository)
     val approval = GetApprovalUseCaseImpl(repository)

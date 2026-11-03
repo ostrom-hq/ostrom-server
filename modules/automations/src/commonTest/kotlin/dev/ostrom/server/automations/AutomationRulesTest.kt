@@ -33,7 +33,7 @@ class AutomationRulesTest {
     @Test
     fun aValidDefinitionIsKeptWithItsNameTrimmed() {
         assertEquals(cron.copy(name = "Nightly"), AutomationRules.check(cron.copy(name = "  Nightly ")))
-        val sample = buildJsonObject { putJsonObject("ticket") { put("number", "SUP-1") } }
+        val sample = buildJsonObject { putJsonObject("ticket") { put("number", "TKT-1") } }
         assertEquals(webhook.copy(samplePayload = sample), AutomationRules.check(webhook.copy(samplePayload = sample)))
         val full = cron.copy(action = AutomationAction("Go", "codex", "gpt-5.1", "high", 1440), maxRunsPerDay = 1000)
         assertEquals(full, AutomationRules.check(full))

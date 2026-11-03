@@ -192,6 +192,26 @@ class UseGateUseCaseTest {
         assertFailsWith<GateNotFoundException> { bench.use(agent(), Uuid.random(), GateUse.RESERVE) }
     }
 
+    // G2: once the session that asked has ended (its receipt is signed), its launch's token no longer takes up the
+    // yes; an action already under way finishes. Another launch's open session does not count.
+    @Test
+    fun aYesIsNotTakenUpOnceItsSessionHasEnded() = runTest {
+        val bench = GateBench()
+        bench.open(bench.mergeRequest(session = OTHER_SESSION))
+        val idle = bench.open(bench.mergeRequest(session = SESSION)).also { bench.answer(it, "rev-b") }
+        val running = approved(bench)
+        bench.use(agent(), running.gate.id, GateUse.RESERVE)
+        bench.sessions.closed += SESSION
+
+        for (use in listOf(GateUse.RESERVE, GateUse.CONSUME)) {
+            val error = assertFailsWith<GateNotUsableException> { bench.use(agent(), idle.gate.id, use) }
+            assertEquals("The session that asked for this yes has ended. Ask again in an open session.", error.message)
+        }
+        assertEquals(GateStatus.APPROVED, bench.repository.gates.getValue(idle.gate.id).status)
+        assertEquals(GateStatus.CONSUMED, bench.use(agent(), running.gate.id, GateUse.CONSUME).status)
+        assertEquals(GateStatus.RESERVED, bench.use(agent(OTHER_SESSION), idle.gate.id, GateUse.RESERVE).status)
+    }
+
     @Test
     fun aGateThatWasNotApprovedHasNoYesToReserve() = runTest {
         val bench = GateBench()

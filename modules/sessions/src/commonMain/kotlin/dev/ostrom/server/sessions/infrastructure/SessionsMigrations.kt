@@ -135,10 +135,13 @@ val SessionsMigrations: List<SchemaMigration> = listOf(
         """.trimIndent(),
     ),
     // The filters of `GET /sessions` (SessionsReadsBenchTest): by developer and the open ones, newest first, read the
-    // organization's recent sessions and kept those that matched (4 995 read for a rare developer's 5). Not by
-    // repository: a repository keeps a large share of the sessions, and every index is written again at each heartbeat
-    // (`last_seen_at` is indexed, no update is HOT). Built in the migration's transaction, not CONCURRENTLY: session
-    // writes wait for the build, short on the tables of today.
+    // organization's recent sessions and kept those that matched (4 995 read for a rare developer's 5). Their cost is
+    // on the heartbeat: `last_seen_at` is indexed (`sessions_stale`), so no heartbeat is a HOT update and each one
+    // writes every index of the table again, these two included (a heartbeat only touches an open session, and every
+    // open session is in `sessions_open`). Two more entries per heartbeat are taken for the two filters the bench found
+    // slowest; none for the repository, whose rarest value reads the organization's recent sessions within the read
+    // budget on the bench's tables (SessionsReadsBenchTest). Built in the migration's transaction, not CONCURRENTLY:
+    // session writes wait for the build, short on the tables of today.
     SchemaMigration(
         6,
         "index_sessions_filters",

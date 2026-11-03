@@ -12,13 +12,21 @@ import kotlin.uuid.Uuid
  * The subscription a shared account belongs to.
  *
  * @property wire The name in the API and the usage ledger.
+ * @property vendor The vendor's name, which the console names the subscription by: accepted for [wire] on the way in.
  */
-enum class AccountProvider(val wire: String) {
+enum class AccountProvider(val wire: String, val vendor: String) {
     /** A Claude Pro or Max subscription (Claude Code OAuth), serving the Anthropic Messages API. */
-    CLAUDE("claude"),
+    CLAUDE("claude", "anthropic"),
 
     /** A ChatGPT subscription (Codex OAuth), serving the OpenAI Responses API. */
-    CODEX("codex"),
+    CODEX("codex", "openai"),
+    ;
+
+    /** Lookup by name. */
+    companion object {
+        /** The provider named [value], by its [wire] name or its [vendor]'s; null for any other. */
+        fun named(value: String): AccountProvider? = entries.firstOrNull { value == it.wire || value == it.vendor }
+    }
 }
 
 /** Whether an account serves. */
@@ -51,12 +59,15 @@ enum class AccountStatus {
  *   leaving its owner room.
  * @property monthlyBudgetMicros Equivalent API cost (USD millionths) the account may serve per calendar month, or null.
  * @property allowedMembers The members who may use it, or null for the whole org.
+ * @property dailyBudgetMicros Equivalent API cost (USD millionths) the account may serve per UTC day, or null: the
+ *   contract's daily allocation.
  */
 data class AccountLimits(
     val maxConcurrent: Int = DEFAULT_MAX_CONCURRENT,
     val utilizationCeiling: Double = DEFAULT_CEILING,
     val monthlyBudgetMicros: Long? = null,
     val allowedMembers: Set<Uuid>? = null,
+    val dailyBudgetMicros: Long? = null,
 ) {
     /** The defaults. */
     companion object {
@@ -106,8 +117,9 @@ data class SharedAccount(
  * OAuth tokens of an account; never logged, stored only sealed.
  *
  * @property accessToken The bearer sent to the provider.
- * @property refreshToken Renews it.
- * @property expiresAt When the access token expires.
+ * @property refreshToken Renews it; empty for a long-lived token (`claude setup-token`, enrolled from a secret), which
+ *   is never renewed: refused by the provider, its account waits for its owner.
+ * @property expiresAt When the access token expires ([Instant.DISTANT_FUTURE] when its expiry is unknown).
  */
 class AccountCredentials(val accessToken: String, val refreshToken: String, val expiresAt: Instant) {
     override fun toString(): String = "AccountCredentials([REDACTED])"
@@ -171,6 +183,7 @@ object SharingRules {
             limits.maxConcurrent !in 1..MAX_CONCURRENT -> "maxConcurrent is 1 to $MAX_CONCURRENT."
             limits.utilizationCeiling !in MIN_CEILING..1.0 -> "utilizationCeiling is $MIN_CEILING to 1."
             (limits.monthlyBudgetMicros ?: 0) < 0 -> "monthlyBudgetMicros is positive."
+            (limits.dailyBudgetMicros ?: 1) <= 0 -> "The daily allocation is positive."
             (limits.allowedMembers?.size ?: 0) > MAX_ALLOWED_MEMBERS -> "At most $MAX_ALLOWED_MEMBERS allowed members."
             else -> null
         }
@@ -201,10 +214,14 @@ object SharingRules {
      */
     fun sameProviderAccount(declared: String, named: String): Boolean = declared.trim().equals(named.trim(), true)
 
-    /** Refuses tokens that cannot be OAuth tokens, and a provider account id that cannot be one. */
+    /**
+     * Refuses tokens that cannot be OAuth tokens, and a provider account id that cannot be one; a long-lived token has
+     * no refresh token ([refreshToken] empty).
+     */
     fun requireTokens(accessToken: String, refreshToken: String, providerAccountId: String) {
         val problem = when {
-            !token.matches(accessToken) || !token.matches(refreshToken) -> "The tokens are malformed."
+            !token.matches(accessToken) || !token.matches(refreshToken.ifEmpty { accessToken }) ->
+                "The tokens are malformed."
             !providerAccount.matches(providerAccountId) -> "providerAccountId is malformed."
             else -> null
         }

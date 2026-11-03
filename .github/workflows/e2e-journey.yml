@@ -5,8 +5,11 @@ name: E2E journey
 # never `edge`, which names no commit. A PARCOURS cell is ✅ only on such a run (JOURNAL 03/11): the bench of
 # ostrom-e2e builds main from its Dockerfile, which proves an e2e pull request, not the image that ships. It runs in
 # this repository because its token reads its own GHCR packages, which ostrom-e2e's cannot yet (as cli-journey.yml).
-# On demand, and, off the org's one-`ci`-job rule on purpose (as cli-journey.yml), on a pull request only when the
-# pull request changes this file.
+# On demand; and, called by ci.yml's ci-e2e on every pull request and every main commit, against the image ci-image
+# built (`image_artifact`): ostrom-e2e main's sweep, every scenario but the TeamCode import, and a short k6 of the
+# gates, so that a change of an answer fails before the merge (AGENTS.md, « End-to-end before the merge »). The CLI
+# takes ten minutes to build: the import and the jalon's CLI scenarios are left to ostrom-e2e's CI, the latter skipped
+# by name in the summary.
 on:
   workflow_dispatch:
     inputs:
@@ -21,14 +24,24 @@ on:
           Scenario files, space-separated, relative to ostrom-e2e
           (`scenarios/budget.e2e.ts scenarios/attestation.e2e.ts`); empty = every scenarios/*.e2e.ts.
         default: ""
+      cli_ref:
+        description: ostrom-cli ref whose binary `ostrom import teamcode` runs (built only when scenarios/import.e2e.ts runs)
+        default: main
       tests:
         description: >-
           Scenarios to run in those files, a test-name regular expression as vitest's -t reads it (`E2E-PARC-013`,
           `E2E-BUDGET`); empty = all of them. Every scenario it names must pass: a skipped one fails the run.
         default: ""
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths: [.github/workflows/e2e-journey.yml]
+  workflow_call:
+    inputs:
+      image_artifact:
+        description: Artifact of the calling run holding the image to test (`docker save | gzip`, ci-image)
+        type: string
+        required: true
+      e2e_ref:
+        description: ostrom-e2e ref whose scenarios run
+        type: string
+        default: main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
@@ -42,7 +55,9 @@ jobs:
     name: journey
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Called by ci-e2e: under 15 minutes, 20 at most. On demand: 30, plus the CLI's native build when
+    # scenarios/import.e2e.ts runs.
+    timeout-minutes: ${{ inputs.image_artifact != '' && 20 || 50 }}
     permissions:
       contents: read
       packages: read
@@ -58,12 +73,26 @@ jobs:
         # latest, 2026-10-01 (as ostrom-e2e)
         image: stripe/stripe-mock@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78
         ports: ['12111:12111']
+      # The fake TeamCode team of E2E-TC-003/004 (ostrom-helm compose/demo/teamcode, the demo's MySQL 8.4), as on
+      # ostrom-e2e's bench.
+      teamcode-db:
+        image: mysql:8.4
+        env: { MYSQL_ROOT_PASSWORD: teamcode-root, MYSQL_DATABASE: teamcode }
+        ports: ['3307:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pteamcode-root" --health-interval 5s --health-timeout 5s --health-retries 30
     env:
       WANTED_IMAGE: ${{ inputs.server_image }}
       E2E_REF: ${{ inputs.e2e_ref || 'main' }}
-      # A pull request that changes this file proves it on one scenario of the main journey (3.2, the gate of a rule).
-      FILES: ${{ github.event_name == 'pull_request' && 'scenarios/parcours.e2e.ts' || inputs.files }}
-      TESTS: ${{ github.event_name == 'pull_request' && 'E2E-PARC-013' || inputs.tests }}
+      # Called by ci-e2e: the image of the calling run, every scenario file but the TeamCode import, then k6.
+      IMAGE_ARTIFACT: ${{ inputs.image_artifact }}
+      CALLED: ${{ inputs.image_artifact != '' }}
+      FILES: ${{ inputs.image_artifact == '' && inputs.files || '' }}
+      TESTS: ${{ inputs.image_artifact == '' && inputs.tests || '' }}
+      # E2E-TC-003/004 (scenarios/import.e2e.ts) run the real `ostrom import teamcode`: the CLI is built and the fake
+      # TeamCode team loaded only when that file runs (named, or every file).
+      TEAMCODE: ${{ inputs.image_artifact == '' && (inputs.files == '' || contains(inputs.files, 'import.e2e.ts')) }}
+      CLI_REF: ${{ inputs.cli_ref || 'main' }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,6 +107,77 @@ jobs:
           ssh-key: ${{ secrets.DEPLOY_KEY_E2E }}
           path: e2e
           persist-credentials: false
+      # The fake TeamCode team (helm#25): schema, rows, a read-only user as `ostrom import teamcode` reads with, and its
+      # key file (fake, public). Pinned as ostrom-e2e's ci.yml pins it: the scenarios name its accounts and tokens.
+      - if: env.TEAMCODE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-helm
+          ref: 4f03cd375d7309da4f58388a533f704f883a0d49
+          ssh-key: ${{ secrets.DEPLOY_KEY_HELM }}
+          path: helm
+          sparse-checkout: compose/demo/teamcode
+          persist-credentials: false
+      - name: Fake TeamCode team in MySQL (helm compose/demo/teamcode)
+        if: env.TEAMCODE == 'true'
+        env:
+          TEAMCODE_DIR: helm/compose/demo/teamcode
+        run: |
+          sql() { docker run --rm -i --network host -e MYSQL_PWD=teamcode-root mysql:8.4 mysql -h127.0.0.1 -P3307 -uroot "$@"; }
+          sql teamcode < "$TEAMCODE_DIR/01-schema.sql"
+          sql teamcode < "$TEAMCODE_DIR/02-seed.sql"
+          docker run --rm --network host -v "$PWD/$TEAMCODE_DIR:/teamcode:ro" -e MYSQL_HOST=127.0.0.1 -e MYSQL_TCP_PORT=3307 \
+            -e MYSQL_ROOT_PASSWORD=teamcode-root -e MYSQL_DATABASE=teamcode -e TEAMCODE_RO_PASSWORD=teamcode-ro \
+            mysql:8.4 sh /teamcode/03-readonly.sh
+          # `ostrom import teamcode` reads TeamCode with the mysql client on the PATH
+          command -v mysql || { sudo apt-get update -q && sudo apt-get install -yq mysql-client; }
+          MYSQL_PWD=teamcode-ro mysql -h127.0.0.1 -P3307 -uteamcode_ro teamcode -N -e "SELECT COUNT(*) FROM accounts WHERE team_id = 'default'"
+      # The CLI's linuxX64 release binary, with the ostrom-core it pins next to it (as cli-journey.yml).
+      - if: env.TEAMCODE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-cli
+          ref: ${{ env.CLI_REF }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CLI }}
+          path: cli
+          persist-credentials: false
+      - name: ostrom-core version the CLI pins
+        id: clicore
+        if: env.TEAMCODE == 'true'
+        run: echo "ref=$(tr -d '[:space:]' < cli/gradle/ostrom-core.ref)" >> "$GITHUB_OUTPUT"
+      - if: env.TEAMCODE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ostrom-hq/ostrom-core
+          ref: ${{ steps.clicore.outputs.ref }}
+          ssh-key: ${{ secrets.DEPLOY_KEY_CORE }}
+          path: ostrom-core
+          persist-credentials: false
+      - if: env.TEAMCODE == 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - if: env.TEAMCODE == 'true'
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-provider: basic
+      - if: env.TEAMCODE == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.konan
+          key: konan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('cli/gradle/libs.versions.toml') }}
+      - name: The CLI's linuxX64 release binary
+        id: cli
+        if: env.TEAMCODE == 'true'
+        working-directory: cli
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false
+        run: |
+          sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+          ./gradlew -Postrom.core.local=true :cli:linkReleaseExecutableLinuxX64
+          echo "bin=$PWD/cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe" >> "$GITHUB_OUTPUT"
+          echo "- CLI: ostrom-cli $(git rev-parse --short HEAD) ($CLI_REF), built here" >> "$GITHUB_STEP_SUMMARY"
       # E2E-SWEEP reads the contract (ostrom-core main's OpenAPI and api/contract/served-routes.txt) and the routes the
       # image serves (core's scripts/served-routes.py on the image's own sources): without them it is skipped (run
       # 41549184819, E2E-SWEEP-005), as in ostrom-e2e's ci.yml.
@@ -92,35 +192,48 @@ jobs:
             scripts/served-routes.py
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      - name: The server image (the newest sha-<7> of main published, unless named)
+      # Called by ci-e2e: the image ci-image built from this very checkout.
+      - name: The image of the calling run (ci-image)
+        if: env.CALLED == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.IMAGE_ARTIFACT }}
+          path: ${{ runner.temp }}/image
+      - name: The server image (the calling run's, or the newest sha-<7> of main published, unless named)
         id: server
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: |
           main=$(git -C server rev-parse origin/main)
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          image=$WANTED_IMAGE
-          if [ -z "$image" ]; then
-            # as cli-journey.yml: a head whose image failed or is still building is skipped; any other error stops.
-            for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
-              candidate=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
-              if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
-                image=$candidate
-                break
-              fi
-              case "$error" in
-                *"manifest unknown"* | *"not found"*) echo "$candidate is not published yet" ;;
-                *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
-              esac
-            done
-            [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
+          if [ "$CALLED" = "true" ]; then
+            gunzip -c "$RUNNER_TEMP/image/ostrom-server-image.tar.gz" | docker load
+            image=ostrom-server:ci
+            revision=$(git -C server rev-parse HEAD)
           else
-            docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
+            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            image=$WANTED_IMAGE
+            if [ -z "$image" ]; then
+              # as cli-journey.yml: a head whose image failed or is still building is skipped; any other error stops.
+              for commit in $(git -C server rev-list --first-parent --max-count=10 origin/main); do
+                candidate=ghcr.io/ostrom-hq/ostrom-server:sha-${commit:0:7}
+                if error=$(docker pull --quiet "$candidate" 2>&1 >/dev/null); then
+                  image=$candidate
+                  break
+                fi
+                case "$error" in
+                  *"manifest unknown"* | *"not found"*) echo "$candidate is not published yet" ;;
+                  *) echo "::error::$candidate cannot be pulled: $error"; exit 1 ;;
+                esac
+              done
+              [ -n "$image" ] || { echo "::error::no sha-<7> image of main's last 10 commits can be pulled"; exit 1; }
+            else
+              docker pull --quiet "$image" || { echo "::error::$image cannot be pulled"; exit 1; }
+            fi
+            revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+            [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
+            git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
+              || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
           fi
-          revision=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
-          [ -n "$revision" ] || { echo "::error::$image carries no org.opencontainers.image.revision label"; exit 1; }
-          git -C server cat-file -e "${revision}^{commit}" 2>/dev/null \
-            || { echo "::error::$image is ostrom-server@${revision:0:7}, a commit not in the history of main"; exit 1; }
           git -C server show "${revision}:ci/database-roles.sql" > "$RUNNER_TEMP/database-roles.sql"
           # The routes this image serves, read on its own sources, then the contract's: E2E-SWEEP's served routes.
           git -C server worktree add --detach "$RUNNER_TEMP/server-at-image" "$revision" >/dev/null
@@ -148,8 +261,9 @@ jobs:
           # Test values only, as ostrom-e2e's bench: mails to a directory, the console is the server's own origin, the
           # scenarios' addresses come through the trusted local proxy, Stripe is stripe-mock, and the providers' token
           # endpoint and APIs behind the gateway are the fake provider a scenario starts on port 4620 (BUDGET-002,
-          # SHARE-*), wired as in ostrom-e2e's ci.yml. Expo's push service is the fake one a scenario starts on port 4621
-          # (NOTIFY-*): the approvers' pushes are read there, never sent to a phone.
+          # SHARE-*), GitHub and the GitHub App are the fakes the scenarios start on 4610 and 4700, and the read limits
+          # (#181) are those of a bench, wired as in ostrom-e2e's ci.yml. Expo's push service is the fake one a scenario
+          # starts on port 4621 (NOTIFY-*): the approvers' pushes are read there, never sent to a phone.
           cat > "$RUNNER_TEMP/server.env" <<'ENV'
           OSTROM_DATABASE_URL=postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
           OSTROM_PORT=4600
@@ -165,9 +279,31 @@ jobs:
           OSTROM_SHARING_CODEX_TOKEN_URL=http://127.0.0.1:4620/v1/oauth/token
           OSTROM_GATEWAY_ANTHROPIC_URL=http://127.0.0.1:4620
           OSTROM_GATEWAY_CODEX_URL=http://127.0.0.1:4620
+          OSTROM_READS_PER_MINUTE=6000
+          OSTROM_READS_IN_FLIGHT=64
+          OSTROM_READ_WAITS_IN_FLIGHT=256
+          OSTROM_GITHUB_WEB_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_API_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_CLIENT_ID=Iv1.e2ebench
+          OSTROM_GITHUB_CLIENT_SECRET=e2e-bench-fake-github
+          OSTROM_GITHUB_API=http://127.0.0.1:4700
+          OSTROM_GITHUB_WEB=http://127.0.0.1:4700
+          OSTROM_GITHUB_APP_ID=1
+          OSTROM_GITHUB_APP_SLUG=ostrom-e2e
+          OSTROM_GITHUB_APP_CLIENT_ID=Iv1.fake
+          OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
+          OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_e2e
+          OSTROM_ARTIFACTS_CONTENT_ORIGIN=http://localhost:4601
           OSTROM_EXPO_PUSH_URL=http://127.0.0.1:4621/--/api/v2/push/send
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
+          # The bench's GitHub App gets a key made for this run, written straight to the env file: never to $GITHUB_ENV,
+          # whose values every later step prints. One line, its newlines as `\n`, as the server reads it (as
+          # console-journey.yml).
+          openssl genrsa -traditional -out "$RUNNER_TEMP/github-app.pem" 2048
+          printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$(awk '{printf "%s\\n", $0}' "$RUNNER_TEMP/github-app.pem")" \
+            >> "$RUNNER_TEMP/server.env"
+          rm "$RUNNER_TEMP/github-app.pem"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
@@ -188,6 +324,19 @@ jobs:
           OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
           # The fake provider the scenarios start, where the server's gateway and sharing point (step above).
           OSTROM_E2E_FAKE_TOKENS_PORT: "4620"
+          # The fake GitHub the scenarios start, where the server points (step above): 4610 for the sign-in with GitHub
+          # (E2E-AUTH-002), 4700 for the App's installations and repositories (E2E-PARC-004, E2E-GH-*).
+          OSTROM_E2E_FAKE_GITHUB_PORT: "4610"
+          OSTROM_E2E_GITHUB_PORT: "4700"
+          # stripe-mock's webhook secret, as on ostrom-e2e's bench.
+          OSTROM_E2E_STRIPE_WEBHOOK_SECRET: whsec_e2e_bench
+          # E2E-TC-003/004: the CLI, the fake TeamCode team, and the superuser of this throwaway database (to make an
+          # imported account wait for a reconnection and read the org's audit chain), as on ostrom-e2e's bench.
+          OSTROM_E2E_CLI_BIN: ${{ steps.cli.outputs.bin }}
+          OSTROM_E2E_TEAMCODE_DB: ${{ env.TEAMCODE == 'true' && 'mysql://teamcode_ro@127.0.0.1:3307/teamcode' || '' }}
+          OSTROM_E2E_TEAMCODE_PASSWORD: teamcode-ro
+          OSTROM_E2E_TEAMCODE_KEY_FILE: ${{ env.TEAMCODE == 'true' && format('{0}/helm/compose/demo/teamcode/key.txt', github.workspace) || '' }}
+          OSTROM_E2E_DATABASE_ADMIN_URL: postgresql://ostrom:ostrom@localhost:5432/ostrom
           # The fake Expo push service the notification scenarios start, where the server's pushes go (step above).
           OSTROM_E2E_FAKE_EXPO_PORT: "4621"
           # E2E-SWEEP's contract (step « The server image »).
@@ -198,6 +347,11 @@ jobs:
           # The files named, or every scenario file; a filter runs its scenarios only; the json report says which ran.
           read -r -a files <<< "${FILES:-}"
           [ "${#files[@]}" -gt 0 ] || files=(scenarios/*.e2e.ts)
+          # Called by ci-e2e: the TeamCode import is left to ostrom-e2e's CI (the CLI's native build), said in the summary.
+          if [ "$CALLED" = "true" ]; then
+            mapfile -t files < <(printf '%s\n' "${files[@]}" | grep -vx 'scenarios/import.e2e.ts')
+            echo "- left out: \`scenarios/import.e2e.ts\` (E2E-TC-*); the jalon's CLI scenarios skip by name: ostrom-e2e's CI plays both with the CLI it builds" >> "$GITHUB_STEP_SUMMARY"
+          fi
           for f in "${files[@]}"; do
             [ -f "$f" ] || { echo "::error::no scenario file $f in ostrom-e2e@$E2E_REF"; exit 1; }
           done
@@ -218,6 +372,56 @@ jobs:
           }
           jq -r --arg t "$TESTS" '.testResults[].assertionResults[] | select(.fullName | test($t))
             | "- \(.status): \(.fullName)"' "$RUNNER_TEMP/journey.json" >> "$GITHUB_STEP_SUMMARY"
+      # A skipped scenario is named with its reason (a probe that finds a route not served yet, the CLI not built here),
+      # never silent: the list goes to the run's summary.
+      - name: Skipped scenarios, by name and reason
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/journey.json" ] || exit 0
+          {
+            echo "### Skipped scenarios"
+            jq -r '.testResults[].assertionResults[] | select(.status == "skipped" or .status == "pending") | "- \(.fullName)"' \
+              "$RUNNER_TEMP/journey.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Called by ci-e2e: a short k6 of the gates, as ostrom-e2e's CI runs it. The load setup must succeed: a k6 that
+      # cannot start is a failure here, never a skip.
+      - if: env.CALLED == 'true' && !cancelled()
+        uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
+      - name: Gate load setup (requester token, approver session)
+        id: loadsetup
+        if: env.CALLED == 'true' && !cancelled()
+        working-directory: e2e
+        env:
+          OSTROM_E2E_SERVER_URL: http://127.0.0.1:4600
+          OSTROM_E2E_MAIL_DIR: ${{ runner.temp }}/ostrom-mail
+          OSTROM_E2E_CONSOLE_ORIGIN: http://127.0.0.1:4600
+        run: node scripts/load-setup.ts
+      - name: k6 health, instance and gates (push to main + yes), then the race (100 simultaneous yes)
+        if: env.CALLED == 'true' && !cancelled()
+        working-directory: e2e
+        env:
+          READY: ${{ steps.loadsetup.outputs.ready }}
+          REASON: ${{ steps.loadsetup.outputs.reason }}
+          OSTROM_URL: http://127.0.0.1:4600
+          OSTROM_LOAD_SCENARIOS: health,instance,gates
+          OSTROM_LOAD_APPROVER_ORIGIN: http://127.0.0.1:4600
+          K6_SUMMARY_TREND_STATS: avg,min,med,max,p(90),p(95),p(99)
+        run: |
+          [ "$READY" = "true" ] || { echo "::error::the gate load setup failed: $REASON"; exit 1; }
+          # The race runs even when a threshold of the first run is crossed; the step fails if either fails.
+          rc=0
+          k6 run --summary-export "$RUNNER_TEMP/smoke-summary.json" load/smoke.js || rc=$?
+          k6 run --summary-export "$RUNNER_TEMP/race-summary.json" load/race.js || rc=$?
+          exit "$rc"
       - name: Server logs
         if: always()
         run: docker logs ostrom-server 2>&1 | tail -n 300 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: e2e-journey-results
+          path: |
+            ${{ runner.temp }}/journey.json
+            ${{ runner.temp }}/*-summary.json
+          if-no-files-found: ignore
+          retention-days: 7

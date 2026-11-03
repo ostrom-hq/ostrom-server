@@ -16,7 +16,8 @@ import kotlin.uuid.Uuid
  * @property email The account's address, if given.
  * @property providerAccountId The provider's account id: sharing it again replaces its tokens.
  * @property accessToken The OAuth access token.
- * @property refreshToken The OAuth refresh token.
+ * @property refreshToken The OAuth refresh token, or empty for a long-lived token that is never renewed (one enrolled
+ *   from a secret).
  * @property expiresAt When the access token expires.
  * @property limits Its limits.
  * @property disabled Stores a new account, or one waiting for a reconnection, turned off in the same write: an
@@ -50,6 +51,8 @@ data class ShareAccountPayload(
  *   sharing it again).
  * @property limits The new limits from the current ones, so a change of one limit keeps the others.
  * @property ifVersion Changes it only if it is still at this [SharedAccount.version]; null changes it anyway.
+ * @property sharedWith The members who may use it from now on, by login (or member id), after [limits]; empty for
+ *   the whole org.
  */
 data class UpdateAccountPayload(
     val label: String? = null,
@@ -57,6 +60,7 @@ data class UpdateAccountPayload(
     val disabled: Boolean? = null,
     val limits: ((AccountLimits) -> AccountLimits)? = null,
     val ifVersion: Long? = null,
+    val sharedWith: List<String>? = null,
 )
 
 /**
@@ -68,6 +72,10 @@ data class UpdateAccountPayload(
  * @property windows Current provider windows.
  * @property inFlight Requests in flight on this replica.
  * @property spentMicros Equivalent API cost served this month.
+ * @property owner The login of the member who shared it ([MemberNames]); empty unless [identityVisible] or when an
+ *   admin added it.
+ * @property sharedWith The logins of the members it is lent to and the `group:<id>` of its groups, sorted; empty for
+ *   the whole org, and unless [identityVisible].
  */
 data class SharedAccountView(
     val account: SharedAccount,
@@ -76,6 +84,8 @@ data class SharedAccountView(
     val windows: List<QuotaWindow>,
     val inFlight: Int,
     val spentMicros: Long,
+    val owner: String,
+    val sharedWith: List<String>,
 )
 
 /** Shares an account. */
@@ -91,6 +101,12 @@ interface ShareAccountUseCase {
 interface ListSharedAccountsUseCase {
     /** Lists them, identities visible to admins and owners only. */
     suspend operator fun invoke(caller: Caller): List<SharedAccountView>
+}
+
+/** The view of an account its writer has just shared or changed (an admin or its owner): identity visible. */
+interface ViewSharedAccountUseCase {
+    /** Names its owner and the members it is lent to. */
+    suspend operator fun invoke(caller: Caller, account: SharedAccount): SharedAccountView
 }
 
 /** Changes an account. */
@@ -182,19 +198,24 @@ private fun SharedAccount?.sharedAgain(caller: Caller, payload: ShareAccountPayl
     }
 }
 
-/** [ListSharedAccountsUseCase]. */
+/** [ListSharedAccountsUseCase]; [names] names the people of the accounts the caller may change. */
 class ListSharedAccountsUseCaseImpl(
     private val repository: SharedAccountRepository,
     private val quotas: QuotaWindowRepository,
     private val pool: SharedAccountPool,
     private val spend: AccountSpendReader,
     private val clock: Clock,
+    private val names: MemberNames = MemberNames(NoMemberLogins),
 ) : ListSharedAccountsUseCase {
     override suspend fun invoke(caller: Caller): List<SharedAccountView> {
         val now = clock.now()
         val windows = quotas.byAccount(caller.orgId)
         val since = SharedAccountPool.monthStart(now)
-        return repository.list(caller.orgId).mapIndexed { index, account ->
+        val accounts = repository.list(caller.orgId)
+        val changeable = accounts.filter { caller.mayChange(it) }
+        val named = names.of(caller.orgId, changeable)
+        val groups = names.groupsOf(caller.orgId, changeable)
+        return accounts.mapIndexed { index, account ->
             val visible = caller.mayChange(account)
             SharedAccountView(
                 account = if (visible) {
@@ -212,18 +233,43 @@ class ListSharedAccountsUseCaseImpl(
                 windows = windows[account.id].orEmpty().filter { it.isCurrent(now) }.sortedBy { it.window },
                 inFlight = pool.inFlight(account.id),
                 spentMicros = spend.spentMicros(account.id, since),
+                owner = if (visible) named.ownerOf(account) else "",
+                sharedWith = if (visible) named.sharedWithOf(account, groups) else emptyList(),
             )
         }
     }
 }
 
-/** [UpdateSharedAccountUseCase]. */
-class UpdateSharedAccountUseCaseImpl(private val repository: SharedAccountRepository) : UpdateSharedAccountUseCase {
+/** [ViewSharedAccountUseCase]. */
+class ViewSharedAccountUseCaseImpl(private val names: MemberNames) : ViewSharedAccountUseCase {
+    override suspend fun invoke(caller: Caller, account: SharedAccount): SharedAccountView {
+        val named = names.of(caller.orgId, listOf(account))
+        val groups = names.groupsOf(caller.orgId, listOf(account))
+        return SharedAccountView(
+            account = account,
+            displayLabel = account.label,
+            identityVisible = true,
+            windows = emptyList(),
+            inFlight = 0,
+            spentMicros = 0,
+            owner = named.ownerOf(account),
+            sharedWith = named.sharedWithOf(account, groups),
+        )
+    }
+}
+
+/** [UpdateSharedAccountUseCase]; [names] reads the members of `sharedWith`. */
+class UpdateSharedAccountUseCaseImpl(
+    private val repository: SharedAccountRepository,
+    private val names: MemberNames = MemberNames(NoMemberLogins),
+) : UpdateSharedAccountUseCase {
     override suspend fun invoke(caller: Caller, id: Uuid, payload: UpdateAccountPayload): SharedAccount {
         val account = repository.writable(caller, id)
         payload.label?.let(SharingRules::requireLabel)
         val patch = payload.limits
-        val limits = if (patch == null) account.limits else patch(account.limits)
+        val patched = if (patch == null) account.limits else patch(account.limits)
+        val sharing = payload.sharedWith?.let { names.sharedWith(caller.orgId, it) }
+        val limits = if (sharing == null) patched else patched.copy(allowedMembers = sharing.members)
         SharingRules.requireLimits(limits)
         payload.priority?.let(SharingRules::requirePriority)
         // RECONNECT_REQUIRED and WRONG_ACCOUNT are left only by sharing again: pausing and resuming must not revive
@@ -241,8 +287,10 @@ class UpdateSharedAccountUseCaseImpl(private val repository: SharedAccountReposi
             limits = limits,
             status = status,
         )
-        return repository.update(updated, payload.ifVersion)
+        val saved = repository.update(updated, payload.ifVersion)
             ?: throw if (payload.ifVersion == null) AccountNotFoundException() else AccountChangedException()
+        sharing?.let { names.lend(caller.orgId, saved.id, it) }
+        return saved
     }
 }
 

@@ -17,6 +17,10 @@ internal object CivilCalendar {
     private const val MONTH_SPAN_NUMERATOR = 153L
     private const val MONTH_SPAN_DENOMINATOR = 5L
 
+    /** The first instant of the UTC day of [now]. */
+    fun dayStart(now: Instant): Instant =
+        Instant.fromEpochSeconds(now.epochSeconds.floorDiv(SECONDS_PER_DAY) * SECONDS_PER_DAY)
+
     /** The first instant of the UTC calendar month of [now]. */
     fun monthStart(now: Instant): Instant {
         val days = now.epochSeconds.floorDiv(SECONDS_PER_DAY)

@@ -21,7 +21,7 @@ coroutines:
   SuspendFunWithFlowReturnType:
     active: true
   # Needs type resolution, which detekt 1.23 cannot provide for libraries built with Kotlin 2.2+: the cancellation rule
-  # is enforced by scripts/check-conventions.py and by review (INF-019).
+  # is enforced by scripts/check-conventions.py and by review.
   SuspendFunSwallowedCancellation:
     active: false
   RedundantSuspendModifier:
