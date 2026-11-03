@@ -25,8 +25,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  # The build in three jobs side by side (the single 40-minute job timed out on #135, with every test green), and
-  # `ci`, the required check of main, green only when all three are. A draft pull request runs no CI: mark it ready.
+  # The build in three jobs side by side (the single 40-minute job timed out on #135, with every test green), ci-e2e
+  # after ci-image, and `ci`, the required check of main, green only when all four are. A draft pull request runs no
+  # CI: mark it ready.
   ci-jvm:
     name: JVM tests, Kover 100 %, detekt, docs and conventions
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -269,6 +270,18 @@ jobs:
         run: |
           docker build -t ostrom-server:ci .
           docker images ostrom-server:ci --format '{{.Size}}'
+      # The image this pull request builds, for ci-e2e: ostrom-e2e main runs against it before the merge, not after.
+      - name: Save the image for ci-e2e
+        run: |
+          docker save ostrom-server:ci | gzip -1 > "$RUNNER_TEMP/ostrom-server-image.tar.gz"
+          ls -lh "$RUNNER_TEMP/ostrom-server-image.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ostrom-server-image
+          path: ${{ runner.temp }}/ostrom-server-image.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
       # As deployed: the owner migrates, the server serves as a role that owns nothing (ci/database-roles.sql).
       - name: Smoke test of the image (roles, migrate, /ready, /api/v1/instance, graceful SIGTERM)
         env:
@@ -371,10 +384,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ostrom-e2e main (the isolation sweep, every scenario but the TeamCode import, a short k6 of the gates) against the
+  # image ci-image built: a pull request that changes an answer fails here, before the merge, and brings its e2e fix
+  # along, or an e2e pull request merged first (AGENTS.md, « End-to-end before the merge »).
+  ci-e2e:
+    needs: [ci-image]
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/e2e-journey.yml
+    with:
+      image_artifact: ostrom-server-image
+    secrets: inherit
+
   # The required check of main, still named `ci` (branch protection, .coord/squash.sh).
   ci:
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    needs: [ci-jvm, ci-native, ci-image]
+    needs: [ci-jvm, ci-native, ci-image, ci-e2e]
     timeout-minutes: 5
     runs-on: ubuntu-24.04
     steps:
@@ -383,6 +410,7 @@ jobs:
           JVM: ${{ needs.ci-jvm.result }}
           NATIVE: ${{ needs.ci-native.result }}
           IMAGE: ${{ needs.ci-image.result }}
+          E2E: ${{ needs.ci-e2e.result }}
         run: |
-          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE"
-          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success
+          echo "JVM tests and Kover: $JVM; native tests: $NATIVE; binary, images and smoke tests: $IMAGE; e2e: $E2E"
+          test "$JVM" = success && test "$NATIVE" = success && test "$IMAGE" = success && test "$E2E" = success

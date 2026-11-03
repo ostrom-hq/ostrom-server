@@ -12,6 +12,13 @@ All repository content (code, comments, docs, commits, pull requests) is in Engl
 
 Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests (ENG-054). Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request, p95/p99 thresholds. Every customer table carries `org_id` under PostgreSQL Row-Level Security, with one end-to-end test per resource proving another organization cannot see or change it; console writes need a user session, agent tokens are scoped to their own session (CONVENTIONS.md section 16). Budgets tested in CI: start-up < 200 ms, API p95 < 50 ms under nominal load.
 
+**End-to-end before the merge.** `ci-e2e` (`ci.yml`, through `e2e-journey.yml`) plays ostrom-e2e main against the
+image the pull request builds: the isolation sweep, every scenario but the TeamCode import, and a short k6 of the gates.
+`ci` needs it. So a pull request that changes an answer, adds or removes a route, or changes a limit brings its e2e
+fix first: an ostrom-e2e pull request merged before it, as a contract change goes to ostrom-core first. A new route
+needs its sweep case in ostrom-e2e (`PARAM_KINDS` in `scenarios/sweep.e2e.ts`, and the resource organization A makes),
+or E2E-SWEEP-001 fails the server pull request.
+
 ## The 15 rules that matter most
 
 1. Read CONVENTIONS.md before each pull request; it wins over habits from other projects.
