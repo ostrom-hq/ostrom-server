@@ -9,9 +9,11 @@ import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.models.CompileInputs
 import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
+import dev.ostrom.server.compiler.domain.models.WorkflowDoc
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.services.JsText
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
+import dev.ostrom.server.compiler.domain.services.WorkflowRepos
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlinx.serialization.json.JsonArray
@@ -136,6 +138,7 @@ class WorkflowsUseCaseImpl(
         create: Boolean,
     ): StoredWorkflow {
         val workflow = decode(raw)
+        val repos = WorkflowRepos.of(raw)
         val before = repository.workflow(orgId, workflow.id)
         // An update names a workflow of the caller's organization: an unknown id (another organization's included,
         // which this one never sees) is not found, and never created. The write is conditional on what was read: an
@@ -150,9 +153,8 @@ class WorkflowsUseCaseImpl(
         val author = Authorship(by, clock.now())
         val saved = repository.saveWorkflow(orgId, workflow.id, raw, expected, author)
             ?: throw OstromException(ErrorKind.CONFLICT, "workflow_conflict: someone saved this workflow in between.")
-        val previous = if (before == null) null else before.doc.workflow
-        val change = changeOf(previous, workflow)
-        if (change != null) record(orgId, workflow, previous, change, author)
+        val change = changeOf(before?.doc, workflow, repos)
+        if (change != null) record(orgId, WorkflowDoc(raw, workflow), before?.doc, change, author)
         return saved
     }
 
@@ -176,27 +178,33 @@ class WorkflowsUseCaseImpl(
         (PackageCompiler.json.parseToJsonElement(payload).jsonObject["workflows"] as JsonArray)
             .any { (it.jsonObject["id"] as JsonPrimitive).content == id }
 
+    // The core model does not know `repos` yet (R6): it is checked here and kept in the saved JSON.
     private fun decode(raw: JsonObject): Workflow = try {
-        PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), raw)
+        WorkflowRepos.problem(raw)?.let { throw IllegalArgumentException(it) }
+        PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), WorkflowRepos.withoutField(raw))
     } catch (e: IllegalArgumentException) {
         throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
     }
 
     private suspend fun record(
         orgId: Uuid,
-        after: Workflow,
-        before: Workflow?,
+        after: WorkflowDoc,
+        before: WorkflowDoc?,
         action: String,
         author: Authorship,
     ) {
-        val decision = DecisionDoc("dec_${Uuid.random()}", "workflow", after.id, author.by, JsText.iso(author.at), null)
+        val id = after.workflow.id
+        val decision = DecisionDoc("dec_${Uuid.random()}", "workflow", id, author.by, JsText.iso(author.at), null)
         val receipt = signer.sign(orgId, decision, action, before?.let(::summary), summary(after))
         repository.addDecision(orgId, decision.copy(receiptId = receipt))
     }
 
-    // What the decision says: the status, the gates and their approvers, and what runs.
-    private fun summary(workflow: Workflow): JsonObject = buildJsonObject {
+    // What the decision says: the status, the repositories of a limited workflow, the gates and their approvers,
+    // and what runs.
+    private fun summary(doc: WorkflowDoc): JsonObject = buildJsonObject {
+        val workflow = doc.workflow
         put("status", workflow.status.name.lowercase())
+        doc.repos?.let { repos -> put(WorkflowRepos.FIELD, JsonArray(repos.map { JsonPrimitive(it) })) }
         put(
             "gates",
             JsonArray(
@@ -223,9 +231,10 @@ class WorkflowsUseCaseImpl(
 }
 
 // `accept` from proposed to accepted, `edit` otherwise; null when nothing that is decided changed.
-private fun changeOf(before: Workflow?, after: Workflow): String? {
-    val same = before != null && strip(before) == strip(after)
-    val accepted = before?.status == WorkflowStatus.PROPOSED && after.status == WorkflowStatus.ACCEPTED
+private fun changeOf(before: WorkflowDoc?, after: Workflow, repos: List<String>?): String? {
+    val same = before != null && strip(before.workflow) == strip(after) && before.repos == repos
+    val proposed = before != null && before.workflow.status == WorkflowStatus.PROPOSED
+    val accepted = proposed && after.status == WorkflowStatus.ACCEPTED
     return when {
         same -> null
         accepted -> "accept"

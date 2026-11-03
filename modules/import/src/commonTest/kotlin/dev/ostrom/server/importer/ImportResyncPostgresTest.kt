@@ -130,7 +130,7 @@ class ImportResyncPostgresTest {
                 TeamCodeAccountDto(
                     provider = "claude",
                     providerAccountId = "claude-1",
-                    label = "Lyes",
+                    label = "Lena",
                     accessToken = "access-token-value",
                     refreshToken = "refresh-token-value",
                     expiresAt = "2026-11-01T00:00:00Z",

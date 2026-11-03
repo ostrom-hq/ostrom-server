@@ -41,7 +41,7 @@ class AutomationLaunchPostgresTest {
 
     private suspend fun HttpClient.trigger(secrets: WebhookSecrets, id: String, secret: String, key: String) =
         post("/api/v1/automations/$id/trigger") {
-            val payload = """{"ticket":{"number":"SUP-7"}}"""
+            val payload = """{"ticket":{"number":"TKT-7"}}"""
             val timestamp = Clock.System.now().epochSeconds.toString()
             val signature = secrets.sign(secret, "$timestamp.".encodeToByteArray() + payload.encodeToByteArray())
             header("Ostrom-Timestamp", timestamp)

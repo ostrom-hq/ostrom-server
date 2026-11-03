@@ -41,6 +41,24 @@ class PackageCompilerTest {
     }
 
     @Test
+    fun aWorkflowThatListsItsRepositoriesAppliesToThemOnlyWhateverItsStatus() {
+        // R6: the alias and the text no longer bring in a workflow limited to another repository, nor its gate.
+        val deploy = node("g", GATE, actions = listOf(action("deploy")))
+        val named = workflow("named", listOf(node("s", STEP, label = "Ship acme/api")))
+        val elsewhere = workflow("elsewhere", listOf(node("s", STEP, label = "Ship acme/api"), deploy))
+        val unrelated = listOf(node("s", STEP, label = "Unrelated"))
+        val observed = workflow("everywhere", unrelated, status = WorkflowStatus.PROPOSED)
+        val docs = listOf(doc(named), limited(elsewhere, "acme/docs"), limited(observed, "ACME/*"))
+        val api = inputs(emptyList(), repo = "acme/api").copy(workflows = docs)
+
+        assertEquals(listOf("named", "everywhere"), PackageCompiler.workflowsFor(api).map { it.workflow.id })
+        val docsRepo = api.copy(repo = "acme/docs")
+        assertEquals(listOf("elsewhere", "everywhere"), PackageCompiler.workflowsFor(docsRepo).map { it.workflow.id })
+        val organization = api.copy(repo = null)
+        assertEquals(docs, PackageCompiler.workflowsFor(organization))
+    }
+
+    @Test
     fun nodesAreOrderedFromTheStartBreadthFirstThenTheUnreachedOnes() {
         val wf = workflow(
             "w",

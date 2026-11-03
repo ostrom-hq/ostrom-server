@@ -27,12 +27,13 @@ class DeviceAuthorizationsRepositoryImpl(private val driver: Driver) : DeviceAut
         driver.execute(
             Statement.create(
                 "INSERT INTO identity_device_authorizations (id, device_code_hash, user_code, client_name, status, " +
-                    "created_at, expires_at, scopes) " +
-                    "VALUES (:id, :hash, :code, :client, :status, :created, :expires, :scopes)",
+                    "created_at, expires_at, scopes, requested_from) " +
+                    "VALUES (:id, :hash, :code, :client, :status, :created, :expires, :scopes, :from)",
             ).bind("id", authorization.id).bind("hash", deviceCodeHash).bind("code", authorization.userCode)
                 .bind("client", authorization.clientName).bind("status", authorization.status.name)
                 .bind("created", authorization.createdAt).bind("expires", authorization.expiresAt)
-                .bind("scopes", authorization.scopes.sorted().joinToString(" ")),
+                .bind("scopes", authorization.scopes.sorted().joinToString(" "))
+                .bind("from", authorization.requestedFrom),
         ).getOrThrow()
     }
 
@@ -103,11 +104,12 @@ class DeviceAuthorizationsRepositoryImpl(private val driver: Driver) : DeviceAut
         lastPolledAt = get("last_polled_at").asInstantOrNull(),
         scopes = get("scopes").asString().split(' ').filter { it.isNotEmpty() }.toSet(),
         approvingOrgId = get("approving_org_id").asUuidOrNull(),
+        requestedFrom = get("requested_from").asStringOrNull(),
     )
 
     private companion object {
         const val COLUMNS =
             "id, user_code, client_name, status, user_id, created_at, expires_at, last_polled_at, scopes, " +
-                "approving_org_id"
+                "approving_org_id, requested_from"
     }
 }

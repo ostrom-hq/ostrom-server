@@ -96,16 +96,16 @@ class ImportSafetyPostgresTest {
             report(Importing.team())
             val own = koin.get<FindSecretUseCase>()(memberA, "TEAMCODE_DISCORD", personal = true)
             val discordA = "discord/${memberA.memberId}"
-            val withoutIt = report(Importing.team(lyesDiscordToken = null))
+            val withoutIt = report(Importing.team(lenaDiscordToken = null))
             assertEquals(line("assignment", discordA, UNCHANGED), withoutIt.items.single { it.name == discordA })
             assertEquals(own.id, credentialOf(memberA))
-            val rotated = report(Importing.team(lyesDiscordToken = "d-lyes-token-2"))
+            val rotated = report(Importing.team(lenaDiscordToken = "d-lena-token-2"))
             val label = "TEAMCODE_DISCORD (personal, ${memberA.memberId})"
             assertEquals(line("secret", label, UPDATED), rotated.items.single { it.name == label })
             assertEquals(line("assignment", discordA, UNCHANGED), rotated.items.single { it.name == discordA })
-            assertEquals(SecretValue("d-lyes-token-2"), value(memberA, "TEAMCODE_DISCORD", personal = true))
+            assertEquals(SecretValue("d-lena-token-2"), value(memberA, "TEAMCODE_DISCORD", personal = true))
             // A server shared in TeamCode carries no member's credential: the one kept would be refused.
-            val shared = report(Importing.team(lyesDiscordToken = null, discordPerMember = false))
+            val shared = report(Importing.team(lenaDiscordToken = null, discordPerMember = false))
             assertEquals(line("server", "discord", UPDATED), shared.items.single { it.name == "discord" })
             assertEquals(line("assignment", discordA, UPDATED), shared.items.single { it.name == discordA })
             assertNull(credentialOf(memberA))
@@ -212,8 +212,8 @@ class ImportSafetyPostgresTest {
                     line("assignment", "grafana.ro/${otherA.memberId}", SKIPPED, NOT_IMPORTED),
                     line("assignment", "mysql/${memberA.memberId}", SKIPPED, NOT_IMPORTED),
                     line("assignment", "grafana.ro/ghost", SKIPPED, "No Ostrom member is mapped to ghost."),
-                    line("account", "claude/Lyes", SKIPPED, NO_SHARING),
-                    line("account", "codex/Lyes", SKIPPED, NO_SHARING),
+                    line("account", "claude/Lena", SKIPPED, NO_SHARING),
+                    line("account", "codex/Lena", SKIPPED, NO_SHARING),
                 ),
                 report.items,
             )
