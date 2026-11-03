@@ -38,6 +38,11 @@ class PostgresSessionsRepository(private val driver: Driver) : SessionsRepositor
         select("id = :id", lock = false) { bind("id", id) }.firstOrNull()
     }
 
+    // The unique (org_id, root_id, segment) index serves it.
+    override suspend fun last(orgId: Uuid, rootId: String): Session? = scoped(orgId) {
+        select("root_id = :root ORDER BY segment DESC LIMIT 1", lock = false) { bind("root", rootId) }.firstOrNull()
+    }
+
     override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> = scoped(orgId) {
         val where = buildList {
             add("org_id = :org")

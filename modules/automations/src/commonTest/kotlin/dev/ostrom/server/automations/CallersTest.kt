@@ -85,7 +85,14 @@ class CallersTest {
     @Test
     fun anAgentTokenAsksAndReadsAsItsPersonNeverAsAnAdministrator() = runTest {
         val agent = principal(PrincipalKind.AGENT, "agent:session", subject = LAUNCH)
-        val expected = WaitCaller(ORG_A, BOB.toString(), admin = false, interactive = false, agent = true)
+        val expected = WaitCaller(
+            ORG_A,
+            BOB.toString(),
+            admin = false,
+            interactive = false,
+            agent = true,
+            session = LAUNCH_SESSION,
+        )
         assertEquals(expected, FakeWaitAgents.agentWaitCallerOf(agent, LAUNCH_SESSION, WAITS_ASK))
         assertEquals(expected, FakeWaitAgents.agentWaitCallerOf(agent, LAUNCH_SESSION, WAITS_READ))
         assertFailsWith<MissingWaitScopeException>("An agent never answers") {

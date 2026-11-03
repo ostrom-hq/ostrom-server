@@ -73,10 +73,10 @@ private val AGENT_WAIT_SCOPES = setOf(WAITS_ASK, WAITS_READ)
  * asked.
  *
  * @param principal The agent token's principal.
- * @param sessionId The session the request names.
+ * @param sessionId The session the request names: any of its segments.
  * @param scope What the tool needs.
  *
- * @return The caller.
+ * @return The caller, in the segment open now.
  *
  * @throws MissingWaitScopeException When [scope] is more than asking and reading.
  * @throws dev.ostrom.server.kernel.auth.NoOrganizationCredentialException When the token's launch is over or its
@@ -90,7 +90,14 @@ suspend fun WaitAgentResolver.agentWaitCallerOf(
 ): WaitCaller {
     if (scope !in AGENT_WAIT_SCOPES) throw MissingWaitScopeException(scope)
     val agent = resolve(principal, sessionId) ?: throw principal.outsideOrganization()
-    return WaitCaller(orgId = agent.orgId, memberId = agent.memberId, admin = false, interactive = false, agent = true)
+    return WaitCaller(
+        orgId = agent.orgId,
+        memberId = agent.memberId,
+        admin = false,
+        interactive = false,
+        agent = true,
+        session = agent.sessionId,
+    )
 }
 
 /**

@@ -192,6 +192,7 @@ data class Wait(
  *   administrator answer or cancel a wait asked of someone else.
  * @property agent Whether an agent token acts for its person, on the waits MCP server: it asks only that person, and
  *   reads and cancels only the waits its person asked, never one someone else asked of its person.
+ * @property session For an agent token, the segment of its session open now, which the server found: it asks there.
  */
 data class WaitCaller(
     val orgId: Uuid,
@@ -199,10 +200,22 @@ data class WaitCaller(
     val admin: Boolean,
     val interactive: Boolean,
     val agent: Boolean = false,
+    val session: String? = null,
 ) {
     /** Whether this caller acts as an administrator here. */
     val actsAsAdmin: Boolean get() = admin && interactive
 }
+
+/**
+ * The agent session a segment belongs to: `<id>` for `<id>` and `<id>~r<n>`, the segments a launcher reopens (a
+ * session id never holds `~` otherwise).
+ *
+ * @param segment A segment's id.
+ * @return The agent session's id.
+ */
+fun agentSessionOf(segment: String): String = segment.substringBefore(SEGMENT_MARK)
+
+private const val SEGMENT_MARK = "~r"
 
 /** How storing a new wait went. */
 enum class CreateOutcome {

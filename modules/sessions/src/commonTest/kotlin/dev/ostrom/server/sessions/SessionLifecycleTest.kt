@@ -254,4 +254,26 @@ class SessionLifecycleTest {
         assertTrue("(ended)" in closed.message.orEmpty(), closed.message)
         assertTrue(Session.LOST.isNotEmpty())
     }
+
+    @Test
+    fun theOpenSegmentIsFoundFromAnyIdOfTheAgentSession() = runTest {
+        val bench = SessionBench()
+        val guard = SessionsGateGuard(bench.repository)
+        val session = bench.start(agent(), start)
+        assertEquals("s-1", guard.openSegment(ORG, "s-1", "launch-1"), "An open segment is itself")
+
+        bench.end(agent(), session.id, EndSession())
+        val closed = assertFailsWith<SessionClosedException> { guard.openSegment(ORG, "s-1", "launch-1") }
+        assertTrue("(ended)" in closed.message.orEmpty(), "Nothing open yet: the last segment's refusal")
+        bench.reopen(agent(), session.id)
+        assertEquals("s-1~r2", guard.openSegment(ORG, "s-1", "launch-1"), "The agent's id, its segment reopened")
+        assertEquals("s-1~r2", guard.openSegment(ORG, "s-1~r2", null))
+        bench.end(agent(), "s-1~r2", EndSession())
+        bench.reopen(agent(), "s-1~r2")
+        assertEquals("s-1~r3", guard.openSegment(ORG, "s-1~r2", "launch-1"), "A segment it knew, since replaced")
+
+        assertFailsWith<NotYourSessionException> { guard.openSegment(ORG, "s-1", "launch-2") }
+        assertFailsWith<SessionNotFoundException> { guard.openSegment(OTHER_ORG, "s-1", "launch-1") }
+        assertFailsWith<SessionNotFoundException> { guard.openSegment(ORG, "s-9", "launch-1") }
+    }
 }

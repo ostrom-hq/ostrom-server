@@ -123,6 +123,7 @@ class AskWaitUseCaseImpl(
  * @property assignee `all`, or a member, for an administrator; the caller's own otherwise.
  * @property status `open` (the default), `resolved`, `cancelled` or `all`.
  * @property sessionId Only this session's.
+ * @property agentSession Only this agent session's, in any of its segments.
  * @property runId Only this run's.
  * @property before The last wait of the previous page.
  * @property limit The page size, 1 to 100 (50).
@@ -132,6 +133,7 @@ data class WaitQuery(
     val assignee: String? = null,
     val status: String? = null,
     val sessionId: String? = null,
+    val agentSession: String? = null,
     val runId: String? = null,
     val before: Uuid? = null,
     val limit: Int? = null,
@@ -182,7 +184,12 @@ class ReadWaitsUseCaseImpl(private val repository: WaitsRepository) : ReadWaitsU
             WaitStatus.entries.firstOrNull { it.wire == wire }
                 ?: throw InvalidWaitException("status is open, resolved, cancelled or all.")
         }
-        val filter = scope(caller, query).copy(status = status, sessionId = query.sessionId, runId = query.runId)
+        val filter = scope(caller, query).copy(
+            status = status,
+            sessionId = query.sessionId,
+            agentSession = query.agentSession,
+            runId = query.runId,
+        )
         val items = repository.list(filter, query.before, limit + 1)
         return WaitPage(items.take(limit), if (items.size > limit) items[limit - 1].id else null)
     }

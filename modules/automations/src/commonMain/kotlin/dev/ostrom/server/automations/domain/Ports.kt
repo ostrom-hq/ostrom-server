@@ -13,6 +13,7 @@ import kotlin.uuid.Uuid
  * @property createdBy Only those asked by this member, if set.
  * @property status Only those in this state, if set.
  * @property sessionId Only those of this session, if set.
+ * @property agentSession Only those of this agent session, in any of its segments ([agentSessionOf]), if set.
  * @property runId Only those of this run, if set.
  */
 data class WaitFilter(
@@ -22,6 +23,7 @@ data class WaitFilter(
     val createdBy: String? = null,
     val status: WaitStatus? = null,
     val sessionId: String? = null,
+    val agentSession: String? = null,
     val runId: String? = null,
 )
 

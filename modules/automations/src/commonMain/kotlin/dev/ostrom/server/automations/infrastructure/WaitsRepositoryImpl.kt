@@ -108,6 +108,8 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             AND (CAST(:created_by AS TEXT) IS NULL OR created_by = :created_by)
             AND (CAST(:status AS TEXT) IS NULL OR status = :status)
             AND (CAST(:session_id AS TEXT) IS NULL OR session_id = :session_id)
+            AND (CAST(:agent_session AS TEXT) IS NULL OR session_id = :agent_session
+                OR starts_with(session_id, CAST(:agent_session AS TEXT) || '~r'))
             AND (CAST(:run_id AS TEXT) IS NULL OR run_id = :run_id)$cursor
             ORDER BY created_at DESC, id DESC LIMIT :limit
             """,
@@ -117,6 +119,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             .bind("created_by", filter.createdBy)
             .bind("status", filter.status?.wire)
             .bind("session_id", filter.sessionId)
+            .bind("agent_session", filter.agentSession)
             .bind("run_id", filter.runId)
             .bind("limit", limit)
         if (before != null) statement.bind("before", before)

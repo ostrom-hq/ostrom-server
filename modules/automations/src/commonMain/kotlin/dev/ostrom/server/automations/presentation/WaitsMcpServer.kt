@@ -10,6 +10,7 @@ import dev.ostrom.server.automations.domain.WaitNotFoundException
 import dev.ostrom.server.automations.domain.WaitQuery
 import dev.ostrom.server.automations.domain.WaitRef
 import dev.ostrom.server.automations.domain.WaitSpec
+import dev.ostrom.server.automations.domain.agentSessionOf
 import dev.ostrom.server.kernel.errors.OstromException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -81,7 +82,10 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
         else -> error(id, METHOD_NOT_FOUND, "Method not found.")
     }
 
-    private class Bound(val binding: WaitsMcpApi, val callerFor: suspend (String) -> WaitCaller)
+    private class Bound(val binding: WaitsMcpApi, val callerFor: suspend (String) -> WaitCaller) {
+        /** The agent session the caller acts in: of the segment the server found for an agent token, else named. */
+        fun agentSession(caller: WaitCaller): String? = (caller.session ?: binding.session)?.let(::agentSessionOf)
+    }
 
     private suspend fun call(id: JsonElement, name: String, arguments: JsonObject, bound: Bound): JsonObject = try {
         val text = when (name) {
@@ -101,15 +105,18 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
 
     private suspend fun ask(bound: Bound, arguments: AskArguments): String {
         val question = WaitSpec(arguments.title, arguments.body, arguments.fields, arguments.actions, arguments.refs)
-        val request = AskWait(question, bound.binding.session, bound.binding.run, arguments.assignee)
-        val wait = dependencies.ask.ask(bound.callerFor(WAITS_ASK), request, null).wait
+        val caller = bound.callerFor(WAITS_ASK)
+        val request = AskWait(question, caller.session ?: bound.binding.session, bound.binding.run, arguments.assignee)
+        val wait = dependencies.ask.ask(caller, request, null).wait
         return "Asked: wait ${wait.id} is open, for member ${wait.assignee}. End your turn now: the answer comes " +
             "back to this session when the member gives it, and get_wait reads it."
     }
 
     private suspend fun list(bound: Bound, arguments: ListArguments): String {
-        val query = WaitQuery(status = arguments.status, sessionId = bound.binding.session, runId = bound.binding.run)
-        val waits = dependencies.read.list(bound.callerFor(WAITS_READ), query).items
+        val caller = bound.callerFor(WAITS_READ)
+        val session = bound.agentSession(caller)
+        val query = WaitQuery(status = arguments.status, agentSession = session, runId = bound.binding.run)
+        val waits = dependencies.read.list(caller, query).items
         if (waits.isEmpty()) return "No waits."
         return waits.joinToString("\n") { "${it.id}  ${it.status.wire}  ${it.question.title}" }
     }
@@ -120,10 +127,15 @@ internal class WaitsMcpServer(private val dependencies: WaitsRoutesDependencies)
         return "Cancelled wait ${wait.id}."
     }
 
-    /** A wait of this agent's session: a wait of another session is not this agent's to read or cancel. */
+    /**
+     * A wait of this agent's session, in any of its segments (one asked before the launcher reopened it stays the
+     * agent's): a wait of another session is not this agent's to read or cancel.
+     */
     private suspend fun ownWait(bound: Bound, raw: String, scope: String): Wait {
-        val wait = dependencies.read.get(bound.callerFor(scope), waitId(raw))
-        return wait.takeIf { it.sessionId == bound.binding.session } ?: throw WaitNotFoundException()
+        val caller = bound.callerFor(scope)
+        val wait = dependencies.read.get(caller, waitId(raw))
+        return wait.takeIf { it.sessionId?.let(::agentSessionOf) == bound.agentSession(caller) }
+            ?: throw WaitNotFoundException()
     }
 
     private fun describe(wait: Wait): String = JSON.encodeToString(WaitResponse.serializer(), wait.toResponse())

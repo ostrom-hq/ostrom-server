@@ -22,6 +22,7 @@ import dev.ostrom.server.gates.domain.services.GateNodeResolver
 import dev.ostrom.server.gates.domain.services.PullRequestHeads
 import dev.ostrom.server.gates.domain.usecases.AskGate
 import dev.ostrom.server.gates.domain.usecases.AskGateUseCaseImpl
+import dev.ostrom.server.gates.fakes.FakeSessions
 import dev.ostrom.server.gates.fakes.GateBench
 import dev.ostrom.server.gates.fakes.IdentityDigester
 import dev.ostrom.server.gates.fakes.ORG
@@ -440,6 +441,11 @@ class AskGateUseCaseTest {
         assertNull(NoGateNodes().resolve(gate.orgId, "o/r", "push-main"))
         assertNull(UnknownPullRequestHeads().head(gate.orgId, "o/r", 6))
         assertNull(UnavailableGateSessions().agentOf(gate.orgId, SESSION))
+        val segment = assertFailsWith<OstromException> {
+            UnavailableGateSessions().openSegment(gate.orgId, SESSION, null)
+        }
+        assertEquals(ErrorKind.UNAVAILABLE, segment.kind, "No segment is found without the sessions module")
+        assertEquals(SESSION, FakeSessions().openSegment(gate.orgId, SESSION, "launch-$SESSION"), "Only the named one")
 
         val silent = ChannelsGateNotifier({ emptyList() }, RecordingLogger())
         silent.requested(gate, emptyList())

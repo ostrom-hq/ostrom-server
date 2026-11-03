@@ -116,6 +116,24 @@ class WaitsPostgresTest {
         assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, assignee = "x"), null, 10))
     }
 
+    @Test
+    fun anAgentSessionListsTheWaitsOfEachOfItsSegmentsOnly() = serverTest(listOf(AutomationsModule)) { server ->
+        val repository = server.koin.get<WaitsRepository>()
+        val first = wait(session = "s_1", at = t0)
+        val reopened = wait(session = "s_1~r2", at = t0 + 1.minutes)
+        // Not its segments: a longer id, and one a LIKE pattern's `_` would take for it.
+        val longer = wait(session = "s_10~r2", at = t0 + 2.minutes)
+        val alike = wait(session = "sX1~r2", at = t0 + 3.minutes)
+        for (wait in listOf(first, reopened, longer, alike)) {
+            assertEquals(CreateOutcome.CREATED, repository.createWithinLimit(wait, 5))
+        }
+
+        val listed = repository.list(WaitFilter(ORG_A, agentSession = "s_1"), null, 10).map { it.id }
+        assertEquals(listOf(reopened.id, first.id), listed)
+        val other = repository.list(WaitFilter(ORG_A, agentSession = "s_10"), null, 10).map { it.id }
+        assertEquals(listOf(longer.id), other)
+    }
+
     private fun open(session: String) = WaitFilter(ORG_A, status = WaitStatus.OPEN, sessionId = session)
 
     @Test

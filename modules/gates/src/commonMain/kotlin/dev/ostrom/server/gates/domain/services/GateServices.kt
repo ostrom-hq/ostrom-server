@@ -119,6 +119,25 @@ interface GateSessions {
     suspend fun assertOpen(orgId: Uuid, sessionId: String, launchId: String?)
 
     /**
+     * The segment open now of the agent session [sessionId] names: its first id, or a segment the launcher has since
+     * replaced (it reopens one after the machine slept, without telling the relay), so that a caller does not have to
+     * know which one is open. The refusals are [assertOpen]'s, judged on that segment.
+     *
+     * @param orgId The organization.
+     * @param sessionId Any segment of the agent session.
+     * @param launchId The launch of the agent token that asks, or null for a person's device: the open segment must be
+     *   one of that launch's (audit A12).
+     * @return The open segment.
+     * @throws dev.ostrom.server.kernel.errors.OstromException When no segment is open, the session is unknown, or the
+     *   open segment is another launch's.
+     */
+    suspend fun openSegment(orgId: Uuid, sessionId: String, launchId: String?): String {
+        // A port that keeps no segments knows only the one it is named.
+        assertOpen(orgId, sessionId, launchId)
+        return sessionId
+    }
+
+    /**
      * Names the coding agent of a session, for the receipt of a gate it asked.
      *
      * @param orgId The organization.

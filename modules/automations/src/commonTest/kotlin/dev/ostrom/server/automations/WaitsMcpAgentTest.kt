@@ -39,13 +39,15 @@ import kotlin.test.assertTrue
  * its own launch's session only, and never reaches the REST waits routes.
  */
 class WaitsMcpAgentTest {
-    /** [FakeWaitAgents], counting its resolutions. */
+    /** [FakeWaitAgents], counting its resolutions; [reopened] is the segment the sessions module finds open, if set. */
     private class CountingWaitAgents : WaitAgentResolver {
         var resolutions = 0
+        var reopened: String? = null
 
         override suspend fun resolve(principal: AuthenticatedPrincipal, sessionId: String): WaitAgent? {
             resolutions++
-            return FakeWaitAgents.resolve(principal, sessionId)
+            val agent = FakeWaitAgents.resolve(principal, sessionId)
+            return reopened?.let { agent?.copy(sessionId = it) } ?: agent
         }
     }
 
@@ -95,6 +97,25 @@ class WaitsMcpAgentTest {
             val before = agents.resolutions
             assertEquals("Cancelled wait $id.", client.call("cancel_wait", """{"wait":"$id"}""", OWN).text())
             assertEquals(before + 1, agents.resolutions, "Read then cancelled with one reading of the token")
+        }
+
+    @Test
+    fun anAgentTokenAsksInTheSegmentTheServerFoundAndKeepsWhatItAskedBefore() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            val before = client.call("ask_human", """{"title":"Before the sleep"}""", OWN).text()
+                .substringAfter("wait ").substringBefore(" ")
+            // The launcher reopened the session while the machine slept; the relay still names its first id.
+            agents.reopened = "$LAUNCH_SESSION~r2"
+            val id = client.call("ask_human", """{"title":"Ship it?"}""", OWN).text()
+                .substringAfter("wait ").substringBefore(" ")
+            val read = Json.parseToJsonElement(client.call("get_wait", """{"wait":"$id"}""", OWN).text()).jsonObject
+            assertEquals("$LAUNCH_SESSION~r2", read.getValue("sessionId").jsonPrimitive.content, "The open segment")
+            val earlier = client.call("get_wait", """{"wait":"$before"}""", OWN)
+            assertFalse(earlier.isError(), "What it asked before the sleep is still its own: ${earlier.text()}")
+            val listed = client.call("list_waits", "{}", OWN).text().lines().map { it.substringBefore(" ") }
+            assertEquals(listOf(id, before), listed, "Both segments' waits")
+            assertEquals("Cancelled wait $before.", client.call("cancel_wait", """{"wait":"$before"}""", OWN).text())
         }
 
     @Test
