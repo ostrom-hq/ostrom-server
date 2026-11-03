@@ -180,7 +180,7 @@ class ImportSafetyPostgresTest {
                     "server",
                     "ostrom",
                     SKIPPED,
-                    "ostrom is the name of Ostrom's own MCP server: rename it in TeamCode.",
+                    "Agents would see ostrom as ostrom, Ostrom's own MCP server: rename it in TeamCode.",
                 )
                 val plan = report(request, dryRun = true).items
                 assertEquals(refused, plan.single { it.kind == "server" }, "The plan says it, as the run does")

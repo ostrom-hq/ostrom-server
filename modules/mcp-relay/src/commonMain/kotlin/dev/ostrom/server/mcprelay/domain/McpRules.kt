@@ -68,8 +68,8 @@ object McpRules {
     fun requireServer(server: McpServer) {
         rule(
             !OstromMcpServers.isOwn(server.name),
-            "`${server.name.trim().lowercase()}` is Ostrom's own MCP server, which every agent already has: choose " +
-                "another name.",
+            "Agents would see `${server.name.trim().lowercase()}` as `${OstromMcpServers.labelOf(server.name)}`, " +
+                "Ostrom's own MCP server, which every agent already has: choose another name.",
         )
         rule(
             serverName.matches(server.name) && server.name !in RESERVED_NAMES,

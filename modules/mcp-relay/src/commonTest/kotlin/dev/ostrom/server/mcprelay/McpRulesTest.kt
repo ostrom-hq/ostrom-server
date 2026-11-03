@@ -8,6 +8,7 @@ import dev.ostrom.server.mcprelay.domain.InvalidMcpServerException
 import dev.ostrom.server.mcprelay.domain.McpRules
 import dev.ostrom.server.mcprelay.domain.McpServer
 import dev.ostrom.server.mcprelay.domain.McpTransport
+import dev.ostrom.server.mcprelay.domain.OstromMcpServers
 import dev.ostrom.server.mcprelay.domain.PolicyEffect
 import dev.ostrom.server.mcprelay.domain.StdioLauncher
 import dev.ostrom.server.mcprelay.domain.StdioSpec
@@ -60,24 +61,28 @@ class McpRulesTest {
     fun ostromIsOstromsOwnServerWhateverItsCaseAndSpaces() {
         // The relay of `ostrom claude` serves `ostrom` itself (the waits): an org server of that name is never reached.
         val spellings = mapOf(
-            "ostrom" to "ostrom",
-            "OSTROM" to "ostrom",
-            " Ostrom " to "ostrom",
-            "ostrom\t" to "ostrom",
-            // Every session package declares it too.
-            "ostrom-workflow" to "ostrom-workflow",
-            "Ostrom-Workflow" to "ostrom-workflow",
+            "ostrom" to "`ostrom` as `ostrom`",
+            "OSTROM" to "`ostrom` as `ostrom`",
+            " Ostrom " to "`ostrom` as `ostrom`",
+            "ostrom\t" to "`ostrom` as `ostrom`",
+            // Every session package declares it too, and the launcher labels `workflow` `ostrom-workflow`.
+            "ostrom-workflow" to "`ostrom-workflow` as `ostrom-workflow`",
+            "Ostrom-Workflow" to "`ostrom-workflow` as `ostrom-workflow`",
+            "workflow" to "`workflow` as `ostrom-workflow`",
         )
-        for ((name, own) in spellings) {
+        for ((name, seen) in spellings) {
             val refused = assertFailsWith<InvalidMcpServerException>(name) {
                 McpRules.requireServer(http.copy(name = name))
             }
             assertEquals(
-                "`$own` is Ostrom's own MCP server, which every agent already has: choose another name.",
+                "Agents would see $seen, Ostrom's own MCP server, which every agent already has: choose another name.",
                 refused.message,
             )
         }
-        McpRules.requireServer(http.copy(name = "ostrom-docs"))
+        for (name in listOf("ostrom-docs", "ostrom.workflow", "workflows", "docs")) {
+            McpRules.requireServer(http.copy(name = name))
+        }
+        assertEquals("ostrom-a_b", OstromMcpServers.labelOf("a.b"))
     }
 
     @Test

@@ -193,7 +193,9 @@ internal class McpImporter(
         val seen = McpRules.agentName("", name)
         val shadowed = byName.values.firstOrNull { it.name != name && McpRules.agentName("", it.name) == seen }
         return when {
-            OstromMcpServers.isOwn(name) -> "$name is the name of Ostrom's own MCP server: rename it in TeamCode."
+            OstromMcpServers.isOwn(name) ->
+                "Agents would see $name as ${OstromMcpServers.labelOf(name)}, Ostrom's own MCP server: rename it in " +
+                    "TeamCode."
             existing != null && owner == null -> "A server named $name exists and was not imported from TeamCode."
             existing != null && owner != planned.source.id ->
                 "A server named $name was imported from another TeamCode variant: delete it to import this one."

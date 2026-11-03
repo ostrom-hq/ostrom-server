@@ -83,7 +83,7 @@ class McpRelayManagementPostgresTest : RelayPostgresHarness() {
     fun noMcpServerIsNamedOstromWhateverItsCaseAndSpaces() =
         serverTest(listOf(SecretsModule, McpRelayModule), overrides) { server ->
             with(server) {
-                for (name in listOf("ostrom", "OSTROM", " ostrom ")) {
+                for (name in listOf("ostrom", "OSTROM", " ostrom ", "ostrom-workflow", "workflow")) {
                     val created = sendJson(HttpMethod.Post, "$admin/servers", McpServerDto(name, SENTRY, "http"))
                     assertEquals(HttpStatusCode.BadRequest, created.status, name)
                     assertTrue("Ostrom's own MCP server" in created.bodyAsText(), created.bodyAsText())
