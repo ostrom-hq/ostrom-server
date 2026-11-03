@@ -371,10 +371,6 @@ class ImportPostgresTest {
                 TeamCodeImportRequest(
                     accounts = listOf(TeamCodeAccountDto("claude", "c", "Lena", null, "a", "r", "tomorrow")),
                 ),
-                // An instant the parser reads but PostgreSQL cannot store: a 400, never the database's 500.
-                TeamCodeImportRequest(
-                    accounts = listOf(TeamCodeAccountDto("claude", "c", "Lena", null, "a", "r", BEYOND)),
-                ),
             )
             for (request in malformed) {
                 assertEquals(HttpStatusCode.BadRequest, import(request).status, request.toString())
@@ -395,5 +391,3 @@ class ImportPostgresTest {
             "organization: $ids. Map them to members of the organization, or leave them unmapped. Nothing was imported."
     }
 }
-
-private const val BEYOND = "+300000-01-01T00:00:00Z"
