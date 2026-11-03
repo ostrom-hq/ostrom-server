@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.gates
 
+import dev.ostrom.server.gates.domain.repositories.GateHistory
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.services.CiChecks
 import dev.ostrom.server.gates.domain.services.GateActorResolver
@@ -75,7 +76,10 @@ object GatesModule : ServerModule {
     override val name: String = "gates"
 
     override val koinModule: Module = module {
-        single<GatesRepository> { PostgresGatesRepository(get()) }
+        single { PostgresGatesRepository(get()) }
+        single<GatesRepository> { get<PostgresGatesRepository>() }
+        // The history of boundary actions, which the rules' replay reads.
+        single<GateHistory> { get<PostgresGatesRepository>() }
         single<GateDigester> { Sha256GateDigester() }
         single<GateReceiptSigner> { ReceiptsGateSigner(get(), get(), get(), get(), get()) }
         single<EnsureGateReceiptUseCase> { EnsureGateReceiptUseCaseImpl(get(), get(), get()) }

@@ -18,6 +18,7 @@ import dev.ostrom.server.rules.fakes.RulesCallers
 import dev.ostrom.server.rules.fakes.RulesCallers.orgA
 import dev.ostrom.server.rules.fakes.call
 import dev.ostrom.server.rules.infrastructure.NoRepositoryReader
+import dev.ostrom.server.rules.infrastructure.RepositoryAnalysisEngine
 import dev.ostrom.server.rules.presentation.AnalysisStarted
 import dev.ostrom.server.rules.presentation.AnalysisStateDto
 import dev.ostrom.server.rules.presentation.NewRuleRequest
@@ -84,9 +85,12 @@ class AnalysisPostgresTest {
         assertTrue(again != runId, "A new run")
         val replay = server.start("replay")
         assertTrue(replay.startsWith("run_"))
+        // Queued: a replay needs no GitHub. Without a gated rule, it fails where the console sees it.
+        server.koin.get<RepositoryAnalysisEngine>().runNext()
         val replayed = server.koin.get<AnalysisRepository>().transaction(orgA) { lock(AnalysisKind.REPLAY) }
         assertEquals("engine", replayed?.failure?.stage)
-        assertEquals("The replay of pull requests is not available on this server yet.", replayed?.failure?.reason)
+        assertEquals("/api/v1/analysis/replay", replayed?.failure?.retryPath)
+        assertTrue("No rule of the organization gates" in replayed?.failure?.reason.orEmpty())
         val page = server.call("GET", "/api/v1/analysis/replay", "reader-a").body<ReplayPage>()
         assertEquals(emptyList(), page.items)
     }

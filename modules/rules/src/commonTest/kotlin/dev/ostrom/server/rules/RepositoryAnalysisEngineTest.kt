@@ -8,6 +8,7 @@ import dev.ostrom.server.rules.domain.models.RepositoryReadException
 import dev.ostrom.server.rules.domain.models.RepositoryRef
 import dev.ostrom.server.rules.domain.services.AnalysisStart
 import dev.ostrom.server.rules.domain.usecases.AnalyzeOrganizationUseCase
+import dev.ostrom.server.rules.domain.usecases.ReplayRulesUseCase
 import dev.ostrom.server.rules.fakes.FakeRepositoryReader
 import dev.ostrom.server.rules.fakes.RecordingLogger
 import dev.ostrom.server.rules.fakes.RepositoryFixtures
@@ -36,7 +37,13 @@ class RepositoryAnalysisEngineTest {
             analysed += run.id to repos.map { it.name }
         }
     }
-    private val engine = RepositoryAnalysisEngine(reader, analyze, logger, capacity = 1)
+    private val replayed = mutableListOf<String>()
+    private val replay = object : ReplayRulesUseCase {
+        override suspend fun invoke(run: AnalysisRun) {
+            replayed += run.id
+        }
+    }
+    private val engine = RepositoryAnalysisEngine(reader, analyze, replay, logger, capacity = 1)
 
     private fun run(id: String = "run_1", kind: AnalysisKind = AnalysisKind.ANALYSIS) = AnalysisRun(
         orgId = org,
@@ -73,25 +80,26 @@ class RepositoryAnalysisEngineTest {
         )
         reader.listingFailure = RepositoryReadException("GitHub did not answer.")
         assertEquals(AnalysisStart.Unavailable("github", "GitHub did not answer."), engine.start(run()))
-        val none = RepositoryAnalysisEngine(NoRepositoryReader(), analyze, logger)
+        val none = RepositoryAnalysisEngine(NoRepositoryReader(), analyze, replay, logger)
         assertEquals(AnalysisStart.Unavailable("github", NoRepositoryReader.REASON), none.start(run()))
     }
 
     @Test
-    fun aReplayIsNotAvailableAndAFullQueueRefusesVisibly() = runTest {
-        assertEquals(
-            AnalysisStart.Unavailable("engine", "The replay of pull requests is not available on this server yet."),
-            engine.start(run(kind = AnalysisKind.REPLAY)),
+    fun aReplayIsQueuedWithoutGitHubAndAFullQueueRefusesVisibly() = runTest {
+        val busy = AnalysisStart.Unavailable(
+            "engine",
+            "Too many analyses are waiting on this server; start again in a minute.",
         )
+        assertEquals(AnalysisStart.Started, engine.start(run("replay_1", AnalysisKind.REPLAY)))
         reader.connect(org, RepositoryFixtures.api)
+        assertEquals(busy, engine.start(run("run_1")))
+        assertEquals(busy, engine.start(run("replay_2", AnalysisKind.REPLAY)))
+        engine.runNext()
+        assertEquals(listOf("replay_1"), replayed, "The worker replays it")
+        assertEquals(emptyList(), analysed, "And reads no repository for it")
         assertEquals(AnalysisStart.Started, engine.start(run("run_1")))
-        assertEquals(
-            AnalysisStart.Unavailable(
-                "engine",
-                "Too many analyses are waiting on this server; start again in a minute.",
-            ),
-            engine.start(run("run_2")),
-        )
+        engine.runNext()
+        assertEquals(listOf("run_1" to listOf("api")), analysed)
     }
 
     @Test
