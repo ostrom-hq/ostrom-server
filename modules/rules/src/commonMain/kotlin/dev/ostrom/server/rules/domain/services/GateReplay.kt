@@ -190,13 +190,13 @@ object GateReplay {
             private set
 
         init {
-            all.forEach { rule ->
-                if (rule.covers(target)) {
-                    count++
-                    if (first.size < MAX_LISTED) first += rule
-                    rule.approverKeys.forEach { (name, key) -> approvers.getOrPut(key) { name } }
-                }
-            }
+            for (rule in all) if (rule.covers(target)) take(rule)
+        }
+
+        private fun take(rule: ReplayedRule) {
+            count++
+            if (first.size < MAX_LISTED) first += rule
+            rule.approverKeys.forEach { (name, key) -> approvers.getOrPut(key) { name } }
         }
     }
 

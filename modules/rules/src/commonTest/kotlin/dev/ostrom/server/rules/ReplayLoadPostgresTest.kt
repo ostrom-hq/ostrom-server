@@ -41,6 +41,7 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
@@ -85,7 +86,7 @@ class ReplayLoadPostgresTest {
             val page = server.call("GET", "/api/v1/analysis/replay", "admin-a")
             assertEquals(HttpStatusCode.OK, page.status)
             val items = page.body<ReplayPage>().items
-            val stored = JsonArray(items).toString().encodeToByteArray().size
+            val stored = Json.encodeToString(JsonArray.serializer(), JsonArray(items)).encodeToByteArray().size
             val plans = plans(server, statements)
             val report = "replay: ${items.size} actions x $RULES rules in $took; resident memory ${mib(before)} " +
                 "before, peak ${mib(memory.peak())} (+${mib(memory.peak() - before)}); items ${mib(stored.toLong())} " +
@@ -125,7 +126,7 @@ class ReplayLoadPostgresTest {
                 GateReplay.replayAll(actions, prepared, SelfApprovalPolicy.NEVER).also { sampler.cancelAndJoin() }
             }
             step("replayed (peak ${mib(memory.peak())})")
-            val text = JsonArray(items).toString()
+            val text = Json.encodeToString(JsonArray.serializer(), JsonArray(items))
             step("items written out (${mib(text.length.toLong() * 2)} of text)")
             write("rules-replay-steps", steps.joinToString("\n"))
             assertEquals(ACTIONS, items.size)
