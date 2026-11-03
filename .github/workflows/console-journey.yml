@@ -25,6 +25,27 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths: [.github/workflows/console-journey.yml]
+  # ostrom-web calls the same journeys on each push to its main and each pull request (its real-journeys.yml): a
+  # console change that breaks a journey against the real server is seen there, not after the merge. The caller grants
+  # packages: read; its token must be allowed to read the server and runner images on GHCR.
+  workflow_call:
+    inputs:
+      server_image:
+        type: string
+        default: ""
+      runner_image:
+        type: string
+        default: ""
+      web_ref:
+        type: string
+        default: main
+      specs:
+        type: string
+        default: ""
+    secrets:
+      # Only while ostrom-web is private; a public console is read with the job's token.
+      DEPLOY_KEY_WEB:
+        required: false
 
 concurrency:
   # Each dispatch is its own run (it names its own image, console and journeys); a pull request's newer push cancels.
@@ -62,13 +83,18 @@ jobs:
       WEB_REF: ${{ inputs.web_ref || 'main' }}
       WANTED_IMAGE: ${{ inputs.server_image }}
       RUNNER_IMAGE: ${{ inputs.runner_image || 'ghcr.io/ostrom-hq/ostrom-runner:latest' }}
-      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch runs
-      # what it names, or all of e2e-real.
-      SPECS: ${{ github.event_name == 'pull_request' && 'me.spec.ts' || inputs.specs }}
+      # A pull request that changes this file proves it with the /me journey (ostrom-web#42, on main); a dispatch or a
+      # call from ostrom-web runs what it names, or all of e2e-real.
+      SPECS: >-
+        ${{ github.event_name == 'pull_request' && github.repository == 'ostrom-hq/ostrom-server' && 'me.spec.ts' ||
+        inputs.specs }}
     steps:
       # The whole history: main's head names the image, and the image's own commit gives its database roles.
+      # Called from ostrom-web, the default repository is the caller's: the server is named, at its main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ostrom-hq/ostrom-server
+          ref: ${{ github.repository == 'ostrom-hq/ostrom-server' && github.sha || 'main' }}
           path: server
           fetch-depth: 0
           persist-credentials: false
