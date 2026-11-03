@@ -6,11 +6,13 @@ import dev.ostrom.core.api.models.WorkflowEdge
 import dev.ostrom.core.api.models.WorkflowNode
 import dev.ostrom.core.api.models.WorkflowNodeKind
 import dev.ostrom.core.api.models.WorkflowStatus
+import dev.ostrom.server.budgets.BudgetsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.services.CompiledPackages
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
+import dev.ostrom.server.gateway.GatewayModule
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
 import dev.ostrom.server.identity.domain.CLI_SCOPES
@@ -24,22 +26,40 @@ import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.presentation.LaunchResponse
+import dev.ostrom.server.mcprelay.McpRelayModule
+import dev.ostrom.server.mcprelay.domain.AssignMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.CreateMcpServerUseCase
+import dev.ostrom.server.mcprelay.domain.ToolPolicy
+import dev.ostrom.server.mcprelay.presentation.McpServerDto
+import dev.ostrom.server.mcprelay.presentation.toPayload
 import dev.ostrom.server.orgs.domain.Invitation
 import dev.ostrom.server.orgs.domain.InvitationsRepository
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgsRepository
+import dev.ostrom.server.reports.ReportsModule
+import dev.ostrom.server.secrets.SecretsModule
+import dev.ostrom.server.secrets.domain.Caller
+import dev.ostrom.server.secrets.domain.MemberRole
+import dev.ostrom.server.secrets.domain.SecretCipher
+import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
+import dev.ostrom.server.sharing.SharingModule
 import dev.ostrom.server.testing.ReadMeasure
+import dev.ostrom.server.testing.RecordingDriver
 import dev.ostrom.server.testing.SentStatement
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.assertNoScan
 import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.measureRead
+import dev.ostrom.server.testing.roundTrips
 import dev.ostrom.server.testing.writeReadReport
+import dev.ostrom.server.usage.UsageModule
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.github.smyrgeorge.sqlx4k.Transaction
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -49,8 +69,11 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
+import io.ktor.http.headersOf
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -64,25 +87,30 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.koin.dsl.module
 import kotlin.math.ceil
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.time.TimeSource
 import kotlin.uuid.Uuid
 
 /**
- * The launch path of `ostrom claude`, measured on PostgreSQL with the real identity, orgs, launches, sessions, gates
- * and compiler modules (ENG perf pass of the launch, `.coord/PERF-LANCEMENT.md`). The path is what the CLI and the
- * hooks call, in order: the agent policy, the session package and the launch with the CLI's token; then, with the
- * launch's agent token, the session's start, the signed gates catalogue, the first governed tool call (a gate asked),
- * the session's end and the launch's end (R2b), which revokes the agent token.
+ * The launch path of `ostrom claude`, measured on PostgreSQL with the real identity, orgs, launches, sessions, gates,
+ * compiler, MCP relay, gateway and budgets modules (ENG perf pass of the launch, `.coord/PERF-LANCEMENT.md`). The path
+ * is what the CLI and the hooks call, in order: the agent policy (the CLI token's first check), the session package,
+ * the launch and the person's MCP servers with the CLI's token; then, with the launch's agent token, the session's
+ * start, the signed gates catalogue, the person's budget, the first MCP call through the relay (an `initialize` to a
+ * fake upstream), the first governed tool call (a gate asked), the session's end and the launch's end (R2b), which
+ * revokes the agent token.
  *
  * Three measures, written to `build/reports/perf/launch-*.txt`:
  * - each route alone, on tables filled past 20 000 rows by another organization: its database p95 at 20 concurrent
@@ -93,20 +121,45 @@ import kotlin.uuid.Uuid
  * - 1 000 launches ended in two organizations: no agent token left active, and the rows each one leaves.
  */
 class LaunchPathLoadPostgresTest {
-    private val modules = launchModules(CompilerModule)
+    private val modules = launchModules(
+        CompilerModule, SecretsModule, McpRelayModule, UsageModule, GatewayModule, BudgetsModule, SharingModule,
+        ReportsModule,
+    )
+
+    /** The upstream MCP server behind the relay: it answers `initialize`, an MCP client's first call. */
+    private val upstream = HttpClient(
+        MockEngine { request ->
+            if (request.method == HttpMethod.Delete) return@MockEngine respond("", HttpStatusCode.OK)
+            val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
+            respond(
+                """{"jsonrpc":"2.0","id":${body["id"]},"result":{"protocolVersion":"2025-11-25",""" +
+                    """"capabilities":{"tools":{}}}}""",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        },
+    ) {
+        followRedirects = false
+        expectSuccess = false
+    }
+
+    private val overrides = module {
+        single<SecretCipher> { AesGcmSecretCipher(ByteArray(CIPHER_KEY) { 7 }) }
+        single(McpRelayModule.HTTP_CLIENT) { upstream }
+    }
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 
     /** A member of an organization, and a CLI token of theirs bound to it. */
     private class Person(val login: String, val userId: Uuid, val cliToken: String)
 
-    /** An organization and its members, the first its owner. */
-    private class Team(val org: Org, val people: List<Person>)
+    /** An organization and its members, the first its owner, whose membership is [ownerMember]. */
+    private class Team(val org: Org, val people: List<Person>, val ownerMember: Uuid)
 
     /** A launch, its agent token and the session it opened. */
     private class Started(val launchId: String, val agentToken: String, val sessionId: String)
 
     @Test
-    fun eachRouteOfTheLaunchPathKeepsToItsIndexesOnFilledTables() = benchTest(modules, null) { server ->
+    fun eachRouteOfTheLaunchPathKeepsToItsIndexesOnFilledTables() = benchTest(modules, overrides) { server ->
         val team = server.team("ada", PEOPLE_FOR_ROUTES)
         server.release(team.org)
         server.fill(team)
@@ -152,9 +205,10 @@ class LaunchPathLoadPostgresTest {
     }
 
     @Test
-    fun aHundredLaunchesAtOnceInOneOrganizationAllAnswerAndEnd() = benchTest(modules, null) { server ->
+    fun aHundredLaunchesAtOnceInOneOrganizationAllAnswerAndEnd() = benchTest(modules, overrides) { server ->
         val team = server.team("bea", CONCURRENT)
         server.release(team.org)
+        server.grafana(team)
         val deadlocksBefore = server.deadlocks()
         val packages = server.koin.get<CompiledPackages>()
         val compiledBefore = packages.compilations
@@ -171,6 +225,9 @@ class LaunchPathLoadPostgresTest {
             Triple(ended.orEmpty().filterNotNull(), started.elapsedNow(), server.contendedLaunches(team))
         }
         val compilations = packages.compilations - compiledBefore
+        // The statements of one more whole path, alone on the server: what each step costs the database.
+        val alone = Calls(server.driver)
+        server.wholePath(team.people.first(), CONCURRENT, alone)
         val deadlocks = server.deadlocks() - deadlocksBefore
         val active = server.activeAgentTokens(team.org.id)
         val stillActing = finished.count { launch ->
@@ -181,6 +238,8 @@ class LaunchPathLoadPostgresTest {
             appendLine("$CONCURRENT launches at once, one organization, one person each; in-process server, pool 4")
             appendLine("${finished.size} of $CONCURRENT paths whole in $wall (budget $CONCURRENCY_BUDGET)")
             append(calls.report())
+            appendLine("one more path alone, per step: its time, statements and round trips to the database")
+            append(alone.statementsReport())
             val transaction = "launch transaction, 100 callers, pool of $CONTENDED_POOL (advisory lock wait included)"
             appendLine(line(transaction, contended))
             appendLine("deadlocks: $deadlocks; agent tokens still active: $active")
@@ -189,6 +248,7 @@ class LaunchPathLoadPostgresTest {
         }
         write("launch-concurrency", report)
         assertEquals(CONCURRENT, finished.size, "Every launch goes through its whole path\n$report")
+        assertEquals(STEPS, alone.steps(), "The path alone goes through every step\n$report")
         assertEquals(0L, deadlocks, report)
         assertEquals(0L, active, "Every agent token is revoked once its launch ended (R2b)\n$report")
         assertEquals(0, stillActing, report)
@@ -196,7 +256,7 @@ class LaunchPathLoadPostgresTest {
     }
 
     @Test
-    fun aThousandEndedLaunchesLeaveNoActiveAgentToken() = benchTest(modules, null) { server ->
+    fun aThousandEndedLaunchesLeaveNoActiveAgentToken() = benchTest(modules, overrides) { server ->
         val teams = listOf(server.team("cyd", LEAK_PEOPLE), server.team("dov", LEAK_PEOPLE))
         val gate = Semaphore(LEAK_WIDTH)
         coroutineScope {
@@ -219,15 +279,24 @@ class LaunchPathLoadPostgresTest {
         assertEquals(0L, active, report)
     }
 
-    /** Each call of the concurrent paths, by route: its time and its status. */
-    private class Calls {
+    /**
+     * Each call of the concurrent paths, by route: its time and its status; with [recorder], the statements each one
+     * sent too (one path alone, nothing else in flight).
+     */
+    private class Calls(private val recorder: RecordingDriver? = null) {
         private val lock = Mutex()
         private val times = mutableMapOf<String, MutableList<Duration>>()
         private val failures = mutableMapOf<String, MutableList<String>>()
+        private val sent = mutableMapOf<String, List<SentStatement>>()
 
         suspend fun <T> timed(route: String, call: suspend () -> HttpResponse, read: suspend (HttpResponse) -> T): T? {
             val start = TimeSource.Monotonic.markNow()
-            val answer = call()
+            lateinit var answer: HttpResponse
+            if (recorder == null) {
+                answer = call()
+            } else {
+                sent[route] = recorder.record { answer = call() }
+            }
             val took = start.elapsedNow()
             val ok = answer.status.isSuccess()
             val failure = if (ok) null else "${answer.status.value} after $took: ${answer.bodyAsText().take(TEXT)}"
@@ -243,6 +312,17 @@ class LaunchPathLoadPostgresTest {
             failures.forEach { (route, list) ->
                 appendLine("$route: ${list.size} failed, first: ${list.first()}")
             }
+        }
+
+        fun steps(): Int = sent.size
+
+        fun statementsReport(): String = buildString {
+            sent.forEach { (route, list) ->
+                val took = times[route]?.single()
+                appendLine("  $route: $took, ${list.size} statements, ${list.roundTrips()} round trips")
+            }
+            val all = sent.values.flatten()
+            appendLine("  whole path: ${all.size} statements, ${all.roundTrips()} round trips")
         }
     }
 
@@ -261,7 +341,11 @@ class LaunchPathLoadPostgresTest {
         } else {
             null
         }
-        return launch?.let { governed(it, n, calls) }
+        // The launcher then lists the person's MCP servers with the CLI's token, before the agent starts.
+        return launch?.let { launched ->
+            calls.timed("GET /mcp/servers?mine", { client.get(MCP_MINE) { bearer(person.cliToken) } }) { }
+                ?.let { governed(launched, n, calls) }
+        }
     }
 
     // What the agent of a launch does with its token: its session, the catalog, a governed gate, the two ends.
@@ -271,6 +355,8 @@ class LaunchPathLoadPostgresTest {
         val steps = listOf<Pair<String, suspend () -> HttpResponse>>(
             "POST /sessions" to { client.post(SESSIONS) { bearer(token); json(session(sessionId, launch.launchId)) } },
             "GET /gates/catalog/signed" to { client.get(CATALOG) { bearer(token) } },
+            "GET /budgets/me" to { client.get(BUDGET) { bearer(token) } },
+            "POST /mcp/{server} (initialize)" to { client.post(MCP_CALL) { bearer(token); json(INITIALIZE) } },
             "POST /gates (governed)" to { client.post(GATES) { bearer(token); json(ask(sessionId, n)) } },
             "POST /sessions/{id}/end" to { client.post("$SESSIONS/$sessionId/end") { bearer(token); json("{}") } },
             "DELETE /launches/{id}" to { client.delete("$LAUNCHES/${launch.launchId}") { bearer(token) } },
@@ -402,7 +488,8 @@ class LaunchPathLoadPostgresTest {
     private suspend fun TestServer.team(prefix: String, size: Int): Team {
         val owner = user("$prefix-0")
         val org = Org(Uuid.random(), "$prefix-team", "$prefix team", null, null, now)
-        koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, owner, OrgRole.OWNER, now)) { false }
+        val ownerMember = Member(Uuid.random(), org.id, owner, OrgRole.OWNER, now)
+        koin.get<OrgsRepository>().create(org, ownerMember) { false }
         val invitations = koin.get<InvitationsRepository>()
         val members = (1 until size).map { n ->
             val userId = user("$prefix-$n")
@@ -415,7 +502,7 @@ class LaunchPathLoadPostgresTest {
         val people = (listOf("$prefix-0" to owner) + members).map { (login, userId) ->
             Person(login, userId, cliToken(userId, org.id))
         }
-        return Team(org, people)
+        return Team(org, people, ownerMember.id)
     }
 
     private suspend fun TestServer.user(login: String): Uuid = koin.get<ResolveUserUseCase>()(
@@ -450,6 +537,15 @@ class LaunchPathLoadPostgresTest {
         )
         val raw = PackageCompiler.json.encodeToJsonElement(Workflow.serializer(), workflow).jsonObject
         koin.get<CompilerRepository>().saveWorkflow(org.id, "release", raw, null, Authorship("load", now))
+    }
+
+    // The owner declares an MCP server and assigns it to every member, through the use cases (a console write needs a
+    // browser session): each launch's agent reaches it through the relay.
+    private suspend fun TestServer.grafana(team: Team) {
+        val owner = Caller(team.org.id, team.ownerMember, MemberRole.OWNER)
+        val dto = McpServerDto("grafana", "https://mcp.grafana.example.com/mcp", "http")
+        val server = koin.get<CreateMcpServerUseCase>()(owner, dto.toPayload(emptyMap()))
+        koin.get<AssignMcpServerUseCase>()(owner, server.id, null, ToolPolicy(setOf("query_loki_logs")), null)
     }
 
     // Another organization's launches, agent tokens and sessions, past 20 000 rows each: a scan reads them all.
@@ -530,6 +626,15 @@ class LaunchPathLoadPostgresTest {
         const val CATALOG = "/api/v1/gates/catalog/signed?repo=$REPO"
         const val GATES = "/api/v1/gates"
         const val LAUNCH = """{"repo":"$REPO","agent":"claude-code","model":"claude-opus-4-1"}"""
+        const val MCP_MINE = "/api/v1/mcp/servers?mine=true"
+        const val MCP_CALL = "/api/v1/mcp/grafana"
+        const val INITIALIZE =
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"""
+        const val BUDGET = "/api/v1/budgets/me"
+        const val CIPHER_KEY = 32
+
+        // The calls of one whole path: 4 with the CLI's token, 7 with the agent's.
+        const val STEPS = 11
 
         const val PEOPLE_FOR_ROUTES = 10
         const val MEASURED_CALLS = 30

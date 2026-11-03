@@ -17,8 +17,28 @@ import kotlin.concurrent.atomics.atomicArrayOfNulls
  * @property statement The statement with its bound values; null when the server sent a bare string.
  * @property transaction Which transaction it ran in: statements of one transaction share it, a statement sent on the
  *   pool has its own.
+ * @property inTransaction Whether it ran inside a transaction the server opened, which costs a `BEGIN` and a `COMMIT`
+ *   more ([roundTrips]).
  */
-class SentStatement(val sql: String, val statement: Statement?, val transaction: Int)
+class SentStatement(
+    val sql: String,
+    val statement: Statement?,
+    val transaction: Int,
+    val inTransaction: Boolean = false,
+)
+
+/**
+ * The round trips to the database of [this] statements: one each, and the `BEGIN` and `COMMIT` of each transaction.
+ *
+ * @receiver Statements of a recording ([RecordingDriver.record]).
+ * @return The round trips.
+ */
+fun List<SentStatement>.roundTrips(): Int = size + TRANSACTION_ENDS * filter { it.inTransaction }.distinctBy {
+    it.transaction
+}.size
+
+/** A transaction's `BEGIN` and `COMMIT`. */
+private const val TRANSACTION_ENDS = 2
 
 /**
  * The serving role's pool of a [serverTest], which notes every statement the server sends while [record] runs: the
@@ -55,8 +75,8 @@ class RecordingDriver(private val inner: Driver) : Driver by inner {
 
     internal fun newTransaction(): Int = transactions.addAndFetch(1)
 
-    internal fun note(sql: String, statement: Statement?, transaction: Int = newTransaction()) {
-        sent.load()?.add(SentStatement(sql, statement, transaction))
+    internal fun note(sql: String, statement: Statement?, transaction: Int? = null) {
+        sent.load()?.add(SentStatement(sql, statement, transaction ?: newTransaction(), transaction != null))
     }
 
     override suspend fun execute(sql: String): Result<Long> = inner.execute(sql).also { note(sql, null) }

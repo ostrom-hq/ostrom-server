@@ -111,6 +111,8 @@ class ReadBenchTest {
         assertEquals(4, sent.take(4).map { it.transaction }.distinct().size, "Each on the pool in its own")
         assertEquals(1, sent.drop(4).map { it.transaction }.distinct().size, "One transaction")
         assertTrue(sent[4].transaction !in sent.take(4).map { it.transaction })
+        assertEquals(listOf(false, false, false, false, true, true, true, true), sent.map { it.inTransaction })
+        assertEquals(8 + 2, sent.roundTrips(), "Each statement, and the transaction's BEGIN and COMMIT")
         val plans = server.database.driver.replay(sent, explain = true)
         assertEquals(4, plans.size, plans.joinToString("\n\n"))
         assertTrue(plans.all { "actual time" in it }, plans.joinToString("\n\n"))
