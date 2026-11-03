@@ -144,7 +144,8 @@ class TenancyPostgresTest {
 
     @Test
     fun aReusedConnectionNeverKeepsTheRoleOrTheOrganizationOfAnInOrgTransaction() = asTenant { serving, role ->
-        assertEquals(TENANT_ROLE to alpha.toString(), serving.inOrg(alpha) { insert(alpha, "alpha's"); state() })
+        val inside = serving.inOrg(alpha) { insert(alpha, "alpha's"); state() }
+        assertEquals(TENANT_ROLE to alpha.toString(), inside, "Inside: current_user is the tenant role, with alpha")
         assertEquals(role to null, serving.state(), "Back to the serving role, without an organization")
         assertEquals(listOf<String?>("beta's"), serving.inOrg(beta) { insert(beta, "beta's"); bodies() })
         assertEquals(role to null, serving.state())
@@ -160,6 +161,24 @@ class TenancyPostgresTest {
         assertFailsWith<SQLError>("Outside inOrg, the serving role is not granted the table") { serving.count() }
         assertFailsWith<SQLError>("A row of another organization is refused") {
             serving.inOrg(alpha) { insert(beta, "planted") }
+        }
+    }
+
+    @Test
+    fun aRoleThatCannotTakeTheTenantRoleIsRefusedNeverServedAsItself() = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            // A serving role that is not a member of the tenant role: the switch fails, the transaction with it.
+            database.withRole(poolSize = 1) { role, serving ->
+                createNotes(database.owner, TENANT_ROLE)
+                val refused = assertFailsWith<SQLError> { serving.inOrg(alpha) { insert(alpha, "never") } }
+                assertTrue("permission denied" in refused.message.orEmpty(), refused.message)
+                assertFailsWith<SQLError>("Nor read as itself") { serving.inOrg(alpha) { count() } }
+                assertEquals(role to null, serving.state(), "The connection is its own role, without organization")
+                assertEquals(0L, database.superuser.count(), "Nothing written, as the owner or anyone else")
+            }
+        } finally {
+            database.close()
         }
     }
 
