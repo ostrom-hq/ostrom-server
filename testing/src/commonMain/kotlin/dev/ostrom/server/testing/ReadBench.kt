@@ -39,7 +39,8 @@ private const val EXPLAIN = "EXPLAIN (ANALYZE, BUFFERS) "
  * ([TRIALS] times, the plans of the median time kept); then the database time of a call: its statements replayed by
  * [CONCURRENT_CALLS] callers at once on a pool of as many connections ([CALLS_EACH] replays each), every transaction
  * of the call replayed as one and rolled back, and the planning and execution times PostgreSQL reports for its
- * queries added up, timed [TRIALS] times and the median trial kept ([medianTrial]).
+ * queries added up, timed [TRIALS] times and the median trial kept ([medianTrial]). Both database timings run alone on
+ * the PostgreSQL server ([TestDatabase.exclusively]): the other test processes' benches wait, and wait for them.
  *
  * The time is the database's own, not the test's: the in-process test server serves its calls one after another, and
  * a client clock around 20 concurrent replays on a CI runner of a few cores measures the decoding and the scheduling
@@ -59,21 +60,25 @@ suspend fun TestServer.measureRead(name: String, call: suspend HttpClient.() -> 
     repeat(WARM_UP_CALLS) { checked() }
     val http = List(HTTP_CALLS) { timed { checked() } }.sorted()[HTTP_CALLS / 2]
     val statements = (1..RECORDINGS).map { driver.record(checked) }.minBy { it.size }
-    val plans = List(TRIALS) { database.driver.replay(statements, explain = true) }.sortedBy(::databaseTime)[TRIALS / 2]
-    val latencies = database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
-        database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
-        val callers = 1..CONCURRENT_CALLS
-        // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.
-        coroutineScope { callers.map { async { pool.replay(statements, explain = true) } }.awaitAll() }
-        medianTrial(
-            List(TRIALS) {
-                coroutineScope {
-                    callers.map {
-                        async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true)) } }
-                    }.awaitAll().flatten()
-                }
-            },
-        )
+    // The database times are taken alone on the server: no other test process's bench times or opens its large pool
+    // meanwhile (TestDatabase.exclusively), so that two benches never measure each other.
+    val (plans, latencies) = database.exclusively {
+        val explained = List(TRIALS) { database.driver.replay(statements, explain = true) }.sortedBy(::databaseTime)
+        explained[TRIALS / 2] to database.withRole(poolSize = CONCURRENT_CALLS) { role, pool ->
+            database.superuser.execute("GRANT ${database.servingRole} TO $role").getOrThrow()
+            val callers = 1..CONCURRENT_CALLS
+            // Every caller warmed up first, then all timed together: their replays overlap CONCURRENT_CALLS wide.
+            coroutineScope { callers.map { async { pool.replay(statements, explain = true) } }.awaitAll() }
+            medianTrial(
+                List(TRIALS) {
+                    coroutineScope {
+                        callers.map {
+                            async { List(CALLS_EACH) { databaseTime(pool.replay(statements, explain = true)) } }
+                        }.awaitAll().flatten()
+                    }
+                },
+            )
+        }
     }
     return ReadMeasure(name, statements, plans, latencies, http)
 }

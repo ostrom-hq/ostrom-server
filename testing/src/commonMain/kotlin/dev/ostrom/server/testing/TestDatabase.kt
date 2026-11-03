@@ -7,6 +7,8 @@ import dev.ostrom.server.kernel.config.EnvironmentConfigSource
 import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.connectPostgres
 import io.github.smyrgeorge.sqlx4k.Driver
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlin.uuid.Uuid
 
 /**
@@ -57,6 +59,10 @@ class TestDatabase private constructor(
      * superuser, owning nothing, granted only the use of the `public` schema (grant it the tables it needs). With
      * [bypassRowLevelSecurity] the role has `BYPASSRLS`, the case the server refuses. The role is dropped afterwards.
      *
+     * A pool larger than [ROLE_POOL_SIZE] (a read bench's 20 concurrent callers, a load test's contended pool) runs
+     * [exclusively]: one at a time on the PostgreSQL server, whatever test process opens it. The wait comes before the
+     * pool opens, so a bench never times it.
+     *
      * @param bypassRowLevelSecurity Whether the role bypasses row-level security.
      * @param poolSize The connections of the role's pool; 1 makes every query run on the same session.
      * @param block The test, given the role's name and a pool connected as the role.
@@ -66,6 +72,65 @@ class TestDatabase private constructor(
     suspend fun <T> withRole(
         bypassRowLevelSecurity: Boolean = false,
         poolSize: Int = ROLE_POOL_SIZE,
+        block: suspend (role: String, driver: Driver) -> T,
+    ): T = if (poolSize > ROLE_POOL_SIZE) {
+        exclusively { connectedAsRole(bypassRowLevelSecurity, poolSize, block) }
+    } else {
+        connectedAsRole(bypassRowLevelSecurity, poolSize, block)
+    }
+
+    /**
+     * Runs [block] alone among the test processes that share this PostgreSQL server: it holds the server's lock of the
+     * timed and large phases, an advisory lock taken in the configured database (the same for every test database) on
+     * a connection of its own, released afterwards, on failure and cancellation too, and by PostgreSQL if the process
+     * dies with it. Within [block], this database takes it again at once (a bench's large pool inside its timing).
+     *
+     * CI's PostgreSQL service has `max_connections` 100 and Gradle runs the modules' tests in parallel, each test with
+     * pools of its own (up to 12 connections, [create]). Two read benches of 20 callers and the launch path's pool of 50
+     * at once ran out of connections (« sorry, too many clients already », on main and on pull requests, 03/11/2026),
+     * and two benches timing at once on the runner's few cores measured each other: a route's p95 went over its budget
+     * on a pull request that never touched it (ReportsReadsBenchTest, server#282).
+     *
+     * @param block What runs alone.
+     * @return What [block] returns.
+     */
+    suspend fun <T> exclusively(block: suspend () -> T): T {
+        if (exclusive) return block()
+        val pool = connectPostgres(admin)
+        try {
+            return pool.holding(EXCLUSIVE_LOCK) {
+                exclusive = true
+                try {
+                    block()
+                } finally {
+                    exclusive = false
+                }
+            }
+        } finally {
+            withContext(NonCancellable) { pool.close() }
+        }
+    }
+
+    // Runs block holding the advisory lock key on a connection of this pool, released afterwards whatever happens.
+    private suspend fun <T> Driver.holding(key: Long, block: suspend () -> T): T {
+        val lock = acquire().getOrThrow()
+        try {
+            lock.fetchAll("SELECT pg_advisory_lock($key)").getOrThrow()
+            return block()
+        } finally {
+            withContext(NonCancellable) {
+                lock.fetchAll("SELECT pg_advisory_unlock($key)")
+                lock.close()
+            }
+        }
+    }
+
+    // Whether this database holds the lock of exclusively: its phases run one after another, never at once.
+    private var exclusive = false
+
+    private suspend fun <T> connectedAsRole(
+        bypassRowLevelSecurity: Boolean,
+        poolSize: Int,
         block: suspend (role: String, driver: Driver) -> T,
     ): T {
         val role = "ostrom_test_role_" + Uuid.random().toHexString()
@@ -112,7 +177,11 @@ class TestDatabase private constructor(
         // connections their migrations use: a pool of 2 deadlocked.
         private const val OWNER_POOL_SIZE = 6
         private const val SUPERUSER_POOL_SIZE = 2
+        // The pool of withRole by default, the largest one that never waits for the others.
         private const val ROLE_POOL_SIZE = 2
+
+        /** The advisory lock key of [exclusively], in the configured database. */
+        internal const val EXCLUSIVE_LOCK = 774_210_001L
 
         /**
          * Creates a fresh database with its owner and serving roles.

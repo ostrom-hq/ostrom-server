@@ -156,16 +156,17 @@ class LaunchPathLoadPostgresTest {
         server.release(team.org)
         val deadlocksBefore = server.deadlocks()
         val calls = Calls()
-        val started = TimeSource.Monotonic.markNow()
-        // Bounded: a call that waits for a connection it never gets is counted as unfinished, not waited for.
-        val ended = withTimeoutOrNull(CONCURRENCY_BUDGET) {
-            coroutineScope {
-                team.people.mapIndexed { n, person -> async { server.wholePath(person, n, calls) } }.awaitAll()
+        // Timed alone on the server: no other test process's bench times or loads it meanwhile (exclusively).
+        val (finished, wall, contended) = server.database.exclusively {
+            val started = TimeSource.Monotonic.markNow()
+            // Bounded: a call that waits for a connection it never gets is counted as unfinished, not waited for.
+            val ended = withTimeoutOrNull(CONCURRENCY_BUDGET) {
+                coroutineScope {
+                    team.people.mapIndexed { n, person -> async { server.wholePath(person, n, calls) } }.awaitAll()
+                }
             }
+            Triple(ended.orEmpty().filterNotNull(), started.elapsedNow(), server.contendedLaunches(team))
         }
-        val wall = started.elapsedNow()
-        val finished = ended.orEmpty().filterNotNull()
-        val contended = server.contendedLaunches(team)
         val deadlocks = server.deadlocks() - deadlocksBefore
         val active = server.activeAgentTokens(team.org.id)
         val stillActing = finished.count { launch ->

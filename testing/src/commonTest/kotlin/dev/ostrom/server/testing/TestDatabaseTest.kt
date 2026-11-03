@@ -10,7 +10,12 @@ import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.koin.core.module.Module
 import org.koin.dsl.module
 import kotlin.test.Test
@@ -19,6 +24,8 @@ import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 
 class TestDatabaseTest {
     private class ProbeModule(override val name: String, override val koinModule: Module) : ServerModule
@@ -132,6 +139,46 @@ class TestDatabaseTest {
         }
     }
 
+    // The lock of TestDatabase.exclusively in pg_locks, held or waited on, by any test process (a bigint key: classid 0,
+    // objsubid 1).
+    private fun exclusiveLocks(granted: Boolean) =
+        "SELECT CAST(count(*) AS text) AS value FROM pg_locks WHERE locktype = 'advisory' AND classid = 0 " +
+            "AND objid = ${TestDatabase.EXCLUSIVE_LOCK} AND objsubid = 1 AND granted = $granted"
+
+    @Test
+    fun largePoolsTakeTurnsOnTheServerAndSmallOnesNeverWait() = runTest(timeout = BENCHES_AHEAD) {
+        val first = TestDatabase.create() ?: return@runTest
+        val second = checkNotNull(TestDatabase.create())
+        try {
+            val holding = CompletableDeferred<String>()
+            val release = CompletableDeferred<Unit>()
+            val holder = async {
+                first.withRole(poolSize = LARGE_POOL) { _, _ ->
+                    // Taken again at once within: a bench's large pool inside its timing.
+                    first.exclusively { holding.complete(first.superuser.text(exclusiveLocks(granted = true))) }
+                    release.await()
+                }
+            }
+            assertEquals("1", holding.await(), "A single large pool holds the lock")
+            // Another test database, as another Gradle test process has: its large pool waits for the first one.
+            val waiter = async { second.withRole(poolSize = LARGE_POOL) { _, _ -> "entered" } }
+            assertEquals("small", second.withRole { _, _ -> "small" }, "A small pool never waits")
+            withContext(Dispatchers.Default) {
+                repeat(LOCK_LOOKS) {
+                    if (first.superuser.text(exclusiveLocks(granted = false)) != "0") return@withContext
+                    delay(LOCK_LOOK_EVERY)
+                }
+            }
+            assertFalse(waiter.isCompleted, "The second large pool waits while the first one is open")
+            release.complete(Unit)
+            holder.await()
+            assertEquals("entered", waiter.await(), "Then it opens")
+        } finally {
+            second.close()
+            first.close()
+        }
+    }
+
     @Test
     fun aDatabaseThatCannotBeCreatedReleasesItsConnection() = runTest {
         val url = environment["OSTROM_TEST_DATABASE_URL"] ?: return@runTest
@@ -164,5 +211,15 @@ class TestDatabaseTest {
         val first = ProbeModule("first", module { single { "first" } })
         val second = ProbeModule("second", module { single { "second" } })
         assertFails { serverTest(listOf(first, second)) {} }
+    }
+
+    private companion object {
+        // Larger than withRole's default pool of 2: a pool that takes turns.
+        const val LARGE_POOL = 3
+        const val LOCK_LOOKS = 50
+        val LOCK_LOOK_EVERY = 100.milliseconds
+
+        // The other test processes' benches may hold the lock first, each for its timings: a bench's own timeout.
+        val BENCHES_AHEAD = 5.minutes
     }
 }
