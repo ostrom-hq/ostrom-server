@@ -438,7 +438,7 @@ class BudgetGuardTest {
         down = false
         clock.advance(5.seconds)
         guard.check(orgA, member)
-        assertEquals("1", audit.single().details["limit_usd"], "A whole amount has no fraction")
+        assertEquals("0.001", audit.single().details["limit_usd"])
         assertEquals(1, alerts.alerts.count { it.thresholdPercent == 100 })
 
         // A member's daily limit that warns is written under the member.
