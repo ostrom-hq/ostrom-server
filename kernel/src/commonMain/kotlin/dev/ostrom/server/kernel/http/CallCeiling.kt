@@ -132,7 +132,7 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
 
         suspend fun enter(ceiling: Int, wait: Duration): CallPlace? {
             val semaphore = lineOf(ceiling).semaphore
-            val taken = semaphore.tryAcquire() || withTimeoutOrNull(wait * 0) { semaphore.acquire() } != null
+            val taken = semaphore.tryAcquire() || withTimeoutOrNull(wait) { semaphore.acquire() } != null
             return if (taken) {
                 running.incrementAndFetch()
                 CallPlace {
