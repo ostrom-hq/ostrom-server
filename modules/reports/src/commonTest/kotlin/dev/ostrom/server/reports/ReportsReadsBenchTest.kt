@@ -10,6 +10,7 @@ import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.receipts.ReceiptsModule
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.sessions.SessionsModule
+import dev.ostrom.server.testing.assertNoScan
 import dev.ostrom.server.testing.benchTest
 import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
@@ -23,7 +24,8 @@ import kotlin.uuid.Uuid
 /**
  * `GET /api/v1/spending` on a ledger of 1 000 000 model calls of 10 organizations (100 000 each) in 50 000
  * sessions of 20 calls, one session every 15 minutes over 52 days: the owner's month and week, a member's month.
- * Each reads the ledger through its index, never a sequential scan of it or of the sessions; its queries, plans and
+ * Each reads the ledger through its index, never a sequential scan of it or of the sessions, and no step of its plan
+ * runs once per call; its queries, plans and
  * p95 are written to `build/reports/perf/reports.txt`. The p95 is not held to the read budget (ReadBench.kt) yet: the
  * month sums 56 000 calls of the ledger at each read, and only a daily total kept by the usage module brings it under
  * 50 ms.
@@ -78,14 +80,17 @@ class ReportsReadsBenchTest {
         ).map { (name, token, path) -> server.measureRead(name) { get(path) { bearerAuth(token) } } }
         writeReadReport("reports", measures)
         measures.forEach { measure ->
-            val scanned = listOf("usage_events", "sessions_sessions").filter { table ->
-                measure.plans.any { Regex("Seq Scan on $table\\b").containsMatchIn(it) }
-            }
-            assertTrue(scanned.isEmpty(), "${measure.name} scans $scanned:\n${measure.describe()}")
+            measure.assertNoScan(setOf("usage_events", "sessions_sessions"))
+            // The ledger is added up before the joins: no step of the plan runs once per call of the window (the
+            // session lookup by launch did before the sums), only once per session and day.
+            val loops = measure.plans.flatMap { plan -> LOOPS.findAll(plan).map { it.groupValues[1].toInt() } }
+            assertTrue(loops.all { it < MAX_LOOPS }, "${measure.name} loops $loops:\n${measure.describe()}")
         }
     }
 
     private companion object {
+        val LOOPS = Regex("loops=([0-9]+)")
+        const val MAX_LOOPS = 10_000
         const val ORGS = 10
         const val USAGE_PER_ORG = 100_000
         const val SESSIONS_PER_ORG = 5_000
