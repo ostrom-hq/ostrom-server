@@ -79,8 +79,10 @@ class AutomationsRunWaits(
     }
 
     // The membership id of a login, or null when it is not a member any more.
-    private suspend fun memberOf(orgId: Uuid, login: String): String? =
-        members.colleague(orgId, login)?.let { members.member(orgId, it.userId) }?.memberId?.toString()
+    private suspend fun memberOf(orgId: Uuid, login: String): String? {
+        val colleague = members.colleague(orgId, login) ?: return null
+        return members.member(orgId, colleague.userId)?.let { it.memberId.toString() }
+    }
 
     // The run's starter, as a member who neither signed in nor administers: the waits apply their own rules to it.
     private fun caller(orgId: Uuid, memberId: String) = WaitCaller(orgId, memberId, admin = false, interactive = false)
