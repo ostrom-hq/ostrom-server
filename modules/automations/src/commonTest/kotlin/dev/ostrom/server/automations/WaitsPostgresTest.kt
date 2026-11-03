@@ -110,6 +110,8 @@ class WaitsPostgresTest {
         assertEquals(all.drop(1), repository.list(WaitFilter(ORG_A), alone.id, 10))
         assertEquals(listOf(all[1].id), repository.list(open("s1"), null, 10).map { it.id })
         assertEquals(listOf(other.id), repository.list(WaitFilter(ORG_A, involving = "x"), null, 10).map { it.id })
+        assertEquals(listOf(other.id), repository.list(WaitFilter(ORG_A, createdBy = "x"), null, 10).map { it.id })
+        assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, createdBy = ALICE.toString()), null, 10))
         assertEquals(4, repository.list(WaitFilter(ORG_A, assignee = ALICE.toString(), runId = "r1"), null, 10).size)
         assertEquals(emptyList(), repository.list(WaitFilter(ORG_A, assignee = "x"), null, 10))
     }
