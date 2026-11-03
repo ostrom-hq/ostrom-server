@@ -320,6 +320,10 @@ class LaunchPathLoadPostgresTest {
             sent.forEach { (route, list) ->
                 val took = times[route]?.single()
                 appendLine("  $route: $took, ${list.size} statements, ${list.roundTrips()} round trips")
+                list.forEach {
+                    val where = if (it.inTransaction) "tx ${it.transaction}" else "pool"
+                    appendLine("    [$where] ${it.sql.replace(SPACES, " ").take(SQL)}")
+                }
             }
             val all = sent.values.flatten()
             appendLine("  whole path: ${all.size} statements, ${all.roundTrips()} round trips")
@@ -647,6 +651,8 @@ class LaunchPathLoadPostgresTest {
         const val LEAK_WIDTH = 3
         val CONCURRENCY_BUDGET = 150.seconds
         const val TEXT = 120
+        const val SQL = 100
+        val SPACES = Regex("\\s+")
         const val SHA_LENGTH = 40
         const val FILLED_ROWS = 20_000
         val FILLED = setOf("launches_launches", "identity_api_tokens", "sessions_sessions")
