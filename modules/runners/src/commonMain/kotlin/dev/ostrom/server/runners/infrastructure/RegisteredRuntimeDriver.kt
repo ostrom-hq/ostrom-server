@@ -44,7 +44,7 @@ class RegisteredRuntimeDriver(
         val seenAt = assignment?.runnerSeenAt
         return when {
             assignment == null -> ExecutionStatus.MISSING
-            assignment.runnerId == null -> ExecutionStatus.PENDING
+            assignment.runnerId == null -> ExecutionStatus.QUEUED
             seenAt == null || seenAt < onlineSince(clock.now()) -> ExecutionStatus.HOST_LOST
             // Pending, or not reported yet.
             else -> STATUS_OF[assignment.state] ?: ExecutionStatus.PENDING
