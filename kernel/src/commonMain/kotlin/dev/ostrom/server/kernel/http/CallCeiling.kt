@@ -68,11 +68,11 @@ fun interface CallPlace {
 
 /**
  * The calls this replica runs at once, per [CallKind], each under its ceiling; past it, a call waits in line for
- * [CallCeilingSettings.queueWait], then is refused. A call costs memory while it runs, and up to 1 MiB more past about
- * 100 at once: the reads, already bounded, held 500 at once under 512 MiB (CHARGE 41647341533), while 500 approvals,
- * writes bounded by nothing, OOMKilled the server (41644506470). Unset, a ceiling follows the container's limit, read at
- * every call so that a new limit applies at once: 150 calls under 512 MiB, in proportion above and below, at least 16,
- * and 256 without a limit.
+ * [CallCeilingSettings.queueWait], then is refused. A call costs memory while it runs, and up to 1 MiB more past
+ * about 100 at once: the reads, already bounded, held 500 at once under 512 MiB (CHARGE 41647341533), while 500
+ * approvals, writes bounded by nothing, OOMKilled the server (41644506470). Unset, a ceiling follows the container's
+ * limit, read at every call so that a new limit applies at once: 150 calls under 512 MiB, in proportion above and
+ * below, at least 16, and 256 without a limit.
  *
  * @param settings The ceilings the instance sets.
  * @param limitBytes Reads the container's memory limit; null without one.
@@ -122,8 +122,8 @@ class CallsInProgress(private val settings: CallCeilingSettings, private val lim
     }
 
     /**
-     * The places of one kind: a semaphore as wide as the ceiling. A new ceiling starts a new semaphore; the calls in the
-     * old one give their places back to it, so that for a moment both count.
+     * The places of one kind: a semaphore as wide as the ceiling. A new ceiling starts a new semaphore; the calls in
+     * the old one give their places back to it, so that for a moment both count.
      */
     private class Places {
         val running = AtomicLong(0)
@@ -191,10 +191,11 @@ class CallCeilingConfig {
 }
 
 /**
- * Counts each call against the replica's ceiling for its kind, before the body is read; past it, the call waits in line
- * for a place, then is refused: 503 `unavailable` with `Retry-After: 1`. Installed on the routing root by [configureHttp] for [CallKind.SERVED];
- * [heldCalls] and [uncountedCalls] install it again on their routes, and the closest installation counts the call,
- * once. Routes built without [configureHttp] (a module's own test) are not counted.
+ * Counts each call against the replica's ceiling for its kind, before the body is read; past it, the call waits in
+ * line for a place, then is refused: 503 `unavailable` with `Retry-After: 1`. Installed on the routing root by
+ * [configureHttp] for [CallKind.SERVED]; [heldCalls] and [uncountedCalls] install it again on their routes, and the
+ * closest installation counts the call, once. Routes built without [configureHttp] (a module's own test) are not
+ * counted.
  */
 val CallCeiling = createRouteScopedPlugin("CallCeiling", ::CallCeilingConfig) {
     val calls = application.attributes.getOrNull(callsInProgressKey)

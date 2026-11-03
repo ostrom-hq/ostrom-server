@@ -25,13 +25,12 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
  * P1 memory: a slow upstream MCP server holds its relay calls, so they count under the held calls' ceiling
- * (`OSTROM_MAX_HELD_CALLS`). Any member who plugs in a slow server would otherwise take the server's ordinary places and
- * have every other call told 503.
+ * (`OSTROM_MAX_HELD_CALLS`). Any member who plugs in a slow server would otherwise take the server's ordinary places
+ * and have every other call told 503. The held ceiling itself is tested in the kernel (CallCeilingTest).
  */
 class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
     private val upstreamIn = CompletableDeferred<Unit>()
@@ -82,10 +81,6 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
                     // The one ordinary place is free: the slow call holds a held place.
                     val read = client.get("$admin/servers") { bearerAuth("admin-a") }
                     assertEquals(HttpStatusCode.OK, read.status, read.bodyAsText())
-                    // The held calls have their own ceiling: a second slow call waits, then is refused.
-                    val second = rpc("grafana", "member-a", toolCall)
-                    assertEquals(HttpStatusCode.ServiceUnavailable, second.status)
-                    assertTrue("unavailable" in second.bodyAsText())
                     upstreamAnswers.complete(Unit)
                     assertEquals(HttpStatusCode.OK, slow.await().status)
                 }
