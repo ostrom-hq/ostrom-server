@@ -73,33 +73,83 @@ class CloseSessionUseCaseImpl(
     private val costs: SessionCosts,
     private val clock: Clock,
 ) : CloseSessionUseCase {
-    override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session = repository.transaction(orgId) {
-        closeLocked(this, lock(id) ?: throw SessionNotFoundException(), end)
+    // Never a connection held while asking the pool for another: ending a segment under its lock used to read the
+    // costs, the gates and the rules and sign the receipt from inside the transaction, so that as many ends at once as
+    // the pool has connections waited for each other until the pool gave up (perf pass of the launch, 03/11/2026). The
+    // reads come first, the end is written under the lock, the receipt is signed after, and its id written last: an
+    // end that fails in between leaves a segment ended without its receipt, which the next end signs.
+    override suspend fun invoke(orgId: Uuid, id: String, end: EndSession): Session {
+        val seen = repository.get(orgId, id) ?: throw SessionNotFoundException()
+        if (seen.receiptId != null) return locked(orgId, id) { merged(it, end) to null }.first
+        val endedAt = seen.endedAt ?: now()
+        val measured = end.copy(
+            costUsd = if (seen.endedAt == null) {
+                costs.costOf(orgId, seen.launchId, seen.startedAt, endedAt)
+            } else {
+                seen.costUsd
+            },
+        )
+        val gates = sessionGates(orgId, id)
+        val inForce = rules.rulesFor(orgId, seen.repo)
+        val (claimed, told) = locked(orgId, id) { session ->
+            when {
+                session.receiptId != null -> merged(session, end) to null
+                // Another end wrote its time and failed before its receipt: this one signs it, as it was written.
+                session.endedAt != null -> merged(session, end).let { it to it.told() }
+                else -> endedOf(session, endedAt, measured, end) to measured
+            }
+        }
+        val draft = told?.let { draft(claimed, claimed.endedAt ?: endedAt, it, gates, inForce) } ?: return claimed
+        val receiptId = (sign(orgId, draft, receiptIdOf(id)).getValue("id") as JsonPrimitive).content
+        return locked(orgId, id) { it.copy(receiptId = it.receiptId ?: receiptId) to null }.first
+    }
+
+    // The segment under its lock, changed and written in one short transaction that asks the pool for nothing else.
+    private suspend fun locked(
+        orgId: Uuid,
+        id: String,
+        change: (Session) -> Pair<Session, EndSession?>,
+    ): Pair<Session, EndSession?> = repository.transaction(orgId) {
+        val session = lock(id) ?: throw SessionNotFoundException()
+        change(session).also { (next, _) -> if (next != session) update(next) }
     }
 
     override suspend fun closeLocked(tx: SessionsTransaction, session: Session, end: EndSession): Session {
         val orgId = session.orgId
         val id = session.id
         val ended = if (session.receiptId != null) {
-            session.copy(model = session.model ?: end.model, exitCode = session.exitCode ?: end.exitCode)
+            merged(session, end)
         } else {
-            val endedAt = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
+            val endedAt = session.endedAt ?: now()
             val measured = end.copy(costUsd = costs.costOf(orgId, session.launchId, session.startedAt, endedAt))
             val draft = draft(session, endedAt, measured, sessionGates(orgId, id), rules.rulesFor(orgId, session.repo))
-            val receipt = sign(orgId, draft, "rcpt_session_$id")
-            session.copy(
-                endedAt = endedAt,
-                receiptId = (receipt.getValue("id") as JsonPrimitive).content,
-                tools = end.tools,
-                source = if (end.source == null) session.source else end.source.clip(SessionSegments.TEXT),
-                model = session.model ?: end.model,
-                costUsd = measured.costUsd,
-                exitCode = end.exitCode,
-            )
+            val receipt = sign(orgId, draft, receiptIdOf(id))
+            endedOf(session, endedAt, measured, end).copy(receiptId = (receipt.getValue("id") as JsonPrimitive).content)
         }
         if (ended != session) tx.update(ended)
         return ended
     }
+
+    private fun now(): Instant = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds())
+
+    // An ended segment takes what a later end adds outside its receipt: the model and the exit code it lacked.
+    private fun merged(session: Session, end: EndSession): Session =
+        session.copy(model = session.model ?: end.model, exitCode = session.exitCode ?: end.exitCode)
+
+    private fun endedOf(session: Session, endedAt: Instant, measured: EndSession, end: EndSession): Session =
+        session.copy(
+            endedAt = endedAt,
+            tools = end.tools,
+            source = if (end.source == null) session.source else end.source.clip(SessionSegments.TEXT),
+            model = session.model ?: end.model,
+            costUsd = measured.costUsd,
+            exitCode = end.exitCode,
+        )
+
+    // What a written end tells its receipt, when the end that wrote it is gone.
+    private fun Session.told(): EndSession = EndSession(model = model, costUsd = costUsd, exitCode = exitCode)
+
+    private fun receiptIdOf(id: String): String = "rcpt_session_$id"
 
     /** The receipt drafts. */
     companion object {

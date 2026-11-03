@@ -182,5 +182,41 @@ class CloseSessionTest {
         assertEquals("gpt", ended.model)
     }
 
+    @Test
+    fun anEndThatFailsBeforeItsReceiptLeavesItToTheNextEnd() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), StartSession(id = "s-1", agent = "claude-code", model = "gpt"))
+        bench.clock.now += 10.minutes
+        bench.costs.cost = 0.7
+        bench.sign.failing = 1
+        assertFailsWith<IllegalStateException> { bench.close(ORG, session.id, EndSession(tools = 2, exitCode = 1)) }
+        val written = bench.repository.get(ORG, "s-1") ?: error("written")
+        assertNull(written.receiptId, "The end is written, its receipt is not")
+        val endedAt = written.endedAt ?: error("The segment is ended: no gate joins it any more")
+
+        bench.clock.now += 1.minutes
+        val ended = bench.close(ORG, session.id, EndSession(model = "opus", exitCode = 4, source = "net"))
+        assertEquals("rcpt_session_s-1", ended.receiptId)
+        assertEquals(endedAt to 1, ended.endedAt to ended.exitCode, "The first end's time and exit code stay")
+        assertEquals(listOf(endedAt), bench.costs.asked.map { it.third }, "Its cost was measured once")
+        val draft = bench.sign.signed.getValue("rcpt_session_s-1")
+        assertEquals("gpt" to "0.7", draft.text("model") to draft.text("costUsd"))
+        val preimage = CloseSessionUseCaseImpl.preimage(session, endedAt, 1, emptyList())
+        assertEquals(Digests.digestOf(preimage), draft.getValue("subject").jsonObject.text("digest"))
+        assertEquals(ended, bench.repository.get(ORG, "s-1"))
+    }
+
+    @Test
+    fun anEndThatAnotherFinishedWhileItReadKeepsTheOthersReceipt() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(agent(), StartSession(id = "s-1", agent = "claude-code"))
+        var first: Session? = null
+        bench.costs.meanwhile = { first = bench.close(ORG, session.id, EndSession(source = "hook")) }
+        val second = bench.close(ORG, session.id, EndSession(model = "sonnet", exitCode = 3, source = "net"))
+        val hook = first ?: error("the hook ended it first")
+        assertEquals(hook.copy(model = "sonnet", exitCode = 3), second, "Only what lies outside the receipt is added")
+        assertEquals(listOf("rcpt_session_s-1"), bench.sign.signed.keys.toList())
+    }
+
     private fun JsonObject.text(name: String): String = getValue(name).jsonPrimitive.content
 }
