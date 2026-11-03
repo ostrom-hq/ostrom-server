@@ -12,22 +12,6 @@ object McpRules {
     /** The most tools listed per server and allowlisted per assignment. */
     const val MAX_TOOLS: Int = 256
 
-    /**
-     * Ostrom's own MCP servers, as the agent knows them: `ostrom`, which the local relay of `ostrom claude` serves
-     * itself (`/mcp/ostrom`, the waits), and `ostrom-workflow`, which every session package declares
-     * (`PackageCompiler`). The launcher lists an organization's servers by name next to them, so one of these names
-     * would never be reached.
-     * Refused whatever its case and surrounding spaces.
-     */
-    val OSTROM_SERVERS: Set<String> = setOf("ostrom", "ostrom-workflow")
-
-    /**
-     * Whether [name] is one of [OSTROM_SERVERS], whatever its case and surrounding spaces.
-     *
-     * @param name A server name.
-     */
-    fun isOstromsOwn(name: String): Boolean = name.trim().lowercase() in OSTROM_SERVERS
-
     /** Names kept for the routes next to `POST /api/v1/mcp/{server}`. */
     val RESERVED_NAMES: Set<String> = setOf("servers", "settings", "calls", "usage")
 
@@ -83,7 +67,7 @@ object McpRules {
      */
     fun requireServer(server: McpServer) {
         rule(
-            !isOstromsOwn(server.name),
+            !OstromMcpServers.isOwn(server.name),
             "`${server.name.trim().lowercase()}` is Ostrom's own MCP server, which every agent already has: choose " +
                 "another name.",
         )
