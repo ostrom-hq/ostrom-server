@@ -88,7 +88,8 @@ class SignOutDeviceUseCaseImpl(
         // `revoke` refuses a token already revoked; the kind is checked first, so no other token is signed out here.
         if (tokens.get(userId, deviceId)?.kind == DEVICE_KIND) {
             if (!tokens.revoke(userId, deviceId, clock.nowMillis())) throw DeviceNotFoundException()
-            audit.record(AuditEntry(null, userId, "token.revoked", "token", deviceId.toString(), CLI_DETAILS))
+            val details = mapOf("kind" to "cli")
+            audit.record(AuditEntry(null, userId, "token.revoked", "token", deviceId.toString(), details))
             return
         }
         if (member == null) throw DeviceNotFoundException()
@@ -97,9 +98,5 @@ class SignOutDeviceUseCaseImpl(
         if (!elevated.revoke(member.orgId, deviceId, clock.nowMillis())) throw DeviceNotFoundException()
         val details = mapOf("kind" to "admin", "owner" to token.userId.toString())
         audit.record(AuditEntry(member.orgId, userId, "token.revoked", "token", deviceId.toString(), details))
-    }
-
-    private companion object {
-        val CLI_DETAILS: Map<String, String> = mapOf("kind" to "cli")
     }
 }
