@@ -193,18 +193,30 @@ interface MagicLinksRepository {
      *
      * @param link The link.
      * @param tokenHash The SHA-256 of its token.
+     * @param browserHash The SHA-256 of the nonce of the browser that asked for it (web audit n°2 M4).
      */
-    suspend fun create(link: MagicLink, tokenHash: String)
+    suspend fun create(link: MagicLink, tokenHash: String, browserHash: String)
 
     /**
-     * Uses a link: returns it and marks it used, atomically.
+     * Uses a link from the browser that asked for it: returns it and marks it used, atomically.
+     *
+     * @param tokenHash The SHA-256 of the token.
+     * @param browserHash The SHA-256 of the nonce the browser presents.
+     * @param now The current time.
+     *
+     * @return The link, or null when unknown, used, expired or asked for by another browser.
+     */
+    suspend fun consume(tokenHash: String, browserHash: String, now: Instant): MagicLink?
+
+    /**
+     * Whether a link is still usable (known, unused, unexpired), whichever browser presents it.
      *
      * @param tokenHash The SHA-256 of the token.
      * @param now The current time.
      *
-     * @return The link, or null when unknown, used or expired.
+     * @return True when it is.
      */
-    suspend fun consume(tokenHash: String, now: Instant): MagicLink?
+    suspend fun pending(tokenHash: String, now: Instant): Boolean
 }
 
 /** The provider is not configured on this instance. */
@@ -222,6 +234,16 @@ class ProviderRejectedException(reason: String) :
 /** The sign-in link is unknown, expired or already used. */
 class InvalidMagicLinkException :
     OstromException(ErrorKind.INVALID_REQUEST, "This sign-in link has expired or was already used. Ask for a new one.")
+
+/**
+ * A valid link opened in another browser than the one that asked for it (web audit n°2 M4): a link forwarded, read
+ * on another device, or caught in transit signs no one in. It stays usable in the browser that asked for it.
+ */
+class MagicLinkOtherBrowserException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "This sign-in link was asked for in another browser. Open it there, or ask for a new link from this one.",
+    "email_link_other_browser",
+)
 
 /** The mail could not be sent. */
 class MailNotSentException : OstromException(ErrorKind.UNAVAILABLE, "The e-mail could not be sent. Retry in a moment.")

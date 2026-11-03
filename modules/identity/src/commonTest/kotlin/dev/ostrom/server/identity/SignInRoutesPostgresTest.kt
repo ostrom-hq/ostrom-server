@@ -13,6 +13,7 @@ import dev.ostrom.server.identity.domain.SignInMethods
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.identity.fakes.FakeOAuthProvider
 import dev.ostrom.server.identity.fakes.RecordingMailSender
+import dev.ostrom.server.identity.presentation.EMAIL_LINK_COOKIE
 import dev.ostrom.server.identity.presentation.MagicLinkRequest
 import dev.ostrom.server.identity.presentation.OAUTH_STATE_COOKIE
 import dev.ostrom.server.identity.presentation.AccountResponse
@@ -42,6 +43,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -50,6 +52,9 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 
 /** Every sign-in journey end to end, with fake providers and a recording mail sender in place of the real ones. */
@@ -213,15 +218,21 @@ class SignInRoutesPostgresTest {
 
         val first = ask("Ada@Example.com")
         assertEquals(HttpStatusCode.Accepted, first.status)
+        val nonce = assertNotNull(first.cookie(EMAIL_LINK_COOKIE))
+        assertEquals("/api/v1/auth", nonce.path)
+        assertEquals(15 * 60, nonce.maxAge)
+        assertTrue(nonce.httpOnly)
         val link = mail.sent.single().text.lines().first { it.startsWith("http") }
         assertTrue(link.startsWith("http://localhost:5173/auth/email#token="), link)
         val token = link.substringAfter("#token=")
 
         val verified = server.client.post("/api/v1/auth/email/verify") {
+            header(HttpHeaders.Cookie, "$EMAIL_LINK_COOKIE=${nonce.value}")
             contentType(ContentType.Application.Json)
             setBody(VerifyMagicLinkRequest(token))
         }
         assertEquals(HttpStatusCode.OK, verified.status)
+        assertEquals("", assertNotNull(verified.cookie(EMAIL_LINK_COOKIE)).value, "The nonce served its purpose")
         val signedIn = verified.body<SignedInResponse>()
         val secret = assertNotNull(verified.cookie(SESSION_COOKIE)).value
         assertFalse(secret in verified.bodyAsText(), "No session in the body")
@@ -241,6 +252,7 @@ class SignInRoutesPostgresTest {
         assertEquals(HttpStatusCode.NoContent, logout.status)
 
         val reused = server.client.post("/api/v1/auth/email/verify") {
+            header(HttpHeaders.Cookie, "$EMAIL_LINK_COOKIE=${nonce.value}")
             contentType(ContentType.Application.Json)
             setBody(VerifyMagicLinkRequest(token))
         }
@@ -252,6 +264,43 @@ class SignInRoutesPostgresTest {
     }
 
     @Test
+    fun aLinkOpenedInAnotherBrowserIsRefusedAndStillSignsInWhereItWasAskedFor() = serverTest(
+        listOf(IdentityModule),
+        overrides,
+    ) { server ->
+        suspend fun ask(cookie: String?) = server.client.post("/api/v1/auth/email") {
+            cookie?.let { header(HttpHeaders.Cookie, "$EMAIL_LINK_COOKIE=$it") }
+            contentType(ContentType.Application.Json)
+            setBody(MagicLinkRequest("ada@example.com"))
+        }
+        suspend fun verify(token: String, cookie: String?) = server.client.post("/api/v1/auth/email/verify") {
+            cookie?.let { header(HttpHeaders.Cookie, "$EMAIL_LINK_COOKIE=$it") }
+            contentType(ContentType.Application.Json)
+            setBody(VerifyMagicLinkRequest(token))
+        }
+
+        val laptop = assertNotNull(ask(null).cookie(EMAIL_LINK_COOKIE)).value
+        assertEquals(laptop, assertNotNull(ask(laptop).cookie(EMAIL_LINK_COOKIE)).value, "One nonce per browser")
+        val (first, second) = mail.sent.map { mail -> mail.text.lines().first { it.startsWith("http") } }
+            .map { it.substringAfter("#token=") }
+        val phone = assertNotNull(ask(null).cookie(EMAIL_LINK_COOKIE)).value
+        assertNotEquals(laptop, phone, "Another browser, another nonce")
+
+        for (other in listOf(null, phone)) {
+            val refused = verify(first, other)
+            assertEquals(HttpStatusCode.Forbidden, refused.status)
+            val error = Json.parseToJsonElement(refused.bodyAsText()).jsonObject.getValue("error").jsonObject
+            assertEquals("email_link_other_browser", error.getValue("type").jsonPrimitive.content)
+            assertNull(refused.cookie(SESSION_COOKIE), "Nobody is signed in")
+        }
+        for (token in listOf(first, second)) {
+            val signedIn = verify(token, laptop)
+            assertEquals(HttpStatusCode.OK, signedIn.status, signedIn.bodyAsText())
+            assertNotNull(signedIn.cookie(SESSION_COOKIE))
+        }
+    }
+
+    @Test
     fun attemptsAndLinksAreUsableOnceAndNotAfterExpiry() = serverTest(listOf(IdentityModule)) { server ->
         val attempts = server.koin.get<OAuthAttemptsRepository>()
         val links = server.koin.get<MagicLinksRepository>()
@@ -260,14 +309,18 @@ class SignInRoutesPostgresTest {
             OAuthAttempt(Uuid.random(), IdentityProvider.OIDC, Uuid.random(), "v", "n", "/x", now, now + 10.minutes)
         attempts.create(attempt, "state-hash")
         val link = MagicLink(Uuid.random(), "ada@example.com", "/y", now, now + 15.minutes)
-        links.create(link, "token-hash")
+        links.create(link, "token-hash", "browser-hash")
 
         assertNull(attempts.consume("state-hash", now + 11.minutes))
         assertNull(attempts.consume("other", now))
         assertEquals(attempt, attempts.consume("state-hash", now))
         assertNull(attempts.consume("state-hash", now))
-        assertNull(links.consume("token-hash", now + 16.minutes))
-        assertEquals(link, links.consume("token-hash", now))
-        assertNull(links.consume("token-hash", now))
+        assertNull(links.consume("token-hash", "browser-hash", now + 16.minutes))
+        assertFalse(links.pending("token-hash", now + 16.minutes))
+        assertNull(links.consume("token-hash", "another-browser", now), "Another browser uses nothing")
+        assertTrue(links.pending("token-hash", now))
+        assertEquals(link, links.consume("token-hash", "browser-hash", now))
+        assertNull(links.consume("token-hash", "browser-hash", now))
+        assertFalse(links.pending("token-hash", now))
     }
 }
