@@ -5,6 +5,7 @@ import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireScope
 import dev.ostrom.server.launches.domain.models.CreatedLaunch
+import dev.ostrom.server.launches.domain.models.HooksMissingReport
 import dev.ostrom.server.launches.domain.models.InvalidLaunchException
 import dev.ostrom.server.launches.domain.models.LaunchRateLimitedException
 import dev.ostrom.server.launches.domain.models.Launcher
@@ -50,6 +51,19 @@ fun Route.launchesRoutes(dependencies: LaunchesRoutesDependencies) = with(depend
             endLaunch(actors.resolve(call.requirePrincipal())?.launchId, params.launchId)
             call.respond(HttpStatusCode.NoContent)
         }
+        // Audit CLI n°2, M3: the CLI saw no hook run and says so. Only the launch's own agent token, as for its end;
+        // the use case checks it before it reads the body's bounds.
+        post<HooksMissingApi> { params ->
+            val principal = call.requirePrincipal()
+            val body = call.receive<HooksMissingRequest>()
+            reportHooksMissing(
+                principal,
+                actors.resolve(principal),
+                params.launchId,
+                HooksMissingReport(body.waitedSeconds, body.stopped),
+            )
+            call.respond(HttpStatusCode.NoContent)
+        }
     }
     // The runner channel: the execution's runner token, checked before the body is read (S2-46), never a member's.
     post<RunnerLaunchApi> {
@@ -70,7 +84,12 @@ private suspend fun ApplicationCall.retryAfter(create: suspend () -> CreatedLaun
     throw limited
 }
 
-private fun CreatedLaunch.toResponse() = LaunchResponse(launch.id, agentToken, launch.expiresAt.toString())
+private fun CreatedLaunch.toResponse() = LaunchResponse(
+    launch.id,
+    agentToken,
+    launch.expiresAt.toString(),
+    HooksCheckResponse(hooksCheck.afterSeconds, hooksCheck.stopAgent),
+)
 
 // The scope first (SECURITY-AUDIT S2-03): a credential that may not launch learns nothing about its organization.
 private suspend fun ApplicationCall.launcher(launchers: LauncherResolver): Launcher {

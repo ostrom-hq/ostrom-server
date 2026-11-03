@@ -2,6 +2,7 @@
 package dev.ostrom.server.orgs.presentation
 
 import dev.ostrom.server.kernel.http.NullsKept
+import dev.ostrom.server.orgs.domain.DEFAULT_HOOKS_DEADLINE
 import dev.ostrom.server.orgs.domain.DEFAULT_TIME_ZONE
 import io.ktor.resources.Resource
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -130,12 +131,15 @@ class InvitationLinksApi {
  * @property name The new name.
  * @property timeZone The new IANA time zone, such as `Europe/Paris`.
  * @property slug The short name: accepted only unchanged, it never changes.
+ * @property hooksDeadlineSeconds How long the launcher waits for the first hook of an agent session before it
+ *   reports `hooks.missing`, from 5 to 300 seconds.
  */
 @Serializable
 data class UpdateOrgRequest(
     val name: String? = null,
     val timeZone: String? = null,
     val slug: String? = null,
+    val hooksDeadlineSeconds: Int? = null,
 )
 
 /**
@@ -202,6 +206,8 @@ const val DEFAULT_LINK_USES = 10
  * @property createdAt When it was created.
  * @property timeZone Its IANA time zone, `UTC` until set (optional in the contract's sense: a
  *   default, so a client built before it still reads the others).
+ * @property hooksDeadlineSeconds How long the launcher waits for the first hook of an agent session, 15 until set
+ *   (also optional in that sense).
  */
 @Serializable
 data class OrgResponse(
@@ -211,6 +217,7 @@ data class OrgResponse(
     val role: String,
     val createdAt: String,
     val timeZone: String = DEFAULT_TIME_ZONE,
+    val hooksDeadlineSeconds: Int = DEFAULT_HOOKS_DEADLINE,
 )
 
 /**

@@ -25,7 +25,7 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
 private const val ORG_COLUMNS =
-    "o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at, o.time_zone"
+    "o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at, o.time_zone, o.hooks_deadline_seconds"
 private const val MEMBER_COLUMNS = "m.id AS member_id, m.org_id, m.user_id, m.role, m.joined_at"
 private const val INVITATION_COLUMNS =
     "id, org_id, email, role, invited_by, created_at, expires_at, max_uses, uses, revoked_at"
@@ -128,14 +128,20 @@ class OrgsRepositoryImpl(private val driver: Driver) : OrgsRepository {
             .getOrThrow()
             .firstOrNull() != null
 
-    override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
-        val columns = listOfNotNull(name?.let { "name = :name" }, timeZone?.let { "time_zone = :zone" })
+    override suspend fun update(id: Uuid, name: String?, timeZone: String?, hooksDeadlineSeconds: Int?) {
+        val columns =
+            listOfNotNull(
+                name?.let { "name = :name" },
+                timeZone?.let { "time_zone = :zone" },
+                hooksDeadlineSeconds?.let { "hooks_deadline_seconds = :hooks" },
+            )
         if (columns.isEmpty()) return
         val statement =
             Statement.create("UPDATE orgs_organizations SET ${columns.joinToString(", ")} WHERE id = :id")
                 .bind("id", id)
         name?.let { statement.bind("name", it) }
         timeZone?.let { statement.bind("zone", it) }
+        hooksDeadlineSeconds?.let { statement.bind("hooks", it) }
         driver.inOrg(id) { execute(statement).getOrThrow() }
     }
 
@@ -427,6 +433,7 @@ private fun ResultSet.Row.toOrg() =
         freeClaim = get("free_claim").asStringOrNull(),
         createdAt = get("created_at").asInstant(),
         timeZone = get("time_zone").asString(),
+        hooksDeadlineSeconds = get("hooks_deadline_seconds").asInt(),
     )
 
 private fun ResultSet.Row.toMember() =

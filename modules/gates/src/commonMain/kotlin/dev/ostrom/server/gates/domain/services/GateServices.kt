@@ -151,6 +151,17 @@ interface GateNodeResolver {
      * @return The gate node of an action class, or null when no workflow gates it.
      */
     suspend fun resolver(orgId: Uuid, repo: String?): suspend (String) -> GateNode? = { resolve(orgId, repo, it) }
+
+    /**
+     * Tells whether the organization has a gate it enforces for a repository, one a workflow decided and not only
+     * proposed: the launcher stops an agent without hooks only where such a gate would be skipped. By default none:
+     * a source that compiles no workflows enforces nothing.
+     *
+     * @param orgId The organization.
+     * @param repo The repository, or null outside one.
+     * @return True when at least one gate is enforced.
+     */
+    suspend fun enforcesAny(orgId: Uuid, repo: String?): Boolean = false
 }
 
 /** Reads pull requests from GitHub (integrations-github), never from a ref the agent can move. */

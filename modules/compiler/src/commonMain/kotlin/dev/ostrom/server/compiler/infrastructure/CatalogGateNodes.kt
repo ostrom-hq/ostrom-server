@@ -26,6 +26,9 @@ class CatalogGateNodes(private val catalog: () -> GatesCatalogUseCase) : GateNod
         }
     }
 
+    override suspend fun enforcesAny(orgId: Uuid, repo: String?): Boolean =
+        catalog()(orgId, repo).any { it.gate?.enforce == true }
+
     private fun CatalogGate.toNode(): GateNode = GateNode(
         workflowId = workflowId,
         nodeId = nodeId,
