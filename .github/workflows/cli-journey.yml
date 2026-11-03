@@ -347,6 +347,8 @@ jobs:
             --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
             $IMAGE seed-test-account"
       # 6.6 is part of the journey: a run that did not play it (an older CLI ref, a skip) is not a proof of the import
+      # Never optional (no continue-on-error, no condition, no input to turn it off): ostrom-cli's 6.6 skips itself
+      # without the TeamCode team, and only this step keeps such a run from being green.
       - name: 6.6 ostrom import teamcode played and passed
         if: always()
         run: |
