@@ -216,7 +216,7 @@ jobs:
         env:
           OSTROM_E2E_API_UPSTREAM: http://127.0.0.1:4600
           OSTROM_E2E_MAIL_DIR: ${{ runner.temp }}/ostrom-mail
-          # The fake GitHub the server points at (step "Test key of the journeys' GitHub App"): the journeys start it.
+          # The fake GitHub the server points at (its env in the step "Start the server"): the journeys start it.
           OSTROM_E2E_FAKE_GITHUB_PORT: '4610'
           OSTROM_E2E_GITHUB_PORT: '4700'
           OSTROM_E2E_GITHUB_WEBHOOK_SECRET: whsec_github_web_journey
