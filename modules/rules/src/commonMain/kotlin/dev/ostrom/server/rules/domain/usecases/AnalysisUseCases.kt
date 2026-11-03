@@ -11,11 +11,11 @@ import dev.ostrom.server.rules.domain.models.AnalysisKind
 import dev.ostrom.server.rules.domain.models.AnalysisRun
 import dev.ostrom.server.rules.domain.models.Decider
 import dev.ostrom.server.rules.domain.models.Rule
-import dev.ostrom.server.rules.domain.models.RuleQuery
 import dev.ostrom.server.rules.domain.repositories.AnalysisRepository
 import dev.ostrom.server.rules.domain.repositories.RulesRepository
 import dev.ostrom.server.rules.domain.services.AnalysisEngine
 import dev.ostrom.server.rules.domain.services.AnalysisStart
+import dev.ostrom.server.rules.domain.services.EveryRule
 import dev.ostrom.server.rules.domain.services.RuleAudit
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonObject
@@ -142,7 +142,7 @@ class GetAnalysisStateUseCaseImpl(
 ) : GetAnalysisStateUseCase {
     override suspend fun invoke(orgId: Uuid): AnalysisSnapshot = AnalysisSnapshot(
         run = analyses.run(orgId, AnalysisKind.ANALYSIS),
-        rules = rules.rules(orgId, RuleQuery(), ListRulesUseCase.MAX_RULES),
+        rules = EveryRule.of(rules, orgId),
         workflows = workflows.list(orgId, null, null),
     )
 }
