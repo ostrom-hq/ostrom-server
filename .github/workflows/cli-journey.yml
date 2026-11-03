@@ -142,6 +142,15 @@ jobs:
         run: |
           psql -h localhost -U ostrom -d ostrom_ci -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/database-roles.sql"
           docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
+          # 2.9: the journey's fake MCP server is HTTPS on 127.0.0.1, with a certificate made here for this run only;
+          # the server trusts it (the system's authorities plus it, mounted over the image's bundle) and, in this
+          # workflow only, may reach a private address (OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS below, never a default).
+          mkdir -p "$RUNNER_TEMP/fake-mcp"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=127.0.0.1" \
+            -addext "subjectAltName=IP:127.0.0.1" -addext "basicConstraints=critical,CA:TRUE" \
+            -keyout "$RUNNER_TEMP/fake-mcp/key.pem" -out "$RUNNER_TEMP/fake-mcp/cert.pem" 2>/dev/null
+          cat /etc/ssl/certs/ca-certificates.crt "$RUNNER_TEMP/fake-mcp/cert.pem" > "$RUNNER_TEMP/fake-mcp/bundle.pem"
+          chmod 0644 "$RUNNER_TEMP/fake-mcp/bundle.pem"
           # The server's non-root user writes the mails (0644); the journey, as the runner's user, reads them.
           mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
           # Test values only: sign-in mails are written to a directory, the console is the server's own origin (the
@@ -155,19 +164,24 @@ jobs:
           OSTROM_STRIPE_SECRET_KEY=sk_test_cli_e2e
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_cli_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
+          OSTROM_MCP_ALLOW_PRIVATE_UPSTREAMS=true
+          SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
           ENV
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
+            -v "$RUNNER_TEMP/fake-mcp/bundle.pem:/etc/ssl/certs/ca-certificates.crt:ro" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
           for _ in $(seq 1 60); do curl -fsS 127.0.0.1:4600/ready >/dev/null 2>&1 && exit 0; sleep 1; done
           docker logs ostrom-server; exit 1
-      - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt)
+      - name: The CLI journey against the server (login to claude, the gate, the yes, the receipt, ostrom mcp)
         working-directory: cli
         env:
           IMAGE: ${{ steps.server.outputs.image }}
         run: >-
           python3 e2e/journey.py --binary cli/build/bin/linuxX64/releaseExecutable/ostrom.kexe
           --server http://127.0.0.1:4600 --mail-dir "$RUNNER_TEMP/ostrom-mail" --report "$RUNNER_TEMP/journey.json"
+          --fake-mcp-port 4630 --fake-mcp-cert "$RUNNER_TEMP/fake-mcp/cert.pem"
+          --fake-mcp-key "$RUNNER_TEMP/fake-mcp/key.pem"
           --seed "docker run --rm --network host --env-file $RUNNER_TEMP/server.env -e OSTROM_ALLOW_TEST_ACCOUNTS=true
           $IMAGE seed-test-account"
       - name: Server logs
