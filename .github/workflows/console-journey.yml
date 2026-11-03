@@ -117,6 +117,11 @@ jobs:
             echo "- server: \`$image\` (ostrom-server@${revision:0:7}; main is at ${main:0:7})"
             echo "- console: ostrom-web $(git -C web rev-parse --short HEAD) ($WEB_REF), built here without mocks"
           } >> "$GITHUB_STEP_SUMMARY"
+      # The GitHub App of the journeys: a key made for this run only. The server points at the fake GitHub the journeys
+      # start on fixed ports (ostrom-web e2e-real/fakeGithub.ts, as ostrom-e2e's src/fake-github.ts): 4610 for the
+      # sign-in with GitHub, 4700 for the App's installations and repositories. Nothing reaches the real GitHub.
+      - name: Test key of the journeys' GitHub App
+        run: echo "E2E_GITHUB_APP_PEM=$(openssl genrsa -traditional 2048 2>/dev/null | awk '{printf "%s\\n", $0}')" >> "$GITHUB_ENV"
       - name: Start the server (roles, migrate, serve as ostrom_app)
         env:
           IMAGE: ${{ steps.server.outputs.image }}
@@ -142,7 +147,19 @@ jobs:
           OSTROM_STRIPE_WEBHOOK_SECRET=whsec_web_e2e
           OSTROM_STRIPE_API_BASE=http://127.0.0.1:12111
           OSTROM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+          OSTROM_GITHUB_WEB_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_API_URL=http://127.0.0.1:4610
+          OSTROM_GITHUB_CLIENT_ID=Iv1.webjourney
+          OSTROM_GITHUB_CLIENT_SECRET=web-journey-fake-github
+          OSTROM_GITHUB_API=http://127.0.0.1:4700
+          OSTROM_GITHUB_WEB=http://127.0.0.1:4700
+          OSTROM_GITHUB_APP_ID=1
+          OSTROM_GITHUB_APP_SLUG=ostrom-web-journey
+          OSTROM_GITHUB_APP_CLIENT_ID=Iv1.fake
+          OSTROM_GITHUB_APP_CLIENT_SECRET=fake-client-secret
+          OSTROM_GITHUB_WEBHOOK_SECRET=whsec_github_web_journey
           ENV
+          printf 'OSTROM_GITHUB_APP_PEM=%s\n' "$E2E_GITHUB_APP_PEM" >> "$RUNNER_TEMP/server.env"
           sed -i 's/^ *//' "$RUNNER_TEMP/server.env"
           docker run -d --name ostrom-server --network host -v "$RUNNER_TEMP/ostrom-mail:/var/lib/ostrom/mail" \
             --env-file "$RUNNER_TEMP/server.env" "$IMAGE"
@@ -167,6 +184,9 @@ jobs:
         env:
           OSTROM_E2E_API_UPSTREAM: http://127.0.0.1:4600
           OSTROM_E2E_MAIL_DIR: ${{ runner.temp }}/ostrom-mail
+          # The fake GitHub the server points at (step "Test key of the journeys' GitHub App"): the journeys start it.
+          OSTROM_E2E_FAKE_GITHUB_PORT: '4610'
+          OSTROM_E2E_GITHUB_PORT: '4700'
           OSTROM_E2E_REQUIRE_ORGS: 'true'
         # SPECS is split on spaces on purpose, each word one Playwright file filter, and never expanded as a path.
         run: |
