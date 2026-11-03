@@ -301,6 +301,10 @@ jobs:
           docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"'
           docker logs ostrom 2>&1 | grep '"msg":"server stopped"'
           test "$(docker inspect -f '{{.State.ExitCode}}' ostrom)" -eq 0
+      - name: Burst measurement against the real CIO engine (perf branch only)
+        env:
+          APP_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
+        run: ci/burst-measure.sh "$APP_URL"
       - name: Smoke test of the license check (an invalid key fails the start, without logging the key)
         env:
           APP_URL: postgresql://ostrom_app:ostrom_app@localhost:5432/ostrom
