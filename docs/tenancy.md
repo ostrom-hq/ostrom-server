@@ -111,6 +111,13 @@ functions (the owner, a member of `ostrom_router` to hand the functions over, do
 | `billing_complete_task(id, at)`, `billing_fail_task(id, retry)` | billing | ends or retries an outbox task | `BillingPostgresTest` |
 | `governance_expired_organizations(now, limit)` | governance | the organizations with confirmations past their 15 minutes, for the sweep | `GovernancePostgresTest` |
 
+One function is not the router's: the member search, `orgs_search_members(org, prefix, after, limit)` (orgs, version
+7; `MemberSearchPostgresTest`). It is owned by **`ostrom_member_search`** (`NOLOGIN`, no RLS bypass) and run by
+`ostrom_tenant` alone, inside a request's transaction. It reads `identity_users` (its only grant there) and the members
+of one organization through a policy of its own bound to `ostrom.org_id` and to `current_user`; it refuses any other
+organization than the session's, and a session without one. It returns member ids only, in order and paged, under the
+`text_pattern_ops` indexes of `lower(login)` and `lower(display_name)`.
+
 ## The audit log is append-only
 
 The policies say which organization's rows a query reaches, not what it may do to them, and the serving role holds
