@@ -9,8 +9,10 @@ import dev.ostrom.server.orgs.domain.InvalidOrgRequestException
 import dev.ostrom.server.orgs.domain.LeaveOrgUseCaseImpl
 import dev.ostrom.server.orgs.domain.ListMembersUseCaseImpl
 import dev.ostrom.server.orgs.domain.MAX_MEMBER_PAGE
+import dev.ostrom.server.orgs.domain.MAX_MEMBER_QUERY
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.MemberNotFoundException
+import dev.ostrom.server.orgs.domain.MembersRepository
 import dev.ostrom.server.orgs.domain.NotAllowedException
 import dev.ostrom.server.orgs.domain.Org
 import dev.ostrom.server.orgs.domain.OrgNotFoundException
@@ -83,6 +85,22 @@ class MemberUseCasesTest {
         assertTrue(third.items.isEmpty())
         assertNull(third.next)
         assertTrue(list(org.id, carl.id, Uuid.random(), 2).items.isEmpty())
+        // The search: a prefix of the login or name, any case, after a member; the ghost is never found.
+        assertEquals(listOf("bob"), list(org.id, carl.id, null, 2, "B").items.map { it.login })
+        val afterBob = list(org.id, carl.id, whole.items[1].member.id, 2, "d")
+        assertEquals(listOf("dana"), afterBob.items.map { it.login })
+        assertNull(afterBob.next)
+        assertTrue(list(org.id, carl.id, Uuid.random(), 2, "d").items.isEmpty())
+        // A person deleted between the search and the read of the page is not shown.
+        val vanished = object : MembersRepository by world.members {
+            override suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int) =
+                world.members.page(orgId, after, limit)
+        }
+        val listWithAVanished = ListMembersUseCaseImpl(world.orgs, vanished, world.people)
+        assertEquals(4, listWithAVanished(org.id, carl.id, null, 10, "z").items.size)
+        for (query in listOf("", "x".repeat(MAX_MEMBER_QUERY + 1))) {
+            assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, null, 2, query) }
+        }
         for (limit in listOf(0, MAX_MEMBER_PAGE + 1)) {
             assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, null, limit) }
         }

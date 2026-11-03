@@ -86,7 +86,7 @@ class SchemaTenancyPostgresTest {
                     searchPath != null && !searchPath.trimEnd().endsWith("pg_temp")
                 },
                 "$name: EXECUTE granted to PUBLIC".takeIf { function["public_execute"] == "true" },
-                "$name: owned by ${function["owner"]}".takeIf { function["owner"] != ROUTER },
+                "$name: owned by ${function["owner"]}".takeIf { function["owner"] !in DEFINER_OWNERS },
             )
         }
         assertEquals(emptySet(), found.toSet(), "SECURITY DEFINER functions outside the rules")
@@ -116,6 +116,12 @@ class SchemaTenancyPostgresTest {
     private companion object {
         const val TENANT = "ostrom_tenant"
         const val ROUTER = "ostrom_router"
+
+        /**
+         * The owners of the `SECURITY DEFINER` functions: the router's cross-organization paths, and the member search
+         * (orgs migration 7), whose role reads `identity_users` and one organization's members, the session's.
+         */
+        val DEFINER_OWNERS = setOf(ROUTER, "ostrom_member_search")
 
         /** The tables that hold an organization's rows: an `org_id` column, or the organizations themselves. */
         const val ORG_TABLE_FILTER = """
