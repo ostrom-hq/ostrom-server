@@ -251,6 +251,12 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 | `OSTROM_GATEWAY_OPENAI_URL` | `https://api.openai.com` | OpenAI base URL (`/v1/responses`, `/v1/chat/completions`) |
 | `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
 | `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
+| `OSTROM_GATEWAY_MAX_OPEN_CALLS` | `100` | Model calls one replica relays at once, 1 to 100 000. Past it a call is refused at once with 503 (`overloaded_error` for Anthropic clients, `server_error` for OpenAI ones) and `retry-after: 1`, and never reaches the provider |
+
+The ceiling bounds what a replica holds in memory. Each open call keeps its body, a connection to the provider and a
+stream to the agent. Measured by chart-load on the native binary: about 0.9 MiB per open stream, over about 113 MiB at
+rest. So 100 calls fit the chart's 256 MiB limit; raise the ceiling only with the limit. Without a ceiling, 200
+streams on two replicas OOMKilled the server (chart-load 41611978908 and 41612342204).
 
 ### Module `sharing`
 

@@ -28,7 +28,8 @@ data class GatewayConfig(
         /**
          * Reads `OSTROM_GATEWAY_*`.
          *
-         * @throws InvalidConfigException When a URL is not http(s).
+         * @throws InvalidConfigException When a URL is not http(s), or the ceiling of open calls not an integer from 1
+         *   to 100 000.
          */
         fun from(source: ConfigSource): GatewayConfig {
             val defaults = ProviderEndpoints()
@@ -44,8 +45,20 @@ data class GatewayConfig(
                     openrouter = source.url("OSTROM_GATEWAY_OPENROUTER_URL", defaults.openrouter),
                     codex = source.url("OSTROM_GATEWAY_CODEX_URL", defaults.codex),
                 ),
+                maxOpenCalls = source.openCalls(),
             )
         }
+
+        private fun ConfigSource.openCalls(): Int {
+            val raw = this[MAX_OPEN_CALLS] ?: return DEFAULT_MAX_OPEN_CALLS
+            return raw.toIntOrNull()?.takeIf { it in OPEN_CALLS }
+                ?: throw InvalidConfigException(
+                    "$MAX_OPEN_CALLS must be an integer between ${OPEN_CALLS.first} and ${OPEN_CALLS.last}.",
+                )
+        }
+
+        private const val MAX_OPEN_CALLS = "OSTROM_GATEWAY_MAX_OPEN_CALLS"
+        private val OPEN_CALLS = 1..100_000
 
         private fun ConfigSource.url(key: String, default: String): String {
             val value = this[key] ?: default
