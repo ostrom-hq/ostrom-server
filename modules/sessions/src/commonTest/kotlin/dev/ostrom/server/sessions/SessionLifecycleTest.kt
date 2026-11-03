@@ -8,6 +8,7 @@ import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.services.OpenSegment
 import dev.ostrom.server.gates.domain.usecases.SessionGate
 import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.sessions.domain.models.EndSession
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
 import dev.ostrom.server.sessions.domain.models.Session
@@ -190,6 +191,11 @@ class SessionLifecycleTest {
         assertEquals(listOf("s-2", "s-1"), bench.list(user(), SessionQuery(limit = 500)).map { it.id })
         assertEquals(listOf("s-1"), bench.list(agent(), SessionQuery(launchId = "launch-2")).map { it.id })
         assertEquals(listOf("s-2"), bench.list(user(), SessionQuery(limit = 0)).map { it.id })
+        // After a cursor: the older sessions, none after the last; a session the organization does not hold is a 400.
+        assertEquals(listOf("s-1"), bench.list(user(), SessionQuery(before = "s-2")).map { it.id })
+        assertEquals(emptyList(), bench.list(user(), SessionQuery(before = "s-1")))
+        assertFailsWith<InvalidPageException> { bench.list(user(), SessionQuery(before = "nope")) }
+        assertFailsWith<InvalidPageException> { bench.list(user(org = OTHER_ORG), SessionQuery(before = "s-1")) }
     }
 
     @Test

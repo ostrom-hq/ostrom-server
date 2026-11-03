@@ -31,9 +31,9 @@ class PagesTest {
     @Test
     fun aPageAfterACursorIsCheckedOnlyWhenItIsEmpty() = runTest {
         var reads = 0
-        val known: suspend () -> Boolean = { reads++; true }
-        val unknown: suspend () -> Boolean = { reads++; false }
-        assertEquals(emptyList(), Pages.checked("after", null, emptyList<Int>(), unknown), "The first page")
+        val known: suspend (String) -> Boolean = { reads++; it == "x" }
+        val unknown: suspend (String) -> Boolean = { reads++; false }
+        assertEquals(emptyList(), Pages.checked<String, Int>("after", null, emptyList(), unknown), "The first page")
         assertEquals(listOf(1), Pages.checked("after", "x", listOf(1), unknown), "A page that follows its cursor")
         assertEquals(0, reads, "No read when the page has rows or no cursor")
         assertEquals(emptyList(), Pages.checked("after", "x", emptyList<Int>(), known), "The end of the list")

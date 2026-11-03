@@ -63,10 +63,14 @@ class InMemorySessions : SessionsRepository {
         return rows.values.filter { it.orgId == orgId && it.rootId == root }.sortedBy { it.segment }
     }
 
-    override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> =
-        rows.values.filter { it.orgId == orgId && (query.launchId == null || it.launchId == query.launchId) }
+    // As the database: after `before`, older sessions only; none after a session it does not hold.
+    override suspend fun list(orgId: Uuid, query: SessionQuery): List<Session> {
+        val cursor = query.before?.let { rows[orgId to it]?.startedAt ?: return emptyList() }
+        return rows.values.filter { it.orgId == orgId && (query.launchId == null || it.launchId == query.launchId) }
+            .filter { cursor == null || it.startedAt < cursor }
             .sortedByDescending { it.startedAt }
             .take(query.limit)
+    }
 
     override suspend fun stale(seenBefore: Instant, limit: Int): List<StaleSession> {
         staleCutoff = seenBefore

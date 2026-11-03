@@ -37,8 +37,8 @@ object Pages {
      * @return [page].
      * @throws InvalidPageException When the page is empty and the cursor names no row.
      */
-    suspend fun <T> checked(name: String, cursor: Any?, page: List<T>, exists: suspend () -> Boolean): List<T> {
-        if (cursor != null && page.isEmpty() && !exists()) unknownCursor(name)
+    suspend fun <C : Any, T> checked(name: String, cursor: C?, page: List<T>, exists: suspend (C) -> Boolean): List<T> {
+        if (cursor != null && page.isEmpty() && !exists(cursor)) unknownCursor(name)
         return page
     }
 
