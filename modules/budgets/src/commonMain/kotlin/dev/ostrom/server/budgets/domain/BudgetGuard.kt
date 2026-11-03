@@ -158,7 +158,9 @@ class BudgetGuardImpl(
 
     private suspend fun alertCrossings(measured: Measured, month: Instant, now: Instant) {
         val limit = measured.limit.micros
-        if (limit <= 0) return
+        // Nothing spent crosses nothing, even a limit of 0 or 80 % of one millionth (which rounds to 0); then the first
+        // cent spent crosses every threshold of a limit of 0, which means "nothing".
+        if (measured.spent <= 0) return
         val subject = measured.subject
         for (threshold in BudgetRules.ALERT_THRESHOLDS) {
             // limit × threshold stays under 10^17: no overflow for any limit BudgetRules accepts.

@@ -39,6 +39,9 @@ data class MachineConfig(
          */
         private const val MAX_INTERVAL_SECONDS = 30
 
+        /** The most sessions a machine may declare it runs at once, as the server accepts. */
+        private const val MAX_SESSIONS = 256
+
         /**
          * Reads the configuration.
          *
@@ -68,12 +71,21 @@ data class MachineConfig(
             require(seconds == null || seconds in 1..MAX_INTERVAL_SECONDS) {
                 "OSTROM_RUNNER_INTERVAL_SECONDS must be 1 to $MAX_INTERVAL_SECONDS."
             }
+            val maxSessions = optional("OSTROM_RUNNER_MAX_SESSIONS")?.let { it.toIntOrNull() ?: -1 }
+            require(maxSessions == null || maxSessions in 0..MAX_SESSIONS) {
+                "OSTROM_RUNNER_MAX_SESSIONS must be 0 to $MAX_SESSIONS."
+            }
             val docker = optional("OSTROM_DOCKER_API_URL")?.let { raw ->
                 val url = raw.trimEnd('/')
                 require(url.startsWith("http://") || url.startsWith("https://")) {
                     "OSTROM_DOCKER_API_URL must be the http(s) URL of the Docker Engine API (a socket proxy)."
                 }
-                MachineDocker(url, optional("OSTROM_DOCKER_NETWORK"), optional("OSTROM_RUNNER_SESSION_IMAGE"))
+                MachineDocker(
+                    url,
+                    optional("OSTROM_DOCKER_NETWORK"),
+                    optional("OSTROM_RUNNER_SESSION_IMAGE"),
+                    maxSessions,
+                )
             }
             val interval = if (seconds == null) DEFAULT_INTERVAL else seconds.seconds
             return MachineConfig(serverUrl, runnerId, key, interval, docker)
@@ -88,5 +100,7 @@ data class MachineConfig(
  *   on the loopback).
  * @property network The network the sessions join (`OSTROM_DOCKER_NETWORK`); the engine's default when null.
  * @property image The only image a session may run (`OSTROM_RUNNER_SESSION_IMAGE`); the server's choice when null.
+ * @property maxSessions The sessions it runs at once at most (`OSTROM_RUNNER_MAX_SESSIONS`, 0 to 256; 0 drains the
+ *   machine); what the machine holds when null.
  */
-data class MachineDocker(val apiUrl: String, val network: String?, val image: String?)
+data class MachineDocker(val apiUrl: String, val network: String?, val image: String?, val maxSessions: Int?)
