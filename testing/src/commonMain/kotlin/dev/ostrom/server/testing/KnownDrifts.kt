@@ -10,7 +10,6 @@ package dev.ostrom.server.testing
 object KnownDrifts {
     private const val STEP_UP = "Contract: StepUpRequired is ApiError's shape: a 403 matches both oneOf branches."
     private const val STATUS = "Contract: the server answers this status, the operation does not declare it."
-    private const val SERVER_500 = "Server: an unforeseen error answers 500 in a test."
     private const val SUCCESS = "The server's success status is not the contract's (200 against 201)."
     private const val CONTENT = "The content origin refuses without the contract's JSON error."
     private const val AUDIT = "The package audit's meta holds counts where the contract says strings."
@@ -62,10 +61,6 @@ object KnownDrifts {
             "relayMcp 202 $ STATUS",
             "relayMcp 413 $ STATUS",
             "startDeviceLogin 429 $ STATUS",
-        ),
-        waiting(
-            SERVER_500,
-            "answerGovernanceConfirmation 500 $ STATUS",
         ),
         waiting(
             SUCCESS,

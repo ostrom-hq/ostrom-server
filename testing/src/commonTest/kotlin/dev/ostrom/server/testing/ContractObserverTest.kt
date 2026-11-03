@@ -48,6 +48,8 @@ class ContractObserverTest {
                     "a" -> call.respondText("""{"id": "a"}""", json)
                     "drift" -> call.respondText("""{"name": 1}""", json)
                     "teapot" -> call.respondText("{}", json, HttpStatusCode(418, "Teapot"))
+                    "crash" -> call.respondText("""{"error": {}}""", json, HttpStatusCode.InternalServerError)
+                    "crash-bare" -> call.respondText("{}", json, HttpStatusCode.InternalServerError)
                     "text" -> call.respondText("a")
                     "broken" -> call.respondText("{not json", json)
                     else -> call.respondText("", json)
@@ -77,7 +79,8 @@ class ContractObserverTest {
         val observer = ContractObserver(ContractFixtures.contract, setOf("getThing 418 $ STATUS"), reports.toString())
         things(observer)
         client.get("/api/v1/things")
-        listOf("a", "drift", "teapot", "text", "broken", "empty").forEach { client.get("/api/v1/things/$it") }
+        val things = listOf("a", "drift", "teapot", "crash", "crash-bare", "text", "broken", "empty")
+        things.forEach { client.get("/api/v1/things/$it") }
         listOf("", "?as=json", "?as=empty", "?as=error").forEach { client.post("/api/v1/things$it") }
         client.get("/api/v1/things/export")
         client.delete("/api/v1/things/a")
@@ -87,6 +90,7 @@ class ContractObserverTest {
         val expected = listOf(
             "getThing 200 $.id MISSING",
             "getThing 200 $.name UNDECLARED",
+            "getThing 500 $.error MISSING",
             "getThing 200 $ BODY",
             "createThing 204 $ BODY",
         )

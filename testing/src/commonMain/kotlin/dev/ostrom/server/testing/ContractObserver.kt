@@ -19,6 +19,8 @@ import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlin.random.Random
 import kotlin.test.fail
@@ -162,7 +164,8 @@ class ContractObserver(
         type: ContentType?,
         body: ByteArray,
     ): List<Violation> {
-        val response = operation.response(status)
+        // A 500 is the unforeseen (ENG-007): no operation declares it, its body is still the contract's ApiError.
+        val response = operation.response(status) ?: UNFORESEEN.takeIf { status == INTERNAL }
         val json = type?.match(ContentType.Application.Json) == true
         val declared = response?.json
         return when {
@@ -185,6 +188,8 @@ class ContractObserver(
 
     private companion object {
         const val REPORTS = "build/reports/contract"
+        const val INTERNAL = 500
+        val UNFORESEEN = ContractResponse(JsonObject(mapOf("\$ref" to JsonPrimitive("#/components/schemas/ApiError"))))
         val SUCCESS = 200..299
 
         // One file per test process: the module's test tasks never write to the same one.
