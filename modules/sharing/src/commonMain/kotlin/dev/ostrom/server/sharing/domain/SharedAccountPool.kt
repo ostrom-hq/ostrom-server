@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -67,9 +68,10 @@ sealed interface LeaseResult {
 
 /**
  * The org's pool of shared personal accounts, as TeamCode runs it: an account serves when READY, out of cool-down,
- * under its own limits (concurrency, utilization ceiling of every current window, monthly budget) and allowed for the
- * member. Among those, a session sticks to its account (the provider's prompt cache lives there), otherwise the least
- * used account wins, then the higher priority. An account whose tokens cannot be renewed is skipped for the next one.
+ * under its own limits (concurrency, utilization ceiling of every current window, monthly and daily budgets) and
+ * allowed for the member. Among those, a session sticks to its account (the provider's prompt cache lives there),
+ * otherwise the least used account wins, then the higher priority. An account whose tokens cannot be renewed is
+ * skipped for the next one.
  *
  * Concurrency and affinity are per replica, in memory.
  *
@@ -166,10 +168,14 @@ class SharedAccountPool(
         val cooling = account.cooldownUntil?.takeIf { it > now }
         val full = current.filter { it.utilization >= account.limits.utilizationCeiling }
         val budget = account.limits.monthlyBudgetMicros
+        val daily = account.limits.dailyBudgetMicros
+        val dayStart = CivilCalendar.dayStart(now)
         return when {
             cooling != null -> Standing.Closed(cooling)
             full.isNotEmpty() -> Standing.Closed(full.map(QuotaWindow::endsAt).max())
             budget != null && spend.spentMicros(account.id, monthStart) >= budget -> Standing.Closed(null)
+            // Its daily allocation spent, the account opens again with the next UTC day.
+            daily != null && spend.spentMicros(account.id, dayStart) >= daily -> Standing.Closed(dayStart + 1.days)
             else -> Standing.Open(current.maxOfOrNull { it.utilization } ?: 0.0)
         }
     }
