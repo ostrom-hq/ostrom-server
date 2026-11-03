@@ -200,8 +200,8 @@ private suspend fun OrgsRoutesDependencies.heldForConsole(
     write: MemberWrite,
 ): Boolean {
     if (!call.requirePrincipal().confirmsByConsole) return false
-    members.check(orgId, userId, write)
-    call.holdForConfirmation(orgId, ORGS_WRITE, OrgsGovernanceChange.of(write))
+    val checked = members.check(orgId, userId, write)
+    call.holdForConfirmation(orgId, ORGS_WRITE, OrgsGovernanceChange.of(checked))
     return true
 }
 

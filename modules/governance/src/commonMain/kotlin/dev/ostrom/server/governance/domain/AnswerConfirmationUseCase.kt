@@ -50,6 +50,7 @@ interface AnswerConfirmationUseCase {
  * @param changes The modules' governance writes.
  * @param expire Writes the expiry of the overdue ones first.
  * @param clock The time.
+ * @param secrets Keeps a result's secret from the console.
  */
 class AnswerConfirmationUseCaseImpl(
     records: ConfirmationRecords,
@@ -57,11 +58,11 @@ class AnswerConfirmationUseCaseImpl(
     private val changes: GovernanceChanges,
     private val expire: ExpireConfirmationsUseCase,
     private val clock: Clock,
+    private val secrets: ConfirmationSecrets,
 ) : AnswerConfirmationUseCase {
     private val repository = records.repository
     private val audit = records.audit
     private val waits = records.waits
-    private val secrets = ConfirmationSecrets(changes, repository)
 
     override suspend fun invoke(
         confirmer: AuthenticatedPrincipal,
@@ -81,8 +82,8 @@ class AnswerConfirmationUseCaseImpl(
             ConfirmationAnswer.REFUSE -> refuse(confirmation, by)
             ConfirmationAnswer.CONFIRM -> confirm(confirmation, by, GovernanceConfirmer(confirmer, member))
         }
-        // The confirmer reads a secret of the result only when they asked for the write themselves.
-        return secrets.shownTo(answered, confirmer.subjectId)
+        // A console session never reads a secret of the result.
+        return secrets.shownTo(answered, confirmer)
     }
 
     private suspend fun refuse(confirmation: Confirmation, by: ConfirmationPerson): Confirmation {

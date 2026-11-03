@@ -54,11 +54,10 @@ object GovernanceModule : ServerModule {
         single { GovernanceChanges(getAll<GovernanceChange>()) }
         single<ExpireConfirmationsUseCase> { ExpireConfirmationsUseCaseImpl(get(), get(), get(), get()) }
         single<OpenConfirmationUseCase> { OpenConfirmationUseCaseImpl(get(), get(), get(), get(), get(), get()) }
-        single<GetConfirmationUseCase> {
-            GetConfirmationUseCaseImpl(get(), get(), get(), get(), get(), ConfirmationSecrets(get(), get()))
-        }
+        single { ConfirmationSecrets(get(), get()) }
+        single<GetConfirmationUseCase> { GetConfirmationUseCaseImpl(get(), get(), get(), get(), get(), get()) }
         single<AnswerConfirmationUseCase> {
-            AnswerConfirmationUseCaseImpl(ConfirmationRecords(get(), get(), get()), get(), get(), get(), get())
+            AnswerConfirmationUseCaseImpl(ConfirmationRecords(get(), get(), get()), get(), get(), get(), get(), get())
         }
         single<GovernanceConfirmations> { GovernanceConfirmationsImpl(get(), get<IdentityConfig>().consoleUrl) }
         single { ConfirmationsRoutesDependencies(get(), get(), get(), get()) }

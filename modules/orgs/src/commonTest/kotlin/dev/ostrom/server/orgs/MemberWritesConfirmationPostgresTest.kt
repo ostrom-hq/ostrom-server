@@ -253,7 +253,10 @@ class MemberWritesConfirmationPostgresTest {
             assertEquals(HttpStatusCode.Forbidden, link(bobs, "admin", 1).status)
             assertEquals(emptyList(), held)
             // What an admin may do is held.
-            assertEquals(HttpStatusCode.Accepted, invite(bobs, "eve@eve.test", "member").status)
+            assertEquals(HttpStatusCode.Accepted, invite(bobs, " Eve@Eve.test ", "member").status)
+            // Held as it will be made: the address cleaned.
+            val heldInvite = held.single().write.payload.getValue("invites").jsonArray.single().jsonObject
+            assertEquals("eve@eve.test", heldInvite.getValue("email").jsonPrimitive.content)
         }
     }
 
@@ -317,6 +320,9 @@ class MemberWritesConfirmationPostgresTest {
             // Nobody named so: the preview fails, so the confirmation service refuses to open it, or to confirm it.
             val nobody = OrgsGovernanceChange.of(MemberWrite.Removal("nobody"))
             assertFailsWith<OstromException> { change.preview(team.orgId, nobody) }
+            // The owner role, read again at the confirmation: the ownership moves by a transfer.
+            val owner = OrgsGovernanceChange.of(MemberWrite.Role("bob", OrgRole.OWNER))
+            assertFailsWith<OstromException> { change.preview(team.orgId, owner) }
             // A kind this change does not own: the governance module never hands it one.
             assertFailsWith<IllegalStateException> {
                 change.preview(team.orgId, GovernanceWrite("members.unknown", JsonObject(emptyMap())))

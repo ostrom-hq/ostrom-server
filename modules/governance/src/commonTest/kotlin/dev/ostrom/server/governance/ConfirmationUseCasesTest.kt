@@ -80,6 +80,7 @@ class ConfirmationUseCasesTest {
         changes,
         expire,
         clock,
+        secrets,
     )
 
     private fun token(who: String, scopes: Set<String> = GovernanceScopes.ALL) =
@@ -374,20 +375,32 @@ class ConfirmationUseCasesTest {
     }
 
     @Test
-    fun aResultsSecretIsShownOnceToThePersonWhoAskedAndNeverToTheConfirmer() = runTest {
+    fun aResultsSecretIsShownOnceToThePersonWhoAskedAndNeverToTheConsole() = runTest {
         change.secret = true
         val asked = open(request())
         assertNull(get(token("ada"), asked.id).result, "Pending: no result yet")
         val answered = confirm(browser("olga"), asked.id)
         assertEquals(JsonPrimitive("shown"), answered.result, "The owner who confirmed never reads it")
         assertEquals(JsonPrimitive("shown"), get(browser("olga"), asked.id).result, "Nor reads it later")
-        assertEquals(JsonPrimitive("never"), repository.rows.getValue(asked.id).result, "Kept for the person who asked")
+        assertEquals(JsonPrimitive("shown"), get(browser("ada"), asked.id).result, "Nor the asker's own console")
+        assertEquals(JsonPrimitive("never"), repository.rows.getValue(asked.id).result, "Kept for the token that waits")
         assertEquals(JsonPrimitive("never"), get(token("ada"), asked.id).result, "The person who asked reads it once")
         assertEquals(JsonPrimitive("shown"), repository.rows.getValue(asked.id).result, "Then it is gone")
         assertEquals(JsonPrimitive("shown"), get(token("ada"), asked.id).result, "Their second read")
-        // Confirmed by the person who asked, on the console: the answer is their read.
+        // Confirmed on the console by the person who asked: their console's answer does not burn the CLI's read.
         val own = open(request(to = "always"))
-        assertEquals(JsonPrimitive("always"), confirm(browser("ada"), own.id).result)
-        assertEquals(JsonPrimitive("shown"), get(token("ada"), own.id).result)
+        assertEquals(JsonPrimitive("shown"), confirm(browser("ada"), own.id).result)
+        assertEquals(JsonPrimitive("always"), get(token("ada"), own.id).result)
+    }
+
+    @Test
+    fun aResultOfAKindNoModuleOwnsAnyMoreIsReadAsStored() = runTest {
+        change.secret = true
+        val asked = open(request())
+        confirm(browser("olga"), asked.id)
+        val orphan = repository.rows.getValue(asked.id).let { it.copy(write = it.write.copy(kind = "gone.away")) }
+        repository.rows[asked.id] = orphan
+        assertEquals(JsonPrimitive("never"), get(browser("olga"), asked.id).result)
+        assertNull(changes.ownerOf("gone.away"))
     }
 }

@@ -8,6 +8,7 @@ import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.orgs.domain.CheckMemberWriteUseCase
+import dev.ostrom.server.orgs.domain.InvalidOrgRequestException
 import dev.ostrom.server.orgs.domain.InviteRequest
 import dev.ostrom.server.orgs.domain.MemberProfile
 import dev.ostrom.server.orgs.domain.MemberWrite
@@ -51,6 +52,10 @@ class OrgsGovernanceChange(
     override suspend fun preview(orgId: Uuid, write: GovernanceWrite): GovernancePreview =
         when (val asked = write.memberWrite()) {
             is MemberWrite.Role -> {
+                // Checked when it was held; read again at the confirmation, which a stale or forged row may reach.
+                if (asked.role == OrgRole.OWNER) {
+                    throw InvalidOrgRequestException("Transfer the ownership to make someone owner.")
+                }
                 val target = findMember(members, people, orgId, asked.login)
                 val summary = "Change ${target.login}'s role to ${asked.role.key()}"
                 GovernancePreview(summary, target.shown(), target.shown(asked.role))

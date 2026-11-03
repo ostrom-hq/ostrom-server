@@ -63,7 +63,7 @@ class GetConfirmationUseCaseImpl(
             confirmation = look(member.orgId, id)
         }
         if (confirmation.status != confirmation.statusAt(clock.now())) confirmation = read(member.orgId, id)
-        return secrets.shownTo(confirmation, viewer.subjectId)
+        return secrets.shownTo(confirmation, viewer)
     }
 
     private suspend fun read(orgId: Uuid, id: String): Confirmation {

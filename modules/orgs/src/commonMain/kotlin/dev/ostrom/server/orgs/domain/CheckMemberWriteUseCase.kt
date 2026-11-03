@@ -1,41 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.orgs.domain
 
-import dev.ostrom.server.kernel.auth.OrgRole
 import kotlin.uuid.Uuid
-
-/** A write on the members, as a person asks for it. */
-sealed interface MemberWrite {
-    /**
-     * Gives [login] the role [role].
-     *
-     * @property login The member.
-     * @property role Their new role.
-     */
-    data class Role(val login: String, val role: OrgRole) : MemberWrite
-
-    /**
-     * Removes [login].
-     *
-     * @property login The member.
-     */
-    data class Removal(val login: String) : MemberWrite
-
-    /**
-     * Invites people by e-mail.
-     *
-     * @property invites Who, with which role.
-     */
-    data class Invites(val invites: List<InviteRequest>) : MemberWrite
-
-    /**
-     * Creates an invitation link.
-     *
-     * @property role The role it gives.
-     * @property maxUses How many people it brings in.
-     */
-    data class Link(val role: OrgRole, val maxUses: Int) : MemberWrite
-}
 
 /**
  * Checks that a person may make a write on the members, without making it: a write held for a confirmation on the
@@ -49,9 +15,10 @@ interface CheckMemberWriteUseCase {
      * @param orgId The organization.
      * @param userId The person who asks.
      * @param write The write.
+     * @return The write as it will be made: the invitations' addresses cleaned, each once.
      * @throws OstromException With the refusal the write itself would get (400, 403, 404).
      */
-    suspend operator fun invoke(orgId: Uuid, userId: Uuid, write: MemberWrite)
+    suspend operator fun invoke(orgId: Uuid, userId: Uuid, write: MemberWrite): MemberWrite
 }
 
 /**
@@ -66,14 +33,17 @@ class CheckMemberWriteUseCaseImpl(
     private val members: MembersRepository,
     private val people: People,
 ) : CheckMemberWriteUseCase {
-    override suspend fun invoke(orgId: Uuid, userId: Uuid, write: MemberWrite) {
+    override suspend fun invoke(orgId: Uuid, userId: Uuid, write: MemberWrite): MemberWrite {
         val caller = requireMembership(orgs, members, orgId, userId)
-        when (write) {
-            is MemberWrite.Role ->
-                requireRoleChange(caller, findMember(members, people, orgId, write.login), write.role)
-            is MemberWrite.Removal -> requireRemoval(caller, findMember(members, people, orgId, write.login))
-            is MemberWrite.Invites -> requireInvites(caller, write.invites)
-            is MemberWrite.Link -> requireLink(caller, write.role, write.maxUses)
+        return when (write) {
+            is MemberWrite.Role -> write.also {
+                requireRoleChange(caller, findMember(members, people, orgId, it.login), it.role)
+            }
+            is MemberWrite.Removal -> write.also {
+                requireRemoval(caller, findMember(members, people, orgId, it.login))
+            }
+            is MemberWrite.Invites -> MemberWrite.Invites(requireInvites(caller, write.invites))
+            is MemberWrite.Link -> write.also { requireLink(caller, it.role, it.maxUses) }
         }
     }
 }
