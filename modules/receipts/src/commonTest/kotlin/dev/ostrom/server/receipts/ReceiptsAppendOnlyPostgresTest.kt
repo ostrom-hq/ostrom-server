@@ -2,7 +2,6 @@
 package dev.ostrom.server.receipts
 
 import dev.ostrom.server.instance.InstanceModule
-import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.receipts.domain.usecases.SignReceiptUseCase
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
@@ -38,7 +37,7 @@ class ReceiptsAppendOnlyPostgresTest {
         assertTrue("append-only" in error.message.orEmpty(), "$what: ${error.message}")
     }
 
-    private suspend fun TestServer.bodies(org: Uuid): List<String> = driver.inOrg(org) {
+    private suspend fun TestServer.bodies(org: Uuid): List<String> = asServingRole(org) {
         fetchAll("SELECT body FROM receipts_receipts ORDER BY id").getOrThrow().map { it.get("body").asString() }
     }
 
