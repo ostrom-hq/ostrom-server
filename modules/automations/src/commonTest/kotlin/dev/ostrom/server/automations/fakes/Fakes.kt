@@ -176,16 +176,19 @@ class InMemoryWaits : WaitsRepository {
 
     override suspend fun get(orgId: Uuid, id: Uuid): Wait? = waits[id]?.takeIf { it.orgId == orgId }
 
+    /** The people side of [WaitFilter], as the repository's query reads it. */
+    private fun WaitFilter.whose(wait: Wait): Boolean = wait.orgId == orgId &&
+        (assignee == null || wait.assignee == assignee) &&
+        (involving == null || wait.assignee == involving || wait.createdBy == involving) &&
+        (createdBy == null || wait.createdBy == createdBy)
+
+    /** The state and place side of [WaitFilter]. */
+    private fun WaitFilter.where(wait: Wait): Boolean = (status == null || wait.status == status) &&
+        (sessionId == null || wait.sessionId == sessionId) &&
+        (runId == null || wait.runId == runId)
+
     override suspend fun list(filter: WaitFilter, before: Uuid?, limit: Int): List<Wait> {
-        val all = waits.values.reversed().filter {
-            it.orgId == filter.orgId &&
-                (filter.assignee == null || it.assignee == filter.assignee) &&
-                (filter.involving == null || it.assignee == filter.involving || it.createdBy == filter.involving) &&
-                (filter.createdBy == null || it.createdBy == filter.createdBy) &&
-                (filter.status == null || it.status == filter.status) &&
-                (filter.sessionId == null || it.sessionId == filter.sessionId) &&
-                (filter.runId == null || it.runId == filter.runId)
-        }
+        val all = waits.values.reversed().filter { filter.whose(it) && filter.where(it) }
         val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
         return all.drop(start).take(limit)
     }
