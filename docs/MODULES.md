@@ -2,10 +2,10 @@
 
 Every functional domain of the server (`identity`, `orgs`, `sessions`, `launches`, `gates`, `receipts`, `compiler`,
 `workflow-runs`, `mcp-relay`, `secrets`, `usage`, `gateway`, `budgets`, `runners`, `automations`, `artifacts`,
-`integrations-github`, `integrations-slack`, `sharing`) is a Gradle module under `modules/<name>/`. Each one already
-exists as an empty skeleton, registered in the app: **the owner of a module only edits its own directory**, plus its
-single line in `app/.../ServerModules.kt` if the order must change. `modules/instance` is the complete reference
-example: copy its shape.
+`integrations-github`, `integrations-slack`, `sharing`, `governance`) is a Gradle module under `modules/<name>/`.
+Each one already exists as an empty skeleton, registered in the app: **the owner of a module only edits its own
+directory**, plus its single line in `app/.../ServerModules.kt` if the order must change. `modules/instance` is the
+complete reference example: copy its shape.
 
 Read [`ostrom-core/docs/CONVENTIONS.md`](https://github.com/ostrom-hq/ostrom-core/blob/main/docs/CONVENTIONS.md)
 first: it wins over this page wherever they differ.
@@ -251,6 +251,23 @@ of the instance and comes before an org's own key (`/api/v1/inference/settings` 
 | `OSTROM_GATEWAY_OPENAI_URL` | `https://api.openai.com` | OpenAI base URL (`/v1/responses`, `/v1/chat/completions`) |
 | `OSTROM_GATEWAY_OPENROUTER_URL` | `https://openrouter.ai/api` | OpenRouter base URL (`/v1/chat/completions`) |
 | `OSTROM_GATEWAY_CODEX_URL` | `https://chatgpt.com/backend-api/codex` | ChatGPT's Codex backend (`/responses`), for shared ChatGPT accounts |
+
+### Module `governance`
+
+A governance write (the rules, the gate policy, the model policy, a workflow's decision) made with a person's API
+token, the CLI's (elevated by `ostrom login --admin` or not) or a personal one, is not applied: the route answers 202
+with a confirmation that an owner or an admin answers on the console, at
+`OSTROM_CONSOLE_URL/confirm/<id>` (audit CLI H1: an agent on the developer's machine can present the developer's
+tokens). A confirmation shows what the write replaces and what it writes, lives 15 minutes, is answered once, and
+each step (created, confirmed, refused, expired, failed) is an event of the organization's signed audit log. A token
+never answers; a browser session and an `inference:admin` service key still write at once. A module that owns a
+governance write binds a `GovernanceChange` named after itself (preview, apply) and calls `holdForConfirmation`
+for a token; without this module loaded, a token's governance write is refused.
+
+**Known limit: the confirmation is a fresh sign-in, not a passkey.** The server has no WebAuthn yet: confirming
+needs a console sign-in less than 5 minutes old, the same step-up as a gate's yes (S2-54, `StepUp.WITHIN`), and
+answers 403 `step_up_required` otherwise. An agent that can read the developer's mailbox could sign in again with an
+e-mail link and confirm its own request; WebAuthn, planned after the go, closes that hole.
 
 ### Module `sharing`
 

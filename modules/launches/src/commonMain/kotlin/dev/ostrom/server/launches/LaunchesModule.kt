@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches
 
+import dev.ostrom.server.automations.domain.WaitAgentResolver
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.kernel.auth.ModelAccess
 import dev.ostrom.server.kernel.database.SchemaMigration
@@ -22,6 +23,7 @@ import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
 import dev.ostrom.server.launches.infrastructure.LaunchAgents
 import dev.ostrom.server.launches.infrastructure.LaunchGateActors
 import dev.ostrom.server.launches.infrastructure.LaunchRelayCallers
+import dev.ostrom.server.launches.infrastructure.LaunchWaitAgents
 import dev.ostrom.server.launches.infrastructure.LaunchesMigrations
 import dev.ostrom.server.launches.infrastructure.ModelAccessLaunchRules
 import dev.ostrom.server.launches.infrastructure.NoLaunchModelRules
@@ -39,9 +41,10 @@ import org.koin.dsl.module
  * The launches module: `ostrom <agent>` reads the organization's policy, then creates a launch and gets the agent
  * token its hooks use, scoped to the launch's sessions (audit A12/A13). It also resolves the callers of the gates,
  * sessions and compiler routes ([LaunchGateActors]), and those of the MCP relay, the inference gateway and the budgets
- * and the usage events ([LaunchRelayCallers]), so that an agent token reaches the organization's MCP servers. It also
- * opens the launch of a cloud session its runner asks for. Needs the identity, orgs, gates and runners modules; it
- * binds the secrets module's `CallerResolver`, which those modules look up.
+ * and the usage events ([LaunchRelayCallers]), so that an agent token reaches the organization's MCP servers, and the
+ * agent token of the waits MCP server ([LaunchWaitAgents]), so that an agent asks a person. It also opens the launch of
+ * a cloud session its runner asks for. Needs the identity, orgs, gates and runners modules; it binds the secrets
+ * module's `CallerResolver` and the automations module's `WaitAgentResolver`, which those modules look up.
  */
 object LaunchesModule : ServerModule {
     override val name: String = "launches"
@@ -54,6 +57,7 @@ object LaunchesModule : ServerModule {
         single { LaunchAgents(get(), get(), get(), get()) }
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
         single<CallerResolver> { LaunchRelayCallers(get(), get()) }
+        single<WaitAgentResolver> { LaunchWaitAgents(get(), get()) }
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get(), get()) }
         single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get()) }
