@@ -22,11 +22,12 @@ internal class FakeDockerEngine : DockerEngine {
     var failRemove: Exception? = null
     var onStart: suspend (PlannedObject) -> Unit = {}
 
-    var info = EngineInfo(cpus = 2, memoryBytes = 8L shl 30)
+    var info: EngineInfo? = EngineInfo(cpus = 2, memoryBytes = 8L shl 30)
 
     override suspend fun containers(): List<HeldContainer> = containers.toList()
 
-    override suspend fun info(): EngineInfo = info
+    override suspend fun info(): EngineInfo =
+        info ?: throw DockerApiException("read the engine", HttpStatusCode.Forbidden)
 
     override suspend fun volumes(): List<HeldVolume> = volumes.toList()
 
@@ -63,7 +64,7 @@ class MachineSessionsTest {
     private val b = Uuid.random()
     private val lines = mutableListOf<String>()
     private val engine = FakeDockerEngine()
-    private val sessions = MachineSessions(engine, PlanGuard(runner, null, null)) { lines += it }
+    private val sessions = MachineSessions(engine, PlanGuard(runner, null, null), null) { lines += it }
 
     private fun work(vararg executions: AssignedExecution, workspaces: List<Uuid> = emptyList()) =
         MachineWork(executions.toList(), workspaces.map(Uuid::toString))
@@ -200,5 +201,13 @@ class MachineSessionsTest {
         engine.info = EngineInfo(cpus = 1, memoryBytes = 2L shl 30)
         assertEquals(1, MachineSessions(engine, PlanGuard(runner, null, null), null) {}.report().capacity)
         assertEquals(0, MachineSessions(engine, PlanGuard(runner, null, null), 0) {}.report().capacity)
+
+        // A socket proxy that hides the engine's info: no capacity (no limit), said once.
+        engine.info = null
+        val hidden = MachineSessions(engine, PlanGuard(runner, null, null), null) { lines += it }
+        assertEquals(null, hidden.report().capacity)
+        engine.info = EngineInfo(cpus = 16, memoryBytes = 64L shl 30)
+        assertEquals(null, hidden.report().capacity, "Read once")
+        assertEquals(1, lines.count { "OSTROM_RUNNER_MAX_SESSIONS" in it }, lines.toString())
     }
 }

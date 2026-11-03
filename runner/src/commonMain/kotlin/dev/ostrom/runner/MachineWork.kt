@@ -9,9 +9,11 @@ import kotlinx.serialization.json.JsonObject
  *
  * @property executions The executions it has: its runner containers, and the plans it is creating.
  * @property workspaces The sessions whose workspace volumes it holds.
+ * @property capacity The sessions it runs at once at most: the server never hands it more. Null (left out of the
+ *   body) when unknown: no limit.
  */
 @Serializable
-data class MachineReport(val executions: List<ReportedExecution>, val workspaces: List<String>)
+data class MachineReport(val executions: List<ReportedExecution>, val workspaces: List<String>, val capacity: Int?)
 
 /**
  * One execution a registered runner has.
