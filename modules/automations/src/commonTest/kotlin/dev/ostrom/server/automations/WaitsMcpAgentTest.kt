@@ -95,19 +95,32 @@ class WaitsMcpAgentTest {
         }
 
     @Test
-    fun anAgentTokenNamesItsSessionAndNoRunBeforeAnyMessageIsRead() =
+    fun anAgentTokenConnectsBeforeItsSessionIsKnownButAsksNothingOutsideIt() =
+        serverTest(listOf(AutomationsModule), withAgents) { server ->
+            val client = server.client
+            // Claude Code connects its MCP servers at start-up, maybe before its SessionStart hook told the relay the
+            // session: the handshake is answered, a tool names the missing session.
+            val initialized = client.rpc("""{"jsonrpc":"2.0","id":1,"method":"initialize"}""", UNBOUND)
+            assertEquals(HttpStatusCode.OK, initialized.status, initialized.bodyAsText())
+            val listed = client.rpc("""{"jsonrpc":"2.0","id":2,"method":"tools/list"}""", UNBOUND)
+            assertTrue("ask_human" in listed.bodyAsText(), listed.bodyAsText())
+            val asked = client.call("ask_human", """{"title":"Ship it?"}""", UNBOUND)
+            assertTrue(asked.isError())
+            assertTrue("?session=" in asked.text(), "Says what is missing: ${asked.text()}")
+            assertTrue(client.call("list_waits", "{}", UNBOUND).isError())
+        }
+
+    @Test
+    fun anAgentTokenNamesNoRunBeforeAnyMessageIsRead() =
         serverTest(listOf(AutomationsModule), withAgents) { server ->
             val client = server.client
             val ping = """{"jsonrpc":"2.0","id":1,"method":"ping"}"""
-            val unbound = client.rpc(ping, "/api/v1/waits/mcp")
-            assertEquals(HttpStatusCode.BadRequest, unbound.status)
-            assertTrue("invalid_request" in unbound.bodyAsText(), unbound.bodyAsText())
-            assertTrue("?session=" in unbound.bodyAsText(), "Says what to add: ${unbound.bodyAsText()}")
             val run = client.rpc(ping, "/api/v1/waits/mcp?session=$LAUNCH_SESSION&run=r1")
             assertEquals(HttpStatusCode.Forbidden, run.status)
             assertTrue("forbidden" in run.bodyAsText(), run.bodyAsText())
+            assertEquals(HttpStatusCode.Forbidden, client.rpc(ping, "/api/v1/waits/mcp?run=r1").status)
 
-            val person = client.rpc(ping, "/api/v1/waits/mcp", token = "agent")
+            val person = client.rpc(ping, UNBOUND, token = "agent")
             assertEquals(HttpStatusCode.OK, person.status, "A person's credential still asks outside a session")
         }
 
@@ -141,6 +154,7 @@ class WaitsMcpAgentTest {
         }
 
     private companion object {
+        const val UNBOUND = "/api/v1/waits/mcp"
         const val OWN = "/api/v1/waits/mcp?session=$LAUNCH_SESSION"
         const val FOREIGN = "/api/v1/waits/mcp?session=$FOREIGN_SESSION"
     }

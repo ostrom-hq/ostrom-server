@@ -139,7 +139,8 @@ class LaunchWaitAgentsPostgresTest {
             )
 
             val ping = """{"jsonrpc":"2.0","id":1,"method":"ping"}"""
-            assertEquals(HttpStatusCode.BadRequest, post(second, "/api/v1/waits/mcp", ping).status)
+            val unbound = post(second, "/api/v1/waits/mcp", ping)
+            assertEquals(HttpStatusCode.OK, unbound.status, "Answered before its session is known")
             assertEquals(HttpStatusCode.Forbidden, post(second, "/api/v1/waits/mcp?session=s-2&run=r", ping).status)
         }
     }
