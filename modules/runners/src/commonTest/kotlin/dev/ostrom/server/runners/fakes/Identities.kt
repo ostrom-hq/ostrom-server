@@ -24,7 +24,16 @@ val DANA: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000da0a")
  * `cloud:read` only, `dana-cli` a personal API token of dana's with `cloud:write`. Cloud sessions are open to org A
  * only. A request whose `Ostrom-Org` header names an organization the caller is not a member of resolves to no one.
  */
-val testIdentities = module {
+val testIdentities = testIdentitiesWith(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to ORG_A.toString()))
+
+/**
+ * [testIdentities] with another configuration of the runners module.
+ *
+ * @param config The configuration.
+ *
+ * @return The module.
+ */
+fun testIdentitiesWith(config: Map<String, String>) = module {
     single<TokenAuthenticator> {
         object : TokenAuthenticator {
             override suspend fun authenticate(token: String): AuthenticatedPrincipal? = when (token) {
@@ -39,7 +48,7 @@ val testIdentities = module {
         }
     }
     single<PrincipalOrgResolver> { TestOrgResolver }
-    single<ConfigSource> { MapConfigSource(mapOf("OSTROM_RUNNERS_ALLOWED_ORGS" to ORG_A.toString())) }
+    single<ConfigSource> { MapConfigSource(config) }
 }
 
 /** Resolves the test identities' organizations (the credential's own: the cloud routes name none). */
