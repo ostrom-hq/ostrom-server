@@ -13,6 +13,10 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInstantOrNull
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.put
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -73,18 +77,22 @@ class RunnerAssignmentsRepositoryImpl(private val driver: Driver) : RunnerAssign
 
     override suspend fun exchange(orgId: Uuid, runnerId: Uuid, report: MachineReport): List<Assignment> =
         driver.inTenant(orgId) {
-            // What it reports; an execution handed over that it no longer has is missing.
-            for (held in fetchAll(heldBy(orgId, runnerId)).getOrThrow().map { it.toAssignment() }) {
-                val reported = report.executions[held.sessionId to held.epoch]
-                val state = reported ?: MachineExecutionState.MISSING.takeIf { held.delivered && !held.stopped }
-                execute(
-                    Statement.create(
-                        "UPDATE runners_assignments SET state = COALESCE(:state, state), holds_workspace = :holds " +
-                            "WHERE org_id = :org_id AND session_id = :session_id AND epoch = :epoch",
-                    ).bind("state", state?.wire).bind("holds", held.sessionId in report.workspaces)
-                        .bind("org_id", orgId).bind("session_id", held.sessionId).bind("epoch", held.epoch),
-                ).getOrThrow()
+            // What it reports, in one statement whatever its history; an execution handed over that it no longer
+            // has is missing. Only the rows that change are written.
+            val executions = buildJsonArray {
+                report.executions.forEach { (key, state) ->
+                    addJsonObject {
+                        put("session_id", key.first.toString())
+                        put("epoch", key.second)
+                        put("state", state.wire)
+                    }
+                }
             }
+            val workspaces = buildJsonArray { report.workspaces.forEach { add(it.toString()) } }
+            execute(
+                Statement.create(REPORT_SQL).bind("executions", executions.toString())
+                    .bind("workspaces", workspaces.toString()).bind("org_id", orgId).bind("runner_id", runnerId),
+            ).getOrThrow()
             // One waiting execution at a time, the oldest, so that waiting work spreads over the online runners.
             execute(
                 Statement.create(TAKE_SQL).bind("runner_id", runnerId).bind("org_id", orgId),
@@ -149,6 +157,27 @@ class RunnerAssignmentsRepositoryImpl(private val driver: Driver) : RunnerAssign
                 "AND a.session_id = :session_id AND r.last_seen_at >= :online_since AND $ROOM_SQL " +
                 "ORDER BY a.epoch DESC LIMIT 1" +
                 "), CAST(:now AS TIMESTAMPTZ) ON CONFLICT (session_id, epoch) DO NOTHING"
+
+        /**
+         * A runner's report on what it holds (`:executions`, a JSON array of `session_id`, `epoch` and `state`;
+         * `:workspaces`, a JSON array of session ids): the state it reports, or `missing` for an execution handed
+         * over and not stopped that it no longer reports; whether it holds each session's workspace.
+         */
+        const val REPORT_SQL: String =
+            "WITH reported AS (SELECT * FROM jsonb_to_recordset(CAST(:executions AS jsonb)) " +
+                "AS r (session_id uuid, epoch bigint, state text)), " +
+                "kept AS (SELECT CAST(w AS uuid) AS session_id FROM " +
+                "jsonb_array_elements_text(CAST(:workspaces AS jsonb)) AS k (w)), " +
+                "changed AS (SELECT a.session_id, a.epoch, COALESCE(r.state, CASE WHEN a.delivered_at IS NOT NULL " +
+                "AND a.stopped_at IS NULL THEN 'missing' END, a.state) AS state, " +
+                "EXISTS (SELECT 1 FROM kept WHERE kept.session_id = a.session_id) AS holds " +
+                "FROM runners_assignments a LEFT JOIN reported r " +
+                "ON r.session_id = a.session_id AND r.epoch = a.epoch " +
+                "WHERE a.org_id = :org_id AND a.runner_id = :runner_id) " +
+                "UPDATE runners_assignments a SET state = changed.state, holds_workspace = changed.holds " +
+                "FROM changed " +
+                "WHERE a.session_id = changed.session_id AND a.epoch = changed.epoch " +
+                "AND (a.state IS DISTINCT FROM changed.state OR a.holds_workspace <> changed.holds)"
 
         /**
          * The oldest waiting execution, taken by one runner only even when two ask at once, one at most, and only

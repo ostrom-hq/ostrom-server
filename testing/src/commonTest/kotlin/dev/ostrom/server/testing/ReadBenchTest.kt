@@ -2,6 +2,7 @@
 package dev.ostrom.server.testing
 
 import io.github.smyrgeorge.sqlx4k.Statement
+import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.ktor.client.request.get
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
@@ -32,6 +33,8 @@ class ReadBenchTest {
         assertTrue("== GET /health" in report && "queries per call: 1" in report, report)
         val written = SystemFileSystem.source(Path("build/reports/perf/testing.txt")).buffered().use { it.readString() }
         assertEquals(report, written)
+        val writing = server.measureRead("GET /health", writes = true) { get("/health") }
+        assertEquals(1, writing.queries, "A read route reads the same with its writes explained")
     }
 
     @Test
@@ -112,6 +115,24 @@ class ReadBenchTest {
         assertEquals(4, plans.size, plans.joinToString("\n\n"))
         assertTrue(plans.all { "actual time" in it }, plans.joinToString("\n\n"))
         assertEquals(emptyList(), server.database.driver.replay(sent, explain = false))
+    }
+
+    @Test
+    fun writesAreExplainedOnlyWhenAsked() = serverTest(emptyList()) { server ->
+        // The owner creates the table, as a migration would; the serving role writes it by default privileges.
+        val owner = server.database.owner
+        owner.execute("CREATE TABLE bench_writes (n INTEGER PRIMARY KEY, seen INTEGER)").getOrThrow()
+        owner.execute("INSERT INTO bench_writes VALUES (1, 0)").getOrThrow()
+        val driver = server.database.driver
+        val sent = listOf("UPDATE bench_writes SET seen = 1 WHERE n = 1", "SELECT seen FROM bench_writes WHERE n = 1")
+            .map { SentStatement(it, Statement.create(it), 1) }
+
+        val plans = driver.replay(sent, explain = true, writes = true)
+        assertEquals(2, plans.size, plans.joinToString("\n\n"))
+        assertTrue("Update on bench_writes" in plans.first(), plans.first())
+        assertEquals(1, driver.replay(sent, explain = true).size, "A read bench explains its reads only")
+        val seen = driver.fetchAll("SELECT seen FROM bench_writes").getOrThrow().single().get("seen").asInt()
+        assertEquals(0, seen, "Rolled back")
     }
 
     @Test
