@@ -163,7 +163,7 @@ class RegisteredRunnersHeartbeatPostgresTest {
                 "SELECT r.org_id, r.key_hash FROM runners_registered r WHERE r.id = :id",
             ) { bind("id", id) },
             "sign of life" to server.plan(ORG_A, RegisteredRunnersRepositoryImpl.TOUCH_SQL) {
-                bind("at", clock.now).bind("org_id", ORG_A).bind("id", id).bind("key_hash", hash)
+                bind("at", clock.now).bind("capacity", 2).bind("org_id", ORG_A).bind("id", id).bind("key_hash", hash)
             },
         )
         val report = plans.entries.joinToString("\n\n") { (name, plan) -> "-- $name\n$plan" }
