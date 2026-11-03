@@ -144,5 +144,24 @@ val GatesMigrations: List<SchemaMigration> = listOf(
     ),
     // Q-GATES-G1 (a): a pull request's author whom no Ostrom person linked, by GitHub account id.
     SchemaMigration(7, "gates_unlinked_author", "ALTER TABLE gates_gates ADD COLUMN unlinked_author BIGINT"),
+    // AUDIT-SERVEUR-3 B2: the sessions whose end read their gates for the receipt. A gate asked in one of them is
+    // refused; the end and the gates take the same advisory lock of the session to write and read it.
+    SchemaMigration(
+        8,
+        "gates_session_ends",
+        """
+        CREATE TABLE gates_session_ends (
+            org_id UUID NOT NULL,
+            session_id TEXT NOT NULL,
+            ended_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (org_id, session_id)
+        );
+        ALTER TABLE gates_session_ends ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE gates_session_ends FORCE ROW LEVEL SECURITY;
+        CREATE POLICY gates_session_ends_org ON gates_session_ends
+            USING (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
+            WITH CHECK (org_id = CAST(NULLIF(current_setting('ostrom.org_id', TRUE), '') AS UUID))
+        """.trimIndent(),
+    ),
 )
 

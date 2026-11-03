@@ -25,6 +25,14 @@ internal object GatesQueries {
         "WHERE s.org_id = :org AND s.session_id = :session AND g.org_id = :org " +
         "ORDER BY g.created_at, g.id LIMIT $MAX_SESSION_GATES"
 
+    /** When a session's end read its gates (`:session`), on the primary key of `gates_session_ends`. */
+    const val SESSION_ENDED =
+        "SELECT ended_at FROM gates_session_ends WHERE org_id = :org AND session_id = :session"
+
+    /** Marks a session ended at `:at`; a session already marked keeps its first time. */
+    const val MARK_SESSION_ENDED = "INSERT INTO gates_session_ends (org_id, session_id, ended_at) " +
+        "VALUES (:org, :session, :at) ON CONFLICT (org_id, session_id) DO NOTHING"
+
     /**
      * The gates opened since `:since`, newest first, at most `:limit`: the rules' replay, read by a background worker
      * once per replay, never on the request path. The organization's prefix of `gates_gates_by_key` finds its rows.
