@@ -7,6 +7,12 @@ import dev.ostrom.server.compiler.domain.models.StoredWorkflow
 import kotlinx.serialization.json.JsonObject
 import kotlin.uuid.Uuid
 
+/**
+ * The most workflows an organization keeps: every read of them (the list, the gates catalogue, the approvers graph, a
+ * compilation) loads them all, so a creation beyond is refused.
+ */
+const val MAX_WORKFLOWS = 1000
+
 /** The organization's workflows and the decisions taken on them. */
 interface WorkflowsRepository {
     /**
@@ -56,12 +62,21 @@ interface WorkflowsRepository {
     suspend fun deleteWorkflow(orgId: Uuid, id: String): Boolean
 
     /**
-     * Lists the decisions taken on workflows.
+     * Counts the organization's workflows.
      *
      * @param orgId The organization.
-     * @return The decisions.
+     * @return How many it keeps, [MAX_WORKFLOWS] at most but for two creations at once.
      */
-    suspend fun decisions(orgId: Uuid): List<DecisionDoc>
+    suspend fun workflowCount(orgId: Uuid): Int
+
+    /**
+     * Lists the last decision taken on each of the organization's workflows: what a package cites. Never the whole
+     * log, which grows with every save.
+     *
+     * @param orgId The organization.
+     * @return One decision per workflow that has one.
+     */
+    suspend fun lastDecisions(orgId: Uuid): List<DecisionDoc>
 
     /**
      * Records a decision.
