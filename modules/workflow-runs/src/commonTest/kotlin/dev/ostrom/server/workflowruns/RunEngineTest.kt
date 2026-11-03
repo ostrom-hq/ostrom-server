@@ -45,6 +45,7 @@ import dev.ostrom.server.workflowruns.fakes.FixedClock
 import dev.ostrom.server.workflowruns.fakes.ORG
 import dev.ostrom.server.workflowruns.infrastructure.RunEngineWorker
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
@@ -62,19 +63,18 @@ class RunEngineTest {
 
     /** The runs in memory: a change is written only on the run as read, like the database's. */
     private class Runs(var writes: Boolean = true) : RunEngineRepository, StartedRunsRepository {
-        val runs = mutableMapOf<String, PlayedRun>()
+        val rows = mutableMapOf<String, PlayedRun>()
         val released = mutableListOf<Pair<String, Instant?>>()
 
         override suspend fun claimDue(owner: String, now: Instant, until: Instant, limit: Int): List<RunRef> =
-            runs.keys.map { RunRef(ORG, it) }
+            rows.keys.map { RunRef(ORG, it) }
 
-        override suspend fun played(orgId: Uuid, id: String): PlayedRun? = runs[id]
+        override suspend fun played(orgId: Uuid, id: String): PlayedRun? = rows[id]
 
         override suspend fun write(orgId: Uuid, change: RunChange): Boolean {
-            val stored = runs[change.next.id] ?: return false
-            if (!writes || stored.run != change.expected) return false
-            runs[change.next.id] = stored.copy(run = change.next)
-            return true
+            val stored = rows[change.next.id]?.takeIf { writes && it.run == change.expected }
+            stored?.let { rows[change.next.id] = it.copy(run = change.next) }
+            return stored != null
         }
 
         override suspend fun release(orgId: Uuid, id: String, owner: String, nextAt: Instant?) {
@@ -82,12 +82,12 @@ class RunEngineTest {
         }
 
         override suspend fun add(orgId: Uuid, run: WorkflowRun, startedAt: Instant, graph: RunGraph, audit: RunAudit) {
-            runs[run.id] = PlayedRun(run, graph)
+            rows[run.id] = PlayedRun(run, graph)
         }
 
-        override suspend fun find(orgId: Uuid, id: String): WorkflowRun? = runs[id]?.run
+        override suspend fun find(orgId: Uuid, id: String): WorkflowRun? = rows[id]?.run
 
-        override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = runs.values.map { it.run }
+        override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = rows.values.map { it.run }
     }
 
     private class Agents(var state: AgentState? = null) : RunAgents {
@@ -142,7 +142,7 @@ class RunEngineTest {
         )
 
     private fun stored(graph: RunGraph, run: WorkflowRun = run()): WorkflowRun {
-        runs.runs[run.id] = PlayedRun(run, graph)
+        runs.rows[run.id] = PlayedRun(run, graph)
         return run
     }
 
@@ -151,7 +151,7 @@ class RunEngineTest {
 
     private suspend fun played(): WorkflowRun {
         play.play(RunRef(ORG, RUN), OWNER)
-        return runs.runs.getValue(RUN).run
+        return runs.rows.getValue(RUN).run
     }
 
     @Test
@@ -162,7 +162,7 @@ class RunEngineTest {
         val next = play.play(RunRef(ORG, RUN), OWNER)
 
         assertEquals(clock.now, next)
-        assertEquals(PlayRunUseCaseImpl.MAX_MOVES / 2, runs.runs.getValue(RUN).run.visits.size)
+        assertEquals(PlayRunUseCaseImpl.MAX_MOVES / 2, runs.rows.getValue(RUN).run.visits.size)
     }
 
     @Test
@@ -172,7 +172,7 @@ class RunEngineTest {
         runs.writes = false
 
         assertEquals(clock.now, play.play(RunRef(ORG, RUN), OWNER))
-        assertEquals(RunStatus.QUEUED, runs.runs.getValue(RUN).run.status)
+        assertEquals(RunStatus.QUEUED, runs.rows.getValue(RUN).run.status)
     }
 
     @Test
@@ -199,7 +199,7 @@ class RunEngineTest {
             run("wfr_${"4".repeat(32)}", RunStatus.SUCCEEDED, listOf(agent)),
         ).forEach { stored(RunGraph(), it) }
 
-        val next = runs.runs.keys.map { play.play(RunRef(ORG, it), OWNER) }
+        val next = runs.rows.keys.map { play.play(RunRef(ORG, it), OWNER) }
 
         assertEquals(listOf(null, null, null, null), next)
         assertEquals(listOf(sessionOf("wfr_${"1".repeat(32)}", 1)), agents.stopped)
@@ -275,7 +275,7 @@ class RunEngineTest {
         stored(RunGraph("t", listOf(TRIGGER)), run("wfr_${"b".repeat(32)}"))
         val failing = object : PlayRunUseCase {
             override suspend fun play(ref: RunRef, owner: String): Instant? =
-                if (ref.id == RUN) throw IllegalStateException("database") else null
+                if (ref.id == RUN) error("database") else null
         }
         val tick = TickRunsUseCaseImpl(runs, failing, clock, logs, OWNER)
 
@@ -295,6 +295,7 @@ class RunEngineTest {
         assertFailsWith<CancellationException> { cancelled.tick() }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun theWorkerPassesAgainAtOnceWhileRunsAreDueAndLogsAFailedPass() = runTest {
         val logs = Logs()
@@ -304,7 +305,7 @@ class RunEngineTest {
                 passes++
                 return when (passes) {
                     1 -> 3
-                    2 -> throw IllegalStateException("database")
+                    2 -> error("database")
                     else -> 0
                 }
             }
