@@ -60,16 +60,17 @@ class HooksMissingPostgresTest {
         )
         val org = Org(Uuid.random(), "$login-team", "$login team", null, null, now)
         koin.get<OrgsRepository>().create(org, Member(Uuid.random(), org.id, user.id, OrgRole.OWNER, now)) { false }
-        suspend fun token(scopes: Set<String>): String {
+        suspend fun token(kind: TokenKind, scopes: Set<String>): String {
             val secret = "osc_" + Uuid.random().toHexString()
             val token = ApiToken(
-                Uuid.random(), user.id, org.id, "cli", TokenKind.CLI, scopes, "hint", null, now, now + 1.hours, null,
+                Uuid.random(), user.id, org.id, "cli", kind, scopes, "hint", null, now, now + 1.hours, null,
                 null,
             )
             koin.get<ApiTokensRepository>().create(token, koin.get<SecretHasher>().hash(secret))
             return secret
         }
-        return Person(org, token(CLI_SCOPES), token(setOf(AUDIT_READ_SCOPE)))
+        // A CLI token keeps only the CLI's scopes: the audit log is read with a personal token.
+        return Person(org, token(TokenKind.CLI, CLI_SCOPES), token(TokenKind.PERSONAL, setOf(AUDIT_READ_SCOPE)))
     }
 
     private suspend fun TestServer.post(token: String?, path: String, body: String): HttpResponse =
@@ -91,7 +92,7 @@ class HooksMissingPostgresTest {
     private suspend fun TestServer.recorded(person: Person): OrgAuditPageResponse =
         client.get("/api/v1/audit?event=hooks.missing") {
             header(HttpHeaders.Authorization, "Bearer ${person.auditor}")
-        }.body()
+        }.also { assertEquals(HttpStatusCode.OK, it.status, it.bodyAsText()) }.body()
 
     private val enforcedGate = module {
         single<GateNodeResolver> {
