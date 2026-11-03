@@ -144,6 +144,18 @@ class AnalysisUseCasesTest {
     }
 
     @Test
+    fun theStateCarriesEveryRulePastAThousand() = runTest {
+        val rules = FakeRulesRepository()
+        (1..1_500).forEach { n ->
+            val id = "rule_${n.toString().padStart(4, '0')}"
+            rules.rules[org to id] = RulesFixtures.rule(id, group = "Group ${n % 7}")
+        }
+        val state = GetAnalysisStateUseCaseImpl(runs, rules, FakeWorkflows(emptyList()))(org)
+        assertEquals(1_500, state.rules.size, "Not cut at 1 000")
+        assertTrue(state.rules.any { it.id == "rule_1400" }, "Rule 1 400 counts")
+    }
+
+    @Test
     fun theStateCarriesTheLastAnalysisTheRulesAndTheWorkflows() = runTest {
         val rules = FakeRulesRepository()
         rules.rules[org to "rule_1"] = RulesFixtures.rule("rule_1")

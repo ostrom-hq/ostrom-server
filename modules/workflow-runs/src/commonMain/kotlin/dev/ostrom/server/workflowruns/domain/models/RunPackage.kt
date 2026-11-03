@@ -12,12 +12,14 @@ import dev.ostrom.core.api.models.PackageMode
  * @property nodes The workflow nodes.
  * @property scripts The check scripts.
  * @property notifications The notify nodes' messages.
+ * @property compiledAt When it was compiled (ISO-8601), empty when unknown.
  */
 data class RunPackage(
     val envelope: PackageEnvelope,
     val nodes: List<PackageNode>,
     val scripts: List<PackageScript>,
     val notifications: List<PackageNotify>,
+    val compiledAt: String = "",
 ) {
     /** The package's digest. */
     val digest: String get() = envelope.digest

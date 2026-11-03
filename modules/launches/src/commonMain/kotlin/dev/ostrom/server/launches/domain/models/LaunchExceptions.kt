@@ -47,3 +47,9 @@ class OtherDeveloperForbiddenException : OstromException(
  * elsewhere or not.
  */
 class UnknownDeveloperException : OstromException(ErrorKind.NOT_FOUND, "Developer not found.")
+
+/**
+ * The launch does not exist, or the caller is not its own agent token: answered the same, so that a credential
+ * learns nothing about launches it does not hold.
+ */
+class LaunchNotFoundException : OstromException(ErrorKind.NOT_FOUND, "Launch not found.")

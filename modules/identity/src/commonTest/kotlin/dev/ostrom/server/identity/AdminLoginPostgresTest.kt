@@ -17,14 +17,18 @@ import dev.ostrom.server.identity.presentation.DeviceCodeRequest
 import dev.ostrom.server.identity.presentation.DeviceCodeResponse
 import dev.ostrom.server.identity.presentation.DeviceTokenRequest
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.GovernanceConfirmationPending
+import dev.ostrom.server.kernel.auth.GovernanceConfirmations
+import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
+import dev.ostrom.server.kernel.auth.GovernanceWrite
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.STEP_UP_REQUIRED
-import dev.ostrom.server.kernel.auth.auditGovernance
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.governs
+import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.testing.TestServer
@@ -42,6 +46,7 @@ import io.ktor.http.contentType
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.post
+import kotlinx.serialization.json.JsonObject
 import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.dsl.module
@@ -57,8 +62,8 @@ import kotlin.uuid.Uuid
 
 /**
  * `ostrom login --admin` end to end on PostgreSQL: the governance scopes asked for, shown and approved in the browser
- * by an owner or admin only, a token bound to their organization for 8 hours, each governance write it makes
- * recorded in that organization's audit log, and `ostrom logout` revoking it.
+ * by an owner or admin only, a token bound to their organization for 8 hours, each governance write it makes held for
+ * a confirmation on the console (audit CLI H1), and `ostrom logout` revoking it.
  */
 class AdminLoginPostgresTest {
     private val organization = Uuid.random()
@@ -66,7 +71,18 @@ class AdminLoginPostgresTest {
     // The approvers' roles in [organization], by user id; a user without one belongs to no organization.
     private val roles = mutableMapOf<String, OrgRole>()
 
+    // The governance writes held for the console, as the governance module would open them.
+    private val held = mutableListOf<GovernanceRequest>()
+
     private val overrides: Module = module {
+        single<GovernanceConfirmations> {
+            object : GovernanceConfirmations {
+                override suspend fun open(request: GovernanceRequest): GovernanceConfirmationPending {
+                    held += request
+                    return GovernanceConfirmationPending("gcf_1", "http://localhost:5173/confirm/gcf_1", "later")
+                }
+            }
+        }
         single<PrincipalOrgResolver> {
             object : PrincipalOrgResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal, orgId: Uuid?): OrgPrincipal? =
@@ -75,8 +91,8 @@ class AdminLoginPostgresTest {
         }
     }
 
-    /** A governance route of another module: who governs may write, each token's write recorded first. */
-    private object GovernedModule : ServerModule {
+    /** A governance route of another module: who governs may ask, a token's write held for the console. */
+    private inner class GovernedModule : ServerModule {
         override val name: String = "governed"
         override val koinModule: Module = module {}
 
@@ -85,8 +101,8 @@ class AdminLoginPostgresTest {
                 post("/governed") {
                     val principal = call.requirePrincipal()
                     if (principal.governs(GovernanceScopes.POLICY_WRITE)) {
-                        call.auditGovernance(principal, GovernanceScopes.POLICY_WRITE)
-                        call.respond(HttpStatusCode.NoContent)
+                        val write = GovernanceWrite("rules.update", JsonObject(emptyMap()))
+                        call.holdForConfirmation(organization, GovernanceScopes.POLICY_WRITE, write)
                     } else {
                         call.respond(HttpStatusCode.Forbidden)
                     }
@@ -96,7 +112,7 @@ class AdminLoginPostgresTest {
     }
 
     private fun adminTest(block: suspend (TestServer) -> Unit) =
-        serverTest(listOf(IdentityModule, GovernedModule), overrides) { server -> block(server) }
+        serverTest(listOf(IdentityModule, GovernedModule()), overrides) { server -> block(server) }
 
     private suspend fun TestServer.signIn(subject: String, role: OrgRole?): Pair<User, StartedSession> {
         val user = koin.get<ResolveUserUseCase>()(
@@ -124,7 +140,7 @@ class AdminLoginPostgresTest {
     }
 
     @Test
-    fun anOwnerOrAdminApprovesTheGovernanceScopesAndTheTokenWritesForEightHoursAudited() = adminTest { server ->
+    fun anOwnerOrAdminApprovesTheGovernanceScopesAndTheTokenAsksForEightHours() = adminTest { server ->
         val (admin, adminSession) = server.signIn("1", OrgRole.ADMIN)
         val (_, memberSession) = server.signIn("2", OrgRole.MEMBER)
         val (_, lonerSession) = server.signIn("3", null)
@@ -150,12 +166,12 @@ class AdminLoginPostgresTest {
         assertTrue(expiresAt <= before + 8.hours + 1.minutes && expiresAt > before + 7.hours, "$expiresAt")
 
         val written = server.client.post("/governed") { bearerAuth(token.token) }
-        assertEquals(HttpStatusCode.NoContent, written.status)
+        assertEquals(HttpStatusCode.Accepted, written.status, "Held for the console, nothing written")
+        val asked = held.single()
+        assertEquals(admin.id.toString(), asked.principal.subjectId)
+        assertEquals("/governed", asked.path)
+        assertEquals("policy:write", asked.scope)
         val events = server.koin.get<AuditRepository>().list(organization, null, null, MAX_EVENTS).map { it.entry }
-        val governed = events.single { it.action == "governance.write" }
-        assertEquals(admin.id, governed.actorId)
-        assertEquals("POST /governed", governed.targetId)
-        assertEquals("policy:write", governed.details["scope"])
         val actions = events.map { it.action }.toSet()
         assertTrue(actions.containsAll(setOf("device.approved", "token.created")), "$actions")
 

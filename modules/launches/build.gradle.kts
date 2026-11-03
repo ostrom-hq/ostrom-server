@@ -15,6 +15,9 @@ kotlin {
             // The callers of the MCP relay, the inference gateway and the budgets, which this module resolves
             // (CallerResolver), so that an agent token reaches them.
             implementation(project(":modules:secrets"))
+            // The agent token of the waits MCP server, which this module resolves (WaitAgentResolver), so that an
+            // agent asks a person through Ostrom's own MCP server.
+            implementation(project(":modules:automations"))
             // The owner of a cloud session (a member), and the runner token of its execution, which opens its launch.
             implementation(project(":modules:orgs"))
             implementation(project(":modules:runners"))

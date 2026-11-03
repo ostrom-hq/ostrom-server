@@ -196,7 +196,7 @@ class CheckTerminalsTest {
         val homes = Homes()
         val terminal = ScriptedTerminal()
         val starter = RecordingStarter(terminal)
-        val checks = CheckTerminals(starter, homes)
+        val checks = CheckTerminals(starter, homes, "/workspace") { it }
         val first = checks.start("true", mapOf("HOME" to "/tmp", "TMPDIR" to "/tmp", "CI" to "1"), "/workspace")
         assertEquals(mapOf("HOME" to "/tmp/check-1", "TMPDIR" to "/tmp/check-1", "CI" to "1"), starter.starts[0].second)
         assertTrue(homes.released.isEmpty())
@@ -209,19 +209,44 @@ class CheckTerminalsTest {
     }
 
     @Test
+    fun aCheckRunsInTheRealFolderOfItsPathAndNeverOutsideTheWorkspace() = runTest {
+        val starter = RecordingStarter(ScriptedTerminal())
+        // A real folder, the workspace itself, a link to `/`, a sibling sharing the prefix, a folder that is not there.
+        val links = mapOf(
+            "/workspace/app" to "/workspace/app",
+            "/workspace/up" to "/",
+            "/workspace/near" to "/workspacex",
+        )
+        val checks = CheckTerminals(starter, Homes(), "/workspace") { path ->
+            links[path] ?: path.takeIf { it == "/workspace" }
+        }
+        checks.start("npm test", emptyMap(), "/workspace/app")
+        checks.start("npm test", emptyMap(), "/workspace")
+        checks.start("npm test", emptyMap(), "/workspace/up")
+        checks.start("npm test", emptyMap(), "/workspace/near")
+        checks.start("npm test", emptyMap(), "/workspace/missing")
+        val folders = listOf("/workspace/app", "/workspace", "/workspace", "/workspace", "/workspace")
+        assertEquals(folders, starter.starts.map { it.third })
+        assertEquals(listOf(true, true, false, false, false), starter.starts.map { it.first == "npm test" })
+        assertTrue(starter.starts.drop(2).all { "exit 126" in it.first })
+    }
+
+    @Test
     fun aCheckThatDoesNotStartReleasesItsHome() = runTest {
         val homes = Homes()
         val failing = object : TerminalStarter {
             override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
                 error("no shell")
         }
-        assertFailsWith<IllegalStateException> { CheckTerminals(failing, homes).start("true", emptyMap(), "/w") }
+        val failingChecks = CheckTerminals(failing, homes, "/workspace") { it }
+        assertFailsWith<IllegalStateException> { failingChecks.start("true", emptyMap(), "/workspace") }
         assertEquals(listOf("/tmp/check-1"), homes.released)
         val stopped = object : TerminalStarter {
             override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
                 throw CancellationException("stop")
         }
-        assertFailsWith<CancellationException> { CheckTerminals(stopped, homes).start("true", emptyMap(), "/w") }
+        val stoppedChecks = CheckTerminals(stopped, homes, "/workspace") { it }
+        assertFailsWith<CancellationException> { stoppedChecks.start("true", emptyMap(), "/workspace") }
         assertEquals(listOf("/tmp/check-1", "/tmp/check-2"), homes.released)
     }
 }
