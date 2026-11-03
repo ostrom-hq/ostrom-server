@@ -317,6 +317,9 @@ telemetry.capture(ProductEvents.gateRequested(userId, orgId, GateKind.MERGE, clo
 A model call (gateway, extraction) runs in
 `telemetry.tracer.inSpan(ModelCall.SPAN_NAME, SpanKind.CLIENT, call.toAttributes(org.contentCapture))` and then
 `metrics.modelCalled(call, duration)`: the span alone goes to Langfuse, prompts only when the org turned capture on.
+The gateway's span (`SpanModelCallTracer`) covers every try of a call, from before planning to its record, under the
+request's span; it carries the model, provider, tokens, cost, organization, session, outcome and status, and never the
+prompt nor the answer (`ContentCapture.NONE`: the gateway does not read the org's capture choice yet).
 Metric attributes are bounded values, never ids; a new metric is added to `OstromMetrics` and to
 `ostrom-infra/observability/catalog.py` together. Event taxonomy and privacy rules: ostrom-core `docs/telemetry.md`.
 
