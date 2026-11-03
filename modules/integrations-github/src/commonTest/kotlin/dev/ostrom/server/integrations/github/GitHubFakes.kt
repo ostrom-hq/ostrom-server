@@ -8,6 +8,7 @@ import dev.ostrom.server.gates.domain.models.GatePullRequest
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.RequestStatus
+import dev.ostrom.server.identity.domain.LinkedIdentities
 import dev.ostrom.server.identity.domain.IdentityProvider
 import dev.ostrom.server.identity.domain.User
 import dev.ostrom.server.identity.domain.UserEmail
@@ -194,7 +195,7 @@ fun gitHubDown() = GitHubCallException("GitHub did not answer GET /repos/acme/ap
  *
  * @param linked The login of the person linked to each GitHub user id.
  */
-class LinkedGitHubUsers(private val linked: Map<Long, String>) : UsersRepository {
+class LinkedGitHubUsers(private val linked: Map<Long, String>) : UsersRepository, LinkedIdentities {
     override suspend fun findByIdentity(issuer: String, subject: String): User? =
         linked[subject.toLong()]?.takeIf { issuer == IdentityProvider.GITHUB.key }
             ?.let { User(Uuid.random(), it, it, null, null, NOW) }

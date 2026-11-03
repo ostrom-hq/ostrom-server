@@ -3,6 +3,7 @@ package dev.ostrom.server.integrations.github.infrastructure
 
 import dev.ostrom.server.gates.domain.services.GateGitHubAccounts
 import dev.ostrom.server.identity.domain.IdentityProvider
+import dev.ostrom.server.identity.domain.LinkedIdentities
 import dev.ostrom.server.identity.domain.UsersRepository
 import dev.ostrom.server.integrations.github.domain.GitHubAccounts
 
@@ -11,11 +12,15 @@ import dev.ostrom.server.integrations.github.domain.GitHubAccounts
  * account, and the GitHub accounts a user linked.
  *
  * @param users The identity module's users.
+ * @param identities The accounts each user linked.
  */
-class IdentityGitHubAccounts(private val users: UsersRepository) : GitHubAccounts, GateGitHubAccounts {
+class IdentityGitHubAccounts(
+    private val users: UsersRepository,
+    private val identities: LinkedIdentities,
+) : GitHubAccounts, GateGitHubAccounts {
     override suspend fun loginOf(githubUserId: Long): String? =
         users.findByIdentity(IdentityProvider.GITHUB.key, githubUserId.toString())?.login
 
     override suspend fun gitHubIdsOf(login: String): List<Long> =
-        users.subjectsOf(login, IdentityProvider.GITHUB.key).mapNotNull { it.toLongOrNull() }
+        identities.subjectsOf(login, IdentityProvider.GITHUB.key).mapNotNull { it.toLongOrNull() }
 }

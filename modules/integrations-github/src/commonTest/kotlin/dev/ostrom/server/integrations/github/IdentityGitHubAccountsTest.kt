@@ -10,7 +10,8 @@ class IdentityGitHubAccountsTest {
     // An approver's GitHub accounts, for a pull request whose author is linked to nobody (Q-GATES-G1).
     @Test
     fun aPersonsGitHubAccountsAreTheOnesTheyLinked() = runTest {
-        val accounts = IdentityGitHubAccounts(LinkedGitHubUsers(mapOf(7L to "dev", 9L to "dev", 8L to "other")))
+        val users = LinkedGitHubUsers(mapOf(7L to "dev", 9L to "dev", 8L to "other"))
+        val accounts = IdentityGitHubAccounts(users, users)
 
         assertEquals(listOf(7L, 9L), accounts.gitHubIdsOf("Dev").sorted())
         assertEquals(emptyList(), accounts.gitHubIdsOf("nobody"))

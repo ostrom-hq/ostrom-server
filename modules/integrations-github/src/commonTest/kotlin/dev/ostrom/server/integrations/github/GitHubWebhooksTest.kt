@@ -48,7 +48,7 @@ class GitHubWebhooksTest {
         GitHubGateChecks(repository, api, "https://console.example", clock),
         logger,
         clock,
-        IdentityGitHubAccounts(LinkedGitHubUsers(mapOf(7L to "dev"))),
+        LinkedGitHubUsers(mapOf(7L to "dev")).let { IdentityGitHubAccounts(it, it) },
     )
     private var delivered = 0
 

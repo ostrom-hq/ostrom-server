@@ -144,7 +144,7 @@ object GitHubIntegrationModule : ServerModule {
         }
         single { GitHubGateChecks(get(), get(), get<GitHubSettings>().webOrigin, get()) } bind GateChannel::class
         single<HandleWebhookUseCase> { HandleWebhookUseCaseImpl(get(), get(), get(), get(), get(), get(), get()) }
-        single { IdentityGitHubAccounts(get()) }
+        single { IdentityGitHubAccounts(get(), get()) }
         single<GitHubAccounts> { get<IdentityGitHubAccounts>() }
         single<GateGitHubAccounts> { get<IdentityGitHubAccounts>() }
         single {

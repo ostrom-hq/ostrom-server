@@ -138,8 +138,6 @@ class IdentityLauncherResolverTest {
 
         override suspend fun listIssuers(userId: Uuid): List<String> = unused()
 
-        override suspend fun subjectsOf(login: String, issuer: String): List<String> = unused()
-
         private fun unused(): Nothing = error("The launches module only reads a user by id or by login.")
     }
 }
