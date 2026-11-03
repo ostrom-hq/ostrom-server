@@ -78,6 +78,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -332,6 +333,25 @@ class GatesPostgresTest {
 
         val again = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()
         assertTrue(again.gate.id != opened.gate.id && again.gate.status == "pending", "One yes covers one action")
+    }
+
+    // Perf pass of the launch (POST /gates): a new gate of a session, with its three approvers, is opened in one
+    // transaction of five statements: the session's lock with the organization, its end, the key's lock, the same
+    // action's gates, then the gate, its session's link and its requests written together.
+    @Test
+    fun aNewGateIsOpenedInFiveStatements() = gatesTest { server ->
+        var opened: HttpResponse? = null
+        val sent = server.driver.record { opened = server.call("agent:a:$session", "/api/v1/gates", push()) }
+        val gate = assertNotNull(opened).body<GateResponse>()
+        val written = sent.first { "INSERT INTO gates_gates" in it.sql }.transaction
+        val opening = sent.filter { it.transaction == written }.map { it.sql }
+        assertEquals(5, opening.size, opening.joinToString("\n"))
+        assertTrue(opening.first().startsWith("SELECT set_config('ostrom.org_id', :org, TRUE), pg_advisory_xact_lock"))
+        assertEquals(listOf(opening.last()), opening.filter { "INSERT" in it }, "One write")
+        for (table in listOf("gates_gates", "gates_sessions", "gates_requests")) {
+            assertTrue("INSERT INTO $table" in opening.last(), table)
+        }
+        assertEquals(listOf("lyes", "rev-b", "rev-c"), server.approvalsOf(gate).map { it.requestedFrom }.sorted())
     }
 
     @Test
