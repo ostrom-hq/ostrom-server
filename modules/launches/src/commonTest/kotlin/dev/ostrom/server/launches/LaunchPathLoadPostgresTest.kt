@@ -9,6 +9,7 @@ import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.compiler.domain.models.Authorship
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
+import dev.ostrom.server.compiler.domain.services.CompiledPackages
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.identity.domain.ApiToken
 import dev.ostrom.server.identity.domain.ApiTokensRepository
@@ -155,6 +156,8 @@ class LaunchPathLoadPostgresTest {
         val team = server.team("bea", CONCURRENT)
         server.release(team.org)
         val deadlocksBefore = server.deadlocks()
+        val packages = server.koin.get<CompiledPackages>()
+        val compiledBefore = packages.compilations
         val calls = Calls()
         // Timed alone on the server: no other test process's bench times or loads it meanwhile (exclusively).
         val (finished, wall, contended) = server.database.exclusively {
@@ -167,6 +170,7 @@ class LaunchPathLoadPostgresTest {
             }
             Triple(ended.orEmpty().filterNotNull(), started.elapsedNow(), server.contendedLaunches(team))
         }
+        val compilations = packages.compilations - compiledBefore
         val deadlocks = server.deadlocks() - deadlocksBefore
         val active = server.activeAgentTokens(team.org.id)
         val stillActing = finished.count { launch ->
@@ -181,12 +185,14 @@ class LaunchPathLoadPostgresTest {
             appendLine(line(transaction, contended))
             appendLine("deadlocks: $deadlocks; agent tokens still active: $active")
             appendLine("ended agent tokens still accepted: $stillActing")
+            appendLine("packages compiled for the $CONCURRENT reads of GET /packages/current: $compilations")
         }
         write("launch-concurrency", report)
         assertEquals(CONCURRENT, finished.size, "Every launch goes through its whole path\n$report")
         assertEquals(0L, deadlocks, report)
         assertEquals(0L, active, "Every agent token is revoked once its launch ended (R2b)\n$report")
         assertEquals(0, stillActing, report)
+        assertTrue(compilations <= 1, "The same sources are compiled once, not at every launch\n$report")
     }
 
     @Test
