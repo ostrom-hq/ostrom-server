@@ -17,6 +17,9 @@ kotlin {
         commonTest.dependencies {
             implementation(project(":testing"))
             implementation(libs.ktor.client.mock)
+            // The console's enrollment end to end: real people, organizations and members name the accounts' owners.
+            implementation(project(":modules:identity"))
+            implementation(project(":modules:orgs"))
         }
     }
 }
