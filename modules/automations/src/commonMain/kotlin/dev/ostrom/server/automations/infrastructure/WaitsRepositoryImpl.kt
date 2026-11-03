@@ -105,6 +105,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
             SELECT $COLUMNS FROM automations_waits WHERE org_id = :org_id
             AND (CAST(:assignee AS TEXT) IS NULL OR assignee = :assignee)
             AND (CAST(:involving AS TEXT) IS NULL OR assignee = :involving OR created_by = :involving)
+            AND (CAST(:created_by AS TEXT) IS NULL OR created_by = :created_by)
             AND (CAST(:status AS TEXT) IS NULL OR status = :status)
             AND (CAST(:session_id AS TEXT) IS NULL OR session_id = :session_id)
             AND (CAST(:run_id AS TEXT) IS NULL OR run_id = :run_id)$cursor
@@ -113,6 +114,7 @@ internal class WaitsRepositoryImpl(private val driver: Driver) : WaitsRepository
         ).bind("org_id", filter.orgId)
             .bind("assignee", filter.assignee)
             .bind("involving", filter.involving)
+            .bind("created_by", filter.createdBy)
             .bind("status", filter.status?.wire)
             .bind("session_id", filter.sessionId)
             .bind("run_id", filter.runId)

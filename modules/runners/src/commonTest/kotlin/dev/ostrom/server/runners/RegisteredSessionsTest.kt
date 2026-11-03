@@ -217,6 +217,33 @@ class RegisteredSessionsTest {
         assertEquals(MachineWork(emptyList(), emptyList()), beat(other))
     }
 
+    /**
+     * The loss window (90 s) against a machine at the runner's longest interval (30 s, `MachineConfig`) whose heartbeat
+     * times out once (10 s) and whose next one the server, under load, records 15 s late: it is never lost. Two lost
+     * heartbeats in a row are a lost machine. A shorter window (60 s) would lose the first one: PERF-RUNNERS, case 3.
+     */
+    @Test
+    fun aHeartbeatLostUnderLoadAtTheLongestIntervalNeverLosesTheMachine() = runTest {
+        val a = runner("a")
+        val session = starting()
+        beat(a)
+        beat(a, report(session, MachineExecutionState.RUNNING))
+        val seen = clock.now
+
+        // Sent at +30 s, timed out at +40 s; the next one leaves at +70 s and is recorded at +85 s.
+        for (at in listOf(30, 40, 60, 70, 85)) {
+            clock.now = seen + at.seconds
+            assertEquals(ExecutionStatus.RUNNING, driver.executionStatus(session), "Online at +$at s")
+        }
+        beat(a, report(session, MachineExecutionState.RUNNING))
+        val recorded = clock.now
+        assertTrue(recorded - seen > 60.seconds, "A 60 s window would have lost it")
+
+        // Then two lost in a row: the next one could come at +110 s at the earliest.
+        clock.now = recorded + 91.seconds
+        assertEquals(ExecutionStatus.HOST_LOST, driver.executionStatus(session))
+    }
+
     @Test
     fun reportedStatesReadFromTheWire() {
         assertEquals(MachineExecutionState.RUNNING, MachineExecutionState.of("running"))

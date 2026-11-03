@@ -63,7 +63,8 @@ class PostgresAnalysisRepository(private val driver: Driver) : AnalysisRepositor
                     .bind("stage", failure?.stage)
                     .bind("reason", failure?.reason)
                     .bind("failed", failure?.at)
-                    .bind("items", JsonArray(run.items).toString())
+                    // One writer for the whole array: `toString` of a JSON tree copies each level into its parent.
+                    .bind("items", Json.encodeToString(JsonArray.serializer(), JsonArray(run.items)))
                     .bind("by", run.startedBy)
                     .bind("started", run.startedAt)
                     .bind("updated", run.updatedAt),

@@ -72,6 +72,12 @@ class AgentSessionRequiredException : OstromException(
     "An agent token names the session it runs in: add ?session=<session id>.",
 )
 
+/** An agent token asks the person who launched it, never another member. */
+class AgentAssigneeRefusedException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "An agent asks only the person who launched it.",
+)
+
 /** An agent token's waits belong to its session: it never names a workflow run. */
 class AgentRunRefusedException : OstromException(ErrorKind.FORBIDDEN, "An agent token does not name a run.")
 

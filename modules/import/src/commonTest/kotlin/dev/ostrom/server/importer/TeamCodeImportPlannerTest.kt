@@ -22,11 +22,11 @@ import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
 class TeamCodeImportPlannerTest {
-    private val lyes = Uuid.parse("0000000a-0000-0000-0000-0000000000a1")
-    private val vivien = Uuid.parse("0000000a-0000-0000-0000-0000000000b1")
+    private val lena = Uuid.parse("0000000a-0000-0000-0000-0000000000a1")
+    private val vera = Uuid.parse("0000000a-0000-0000-0000-0000000000b1")
 
     private val export = TeamCodeExport(
-        members = listOf(TeamCodeMember("m1", "lyes"), TeamCodeMember("m2", "vivien"), TeamCodeMember("m3", "ghost")),
+        members = listOf(TeamCodeMember("m1", "lena"), TeamCodeMember("m2", "vera"), TeamCodeMember("m3", "ghost")),
         servers = listOf(
             TeamCodeMcpServer("v-ro", "grafana", "read only", url = "https://g.example.com/ro"),
             TeamCodeMcpServer(
@@ -56,7 +56,7 @@ class TeamCodeImportPlannerTest {
         ),
     )
 
-    private val plan = TeamCodeImportPlanner.plan(export, mapOf("m1" to lyes, "m2" to vivien))
+    private val plan = TeamCodeImportPlanner.plan(export, mapOf("m1" to lena, "m2" to vera))
 
     private fun server(id: String, target: String, variant: String = "default", perMember: Boolean = false) =
         TeamCodeMcpServer(id, target, variant, perMember = perMember, url = "https://$id.example.com/mcp")
@@ -142,7 +142,7 @@ class TeamCodeImportPlannerTest {
     @Test
     fun mappedMembersAreAssignedWithTheirOwnCredential() {
         assertEquals(
-            listOf("grafana.read-only" to vivien, "grafana" to lyes, "grafana" to vivien),
+            listOf("grafana.read-only" to vera, "grafana" to lena, "grafana" to vera),
             plan.assignments.map { it.server.name to it.memberId },
         )
         assertEquals(SecretValue("own"), plan.assignments[2].memberSecret)
@@ -253,7 +253,7 @@ class TeamCodeImportPlannerTest {
     fun theAssignmentsOfAServerInConflictArePlannedToBeReported() {
         val servers = listOf(server("a", "Grafana"), server("b", "grafana"))
         val export = TeamCodeExport(servers = servers, assignments = listOf(TeamCodeAssignment("m1", "b")))
-        val assignment = TeamCodeImportPlanner.plan(export, mapOf("m1" to lyes)).assignments.single()
+        val assignment = TeamCodeImportPlanner.plan(export, mapOf("m1" to lena)).assignments.single()
         assertEquals("b", assignment.server.source.id)
         assertTrue(assignment.server.conflict != null)
     }
