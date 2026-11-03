@@ -287,6 +287,9 @@ class InMemoryDeviceAuthorizationsRepository(
 class InMemoryAuditRepository : AuditRepository {
     val events = mutableListOf<AuditEvent>()
 
+    /** Every read of an organization's log, in order. */
+    val orgReads = mutableListOf<OrgAuditQuery>()
+
     override suspend fun append(
         orgId: Uuid?,
         build: suspend (previousHash: String?, sequence: Long) -> AuditEvent,
@@ -300,7 +303,7 @@ class InMemoryAuditRepository : AuditRepository {
             .reversed().take(limit)
 
     override suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent> =
-        list(orgId, null, query.beforeSequence, Int.MAX_VALUE)
+        list(orgId, null, query.beforeSequence, Int.MAX_VALUE).also { orgReads += query }
             .filter { query.actorId == null || it.entry.actorId == query.actorId }
             .filter { query.action == null || it.entry.action == query.action }
             .take(query.limit)
