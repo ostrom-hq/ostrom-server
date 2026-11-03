@@ -217,5 +217,11 @@ class CheckTerminalsTest {
         }
         assertFailsWith<IllegalStateException> { CheckTerminals(failing, homes).start("true", emptyMap(), "/w") }
         assertEquals(listOf("/tmp/check-1"), homes.released)
+        val stopped = object : TerminalStarter {
+            override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal =
+                throw CancellationException("stop")
+        }
+        assertFailsWith<CancellationException> { CheckTerminals(stopped, homes).start("true", emptyMap(), "/w") }
+        assertEquals(listOf("/tmp/check-1", "/tmp/check-2"), homes.released)
     }
 }

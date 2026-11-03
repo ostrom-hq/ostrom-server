@@ -122,20 +122,27 @@ class CheckHost(
     suspend fun serve(link: AgentConnection) {
         while (true) {
             val nonce = CheckNonces.read(link.input) ?: break
-            val connection = try {
-                connect()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                log("check connection failed: ${error::class.simpleName}")
-                null
-            } ?: continue
-            try {
-                CheckNonces.write(connection.output, nonce)
-                host.serve(connection.input, connection.output)
-            } finally {
-                connection.close()
-            }
+            connectOrNull()?.let { serveCheck(it, nonce) }
+        }
+    }
+
+    /** A new connection to the runner; null, logged, when it cannot be opened (the runner's check then times out). */
+    private suspend fun connectOrNull(): AgentConnection? = try {
+        connect()
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
+        log("check connection failed: ${error::class.simpleName}")
+        null
+    }
+
+    /** Opens the check's connection with its nonce, then serves the check on it. */
+    private suspend fun serveCheck(connection: AgentConnection, nonce: String) {
+        try {
+            CheckNonces.write(connection.output, nonce)
+            host.serve(connection.input, connection.output)
+        } finally {
+            connection.close()
         }
     }
 }
@@ -152,14 +159,17 @@ internal object CheckNonces {
 
     /** Reads a nonce; null at the end of the stream or on anything but a whole one. */
     suspend fun read(input: ByteReadChannel): String? {
-        if (input.exhausted()) return null
-        val bytes = try {
-            input.readByteArray(LENGTH)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            return null
-        }
-        return bytes.decodeToString().takeIf { text -> text.all { it in '0'..'9' || it in 'a'..'f' } }
+        val bytes = if (input.exhausted()) null else whole(input)
+        val text = bytes?.decodeToString().orEmpty()
+        return text.takeIf { it.length == LENGTH && it.all { char -> char in '0'..'9' || char in 'a'..'f' } }
+    }
+
+    /** The nonce's bytes; null when the stream ends before them. */
+    private suspend fun whole(input: ByteReadChannel): ByteArray? = try {
+        input.readByteArray(LENGTH)
+    } catch (error: CancellationException) {
+        throw error
+    } catch (_: Exception) {
+        null
     }
 }

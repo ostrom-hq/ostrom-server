@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.runner
 
+import kotlinx.coroutines.CancellationException
+
 /** The homes of the checks, on the check host. */
 interface CheckHomes {
     /**
@@ -29,14 +31,16 @@ interface CheckHomes {
 class CheckTerminals(private val terminals: TerminalStarter, private val homes: CheckHomes) : TerminalStarter {
     override suspend fun start(script: String, environment: Map<String, String>, directory: String): Terminal {
         val home = homes.create()
-        var started = false
-        try {
-            val terminal = terminals.start(script, environment + mapOf("HOME" to home, "TMPDIR" to home), directory)
-            started = true
-            return Released(terminal) { homes.release(home) }
-        } finally {
-            if (!started) homes.release(home)
+        val terminal = try {
+            terminals.start(script, environment + mapOf("HOME" to home, "TMPDIR" to home), directory)
+        } catch (error: CancellationException) {
+            homes.release(home)
+            throw error
+        } catch (error: Exception) {
+            homes.release(home)
+            throw error
         }
+        return Released(terminal) { homes.release(home) }
     }
 
     /** A check's terminal, whose close releases the check's home. */
