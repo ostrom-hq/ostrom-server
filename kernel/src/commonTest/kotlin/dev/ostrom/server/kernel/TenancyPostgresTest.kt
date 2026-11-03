@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.kernel
 
+import dev.ostrom.server.kernel.database.TENANT_ROLE
 import dev.ostrom.server.kernel.database.UnsafeDatabaseRoleException
+import dev.ostrom.server.kernel.database.inOrg
 import dev.ostrom.server.kernel.database.requireRowLevelSecurity
 import dev.ostrom.server.kernel.database.withOrganization
+import dev.ostrom.server.testing.RecordingDriver
 import dev.ostrom.server.testing.TestDatabase
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
@@ -51,6 +54,31 @@ class TenancyPostgresTest {
             database.close()
         }
     }
+
+    // As asServingRole, with the table granted to the tenant role the serving role switches to in inOrg.
+    private fun asTenant(block: suspend (serving: Driver, role: String) -> Unit) = runTest {
+        val database = TestDatabase.create() ?: return@runTest
+        try {
+            // One connection: every transaction of the test reuses the connection the previous one used.
+            database.withRole(poolSize = 1) { role, serving ->
+                database.superuser.execute("GRANT $TENANT_ROLE TO $role").getOrThrow()
+                createNotes(database.owner, TENANT_ROLE)
+                block(serving, role)
+            }
+        } finally {
+            database.close()
+        }
+    }
+
+    // Who the connection is and the organization it carries, outside or inside a transaction.
+    private suspend fun QueryExecutor.state(): Pair<String?, String?> {
+        val row = fetchAll("SELECT current_user AS who, current_setting('ostrom.org_id', true) AS org").getOrThrow()
+            .single()
+        return row.get("who").asStringOrNull() to row.get("org").asStringOrNull()?.ifEmpty { null }
+    }
+
+    private suspend fun QueryExecutor.bodies(): List<String?> =
+        fetchAll("SELECT body FROM notes ORDER BY body").getOrThrow().map { it.get("body").asStringOrNull() }
 
     private suspend fun QueryExecutor.insert(org: Uuid, body: String) {
         execute(
@@ -104,6 +132,35 @@ class TenancyPostgresTest {
             }
         }
         assertEquals(0L, serving.withOrganization(alpha) { it.count() })
+    }
+
+    @Test
+    fun inOrgConfinesItsTransactionInOneStatementBeforeItsWork() = asTenant { serving, _ ->
+        val recording = RecordingDriver(serving)
+        val sent = recording.record { recording.inOrg(alpha) { count() } }
+        assertEquals(2, sent.size, sent.joinToString("\n") { it.sql })
+        assertEquals("SELECT count(*) AS n FROM notes", sent.last().sql, "Then the work")
+    }
+
+    @Test
+    fun aReusedConnectionNeverKeepsTheRoleOrTheOrganizationOfAnInOrgTransaction() = asTenant { serving, role ->
+        assertEquals(TENANT_ROLE to alpha.toString(), serving.inOrg(alpha) { insert(alpha, "alpha's"); state() })
+        assertEquals(role to null, serving.state(), "Back to the serving role, without an organization")
+        assertEquals(listOf<String?>("beta's"), serving.inOrg(beta) { insert(beta, "beta's"); bodies() })
+        assertEquals(role to null, serving.state())
+        assertFailsWith<IllegalStateException> {
+            serving.inOrg(alpha) {
+                insert(alpha, "rolled back")
+                error("use case failed")
+            }
+        }
+        assertEquals(role to null, serving.state(), "A failed transaction leaves nothing on the connection either")
+        assertEquals(listOf<String?>("beta's"), serving.inOrg(beta) { bodies() }, "Never alpha's rows")
+        assertEquals(listOf<String?>("alpha's"), serving.inOrg(alpha) { bodies() }, "Never beta's rows")
+        assertFailsWith<SQLError>("Outside inOrg, the serving role is not granted the table") { serving.count() }
+        assertFailsWith<SQLError>("A row of another organization is refused") {
+            serving.inOrg(alpha) { insert(beta, "planted") }
+        }
     }
 
     @Test
