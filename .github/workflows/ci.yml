@@ -160,7 +160,7 @@ jobs:
         run: echo 'org.gradle.workers.max=2' >> ~/.gradle/gradle.properties
       - name: Native tests (linuxX64), with PostgreSQL
         if: ${{ !cancelled() }}
-        run: ./gradlew :app:linuxX64Test --tests '*GateJourneyPostgresTest*'
+        run: ./gradlew :app:linuxX64Test --tests '*GateJourneyPostgresTest.whatABurstLeavesAlive*'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

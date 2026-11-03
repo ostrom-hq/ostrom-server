@@ -35,7 +35,12 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -49,6 +54,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 import kotlin.time.measureTime
 import kotlin.uuid.Uuid
@@ -260,13 +266,29 @@ class GateJourneyPostgresTest {
     @Test
     fun whatABurstLeavesAlive() = serverTest(serverModules()) { server ->
         val driver = server.koin.get<Driver>()
+        decay("start")
         peaks("http") { List(BURST) { async { server.client.get("/api/v1/approvals").status.value } }.awaitAll() }
+        decay("http")
+        val bounded = Semaphore(BOUNDED)
+        peaks("http-bounded") {
+            List(BURST) {
+                async { bounded.withPermit { server.client.get("/api/v1/approvals").status.value } }
+            }.awaitAll()
+        }
+        decay("http-bounded")
         peaks("selects") {
             List(BURST) { async { driver.fetchAll("SELECT repeat('x', 20000)").getOrThrow().rows.size } }.awaitAll()
         }
-        peaks("health") { List(BURST) { async { server.client.get("/api/v1/health").status.value } }.awaitAll() }
-        peaks("http-again") {
-            List(BURST) { async { server.client.get("/api/v1/approvals").status.value } }.awaitAll()
+        decay("selects")
+    }
+
+    // How what a burst left alive goes away: collected again after 0, 1, 3 and 10 s of real time (`DECAY`).
+    private suspend fun decay(stage: String) {
+        var waited = 0
+        for (step in listOf(0, 1, 2, 7)) {
+            withContext(Dispatchers.Default) { delay(step.seconds) }
+            waited += step
+            println("DECAY stage=$stage after_s=$waited threads=${threadKinds()} ${afterCollection()}")
         }
     }
 
@@ -305,6 +327,7 @@ class GateJourneyPostgresTest {
         const val SHA_LENGTH = 40
         const val RACE = 100
         const val BURST = 300
+        const val BOUNDED = 16
         const val CONSOLE_ORIGIN = "http://localhost:5173"
         const val COMMIT = "0123456789abcdef0123456789abcdef01234567"
     }

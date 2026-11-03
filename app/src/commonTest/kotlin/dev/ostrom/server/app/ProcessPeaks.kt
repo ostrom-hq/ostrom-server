@@ -16,7 +16,7 @@ internal expect fun processStatus(): String
 internal expect fun threadNames(): List<String>
 
 // Thread names without their numbers, counted: `tokio-runtime-w ×8`.
-private fun threadKinds(): String = threadNames()
+internal fun threadKinds(): String = threadNames()
     .groupingBy { it.trim().trimEnd { c -> c.isDigit() || c == '-' || c == '#' } }
     .eachCount()
     .entries
