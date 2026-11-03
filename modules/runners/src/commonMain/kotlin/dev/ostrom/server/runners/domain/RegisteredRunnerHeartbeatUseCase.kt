@@ -2,6 +2,7 @@
 package dev.ostrom.server.runners.domain
 
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -18,13 +19,20 @@ interface RegisteredRunnerHeartbeatUseCase {
      * @param key The key it presented.
      * @param report What the runner runs and keeps; null from a runner that does not run sessions, which is then given
      *   none.
+     * @param wait How long a runner with room may wait for an execution to hand over (the contract's `wait`): the
+     *   answer comes as soon as one is, and at the end of the wait otherwise.
      *
      * @return What it must hold: the executions to run, each plan handed over once, and the workspaces to keep.
      *
      * @throws RunnerUnauthenticatedException When no runner has that id or the key is not its own; both answer the
      *   same, so neither the runner's existence nor its organization leaks.
      */
-    suspend operator fun invoke(id: Uuid, key: String, report: MachineReport? = null): MachineWork
+    suspend operator fun invoke(
+        id: Uuid,
+        key: String,
+        report: MachineReport? = null,
+        wait: Duration = Duration.ZERO,
+    ): MachineWork
 }
 
 /**
@@ -50,7 +58,7 @@ class RegisteredRunnerHeartbeatUseCaseImpl(
     private val sessions: CloudSessionsRepository,
     private val planner: ExecutionPlanner,
 ) : RegisteredRunnerHeartbeatUseCase {
-    override suspend fun invoke(id: Uuid, key: String, report: MachineReport?): MachineWork {
+    override suspend fun invoke(id: Uuid, key: String, report: MachineReport?, wait: Duration): MachineWork {
         val hash = tokens.hash(key)
         val stored = repository.keyOf(id)
         val matches = constantTimeEquals(hash, if (stored == null) NO_KEY_HASH else stored.keyHash)
