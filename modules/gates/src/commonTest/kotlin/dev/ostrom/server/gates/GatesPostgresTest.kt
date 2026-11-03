@@ -52,6 +52,8 @@ import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
+import dev.ostrom.server.kernel.http.CallCeilingSettings
+import dev.ostrom.server.kernel.http.CallsInProgress
 import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.testing.TestServer
@@ -194,6 +196,13 @@ class GatesPostgresTest {
 
     private fun gatesTest(block: suspend (TestServer) -> Unit) =
         serverTest(listOf(GatesModule), overrides) { server -> block(server) }
+
+    // Two hundred hooks wait together: more than the held calls a server takes by default without a memory limit
+    // (128), so the instance sets its own ceiling, as OSTROM_MAX_HELD_CALLS does.
+    private val manyHeld = module {
+        includes(overrides)
+        single { CallsInProgress(CallCeilingSettings(held = WAITERS + 16), { null }) }
+    }
 
     // Four waits at once per subject, the default for the rest.
     private val fewWaits = module {
@@ -458,7 +467,7 @@ class GatesPostgresTest {
     }
 
     @Test
-    fun twoHundredWaitingHooksHoldNoConnection() = gatesTest { server ->
+    fun twoHundredWaitingHooksHoldNoConnection() = serverTest(listOf(GatesModule), manyHeld) { server ->
         // The test pool has 4 connections: a wait that held one would stall every other request for its 30 s.
         val agent = "agent:a:$session"
         val opened = server.call(agent, "/api/v1/gates", push()).body<GateResponse>()

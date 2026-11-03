@@ -66,7 +66,7 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
         expectSuccess = false
     }
 
-    private val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = 2.seconds)) { null }
+    private val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = 2.seconds), { null })
 
     private val oneCallAtOnce = module {
         includes(overrides)

@@ -105,7 +105,7 @@ class CallCeilingTest {
 
     @Test
     fun withoutALimitTheCeilingsAreTheDefault() {
-        val calls = CallsInProgress(CallCeilingSettings()) { null }
+        val calls = CallsInProgress(CallCeilingSettings(), { null })
         assertEquals(CallsInProgress.DEFAULT_CEILING, calls.ceiling(CallKind.SERVED))
         assertEquals(CallsInProgress.DEFAULT_CEILING / 2, calls.ceiling(CallKind.HELD))
         assertEquals(170, calls.ceiling(CallKind.OPEN), "two thirds of the ordinary calls, as under a limit")
@@ -113,13 +113,13 @@ class CallCeilingTest {
 
     @Test
     fun theHeldCeilingFollowsAnOrdinaryCeilingSetByTheInstance() {
-        assertEquals(25, CallsInProgress(CallCeilingSettings(served = 50)) { 1024 * mib }.ceiling(CallKind.HELD))
-        assertEquals(1, CallsInProgress(CallCeilingSettings(served = 1)) { null }.ceiling(CallKind.HELD), "at least 1")
+        assertEquals(25, CallsInProgress(CallCeilingSettings(served = 50), { 1024 * mib }).ceiling(CallKind.HELD))
+        assertEquals(1, CallsInProgress(CallCeilingSettings(served = 1), { null }).ceiling(CallKind.HELD), "at least 1")
     }
 
     @Test
     fun aCeilingSetByTheInstanceWinsOverTheLimit() {
-        val calls = CallsInProgress(CallCeilingSettings(served = 2, held = 3, open = 4)) { 512 * mib }
+        val calls = CallsInProgress(CallCeilingSettings(served = 2, held = 3, open = 4), { 512 * mib })
         assertEquals(2, calls.ceiling(CallKind.SERVED))
         assertEquals(3, calls.ceiling(CallKind.HELD))
         assertEquals(4, calls.ceiling(CallKind.OPEN))
@@ -127,7 +127,7 @@ class CallCeilingTest {
 
     @Test
     fun eachKindCountsUnderItsOwnCeiling() = runTest {
-        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, open = 1, queueWait = ZERO)) { null }
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, open = 1, queueWait = ZERO), { null })
         val served = assertNotNull(calls.enter(CallKind.SERVED))
         assertNull(calls.enter(CallKind.SERVED), "the served place is taken")
         val held = assertNotNull(calls.enter(CallKind.HELD), "a held call does not count with the served ones")
@@ -147,7 +147,7 @@ class CallCeilingTest {
 
     @Test
     fun pastTheCeilingACallWaitsInLineForAPlaceThenIsRefused() = runTest {
-        val calls = CallsInProgress(CallCeilingSettings(served = 1, queueWait = 2.seconds)) { null }
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, queueWait = 2.seconds), { null })
         val first = assertNotNull(calls.enter(CallKind.SERVED))
         val waiting = async { calls.enter(CallKind.SERVED) }
         advanceTimeBy(1.seconds)
@@ -162,7 +162,7 @@ class CallCeilingTest {
 
     @Test
     fun aFullLineRefusesTheNextCallAtOnce() = runTest {
-        val calls = CallsInProgress(CallCeilingSettings(served = 1, queueWait = 2.seconds)) { null }
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, queueWait = 2.seconds), { null })
         val first = assertNotNull(calls.enter(CallKind.SERVED))
         val waiting = async { calls.enter(CallKind.SERVED) }
         advanceTimeBy(1.seconds)
@@ -216,7 +216,7 @@ class CallCeilingTest {
     ) = testApplication {
         val release = CompletableDeferred<Unit>()
         val probe = Probe(release)
-        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = wait)) { null }
+        val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = wait), { null })
         val koin = koinApplication {
             modules(
                 module {
