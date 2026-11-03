@@ -81,8 +81,11 @@ class PostgresRunEngineRepository(
     private fun ResultSet.Row.run(): WorkflowRun =
         OstromJson.decodeFromString(WorkflowRun.serializer(), get("body").asString())
 
-    private fun ResultSet.Row.graph(): RunGraph =
-        get("graph").asStringOrNull()?.let { OstromJson.decodeFromString(RunGraph.serializer(), it) } ?: RunGraph()
+    // A run started before the engine copied no graph: an empty one, which fails it with nothing to play.
+    private fun ResultSet.Row.graph(): RunGraph {
+        val raw = get("graph").asStringOrNull()
+        return if (raw == null) RunGraph() else OstromJson.decodeFromString(RunGraph.serializer(), raw)
+    }
 
     private fun Statement.instant(name: String, value: Instant?): Statement =
         if (value == null) bindNull(name, Instant::class) else bind(name, value)

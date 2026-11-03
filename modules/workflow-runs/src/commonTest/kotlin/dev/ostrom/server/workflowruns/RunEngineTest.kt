@@ -65,9 +65,12 @@ class RunEngineTest {
     private class Runs(var writes: Boolean = true) : RunEngineRepository, StartedRunsRepository {
         val rows = mutableMapOf<String, PlayedRun>()
         val released = mutableListOf<Pair<String, Instant?>>()
+        val leases = mutableListOf<Instant>()
 
-        override suspend fun claimDue(owner: String, now: Instant, until: Instant, limit: Int): List<RunRef> =
-            rows.keys.map { RunRef(ORG, it) }
+        override suspend fun claimDue(owner: String, now: Instant, until: Instant, limit: Int): List<RunRef> {
+            leases += until
+            return rows.keys.map { RunRef(ORG, it) }
+        }
 
         override suspend fun played(orgId: Uuid, id: String): PlayedRun? = rows[id]
 
@@ -248,6 +251,8 @@ class RunEngineTest {
         val loop = RunGraph("t", listOf(TRIGGER.copy(maxVisits = 500)), listOf(WorkflowEdge("t", "t")))
         val full = run(visits = List(RunMoves.MAX_VISITS) { visit(it + 1, "t", WorkflowNodeKind.TRIGGER, "done") })
         assertEquals("The run made 100 visits, the most.", moves.begin(full, loop, "t").next.failure)
+        // A graph without a start begins at its first node.
+        assertEquals("t", moves.start(run(), RunGraph(null, listOf(TRIGGER))).next.currentNodeId)
 
         fun after(outcome: String, vararg edges: WorkflowEdge): WorkflowRun {
             val done = run(visits = listOf(visit(1, "a", WorkflowNodeKind.AGENT, "done", outcome)))
@@ -258,6 +263,8 @@ class RunEngineTest {
         assertEquals("Node a: failed.", after("failed").failure)
         assertEquals("Node a: failed.", after("failed", WorkflowEdge("a", "t")).failure)
         assertEquals("Node a: odd.", after("odd", WorkflowEdge("a", "t", on = "next")).failure)
+        // A yes whose only edge takes another outcome has nowhere to go.
+        assertEquals("Node a: approved.", after("approved", WorkflowEdge("a", "t", on = "rejected")).failure)
         assertEquals("t", after("next", WorkflowEdge("a", "t", on = "next")).currentNodeId)
         assertEquals("t", after("approved", WorkflowEdge("a", "t")).currentNodeId)
         val chosen = after("failed", WorkflowEdge("a", null, on = "x"), WorkflowEdge("a", "t", on = "failed"))
@@ -283,6 +290,7 @@ class RunEngineTest {
 
         val other = "wfr_${"b".repeat(32)}"
         assertEquals(listOf(RUN to clock.now + TickRunsUseCaseImpl.RETRY, other to null), runs.released)
+        assertEquals(listOf(clock.now + TickRunsUseCaseImpl.LEASE), runs.leases)
         assertEquals(listOf<Any>("workflow run step failed" to mapOf("error" to "IllegalStateException")), logs.lines)
         val cancelled = TickRunsUseCaseImpl(
             runs,

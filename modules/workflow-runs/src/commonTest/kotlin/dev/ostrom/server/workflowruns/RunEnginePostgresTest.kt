@@ -26,9 +26,11 @@ import dev.ostrom.server.identity.domain.SecretHasher
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.VerifiedIdentity
 import dev.ostrom.server.instance.InstanceModule
+import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.launches.LaunchesModule
+import dev.ostrom.server.launches.domain.services.LauncherResolver
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
 import dev.ostrom.server.orgs.OrgsModule
 import dev.ostrom.server.orgs.domain.Invitation
@@ -59,9 +61,11 @@ import dev.ostrom.server.workflowruns.domain.models.RunChange
 import dev.ostrom.server.workflowruns.domain.models.RunGraph
 import dev.ostrom.server.workflowruns.domain.repositories.RunEngineRepository
 import dev.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
+import dev.ostrom.server.workflowruns.domain.services.AgentRequest
 import dev.ostrom.server.workflowruns.domain.services.RunAgents
 import dev.ostrom.server.workflowruns.domain.services.RunGates
 import dev.ostrom.server.workflowruns.fakes.FixedClock
+import dev.ostrom.server.workflowruns.infrastructure.CloudRunAgents
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -516,6 +520,18 @@ class RunEnginePostgresTest {
         // A gate or a session another organization holds, or none, is not there for this one.
         assertNull(server.koin.get<RunGates>().state(ada.org.id, Uuid.random()))
         assertNull(server.koin.get<RunAgents>().state(eveOrg, sessionOf(run.id, 1)))
+        // A starter whose login still resolves but whose membership is gone (removed meanwhile) starts no session.
+        val real = server.koin.get<LauncherResolver>()
+        val removed = object : LauncherResolver by real {
+            override suspend fun member(orgId: Uuid, userId: Uuid): OrgPrincipal? = null
+        }
+        val agents = CloudRunAgents(server.koin.get(), server.koin.get(), removed, clock)
+        val request = AgentRequest(Uuid.random(), "ada", "Ship · Build", "claude", null, "Build")
+        assertEquals(
+            "The person who started the run is no longer a member of the organization.",
+            agents.start(ada.org.id, request),
+        )
+        assertNull(server.koin.get<CloudSessionsRepository>().get(ada.org.id, request.sessionId))
     }
 
     @Test

@@ -89,7 +89,8 @@ class PlayRunUseCaseImpl(
 
     private suspend fun effect(visit: Visit): Step = when (visit.node.kind) {
         WorkflowNodeKind.AGENT -> agent(visit)
-        WorkflowNodeKind.GATE -> visit.last.gateId?.let { decided(visit, Uuid.parse(it)) } ?: open(visit)
+        WorkflowNodeKind.GATE ->
+            visit.last.gateId.let { id -> if (id == null) open(visit) else decided(visit, Uuid.parse(id)) }
         WorkflowNodeKind.TRIGGER -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.NEXT))
         else -> write(
             visit.ref,
@@ -102,16 +103,18 @@ class PlayRunUseCaseImpl(
         )
     }
 
+    // Conditions rather than a `when` on the nullable state, whose unreachable default Kover counts as a branch.
     private suspend fun agent(visit: Visit): Step {
         val sessionId = sessionOf(visit.run.id, visit.last.seq)
-        return when (agents.state(visit.ref.orgId, sessionId)) {
-            null -> {
+        val state = agents.state(visit.ref.orgId, sessionId)
+        return when {
+            state == null -> {
                 val refusal = agents.start(visit.ref.orgId, AgentRequests.of(visit.run, visit.node, sessionId))
                 if (refusal == null) later() else write(visit.ref, visit.failed(refusal))
             }
-            AgentState.WORKING -> later()
-            AgentState.FAILED -> write(visit.ref, visit.failed("The agent session failed to start."))
-            AgentState.DONE -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.NEXT))
+            state == AgentState.WORKING -> later()
+            state == AgentState.FAILED -> write(visit.ref, visit.failed("The agent session failed to start."))
+            else -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.NEXT))
         }
     }
 
@@ -134,11 +137,14 @@ class PlayRunUseCaseImpl(
         return write(visit.ref, change)
     }
 
-    private suspend fun decided(visit: Visit, gateId: Uuid): Step = when (gates.state(visit.ref.orgId, gateId)) {
-        GateState.PENDING -> later()
-        GateState.APPROVED -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.APPROVED))
-        GateState.REJECTED -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.REJECTED))
-        null -> write(visit.ref, visit.failed("The gate is gone."))
+    private suspend fun decided(visit: Visit, gateId: Uuid): Step {
+        val state = gates.state(visit.ref.orgId, gateId)
+        return when {
+            state == null -> write(visit.ref, visit.failed("The gate is gone."))
+            state == GateState.PENDING -> later()
+            state == GateState.APPROVED -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.APPROVED))
+            else -> write(visit.ref, visit.moves.finish(visit.run, RunMoves.REJECTED))
+        }
     }
 
     private fun later(): Step = Step.Later(clock.now() + poll)
