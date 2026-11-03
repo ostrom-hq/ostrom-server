@@ -68,6 +68,17 @@ data class Member(
 )
 
 /**
+ * A page of the members.
+ *
+ * @property items The members, oldest first.
+ * @property next The member the next page starts after, when more follow.
+ */
+data class MemberPage(val items: List<MemberProfile>, val next: Uuid?)
+
+/** The most members of a page, and the default: the whole team of every organization today. */
+const val MAX_MEMBER_PAGE = 1000
+
+/**
  * A member with what the console shows of the person.
  *
  * @property member The membership.

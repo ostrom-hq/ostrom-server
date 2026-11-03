@@ -11,6 +11,7 @@ import dev.ostrom.server.compiler.domain.models.DecisionDoc
 import dev.ostrom.server.compiler.domain.models.StoredWorkflow
 import dev.ostrom.server.compiler.domain.models.WorkflowDoc
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
+import dev.ostrom.server.compiler.domain.repositories.MAX_WORKFLOWS
 import dev.ostrom.server.compiler.domain.services.JsText
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.domain.services.WorkflowRepos
@@ -146,6 +147,11 @@ class WorkflowsUseCaseImpl(
         // never a creation; a creation never replaces.
         val expected = when {
             create && before != null -> throw OstromException(ErrorKind.CONFLICT, "A workflow with this id exists.")
+            // Every read of the workflows loads them all: a creation beyond the limit is refused.
+            create && repository.workflowCount(orgId) >= MAX_WORKFLOWS -> throw OstromException(
+                ErrorKind.CONFLICT,
+                "workflow_limit: an organization keeps at most $MAX_WORKFLOWS workflows; delete one first.",
+            )
             create -> null
             before == null -> throw OstromException(ErrorKind.NOT_FOUND, "Workflow not found.")
             else -> expectedVersion ?: before.version
@@ -164,7 +170,7 @@ class WorkflowsUseCaseImpl(
 
     override suspend fun delete(orgId: Uuid, id: String) {
         get(orgId, id)
-        val pinned = repository.packages(orgId, null).filter { !it.revoked }.any { stored ->
+        val pinned = repository.packages(orgId).filter { !it.revoked }.any { stored ->
             val pin = repository.pin(orgId, stored.envelope.repo)
             pin?.contentDigest == stored.envelope.contentDigest && compiles(stored.envelope.payload, id)
         }

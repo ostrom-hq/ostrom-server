@@ -8,6 +8,7 @@ import dev.ostrom.server.secrets.infrastructure.fetchInOrg
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.serverTest
 import dev.ostrom.server.usage.domain.Admission
+import dev.ostrom.server.usage.domain.DailySpendLimits
 import dev.ostrom.server.usage.domain.SpendAdmission
 import dev.ostrom.server.usage.domain.SpendHold
 import dev.ostrom.server.usage.domain.SpendLimits
@@ -26,6 +27,7 @@ import org.koin.dsl.module
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 
@@ -114,6 +116,33 @@ class SpendHoldsPostgresTest {
         assertEquals(
             Admission.Insufficient(SpendScope.MEMBER, 2_000, 500),
             server.admit(hold(600, memberId = one), limits),
+        )
+    }
+
+    @Test
+    fun aDailyLimitCountsTodaysSpendAndTheCallsInFlight() = serverTest(modules, overrides) { server ->
+        val today = TestCallers.epoch - 1.hours
+        // Spent before today: counts for the month, never for the day.
+        server.koin.get<UsageRecorder>().record(modelEvent(5_000, memberId = member, at = today - 1.minutes))
+        server.koin.get<UsageRecorder>().record(modelEvent(600, memberId = member))
+        val orgDay = SpendLimits(null, null, DailySpendLimits(today, orgMicros = 1_000, memberMicros = null))
+        assertEquals(Admission.Admitted, server.admit(hold(300), orgDay))
+        assertEquals(
+            Admission.Insufficient(SpendScope.ORG, 1_000, 100, daily = true),
+            server.admit(hold(101), orgDay),
+            "Today's 600 and the 300 in flight leave 100",
+        )
+
+        val memberDay = SpendLimits(null, null, DailySpendLimits(today, orgMicros = null, memberMicros = 600))
+        assertEquals(Admission.Exhausted(SpendScope.MEMBER, 600, daily = true), server.admit(hold(1), memberDay))
+        val other = Uuid.random()
+        assertEquals(Admission.Admitted, server.admit(hold(500, memberId = other), memberDay), "Another member's day")
+
+        val both = SpendLimits(10_000, null, DailySpendLimits(today, orgMicros = null, memberMicros = 2_000))
+        assertEquals(
+            Admission.Insufficient(SpendScope.ORG, 10_000, 3_600),
+            server.admit(hold(4_000), both),
+            "The month counts the 5 600 spent and the 800 in flight",
         )
     }
 }

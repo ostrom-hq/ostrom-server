@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 
 /**
  * Runs one replay of an organization: its rules that gate boundary actions (proposed, accepted, or as the team edited
@@ -54,7 +55,7 @@ class ReplayRulesUseCaseImpl(
     private val oneAtATime = Mutex()
 
     override suspend fun invoke(run: AnalysisRun) {
-        oneAtATime.withLock { runs.execute(run, "replay") { replay(run) } }
+        oneAtATime.withLock { runs.execute(run, "replay", REPLAY_DEADLINE) { replay(run) } }
     }
 
     private suspend fun replay(run: AnalysisRun) {
@@ -88,3 +89,6 @@ class ReplayRulesUseCaseImpl(
 // How far back the history is replayed. Top-level: a companion property has a getter nothing calls, which Kover
 // counts.
 private val REPLAY_WINDOW = 30.days
+
+// How long a replay may take: the worst measured is 15 s (1,000 actions, 1,500 rules, ReplayLoadPostgresTest).
+private val REPLAY_DEADLINE = 5.minutes

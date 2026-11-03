@@ -63,7 +63,8 @@ accepts it, but a phone shows its receipts as signed by an unknown key.
    - the previous key is not a key this instance signed with: a key from another instance never vouches for this one;
    - the previous key is the current key itself.
 
-   A missing previous key file stops the start with a configuration error.
+   A previous key file that is missing, or is not an Ed25519 private key in PKCS#8 PEM, stops the start with a
+   configuration error that names the file. So does such a current key file.
 
 5. **Remove `OSTROM_PREVIOUS_SIGNING_KEY_FILE`.** The rotation is recorded once and never changes, so later starts do
    not need the previous key. Keep the previous private key offline, or destroy it: the server only needs its public
