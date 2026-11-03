@@ -2,6 +2,7 @@
 
 package dev.ostrom.server.identity
 
+import dev.ostrom.server.identity.domain.ADMIN_READ_SCOPES
 import dev.ostrom.server.identity.domain.ADMIN_SCOPES
 import dev.ostrom.server.identity.domain.ADMIN_TOKEN_LIFETIME
 import dev.ostrom.server.identity.domain.ADMIN_TOKEN_SCOPES
@@ -19,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.uuid.Uuid
 
@@ -27,12 +29,26 @@ class AdminScopesTest {
     @Test
     fun onlyTheAdminTokenHoldsTheGovernanceScopesWhateverARowLists() {
         val stored = ADMIN_SCOPES + CLI_SCOPES + "orgs:write" + "user:*"
-        assertEquals(ADMIN_TOKEN_SCOPES, grantedScopes(TokenKind.ADMIN, stored))
-        assertEquals(CLI_SCOPES + ADMIN_SCOPES, ADMIN_TOKEN_SCOPES)
+        // never more than its row lists: this one lists no read of the governance
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES, grantedScopes(TokenKind.ADMIN, stored))
+        assertEquals(CLI_SCOPES + ADMIN_SCOPES + ADMIN_READ_SCOPES, ADMIN_TOKEN_SCOPES)
         assertEquals(CLI_SCOPES + "orgs:write", grantedScopes(TokenKind.PERSONAL, stored - "user:*"))
         assertEquals(CLI_SCOPES, grantedScopes(TokenKind.CLI, stored))
         assertEquals(8.hours, ADMIN_TOKEN_LIFETIME)
         assertEquals("osg", TokenKind.ADMIN.prefix)
+    }
+
+    @Test
+    fun theAdminTokenReadsTheModelPolicyItRewrites() {
+        // ostrom policy set models keeps the default and the members' lists: it reads the policy before writing it
+        assertTrue("inference:read" in ADMIN_TOKEN_SCOPES, "$ADMIN_TOKEN_SCOPES")
+        assertTrue("inference:read" in grantedScopes(TokenKind.ADMIN, ADMIN_TOKEN_SCOPES))
+        // a read, not a governance scope: a personal token still holds it, the device's token still does not
+        assertEquals(setOf("inference:read"), grantedScopes(TokenKind.PERSONAL, setOf("inference:read")))
+        assertTrue("inference:read" !in grantedScopes(TokenKind.CLI, ADMIN_TOKEN_SCOPES))
+        // reads only, which the browser does not show: never a write slipped in unseen
+        assertTrue(ADMIN_READ_SCOPES.all { it.endsWith(":read") }, "$ADMIN_READ_SCOPES")
+        assertTrue((ADMIN_READ_SCOPES intersect ADMIN_SCOPES).isEmpty())
     }
 
     @Test
