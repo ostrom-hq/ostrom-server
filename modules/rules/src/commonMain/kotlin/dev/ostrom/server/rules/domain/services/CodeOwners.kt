@@ -7,30 +7,45 @@ package dev.ostrom.server.rules.domain.services
  */
 object CodeOwners {
     private const val MAX_ENTRIES = 500
+
+    /** The longest pattern read; a longer entry is left out. */
+    const val MAX_PATTERN: Int = 256
+
+    /** The longest path matched; a longer one has no owner (nobody's yes, the team picks). */
+    const val MAX_PATH: Int = 1_024
+
     private val spaces = Regex("\\s+")
+    private val stars = Regex("\\*+")
 
     /**
      * Reads a CODEOWNERS file: comments and blank lines are ignored.
      *
      * @param text The file.
-     * @return Its entries in file order, at most 50.
+     * @return Its entries in file order, at most 500, each pattern at most [MAX_PATTERN] characters.
      */
     fun parse(text: String): List<OwnerEntry> = text.lineSequence()
         .map { it.substringBefore(" #").substringBefore("\t#").trim() }
         .filter { it.isNotEmpty() && !it.startsWith("#") }
         .map { line -> line.split(spaces).let { OwnerEntry(it.first(), it.drop(1)) } }
+        .filter { it.pattern.length <= MAX_PATTERN }
         .take(MAX_ENTRIES)
         .toList()
 
     /**
-     * The owners GitHub requests for a path: those of the last entry that matches it.
+     * The owners GitHub requests for a path: those of the last entry that matches it. Matched without a regular
+     * expression ([GlobMatcher]): a pattern and a path both come from the repository, and `*a*a*a…` against a long
+     * name would keep a backtracking engine busy for hours, out of reach of any cancellation.
      *
      * @param entries The entries.
-     * @param path The path, from the root.
+     * @param path The path, from the root; past [MAX_PATH] characters it has no owner.
      * @return The owners, or none.
      */
     fun ownersOf(entries: List<OwnerEntry>, path: String): List<String> =
-        entries.lastOrNull { Regex(glob(it.pattern)).matches(path) }?.owners.orEmpty()
+        if (path.length > MAX_PATH) {
+            emptyList()
+        } else {
+            entries.lastOrNull { GlobMatcher.of(it.pattern).matches(path) }?.owners.orEmpty()
+        }
 
     /**
      * The GitHub logins among owners: `@alice` gives `alice`; a team (`@acme/platform`) or an e-mail gives nothing.
@@ -42,16 +57,14 @@ object CodeOwners {
         owners.filter { it.startsWith("@") && '/' !in it }.map { it.drop(1) }.distinct()
 
     /**
-     * A pattern as a regular expression on a path from the repository's root.
+     * Whether a pattern may become a gate's expression: one run of stars at most. Each hook matches the expression
+     * with a backtracking engine, as the replay does on the server; two runs (`*a*`, `**` then `*`) already cost the
+     * square of the path's length per position, more runs a power of it.
      *
-     * @param pattern The pattern (`/docs/`, `*.sql`, a double star for any depth).
-     * @return The expression, anchored at both ends.
+     * @param pattern The pattern.
+     * @return True when it has at most one run of stars.
      */
-    fun glob(pattern: String): String {
-        val anchored = pattern.startsWith("/") || pattern.trimEnd('/').contains('/')
-        val head = if (anchored) "^" else "^(?:.*/)?"
-        return head + translate(pattern.removePrefix("/").trimEnd('/')) + tail(pattern)
-    }
+    fun gateable(pattern: String): Boolean = stars.findAll(pattern).count() <= 1
 
     /**
      * The pattern a gate matches for files under a CODEOWNERS pattern, on any path that ends with them: an agent's

@@ -7,6 +7,3 @@ import dev.ostrom.server.kernel.errors.OstromException
 /** A limit is negative or above [BudgetRules.MAX_LIMIT_MICROS]. */
 class InvalidBudgetException :
     OstromException(ErrorKind.INVALID_REQUEST, "A limit is 0 to ${BudgetRules.MAX_LIMIT_MICROS} USD millionths.")
-
-/** The member has no limit of their own, or the id is malformed. */
-class MemberBudgetNotFoundException : OstromException(ErrorKind.NOT_FOUND, "This member has no budget of their own.")

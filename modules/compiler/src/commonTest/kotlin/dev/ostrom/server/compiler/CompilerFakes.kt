@@ -55,7 +55,12 @@ internal class MemoryCompilerRepository : CompilerRepository {
 
     override suspend fun deleteWorkflow(orgId: Uuid, id: String): Boolean = workflows.remove(orgId to id) != null
 
-    override suspend fun decisions(orgId: Uuid): List<DecisionDoc> = decisions[orgId].orEmpty()
+    override suspend fun workflowCount(orgId: Uuid): Int = workflows.keys.count { it.first == orgId }
+
+    override suspend fun lastDecisions(orgId: Uuid): List<DecisionDoc> = decisions[orgId].orEmpty()
+        .filter { (orgId to it.subjectId) in workflows }
+        .groupBy { it.subjectId }
+        .map { (_, taken) -> taken.maxBy { it.at } }
 
     override suspend fun addDecision(orgId: Uuid, decision: DecisionDoc) {
         decisions.getOrPut(orgId) { mutableListOf() } += decision

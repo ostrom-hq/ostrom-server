@@ -48,6 +48,7 @@ import kotlin.uuid.Uuid
  * @property label The action label.
  * @property evidence What the approvers are shown.
  * @property redirected True when the command rewrites where git reads or sends (audit A6).
+ * @property unlinkedAuthor The GitHub account id of a pull request's author linked to no Ostrom person ([Gate]).
  */
 data class OpenGate(
     val actor: GateActor,
@@ -59,6 +60,7 @@ data class OpenGate(
     val label: String,
     val evidence: List<Evidence>,
     val redirected: Boolean = false,
+    val unlinkedAuthor: Long? = null,
 )
 
 /** Opens a gate, or joins the live one for the same action. */
@@ -203,6 +205,7 @@ class OpenGateUseCaseImpl(
         shownDigest = digester.digest(GateKeys.shownPreimage(request.label, request.subject, request.evidence)),
         evidence = request.evidence,
         createdAt = clock.now(),
+        unlinkedAuthor = request.unlinkedAuthor,
     )
 
     private fun validate(request: OpenGate) {
@@ -311,4 +314,6 @@ private fun join(gate: Gate, request: OpenGate): Gate = gate.copy(
     askedVia = gate.askedVia + request.via,
     sessionIds = (gate.sessionIds + listOfNotNull(request.sessionId)).distinct(),
     launchIds = (gate.launchIds + listOfNotNull(request.actor.launchId)).distinct(),
+    // The GitHub check joining a gate the hook opened brings the author's unlinked account; once known, it stays.
+    unlinkedAuthor = gate.unlinkedAuthor ?: request.unlinkedAuthor,
 )

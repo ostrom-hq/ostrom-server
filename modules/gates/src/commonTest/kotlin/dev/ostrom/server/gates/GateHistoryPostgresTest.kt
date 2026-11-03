@@ -59,7 +59,7 @@ class GateHistoryPostgresTest {
         repository.transaction {
             insertGate(gateOf(orgA, "push-main", 1))
             insertGate(gateOf(orgA, "deploy", 2))
-            insertGate(gateOf(orgA, "merge", 3))
+            insertGate(gateOf(orgA, "merge", 3).copy(unlinkedAuthor = 42L))
             insertGate(gateOf(orgA, "old", 24 * 31))
         }
         repository.transaction { insertGate(gateOf(orgB, "theirs", 1)) }
@@ -69,5 +69,7 @@ class GateHistoryPostgresTest {
         assertEquals(listOf("push-main", "deploy", "merge"), history.recent(orgA, since, 10).map { it.label })
         assertEquals(listOf("push-main", "deploy"), history.recent(orgA, since, 2).map { it.label }, "At most limit")
         assertEquals(listOf("theirs"), history.recent(orgB, since, 10).map { it.label }, "Org B reads only its own")
+        // The author of a pull request linked to nobody is kept with the gate (Q-GATES-G1).
+        assertEquals(listOf(null, null, 42L), history.recent(orgA, since, 10).map { it.unlinkedAuthor })
     }
 }
