@@ -158,7 +158,7 @@ class TenancyPostgresTest {
         assertEquals(role to null, serving.state(), "A failed transaction leaves nothing on the connection either")
         assertEquals(listOf<String?>("beta's"), serving.inOrg(beta) { bodies() }, "Never alpha's rows")
         assertEquals(listOf<String?>("alpha's"), serving.inOrg(alpha) { bodies() }, "Never beta's rows")
-        assertFailsWith<SQLError>("Outside inOrg, the serving role is not granted the table") { serving.count() }
+        assertEquals(0L, serving.count(), "Fail closed outside inOrg: no organization, no row")
         assertFailsWith<SQLError>("A row of another organization is refused") {
             serving.inOrg(alpha) { insert(beta, "planted") }
         }
