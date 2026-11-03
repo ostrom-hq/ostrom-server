@@ -13,14 +13,14 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
-import kotlin.time.Duration.Companion.seconds
-import kotlin.uuid.Uuid
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /** A way to call the server as someone: a browser session, a token, nothing at all. */
 internal class Credential(val name: String, val apply: HttpRequestBuilder.() -> Unit)
