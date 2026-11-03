@@ -12,8 +12,8 @@ import dev.ostrom.server.kernel.auth.CSRF_HEADER
 import dev.ostrom.server.kernel.auth.SESSION_COOKIE
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.assertWithinBudget
-import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.benchTest
+import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get

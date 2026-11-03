@@ -19,8 +19,8 @@ import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
 import dev.ostrom.server.testing.assertWithinBudget
-import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.benchTest
+import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
@@ -33,8 +33,9 @@ import kotlin.uuid.Uuid
 
 /**
  * `GET /api/v1/approvals/queue` on 10 organizations of 2 000 gates each, two approval requests per gate: the queue of
- * the approver of every gate (100 pending, the page's maximum) and of one of 20 reviewers. Each keeps the read budget
- * (ReadBench.kt); its queries, plans and p95 are written to `build/reports/perf/gates.txt`.
+ * the approver of every gate (100 pending, the page's maximum) and of one of 20 reviewers (rev-1, who has pending
+ * requests, so that the pending gates are read too). Each keeps the read budget (ReadBench.kt); its queries, plans
+ * and p95 are written to `build/reports/perf/gates.txt`.
  */
 class GatesReadsBenchTest {
     private val orgs = List(ORGS) { Uuid.fromLongs(0, it.toLong() + 1) }
@@ -84,7 +85,7 @@ class GatesReadsBenchTest {
 
         val measures = listOf(
             "GET /api/v1/approvals/queue (approver of every gate)" to OPS,
-            "GET /api/v1/approvals/queue (one reviewer of 20)" to "rev-5@acme.test",
+            "GET /api/v1/approvals/queue (one reviewer of 20)" to "rev-1@acme.test",
         ).map { (name, person) -> server.measureRead(name) { get("/api/v1/approvals/queue") { bearerAuth(person) } } }
         writeReadReport("gates", measures)
         measures.forEach { it.assertWithinBudget(setOf("gates_gates", "gates_requests")) }

@@ -6,8 +6,8 @@ import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
 import dev.ostrom.server.testing.assertWithinBudget
-import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.benchTest
+import dev.ostrom.server.testing.measureRead
 import dev.ostrom.server.testing.writeReadReport
 import dev.ostrom.server.usage.UsageModule
 import io.ktor.client.request.bearerAuth
