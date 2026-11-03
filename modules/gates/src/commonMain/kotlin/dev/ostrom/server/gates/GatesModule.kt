@@ -126,7 +126,7 @@ object GatesModule : ServerModule {
     }
 
     override fun routes(route: Route, koin: Koin) {
-        route.gatesRoutes(koin.get())
+        route.gatesRoutes(koin.get(), koin.get())
     }
 
     /** Keeps the `ostrom.gates.pending` gauge's count, read every 30 s across organizations. */

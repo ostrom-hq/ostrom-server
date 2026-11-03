@@ -190,7 +190,7 @@ class ConsoleStepUpPostgresTest {
     fun creatingAServiceKeyNeedsAFreshSignIn() = stepUp(HttpStatusCode.Created) { ada, _ ->
         client.post("/api/v1/service-keys") {
             session(ada)
-            json(CreateServiceKeyRequest("ci", listOf("sessions:read")))
+            json(CreateServiceKeyRequest("ci", listOf("sessions:write")))
         }
     }
 }

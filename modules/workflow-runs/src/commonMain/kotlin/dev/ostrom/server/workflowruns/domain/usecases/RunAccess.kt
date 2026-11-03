@@ -23,7 +23,8 @@ import dev.ostrom.server.workflowruns.domain.services.RunSessions
  */
 class RunAccess(private val sessions: RunSessions, private val packages: RunPackages) {
     /**
-     * The session a report is written for: only its person, and an agent token of its own launch, write there.
+     * The session a report is written for: only its person, an agent token of its own launch, and a service key of its
+     * organization (its CI) write there.
      *
      * @param actor The caller.
      * @param sessionId The session, or null for a report outside a session (a person's only).
@@ -32,21 +33,24 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
      *
      * @throws RunSessionNotFoundException When the organization has no such session.
      * @throws NotYourSessionException When it is another person's, or another
-     *   launch's; or when an agent token names no session.
+     *   launch's; or when an agent token or a service key names no session.
      * @throws SessionClosedException When the session has ended: its receipt is signed, nothing is added to it.
      */
     suspend fun writing(actor: GateActor, sessionId: String?): Session? {
         if (sessionId != null) {
             return owned(actor, sessionId).also { if (it.endedAt != null) throw SessionClosedException(it) }
         }
-        // An agent token acts inside its launch's sessions only: never outside one.
-        if (actor.kind == ActorKind.AGENT_SESSION) throw NotYourSessionException()
+        // An agent token acts inside its launch's sessions only, and a service key inside its organization's: no
+        // person stands behind a report outside a session.
+        if (actor.kind == ActorKind.AGENT_SESSION || actor.kind == ActorKind.SERVICE) throw NotYourSessionException()
         SessionAccess.person(actor)
         return null
     }
 
     /**
-     * A session only its person, and an agent token of its own launch, write for.
+     * A session only its person, an agent token of its own launch, and a service key of its organization write for.
+     * The key is no person: the CI of the organization reports for any of its sessions, never another organization's
+     * (the session is looked up in the key's organization only).
      *
      * @param actor The caller.
      * @param sessionId The session.
@@ -58,7 +62,7 @@ class RunAccess(private val sessions: RunSessions, private val packages: RunPack
      */
     suspend fun owned(actor: GateActor, sessionId: String): Session {
         val session = sessions.find(actor.orgId, sessionId) ?: throw RunSessionNotFoundException()
-        SessionAccess.ensureOwner(actor, session)
+        if (actor.kind != ActorKind.SERVICE) SessionAccess.ensureOwner(actor, session)
         return session
     }
 
