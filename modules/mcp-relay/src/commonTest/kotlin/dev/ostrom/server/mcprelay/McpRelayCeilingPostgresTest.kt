@@ -2,6 +2,7 @@
 package dev.ostrom.server.mcprelay
 
 import dev.ostrom.server.kernel.http.CallCeilingSettings
+import dev.ostrom.server.kernel.http.CallKind
 import dev.ostrom.server.kernel.http.CallsInProgress
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.testing.serverTest
@@ -65,9 +66,11 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
         expectSuccess = false
     }
 
+    private val calls = CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = 2.seconds)) { null }
+
     private val oneCallAtOnce = module {
         includes(overrides)
-        single { CallsInProgress(CallCeilingSettings(served = 1, held = 1, queueWait = 2.seconds)) { null } }
+        single { calls }
     }
 
     private val toolCall =
@@ -89,6 +92,8 @@ class McpRelayCeilingPostgresTest : RelayPostgresHarness() {
                         fail("The relay answered before the upstream: ${answer.status} ${answer.bodyAsText()}")
                     }
                     // The one ordinary place is free: the slow call holds a held place.
+                    assertEquals(1, calls.inProgress(CallKind.HELD), "the relayed call counts as held")
+                    assertEquals(0, calls.inProgress(CallKind.SERVED))
                     val read = client.get("$admin/servers") { bearerAuth("admin-a") }
                     assertEquals(HttpStatusCode.OK, read.status, read.bodyAsText())
                     upstreamAnswers.complete(Unit)
