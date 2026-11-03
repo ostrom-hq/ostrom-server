@@ -14,10 +14,11 @@ internal object ReportsQueries {
      * An event names its session by its id, or, for a model call through the gateway, by its launch (`launch_id`; its
      * `session_id` is then the launch's id too): the agent and the repository come from the session with that id, else
      * from the first segment of that launch, one session only so that nothing counts twice. The first segments of the
-     * organization's launches are read once, in the order of their index, and hashed: no lookup per line. The launch is
-     * compared as the column itself, no expression: under row level security only a leakproof comparison reaches the
-     * index. A line's `sessions` counts the sessions its spending was found in: a launch counts once, a call outside
-     * any session never.
+     * organization's launches are read once, sorted by their bytes (`COLLATE "C"`: the database's collation took 17
+     * of the 53 ms of an owner's month on a loaded runner, and grouping needs no language order), and hashed: no
+     * lookup per line. The launch is compared as the column itself, no expression: under row level security only a
+     * leakproof comparison reaches the index. A line's `sessions` counts the sessions its spending was found in: a
+     * launch counts once, a call outside any session never.
      *
      * The ledger is first added up by member, session, launch and day (`calls`), then joined: a session's calls are
      * joined once per day, not once per call. The whole days of the window come from the daily totals the usage module
@@ -55,8 +56,9 @@ internal object ReportsQueries {
                     FROM calls c
                     LEFT JOIN sessions_sessions s ON s.org_id = c.org_id AND s.id = c.session_id
                     LEFT JOIN (
-                        SELECT DISTINCT ON (f.launch_id) f.launch_id, f.id, f.agent, f.repo FROM sessions_sessions f
-                        WHERE f.org_id = :org_id AND f.launch_id IS NOT NULL ORDER BY f.launch_id, f.segment
+                        SELECT DISTINCT ON (f.launch_id COLLATE "C") f.launch_id, f.id, f.agent, f.repo
+                        FROM sessions_sessions f WHERE f.org_id = :org_id AND f.launch_id IS NOT NULL
+                        ORDER BY f.launch_id COLLATE "C", f.segment
                     ) l ON s.id IS NULL AND l.launch_id = c.launch_id
                     LEFT JOIN orgs_members m ON m.org_id = c.org_id AND m.id = c.member_id
                     LEFT JOIN identity_users u ON u.id = m.user_id
