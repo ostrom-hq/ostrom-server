@@ -435,14 +435,15 @@ interface AuditRepository {
     suspend fun list(orgId: Uuid?, actorId: Uuid?, beforeSequence: Long?, limit: Int): List<AuditEvent>
 
     /**
-     * Lists the events of an organization's chain, newest first, as `GET /api/v1/audit` filters them.
+     * Lists the events of an organization's chain, newest first, as `GET /api/v1/audit` filters them, each with the
+     * hash of the event before it in the chain (read even when the filters leave that one out), to check the link.
      *
      * @param orgId The organization.
      * @param query The filters, the page's cursor and its size.
      *
      * @return The events.
      */
-    suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<AuditEvent>
+    suspend fun listOrg(orgId: Uuid, query: OrgAuditQuery): List<ChainedAuditEvent>
 }
 
 /** The accounts people linked at sign-in providers, by person. */
