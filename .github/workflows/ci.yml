@@ -23,6 +23,12 @@ on:
         description: The ostrom-core commit (full SHA) whose contract the tests check, instead of main
         type: string
         default: ''
+      # A server change that an e2e scenario proves, while main's scenario still waits for it (a temporary skip):
+      # play the e2e branch that drops the skip against this pull request's image before the squash.
+      e2e_ref:
+        description: The ostrom-e2e ref whose scenarios ci-e2e runs, instead of main
+        type: string
+        default: ''
 env:
   KOTLIN_VERSION: '2.4.21'
 permissions:
@@ -447,6 +453,7 @@ jobs:
     uses: ./.github/workflows/e2e-journey.yml
     with:
       image_artifact: ostrom-server-image
+      e2e_ref: ${{ inputs.e2e_ref || 'main' }}
     secrets: inherit
 
   # The required check of main, still named `ci` (branch protection, .coord/squash.sh).

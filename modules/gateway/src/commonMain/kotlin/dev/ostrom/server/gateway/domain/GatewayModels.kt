@@ -102,6 +102,7 @@ data class TokenUsage(val input: Long = 0, val output: Long = 0, val cacheRead: 
  * @property firstByteMillis Time to the first byte sent back, if any.
  * @property durationMillis Total time.
  * @property launchId The launch whose agent token made the call, or null for a person's own credential.
+ * @property workflowId The workflow that launch plays, or null: the call counts under it.
  */
 data class ModelCallRecord(
     val id: Uuid,
@@ -121,6 +122,7 @@ data class ModelCallRecord(
     val firstByteMillis: Long?,
     val durationMillis: Long,
     val launchId: String? = null,
+    val workflowId: String? = null,
 )
 
 /** Receives every relayed call: bound to the usage ledger by the usage wiring. */
@@ -178,8 +180,15 @@ object NoModelCallTracer : ModelCallTracer {
  * @property callId The call: its [ModelCallRecord.id], which settles the hold. Every try of a call asks with the
  *   same id.
  * @property reserveMicros What the call may cost at most, USD millionths ([BudgetCheck]); 0 when unpriced.
+ * @property workflowId The workflow the call's launch plays, or null: that workflow's limits apply too.
  */
-data class SpendRequest(val orgId: Uuid, val memberId: Uuid, val callId: Uuid, val reserveMicros: Long)
+data class SpendRequest(
+    val orgId: Uuid,
+    val memberId: Uuid,
+    val callId: Uuid,
+    val reserveMicros: Long,
+    val workflowId: String? = null,
+)
 
 /** Whether a member may spend now. */
 sealed interface SpendDecision {

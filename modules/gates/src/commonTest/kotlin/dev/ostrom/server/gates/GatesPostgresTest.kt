@@ -49,6 +49,7 @@ import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.gates.presentation.toAskGate
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -119,6 +120,7 @@ class GatesPostgresTest {
                         token,
                         PrincipalKind.USER,
                         setOf(GateScopes.ANSWER),
+                        credentialId = "osm-$token",
                         channel = PrincipalChannel.MOBILE_APP,
                         authenticatedAt = Clock.System.now(),
                     )
@@ -147,6 +149,8 @@ class GatesPostgresTest {
                 }
             }
         }
+        // The app's unlock, bound to the request it answers: PhoneYesPostgresTest (app) plays the binding for real.
+        single<PhoneUnlockProofs> { PhoneUnlockProofs { credential, _, _ -> credential.startsWith("osm-app:") } }
         single<GateActorResolver> {
             object : GateActorResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? {

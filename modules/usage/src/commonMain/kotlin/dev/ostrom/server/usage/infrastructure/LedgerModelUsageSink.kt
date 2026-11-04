@@ -34,6 +34,7 @@ fun ModelCallRecord.toUsageEvent(): UsageEvent {
         accountId = accountId,
         sessionId = sessionId,
         launchId = launchId,
+        workflowId = workflowId,
         inputTokens = tokens.input,
         outputTokens = tokens.output,
         cacheReadTokens = tokens.cacheRead,

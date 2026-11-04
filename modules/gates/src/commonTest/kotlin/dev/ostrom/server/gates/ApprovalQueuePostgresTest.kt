@@ -24,6 +24,7 @@ import dev.ostrom.server.gates.presentation.GatePushRef
 import dev.ostrom.server.gates.presentation.GateResponse
 import dev.ostrom.server.gates.presentation.GateScopes
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
+import dev.ostrom.server.kernel.auth.PhoneUnlockProofs
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.TokenAuthenticator
@@ -75,6 +76,8 @@ class ApprovalQueuePostgresTest {
                 }
             }
         }
+        // The app's unlock, bound to the request it answers (Q-APP-STEPUP-RISK): app's PhoneYesPostgresTest plays it.
+        single<PhoneUnlockProofs> { PhoneUnlockProofs { _, _, _ -> true } }
         single<GateActorResolver> {
             object : GateActorResolver {
                 override suspend fun resolve(principal: AuthenticatedPrincipal): GateActor? {
