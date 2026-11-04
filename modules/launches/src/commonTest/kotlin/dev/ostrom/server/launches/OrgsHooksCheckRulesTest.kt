@@ -10,6 +10,7 @@ import dev.ostrom.server.launches.infrastructure.OrgsHooksCheckRules
 import dev.ostrom.server.orgs.domain.Member
 import dev.ostrom.server.orgs.domain.Membership
 import dev.ostrom.server.orgs.domain.Org
+import dev.ostrom.server.orgs.domain.OrgEvent
 import dev.ostrom.server.orgs.domain.OrgsRepository
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -29,7 +30,7 @@ class OrgsHooksCheckRulesTest {
         override suspend fun findBySlug(slug: String): Org? = TODO()
         override suspend fun slugTaken(slug: String): Boolean = TODO()
         override suspend fun update(id: Uuid, name: String?, timeZone: String?, hooksDeadlineSeconds: Int?) = TODO()
-        override suspend fun delete(id: Uuid, at: Instant, purgeAfter: Instant) = TODO()
+        override suspend fun delete(id: Uuid, at: Instant, event: OrgEvent, purgeAfter: Instant): Boolean = TODO()
         override suspend fun listOfUser(userId: Uuid): List<Membership> = TODO()
     }
 

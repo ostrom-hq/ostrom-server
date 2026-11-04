@@ -52,6 +52,7 @@ interface CreateLaunchUseCase {
  * @param limit How many launches a window takes, per person and per organization.
  * @param workflows The organization's workflows, which a launch may name; null, none is known.
  */
+@Suppress("LongParameterList") // One parameter per port a launch reads; the limit and the workflows have defaults.
 class CreateLaunchUseCaseImpl(
     private val repository: LaunchesRepository,
     private val policy: LaunchPolicy,
