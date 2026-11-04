@@ -181,8 +181,9 @@ class ListBoundsPostgresTest {
         return Person(org.id, koin.get<StartWebSessionUseCase>()(user.id))
     }
 
-    // Two rules and two artifacts (a page of one has a next), an automation and an MCP server (their sub-lists): the
-    // ids of the created resources by their collection, for the paths that name one.
+    // Two rules and two artifacts (a page of one has a next), an automation and an MCP server (their sub-lists), an
+    // accepted workflow and one run of it (the runs, listed by the organization and by the workflow): the ids of the
+    // created resources by their collection, for the paths that name one.
     private suspend fun TestServer.seed(ada: Person): Map<String, String> {
         repeat(2) { n ->
             write(ada, "/api/v1/rules", """{"statement": "Rule $n of the lists", "group": "Lists"}""")
@@ -199,9 +200,18 @@ class ListBoundsPostgresTest {
             """{"name": "lists", "transport": "http", "url": "https://mcp.example.com/mcp", "enabled": true,
                 "scope": "shared"}""",
         )
+        val workflow = write(
+            ada,
+            "/api/v1/workflows",
+            """{"id": "lists", "name": "Lists", "domain": "git", "nodes": [{"id": "t", "kind": "trigger",
+                "label": "Push"}], "edges": [], "start": "t", "status": "accepted",
+                "foundAt": "2026-11-03T10:00:00Z", "inputs": []}""",
+        )
+        workflow?.let { write(ada, "/api/v1/workflows/$it/runs", "{}") }
         val artifact = read(ada, "/api/v1/artifacts", "").let { items(it)?.firstOrNull()?.id() }
         return listOfNotNull(
             automation?.let { "/api/v1/automations" to it },
+            workflow?.let { "/api/v1/workflows" to it },
             artifact?.let { "/api/v1/artifacts" to it },
             "/api/v1/mcp/servers" to "lists",
         ).toMap()

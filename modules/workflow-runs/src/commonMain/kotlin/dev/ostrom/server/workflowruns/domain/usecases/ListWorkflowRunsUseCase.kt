@@ -3,6 +3,8 @@ package dev.ostrom.server.workflowruns.domain.usecases
 
 import dev.ostrom.core.api.models.WorkflowRun
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.kernel.errors.InvalidPageException
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.workflowruns.domain.models.RunWorkflowNotFoundException
 import dev.ostrom.server.workflowruns.domain.repositories.RunsQuery
 import dev.ostrom.server.workflowruns.domain.repositories.StartedRunsRepository
@@ -19,6 +21,7 @@ interface ListWorkflowRunsUseCase {
      * @return The runs.
      *
      * @throws RunWorkflowNotFoundException When the query names a workflow the organization does not have.
+     * @throws InvalidPageException When `before` names no run of the organization (garbage, forged, another's).
      */
     suspend operator fun invoke(actor: GateActor, query: RunsQuery): List<WorkflowRun>
 }
@@ -38,6 +41,9 @@ class ListWorkflowRunsUseCaseImpl(
         if (workflowId != null && workflows.find(actor.orgId, workflowId) == null) {
             throw RunWorkflowNotFoundException()
         }
-        return repository.runs(actor.orgId, query)
+        // An empty page after a cursor costs one read by key: a run of this organization, or a 400.
+        return Pages.checked("before", query.before, repository.runs(actor.orgId, query)) {
+            repository.find(actor.orgId, it) != null
+        }
     }
 }
