@@ -56,6 +56,7 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 
 /**
  * The sharing module: members pool their personal subscriptions (Claude Pro/Max, ChatGPT for Codex), on by choice of
@@ -73,7 +74,7 @@ object SharingModule : ServerModule {
                 followRedirects = false
                 expectSuccess = false
             }
-        }
+        } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
         single<SharedAccountRepository> { SharedAccountRepositoryImpl(get()) }
         single<QuotaWindowRepository> { QuotaWindowRepositoryImpl(get()) }
         single { AccountTokenCipher(get()) }

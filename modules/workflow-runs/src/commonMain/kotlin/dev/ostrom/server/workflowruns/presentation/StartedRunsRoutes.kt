@@ -3,6 +3,7 @@ package dev.ostrom.server.workflowruns.presentation
 
 import dev.ostrom.core.api.models.RunStatus
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.workflowruns.domain.models.InvalidRunException
 import dev.ostrom.server.workflowruns.domain.repositories.RunsQuery
 import io.ktor.http.HttpStatusCode
@@ -12,10 +13,11 @@ import io.ktor.server.resources.get
 import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlin.uuid.Uuid
 
 /**
- * The runs of workflows: started by an owner or an admin with a person's credential, read by any member; never by an
- * agent token. Mounted inside the authenticated routes of [workflowRunsRoutes].
+ * The runs of workflows: started and cancelled by an owner or an admin with a person's credential, read by any member;
+ * never by an agent token. Mounted inside the authenticated routes of [workflowRunsRoutes].
  *
  * @param dependencies The use cases.
  */
@@ -23,7 +25,7 @@ internal fun Route.startedRunsRoutes(dependencies: WorkflowRunsRoutesDependencie
     post<WorkflowRunsOfApi> { params ->
         val actor = actorOf(call, RunScopes.starting)
         val body = call.receive<StartRunRequest>()
-        call.respond(HttpStatusCode.Created, startRun(actor, params.id, body.inputs))
+        call.respond(HttpStatusCode.Created, startRun(actor, params.id, body.inputs, personOf(call)))
     }
     get<WorkflowRunsOfApi> { params ->
         val actor = actorOf(call, RunScopes.reading)
@@ -33,7 +35,17 @@ internal fun Route.startedRunsRoutes(dependencies: WorkflowRunsRoutesDependencie
         val actor = actorOf(call, RunScopes.reading)
         respondRuns(call, actor, RunsQuery(null, runStatusOf(params.status), params.before))
     }
+    get<RunApi> { params ->
+        call.respond(getRun(actorOf(call, RunScopes.reading), params.id))
+    }
+    post<RunCancelApi> { params ->
+        val actor = actorOf(call, RunScopes.starting)
+        call.respond(cancelRun(actor, params.id, personOf(call)))
+    }
 }
+
+// The person's id, for the audit log: a person's credential names its user.
+private fun personOf(call: ApplicationCall): Uuid? = Uuid.parseOrNull(call.requirePrincipal().subjectId)
 
 private suspend fun WorkflowRunsRoutesDependencies.respondRuns(
     call: ApplicationCall,

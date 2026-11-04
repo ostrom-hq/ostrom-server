@@ -14,6 +14,12 @@ object BudgetRules {
     /** Member overrides listed at most. */
     const val MAX_OVERRIDES: Int = 1000
 
+    /**
+     * Workflow budgets listed at most: as many as an organization keeps workflows (the compiler's `MAX_WORKFLOWS`),
+     * since a workflow budget names one of them and goes when it is deleted.
+     */
+    const val MAX_WORKFLOW_BUDGETS: Int = 1000
+
     /** The alert thresholds, in percent of a limit, ascending. */
     val ALERT_THRESHOLDS: List<Int> = listOf(80, 100)
 
@@ -122,6 +128,8 @@ class GetMyBudgetUseCaseImpl(
             spentMicros = spent,
             remainingMicros = limit?.let { (it - spent).coerceAtLeast(0) },
             resetsAt = period.end,
+            // The member's budget: its limit, spend and decision are the member's and the org's. A workflow's is
+            // not shown here (`MyBudget.exhaustedScope` is `org` or `member` in the contract); its refusal says so.
             decision = guard.check(caller.orgId, caller.memberId),
         )
     }

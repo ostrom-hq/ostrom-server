@@ -14,6 +14,7 @@ import dev.ostrom.server.sessions.domain.usecases.CloseSessionUseCaseImpl
 import dev.ostrom.server.sessions.fakes.ORG
 import dev.ostrom.server.sessions.fakes.SessionBench
 import dev.ostrom.server.sessions.fakes.agent
+import dev.ostrom.server.sessions.fakes.user
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -114,6 +115,7 @@ class CloseSessionTest {
 
         val draft = bench.sign.signed.getValue("rcpt_session_s-1")
         assertReceiptDraft(draft)
+        assertEquals("launch-1" to "s-1", draft.text("launchId") to draft.text("sessionId"), "Its launch and segment")
         assertGatesPreimage(bench, session, ended, gateA to gateB, draft)
     }
 
@@ -171,6 +173,16 @@ class CloseSessionTest {
         assertEquals(1, bench.sign.signed.size)
         assertEquals(second, bench.close(ORG, session.id, EndSession(model = "opus", exitCode = 4)))
         assertFailsWith<SessionNotFoundException> { bench.close(ORG, "nope", EndSession()) }
+    }
+
+    @Test
+    fun aSegmentOutsideALaunchNamesNoLaunch() = runTest {
+        val bench = SessionBench()
+        val session = bench.start(user(), StartSession(id = "s-1", agent = "codex"))
+        bench.close(ORG, session.id, EndSession())
+        val draft = bench.sign.signed.getValue("rcpt_session_s-1")
+        assertFalse("launchId" in draft, "No launch: none named")
+        assertEquals("s-1", draft.text("sessionId"))
     }
 
     @Test

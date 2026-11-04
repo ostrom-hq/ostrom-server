@@ -69,6 +69,7 @@ import org.koin.core.Koin
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -132,7 +133,7 @@ object McpRelayModule : ServerModule {
                 followRedirects = false
                 expectSuccess = false
             }
-        }
+        } onClose { it?.close() } // Its selector holds a thread of Dispatchers.IO until then (StoppedApplicationsTest).
         single<McpRelayRepository> { McpRelayRepositoryImpl(get()) }
         single<McpUpstream> {
             val config = get<McpRelayConfig>()
