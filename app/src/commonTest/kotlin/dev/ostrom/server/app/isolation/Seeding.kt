@@ -139,7 +139,7 @@ private fun artifact(party: Party, access: String) =
     """{"title": "${party.marker} $access doc", "access": "$access",""" +
         """ "files": [{"path": "index.html", "content": "<h1>${party.marker}</h1>"}]}"""
 
-// A rule, a rule held for a confirmation, the accepted workflow and its package.
+// A rule, a rule held for a confirmation, the accepted workflow, a run of it and its package.
 private suspend fun Seeder.governance(party: Party) {
     val owner = party.browser
     val rule = """{"statement": "${party.marker} ships on Fridays", "group": "${party.marker}"}"""
@@ -156,6 +156,10 @@ private suspend fun Seeder.governance(party: Party) {
             """ "push-main", "label": "Push to the main branch", "patterns": [], "repos": ["acme/api"]}]}]}""",
     )
     keep(Seed.WORKFLOW, workflow, posted)
+    // A run of it, cancelled at once: it stays as it is between the snapshots of B's reads (the engine plays no
+    // cancelled run), and the routes that name a run have one of B's to aim at.
+    val run = keep(Seed.RUN, send("run", "POST /api/v1/workflows/$workflow/runs", owner, "{}"), "id")
+    if (run != null) send("run cancelled", "POST /api/v1/runs/$run/cancel", owner, "{}", expected = OK)
     keep(Seed.PACKAGE, send("package", "GET /api/v1/packages/current?repo=acme/api", owner, expected = OK), "digest")
 }
 

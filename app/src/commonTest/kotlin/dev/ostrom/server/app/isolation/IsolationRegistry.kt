@@ -24,6 +24,7 @@ import dev.ostrom.server.app.isolation.Seed.PACKAGE
 import dev.ostrom.server.app.isolation.Seed.PUSH_DEVICE
 import dev.ostrom.server.app.isolation.Seed.RECEIPT
 import dev.ostrom.server.app.isolation.Seed.RULE
+import dev.ostrom.server.app.isolation.Seed.RUN
 import dev.ostrom.server.app.isolation.Seed.RUNNER
 import dev.ostrom.server.app.isolation.Seed.SECRET
 import dev.ostrom.server.app.isolation.Seed.SERVICE_KEY
@@ -335,6 +336,11 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "GET /api/v1/workflows/{id}" to target("id" to WORKFLOW),
     "PUT /api/v1/workflows/{id}" to target("id" to WORKFLOW, body = """{"workflow": {}}"""),
     "DELETE /api/v1/workflows/{id}" to target("id" to WORKFLOW),
+    "GET /api/v1/workflows/{id}/runs" to target("id" to WORKFLOW),
+    "POST /api/v1/workflows/{id}/runs" to target("id" to WORKFLOW, body = "{}"),
+    "GET /api/v1/runs" to Case.Target(),
+    "GET /api/v1/runs/{id}" to target("id" to RUN),
+    "POST /api/v1/runs/{id}/cancel" to target("id" to RUN, body = "{}"),
     "GET /api/v1/packages" to Case.Target(),
     "GET /api/v1/packages/current" to Case.Target(),
     "GET /api/v1/packages/audit" to Case.Target(),
