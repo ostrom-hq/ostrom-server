@@ -18,6 +18,7 @@ import dev.ostrom.server.budgets.domain.monthlyMicros
 import dev.ostrom.server.kernel.audit.OrgAuditRecord
 import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.logging.LogLevel
+import dev.ostrom.server.testing.checkTime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -391,7 +392,7 @@ class BudgetGuardTest {
     }
 
     @Test
-    fun tenThousandCachedChecksTakeUnderTwoHundredMilliseconds() = runTest {
+    fun tenThousandCachedChecksReadTheLimitsOnceAndKeepTheirTimeBudget() = runTest {
         repository.orgLimits[orgA] = 1_000_000
         overrideMember(10_000)
         // An untimed pass first: on the JVM the first calls also pay class loading and the JIT, not the cache.
@@ -404,10 +405,11 @@ class BudgetGuardTest {
             mark.elapsedNow()
         }.min()
 
-        // 20 µs a check at most, under Kover's instrumentation on a shared runner (about 6 µs measured there): a check
-        // that reads the database instead of the cache takes milliseconds, two orders of magnitude above.
-        assertTrue(elapsed < 200.milliseconds, "10 000 cached checks took $elapsed")
-        assertEquals(1, repository.limitReads)
+        // What the Build holds, on any runner: 60 000 checks read the limits once, a check that reads the database
+        // instead of the cache reads them every time. The time, 20 µs a check at most under Kover's instrumentation
+        // (about 6 µs measured on a shared runner), is held by checkTime: the Build's summary and the Perf workflow.
+        assertEquals(1, repository.limitReads, "Read once, then cached")
+        checkTime("10 000 cached budget checks (BudgetGuard), best of 5", elapsed, 200.milliseconds)
     }
 
     @Test

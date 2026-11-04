@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.governance.domain
 
+import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.GovernanceRequest
 import dev.ostrom.server.kernel.auth.GovernanceScopes
 import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
@@ -68,12 +69,9 @@ class OpenConfirmationUseCaseImpl(
             before = preview.before,
             after = preview.after,
             requestedBy = ConfirmationPerson(userId, member.memberId),
-            credential = if (request.principal.scopes.any { it in GovernanceScopes.ALL }) {
-                ConfirmationCredential.ADMIN
-            } else {
-                ConfirmationCredential.DEVICE
-            },
+            credential = credentialOf(request.principal),
             tokenId = request.principal.credentialId,
+            tokenName = request.principal.personalTokenName,
             status = ConfirmationStatus.PENDING,
             createdAt = now,
             expiresAt = now + ConfirmationRules.LIFETIME,
@@ -83,4 +81,18 @@ class OpenConfirmationUseCaseImpl(
         repository.insert(confirmation)
         return confirmation
     }
+}
+
+/**
+ * The kind of token that asks: a personal token made in the console whatever its scopes, else the token of `ostrom
+ * login --admin` (a governance scope), else the CLI's.
+ *
+ * @param principal Who asks.
+ *
+ * @return The credential the confirmation shows.
+ */
+private fun credentialOf(principal: AuthenticatedPrincipal): ConfirmationCredential = when {
+    principal.personalTokenName != null -> ConfirmationCredential.API_TOKEN
+    principal.scopes.any { it in GovernanceScopes.ALL } -> ConfirmationCredential.ADMIN
+    else -> ConfirmationCredential.DEVICE
 }
