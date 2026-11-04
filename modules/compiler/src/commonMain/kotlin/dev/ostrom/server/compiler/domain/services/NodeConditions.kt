@@ -69,7 +69,7 @@ object NodeConditions {
         require(condition.path.length <= MAX_TEXT_FIELD && PATH.matches(condition.path)) { "$at.path: $PATH_FORM" }
         require(condition.op != NodeConditionOp.UNKNOWN) { "$at.op: equals, notEquals, exists or matches." }
         require((value == null) == (condition.op == NodeConditionOp.EXISTS)) { "$at.value: $VALUE_FORM" }
-        val problem = if (condition.op == NodeConditionOp.MATCHES) problem(value.orEmpty()) else null
+        val problem = value.takeIf { condition.op == NodeConditionOp.MATCHES }?.let(::problem)
         require(problem == null) { "$at.value: $problem" }
         require(edges.all { it.on in BRANCHES }) { "$at: every edge out of the node says on true or on false." }
     }

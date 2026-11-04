@@ -114,6 +114,7 @@ class RunNodesPostgresTest {
     }
 
     /** Saves an accepted workflow of [team]'s organization. */
+    @Suppress("LongParameterList") // A workflow document: its team, id, nodes, start, inputs and edges.
     private suspend fun TestServer.workflow(
         team: Team,
         id: String,
