@@ -28,6 +28,7 @@ import dev.ostrom.server.rules.presentation.ReplayPage
 import dev.ostrom.server.testing.SentStatement
 import dev.ostrom.server.testing.TestServer
 import dev.ostrom.server.testing.benchTest
+import dev.ostrom.server.testing.checkTime
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
@@ -101,7 +102,10 @@ class ReplayLoadPostgresTest {
             assertTrue(items.all { it.getValue("ruleCount").jsonPrimitive.content == "$RULES" }, "Every rule counts")
             assertTrue(plans.none { "Seq Scan on gates_gates" in it || "Seq Scan on rules_rules" in it }, report)
             assertTrue(stored < MAX_STORED, "Items over ${mib(MAX_STORED.toLong())}:\n$report")
-            assertTrue(took < MAX_DURATION, "Over $MAX_DURATION:\n$report")
+            // A query per action or per rule shows here on any runner; the duration is held by checkTime (the Build's
+            // summary and the Perf workflow), here only past ten times its budget.
+            assertTrue(statements.size <= MAX_STATEMENTS, "${statements.size} statements:\n$report")
+            checkTime("rules replay, $ACTIONS actions x $RULES rules", took, MAX_DURATION) { report }
             // A pod rests at about 112 Mi of its 256 (JOURNAL 03/11, relay leg of chart-load): a replay, one at a time
             // on a server, leaves it 44 Mi for its requests. Only the resident set says so: the JVM's heap in use
             // counts its garbage until it collects (reported, not budgeted).
@@ -230,6 +234,10 @@ class ReplayLoadPostgresTest {
         const val MAX_GROWTH = 100L * 1024 * 1024
         const val MIB = 1024 * 1024
         val MAX_DURATION: Duration = 30.seconds
+
+        // The statements of a replay today (20, Build 41717982170), whatever its number of actions and rules.
+        const val MAX_STATEMENTS = 20
+
         val SAMPLE_EVERY: Duration = 0.01.seconds
         const val GATE_COLUMNS = "id, org_id, gate_key, subject, node, label, mode, status, asked_by, asked_via, " +
             "session_ids, launch_ids, shown_digest, evidence, decided_by, decided_at, self_approved, receipt_id, " +

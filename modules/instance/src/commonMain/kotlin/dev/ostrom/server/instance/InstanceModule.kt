@@ -5,6 +5,7 @@ import dev.ostrom.server.instance.domain.GetCurrentSigningKeyUseCase
 import dev.ostrom.server.instance.domain.GetCurrentSigningKeyUseCaseImpl
 import dev.ostrom.server.instance.domain.GetOrCreateInstanceUseCase
 import dev.ostrom.server.instance.domain.GetOrCreateInstanceUseCaseImpl
+import dev.ostrom.server.instance.domain.InstanceKeyringImpl
 import dev.ostrom.server.instance.domain.InstanceRepository
 import dev.ostrom.server.instance.domain.ListSigningKeysUseCase
 import dev.ostrom.server.instance.domain.ListSigningKeysUseCaseImpl
@@ -18,6 +19,7 @@ import dev.ostrom.server.instance.presentation.InstanceRoutesDependencies
 import dev.ostrom.server.instance.presentation.instanceRoutes
 import dev.ostrom.server.kernel.database.SchemaMigration
 import dev.ostrom.server.kernel.module.ServerModule
+import dev.ostrom.server.kernel.signing.InstanceKeyring
 import io.ktor.server.routing.Route
 import org.koin.core.Koin
 import org.koin.core.module.Module
@@ -36,6 +38,7 @@ object InstanceModule : ServerModule {
         }
         single<ListSigningKeysUseCase> { ListSigningKeysUseCaseImpl(get()) }
         single<GetCurrentSigningKeyUseCase> { GetCurrentSigningKeyUseCaseImpl(get(), get()) }
+        single<InstanceKeyring> { InstanceKeyringImpl(get(), get()) }
         single { InstanceRoutesDependencies(get(), get(), get()) }
     }
 

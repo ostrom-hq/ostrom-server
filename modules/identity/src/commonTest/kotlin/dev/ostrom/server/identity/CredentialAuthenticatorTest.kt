@@ -80,6 +80,7 @@ class CredentialAuthenticatorTest {
         assertEquals(
             AuthenticatedPrincipal(
                 userId.toString(), PrincipalKind.USER, setOf("orgs:read"), stored.id.toString(), null,
+                personalTokenName = "t",
             ),
             authenticator.authenticate("osp_a"),
         )
@@ -92,6 +93,16 @@ class CredentialAuthenticatorTest {
         val principal = authenticator.authenticate("osc_a")
         assertEquals(PrincipalKind.USER, principal?.kind)
         assertEquals(orgId.toString(), principal?.orgId)
+        assertEquals(null, principal?.personalTokenName, "Only a personal token is named")
+    }
+
+    @Test
+    fun aPersonalTokenNamedBeforeTheRuleIsShownWithoutWhatBreaksALineOrHidesText() = runTest {
+        val legacy = token("osp_old", TokenKind.PERSONAL).copy(name = "ostrom login\nOwner\u202E  approval\u200B")
+        tokens.tokens["h(osp_old)"] = legacy
+        assertEquals("ostrom login Owner approval", authenticator.authenticate("osp_old")?.personalTokenName)
+        tokens.tokens["h(osp_old)"] = legacy.copy(name = "\u200B\n")
+        assertEquals("unnamed token", authenticator.authenticate("osp_old")?.personalTokenName)
     }
 
     @Test

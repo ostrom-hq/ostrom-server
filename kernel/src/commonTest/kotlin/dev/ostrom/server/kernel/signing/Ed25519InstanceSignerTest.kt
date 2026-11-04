@@ -38,6 +38,7 @@ class Ed25519InstanceSignerTest {
         assertEquals(64, signature.size)
         assertTrue(signer.verify(data, signature))
         assertFalse(signer.verify("tampered".encodeToByteArray(), signature))
+        assertFalse(signer.verify(data, signature.copyOf(SIGNATURE_SIZE - 1)), "A short signature is a no, not a throw")
         assertEquals("ed25519", signer.algorithm)
         assertTrue(Regex("[0-9a-f]{16}").matches(signer.keyId))
         assertTrue(signer.publicKeyPem.startsWith("-----BEGIN PUBLIC KEY-----"))
@@ -147,7 +148,33 @@ class Ed25519InstanceSignerTest {
         assertNotEquals(Ed25519InstanceSigner.generate().keyId, Ed25519InstanceSigner.generate().keyId)
     }
 
+    @Test
+    fun aPublishedKeyVerifiesWhatItsKeySignedAndNothingElse() = runTest {
+        val past = Ed25519InstanceSigner.generate()
+        val current = Ed25519InstanceSigner.generate()
+        val data = "line".encodeToByteArray()
+        val signature = past.sign(data)
+
+        assertTrue(Ed25519InstanceSigner.verifyWith(past.publicKeyPem, data, signature))
+        assertFalse(Ed25519InstanceSigner.verifyWith(current.publicKeyPem, data, signature))
+        assertFalse(Ed25519InstanceSigner.verifyWith(past.publicKeyPem, "other".encodeToByteArray(), signature))
+        assertFalse(Ed25519InstanceSigner.verifyWith(past.publicKeyPem, data, ByteArray(0)))
+    }
+
+    @Test
+    fun theCurrentKeyringKnowsTheCurrentKeyOnly() = runTest {
+        val signer = Ed25519InstanceSigner.generate()
+        val ring = CurrentKeyring(signer)
+        val data = "line".encodeToByteArray()
+
+        assertEquals(true, ring.verify(signer.keyId, data, signer.sign(data)))
+        assertEquals(false, ring.verify(signer.keyId, data, ByteArray(SIGNATURE_SIZE)))
+        assertEquals(null, ring.verify("0000000000000000", data, signer.sign(data)))
+    }
+
     private companion object {
+        const val SIGNATURE_SIZE = 64
+
         // A fixed Ed25519 key (PKCS#8 PEM), as another replica would have written it.
         const val OTHER_KEY_PEM = "-----BEGIN PRIVATE KEY-----\n" +
             "MC4CAQAwBQYDK2VwBCIEIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g\n" +
