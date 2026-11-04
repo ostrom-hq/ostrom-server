@@ -254,6 +254,40 @@ private const val FORCED_SQL: String =
     """
 
 /**
+ * Version 8: how long the launcher waits for the first hook of an agent session (`hooks_deadline_seconds`, 15 until an
+ * owner or admin sets it, 5 to 300 whatever writes it). `orgs_claim_holders` and `orgs_find_by_slug` return the table's
+ * own rows and carry the column as it is; `orgs_memberships_of` is made again to return it, as version 3 did for the
+ * time zone.
+ */
+private val HOOKS_DEADLINE_SQL: String =
+    """
+    ALTER TABLE orgs_organizations
+        ADD COLUMN hooks_deadline_seconds INTEGER NOT NULL DEFAULT 15
+        CONSTRAINT orgs_organizations_hooks_deadline CHECK (hooks_deadline_seconds BETWEEN 5 AND 300);
+    DROP FUNCTION orgs_memberships_of(UUID);
+    CREATE FUNCTION orgs_memberships_of(p_user UUID) RETURNS TABLE (
+        id UUID, slug TEXT, name TEXT, github_org_id BIGINT, free_claim TEXT, created_at TIMESTAMPTZ,
+        time_zone TEXT, hooks_deadline_seconds INTEGER, member_id UUID, org_id UUID, user_id UUID, role TEXT,
+        joined_at TIMESTAMPTZ
+    ) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+        SELECT o.id, o.slug, o.name, o.github_org_id, o.free_claim, o.created_at, o.time_zone,
+               o.hooks_deadline_seconds, m.id, m.org_id, m.user_id, m.role, m.joined_at
+        FROM orgs_members m JOIN orgs_organizations o ON o.id = m.org_id
+        WHERE m.user_id = p_user AND o.deleted_at IS NULL;
+    $$;
+    REVOKE EXECUTE ON FUNCTION orgs_memberships_of(UUID) FROM PUBLIC;
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ostrom_app') THEN
+            GRANT EXECUTE ON FUNCTION orgs_memberships_of(UUID) TO ostrom_app;
+        END IF;
+    END $$;
+    GRANT CREATE ON SCHEMA public TO ostrom_router;
+    ALTER FUNCTION orgs_memberships_of(UUID) OWNER TO ostrom_router;
+    REVOKE CREATE ON SCHEMA public FROM ostrom_router;
+    """
+        .trimIndent()
+
+/**
  * The schema of the orgs module; its tables start with `orgs_`. Every table has forced row-level security
  * on the organization (`ostrom.org_id`, `dev.ostrom.server.kernel.database.inOrg`): the
  * organization's own row, its members and its invitations are only visible to a query confined to
@@ -362,6 +396,12 @@ val OrgsMigrations: List<SchemaMigration> =
             """.trimIndent(),
         ),
         SchemaMigration(version = 7, name = "orgs_member_search", sql = MEMBER_SEARCH_SQL),
+        // The organization's wait for its hooks (`hooksDeadlineSeconds`, server#297, audit M3).
+        SchemaMigration(
+            version = 8,
+            name = "orgs_hooks_deadline",
+            sql = HOOKS_DEADLINE_SQL,
+        ),
     )
 
 /** The short name an erased organization keeps, in SQL: `~` and its id, outside the pattern of the short names. */

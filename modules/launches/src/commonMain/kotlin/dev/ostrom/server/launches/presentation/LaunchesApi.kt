@@ -21,6 +21,15 @@ class LaunchesApi
 class LaunchApi(val launchId: String)
 
 /**
+ * The CLI's report that no hook ran in a launch's session (contract `reportHooksMissing`, not in the contract yet).
+ *
+ * @property launchId The launch.
+ */
+@Serializable
+@Resource("/api/v1/launches/{launchId}/hooks-missing")
+class HooksMissingApi(val launchId: String)
+
+/**
  * The organization's policy on launches (contract `checkAgentPolicy`).
  *
  * @property agent The agent's name in Ostrom.
@@ -49,14 +58,40 @@ data class CreateLaunchRequest(
 )
 
 /**
+ * What the CLI does when no hook of Ostrom ran in the agent's session.
+ *
+ * @property afterSeconds How long it waits for the first hook before it concludes none runs (the organization's
+ *   `hooksDeadlineSeconds`).
+ * @property stopAgent Whether it then stops the agent: the organization enforces a gate, which the agent would skip.
+ */
+@Serializable
+data class HooksCheckResponse(val afterSeconds: Int, val stopAgent: Boolean)
+
+/**
  * A launch created: the only time its agent token's secret is sent.
  *
  * @property launchId The launch.
  * @property agentToken The agent token, which the CLI hands to the hooks through its relay, never the device token.
  * @property expiresAt When the token expires (ISO 8601).
+ * @property hooksCheck When to look for the hooks and whether to stop an agent without them; absent from a server
+ *   that does not tell, which a CLI reads as "do not check".
  */
 @Serializable
-data class LaunchResponse(val launchId: String, val agentToken: String, val expiresAt: String)
+data class LaunchResponse(
+    val launchId: String,
+    val agentToken: String,
+    val expiresAt: String,
+    val hooksCheck: HooksCheckResponse? = null,
+)
+
+/**
+ * The body of `POST /api/v1/launches/{launchId}/hooks-missing`.
+ *
+ * @property waitedSeconds How long the CLI waited for the first hook, from 0 to 3600.
+ * @property stopped Whether it stopped the agent.
+ */
+@Serializable
+data class HooksMissingRequest(val waitedSeconds: Int, val stopped: Boolean)
 
 /**
  * The answer of `GET /api/v1/policy/agents`.

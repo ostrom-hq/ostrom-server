@@ -81,4 +81,10 @@ val GovernanceMigrations: List<SchemaMigration> = listOf(
         REVOKE CREATE ON SCHEMA public FROM ostrom_router
         """.trimIndent(),
     ),
+    // The name of the personal token that asked, as it was then (audit 2, F1 bis): null for any other token.
+    SchemaMigration(
+        version = 2,
+        name = "confirmation_token_name",
+        sql = "ALTER TABLE governance_confirmations ADD COLUMN token_name TEXT",
+    ),
 )

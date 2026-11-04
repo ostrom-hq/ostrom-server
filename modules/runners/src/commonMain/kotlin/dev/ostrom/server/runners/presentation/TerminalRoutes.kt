@@ -4,6 +4,7 @@ package dev.ostrom.server.runners.presentation
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.http.openConnections
 import dev.ostrom.server.runners.domain.Caller
 import dev.ostrom.server.runners.domain.CloudSessionNotFoundException
 import dev.ostrom.server.runners.domain.InvalidCloudSessionRequestException
@@ -99,36 +100,40 @@ fun Route.terminalRoutes(dependencies: TerminalRoutesDependencies) = with(depend
             call.respond(TerminalTicketResponse(ticket.value, ticket.expiresAt.toString()))
         }
     }
-    webSocket("/api/v1/cloud/sessions/{id}/terminal") {
-        val id = Uuid.parseOrNull(call.parameters.getOrFail("id"))
-            ?: return@webSocket close(CloseReason(TerminalCloseCodes.NOT_FOUND, "No such cloud session."))
-        val caller = try {
-            clientCaller(dependencies, id)
-        } catch (error: OstromException) {
-            return@webSocket close(closeReason(error))
-        } ?: return@webSocket close(CloseReason(TerminalCloseCodes.UNAUTHORIZED, NEED_MEMBER_CREDENTIAL))
-        try {
-            openTerminal(caller, id)
-        } catch (error: OstromException) {
-            return@webSocket close(closeReason(error))
+    // A terminal stays open as long as its client keeps it: open connections, counted apart from the server's other
+    // calls and from the waits (P1 memory).
+    openConnections {
+        webSocket("/api/v1/cloud/sessions/{id}/terminal") {
+            val id = Uuid.parseOrNull(call.parameters.getOrFail("id"))
+                ?: return@webSocket close(CloseReason(TerminalCloseCodes.NOT_FOUND, "No such cloud session."))
+            val caller = try {
+                clientCaller(dependencies, id)
+            } catch (error: OstromException) {
+                return@webSocket close(closeReason(error))
+            } ?: return@webSocket close(CloseReason(TerminalCloseCodes.UNAUTHORIZED, NEED_MEMBER_CREDENTIAL))
+            try {
+                openTerminal(caller, id)
+            } catch (error: OstromException) {
+                return@webSocket close(closeReason(error))
+            }
+            attachClient(dependencies, id)
         }
-        attachClient(dependencies, id)
-    }
-    webSocket("/api/v1/cloud/runner/terminal") {
-        val token = bearerToken()
-        val id = call.parameters["sessionId"]?.let(Uuid::parseOrNull)
-        val epoch = call.parameters["epoch"]?.toLongOrNull()
-        if (token == null || id == null || epoch == null) {
-            return@webSocket close(CloseReason(TerminalCloseCodes.UNAUTHORIZED, NEED_RUNNER_CREDENTIAL))
+        webSocket("/api/v1/cloud/runner/terminal") {
+            val token = bearerToken()
+            val id = call.parameters["sessionId"]?.let(Uuid::parseOrNull)
+            val epoch = call.parameters["epoch"]?.toLongOrNull()
+            if (token == null || id == null || epoch == null) {
+                return@webSocket close(CloseReason(TerminalCloseCodes.UNAUTHORIZED, NEED_RUNNER_CREDENTIAL))
+            }
+            try {
+                authenticateRunner(token, id, epoch)
+            } catch (error: OstromException) {
+                return@webSocket close(closeReason(error))
+            }
+            val link = relay.connectRunner(id, epoch)
+                ?: return@webSocket close(CloseReason(TerminalCloseCodes.CONFLICT, NEWER_EXECUTION))
+            attachRunner(relay, id, link)
         }
-        try {
-            authenticateRunner(token, id, epoch)
-        } catch (error: OstromException) {
-            return@webSocket close(closeReason(error))
-        }
-        val link = relay.connectRunner(id, epoch)
-            ?: return@webSocket close(CloseReason(TerminalCloseCodes.CONFLICT, NEWER_EXECUTION))
-        attachRunner(relay, id, link)
     }
     get("/api/v1/cloud/sessions/{id}/terminal") { throw InvalidCloudSessionRequestException(NEED_UPGRADE) }
     get("/api/v1/cloud/runner/terminal") { throw InvalidCloudSessionRequestException(NEED_UPGRADE) }

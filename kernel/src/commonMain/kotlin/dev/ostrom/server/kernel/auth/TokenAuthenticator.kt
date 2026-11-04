@@ -20,6 +20,8 @@ import kotlin.time.Instant
  *   unknown. A yes to a high-risk action needs it within five minutes (S2-54).
  * @property namedOrg The organization the request names in its [ORG_HEADER] header, as sent: only a hint, which the
  *   [PrincipalOrgResolver] checks against the caller's membership.
+ * @property personalTokenName The name its owner gave a personal token made in the console, which a governance
+ *   confirmation shows; null for any other credential (the CLI's, a browser session, an agent, a service key).
  */
 data class AuthenticatedPrincipal(
     val subjectId: String,
@@ -30,6 +32,7 @@ data class AuthenticatedPrincipal(
     val channel: PrincipalChannel = PrincipalChannel.API_TOKEN,
     val authenticatedAt: Instant? = null,
     val namedOrg: String? = null,
+    val personalTokenName: String? = null,
 ) {
     /**
      * Whether the principal may do what [scope] names: the scope is listed, or the principal is a user's browser

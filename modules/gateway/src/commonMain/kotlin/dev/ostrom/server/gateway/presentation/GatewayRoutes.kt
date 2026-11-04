@@ -21,6 +21,7 @@ import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.http.bodyLimit
+import dev.ostrom.server.kernel.http.heldCalls
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.OrgNotFoundException
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -83,11 +84,15 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  * @param dependencies The use cases.
  */
 fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependencies) {
-    // A model call carries the whole context: up to 32 MiB instead of the kernel's 1 MiB (S2-46).
-    bodyLimit(MAX_INFERENCE_REQUEST_BYTES) {
-        routePost("$INFERENCE_BASE/v1/messages") { infer(dependencies, WireProtocol.MESSAGES) }
-        routePost("$INFERENCE_BASE/v1/responses") { infer(dependencies, WireProtocol.RESPONSES) }
-        routePost("$INFERENCE_BASE/v1/chat/completions") { infer(dependencies, WireProtocol.CHAT) }
+    // A model call carries the whole context: up to 32 MiB instead of the kernel's 1 MiB (S2-46). It lasts as long as
+    // the provider streams: a held call, counted apart from the server's other calls (P1 memory), on top of the
+    // gateway's own ceiling of open calls.
+    heldCalls {
+        bodyLimit(MAX_INFERENCE_REQUEST_BYTES) {
+            routePost("$INFERENCE_BASE/v1/messages") { infer(dependencies, WireProtocol.MESSAGES) }
+            routePost("$INFERENCE_BASE/v1/responses") { infer(dependencies, WireProtocol.RESPONSES) }
+            routePost("$INFERENCE_BASE/v1/chat/completions") { infer(dependencies, WireProtocol.CHAT) }
+        }
     }
     routeGet("$INFERENCE_BASE/v1/models") {
         call.inferenceCaller(dependencies, WireProtocol.CHAT)?.let { (caller, _) ->

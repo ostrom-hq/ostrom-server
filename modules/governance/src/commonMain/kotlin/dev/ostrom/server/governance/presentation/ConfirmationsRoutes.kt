@@ -3,6 +3,7 @@ package dev.ostrom.server.governance.presentation
 
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.http.heldCalls
 import io.ktor.server.request.receive
 import io.ktor.server.resources.get
 import io.ktor.server.resources.post
@@ -18,12 +19,18 @@ import kotlin.time.Duration.Companion.seconds
  * @param dependencies The use cases.
  */
 fun Route.confirmationsRoutes(dependencies: ConfirmationsRoutesDependencies) = with(dependencies) {
-    authenticated {
-        get<ConfirmationApi> { params ->
-            val wait = (params.wait ?: 0).coerceIn(0, MAX_WAIT_SECONDS).seconds
-            val confirmation = get(call.requirePrincipal(), params.id, wait)
-            call.respond(confirmation.toDto(people, clock.now()))
+    // Waits up to 30 s for the answer: a held call, counted apart from the server's other calls from before
+    // authentication on (P1 memory).
+    heldCalls {
+        authenticated {
+            get<ConfirmationApi> { params ->
+                val wait = (params.wait ?: 0).coerceIn(0, MAX_WAIT_SECONDS).seconds
+                val confirmation = get(call.requirePrincipal(), params.id, wait)
+                call.respond(confirmation.toDto(people, clock.now()))
+            }
         }
+    }
+    authenticated {
         post<ConfirmationApi.Answer> { params ->
             val principal = call.requirePrincipal()
             val body = call.receive<AnswerConfirmationRequest>()
