@@ -26,15 +26,34 @@ class Ed25519InstanceSigner private constructor(
 
     override suspend fun sign(data: ByteArray): ByteArray = privateKey.signatureGenerator().generateSignature(data)
 
+    // A signature of another length is refused before the provider sees it: the JDK throws on it instead of saying no.
     override suspend fun verify(data: ByteArray, signature: ByteArray): Boolean =
-        publicKey.signatureVerifier().tryVerifySignature(data, signature)
+        signature.size == SIGNATURE_LENGTH && publicKey.signatureVerifier().tryVerifySignature(data, signature)
 
     /** Creating or loading the instance key. */
     companion object {
         /** The key id is the first 16 hex characters of the SHA-256 of the public key (SPKI DER), as the prototype. */
         private const val KEY_ID_LENGTH = 16
 
+        /** An Ed25519 signature is 64 bytes (RFC 8032). */
+        private const val SIGNATURE_LENGTH = 64
+
         private val edDsa get() = CryptographyProvider.Default.get(EdDSA)
+
+        /**
+         * Verifies an Ed25519 signature with a public key the instance published (PEM, SPKI): a past key of the
+         * instance, kept to verify what it signed.
+         *
+         * @param publicKeyPem The public key, as [publicKeyPem] writes it.
+         * @param data The signed bytes.
+         * @param signature The signature.
+         *
+         * @return Whether it verifies.
+         */
+        suspend fun verifyWith(publicKeyPem: String, data: ByteArray, signature: ByteArray): Boolean =
+            signature.size == SIGNATURE_LENGTH && edDsa.publicKeyDecoder(EdDSA.Curve.Ed25519)
+                .decodeFromByteArray(EdDSA.PublicKey.Format.PEM, publicKeyPem.encodeToByteArray())
+                .signatureVerifier().tryVerifySignature(data, signature)
 
         /**
          * Generates a new key, in memory only (tests).
