@@ -3,6 +3,7 @@ package dev.ostrom.server.workflowruns
 
 import dev.ostrom.core.api.models.RunStatus
 import dev.ostrom.core.api.models.WorkflowRun
+import dev.ostrom.server.automations.AutomationsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.gates.GatesModule
 import dev.ostrom.server.gates.domain.models.ActorKind
@@ -61,7 +62,7 @@ class StartRunPostgresTest {
     private val orgB = Uuid.parse("0000000b-0000-0000-0000-000000000000")
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
-        RunnersModule, LaunchesModule, WorkflowRunsModule,
+        RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
 
     // Tokens are `<kind>:<org letter>:<id>`: `user` a browser session, `cli` a person's token that writes workflows,
@@ -150,7 +151,7 @@ class StartRunPostgresTest {
             listOf(SHIP, "Ship $SHIP", version.toString(), "lead", "manual"),
             listOf(run.workflowId, run.workflowName, run.workflowVersion.toString(), run.startedBy, run.source),
         )
-        // No engine plays a run yet: it is queued, with nothing visited, no session, no end.
+        // The engine does not run in this test (RunEnginePostgresTest plays runs): queued, nothing visited, no end.
         assertEquals(RunStatus.QUEUED, run.status)
         assertEquals(emptyList(), run.visits)
         assertNull(run.sessionId)

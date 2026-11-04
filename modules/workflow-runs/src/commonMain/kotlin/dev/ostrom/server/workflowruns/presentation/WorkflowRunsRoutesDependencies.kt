@@ -5,10 +5,12 @@ import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.kernel.auth.ServiceKeyAudit
 import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
+import dev.ostrom.server.workflowruns.domain.usecases.CancelWorkflowRunUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.GetReceiptBundleUseCase
+import dev.ostrom.server.workflowruns.domain.usecases.GetWorkflowRunUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.ListChecksUseCase
-import dev.ostrom.server.workflowruns.domain.usecases.ListWorkflowRunsUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.ListNotificationsUseCase
+import dev.ostrom.server.workflowruns.domain.usecases.ListWorkflowRunsUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.ReportCheckUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.ReportRunnerCheckUseCase
 import dev.ostrom.server.workflowruns.domain.usecases.SendNotificationUseCase
@@ -31,6 +33,8 @@ import dev.ostrom.server.workflowruns.domain.usecases.StartWorkflowRunUseCase
  * @property serviceKeys Audits the calls of a service key, the CI's caller of `reportCheck` and `signWorkflowReceipt`.
  * @property startRun Starts a run of a workflow.
  * @property listRuns Lists the runs of workflows.
+ * @property getRun Reads a run of a workflow.
+ * @property cancelRun Cancels a run of a workflow.
  */
 data class WorkflowRunsRoutesDependencies(
     val actors: GateActorResolver,
@@ -46,4 +50,6 @@ data class WorkflowRunsRoutesDependencies(
     val serviceKeys: ServiceKeyAudit,
     val startRun: StartWorkflowRunUseCase,
     val listRuns: ListWorkflowRunsUseCase,
+    val getRun: GetWorkflowRunUseCase,
+    val cancelRun: CancelWorkflowRunUseCase,
 )

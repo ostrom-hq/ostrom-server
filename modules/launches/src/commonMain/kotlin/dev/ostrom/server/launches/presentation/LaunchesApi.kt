@@ -38,9 +38,15 @@ class AgentPolicyApi(val agent: String? = null, val dev: String? = null, val mod
  * @property repo The repository (`owner/name`, or the folder's name).
  * @property agent The agent's name in Ostrom.
  * @property model The model.
+ * @property workflowId The workflow the launch plays, one of the organization's.
  */
 @Serializable
-data class CreateLaunchRequest(val repo: String? = null, val agent: String, val model: String? = null)
+data class CreateLaunchRequest(
+    val repo: String? = null,
+    val agent: String,
+    val model: String? = null,
+    val workflowId: String? = null,
+)
 
 /**
  * A launch created: the only time its agent token's secret is sent.

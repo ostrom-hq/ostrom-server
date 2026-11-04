@@ -135,7 +135,7 @@ class FakeOrgDeletions(private val store: OrgsStore) : OrgDeletionsRepository {
     }
 }
 
-class FakeMembers(private val store: OrgsStore) : MembersRepository {
+class FakeMembers(private val store: OrgsStore, private val people: FakePeople = FakePeople()) : MembersRepository {
     override suspend fun findByUser(orgId: Uuid, userId: Uuid): Member? =
         store.members.values.firstOrNull { it.orgId == orgId && it.userId == userId }
 
@@ -149,6 +149,14 @@ class FakeMembers(private val store: OrgsStore) : MembersRepository {
         val ordered = list(orgId).sortedWith(compareBy({ it.joinedAt }, { it.id.toString() }))
         val start = if (after == null) 0 else ordered.indexOfFirst { it.id == after }
         return if (start < 0) emptyList() else ordered.drop(if (after == null) 0 else start + 1).take(limit)
+    }
+
+    override suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int): List<Member> {
+        val named = people.people.values.filter { person ->
+            listOf(person.login, person.displayName).any { it.lowercase().startsWith(prefix.lowercase()) }
+        }.map { it.id }.toSet()
+        val all = page(orgId, after, Int.MAX_VALUE)
+        return all.filter { it.userId in named }.take(limit)
     }
 
     override suspend fun count(orgId: Uuid): Int = list(orgId).size
@@ -290,9 +298,9 @@ class OrgsWorld {
     val audit = RecordingAudit()
     val orgs = FakeOrgs(store, audit)
     val deletions = FakeOrgDeletions(store)
-    val members = FakeMembers(store)
-    val invitations = FakeInvitations(store)
     val people = FakePeople()
+    val members = FakeMembers(store, people)
+    val invitations = FakeInvitations(store)
     val seats = FakeSeats()
     val tokens = FakeTokens()
     val limiter = FakeLimiter()

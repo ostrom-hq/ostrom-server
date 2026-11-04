@@ -24,7 +24,7 @@ import kotlin.uuid.Uuid
  * production, never as a role that bypasses row-level security.
  *
  * - [owner]: the owner of the database, the schema and every table, `NOSUPERUSER NOBYPASSRLS CREATEROLE`, admin of
- *   `ostrom_tenant` and `ostrom_router`. It runs the migrations, like `ostrom-server migrate`.
+ *   `ostrom_tenant`, `ostrom_router` and `ostrom_member_search`. It runs the migrations, like `ostrom-server migrate`.
  * - [driver]: the serving role, `NOSUPERUSER NOBYPASSRLS`, owner of nothing, member of `ostrom_tenant`, with the rows
  *   of the owner's tables by default privileges. Every test and the test server go through it.
  * - [superuser]: the configured user (CI's PostgreSQL service user), which creates the database and the roles. Only for
@@ -32,7 +32,8 @@ import kotlin.uuid.Uuid
  *
  * The owner and serving roles are created for this database alone (their attributes are those of
  * `ci/database-roles.sql`, their names unique so tests in parallel never share them) and dropped with it;
- * `ostrom_tenant` and `ostrom_router`, global to the cluster and named by the migrations, are created when missing.
+ * `ostrom_tenant`, `ostrom_router` and `ostrom_member_search`, global to the cluster and named by the migrations, are
+ * created when missing.
  *
  * Configured by `OSTROM_TEST_DATABASE_URL`, an existing database to connect to with its credentials
  * (`postgresql://ostrom:ostrom@localhost:5432/ostrom_test`), or `OSTROM_TEST_DATABASE_USER` and
@@ -242,6 +243,7 @@ class TestDatabase private constructor(
                 config,
                 tolerated("CREATE ROLE $TENANT NOLOGIN NOSUPERUSER NOBYPASSRLS"),
                 tolerated("CREATE ROLE $ROUTER NOLOGIN NOSUPERUSER NOBYPASSRLS"),
+                tolerated("CREATE ROLE $MEMBER_SEARCH NOLOGIN NOSUPERUSER NOBYPASSRLS"),
                 "CREATE ROLE $ownerRole LOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS " +
                     "PASSWORD '$ownerPassword'",
                 "CREATE ROLE $servingRole LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS " +
@@ -249,6 +251,7 @@ class TestDatabase private constructor(
                 "GRANT $TENANT TO $ownerRole WITH ADMIN OPTION",
                 "GRANT $TENANT TO $servingRole",
                 "GRANT $ROUTER TO $ownerRole WITH ADMIN OPTION",
+                "GRANT $MEMBER_SEARCH TO $ownerRole WITH ADMIN OPTION",
                 "CREATE DATABASE $name OWNER $ownerRole",
             )
             val testUrl = config.url.substringBeforeLast('/') + "/" + name
@@ -273,6 +276,9 @@ class TestDatabase private constructor(
 
         // The owner of the cross-organization functions (docs/tenancy.md), never granted to the serving role.
         private const val ROUTER = "ostrom_router"
+
+        // The owner of the member search's function (orgs migration 7), never granted to the serving role either.
+        private const val MEMBER_SEARCH = "ostrom_member_search"
 
         // Roles are global to the cluster: tolerate one created by another test, a migration or the roles script.
         private fun tolerated(sql: String) =
