@@ -144,8 +144,10 @@ class InMemoryRuns : WorkflowRunsRepository {
         queries += query
         return checks.filter { query.sessionId == null || it.sessionId == query.sessionId }
             .filter { query.nodeId == null || it.nodeId == query.nodeId }
-            .reversed().take(query.limit)
+            .reversed().after(query.before) { it.id }.take(query.limit)
     }
+
+    override suspend fun hasCheck(orgId: Uuid, id: String): Boolean = checks.any { it.id == id }
 
     override suspend fun addNotification(orgId: Uuid, notification: Notification, actionKey: String): Notification {
         val first = notifications.firstOrNull { (stored, key) ->
@@ -166,7 +168,16 @@ class InMemoryRuns : WorkflowRunsRepository {
     override suspend fun notifications(orgId: Uuid, query: RunQuery): List<Notification> {
         queries += query
         return notifications.map { it.first }.filter { query.sessionId == null || it.sessionId == query.sessionId }
-            .reversed()
+            .reversed().after(query.before) { it.id }
+    }
+
+    override suspend fun hasNotification(orgId: Uuid, id: String): Boolean = notifications.any { it.first.id == id }
+
+    // As the database: the rows after the cursor, newest first; none after a row it does not hold.
+    private fun <T> List<T>.after(before: String?, id: (T) -> String): List<T> {
+        if (before == null) return this
+        val at = indexOfFirst { id(it) == before }
+        return if (at < 0) emptyList() else drop(at + 1)
     }
 }
 

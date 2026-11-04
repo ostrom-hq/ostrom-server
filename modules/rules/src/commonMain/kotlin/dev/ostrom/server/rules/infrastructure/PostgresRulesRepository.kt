@@ -79,6 +79,13 @@ class PostgresRulesRepository(private val driver: Driver) : RulesRepository {
             tx.fetchAll(statement).getOrThrow().map { it.toDecision() }
         }
 
+    override suspend fun decision(orgId: Uuid, id: String): Decision? = driver.withOrganization(orgId) { tx ->
+        tx.fetchAll(
+            Statement.create("SELECT $DECISION_COLUMNS FROM rules_decisions WHERE org_id = :org AND id = :id")
+                .bind("org", orgId).bind("id", id),
+        ).getOrThrow().map { it.toDecision() }.firstOrNull()
+    }
+
     override suspend fun markSigned(orgId: Uuid, ids: List<String>) {
         if (ids.isEmpty()) return
         driver.withOrganization(orgId) { tx ->

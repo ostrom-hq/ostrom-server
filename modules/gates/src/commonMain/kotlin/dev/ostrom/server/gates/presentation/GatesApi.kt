@@ -43,10 +43,15 @@ class GatesApi {
     }
 }
 
-/** The approvals of the caller's organization. */
+/** The approvals of the caller's organization; `before` is the `next` of the previous page. */
 @Serializable
 @Resource("/api/v1/approvals")
-class ApprovalsApi(val status: String? = null, val mine: Boolean? = null, val limit: Int? = null) {
+class ApprovalsApi(
+    val status: String? = null,
+    val mine: Boolean? = null,
+    val limit: Int? = null,
+    val before: String? = null,
+) {
     /** The caller's yes queue (contract `getApprovalQueue`); a constant segment, matched before `{id}`. */
     @Serializable
     @Resource("queue")

@@ -6,6 +6,7 @@ import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.core.api.models.ReportCheckRequest
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
 import dev.ostrom.server.sessions.domain.models.SessionClosedException
 import dev.ostrom.server.workflowruns.domain.models.InvalidRunException
@@ -218,8 +219,10 @@ class ChecksTest {
 
     @Test
     fun theRunsAreReadByAMemberAndByTheSessionsAgentOnly() = runTest {
-        report(AGENT, request())
+        val run = report(AGENT, request())
         val bySession = RunQuery(sessionId = "s-1")
+        assertTrue(list(ADA, RunQuery(before = run.id)).isEmpty(), "After the last run")
+        assertFailsWith<InvalidPageException> { list(ADA, RunQuery(before = "nope")) }
         assertEquals(1, list(BOB, bySession).size, "Any member reads them")
         assertEquals(1, list(ADA, RunQuery()).size)
         assertEquals(1, list(AGENT, bySession).size)

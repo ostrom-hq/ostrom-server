@@ -139,4 +139,18 @@ interface GitHubDirectoryRepository {
      * @return The teams, by slug.
      */
     suspend fun teams(orgId: Uuid, after: String?, limit: Int): List<GitHubTeam>
+
+    /**
+     * @param orgId The organization.
+     * @param name A repository's name.
+     * @return True when the organization's directory holds it.
+     */
+    suspend fun hasRepo(orgId: Uuid, name: String): Boolean
+
+    /**
+     * @param orgId The organization.
+     * @param slug A team's slug.
+     * @return True when the organization's directory holds it.
+     */
+    suspend fun hasTeam(orgId: Uuid, slug: String): Boolean
 }

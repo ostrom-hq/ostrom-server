@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.integrations.github.domain
 
+import dev.ostrom.server.kernel.errors.Pages
 import kotlin.uuid.Uuid
 
 /** Lists the repositories the organization's installation of the App sees (`GET /api/v1/repos`). */
@@ -41,8 +42,10 @@ class ListGitHubReposUseCaseImpl(
 ) : ListGitHubReposUseCase {
     override suspend fun invoke(orgId: Uuid, after: String?, limit: Int?): NamePage<GitHubRepo> {
         val size = pageSize(after, limit)
-        if (!sync.ensure(orgId)) return NamePage(emptyList(), null)
-        return page(directory.repos(orgId, after, size + 1), size) { it.name }
+        if (!sync.ensure(orgId)) return nothing(after)
+        val read = directory.repos(orgId, after, size + 1)
+        val rows = Pages.checked("after", after, read) { directory.hasRepo(orgId, it) }
+        return page(rows, size) { it.name }
     }
 }
 
@@ -58,8 +61,10 @@ class ListGitHubTeamsUseCaseImpl(
 ) : ListGitHubTeamsUseCase {
     override suspend fun invoke(orgId: Uuid, after: String?, limit: Int?): NamePage<GitHubTeam> {
         val size = pageSize(after, limit)
-        if (!sync.ensure(orgId)) return NamePage(emptyList(), null)
-        return page(directory.teams(orgId, after, size + 1), size) { it.slug }
+        if (!sync.ensure(orgId)) return nothing(after)
+        val read = directory.teams(orgId, after, size + 1)
+        val rows = Pages.checked("after", after, read) { directory.hasTeam(orgId, it) }
+        return page(rows, size) { it.slug }
     }
 }
 
@@ -72,6 +77,12 @@ private fun pageSize(after: String?, limit: Int?): Int {
     if (size !in 1..MAX_PAGE) throw InvalidPageException("limit is between 1 and $MAX_PAGE.")
     if (after != null && after.length > MAX_CURSOR) throw InvalidPageException("This cursor is not one of ours.")
     return size
+}
+
+// Without an installation the list is empty and no page ever gave a cursor: one is refused (a 400), not ignored.
+private fun <T> nothing(after: String?): NamePage<T> {
+    if (after != null) Pages.unknownCursor("after")
+    return NamePage(emptyList(), null)
 }
 
 // Read one row more than the page: when it exists, the page has a next one, named by its last row.

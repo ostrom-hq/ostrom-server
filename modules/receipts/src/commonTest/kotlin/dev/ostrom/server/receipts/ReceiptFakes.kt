@@ -57,7 +57,10 @@ internal class FakeReceipts : ReceiptsRepository {
 
     override suspend fun list(orgId: Uuid, query: ReceiptQuery): List<StoredReceipt> {
         lastQuery = query
-        return rows.filter { it.orgId == orgId }.reversed().take(query.limit)
+        // As the database: after `before`, older receipts only; none after a receipt it does not hold.
+        val newest = rows.filter { it.orgId == orgId }.reversed()
+        val start = query.before?.let { before -> newest.indexOfFirst { it.id == before } + 1 } ?: 0
+        return if (start == 0 && query.before != null) emptyList() else newest.drop(start).take(query.limit)
     }
 }
 

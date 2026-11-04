@@ -2,6 +2,7 @@
 package dev.ostrom.server.automations.domain
 
 import dev.ostrom.server.kernel.auth.MemberDirectory
+import dev.ostrom.server.kernel.errors.Pages
 import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -173,7 +174,9 @@ class RunAutomationsUseCaseImpl(
         val automation = repository.visibleTo(caller, id)
         val size = limit ?: DEFAULT_PAGE
         requireAutomation(size in 1..MAX_PAGE) { "limit is between 1 and $MAX_PAGE." }
-        val items = repository.listRuns(automation.orgId, automation.id, before, size + 1)
+        // A `before` that names no run of this automation (forged, or another's) is a 400, not an empty page.
+        val read = repository.listRuns(automation.orgId, automation.id, before, size + 1)
+        val items = Pages.checked("before", before, read) { repository.hasRun(automation.orgId, automation.id, it) }
         return RunPage(items.take(size), items.getOrNull(size)?.let { items[size - 1].id })
     }
 

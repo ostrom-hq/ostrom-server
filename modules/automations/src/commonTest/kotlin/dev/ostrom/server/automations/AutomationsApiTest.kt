@@ -46,6 +46,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 
 /** The automations routes, against a real PostgreSQL. */
 class AutomationsApiTest {
@@ -194,6 +195,8 @@ class AutomationsApiTest {
             val rest = client.get("$path/runs?before=${history.next}") { bearerAuth("alice") }.body<RunsResponse>()
             assertEquals(2, rest.items.size)
             assertNull(rest.next)
+            val end = client.get("$path/runs?before=${rest.items.last().id}") { bearerAuth("alice") }
+            assertEquals(emptyList(), end.body<RunsResponse>().items, "After the oldest run")
         }
     }
 
@@ -229,6 +232,9 @@ class AutomationsApiTest {
         assertEquals(HttpStatusCode.BadRequest, badCursor.status)
         val badRunsCursor = client.get("$path/runs?before=nope") { bearerAuth("alice") }
         assertEquals(HttpStatusCode.BadRequest, badRunsCursor.status)
+        // An id that is no run of this automation, of this organization: refused, not an empty page.
+        val forgedRunsCursor = client.get("$path/runs?before=${Uuid.random()}") { bearerAuth("alice") }
+        assertEquals(HttpStatusCode.BadRequest, forgedRunsCursor.status)
         assertEquals(HttpStatusCode.Forbidden, client.get("/api/v1/automations?owner=all") { bearerAuth("bob") }.status)
         assertEquals(HttpStatusCode.OK, client.get("/api/v1/automations?owner=all") { bearerAuth("dave") }.status)
         assertEquals(HttpStatusCode.Forbidden, client.send("dave", "POST", "$path/enable").status)

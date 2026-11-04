@@ -3,6 +3,7 @@ package dev.ostrom.server.rules
 
 import dev.ostrom.server.gates.domain.models.SelfApprovalPolicy
 import dev.ostrom.server.gates.infrastructure.DefaultGatePolicies
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.rules.domain.models.Decision
 import dev.ostrom.server.rules.domain.models.DecisionQuery
 import dev.ostrom.server.rules.domain.models.DecisionSubject
@@ -99,6 +100,11 @@ class DecisionsAndPolicyUseCasesTest {
         assertEquals(3, all.size)
         assertNull(end)
         assertEquals(DecisionQuery.PAGE, DecisionQuery().limit)
+        assertEquals(listOf("dec_1"), list(orgA, DecisionQuery(before = "dec_2")).first.map { it.id })
+        assertEquals(emptyList(), list(orgA, DecisionQuery(before = "dec_1")).first, "The end of the list")
+        // A decision the organization does not hold: forged, or another organization's.
+        assertFailsWith<InvalidPageException> { list(orgA, DecisionQuery(before = "dec_9")) }
+        assertFailsWith<InvalidPageException> { list(orgB, DecisionQuery(before = "dec_1")) }
     }
 
     @Test

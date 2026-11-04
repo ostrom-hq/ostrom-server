@@ -7,6 +7,7 @@ import dev.ostrom.core.api.models.PackageMode
 import dev.ostrom.core.receipts.Digests
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.receipts.domain.usecases.isoMillis
 import dev.ostrom.server.sessions.domain.models.SessionAccess
 import dev.ostrom.server.workflowruns.domain.models.NotInPackageException
@@ -150,7 +151,10 @@ class ListNotificationsUseCaseImpl(
         val sessionId = query.sessionId
         if (sessionId != null) access.reading(actor, sessionId)
         if (sessionId == null && actor.kind == ActorKind.AGENT_SESSION) return emptyList()
-        return repository.notifications(actor.orgId, query)
+        // A `before` that names no notification of the organization (forged, or another's) is a 400, not an empty page.
+        return Pages.checked("before", query.before, repository.notifications(actor.orgId, query)) {
+            repository.hasNotification(actor.orgId, it)
+        }
     }
 }
 

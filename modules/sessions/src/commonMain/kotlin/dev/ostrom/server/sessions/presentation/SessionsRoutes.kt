@@ -8,6 +8,7 @@ import dev.ostrom.server.gates.presentation.requireAnyScope
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.throttledReads
 import dev.ostrom.server.sessions.domain.models.EndSession
@@ -41,7 +42,7 @@ fun Route.sessionsRoutes(dependencies: SessionsRoutesDependencies, throttle: Rea
         throttledReads(throttle) {
             get<SessionsApi> { params ->
                 val actor = call.actor(actors, SessionScopes.reading)
-                val limit = (params.limit ?: PAGE).coerceIn(1, SessionQuery.PAGE)
+                val limit = Pages.size(params.limit, PAGE, SessionQuery.PAGE)
                 val query = SessionQuery(params.repo, params.dev, params.open, params.before, null, limit)
                 val items = list(actor, query)
                 val next = if (items.size == query.limit) items.last().id else null

@@ -86,13 +86,15 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
         approverId: String?,
         status: RequestStatus?,
         limit: Int,
+        before: Uuid?,
     ): List<ApprovalView> = driver.transaction {
         Tx(this).run {
             scope.enter(orgId)
-            val page = Statement.create(GatesQueries.approvals(approverId != null, status != null))
+            val page = Statement.create(GatesQueries.approvals(approverId != null, status != null, before != null))
                 .bind("org", orgId).bind("limit", limit)
             approverId?.let { page.bind("approver", it) }
             status?.let { page.bind("status", it.name) }
+            before?.let { page.bind("before", it) }
             val requests = executor.rows(page).map { it.toRequest() }
             val gateIds = requests.map { it.gateId }.distinct()
             // One read for every gate of the page (at most `limit` ids, each bound): no query per request.

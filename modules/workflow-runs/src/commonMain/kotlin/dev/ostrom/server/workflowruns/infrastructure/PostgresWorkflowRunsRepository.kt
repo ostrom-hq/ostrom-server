@@ -20,6 +20,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
+@Suppress("TooManyFunctions") // One implementation of the module's one port: its reads, writes and cursor checks.
 class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsRepository {
     override suspend fun addCheck(orgId: Uuid, run: CheckRun, attestation: CheckAttestation) {
         driver.withOrganization(orgId) { tx ->
@@ -87,6 +88,17 @@ class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsR
                 decodeNotification(it.get("body").asString())
             }
         }
+
+    override suspend fun hasCheck(orgId: Uuid, id: String): Boolean = holds(orgId, "workflow_runs_checks", id)
+
+    override suspend fun hasNotification(orgId: Uuid, id: String): Boolean =
+        holds(orgId, "workflow_runs_notifications", id)
+
+    // One row by its key (the table's primary key starts with the organization), under row-level security.
+    private suspend fun holds(orgId: Uuid, table: String, id: String): Boolean = driver.withOrganization(orgId) { tx ->
+        val statement = Statement.create("SELECT 1 AS one FROM $table WHERE org_id = :org_id AND id = :id")
+        tx.fetchAll(statement.bind("org_id", orgId).bind("id", id)).getOrThrow().firstOrNull() != null
+    }
 
     private fun String.bindQuery(orgId: Uuid, query: RunQuery): Statement {
         var statement = Statement.create(this).bind("org_id", orgId).bind("limit", query.limit)

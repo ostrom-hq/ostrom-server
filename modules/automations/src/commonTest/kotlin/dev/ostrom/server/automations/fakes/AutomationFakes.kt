@@ -72,8 +72,9 @@ class InMemoryAutomations : AutomationsRepository {
 
     override suspend fun list(orgId: Uuid, owner: String?, before: Uuid?, limit: Int): List<Automation> {
         val all = automations.values.reversed().filter { it.orgId == orgId && (owner == null || it.owner == owner) }
+        // None after a row it does not hold, as the database.
         val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
-        return all.drop(start).take(limit)
+        return if (before != null && start == 0) emptyList() else all.drop(start).take(limit)
     }
 
     override suspend fun update(automation: Automation, expected: Automation): Automation? {
@@ -113,9 +114,13 @@ class InMemoryAutomations : AutomationsRepository {
 
     override suspend fun listRuns(orgId: Uuid, automationId: Uuid, before: Uuid?, limit: Int): List<AutomationRun> {
         val all = runs.values.reversed().filter { it.orgId == orgId && it.automationId == automationId }
+        // None after a row it does not hold, as the database.
         val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
-        return all.drop(start).take(limit)
+        return if (before != null && start == 0) emptyList() else all.drop(start).take(limit)
     }
+
+    override suspend fun hasRun(orgId: Uuid, automationId: Uuid, id: Uuid): Boolean =
+        runs[id]?.let { it.orgId == orgId && it.automationId == automationId } == true
 
     override suspend fun countRuns(
         orgId: Uuid,

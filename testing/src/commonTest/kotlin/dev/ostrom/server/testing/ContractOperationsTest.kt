@@ -50,6 +50,17 @@ class ContractOperationsTest {
     }
 
     @Test
+    fun anOperationKnowsItsQueryParametersAndTheirSchemas() {
+        val list = operations.all.first { it.id == "listThings" }
+        assertEquals(listOf("limit", "after", "tag"), list.query.keys.toList(), "The path's header is not a query")
+        assertEquals("100", list.query.getValue("limit")["maximum"].toString())
+        assertEquals("\"uuid\"", list.query.getValue("after")["format"].toString(), "Its schema, by reference")
+        assertEquals(JsonObject(emptyMap()), list.query.getValue("tag"), "No schema declared")
+        assertEquals(emptyMap(), operations.all.first { it.id == "getThing" }.query, "A path parameter only")
+        assertEquals(emptyMap(), operations.all.first { it.id == "createThing" }.query, "None of its own")
+    }
+
+    @Test
     fun onlyASuccessWithAJsonBodyMustBeObserved() {
         val answering = operations.all.filter { it.answersJson }.map { it.id }
         assertEquals(listOf("listThings", "getThing", "DELETE /api/v1/things/{id}"), answering)

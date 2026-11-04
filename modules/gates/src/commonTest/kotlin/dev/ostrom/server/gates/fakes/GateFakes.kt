@@ -100,12 +100,18 @@ class InMemoryGatesRepository : GatesRepository {
         approverId: String?,
         status: RequestStatus?,
         limit: Int,
-    ): List<ApprovalView> =
-        requests.values.filter {
+        before: Uuid?,
+    ): List<ApprovalView> {
+        val all = requests.values.filter {
             it.orgId == orgId &&
                 (approverId == null || it.approverId.equals(approverId, ignoreCase = true)) &&
                 (status == null || it.status == status)
-        }.reversed().take(limit).mapNotNull { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
+        }.reversed()
+        // Those older than `before`; none after a request it does not hold, as the database.
+        val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
+        val page = if (before != null && start == 0) emptyList() else all.drop(start).take(limit)
+        return page.mapNotNull { request -> gates[request.gateId]?.let { ApprovalView(request, it) } }
+    }
 
     /** The gates `approversOf` was asked for, one list per call. */
     val approverReads = mutableListOf<List<Uuid>>()

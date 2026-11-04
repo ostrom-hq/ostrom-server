@@ -80,6 +80,7 @@ class GatesQueryPlansTest {
         val inbox = GatesQueries.approvals(approver = true, status = false)
         val pending = GatesQueries.approvals(approver = true, status = true)
         val recent = GatesQueries.approvals(approver = false, status = false)
+        val older = GatesQueries.approvals(approver = false, status = false, cursor = true)
         return linkedMapOf(
             "gates of an action, under its lock (asking)" to serving.explain(GatesQueries.BY_KEY) {
                 bind("key", keyOf(7)).bind("limit", 20)
@@ -96,6 +97,9 @@ class GatesQueryPlansTest {
             },
             "inbox of an approver" to serving.explain(inbox) { bind("approver", "rev-5@acme.test").bind("limit", 50) },
             "newest requests of the org" to serving.explain(recent) { bind("limit", 50) },
+            "next page of the org's requests" to serving.explain(older) {
+                bind("limit", 50).bind("before", requestOf(first, 0).id)
+            },
             "gates of a page of requests" to serving.explain(GatesQueries.gates(2)) {
                 bind("g0", first.id).bind("g1", Uuid.random())
             },

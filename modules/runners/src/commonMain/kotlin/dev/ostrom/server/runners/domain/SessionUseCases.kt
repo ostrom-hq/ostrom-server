@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners.domain
 
+import dev.ostrom.server.kernel.errors.Pages
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -210,7 +211,10 @@ class ListCloudSessionsUseCaseImpl(private val repository: CloudSessionsReposito
     override suspend fun invoke(caller: Caller, before: Uuid?, limit: Int?): List<CloudSession> {
         val size = limit ?: DEFAULT_PAGE
         ensureValid(size in 1..MAX_PAGE) { "The limit must be between 1 and $MAX_PAGE." }
-        return repository.list(caller.orgId, caller.memberId, before, size)
+        // A `before` that names no session of the organization (forged, or another's) is a 400, not an empty page.
+        return Pages.checked("before", before, repository.list(caller.orgId, caller.memberId, before, size)) {
+            repository.get(caller.orgId, it) != null
+        }
     }
 
     private companion object {

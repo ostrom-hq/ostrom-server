@@ -140,6 +140,11 @@ class ListMembersUseCaseImpl(
         } else {
             members.search(orgId, query, after, limit + 1)
         }
+        // A cursor no page of this organization gave (forged, or another organization's member): refused, not an
+        // empty page. Checked only when the page is empty, the one case an unknown cursor reaches.
+        if (after != null && read.isEmpty() && members.findById(orgId, after) == null) {
+            throw InvalidOrgRequestException("after is not a member of this organization.")
+        }
         val list = read.take(limit)
         val byId = people.getMany(list.map { it.userId }).associateBy { it.id }
         val items = list.mapNotNull { member -> byId[member.userId]?.let { profileOf(member, it).seenBy(viewer) } }

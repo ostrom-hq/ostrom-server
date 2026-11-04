@@ -222,22 +222,6 @@ class GatesPostgresTest {
         }
     }
 
-    private suspend fun TestServer.call(
-        token: String?,
-        path: String,
-        body: Any? = null,
-        post: Boolean = body != null,
-    ): HttpResponse =
-        if (!post) {
-            client.get(path) { token?.let { header(HttpHeaders.Authorization, "Bearer $it") } }
-        } else {
-            client.post(path) {
-                token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
-                contentType(ContentType.Application.Json)
-                if (body != null) setBody(body)
-            }
-        }
-
     private fun push(commit: String = sha, force: Boolean = false, diff: String = "+ok") = GateAskRequest(
         sessionId = session,
         repo = "ostrom-hq/gate-demo",
@@ -256,13 +240,6 @@ class GatesPostgresTest {
     // Moves a gate with the agent's token: `reserve`, `release` or `consume`.
     private suspend fun TestServer.move(token: String, gate: GateResponse, move: String): HttpResponse =
         call(token, "/api/v1/gates/${gate.gate.id}/$move", post = true)
-
-    // The status and `error.type`, the key of the contract (core api/openapi.yaml) that a client branches on.
-    private suspend fun HttpResponse.assertRefused(expected: HttpStatusCode, type: String, why: String? = null) {
-        assertEquals(expected, status, why)
-        val error = Json.parseToJsonElement(bodyAsText()).jsonObject.getValue("error").jsonObject
-        assertEquals(type, error.getValue("type").jsonPrimitive.content, why)
-    }
 
     private suspend fun TestServer.answer(
         token: String,
@@ -289,6 +266,7 @@ class GatesPostgresTest {
         assertEquals("Merge into main", opened.gate.gate?.label)
         val approvals = server.approvalsOf(opened)
         assertEquals(listOf("lyes", "rev-b", "rev-c"), approvals.map { it.requestedFrom }.sorted())
+        server.assertApprovalsPagedByBefore(approvals)
         val diff = dev.ostrom.server.gates.presentation.Evidence(
             "Diff (sent by the developer's machine, not checked by Ostrom)",
             "+ok",
@@ -536,6 +514,9 @@ class GatesPostgresTest {
         )
         assertEquals(HttpStatusCode.NotFound, server.move("agent:b:$session", opened, "consume").status)
         assertTrue(server.call("user:b:rev-b", "/api/v1/approvals").body<ApprovalsPage>().items.isEmpty())
+        // A's request as B's cursor names nothing of B's: a 400, never A's rows.
+        val foreign = server.call("user:b:rev-b", "/api/v1/approvals?before=${approval.id}")
+        assertEquals(HttpStatusCode.BadRequest, foreign.status)
         assertEquals(approval, server.call("user:a:rev-b", "/api/v1/approvals/${approval.id}").body<Approval>())
         val mine = server.call("user:a:rev-b", "/api/v1/approvals?mine=true&status=pending").body<ApprovalsPage>()
         assertEquals(1, mine.items.size)
@@ -878,6 +859,46 @@ private fun manyHeldCalls(overrides: Module) = module {
 
 private const val FEW_WAITS = 4
 private const val ROUNDS = 3
+
+// Outside the class, which detekt holds under its size: they read nothing of a test's state.
+
+private suspend fun TestServer.call(
+    token: String?,
+    path: String,
+    body: Any? = null,
+    post: Boolean = body != null,
+): HttpResponse =
+    if (!post) {
+        client.get(path) { token?.let { header(HttpHeaders.Authorization, "Bearer $it") } }
+    } else {
+        client.post(path) {
+            token?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+            contentType(ContentType.Application.Json)
+            if (body != null) setBody(body)
+        }
+    }
+
+// The status and `error.type`, the key of the contract (core api/openapi.yaml) that a client branches on.
+private suspend fun HttpResponse.assertRefused(expected: HttpStatusCode, type: String, why: String? = null) {
+    assertEquals(expected, status, why)
+    val error = Json.parseToJsonElement(bodyAsText()).jsonObject.getValue("error").jsonObject
+    assertEquals(type, error.getValue("type").jsonPrimitive.content, why)
+}
+
+// Paged by `before`: a full page names its last as `next`, the end gives none, a cursor of nothing is a 400.
+private suspend fun TestServer.assertApprovalsPagedByBefore(approvals: List<Approval>) {
+    val first = call("user:a:rev-b", "/api/v1/approvals?limit=1").body<ApprovalsPage>()
+    val rest = call("user:a:rev-b", "/api/v1/approvals?before=${first.next}").body<ApprovalsPage>()
+    assertEquals(approvals.map { it.id }, (first.items + rest.items).map { it.id })
+    assertNull(rest.next)
+    val end = call("user:a:rev-b", "/api/v1/approvals?before=${rest.items.last().id}").body<ApprovalsPage>()
+    assertEquals(emptyList(), end.items)
+    for (cursor in listOf("nope", Uuid.random().toString())) {
+        val refused = call("user:a:rev-b", "/api/v1/approvals?before=$cursor")
+        assertEquals(HttpStatusCode.BadRequest, refused.status, cursor)
+    }
+}
+
 private val ASK_BUDGET = 50.milliseconds
 private const val ASK_MEASURE = "ask a gate (AskGateUseCase): p95 (best, median) of $ROUNDS rounds"
 

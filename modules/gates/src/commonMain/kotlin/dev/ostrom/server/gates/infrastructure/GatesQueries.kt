@@ -93,19 +93,26 @@ internal object GatesQueries {
 
     /**
      * A page of approval requests, newest first, at most `:limit`: an approver's (`:approver`) when [approver], of one
-     * status (`:status`) when [status].
+     * status (`:status`) when [status], older than the request `:before` when [cursor].
      *
      * @param approver Whether the page is one approver's.
      * @param status Whether the page is of one status.
+     * @param cursor Whether the page starts after a request.
      * @return The SQL.
      */
-    fun approvals(approver: Boolean, status: Boolean): String {
+    fun approvals(approver: Boolean, status: Boolean, cursor: Boolean = false): String {
         val filters = buildString {
             append("org_id = :org")
             // Identities compare without case everywhere (`SelfApproval.same`), the inbox too: `approver_key` is the
             // lowered approver, so the comparison is a leakproof `=`, an index condition under row level security.
             if (approver) append(" AND approver_key = lower(:approver)")
             if (status) append(" AND status = :status")
+            if (cursor) {
+                append(
+                    " AND (created_at, id) < (SELECT created_at, id FROM gates_requests WHERE org_id = :org " +
+                        "AND id = :before)",
+                )
+            }
         }
         return "SELECT $REQUEST_COLUMNS FROM gates_requests WHERE $filters " +
             "ORDER BY created_at DESC, id DESC LIMIT :limit"

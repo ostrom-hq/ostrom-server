@@ -23,6 +23,7 @@ import dev.ostrom.server.artifacts.fakes.bob
 import dev.ostrom.server.artifacts.fakes.carol
 import dev.ostrom.server.artifacts.fakes.dave
 import dev.ostrom.server.artifacts.infrastructure.Sha256ContentDigest
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.kernel.signing.Ed25519InstanceSigner
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -135,6 +136,9 @@ class ArtifactUseCasesTest {
         assertEquals(2, read.list(bob, null, 2).size)
         assertFailsWith<InvalidArtifactRequestException> { read.list(bob, null, 0) }
         assertFailsWith<InvalidArtifactRequestException> { read.list(bob, null, 101) }
+        val last = read.list(bob, null, null).last()
+        assertEquals(emptyList(), read.list(bob, last.id, null), "After the last")
+        assertFailsWith<InvalidPageException> { read.list(bob, Uuid.random(), null) }
     }
 
     @Test
