@@ -297,6 +297,7 @@ internal val ISOLATION_REGISTRY: Map<String, Case> = mapOf(
     "POST /api/v1/gates/{id}/reserve" to target("id" to GATE),
     "POST /api/v1/gates/{id}/consume" to target("id" to GATE),
     "POST /api/v1/gates/{id}/release" to target("id" to GATE),
+    "POST /api/v1/gates/local-denials" to Case.Target(body = LOCAL_DENIAL_BODY),
     "GET /api/v1/gates/policy" to Case.Target(),
     "PUT /api/v1/gates/policy" to Case.Target(body = """{"selfApproval": "never"}""", admin = true),
     "GET /api/v1/gates/catalog" to Case.Target(),
@@ -385,6 +386,10 @@ private const val AUTOMATION_BODY = """{"name": "Taken", "trigger": {"kind": "we
 
 private const val GATE_BODY = """{"sessionId": "{{SESSION}}", "repo": "acme/api", "class": "push-main",""" +
     """ "tool": "Bash", "command": "deploy"}"""
+
+// The hook's report of a refusal on the workstation (audit A6), naming B's session: answered as for no session.
+private const val LOCAL_DENIAL_BODY = """{"sessionId": "{{SESSION}}", "repo": "acme/api", "class": "push-main",""" +
+    """ "reason": "redirected", "command": "git push origin main"}"""
 
 // A JSON-RPC call of the MCP tool [tool], its one argument [argument] naming B's seed of the same name.
 private fun mcpCall(tool: String, argument: String): String {
