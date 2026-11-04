@@ -20,6 +20,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
+@Suppress("TooManyFunctions") // One implementation of the module's one port: its reads, writes and cursor checks.
 class PostgresWorkflowRunsRepository(private val driver: Driver) : WorkflowRunsRepository {
     override suspend fun addCheck(orgId: Uuid, run: CheckRun, attestation: CheckAttestation) {
         driver.withOrganization(orgId) { tx ->

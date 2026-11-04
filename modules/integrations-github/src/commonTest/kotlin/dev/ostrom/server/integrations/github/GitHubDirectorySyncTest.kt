@@ -10,6 +10,7 @@ import dev.ostrom.server.integrations.github.domain.InvalidPageException
 import dev.ostrom.server.integrations.github.domain.ListGitHubReposUseCaseImpl
 import dev.ostrom.server.integrations.github.domain.ListGitHubTeamsUseCaseImpl
 import dev.ostrom.server.kernel.errors.ErrorKind
+import dev.ostrom.server.kernel.errors.InvalidPageException as UnknownCursorException
 import dev.ostrom.server.kernel.logging.LogLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -198,7 +199,7 @@ class GitHubDirectorySyncTest {
         }
         assertFailsWith<InvalidPageException> { repos(ORG, "x".repeat(201), null) }
         // A cursor no page gave (here past every name) is refused; the last name of the list reads an empty page.
-        assertFailsWith<InvalidPageException> { repos(ORG, "x".repeat(200), 100) }
+        assertFailsWith<UnknownCursorException> { repos(ORG, "x".repeat(200), 100) }
         assertEquals(emptyList(), repos(ORG, "web", 100).items)
     }
 }

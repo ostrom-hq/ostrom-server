@@ -26,6 +26,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
+@Suppress("TooManyFunctions") // One implementation of the module's one port: its reads, writes and cursor checks.
 class PostgresGitHubDirectoryRepository(private val driver: Driver) : GitHubDirectoryRepository {
     private suspend fun <T> scoped(orgId: Uuid, block: suspend Tx.() -> T): T = driver.transaction {
         val tx = Tx(this)
