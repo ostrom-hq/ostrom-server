@@ -304,6 +304,7 @@ class RelayInferenceUseCaseImpl(
             firstByteMillis = state.firstByte?.let { (it - started).inWholeMilliseconds },
             durationMillis = (clock.now() - started).inWholeMilliseconds,
             launchId = state.exchange.caller.launchId,
+            workflowId = state.exchange.caller.workflowId,
         )
         // Never cancelled halfway: the ledger keeps a call the agent abandoned.
         withContext(NonCancellable) {

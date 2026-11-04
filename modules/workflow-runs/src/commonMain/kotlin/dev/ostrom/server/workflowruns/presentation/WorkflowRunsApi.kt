@@ -171,6 +171,24 @@ class WorkflowRunsOfApi(val id: String, val status: String? = null, val before: 
 class RunsApi(val status: String? = null, val before: String? = null)
 
 /**
+ * A run of a workflow, with its visits.
+ *
+ * @property id The run.
+ */
+@Serializable
+@Resource("/api/v1/runs/{id}")
+class RunApi(val id: String)
+
+/**
+ * Cancels a run of a workflow.
+ *
+ * @property id The run.
+ */
+@Serializable
+@Resource("/api/v1/runs/{id}/cancel")
+class RunCancelApi(val id: String)
+
+/**
  * The body of `POST /api/v1/workflows/{id}/runs`.
  *
  * @property inputs The inputs, by id.

@@ -21,6 +21,18 @@ class StepUpRequiredException : OstromException(
     "step_up_required",
 )
 
+/**
+ * A yes from the app without an unlock bound to this request, less than [StepUp.BOUND_WITHIN] old and not used yet
+ * (Q-APP-STEPUP-RISK): the app unlocks again for this request (`unlockMobileApp.requestId`), then sends the yes again.
+ */
+class BoundUnlockRequiredException : OstromException(
+    ErrorKind.FORBIDDEN,
+    "Unlock the app again to say yes: a yes from the phone needs its own biometric unlock, made for this request " +
+        "within the last minute.",
+    "step_up_required",
+    requestBound = true,
+)
+
 /** A device, agent or service token tried to answer: only a signed-in person says yes or no. */
 class OnlyPeopleAnswerException : OstromException(ErrorKind.FORBIDDEN, "Only a signed-in person can answer a gate.")
 

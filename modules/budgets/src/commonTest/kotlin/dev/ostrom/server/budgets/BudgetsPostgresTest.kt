@@ -16,8 +16,13 @@ import dev.ostrom.server.budgets.domain.ExceededBudget
 import dev.ostrom.server.budgets.presentation.BudgetDto
 import dev.ostrom.server.budgets.presentation.BudgetsPage
 import dev.ostrom.server.budgets.presentation.MyBudgetResponse
+import dev.ostrom.server.gateway.domain.SpendDecision
+import dev.ostrom.server.gateway.domain.SpendGuard
+import dev.ostrom.server.gateway.domain.SpendRequest
 import dev.ostrom.server.kernel.audit.OrgAuditRecord
 import dev.ostrom.server.kernel.audit.OrgAuditTrail
+import dev.ostrom.server.kernel.workflows.WorkflowDirectory
+import dev.ostrom.server.kernel.workflows.WorkflowRemovals
 import dev.ostrom.server.secrets.SecretsModule
 import dev.ostrom.server.secrets.domain.SecretCipher
 import dev.ostrom.server.secrets.infrastructure.AesGcmSecretCipher
@@ -87,6 +92,7 @@ class BudgetsPostgresTest {
         memberId: Uuid?,
         at: Instant = TestCallers.epoch,
         orgId: Uuid = TestCallers.orgA,
+        workflowId: String? = null,
     ) {
         koin.get<UsageRecorder>().record(
             UsageEvent(
@@ -97,6 +103,7 @@ class BudgetsPostgresTest {
                 "claude-sonnet-4-5",
                 costMicros = costMicros,
                 at = at,
+                workflowId = workflowId,
             ),
         )
     }
@@ -184,12 +191,19 @@ class BudgetsPostgresTest {
         val refused = listOf(
             BudgetDto("organization", usdPerMonth = -1.0),
             BudgetDto("organization", usdPerDay = -1.0, hardStop = false),
-            BudgetDto("workflow", "deploy", 1.0),
+            BudgetDto("workflow", null, 1.0),
+            BudgetDto("workflow", " ", 1.0),
+            BudgetDto("team", "deploy", 1.0),
             BudgetDto("member", "not-a-uuid", 1.0),
         )
         for (budget in refused) {
             assertEquals(HttpStatusCode.BadRequest, server.putBudget("admin-a", budget).status, budget.toString())
         }
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.putBudget("admin-a", BudgetDto("workflow", "deploy", 1.0)).status,
+            "A server without workflows knows none",
+        )
         assertEquals(
             listOf(BudgetDto("member", usdPerMonth = 1.0)),
             server.budgets().items,
@@ -340,6 +354,95 @@ class BudgetsPostgresTest {
             )
             assertEquals(1, audit.count { it.event == "budget.exceeded" })
         }
+
+    /** The overrides with a directory that knows `review` and `nightly` in org A, and `review` in org B. */
+    private val withWorkflows: Module = module {
+        includes(overrides)
+        single<WorkflowDirectory> {
+            val known = setOf(
+                TestCallers.orgA to "review",
+                TestCallers.orgA to "nightly",
+                TestCallers.orgB to "review",
+            )
+            WorkflowDirectory { org, id -> id.takeIf { org to id in known } }
+        }
+    }
+
+    @Test
+    fun aWorkflowsBudgetIsSetOnOneOfTheOrgsWorkflowsAndStopsItsCalls() = serverTest(modules, withWorkflows) { server ->
+        val orgA = TestCallers.orgA
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", BudgetDto("workflow", "review", 1.0)).status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.putBudget("admin-a", BudgetDto("workflow", "ghost", 1.0)).status,
+            "Not one of the org's workflows",
+        )
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-b", BudgetDto("workflow", "review", 5.0)).status)
+        assertEquals(
+            HttpStatusCode.NotFound,
+            server.putBudget("admin-b", BudgetDto("workflow", "nightly", 5.0)).status,
+            "Org A's workflow is unknown to org B",
+        )
+        assertEquals(listOf(BudgetDto("workflow", "review", 1.0)), server.budgets().items)
+        assertEquals(listOf(BudgetDto("workflow", "review", 5.0)), server.budgets("admin-b").items, "Org B's own")
+        val changed = audit.last { it.event == "budget.changed" && it.orgId == orgA }
+        assertEquals("review" to "workflow", changed.subjectId to changed.details["scope"])
+
+        server.spend(600_000, member, workflowId = "review")
+        server.spend(400_000, TestCallers.adminA.memberId, workflowId = "review")
+        server.spend(9_000_000, member)
+        val guard = server.koin.get<BudgetGuard>()
+        val stopped = guard.check(orgA, member, "review")
+        assertIs<BudgetDecision.Exhausted>(stopped)
+        assertEquals(BudgetScope.WORKFLOW to 1_000_000L, stopped.scope to stopped.limitMicros)
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member), "A call that plays no workflow")
+        assertEquals(
+            BudgetDecision.Allowed(5_000_000),
+            guard.check(TestCallers.orgB, TestCallers.adminB.memberId, "review"),
+            "Org B's workflow of the same id spent nothing",
+        )
+        val refused = server.koin.get<SpendGuard>().check(SpendRequest(orgA, member, Uuid.random(), 1, "review"))
+        assertIs<SpendDecision.Exhausted>(refused)
+        assertTrue("this workflow's limit of $1.00" in refused.message, refused.message)
+        val exceeded = server.koin.get<BudgetsRepository>().exceeded(
+            orgA,
+            null,
+            BudgetPeriod.day(clock.now()).start,
+            BudgetPeriod.of(clock.now()).start,
+            10,
+        )
+        assertEquals(listOf<String?>("review"), exceeded.map { it.workflowId })
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", BudgetDto("workflow", "review")).status)
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", BudgetDto("workflow", "ghost")).status)
+        assertEquals(emptyList(), server.budgets().items, "Removed; a removal never asks for the workflow")
+        assertEquals(listOf(BudgetDto("workflow", "review", 5.0)), server.budgets("admin-b").items)
+    }
+
+    @Test
+    fun aWorkflowsBudgetThatWarnsIsAuditedAndGoesWithItsWorkflow() = serverTest(modules, withWorkflows) { server ->
+        val orgA = TestCallers.orgA
+        val guard = server.koin.get<BudgetGuard>()
+        val nightly = BudgetDto("workflow", "nightly", usdPerDay = 0.5, hardStop = false)
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", nightly).status)
+        server.spend(500_000, member, workflowId = "nightly")
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member, "nightly"), "Warns, never stops")
+        val line = audit.single { it.event == "budget.exceeded" }
+        assertEquals("nightly", line.subjectId)
+        assertEquals(listOf("workflow", "day", "warn"), listOf("scope", "period", "action").map { line.details[it] })
+
+        // A deleted workflow's budget goes with it, both windows, and its alerts: org B's of the same id stays.
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-b", BudgetDto("workflow", "review", 5.0)).status)
+        val both = BudgetDto("workflow", "nightly", usdPerMonth = 9.0, usdPerDay = 0.5, hardStop = false)
+        assertEquals(HttpStatusCode.OK, server.putBudget("admin-a", both).status)
+        assertEquals(listOf(both), server.budgets().items, "Listed whole, both windows")
+        server.koin.get<WorkflowRemovals>().removed(orgA, "nightly")
+        assertEquals(emptyList(), server.budgets().items)
+        assertEquals(BudgetDecision.Allowed(null), guard.check(orgA, member, "nightly"), "Its cached decision too")
+        val alertsLeft = Statement.create("SELECT COUNT(*) AS n FROM budgets_alerts WHERE workflow_id IS NOT NULL")
+        assertEquals(0L, server.driver.fetchInOrg(orgA, alertsLeft).getOrThrow().first().get("n").asLong())
+        server.koin.get<WorkflowRemovals>().removed(orgA, "review")
+        assertEquals(listOf(BudgetDto("workflow", "review", 5.0)), server.budgets("admin-b").items, "Org B's stays")
+    }
 
     @Test
     fun anAlertIsMarkedOnceInTheDatabase() = serverTest(modules, overrides) { server ->

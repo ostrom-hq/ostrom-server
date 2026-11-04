@@ -33,9 +33,12 @@ enum class ErrorKind(val type: String) {
  * @property type The `error.type` clients receive: the kind's, unless the contract names a finer key for this failure
  *   (`step_up_required`, a 403; `installation_not_yours`, a 403; `installation_pending`, a 503). Stable once
  *   published, like [ErrorKind.type].
+ * @property requestBound True on a `step_up_required` that only an unlock of the phone bound to this very request
+ *   lifts (`error.requestBound`, Q-APP-STEPUP-RISK); null, and absent from the answer, otherwise.
  */
 open class OstromException(
     val kind: ErrorKind,
     override val message: String,
     val type: String = kind.type,
+    val requestBound: Boolean? = null,
 ) : Exception(message)

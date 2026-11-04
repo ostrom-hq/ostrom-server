@@ -13,10 +13,14 @@ import dev.ostrom.server.compiler.domain.models.WorkflowDoc
 import dev.ostrom.server.compiler.domain.repositories.CompilerRepository
 import dev.ostrom.server.compiler.domain.repositories.MAX_WORKFLOWS
 import dev.ostrom.server.compiler.domain.services.JsText
+import dev.ostrom.server.compiler.domain.services.NodeConditions
 import dev.ostrom.server.compiler.domain.services.PackageCompiler
 import dev.ostrom.server.compiler.domain.services.WorkflowRepos
 import dev.ostrom.server.kernel.errors.ErrorKind
 import dev.ostrom.server.kernel.errors.OstromException
+import dev.ostrom.server.kernel.workflows.WorkflowRemovals
+import kotlin.time.Clock
+import kotlin.uuid.Uuid
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -24,8 +28,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
-import kotlin.time.Clock
-import kotlin.uuid.Uuid
 
 /** Signs the receipt of a decision on a workflow (`decisions.ts` `recordSigned`, receipt kind `workflow`). */
 interface WorkflowDecisionSigner {
@@ -108,11 +110,13 @@ interface WorkflowsUseCase {
  * @param repository The compiler's storage.
  * @param signer Signs the decisions.
  * @param clock The time.
+ * @param removals Told of a deleted workflow (its budgets go with it); null, nobody keeps anything about one.
  */
 class WorkflowsUseCaseImpl(
     private val repository: CompilerRepository,
     private val signer: WorkflowDecisionSigner,
     private val clock: Clock,
+    private val removals: WorkflowRemovals? = null,
 ) : WorkflowsUseCase {
     override suspend fun list(orgId: Uuid, repo: String?, status: WorkflowStatus?): List<StoredWorkflow> {
         val all = repository.workflows(orgId)
@@ -178,16 +182,19 @@ class WorkflowsUseCaseImpl(
             throw OstromException(ErrorKind.CONFLICT, "workflow_in_use: a pinned package compiles this workflow.")
         }
         repository.deleteWorkflow(orgId, id)
+        removals?.removed(orgId, id)
     }
 
     private fun compiles(payload: String, id: String): Boolean =
         (PackageCompiler.json.parseToJsonElement(payload).jsonObject["workflows"] as JsonArray)
             .any { (it.jsonObject["id"] as JsonPrimitive).content == id }
 
-    // The core model does not know `repos` yet (R6): it is checked here and kept in the saved JSON.
+    // The core model does not know `repos` yet (R6): it is checked here and kept in the saved JSON. A check node's
+    // condition is checked against the workflow's nodes and edges.
     private fun decode(raw: JsonObject): Workflow = try {
         WorkflowRepos.problem(raw)?.let { throw IllegalArgumentException(it) }
         PackageCompiler.json.decodeFromJsonElement(Workflow.serializer(), WorkflowRepos.withoutField(raw))
+            .also(NodeConditions::check)
     } catch (e: IllegalArgumentException) {
         throw InvalidWorkflowException("Invalid workflow: ${e.message.toString().take(MAX_ERROR)}", e)
     }
