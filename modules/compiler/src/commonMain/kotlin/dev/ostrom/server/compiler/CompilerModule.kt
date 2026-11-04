@@ -72,7 +72,7 @@ object CompilerModule : ServerModule {
         // sources: the catalogue is only fetched at the first gate.
         single<GateNodeResolver> {
             val koin = getKoin()
-            CatalogGateNodes { koin.get() }
+            CatalogGateNodes({ koin.get() }) { koin.get() }
         }
         single {
             val publicUrl = get<ConfigSource>()["OSTROM_PUBLIC_URL"]

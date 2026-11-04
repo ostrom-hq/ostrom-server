@@ -7,6 +7,7 @@ import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
 import dev.ostrom.server.launches.domain.usecases.CreateLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.EndLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
+import dev.ostrom.server.launches.domain.usecases.ReportHooksMissingUseCase
 import dev.ostrom.server.runners.domain.AuthenticateRunnerUseCase
 import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
 
@@ -21,6 +22,7 @@ import dev.ostrom.server.runners.domain.CheckRunnerTokenUseCase
  * @property openRunnerLaunch Opens a cloud session's launch.
  * @property actors Reads an agent token's launch ([dev.ostrom.server.launches.infrastructure.LaunchGateActors]).
  * @property endLaunch Ends a launch.
+ * @property reportHooksMissing Records that no hook ran in a launch's session.
  */
 data class LaunchesRoutesDependencies(
     val launchers: LauncherResolver,
@@ -31,4 +33,5 @@ data class LaunchesRoutesDependencies(
     val openRunnerLaunch: OpenRunnerLaunchUseCase,
     val actors: GateActorResolver,
     val endLaunch: EndLaunchUseCase,
+    val reportHooksMissing: ReportHooksMissingUseCase,
 )

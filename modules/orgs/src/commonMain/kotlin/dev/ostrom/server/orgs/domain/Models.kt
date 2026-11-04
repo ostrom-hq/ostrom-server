@@ -17,6 +17,8 @@ import kotlin.uuid.Uuid
  *   free team; null once it pays (BILLING releases it) or is deleted.
  * @property createdAt When it was created.
  * @property timeZone Its IANA time zone (`Europe/Paris`), [DEFAULT_TIME_ZONE] until an owner or admin sets it.
+ * @property hooksDeadlineSeconds How long the launcher waits for the first hook of an agent session before it
+ *   reports `hooks.missing`, [DEFAULT_HOOKS_DEADLINE] until an owner or admin sets it.
  */
 data class Org(
     val id: Uuid,
@@ -26,6 +28,7 @@ data class Org(
     val freeClaim: String?,
     val createdAt: Instant,
     val timeZone: String = DEFAULT_TIME_ZONE,
+    val hooksDeadlineSeconds: Int = DEFAULT_HOOKS_DEADLINE,
 ) {
     /** Its picture: the linked GitHub organization's avatar, or empty when it is not linked. */
     val avatarUrl: String get() = githubOrgId?.let { "https://avatars.githubusercontent.com/u/$it" }.orEmpty()
@@ -37,8 +40,14 @@ data class Org(
  * @property name The new name.
  * @property timeZone The new IANA time zone.
  * @property slug The short name, accepted only unchanged: it never changes.
+ * @property hooksDeadlineSeconds The new wait for the hooks, in seconds.
  */
-data class OrgChange(val name: String? = null, val timeZone: String? = null, val slug: String? = null)
+data class OrgChange(
+    val name: String? = null,
+    val timeZone: String? = null,
+    val slug: String? = null,
+    val hooksDeadlineSeconds: Int? = null,
+)
 
 /**
  * What one pass over the deleted organizations did.
