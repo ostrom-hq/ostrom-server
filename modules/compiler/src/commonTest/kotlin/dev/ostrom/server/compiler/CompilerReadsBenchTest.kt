@@ -132,7 +132,7 @@ class CompilerReadsBenchTest {
             server.measureRead("GET ${read.path}") { get(read.path) { bearerAuth("lead") } }
         }
         writeReadReport("compiler", measures)
-        measures.forEach { it.assertWithinBudget(setOf("compiler_workflows", "compiler_packages")) }
+        measures.forEach { it.assertWithinBudget(setOf("compiler_workflows", "compiler_packages"), MAX_QUERIES) }
         reads.zip(measures).forEach { (read, measure) ->
             assertTrue(measure.plans.any { read.index in it }, measure.describe())
         }
@@ -159,6 +159,10 @@ class CompilerReadsBenchTest {
 
     private companion object {
         const val ORGS = 10
+
+        // The queries of the busiest read today (one per list, Build 41717982170):
+        // one more is an N+1, on any runner.
+        const val MAX_QUERIES = 1
         const val PER_ORG = 1000
         const val REPOS = 50
         const val URL = "https://ostrom.example/"

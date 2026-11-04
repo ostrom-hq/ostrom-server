@@ -50,6 +50,7 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
                     .bind("requested_by_member", confirmation.requestedBy.memberId)
                     .bind("credential", confirmation.credential.wire)
                     .nullable("token_id", confirmation.tokenId)
+                    .nullable("token_name", confirmation.tokenName)
                     .bind("status", confirmation.status.wire)
                     .bind("created_at", confirmation.createdAt)
                     .bind("expires_at", confirmation.expiresAt),
@@ -130,6 +131,7 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
             requestedBy = ConfirmationPerson(get("requested_by_user").asString(), get("requested_by_member").asUuid()),
             credential = ConfirmationCredential.entries.first { it.wire == get("credential").asString() },
             tokenId = get("token_id").asStringOrNull(),
+            tokenName = get("token_name").asStringOrNull(),
             status = ConfirmationStatus.entries.first { it.wire == get("status").asString() },
             createdAt = get("created_at").asInstant(),
             expiresAt = get("expires_at").asInstant(),
@@ -145,6 +147,7 @@ class PostgresConfirmationsRepository(private val driver: Driver) : Confirmation
         private val COLUMN_NAMES = listOf(
             "org_id", "id", "kind", "scope", "method", "path", "payload", "summary", "before_json", "after_json",
             "requested_by_user", "requested_by_member", "credential", "token_id", "status", "created_at", "expires_at",
+            "token_name",
         )
         private val READ_COLUMNS = (
             COLUMN_NAMES + listOf(

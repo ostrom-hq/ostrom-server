@@ -15,7 +15,6 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
-import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
@@ -174,28 +173,18 @@ private fun SentStatement.copy(prefix: String): Statement {
 }
 
 /**
- * Fails unless this route keeps the budget of a read page: a database p95 under [READ_P95_BUDGET], and no sequential
- * scan of any of [largeTables], the organization tables the test filled past 10 000 rows.
+ * Fails unless this route keeps the shape of a read page: no sequential scan of any of [largeTables], the organization
+ * tables the test filled past 10 000 rows, and at most [maxQueries] queries per call (no N+1). Its database p95 is held
+ * to [READ_P95_BUDGET] by [checkTime]: written for the Build's summary and the Perf workflow, failing here only past
+ * [BLOCK_FACTOR] times the budget.
  *
  * @param largeTables The tables never to scan.
+ * @param maxQueries The queries one call sends at most, set at what it sends today.
  */
-fun ReadMeasure.assertWithinBudget(largeTables: Set<String>) {
+fun ReadMeasure.assertWithinBudget(largeTables: Set<String>, maxQueries: Int) {
     assertNoScan(largeTables)
-    assertTrue(p95 < READ_P95_BUDGET, "$name: database p95 $p95 over $READ_P95_BUDGET:\n${describe()}")
-}
-
-/**
- * Fails if this route scans any of [largeTables] sequentially: the organization tables the test filled past
- * 10 000 rows.
- *
- * @param largeTables The tables never to scan.
- */
-fun ReadMeasure.assertNoScan(largeTables: Set<String>) {
-    val scanned = largeTables.filter { table ->
-        val scan = Regex("Seq Scan on ${Regex.escape(table)}\\b")
-        plans.any { scan.containsMatchIn(it) }
-    }
-    assertTrue(scanned.isEmpty(), "$name scans $scanned:\n${describe()}")
+    assertQueriesAtMost(maxQueries)
+    checkTime("$name: database p95", p95, READ_P95_BUDGET) { describe() }
 }
 
 /**

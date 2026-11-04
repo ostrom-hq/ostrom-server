@@ -211,8 +211,11 @@ private const val MAX_NAMED_UNKNOWN = 5
 /** The value is not an e-mail address. */
 class InvalidEmailException : OstromException(ErrorKind.INVALID_REQUEST, "This is not a valid e-mail address.")
 
-/** A token name is blank or longer than 100 characters. */
-class InvalidTokenNameException : OstromException(ErrorKind.INVALID_REQUEST, "A token name has 1 to 100 characters.")
+/** A token name is blank, longer than 100 characters, or holds a character that breaks a line or hides text. */
+class InvalidTokenNameException : OstromException(
+    ErrorKind.INVALID_REQUEST,
+    "A token name has 1 to 100 characters, without a line break, a tab or an invisible character.",
+)
 
 /** The organization already has [MAX_SERVICE_KEYS_PER_ORG] live service keys. */
 class TooManyServiceKeysException :

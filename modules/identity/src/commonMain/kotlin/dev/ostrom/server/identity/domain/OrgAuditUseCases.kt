@@ -24,12 +24,13 @@ data class OrgAuditQuery(
 )
 
 /**
- * A line of an organization's audit log, with the login of the person who acted.
+ * A line of an organization's audit log, with the login of the person who acted and what its check found.
  *
  * @property event The signed event.
  * @property actorLogin The actor's login, or null for the server itself or a person who no longer exists.
+ * @property integrity What the server found when it read the line.
  */
-data class OrgAuditLine(val event: AuditEvent, val actorLogin: String?)
+data class OrgAuditLine(val event: AuditEvent, val actorLogin: String?, val integrity: AuditIntegrity)
 
 /**
  * A page of an organization's audit log.
@@ -57,14 +58,16 @@ interface ListOrgAuditUseCase {
 }
 
 /**
- * [ListOrgAuditUseCase] on the audit repository and the people.
+ * [ListOrgAuditUseCase] on the audit repository and the people; every line served is checked as it is read.
  *
  * @param events The audit repository.
  * @param users The people, for the logins of the actors.
+ * @param verifier Checks each line against its hash, its signature and the line before it.
  */
 class ListOrgAuditUseCaseImpl(
     private val events: AuditRepository,
     private val users: UsersRepository,
+    private val verifier: AuditVerifier,
 ) : ListOrgAuditUseCase {
     override suspend fun invoke(orgId: Uuid, actorLogin: String?, action: String?, before: String?): OrgAuditPage {
         val beforeSequence = before?.let { it.toLongOrNull()?.takeIf { sequence -> sequence > 0 } }
@@ -82,9 +85,12 @@ class ListOrgAuditUseCaseImpl(
         // One line more than a page: when it comes, there is a next page; never a cursor to an empty one.
         val read = events.listOrg(orgId, OrgAuditQuery(actorId, action, beforeSequence, ORG_AUDIT_PAGE + 1))
         val page = read.take(ORG_AUDIT_PAGE)
-        val logins = users.getMany(page.mapNotNull { it.entry.actorId }.toSet()).associate { it.id to it.login }
-        val next = if (read.size > ORG_AUDIT_PAGE) page.last().sequence.toString() else null
-        return OrgAuditPage(page.map { OrgAuditLine(it, it.entry.actorId?.let(logins::get)) }, next)
+        val logins = users.getMany(page.mapNotNull { it.event.entry.actorId }.toSet()).associate { it.id to it.login }
+        val next = if (read.size > ORG_AUDIT_PAGE) page.last().event.sequence.toString() else null
+        val lines = page.map { line ->
+            OrgAuditLine(line.event, line.event.entry.actorId?.let(logins::get), verifier.integrity(line))
+        }
+        return OrgAuditPage(lines, next)
     }
 }
 

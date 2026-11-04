@@ -10,7 +10,15 @@ All repository content (code, comments, docs, commits, pull requests) is in Engl
 
 ## Specific to this repository
 
-Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests. Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request, p95/p99 thresholds. Every customer table carries `org_id` under PostgreSQL Row-Level Security, with one end-to-end test per resource proving another organization cannot see or change it; console writes need a user session, agent tokens are scoped to their own session (CONVENTIONS.md section 16). Budgets tested in CI: start-up < 200 ms, API p95 < 50 ms under nominal load.
+Layers `domain`, `infrastructure`, `presentation`, `app`; the graph is checked by `scripts/check-conventions.py`. Every route declares who may call it and has its 401/404 tests. Every new request-path query comes with its EXPLAIN ANALYZE. Short k6 load test on every pull request. Every customer table carries `org_id` under PostgreSQL Row-Level Security, with one end-to-end test per resource proving another organization cannot see or change it; console writes need a user session, agent tokens are scoped to their own session (CONVENTIONS.md section 16). Budgets: start-up < 200 ms, API p95 < 50 ms under nominal load.
+
+**A Build never fails on a time in milliseconds** (orchestrator, JOURNAL 02:5x). A bench holds, in `ci.yml`, what no
+runner's load changes: the queries one call sends (`maxQueries`, no N+1), the shape of its plans (no `Seq Scan` on a
+filled table), the rows it reads, no deadlock; and a time only past ten times its budget, against a block. Every
+time is measured through `checkTime` (testing module, `TimeBudget.kt`): shown in the job's summary, and held to its
+budget by `perf.yml` (nightly and on dispatch), on the median of three runs. In ci-e2e, a k6 threshold on a time
+(p95, p99) is reported, the others block (`scripts/k6-thresholds.py`); ostrom-e2e's nightly `chart-load.yml` holds the
+time thresholds. A new bench follows the same split.
 
 **End-to-end before the merge.** `ci-e2e` (`ci.yml`, through `e2e-journey.yml`) plays ostrom-e2e main against the
 image the pull request builds: the isolation sweep, every scenario but the TeamCode import, and a short k6 of the gates.

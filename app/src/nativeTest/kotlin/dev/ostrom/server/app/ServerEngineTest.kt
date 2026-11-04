@@ -11,9 +11,11 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readString
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -62,6 +64,40 @@ class ServerEngineTest {
             }
         } finally {
             selector.close()
+        }
+    }
+
+    /**
+     * CHARGE 41637506577: Ktor's CIO runs calls on Dispatchers.IO, whose threads (up to 64) are started on demand and
+     * never end; a burst of 100 unauthenticated requests took the server from 63 to 121 threads and OOMKilled it under
+     * 512 MiB. On Dispatchers.Default (one thread per core) the same probe (41637510769) stayed between 78 and 96.
+     */
+    @Test
+    fun callsRunOnTheDefaultDispatcherNotOnIo() = runBlocking {
+        val server = serverEngine(port = 0, host = LOOPBACK) {
+            routing {
+                get("/") {
+                    val dispatcher = currentCoroutineContext()[ContinuationInterceptor]
+                    call.respondText(if (dispatcher === Dispatchers.Default) "default" else dispatcher.toString())
+                }
+            }
+        }.start(wait = false)
+        val selector = SelectorManager(Dispatchers.Default)
+        try {
+            withTimeout(10.seconds) {
+                val socket = aSocket(selector).tcp().connect(LOOPBACK, server.engine.resolvedConnectors().single().port)
+                try {
+                    socket.openWriteChannel(autoFlush = true)
+                        .writeStringUtf8("GET / HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n")
+                    val answer = socket.openReadChannel().readRemaining().readString()
+                    assertTrue(answer.endsWith("\r\n\r\ndefault"), answer)
+                } finally {
+                    socket.close()
+                }
+            }
+        } finally {
+            selector.close()
+            server.stop(0, STOP_TIMEOUT_MILLIS)
         }
     }
 

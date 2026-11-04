@@ -93,7 +93,7 @@ class SessionsReadsBenchTest {
             server.measureRead("GET ${read.path}${read.note}") { get(read.path) { bearerAuth("lyes") } }
         }
         writeReadReport("sessions", measures)
-        measures.forEach { it.assertWithinBudget(setOf("sessions_sessions")) }
+        measures.forEach { it.assertWithinBudget(setOf("sessions_sessions"), MAX_QUERIES) }
         reads.filter { it.items != null }.forEach { read ->
             val page = server.client.get(read.path) { bearerAuth("lyes") }.body<SessionsPage>()
             assertEquals(read.items, page.items.size, read.path)
@@ -118,6 +118,10 @@ class SessionsReadsBenchTest {
 
     private companion object {
         const val ORGS = 10
+
+        // The queries of the busiest read today (one session, Build 41717982170):
+        // one more is an N+1, on any runner.
+        const val MAX_QUERIES = 2
         const val SESSIONS_PER_ORG = 5_000
         const val PAGE = 50
         const val RARE = 5

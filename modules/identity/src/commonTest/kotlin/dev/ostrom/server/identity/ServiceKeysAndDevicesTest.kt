@@ -129,6 +129,7 @@ class ServiceKeysAndDevicesTest {
     fun aKeyTakesTheNameAndLifetimeOfAPersonalTokenAndOnlyTheScopesACiCalls() = runTest {
         assertFailsWith<InvalidTokenNameException> { create(owner, ada, "  ", listOf("rules:read"), null) }
         assertFailsWith<InvalidTokenNameException> { create(owner, ada, "x".repeat(101), listOf("rules:read"), null) }
+        assertFailsWith<InvalidTokenNameException> { create(owner, ada, "ci\nOwner", listOf("rules:read"), null) }
         assertFailsWith<InvalidServiceKeyScopesException> { create(owner, ada, "k", emptyList(), null) }
         // What a CI calls, nothing else: never a governance write, a token, a member or billing.
         for (scope in listOf("gates:answer", "orgs:write", "billing:read", "accounts", "cloud:read", "a:b")) {
