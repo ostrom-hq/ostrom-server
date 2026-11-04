@@ -271,11 +271,10 @@ class ListBoundsPostgresTest {
         /**
          * The paged lists whose page of A is empty after the minimal bootstrap: nothing of A to replay in B. Their
          * cursor names a row by its id (refused when B cannot see it, as the forged id above is) or is a position in
-         * time the contract accepts as such (activity, MCP calls, usage events: `before` an instant), which row-level
+         * time the contract accepts as such (MCP calls, usage events: `before` an instant), which row-level
          * security keeps to B's own rows.
          */
         val WITHOUT_FOREIGN_CURSOR = setOf(
-            "listActivity",
             "listApprovals",
             "listAutomationRuns",
             "listChecks",
