@@ -154,6 +154,15 @@ jobs:
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
+      # The times the benches measured, against their budgets: reported, never blocking. A Build fails on what no
+      # runner's load changes (queries per call, plans, rows read) and on a time only past ten times its budget
+      # (TimeBudget.kt); perf.yml holds the budgets, on the median of three runs.
+      - name: Measured times and their budgets (reported, held by perf.yml)
+        if: success() || failure()
+        run: |
+          python3 scripts/perf-budgets.py --self-test
+          python3 scripts/k6-thresholds.py --self-test
+          python3 scripts/perf-budgets.py summary . | tee -a "$GITHUB_STEP_SUMMARY"
       # Every served operation that answers JSON was seen answering by a test, so ContractObserver checked it against
       # the contract (or contract/unobserved-operations.txt says why not); prints the drifts the tests met.
       - name: Every served operation's answer was checked against the contract
@@ -215,6 +224,9 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Measured times and their budgets (reported, held by perf.yml)
+        if: success() || failure()
+        run: python3 scripts/perf-budgets.py summary . | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
         if: success() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -360,7 +372,7 @@ jobs:
           expect 1 UnsafeDatabaseRoleException -e OSTROM_DATABASE_URL="$OWNER_URL" ostrom-server:ci
           expect 2 OSTROM_ALLOW_TEST_ACCOUNTS -e OSTROM_DATABASE_URL="$APP_URL" ostrom-server:ci \
             seed-test-account qa@ostrom.test
-          docker run -d --name ostrom --network host -e OSTROM_DATABASE_URL="$APP_URL" \
+          docker run -d --name ostrom --network host --memory 512m -e OSTROM_DATABASE_URL="$APP_URL" \
             -e OSTROM_SHUTDOWN_DELAY_SECONDS=1 ostrom-server:ci
           for i in $(seq 1 30); do curl -fsS localhost:8080/ready && break; sleep 1; done
           echo
@@ -371,6 +383,13 @@ jobs:
           docker logs ostrom
           docker logs ostrom 2>&1 | grep '"msg":"server draining"' | grep '"signal":"SIGTERM"'
           docker logs ostrom 2>&1 | grep '"msg":"server stopped"'
+          # Under a container limit, the binary leaves the Kotlin/Native heap unbounded: a heap budget (a target and a
+          # maximum read from the limit) grew Dispatchers.IO round after round and OOMKilled the server at the third
+          # round of CHARGE's bench under 512 MiB (e2e 41693127618, server#266). The pause past the target is
+          # Kotlin/Native's default ("gc_pause":true without any setting, Build 41722339019), and the bisection's flat
+          # image ran with it: only the bound is checked.
+          starting=$(docker logs ostrom 2>&1 | grep '"msg":"server starting"')
+          echo "$starting" | grep -q '"gc_heap_bounded":false' || { echo "the heap is bounded: $starting"; exit 1; }
           test "$(docker inspect -f '{{.State.ExitCode}}' ostrom)" -eq 0
       - name: Smoke test of the license check (an invalid key fails the start, without logging the key)
         env:

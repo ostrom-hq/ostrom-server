@@ -68,11 +68,15 @@ class BudgetsReadsBenchTest {
             get("/api/v1/budgets/me") { bearerAuth("member-a") }
         }
         writeReadReport("budgets", listOf(measure))
-        measure.assertWithinBudget(setOf("usage_events"))
+        measure.assertWithinBudget(setOf("usage_events"), MAX_QUERIES)
     }
 
     private companion object {
         const val ORGS = 10
+
+        // The queries of the busiest read today (the organization's and the member's limits, Build 41717982170):
+        // one more is an N+1, on any runner.
+        const val MAX_QUERIES = 2
         const val USAGE_PER_ORG = 100_000
         const val LIMIT_MICROS = 1_000_000_000_000L
         const val MEMBER_LIMIT_MICROS = LIMIT_MICROS / 2
