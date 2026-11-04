@@ -174,8 +174,10 @@ class OrgsReadsBenchTest {
         server.database.superuser.execute("VACUUM ANALYZE orgs_members").getOrThrow()
         val searches = listOf("u", "user0-4", "user0-4999").map { q ->
             val path = "/api/v1/orgs/org0/members?q=$q&limit=$PAGE"
+            // One name for the three trials: the median one is reported, and the Perf workflow pairs a measure
+            // across its runs by name, so a trial number would make it a different measure in each run.
             val trials = (1..TRIALS).map {
-                server.measureRead("GET /api/v1/orgs/{org}/members?q=$q (5 000 members, trial $it)") {
+                server.measureRead("GET /api/v1/orgs/{org}/members?q=$q (5 000 members, median of $TRIALS trials)") {
                     get(path) { session(owners.first()) }
                 }
             }
