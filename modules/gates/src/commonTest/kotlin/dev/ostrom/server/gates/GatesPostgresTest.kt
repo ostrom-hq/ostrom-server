@@ -57,7 +57,9 @@ import dev.ostrom.server.kernel.http.CallCeilingSettings
 import dev.ostrom.server.kernel.http.CallsInProgress
 import dev.ostrom.server.kernel.http.ReadLimits
 import dev.ostrom.server.kernel.http.ReadThrottle
+import dev.ostrom.server.testing.RecordingDriver
 import dev.ostrom.server.testing.TestServer
+import dev.ostrom.server.testing.checkTime
 import dev.ostrom.server.testing.serverTest
 import io.github.smyrgeorge.sqlx4k.Statement
 import io.ktor.client.call.body
@@ -767,12 +769,13 @@ class GatesPostgresTest {
     }
 
     // The decision the hook waits on before every gated command: the ask use case on PostgreSQL (transaction, advisory
-    // lock on the gate key, rows), at the 95th percentile, after a warm-up. The test HTTP client is left out: it is
-    // the transport. The target is 20 ms, met on a quiet runner (runs 41026245553, 41030430506). A shared runner under
-    // load moves the whole curve (a median of 19 ms, run 41030362738), so the gate of the CI is a regression bound,
-    // twice and a half the target, on the best of three rounds; every round is shown on failure.
+    // lock on the gate key, rows). The Build holds what no runner's load changes: the statements one ask sends (the
+    // fewest of three recordings, as the read benches keep them), a handful whatever the history. Its p95, after a
+    // warm-up and on the best of three rounds, is held to its budget by checkTime (the Build's summary, the Perf
+    // workflow; here only past ten times it): the target is 20 ms on a quiet runner (runs 41026245553, 41030430506),
+    // the budget twice and a half that, as a shared runner under load moves the whole curve (run 41030362738).
     @Test
-    fun aGateDecisionStaysUnderItsRegressionBoundAtThe95thPercentile() = gatesTest { server ->
+    fun aGateDecisionSendsAHandfulOfStatementsAndKeepsItsTimeBudget() = gatesTest { server ->
         val ask = server.koin.get<AskGateUseCase>()
         val actor = GateActor("agent", orgA, ActorKind.AGENT_SESSION, launchId = session, personId = "lyes")
         val request = push().toAskGate()
@@ -785,8 +788,8 @@ class GatesPostgresTest {
             }.sorted()
             times[SAMPLES * 95 / 100 - 1] to times[SAMPLES / 2]
         }
-        val shown = rounds.joinToString { (p95, median) -> "p95 = $p95, median = $median" }
-        assertTrue(rounds.minOf { it.first } < 50.milliseconds, shown)
+        assertAskSendsAHandful(server.driver) { ask(actor, request) }
+        checkTime(ASK_MEASURE, rounds.minOf { it.first }, ASK_BUDGET) { rounds.joinToString() }
     }
 
     @Test
@@ -875,3 +878,17 @@ private fun manyHeldCalls(overrides: Module) = module {
 
 private const val FEW_WAITS = 4
 private const val ROUNDS = 3
+private val ASK_BUDGET = 50.milliseconds
+private const val ASK_MEASURE = "ask a gate (AskGateUseCase): p95 (best, median) of $ROUNDS rounds"
+
+// The statements of one ask today (Build 41727084508): the role, the organization, the lock, the gates of the key and
+// what it writes. One more is a query per gate or per request, on any runner.
+private const val MAX_ASK_STATEMENTS = 6
+
+/** Fails if one ask sends over [MAX_ASK_STATEMENTS] statements: the fewest of three recordings, as a bench keeps. */
+private suspend fun assertAskSendsAHandful(driver: RecordingDriver, ask: suspend () -> Unit) {
+    val sent = List(ROUNDS) { driver.record(ask) }.minBy { it.size }
+    val statements = sent.joinToString("\n") { it.sql }
+    println("ask a gate: ${sent.size} statements\n$statements")
+    assertTrue(sent.size <= MAX_ASK_STATEMENTS, "An ask sends ${sent.size} statements:\n$statements")
+}

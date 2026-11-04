@@ -154,6 +154,15 @@ jobs:
       - name: Lines and branches not covered
         if: failure()
         run: python3 scripts/uncovered.py
+      # The times the benches measured, against their budgets: reported, never blocking. A Build fails on what no
+      # runner's load changes (queries per call, plans, rows read) and on a time only past ten times its budget
+      # (TimeBudget.kt); perf.yml holds the budgets, on the median of three runs.
+      - name: Measured times and their budgets (reported, held by perf.yml)
+        if: success() || failure()
+        run: |
+          python3 scripts/perf-budgets.py --self-test
+          python3 scripts/k6-thresholds.py --self-test
+          python3 scripts/perf-budgets.py summary . | tee -a "$GITHUB_STEP_SUMMARY"
       # Every served operation that answers JSON was seen answering by a test, so ContractObserver checked it against
       # the contract (or contract/unobserved-operations.txt says why not); prints the drifts the tests met.
       - name: Every served operation's answer was checked against the contract
@@ -215,6 +224,9 @@ jobs:
         run: ./gradlew --continue linuxX64Test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Measured times and their budgets (reported, held by perf.yml)
+        if: success() || failure()
+        run: python3 scripts/perf-budgets.py summary . | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Gradle's build cache, saved from main only (a pull request restores, never writes)
         if: success() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
