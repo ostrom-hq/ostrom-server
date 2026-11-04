@@ -30,6 +30,8 @@ data class Viewer(val channel: ViewerChannel, val answers: Boolean)
  * @property canApprove True when their yes would pass, the fresh sign-in or the app's unlock aside (the answer route
  *   asks for them, `step_up_required`).
  * @property reason Why their yes would be refused, in plain words; null when it would pass.
+ * @property reasonType The key of [reason] when the answer would carry a finer `error.type` than its kind's
+ *   (`github_link_required`, `self_approval_refused` from the GitHub link rule); null otherwise.
  * @property selfApproval True when their yes would pass as a self-approval: they asked, and they are the only approver.
  */
 data class CallerRights(
@@ -38,6 +40,7 @@ data class CallerRights(
     val canApprove: Boolean,
     val reason: String? = null,
     val selfApproval: Boolean = false,
+    val reasonType: String? = null,
 )
 
 /**
@@ -83,7 +86,7 @@ object ApprovalRights {
         return if (!rights.canApprove || refusal == null) {
             rights
         } else {
-            rights.copy(canApprove = false, reason = refusal.message, selfApproval = false)
+            rights.copy(canApprove = false, reason = refusal.message, selfApproval = false, reasonType = refusal.type)
         }
     }
 
