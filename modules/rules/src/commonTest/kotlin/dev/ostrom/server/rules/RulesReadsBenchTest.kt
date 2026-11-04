@@ -84,11 +84,15 @@ class RulesReadsBenchTest {
         }
         writeReadReport("rules", measures)
         measures.forEach { it.assertNoScan(setOf("rules_rules")) }
-        measures.dropLast(LONG_READS).forEach { it.assertWithinBudget(setOf("rules_rules")) }
+        measures.dropLast(LONG_READS).forEach { it.assertWithinBudget(setOf("rules_rules"), MAX_QUERIES) }
     }
 
     private companion object {
         const val ORGS = 10
+
+        // The queries of the busiest read today (one per list, Build 41717982170):
+        // one more is an N+1, on any runner.
+        const val MAX_QUERIES = 1
         const val RULES_PER_ORG = 1_000
         const val GROUPS = 20
         const val LONG_READS = 2

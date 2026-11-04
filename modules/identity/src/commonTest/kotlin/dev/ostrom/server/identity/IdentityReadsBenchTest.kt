@@ -93,7 +93,7 @@ class IdentityReadsBenchTest {
             server.measureRead("GET $path$note") { get(path) { browserSession(session.secret, null) } }
         }
         writeReadReport("identity", measures)
-        measures.forEach { it.assertWithinBudget(setOf("identity_audit_events", "identity_api_tokens")) }
+        measures.forEach { it.assertWithinBudget(setOf("identity_audit_events", "identity_api_tokens"), MAX_QUERIES) }
         reads.zip(measures).forEach { (read, measure) ->
             read.third?.let { index -> assertTrue(measure.plans.any { index in it }, measure.describe()) }
         }
@@ -101,6 +101,10 @@ class IdentityReadsBenchTest {
 
     private companion object {
         const val ORGS = 10
+
+        // The queries of the busiest read today (an actor's audit page, Build 41717982170):
+        // one more is an N+1, on any runner.
+        const val MAX_QUERIES = 4
         const val AUDIT_PER_ORG = 10_000
         const val AGENT_TOKENS_PER_PERSON = 5_000
     }
