@@ -199,6 +199,48 @@ class OrgSettingsPostgresTest {
         }
 
     @Test
+    fun anOwnerOrAdminSetsHowLongTheLauncherWaitsForTheHooks() =
+        serverTest(modules, overrides) { server ->
+            val ada = server.signIn("ada")
+            val bob = server.signIn("bob")
+            val acme = server.createOrg(ada, "Acme")
+            assertEquals(15, acme.hooksDeadlineSeconds, "15 seconds until set")
+            server.join(ada, "acme", bob)
+
+            val slower = server.patch(ada, "acme", UpdateOrgRequest(hooksDeadlineSeconds = 45))
+            assertEquals(HttpStatusCode.OK, slower.status)
+            assertEquals(acme.copy(hooksDeadlineSeconds = 45), slower.body<OrgResponse>())
+            assertEquals(
+                45,
+                server.client.get("/api/v1/orgs/acme") { session(ada) }.body<OrgResponse>().hooksDeadlineSeconds,
+            )
+            assertEquals(
+                listOf(45),
+                server.client.get("/api/v1/orgs") { session(ada) }.body<OrgsResponse>().items
+                    .map { it.hooksDeadlineSeconds },
+            )
+            server.patch(ada, "acme", UpdateOrgRequest(hooksDeadlineSeconds = 4))
+                .assertRefused(HttpStatusCode.BadRequest, "invalid_request")
+            server.patch(ada, "acme", UpdateOrgRequest(hooksDeadlineSeconds = 301))
+                .assertRefused(HttpStatusCode.BadRequest, "invalid_request")
+            server.patch(bob, "acme", UpdateOrgRequest(hooksDeadlineSeconds = 20))
+                .assertRefused(HttpStatusCode.Forbidden, "forbidden")
+            val after = server.client.get("/api/v1/orgs/acme") { session(ada) }.body<OrgResponse>()
+            assertEquals(45, after.hooksDeadlineSeconds, "A refused change changes nothing")
+            assertEquals(
+                1L,
+                server.count(
+                    "SELECT count(*) AS n FROM identity_audit_events WHERE org_id = '${acme.id}' " +
+                        "AND action = 'org.hooks_deadline.changed'"
+                ),
+            )
+            assertEquals(
+                1L,
+                server.count("SELECT count(*) AS n FROM orgs_organizations WHERE hooks_deadline_seconds = 45"),
+            )
+        }
+
+    @Test
     fun anotherOrganizationNeitherChangesNorDeletesIt() =
         serverTest(modules, overrides) { server ->
             val ada = server.signIn("ada")

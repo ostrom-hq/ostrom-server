@@ -21,6 +21,7 @@ import dev.ostrom.server.kernel.auth.holdForConfirmation
 import dev.ostrom.server.kernel.auth.requirePrincipal
 import dev.ostrom.server.kernel.auth.requireRecentSignIn
 import dev.ostrom.server.kernel.http.bodyLimit
+import dev.ostrom.server.kernel.http.heldCalls
 import dev.ostrom.server.secrets.domain.Caller
 import dev.ostrom.server.secrets.domain.OrgNotFoundException
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -45,6 +46,8 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
 import io.ktor.server.routing.get as routeGet
 import io.ktor.server.routing.post as routePost
 
@@ -69,6 +72,25 @@ private val POLICY_WRITERS = WriteAccess.tokens(PrincipalKind.SERVICE)
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
 
+/**
+ * Inference routes speaking [protocol]: held calls, with bodies up to [MAX_INFERENCE_REQUEST_BYTES], refused past the
+ * replica's ceiling as an overloaded provider refuses, in [protocol]'s shape.
+ */
+private fun Route.modelCalls(protocol: WireProtocol, clock: Clock, build: Route.() -> Unit) =
+    heldCalls(refuse = { call -> KtorInferenceResponder(call, clock).refuse(protocol, overloaded(clock)) }) {
+        bodyLimit(MAX_INFERENCE_REQUEST_BYTES, build)
+    }
+
+/** When an agent refused for [RefusalKind.OVERLOADED] may retry. */
+private val OVERLOADED_RETRY = 1.seconds
+
+/** The refusal of a model call past the replica's ceiling of held calls. */
+private fun overloaded(clock: Clock) = InferenceRefusal(
+    RefusalKind.OVERLOADED,
+    "This Ostrom server is relaying as many model calls as it can hold; retry shortly.",
+    clock.now() + OVERLOADED_RETRY,
+)
+
 /** The agent headers never passed down, not even to the planner: its credentials. */
 private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
 
@@ -83,10 +105,18 @@ private val CREDENTIAL_HEADERS = setOf("authorization", "x-api-key", "cookie")
  * @param dependencies The use cases.
  */
 fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependencies) {
-    // A model call carries the whole context: up to 32 MiB instead of the kernel's 1 MiB (S2-46).
-    bodyLimit(MAX_INFERENCE_REQUEST_BYTES) {
+    // A model call carries the whole context: up to 32 MiB instead of the kernel's 1 MiB (S2-46). It lasts as long as
+    // the provider streams: a held call, counted apart from the server's other calls (P1 memory) under the replica's
+    // ceiling of held calls (OSTROM_MAX_HELD_CALLS). Past it, the call is refused as an overloaded provider refuses,
+    // in the agent's API, so that the agent retries it as it would the provider's 503.
+    // Each route is written out: the contract check reads the mounted paths in the sources (served-routes.py).
+    modelCalls(WireProtocol.MESSAGES, clock) {
         routePost("$INFERENCE_BASE/v1/messages") { infer(dependencies, WireProtocol.MESSAGES) }
+    }
+    modelCalls(WireProtocol.RESPONSES, clock) {
         routePost("$INFERENCE_BASE/v1/responses") { infer(dependencies, WireProtocol.RESPONSES) }
+    }
+    modelCalls(WireProtocol.CHAT, clock) {
         routePost("$INFERENCE_BASE/v1/chat/completions") { infer(dependencies, WireProtocol.CHAT) }
     }
     routeGet("$INFERENCE_BASE/v1/models") {

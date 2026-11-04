@@ -14,6 +14,7 @@ import dev.ostrom.server.kernel.logging.Logger
 import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.kernel.network.TrustedProxies
 import dev.ostrom.server.kernel.observability.OstromMetrics
+import dev.ostrom.server.kernel.observability.ProcessMemory
 import dev.ostrom.server.kernel.observability.installTelemetry
 import dev.ostrom.server.kernel.observability.recordRouteTemplates
 import io.ktor.http.HttpHeaders
@@ -43,7 +44,8 @@ const val SERVER_VERSION: String = "0.1.0-dev"
 /**
  * Installs the kernel's HTTP layer (the client address behind trusted proxies, request body limit, traces and request
  * metrics when the Koin has a [Telemetry], JSON, type-safe resources, request ids, request logs by route template,
- * uniform errors, token authentication, `/health` and `/ready`) and the routes of every module.
+ * uniform errors, token authentication, the ceiling of calls at once ([CallCeiling]), `/health` and `/ready`) and the
+ * routes of every module.
  *
  * @param koin The application's Koin, with the kernel module and every module's definitions loaded.
  * @param modules The functional modules, in order.
@@ -71,8 +73,13 @@ fun Application.configureHttp(koin: Koin, modules: List<ServerModule>) {
         governanceConfirmationsKey,
         koin.getOrNull<GovernanceConfirmations>() ?: RefusingGovernanceConfirmations(),
     )
+    attributes.put(
+        callsInProgressKey,
+        koin.getOrNull<CallsInProgress>() ?: CallsInProgress(CallCeilingSettings(), ProcessMemory::limitBytes),
+    )
     routing {
-        healthRoutes(koin.getAll(), SERVER_VERSION, koin.getOrNull<Readiness>() ?: Readiness())
+        install(CallCeiling)
+        uncountedCalls { healthRoutes(koin.getAll(), SERVER_VERSION, koin.getOrNull<Readiness>() ?: Readiness()) }
         modules.forEach { it.routes(this, koin) }
     }
 }

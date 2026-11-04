@@ -72,5 +72,6 @@ private fun CallerRights.toCallerView() = ApprovalCallerView(
     self = self,
     canApprove = canApprove,
     reason = reason,
+    reasonType = reasonType,
     selfApproval = if (selfApproval) true else null,
 )

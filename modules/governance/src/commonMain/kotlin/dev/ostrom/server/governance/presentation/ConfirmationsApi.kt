@@ -46,6 +46,15 @@ data class AnswerConfirmationRequest(val answer: String)
 data class ConfirmationPersonDto(val memberId: String, val login: String? = null, val name: String? = null)
 
 /**
+ * The personal token that asked (contract `GovernanceConfirmationToken`).
+ *
+ * @property id Its id.
+ * @property name The name its owner gave it when it asked.
+ */
+@Serializable
+data class ConfirmationTokenDto(val id: String, val name: String)
+
+/**
  * Why a confirmed write was not written (contract `ApiError`).
  *
  * @property type The stable key.
@@ -67,7 +76,8 @@ data class ConfirmationErrorDto(val type: String, val message: String)
  * @property before What it replaces, JSON null for nothing: always sent.
  * @property after What it writes, JSON null for nothing: always sent.
  * @property requestedBy Who asked.
- * @property credential `admin` or `device`.
+ * @property credential `admin`, `device` or `api_token`.
+ * @property token The personal token that asked, for `api_token`.
  * @property createdAt When it was asked (ISO 8601).
  * @property expiresAt When it expires (ISO 8601).
  * @property answeredBy Who answered.
@@ -88,6 +98,7 @@ data class ConfirmationDto(
     val after: JsonElement,
     val requestedBy: ConfirmationPersonDto,
     val credential: String,
+    val token: ConfirmationTokenDto? = null,
     val createdAt: String,
     val expiresAt: String,
     val answeredBy: ConfirmationPersonDto? = null,

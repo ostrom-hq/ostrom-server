@@ -92,7 +92,7 @@ class OrgsReadsBenchTest {
                 "/api/v1/orgs/org0/members?q=user0-4&limit=$PAGE",
         ).map { (name, path) -> server.measureRead(name) { get(path) { session(sessions.first()) } } }
         writeReadReport("orgs", measures)
-        measures.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }
+        measures.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users"), MAX_QUERIES) }
         // No N+1: the list of 1 000 sends the queries of one member, and neither sends more than a handful.
         val described = measures.joinToString("\n") { it.describe() }
         assertEquals(measures[1].queries, measures[0].queries, described)
@@ -174,8 +174,10 @@ class OrgsReadsBenchTest {
         server.database.superuser.execute("VACUUM ANALYZE orgs_members").getOrThrow()
         val searches = listOf("u", "user0-4", "user0-4999").map { q ->
             val path = "/api/v1/orgs/org0/members?q=$q&limit=$PAGE"
+            // One name for the three trials: the median one is reported, and the Perf workflow pairs a measure
+            // across its runs by name, so a trial number would make it a different measure in each run.
             val trials = (1..TRIALS).map {
-                server.measureRead("GET /api/v1/orgs/{org}/members?q=$q (5 000 members, trial $it)") {
+                server.measureRead("GET /api/v1/orgs/{org}/members?q=$q (5 000 members, median of $TRIALS trials)") {
                     get(path) { session(owners.first()) }
                 }
             }
@@ -183,7 +185,7 @@ class OrgsReadsBenchTest {
         }
         writeReadReport("orgs-search", searches)
         server.explainSearch()
-        searches.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users")) }
+        searches.forEach { it.assertWithinBudget(setOf("orgs_members", "identity_users"), MAX_QUERIES) }
         server.searchMemory(owners.first())
     }
 

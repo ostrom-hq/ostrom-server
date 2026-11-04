@@ -211,6 +211,11 @@ Every request is already logged once by the kernel (method, route template — n
 | `OSTROM_READS_PER_MINUTE` | `600` | 1 to 100 000: how many calls one subject (a person, a device, an agent, a service) makes per minute to the costly reads (sessions and their thread, activity, spending, receipts, the audit log, a gate and its wait, the approvals); past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_READS_IN_FLIGHT` | `16` | 1 to 1 000: how many of those reads one subject holds at once; past it, a 429 with `Retry-After`. Counted per replica |
 | `OSTROM_READ_WAITS_IN_FLIGHT` | `256` | 1 to 10 000: how many gate reads (`GET /gates/{id}`, whose `wait` holds the call up to 30 s) one subject holds at once, apart from the reads above; they count in `OSTROM_READS_PER_MINUTE` too. Past it, a 429 with `Retry-After`. Counted per replica |
+| `OSTROM_MAX_CALLS_IN_PROGRESS` | from the memory limit | 1 to 100 000: how many calls this replica runs at once. Past it, a call waits in line for a place, before authentication and before its body is read, then gets a 503 `unavailable` with `Retry-After: 1`; at once when as many calls already wait as the ceiling. Unset, 150 per 512 MiB of container limit (at least 16; 256 without a limit), read again every 5 s (a failed read keeps the last). Held calls and `/health`, `/ready` are not counted |
+| `OSTROM_MAX_HELD_CALLS` | from the memory limit | 1 to 100 000: the same, apart, half the ordinary ceiling when unset (75 per 512 MiB), for the calls that stay open: gate and confirmation waits, inference calls, MCP relay calls. A model call refused past it gets its 503 in the agent's API, as an overloaded provider answers (`overloaded_error` for Anthropic clients, `server_error` for OpenAI ones), with `Retry-After: 1` |
+| `OSTROM_MAX_OPEN_CONNECTIONS` | from the memory limit | 1 to 100 000: the same, apart, for the connections open as long as their client keeps them: terminal WebSockets, the live usage stream. Unset, 100 per 512 MiB of container limit (at least 16; 170 without a limit): with 150, the three kinds full at once peaked at 495 MiB under 512 MiB (CHARGE 41668930337) |
+| `OSTROM_CALL_QUEUE_SECONDS` | `5` | 0 to 60: how long a call past its ceiling waits in line for a place before its 503 |
+| `KTOR_CURL_POLL_TIMEOUT` | `5` | Milliseconds the HTTP clients' engine (Ktor's Curl) waits in one poll while calls are open; set by the server at start unless already set. Ktor's own 100 ms made each outgoing exchange wait up to 100 ms while another exchange of the same client was open (an MCP tool call: 4 exchanges, 315 ms at p95 under load, 42 ms at 5) |
 | `OSTROM_DATABASE_MIGRATION_URL` | required by `migrate` | The owner's connection, read by `ostrom-server migrate` only; never give it to the serving process |
 | `OSTROM_DATABASE_MIGRATION_USER`, `OSTROM_DATABASE_MIGRATION_PASSWORD` | the URL's | The owner's credentials, as for `OSTROM_DATABASE_USER` |
 | `OSTROM_ALLOW_TEST_ACCOUNTS` | — | `true` lets `ostrom-server seed-test-account` run; never set in production |
@@ -237,6 +242,33 @@ Every request is already logged once by the kernel (method, route template — n
 A module that needs its own keys reads them from the `ConfigSource` bound in Koin (`get<ConfigSource>()`: the
 environment, then `OSTROM_CONFIG_FILE`), with the `OSTROM_<MODULE>_…` prefix, and adds them to this table. In a
 `serverTest`, give it values with `overrides = module { single<ConfigSource> { MapConfigSource(mapOf(…)) } }`.
+
+### Memory under the container limit
+
+The server reads its container's memory limit (cgroup v2 `memory.max`, else v1) and holds itself under it, with no
+key to set (the ceilings of calls can be set):
+
+- Calls run on `Dispatchers.Default`, one thread per core. Ktor's CIO runs them on `Dispatchers.IO`, whose threads (up
+  to 64) start on demand and never end, each with memory of its own: a burst of 100 unauthenticated requests took the
+  server from 63 to 121 threads and OOMKilled it under 512 MiB (CHARGE 41637506577).
+- The Kotlin/Native collector keeps its defaults, with no target or maximum set from the limit. A heap budget bounded
+  under the limit grew Dispatchers.IO round after round and OOMKilled the server at the third round of a burst under 512
+  MiB (CHARGE e2e 41693127618); without it, the same rounds stayed at 102 threads and peaked at 450 MiB (bisection,
+  JOURNAL 03/11). The image's smoke test checks it.
+
+- Calls at once are bounded (`OSTROM_MAX_CALLS_IN_PROGRESS`): each costs memory while it runs, about 1 MiB more past
+  100 at once, so 500 approvals at once still OOMKilled the server under 512 MiB once the heap was bounded, where 200
+  peaked at 377 MiB (CHARGE 41644506470). Past 150 calls per 512 MiB, a call waits in line up to 5 s
+  (`OSTROM_CALL_QUEUE_SECONDS`), then is told 503 with `Retry-After: 1`; when as many calls already wait as the
+  ceiling, at once. The limit is read again every 5 s, and a failed read keeps the last one.
+- The calls that wait (gate and confirmation waits, inference calls, MCP relay calls, as slow as their upstream) count
+  apart under their own ceiling (`OSTROM_MAX_HELD_CALLS`), half the ordinary one, so that both full stay near the 200
+  calls measured at 377 MiB: a member who plugs in a slow MCP server fills only those places. The connections open as
+  long as their client keeps them (terminal WebSockets, the live usage stream) count apart again
+  (`OSTROM_MAX_OPEN_CONNECTIONS`, 100 per 512 MiB), so that permanent connections never take the waits' places. `/health` and `/ready` are never counted.
+
+Without a limit (a plain process), the heap keeps the runtime's own tuning; the ordinary calls are bounded at 256,
+the calls that wait at 128 and the open connections at 170.
 
 ### Module `gateway`
 
