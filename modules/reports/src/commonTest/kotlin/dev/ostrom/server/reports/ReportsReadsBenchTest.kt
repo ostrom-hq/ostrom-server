@@ -91,9 +91,9 @@ class ReportsReadsBenchTest {
         val LOOPS = Regex("loops=([0-9]+)")
         const val MAX_LOOPS = 10_000
 
-        // The queries of the busiest read today (a month's report, Build 41717982170):
-        // one more is an N+1, on any runner.
-        const val MAX_QUERIES = 3
+        // The queries of the busiest read today (a month's report): the report, the organization's and member
+        // limits, the workflows' limits (a query of their own since #337), the alerts. One more is an N+1.
+        const val MAX_QUERIES = 4
         const val ORGS = 10
         const val USAGE_PER_ORG = 100_000
         const val SESSIONS_PER_ORG = 5_000
