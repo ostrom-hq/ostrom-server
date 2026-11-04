@@ -72,12 +72,14 @@ private val POLICY_WRITERS = WriteAccess.tokens(PrincipalKind.SERVICE)
 private const val MAX_SESSION = 128
 private const val BEARER = "Bearer "
 
-/** The inference endpoints, each in the API it speaks. */
-private val INFERENCE_ROUTES = listOf(
-    "/v1/messages" to WireProtocol.MESSAGES,
-    "/v1/responses" to WireProtocol.RESPONSES,
-    "/v1/chat/completions" to WireProtocol.CHAT,
-)
+/**
+ * Inference routes speaking [protocol]: held calls, with bodies up to [MAX_INFERENCE_REQUEST_BYTES], refused past the
+ * replica's ceiling as an overloaded provider refuses, in [protocol]'s shape.
+ */
+private fun Route.modelCalls(protocol: WireProtocol, clock: Clock, build: Route.() -> Unit) =
+    heldCalls(refuse = { call -> KtorInferenceResponder(call, clock).refuse(protocol, overloaded(clock)) }) {
+        bodyLimit(MAX_INFERENCE_REQUEST_BYTES, build)
+    }
 
 /** When an agent refused for [RefusalKind.OVERLOADED] may retry. */
 private val OVERLOADED_RETRY = 1.seconds
@@ -107,12 +109,15 @@ fun Route.gatewayRoutes(dependencies: GatewayRoutesDependencies) = with(dependen
     // the provider streams: a held call, counted apart from the server's other calls (P1 memory) under the replica's
     // ceiling of held calls (OSTROM_MAX_HELD_CALLS). Past it, the call is refused as an overloaded provider refuses,
     // in the agent's API, so that the agent retries it as it would the provider's 503.
-    for ((path, protocol) in INFERENCE_ROUTES) {
-        heldCalls(refuse = { call -> KtorInferenceResponder(call, clock).refuse(protocol, overloaded(clock)) }) {
-            bodyLimit(MAX_INFERENCE_REQUEST_BYTES) {
-                routePost("$INFERENCE_BASE$path") { infer(dependencies, protocol) }
-            }
-        }
+    // Each route is written out: the contract check reads the mounted paths in the sources (served-routes.py).
+    modelCalls(WireProtocol.MESSAGES, clock) {
+        routePost("$INFERENCE_BASE/v1/messages") { infer(dependencies, WireProtocol.MESSAGES) }
+    }
+    modelCalls(WireProtocol.RESPONSES, clock) {
+        routePost("$INFERENCE_BASE/v1/responses") { infer(dependencies, WireProtocol.RESPONSES) }
+    }
+    modelCalls(WireProtocol.CHAT, clock) {
+        routePost("$INFERENCE_BASE/v1/chat/completions") { infer(dependencies, WireProtocol.CHAT) }
     }
     routeGet("$INFERENCE_BASE/v1/models") {
         call.inferenceCaller(dependencies, WireProtocol.CHAT)?.let { (caller, _) ->
