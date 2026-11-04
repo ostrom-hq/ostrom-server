@@ -55,6 +55,7 @@ private const val STOP_TIMEOUT_MILLIS = 15_000L
  * @param args The command line.
  */
 fun main(args: Array<String>) {
+    configureHttpClients()
     val command = try {
         parseCommand(args.toList())
     } catch (error: UsageException) {
