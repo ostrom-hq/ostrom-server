@@ -9,6 +9,7 @@ import dev.ostrom.server.governance.fakes.FakeChange
 import dev.ostrom.server.governance.infrastructure.PostgresConfirmationsRepository
 import dev.ostrom.server.governance.presentation.AnswerConfirmationRequest
 import dev.ostrom.server.governance.presentation.ConfirmationDto
+import dev.ostrom.server.governance.presentation.ConfirmationTokenDto
 import dev.ostrom.server.identity.IdentityModule
 import dev.ostrom.server.identity.domain.AuditRepository
 import dev.ostrom.server.identity.domain.IdentityProvider
@@ -97,10 +98,13 @@ class GovernancePostgresTest {
         val browser: Boolean,
         val age: Int = 0,
         val tokenNamed: Boolean = true,
+        val personalToken: String? = null,
     )
 
     private val people = mapOf(
         "ada-token" to Person("ada", orgA, OrgRole.ADMIN, browser = false),
+        // A personal token made in the console, which holds the governance scopes too.
+        "ada-personal" to Person("ada", orgA, OrgRole.ADMIN, browser = false, personalToken = "deploy bot"),
         "olga-browser" to Person("olga", orgA, OrgRole.OWNER, browser = true),
         "olga-stale" to Person("olga", orgA, OrgRole.OWNER, browser = true, age = 10),
         "mia-browser" to Person("mia", orgA, OrgRole.MEMBER, browser = true),
@@ -151,6 +155,7 @@ class GovernancePostgresTest {
                         credentialId = token.takeUnless { _ -> it.browser || !it.tokenNamed },
                         channel = if (it.browser) PrincipalChannel.BROWSER else PrincipalChannel.API_TOKEN,
                         authenticatedAt = Time.now() - it.age.minutes,
+                        personalTokenName = it.personalToken,
                     )
                 }
             }
@@ -252,6 +257,23 @@ class GovernancePostgresTest {
         assertEquals(Uuid.parse(users.getValue("ada")), created.actorId)
         assertEquals("ada-token", created.details["token"])
         assertEquals("PUT /governed", created.details["request"])
+    }
+
+    @Test
+    fun aPersonalTokensConfirmationNamesItsTokenAndAnAdminTokensDoesNot() = governanceTest { server ->
+        val id = server.ask("ada-personal", "never").body<GovernanceConfirmationPending>().confirmationId
+        val shown = server.read("olga-browser", id).body<ConfirmationDto>()
+        assertEquals("api_token", shown.credential)
+        assertEquals(ConfirmationTokenDto("ada-personal", "deploy bot"), shown.token)
+        assertEquals(shown, server.read("ada-personal", id).body<ConfirmationDto>(), "Its requester reads the same")
+
+        val admin = server.ask("ada-token", "everyone").body<GovernanceConfirmationPending>().confirmationId
+        val byAdmin = server.read("olga-browser", admin).body<ConfirmationDto>()
+        assertEquals("admin" to null, byAdmin.credential to byAdmin.token)
+
+        val events = server.koin.get<AuditRepository>().list(orgA, null, null, 50).map { it.entry }
+        val created = events.first { it.targetId == id && it.action == "governance.confirmation.created" }
+        assertEquals("api_token" to "deploy bot", created.details["credential"] to created.details["tokenName"])
     }
 
     @Test

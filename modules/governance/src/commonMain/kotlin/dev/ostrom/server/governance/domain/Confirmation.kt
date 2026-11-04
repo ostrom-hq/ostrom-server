@@ -22,6 +22,8 @@ import kotlin.uuid.Uuid
  * @property requestedBy Who asked.
  * @property credential Which kind of token asked.
  * @property tokenId The token that asked, when the identity module names it.
+ * @property tokenName The name of the personal token that asked, as it was when it asked
+ *   ([ConfirmationCredential.API_TOKEN]).
  * @property status Where it stands, as stored: a pending one past [expiresAt] is expired ([statusAt]).
  * @property createdAt When it was asked.
  * @property expiresAt When it expires unanswered.
@@ -50,6 +52,7 @@ data class Confirmation(
     val answeredAt: Instant? = null,
     val result: JsonElement? = null,
     val error: ConfirmationError? = null,
+    val tokenName: String? = null,
 ) {
     /**
      * Its status at [now]: a pending confirmation past its expiry is expired, even before the server writes it so.
@@ -119,8 +122,11 @@ enum class ConfirmationCredential(val wire: String) {
     /** The token of `ostrom login --admin`: it holds a governance scope. */
     ADMIN("admin"),
 
-    /** Another person's token: the CLI's `ostrom login`, a personal token. */
+    /** The CLI's token, `ostrom login`. */
     DEVICE("device"),
+
+    /** A personal token made in the console, whatever its scopes: the confirmation names it. */
+    API_TOKEN("api_token"),
 }
 
 /** The answer of an owner or an admin. */

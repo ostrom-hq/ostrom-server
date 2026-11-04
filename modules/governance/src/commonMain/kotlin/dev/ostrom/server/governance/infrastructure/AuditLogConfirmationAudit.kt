@@ -23,6 +23,7 @@ class AuditLogConfirmationAudit(private val audit: AuditLog) : ConfirmationAudit
             put("requestedBy", confirmation.requestedBy.userId)
             put("credential", confirmation.credential.wire)
             confirmation.tokenId?.let { put("token", it) }
+            confirmation.tokenName?.let { put("tokenName", it) }
             confirmation.error?.let { put("error", it.type) }
         }
         val actor = actorUserId?.let(Uuid::parseOrNull)

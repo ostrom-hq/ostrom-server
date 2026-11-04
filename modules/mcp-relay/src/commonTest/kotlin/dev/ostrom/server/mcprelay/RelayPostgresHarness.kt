@@ -73,7 +73,8 @@ abstract class RelayPostgresHarness {
     /** What the fake upstream received: method, authorization, and the tool called. */
     protected val upstreamSeen = mutableListOf<Triple<String, String?, String?>>()
 
-    protected val fakeMcp = HttpClient(
+    /** The fake upstream behind the relay's HTTP client; a test may replace it (a slow one, say). */
+    protected open val fakeMcp: HttpClient = HttpClient(
         MockEngine { request ->
             if (request.method == HttpMethod.Delete) return@MockEngine respond("", HttpStatusCode.OK)
             val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject

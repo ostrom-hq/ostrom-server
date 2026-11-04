@@ -23,13 +23,17 @@ internal actual fun processCpuSeconds(): Double = clock().toDouble() / CLOCKS_PE
 
 /** Resident bytes from `/proc/self/statm` (Linux, where the server runs); null elsewhere. */
 internal actual fun processResidentBytes(): Long? {
-    val pages = readStatm()?.trim()?.split(' ')?.getOrNull(1)?.toLongOrNull()
+    val pages = readFirstLine("/proc/self/statm")?.trim()?.split(' ')?.getOrNull(1)?.toLongOrNull()
     return pages?.let { it * sysconf(_SC_PAGESIZE) }
 }
 
-/** The first line of `/proc/self/statm`, or null where there is none. */
-private fun readStatm(): String? {
-    val file = fopen("/proc/self/statm", "r") ?: return null
+/** The container's memory limit: cgroup v2 `memory.max`, else cgroup v1 `memory.limit_in_bytes`. */
+internal actual fun processMemoryLimit(): String? =
+    readFirstLine("/sys/fs/cgroup/memory.max") ?: readFirstLine("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+
+/** The first line of [path], or null where there is none. */
+private fun readFirstLine(path: String): String? {
+    val file = fopen(path, "r") ?: return null
     return try {
         memScoped {
             val buffer = allocArray<ByteVar>(LINE)
