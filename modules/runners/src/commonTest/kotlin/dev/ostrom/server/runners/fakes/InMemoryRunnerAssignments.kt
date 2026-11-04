@@ -83,6 +83,8 @@ class InMemoryRunnerAssignments(
             .forEach { it.delivered = true }
     }
 
+    override suspend fun hasWork(orgId: Uuid): Boolean = rows.any { it.orgId == orgId && !it.delivered && !it.stopped }
+
     private fun Row.toAssignment() = Assignment(
         sessionId, epoch, runnerId, runnerId?.let(seenAt), state, delivered, stopped, dropped,
         superseded = rows.any { later ->

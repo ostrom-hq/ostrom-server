@@ -50,6 +50,7 @@ class GatewayLedgerTest {
         firstByteMillis = 12,
         durationMillis = 900,
         launchId = "lch_1",
+        workflowId = "review",
     )
 
     @Test
@@ -70,6 +71,7 @@ class GatewayLedgerTest {
                 accountId = call.accountId,
                 sessionId = "lch_1",
                 launchId = "lch_1",
+                workflowId = "review",
                 inputTokens = 1200,
                 outputTokens = 42,
                 cacheReadTokens = 300,

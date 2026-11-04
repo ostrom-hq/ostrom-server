@@ -7,6 +7,7 @@ import dev.ostrom.server.identity.domain.MAX_TOKENS_PER_USER
 import dev.ostrom.server.identity.domain.TokenKind
 import dev.ostrom.server.identity.domain.WebSession
 import dev.ostrom.server.identity.domain.WebSessionsRepository
+import dev.ostrom.server.kernel.database.PurgeDates
 import dev.ostrom.server.kernel.database.withOrganization
 import io.github.smyrgeorge.sqlx4k.Driver
 import io.github.smyrgeorge.sqlx4k.QueryExecutor
@@ -18,6 +19,7 @@ import io.github.smyrgeorge.sqlx4k.impl.extensions.asInt
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asLong
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuid
 import io.github.smyrgeorge.sqlx4k.impl.extensions.asUuidOrNull
+import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 
@@ -102,7 +104,10 @@ private fun ResultSet.Row.toWebSession() = WebSession(
  *
  * @param driver The database.
  */
-class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository {
+class ApiTokensRepositoryImpl(
+    private val driver: Driver,
+    private val clock: Clock = Clock.System,
+) : ApiTokensRepository {
     override suspend fun create(token: ApiToken, secretHash: String) {
         val orgId = token.orgId
         if (orgId == null) {
@@ -182,11 +187,15 @@ class ApiTokensRepositoryImpl(private val driver: Driver) : ApiTokensRepository 
         ).bind("session", agentSessionId).bind("at", at),
     ).getOrThrow().first().get("revoked").asLong()
 
-    // The one deletion across organizations, through the function of IdentityMigrations version 14.
-    override suspend fun purgeAgentTokens(before: Instant): Long = driver.fetchAll(
-        Statement.create("SELECT identity_purge_agent_tokens(CAST(:before AS TIMESTAMPTZ)) AS n")
-            .bind("before", before),
-    ).getOrThrow().first().get("n").asLong()
+    // The one deletion across organizations, through the function of IdentityMigrations versions 14 and 15, which
+    // bounds the date to the retention itself.
+    override suspend fun purgeAgentTokens(before: Instant): Long {
+        PurgeDates.check(before, clock.now())
+        return driver.fetchAll(
+            Statement.create("SELECT identity_purge_agent_tokens(CAST(:before AS TIMESTAMPTZ)) AS n")
+                .bind("before", before),
+        ).getOrThrow().first().get("n").asLong()
+    }
 
     private companion object {
         const val TOKEN_COLUMNS = "id, user_id, org_id, name, kind, scopes, hint, agent_session_id, created_at, " +

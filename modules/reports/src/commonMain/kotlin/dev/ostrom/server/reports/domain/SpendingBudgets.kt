@@ -27,11 +27,12 @@ interface SpendingBudgets {
 /**
  * A budget spent past its limit in its current period.
  *
- * @property memberId The member, for a member's budget; null for the organization's.
+ * @property memberId The member, for a member's budget; null for the organization's or a workflow's.
  * @property daily Whether its period is the day (else the month).
  * @property stops Whether it stops the calls (else it only warns).
  * @property limitMicros The limit, millionths of a US dollar.
  * @property since When the server saw it reached.
+ * @property workflowId The workflow, for a workflow's budget.
  */
 data class ExceededBudget(
     val memberId: Uuid?,
@@ -39,4 +40,5 @@ data class ExceededBudget(
     val stops: Boolean,
     val limitMicros: Long,
     val since: Instant,
+    val workflowId: String? = null,
 )

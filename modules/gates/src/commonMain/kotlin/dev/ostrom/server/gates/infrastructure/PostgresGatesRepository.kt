@@ -16,6 +16,7 @@ import dev.ostrom.server.gates.domain.models.GateSubject
 import dev.ostrom.server.gates.domain.models.PushRef
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.repositories.GateHistory
+import dev.ostrom.server.gates.domain.repositories.GateSessionEnds
 import dev.ostrom.server.gates.domain.repositories.GatesRepository
 import dev.ostrom.server.gates.domain.repositories.GatesTransaction
 import io.github.smyrgeorge.sqlx4k.Driver
@@ -56,23 +57,10 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
     }
 
     override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> =
-        driver.transaction {
-            Tx(this).run {
-                scope.enter(orgId)
-                val statement = Statement.create(GatesQueries.requestsOf(gateIds.size)).bind("org", orgId)
-                gateIds.forEachIndexed { index, gateId -> statement.bind("g$index", gateId) }
-                executor.rows(statement).map { it.toRequest() }
-            }
-        }
+        driver.transaction { Tx(this).requestsOfGates(orgId, gateIds) }
 
     override suspend fun ofSession(orgId: Uuid, sessionId: String): List<Gate> = driver.transaction {
-        Tx(this).run {
-            scope.enter(orgId)
-            // Served by the primary key of the session links (migration 3).
-            executor.rows(
-                Statement.create(GatesQueries.OF_SESSION).bind("org", orgId).bind("session", sessionId),
-            ).map { it.toGate() }
-        }
+        Tx(this).gatesOfSession(orgId, sessionId)
     }
 
     override suspend fun recent(orgId: Uuid, since: Instant, limit: Int): List<Gate> = driver.transaction {
@@ -149,8 +137,13 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
         }
     }
 
-    private class Tx(val executor: QueryExecutor) : GatesTransaction {
-        val scope = OrgScope(executor)
+    // The sessions' ends apart ([SessionEnds]): one class would hold more functions than detekt allows.
+    private class Tx private constructor(
+        val executor: QueryExecutor,
+        val scope: OrgScope,
+    ) : GatesTransaction, GateSessionEnds by SessionEnds(executor, scope) {
+        constructor(executor: QueryExecutor) : this(executor, OrgScope(executor))
+
 
         override suspend fun lockKey(orgId: Uuid, key: String) {
             scope.enter(orgId)
@@ -260,6 +253,47 @@ class PostgresGatesRepository(private val driver: Driver) : GatesRepository, Gat
                         .bind("channel", request.channel?.name),
                 ).getOrThrow()
             }
+        }
+    }
+
+    // AUDIT-SERVEUR-3 B2: the lock and the mark of a session's end, and the reads of its receipt.
+    private class SessionEnds(val executor: QueryExecutor, val scope: OrgScope) : GateSessionEnds {
+        // The sessions module's motif (`sessions:<org>:<root>`), in the gates' own name.
+        override suspend fun lockSession(orgId: Uuid, sessionId: String) {
+            executor.fetchAll(
+                Statement.create("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
+                    .bind("key", "gates-session:$orgId:$sessionId"),
+            ).getOrThrow()
+        }
+
+        override suspend fun sessionEndedAt(orgId: Uuid, sessionId: String): Instant? {
+            scope.enter(orgId)
+            return executor.rows(
+                Statement.create(GatesQueries.SESSION_ENDED).bind("org", orgId).bind("session", sessionId),
+            ).firstOrNull()?.let { it.get("ended_at").asInstant() }
+        }
+
+        override suspend fun markSessionEnded(orgId: Uuid, sessionId: String, at: Instant) {
+            scope.enter(orgId)
+            executor.execute(
+                Statement.create(GatesQueries.MARK_SESSION_ENDED).bind("org", orgId).bind("session", sessionId)
+                    .bind("at", at),
+            ).getOrThrow()
+        }
+
+        // Served by the primary key of the session links (migration 3).
+        override suspend fun gatesOfSession(orgId: Uuid, sessionId: String): List<Gate> {
+            scope.enter(orgId)
+            return executor.rows(
+                Statement.create(GatesQueries.OF_SESSION).bind("org", orgId).bind("session", sessionId),
+            ).map { it.toGate() }
+        }
+
+        override suspend fun requestsOfGates(orgId: Uuid, gateIds: List<Uuid>): List<ApprovalRequest> {
+            scope.enter(orgId)
+            val statement = Statement.create(GatesQueries.requestsOf(gateIds.size)).bind("org", orgId)
+            gateIds.forEachIndexed { index, gateId -> statement.bind("g$index", gateId) }
+            return executor.rows(statement).map { it.toRequest() }
         }
     }
 

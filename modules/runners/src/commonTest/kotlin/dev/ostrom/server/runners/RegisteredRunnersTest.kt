@@ -27,6 +27,7 @@ import dev.ostrom.server.runners.domain.RunnerRegistrationOutcome
 import dev.ostrom.server.runners.domain.RunnerUnauthenticatedException
 import dev.ostrom.server.runners.domain.constantTimeEquals
 import dev.ostrom.server.runners.fakes.FakeRunnerTokens
+import dev.ostrom.server.runners.fakes.FakeRunnerWorkSignals
 import dev.ostrom.server.runners.fakes.InMemoryCloudSessionsRepository
 import dev.ostrom.server.runners.fakes.InMemoryRunnerAssignments
 import dev.ostrom.server.runners.fakes.ORG_A
@@ -207,6 +208,7 @@ class RegisteredRunnersTest {
         clock,
         InMemoryRunnerAssignments(),
         InMemoryCloudSessionsRepository(),
+        FakeRunnerWorkSignals(),
     ) { error("No execution to plan") }
 
     private companion object {

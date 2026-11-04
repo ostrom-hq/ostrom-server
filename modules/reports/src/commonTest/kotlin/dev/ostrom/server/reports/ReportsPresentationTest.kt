@@ -59,6 +59,10 @@ class ReportsPresentationTest {
             ExceededBudgetDto("organization", null, "month", 100.0, hardStop = true, since = NOW.toString()),
             ExceededBudget(null, daily = false, stops = true, limitMicros = 100_000_000, since = NOW).toDto(),
         )
+        assertEquals(
+            ExceededBudgetDto("workflow", "review", "month", 3.0, hardStop = true, since = NOW.toString()),
+            ExceededBudget(null, false, true, 3_000_000, NOW, workflowId = "review").toDto(),
+        )
     }
 
     @Test

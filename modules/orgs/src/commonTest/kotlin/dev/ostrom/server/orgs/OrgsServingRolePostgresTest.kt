@@ -152,6 +152,7 @@ class OrgsServingRolePostgresTest {
                     .single()
                     .get("n")
                     .asLong()
-            assertEquals(8L, hardened)
+            // The router's eight, and the member search's (orgs migration 7, owned by ostrom_member_search).
+            assertEquals(9L, hardened)
         }
 }

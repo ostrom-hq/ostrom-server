@@ -74,8 +74,8 @@ data class SpendingDto(
 /**
  * The contract's `ExceededBudget`: a budget spent past its limit in its current day or month.
  *
- * @property scope `organization` or `member`.
- * @property subject For `member`: the member's id.
+ * @property scope `organization`, `member` or `workflow`.
+ * @property subject For `member`: the member's id; for `workflow`: the workflow's id.
  * @property period `day` or `month`.
  * @property usd The limit, US dollars.
  * @property hardStop Whether it stops the calls; false, it only warns and the calls go on.

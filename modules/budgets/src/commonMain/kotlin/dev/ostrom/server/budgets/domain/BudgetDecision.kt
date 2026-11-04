@@ -4,7 +4,7 @@ package dev.ostrom.server.budgets.domain
 import kotlin.time.Instant
 
 /** What a limit applies to. */
-enum class BudgetScope { ORG, MEMBER }
+enum class BudgetScope { ORG, MEMBER, WORKFLOW }
 
 /**
  * Whether a member may spend more. The budgets only decide; the gateway turns [Exhausted] into its answer. Only a
