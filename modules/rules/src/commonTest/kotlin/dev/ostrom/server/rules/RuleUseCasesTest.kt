@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.rules
 
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.rules.domain.models.GateChange
 import dev.ostrom.server.rules.domain.models.InvalidRuleException
 import dev.ostrom.server.rules.domain.models.NewRule
@@ -297,7 +298,12 @@ class RuleUseCasesTest {
         val last = list(orgA, RuleQuery(after = second.next), 2)
         assertEquals(listOf("rule_5"), last.items.map { it.id })
         assertNull(last.next, "The last page")
-        assertEquals(listOf("rule_2"), list(orgA, RuleQuery(), 0).items.map { it.id }, "At least one")
+        assertEquals(emptyList(), list(orgA, RuleQuery(after = RuleCursor("C", "rule_5")), 2).items, "After the last")
+        // A rule the organization does not hold: forged, or another organization's.
+        assertFailsWith<InvalidPageException> { list(orgA, RuleQuery(after = RuleCursor("Z", "rule_9")), 2) }
+        val ofA = RuleQuery(after = RuleCursor("A", "rule_4"))
+        assertFailsWith<InvalidPageException> { list(RulesFixtures.orgB, ofA, 2) }
+        assertFailsWith<InvalidPageException> { list(orgA, RuleQuery(), 0) }
         list(orgA, RuleQuery(), 5_000)
         assertEquals(ListRulesUseCase.MAX_RULES + 1, bench.repository.limits.last(), "At most 1 000")
     }

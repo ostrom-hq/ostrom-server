@@ -2,6 +2,7 @@
 package dev.ostrom.server.automations.domain
 
 import dev.ostrom.server.kernel.auth.MemberDirectory
+import dev.ostrom.server.kernel.errors.Pages
 import kotlinx.serialization.json.JsonElement
 import kotlin.time.Clock
 import kotlin.time.Instant
@@ -190,7 +191,10 @@ class ReadWaitsUseCaseImpl(private val repository: WaitsRepository) : ReadWaitsU
             sessionIds = query.sessionIds,
             runId = query.runId,
         )
-        val items = repository.list(filter, query.before, limit + 1)
+        // A `before` that names no wait of the organization (forged, or another's) is a 400, not an empty page.
+        val items = Pages.checked("before", query.before, repository.list(filter, query.before, limit + 1)) {
+            repository.get(filter.orgId, it) != null
+        }
         return WaitPage(items.take(limit), if (items.size > limit) items[limit - 1].id else null)
     }
 

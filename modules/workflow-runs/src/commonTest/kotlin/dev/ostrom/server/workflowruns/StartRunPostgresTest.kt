@@ -253,8 +253,10 @@ class StartRunPostgresTest {
         assertEquals(HttpStatusCode.NotFound, server.call("user:b:lead", path).status)
         assertEquals(HttpStatusCode.NotFound, server.call("user:b:lead", path, """{"inputs":{"branch":"x"}}""").status)
         assertEquals(emptyList(), server.call("user:a:lead", path).ids(), "Nothing started in A by B")
-        // B's cursor on A's run reads nothing of A.
-        assertEquals(emptyList(), server.call("user:b:lead", "/api/v1/runs?before=${run.id}").ids())
+        // B's cursor on A's run reads nothing of A: it names no run of B's, a 400 (SRV-LECTURES).
+        val replayed = server.call("user:b:lead", "/api/v1/runs?before=${run.id}")
+        assertEquals(HttpStatusCode.BadRequest, replayed.status, replayed.bodyAsText())
+        assertTrue(run.id !in replayed.bodyAsText(), "Nothing of A in the refusal")
     }
 
     @Test

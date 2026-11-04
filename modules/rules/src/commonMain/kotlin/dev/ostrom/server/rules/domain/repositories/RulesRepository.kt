@@ -70,6 +70,15 @@ interface RulesRepository {
     suspend fun decisions(orgId: Uuid, query: DecisionQuery): List<Decision>
 
     /**
+     * Reads one decision.
+     *
+     * @param orgId The organization.
+     * @param id The decision's id.
+     * @return The decision, or null when the organization has none with this id.
+     */
+    suspend fun decision(orgId: Uuid, id: String): Decision?
+
+    /**
      * Marks decisions as signed.
      *
      * @param orgId The organization.

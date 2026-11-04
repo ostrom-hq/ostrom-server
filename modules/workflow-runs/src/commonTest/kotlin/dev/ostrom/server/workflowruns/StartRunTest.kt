@@ -8,6 +8,7 @@ import dev.ostrom.core.api.models.WorkflowStatus
 import dev.ostrom.server.gates.domain.models.ActorKind
 import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.kernel.auth.OrgRole
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.workflowruns.domain.models.InvalidRunException
 import dev.ostrom.server.workflowruns.domain.models.RunAudit
 import dev.ostrom.server.workflowruns.domain.models.RunGraph
@@ -48,10 +49,15 @@ class StartRunTest {
         override suspend fun find(orgId: Uuid, id: String): WorkflowRun? =
             stored.firstOrNull { it.first == orgId && it.second.id == id }?.second
 
-        override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> = stored
-            .filter { it.first == orgId && (query.workflowId == null || it.second.workflowId == query.workflowId) }
-            .map { it.second }
-            .reversed()
+        // Newest first, and after a cursor only the older ones: nothing after a run it does not hold, as the database.
+        override suspend fun runs(orgId: Uuid, query: RunsQuery): List<WorkflowRun> {
+            val newest = stored.filter { it.first == orgId }.map { it.second }.reversed()
+            val older = query.before?.let { before ->
+                val at = newest.indexOfFirst { it.id == before }
+                if (at < 0) emptyList() else newest.drop(at + 1)
+            } ?: newest
+            return older.filter { query.workflowId == null || it.workflowId == query.workflowId }
+        }
     }
 
     private class Workflows(vararg known: RunWorkflow) : RunWorkflows {
@@ -121,6 +127,22 @@ class StartRunTest {
         assertFailsWith<WorkflowNotAcceptedException> { start(owner, "idea", emptyMap()) }
         assertFailsWith<RunWorkflowNotFoundException> { list(owner, RunsQuery(workflowId = "absent")) }
         assertEquals(emptyList(), runs.stored)
+    }
+
+    @Test
+    fun aPageAfterARunIsOlderAndACursorThatNamesNoRunIsRefused() = runTest {
+        val owner = person(OrgRole.OWNER)
+        val first = start(owner, "ship", mapOf("branch" to "main"))
+        val second = start(owner, "ship", mapOf("branch" to "main"))
+        assertEquals(listOf(first), list(owner, RunsQuery(before = second.id)))
+        assertEquals(emptyList(), list(owner, RunsQuery(workflowId = "ship", before = first.id)), "The end: no 400")
+        for (cursor in listOf("not a run", "wfr_${Uuid.random().toHexString()}")) {
+            assertFailsWith<InvalidPageException>(cursor) { list(owner, RunsQuery(before = cursor)) }
+        }
+        val other = owner.copy(orgId = Uuid.random())
+        assertFailsWith<InvalidPageException>("Another organization's run") {
+            list(other, RunsQuery(before = first.id))
+        }
     }
 
     @Test

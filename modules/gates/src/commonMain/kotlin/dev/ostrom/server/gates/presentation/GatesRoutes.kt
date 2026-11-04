@@ -8,11 +8,13 @@ import dev.ostrom.server.gates.domain.models.InvalidGateRequestException
 import dev.ostrom.server.gates.domain.models.RequestStatus
 import dev.ostrom.server.gates.domain.services.GateActorResolver
 import dev.ostrom.server.gates.domain.usecases.GateUse
+import dev.ostrom.server.gates.domain.usecases.ListApprovalsUseCase
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.PrincipalChannel
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.outsideOrganization
 import dev.ostrom.server.kernel.auth.requirePrincipal
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.heldCalls
 import dev.ostrom.server.kernel.http.throttledReads
@@ -58,8 +60,11 @@ fun Route.gatesRoutes(dependencies: GatesRoutesDependencies, throttle: ReadThrot
             get<ApprovalsApi> { params ->
                 val actor = actors.actorOf(call.requirePrincipal(), GateScopes.readingApprovals)
                 val status = params.status?.let { statusOf(it) }
-                val items = approvals(actor, params.mine == true, status, params.limit ?: DEFAULT_PAGE)
-                call.respond(ApprovalsPage(items.map { it.toApproval() }))
+                val size = Pages.size(params.limit, DEFAULT_PAGE, ListApprovalsUseCase.MAX_LIMIT)
+                val before = params.before?.let { Uuid.parseOrNull(it) ?: Pages.unknownCursor("before") }
+                val items = approvals(actor, params.mine == true, status, size, before)
+                val next = if (items.size == size) items.last().request.id.toString() else null
+                call.respond(ApprovalsPage(items.map { it.toApproval() }, next))
             }
         }
         post<GatesApi.Id.Reserve> { params -> respondUse(dependencies, params.parent.id, GateUse.RESERVE) }

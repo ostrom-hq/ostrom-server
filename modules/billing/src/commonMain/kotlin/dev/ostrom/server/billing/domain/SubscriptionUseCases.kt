@@ -3,6 +3,7 @@ package dev.ostrom.server.billing.domain
 
 import dev.ostrom.server.kernel.auth.MemberEmails
 import dev.ostrom.server.kernel.auth.OrgPrincipal
+import dev.ostrom.server.kernel.errors.Pages
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
@@ -298,7 +299,8 @@ class ListInvoicesUseCaseImpl(
 ) : ListInvoicesUseCase {
     override suspend fun invoke(caller: OrgPrincipal, orgId: Uuid, limit: Int): List<Invoice> {
         caller.requireBillingAdminOf(orgId)
+        val size = Pages.size(limit, MAX_INVOICES, MAX_INVOICES)
         val customerId = repository.get(orgId)?.stripeCustomerId ?: return emptyList()
-        return stripe.listInvoices(customerId, limit.coerceIn(1, MAX_INVOICES))
+        return stripe.listInvoices(customerId, size)
     }
 }

@@ -26,6 +26,7 @@ import kotlin.uuid.Uuid
  *
  * @param driver The connection pool.
  */
+@Suppress("TooManyFunctions") // One implementation of the module's one port: its reads, writes and cursor checks.
 class PostgresGitHubDirectoryRepository(private val driver: Driver) : GitHubDirectoryRepository {
     private suspend fun <T> scoped(orgId: Uuid, block: suspend Tx.() -> T): T = driver.transaction {
         val tx = Tx(this)
@@ -79,6 +80,14 @@ class PostgresGitHubDirectoryRepository(private val driver: Driver) : GitHubDire
 
     override suspend fun teams(orgId: Uuid, after: String?, limit: Int): List<GitHubTeam> = scoped(orgId) {
         fetch(keyset(GitHubDirectoryQueries.teams(after != null), orgId, after, limit)).map { it.toTeam() }
+    }
+
+    override suspend fun hasRepo(orgId: Uuid, name: String): Boolean = scoped(orgId) {
+        fetch(Statement.create(GitHubDirectoryQueries.REPO).bind("org", orgId).bind("key", name)).isNotEmpty()
+    }
+
+    override suspend fun hasTeam(orgId: Uuid, slug: String): Boolean = scoped(orgId) {
+        fetch(Statement.create(GitHubDirectoryQueries.TEAM).bind("org", orgId).bind("key", slug)).isNotEmpty()
     }
 
     private fun keyset(sql: String, orgId: Uuid, after: String?, limit: Int): Statement {
@@ -150,6 +159,12 @@ internal object GitHubDirectoryQueries {
     const val STATE = "SELECT synced_at, checked_at FROM github_directory_syncs WHERE org_id = :org"
     private const val REPO_COLUMNS = "name, description, language, default_branch, archived, pushed_at, owners"
     private const val TEAM_COLUMNS = "slug, name, members, repos"
+
+    /** One repository by its key, to check a cursor. */
+    const val REPO = "SELECT name FROM github_repos WHERE org_id = :org AND name = :key"
+
+    /** One team by its key, to check a cursor. */
+    const val TEAM = "SELECT slug FROM github_teams WHERE org_id = :org AND slug = :key"
 
     fun repos(cursor: Boolean): String = keyset("$REPO_COLUMNS FROM github_repos", "name", cursor)
 

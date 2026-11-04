@@ -229,6 +229,13 @@ class GitHubDirectoryPostgresTest {
         val bTeams = server.get("user:b:owner", "/api/v1/orgs/$OTHER_ORG/teams").body<TeamsResponse>()
         assertEquals(listOf("globex-team"), bTeams.items.map { it.slug })
         assertEquals(2, directoryApi.reads, "One read of GitHub per organization")
+        // A cursor: after the last row, nothing; one that names nothing of the organization (org A's in B), a 400.
+        assertEquals(emptyList(), server.get("user:a:owner", "/api/v1/repos?after=web").body<ReposResponse>().items)
+        val teamsOfA = "/api/v1/orgs/$ORG/teams?after=platform"
+        assertEquals(emptyList(), server.get("user:a:owner", teamsOfA).body<TeamsResponse>().items)
+        assertEquals(HttpStatusCode.BadRequest, server.get("user:b:owner", "/api/v1/repos?after=web").status)
+        val bAfterA = "/api/v1/orgs/$OTHER_ORG/teams?after=platform"
+        assertEquals(HttpStatusCode.BadRequest, server.get("user:b:owner", bAfterA).status)
     }
 
     @Test

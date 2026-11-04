@@ -45,6 +45,9 @@ interface AutomationsRepository {
     /** The runs of [automationId], newest first, after [before]. */
     suspend fun listRuns(orgId: Uuid, automationId: Uuid, before: Uuid?, limit: Int): List<AutomationRun>
 
+    /** Whether [id] is a run of [automationId], of [orgId]. */
+    suspend fun hasRun(orgId: Uuid, automationId: Uuid, id: Uuid): Boolean
+
     /** How many runs of [automationId] (of [orgId]) from [sources] and in [statuses] were recorded since [since]. */
     suspend fun countRuns(
         orgId: Uuid,

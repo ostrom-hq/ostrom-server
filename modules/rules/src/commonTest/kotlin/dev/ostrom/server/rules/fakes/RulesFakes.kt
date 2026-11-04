@@ -150,8 +150,15 @@ class FakeRulesRepository : RulesRepository {
 
     override suspend fun rule(orgId: Uuid, id: String): Rule? = rules[orgId to id]
 
-    override suspend fun decisions(orgId: Uuid, query: DecisionQuery): List<Decision> =
-        decisions.filter { it.orgId == orgId }.reversed().take(query.limit)
+    // As the database: after `before`, older decisions only; none after a decision it does not hold.
+    override suspend fun decisions(orgId: Uuid, query: DecisionQuery): List<Decision> {
+        val newest = decisions.filter { it.orgId == orgId }.reversed()
+        val start = query.before?.let { before -> newest.indexOfFirst { it.id == before } + 1 } ?: 0
+        return if (start == 0 && query.before != null) emptyList() else newest.drop(start).take(query.limit)
+    }
+
+    override suspend fun decision(orgId: Uuid, id: String): Decision? =
+        decisions.firstOrNull { it.orgId == orgId && it.id == id }
 
     override suspend fun markSigned(orgId: Uuid, ids: List<String>) {
         for (index in decisions.indices) {

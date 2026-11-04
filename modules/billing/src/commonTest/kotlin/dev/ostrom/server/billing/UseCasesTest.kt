@@ -29,6 +29,7 @@ import dev.ostrom.server.billing.fakes.stripeSubscription
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.auth.PrincipalKind
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -293,7 +294,7 @@ class UseCasesTest {
     }
 
     @Test
-    fun invoicesAreBoundedAndEmptyBeforeTheFirstPurchase() = runTest {
+    fun invoicesAreBoundedRefusedUnderOneAndEmptyBeforeTheFirstPurchase() = runTest {
         val world = World()
         assertEquals(emptyList(), world.invoices(world.admin, world.org, 10))
         world.subscribe()
@@ -302,8 +303,13 @@ class UseCasesTest {
         )
         assertEquals("in_1", world.invoices(world.admin, world.org, 500).single().id)
         assertEquals("invoices cus_1 100", world.stripe.calls.last())
-        world.invoices(world.admin, world.org, 0)
+        world.invoices(world.admin, world.org, 1)
         assertEquals("invoices cus_1 1", world.stripe.calls.last())
+        // A size of 0 or less is refused, before the first purchase too.
+        for (size in listOf(0, -1)) {
+            assertFailsWith<InvalidPageException> { world.invoices(world.admin, world.org, size) }
+            assertFailsWith<InvalidPageException> { World().let { it.invoices(it.admin, it.org, size) } }
+        }
     }
 
     // Change plan, cancel, resume ---------------------------------------------------------------------------------

@@ -4,6 +4,7 @@ package dev.ostrom.server.usage.presentation
 import dev.ostrom.server.kernel.auth.PrincipalKind
 import dev.ostrom.server.kernel.auth.WriteAccess
 import dev.ostrom.server.kernel.auth.authenticated
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.kernel.http.OstromJson
 import dev.ostrom.server.kernel.http.openConnections
 import dev.ostrom.server.secrets.domain.RelayScopes
@@ -64,7 +65,7 @@ fun Route.usageRoutes(dependencies: UsageRoutesDependencies) = with(dependencies
         }
         get<UsageApi.Events> { params ->
             val caller = call.requireCaller(callers, UsageScopes.READ)
-            val limit = params.limit.coerceIn(1, UsageRules.MAX_PAGE)
+            val limit = Pages.size(params.limit, UsageRules.MAX_PAGE, UsageRules.MAX_PAGE)
             val page = listEvents(caller, params.before?.toUsageCursor(), limit)
             val next = if (page.size == limit) page.last().toCursor() else null
             call.respond(UsageEventsPageResponse(page.map { it.toResponse() }, next))

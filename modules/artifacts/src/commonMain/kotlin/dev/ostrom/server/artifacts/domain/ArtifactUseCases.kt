@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.artifacts.domain
 
+import dev.ostrom.server.kernel.errors.Pages
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -142,7 +143,10 @@ internal class ReadArtifactsUseCaseImpl(private val repository: ArtifactsReposit
     override suspend fun list(caller: ArtifactCaller, before: Uuid?, limit: Int?): List<Artifact> {
         val size = limit ?: DEFAULT_PAGE
         ensureValid(size in 1..MAX_PAGE) { "limit must be between 1 and $MAX_PAGE." }
-        return repository.listReadable(caller, before, size)
+        // A `before` that names no artifact of the organization (forged, or another's) is a 400, not an empty page.
+        return Pages.checked("before", before, repository.listReadable(caller, before, size)) {
+            repository.get(caller.orgId, it) != null
+        }
     }
 
     override suspend fun get(caller: ArtifactCaller, id: Uuid): Artifact = rules.readable(caller, id)

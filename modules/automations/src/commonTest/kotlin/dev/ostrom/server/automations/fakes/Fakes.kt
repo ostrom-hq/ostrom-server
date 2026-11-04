@@ -193,8 +193,9 @@ class InMemoryWaits : WaitsRepository {
 
     override suspend fun list(filter: WaitFilter, before: Uuid?, limit: Int): List<Wait> {
         val all = waits.values.reversed().filter { filter.whose(it) && filter.where(it) }
+        // None after a row it does not hold, as the database.
         val start = before?.let { cursor -> all.indexOfFirst { it.id == cursor } + 1 } ?: 0
-        return all.drop(start).take(limit)
+        return if (before != null && start == 0) emptyList() else all.drop(start).take(limit)
     }
 
     override suspend fun resolve(orgId: Uuid, id: Uuid, answer: WaitAnswer): Wait? {

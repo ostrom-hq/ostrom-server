@@ -24,6 +24,11 @@ object ContractFixtures {
               "parameters": [{"$R": "#/components/parameters/Org"}],
               "get": {
                 "operationId": "listThings", "x-ostrom-status": "served",
+                "parameters": [
+                  {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100}},
+                  {"name": "after", "in": "query", "schema": {"$R": "#/components/schemas/Cursor"}},
+                  {"name": "tag", "in": "query"}
+                ],
                 "responses": {
                   "200": {"content": {"application/json": {"schema": {"$R": "#/components/schemas/Things"}}}},
                   "401": {"$R": "#/components/responses/Error"}
@@ -37,6 +42,7 @@ object ContractFixtures {
             "/api/v1/things/{id}": {
               "get": {
                 "operationId": "getThing", "x-ostrom-status": "served",
+                "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
                 "responses": {
                   "200": {"content": {"application/json": {"schema": {"$R": "#/components/schemas/Thing"}}}}
                 }
@@ -69,7 +75,9 @@ object ContractFixtures {
             "/api/v1/bare": {"get": {"operationId": "bare", "x-ostrom-status": "served"}}
           },
           "components": {
+            "parameters": {"Org": {"name": "org", "in": "header", "schema": {"type": "string"}}},
             "schemas": {
+              "Cursor": {"type": "string", "format": "uuid"},
               "Things": {
                 "type": "object",
                 "properties": {"items": {"type": "array", "items": {"$R": "#/components/schemas/Thing"}}},

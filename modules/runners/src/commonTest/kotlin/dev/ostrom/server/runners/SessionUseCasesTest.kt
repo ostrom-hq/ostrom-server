@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.runners
 
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.runners.domain.AgentKind
 import dev.ostrom.server.runners.domain.Caller
 import dev.ostrom.server.runners.domain.ChangeCloudSessionUseCaseImpl
@@ -231,6 +232,9 @@ class SessionUseCasesTest {
         assertEquals(listOf("s2", "s1", "s0"), list(alice, null, null).map { it.name })
         assertEquals(listOf("s2", "s1"), list(alice, null, 2).map { it.name })
         assertEquals(listOf("s0"), list(alice, created[1].id, 2).map { it.name })
+        assertEquals(emptyList(), list(alice, created[0].id, 2), "After the oldest")
+        assertFailsWith<InvalidPageException> { list(alice, Uuid.random(), 2) }
+        assertFailsWith<InvalidPageException> { list(Caller(ORG_B, "alice"), created[0].id, 2) }
         assertFailsWith<InvalidCloudSessionRequestException> { list(alice, null, 0) }
         assertFailsWith<InvalidCloudSessionRequestException> { list(alice, null, 51) }
     }

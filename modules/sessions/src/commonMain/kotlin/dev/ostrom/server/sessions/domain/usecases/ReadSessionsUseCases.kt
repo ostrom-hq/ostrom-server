@@ -6,6 +6,7 @@ import dev.ostrom.server.gates.domain.models.GateActor
 import dev.ostrom.server.gates.domain.models.GateStatus
 import dev.ostrom.server.gates.domain.usecases.ListSessionGatesUseCase
 import dev.ostrom.server.gates.domain.usecases.SessionGate
+import dev.ostrom.server.kernel.errors.Pages
 import dev.ostrom.server.receipts.domain.usecases.GetReceiptUseCase
 import dev.ostrom.server.sessions.domain.models.GateAnswer
 import dev.ostrom.server.sessions.domain.models.Session
@@ -104,9 +105,11 @@ class ListSessionsUseCaseImpl(private val repository: SessionsRepository) : List
     override suspend fun invoke(actor: GateActor, query: SessionQuery): List<Session> {
         // S2-48: an agent token lists its launch's sessions only, and nothing without a launch.
         if (actor.kind == ActorKind.AGENT_SESSION && actor.launchId == null) return emptyList()
-        return repository.list(
+        val page = repository.list(
             actor.orgId,
             query.copy(launchId = actor.launchId, limit = query.limit.coerceIn(1, SessionQuery.PAGE)),
         )
+        // A `before` that names no session of the organization (forged, or another's) is a 400, not an empty page.
+        return Pages.checked("before", query.before, page) { repository.get(actor.orgId, it) != null }
     }
 }

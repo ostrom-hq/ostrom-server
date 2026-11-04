@@ -84,13 +84,15 @@ class MemberUseCasesTest {
         val third = list(org.id, carl.id, second.next, 2)
         assertTrue(third.items.isEmpty())
         assertNull(third.next)
-        assertTrue(list(org.id, carl.id, Uuid.random(), 2).items.isEmpty())
+        assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, Uuid.random(), 2) }
+        // The last member as the cursor names a member: an empty page, not a refusal.
+        assertTrue(list(org.id, carl.id, ghost.id, 2).items.isEmpty())
         // The search: a prefix of the login or name, any case, after a member; the ghost is never found.
         assertEquals(listOf("bob"), list(org.id, carl.id, null, 2, "B").items.map { it.login })
         val afterBob = list(org.id, carl.id, whole.items[1].member.id, 2, "d")
         assertEquals(listOf("dana"), afterBob.items.map { it.login })
         assertNull(afterBob.next)
-        assertTrue(list(org.id, carl.id, Uuid.random(), 2, "d").items.isEmpty())
+        assertFailsWith<InvalidOrgRequestException> { list(org.id, carl.id, Uuid.random(), 2, "d") }
         // A person deleted between the search and the read of the page is not shown.
         val vanished = object : MembersRepository by world.members {
             override suspend fun search(orgId: Uuid, prefix: String, after: Uuid?, limit: Int) =

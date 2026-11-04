@@ -3,6 +3,7 @@ package dev.ostrom.server.workflowruns
 
 import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageMode
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import dev.ostrom.server.sessions.domain.models.NotYourSessionException
 import dev.ostrom.server.sessions.domain.models.SessionClosedException
 import dev.ostrom.server.workflowruns.domain.models.NotInPackageException
@@ -137,8 +138,10 @@ class NotificationsTest {
 
     @Test
     fun theNotificationsAreReadByAMemberAndByTheSessionsAgentOnly() = runTest {
-        send(AGENT, request())
+        val sent = send(AGENT, request())
         assertEquals(1, list(BOB, RunQuery(sessionId = "s-1")).size)
+        assertTrue(list(ADA, RunQuery(before = sent.id)).isEmpty(), "After the last notification")
+        assertFailsWith<InvalidPageException> { list(ADA, RunQuery(before = "nope")) }
         assertEquals(1, list(ADA, RunQuery()).size)
         assertEquals(1, list(AGENT, RunQuery(sessionId = "s-1")).size)
         assertTrue(list(AGENT, RunQuery()).isEmpty())

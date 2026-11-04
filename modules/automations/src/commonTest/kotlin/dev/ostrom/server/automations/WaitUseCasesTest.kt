@@ -34,6 +34,7 @@ import dev.ostrom.server.automations.fakes.bob
 import dev.ostrom.server.automations.fakes.carol
 import dev.ostrom.server.automations.fakes.dave
 import dev.ostrom.server.automations.fakes.daveKey
+import dev.ostrom.server.kernel.errors.InvalidPageException
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -185,6 +186,9 @@ class WaitUseCasesTest {
         val second = read.list(dave, WaitQuery(assignee = "all", status = "all", limit = 2, before = first.next))
         assertEquals(listOf(forAlice.id), ids(second))
         assertNull(second.next)
+        val all = WaitQuery(assignee = "all", status = "all")
+        assertEquals(emptyList(), ids(read.list(dave, all.copy(before = forAlice.id))), "After the last")
+        assertFailsWith<InvalidPageException> { read.list(dave, all.copy(before = Uuid.random())) }
     }
 
     private val approve = emptyMap<String, JsonElement>()
