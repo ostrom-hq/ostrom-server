@@ -85,7 +85,13 @@ class StoppedApplicationsTest {
      * passed on the leak, #344).
      */
     private fun selecting(): Int? {
-        val pselect6 = PSELECT6[Platform.cpuArchitecture] ?: return null
+        val pselect6 = PSELECT6[Platform.cpuArchitecture]
+        val tids = if (pselect6 == null) null else taskIds()
+        return tids?.filterNot { it.startsWith(".") }
+            ?.count { readFile("/proc/self/task/$it/syscall")?.substringBefore(' ') == pselect6 }
+    }
+
+    private fun taskIds(): List<String>? {
         val dir = opendir("/proc/self/task") ?: return null
         val tids = mutableListOf<String>()
         try {
@@ -97,17 +103,17 @@ class StoppedApplicationsTest {
         } finally {
             closedir(dir)
         }
-        return tids.filterNot { it.startsWith(".") }
-            .count { readFile("/proc/self/task/$it/syscall")?.substringBefore(' ') == pselect6 }
+        return tids
     }
 
     /** [selecting] once two reads a tenth of a second apart agree. */
     private fun settled(): Int? {
-        var count = selecting() ?: return null
-        repeat(SETTLE_TURNS) {
+        var count = selecting()
+        var turns = 0
+        while (count != null && turns < SETTLE_TURNS) {
             usleep(SETTLE_MICROS)
-            val next = selecting()!!
-            if (next == count) return count
+            val next = selecting()
+            turns = if (next == count) SETTLE_TURNS else turns + 1
             count = next
         }
         return count
