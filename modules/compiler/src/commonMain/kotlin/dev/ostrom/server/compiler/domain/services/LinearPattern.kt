@@ -238,7 +238,8 @@ private class PatternParser(private val pattern: String) {
                 val to = pattern[at + 1]
                 at += 2
                 require(c <= to) { "the range $c-$to is reversed." }
-                { x -> x in c..to }
+                val inRange: (Char) -> Boolean = { x -> x in c..to }
+                inRange
             }
             else -> literal(c)
         }
