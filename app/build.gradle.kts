@@ -54,6 +54,8 @@ kotlin {
     targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
         // SIGTERM and SIGINT through a pipe (src/nativeInterop/cinterop/signals.def), for the graceful stop.
         compilations.getByName("main").cinterops.create("signals")
+        // Names the threads of the pools that serve calls (src/nativeInterop/cinterop/threads.def).
+        compilations.getByName("main").cinterops.create("threads")
         binaries.executable {
             baseName = "ostrom-server"
             entryPoint = "dev.ostrom.server.app.main"

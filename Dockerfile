@@ -15,6 +15,10 @@ COPY --from=layout --chown=65532:65532 /out/var/lib/ostrom /var/lib/ostrom
 COPY --chmod=0755 dist/ostrom-server /usr/local/bin/ostrom-server
 WORKDIR /var/lib/ostrom
 ENV OSTROM_SIGNING_KEY_FILE=/var/lib/ostrom/instance-key.pem
+# glibc gives each thread that calls malloc an arena of its own, up to 8 per core, and keeps what it freed there. The
+# server's threads only grow (Ktor's CIO runs on Kotlin/Native's Dispatchers.IO, whose threads never end), and its
+# memory followed them (CHARGE 41672759077: 198 threads, 448 MiB at rest after a burst). Two arenas for all.
+ENV MALLOC_ARENA_MAX=2
 EXPOSE 8080
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/ostrom-server"]
