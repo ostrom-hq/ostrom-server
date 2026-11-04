@@ -83,7 +83,7 @@ fun Route.orgsRoutes(dependencies: OrgsRoutesDependencies) =
             }
             patch<OrgsApi.Org, UpdateOrgRequest> { params, request ->
                 val (orgId, userId) = member(call, params.org, ORGS_WRITE)
-                val change = OrgChange(request.name, request.timeZone, request.slug)
+                val change = OrgChange(request.name, request.timeZone, request.slug, request.hooksDeadlineSeconds)
                 call.respond(orgs.update(orgId, userId, change).toOrgResponse())
             }
             delete<OrgsApi.Org> { params ->
@@ -255,6 +255,7 @@ private fun Membership.toOrgResponse() =
         member.role.key(),
         org.createdAt.toString(),
         org.timeZone,
+        org.hooksDeadlineSeconds,
     )
 
 internal fun MemberProfile.toMemberResponse() =
