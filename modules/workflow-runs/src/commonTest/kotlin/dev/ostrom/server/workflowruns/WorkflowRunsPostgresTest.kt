@@ -7,6 +7,7 @@ import dev.ostrom.core.api.models.Notification
 import dev.ostrom.core.api.models.NotificationStatus
 import dev.ostrom.core.api.models.PackageEnvelope
 import dev.ostrom.core.api.models.PackageMode
+import dev.ostrom.server.automations.AutomationsModule
 import dev.ostrom.server.compiler.CompilerModule
 import dev.ostrom.server.compiler.domain.models.PackagePin
 import dev.ostrom.server.compiler.domain.models.StoredPackage
@@ -92,7 +93,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class WorkflowRunsPostgresTest {
     private val modules = listOf(
         InstanceModule, IdentityModule, OrgsModule, ReceiptsModule, GatesModule, SessionsModule, CompilerModule,
-        RunnersModule, LaunchesModule, WorkflowRunsModule,
+        RunnersModule, LaunchesModule, AutomationsModule, WorkflowRunsModule,
     )
     private val now = Instant.fromEpochMilliseconds(Clock.System.now().toEpochMilliseconds())
 

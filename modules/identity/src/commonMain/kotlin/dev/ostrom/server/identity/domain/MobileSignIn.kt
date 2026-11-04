@@ -177,17 +177,18 @@ interface MobileTokensRepository {
     suspend fun create(token: ApiToken, secretHash: String, unlockKeyHash: String)
 
     /**
-     * Records an unlock: the token's [ApiToken.authenticatedAt] becomes [at], only when the token is the user's, an
-     * app token, live, and its unlock key has this hash.
+     * Records an unlock: the token's [ApiToken.authenticatedAt] becomes [at], and the request it is for [requestId],
+     * only when the token is the user's, an app token, live, and its unlock key has this hash.
      *
      * @param tokenId The token.
      * @param userId Its owner.
      * @param unlockKeyHash The SHA-256 of the presented unlock key.
      * @param at When.
+     * @param requestId The approval request the unlock proves a yes for, or null: it replaces the previous one.
      *
      * @return True when recorded.
      */
-    suspend fun unlock(tokenId: Uuid, userId: Uuid, unlockKeyHash: String, at: Instant): Boolean
+    suspend fun unlock(tokenId: Uuid, userId: Uuid, unlockKeyHash: String, at: Instant, requestId: String?): Boolean
 }
 
 /** The mobile parameters of a sign-in start are missing or invalid. */

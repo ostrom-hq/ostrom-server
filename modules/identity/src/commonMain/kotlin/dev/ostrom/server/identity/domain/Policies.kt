@@ -107,7 +107,9 @@ val MOBILE_SCOPES: Set<String> = setOf(
 /**
  * How long after the phone's biometric unlock the app's token may say yes (S2-54): the step-up window of a yes. The
  * identity module withholds [ANSWER_SCOPE] outside it, so no gate route can accept a yes from a token lifted from the
- * phone's keychain without its biometrics, whatever it checks itself.
+ * phone's keychain without its biometrics, whatever it checks itself. A yes also takes the unlock bound to its own
+ * request, at most a minute old and used once ([dev.ostrom.server.kernel.auth.PhoneUnlockProofs], Q-APP-STEPUP-RISK):
+ * the five minutes are a no's.
  */
 val MOBILE_UNLOCK_WINDOW: Duration = 5.minutes
 

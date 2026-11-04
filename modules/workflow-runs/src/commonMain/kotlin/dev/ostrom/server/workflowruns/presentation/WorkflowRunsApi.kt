@@ -111,6 +111,7 @@ data class NotificationsPage(val items: List<Notification>, val next: String? = 
  * @property digest The digest signed.
  * @property kid The key that signed it.
  * @property reason Why not.
+ * @property orgBound True when the signed body names the caller's organization.
  */
 @Serializable
 data class VerificationDto(
@@ -118,6 +119,7 @@ data class VerificationDto(
     val digest: String? = null,
     val kid: String? = null,
     val reason: String? = null,
+    val orgBound: Boolean = false,
 )
 
 /**
@@ -167,6 +169,24 @@ class WorkflowRunsOfApi(val id: String, val status: String? = null, val before: 
 @Serializable
 @Resource("/api/v1/runs")
 class RunsApi(val status: String? = null, val before: String? = null)
+
+/**
+ * A run of a workflow, with its visits.
+ *
+ * @property id The run.
+ */
+@Serializable
+@Resource("/api/v1/runs/{id}")
+class RunApi(val id: String)
+
+/**
+ * Cancels a run of a workflow.
+ *
+ * @property id The run.
+ */
+@Serializable
+@Resource("/api/v1/runs/{id}/cancel")
+class RunCancelApi(val id: String)
 
 /**
  * The body of `POST /api/v1/workflows/{id}/runs`.

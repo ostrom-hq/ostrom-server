@@ -50,18 +50,19 @@ class ReceiptCompatTest {
         val keys = FakeKeys(listOf(ReceiptKey(instance.keyId, instance.algorithm, instance.publicKeyPem)))
         val verify = VerifyReceiptUseCaseImpl(FakeReceipts(), keys)
 
-        val outcome = verify.verify(signed)
+        val outcome = verify.verify(ORG_A, signed)
         assertTrue(outcome.ok)
+        assertFalse(outcome.orgBound, "A body that names no organization is never bound to one")
         assertEquals(instance.keyId, outcome.kid)
         assertNull(outcome.reason)
 
-        val tampered = verify.verify(JsonObject(signed + ("initiator" to JsonPrimitive("mallory"))))
+        val tampered = verify.verify(ORG_A, JsonObject(signed + ("initiator" to JsonPrimitive("mallory"))))
         assertFalse(tampered.ok)
         assertNull(tampered.kid)
         assertNotNull(tampered.reason)
 
         keys.keys = listOf(signer.receiptKey())
-        assertFalse(verify.verify(signed).ok, "Only the instance's keys are trusted")
+        assertFalse(verify.verify(ORG_A, signed).ok, "Only the instance's keys are trusted")
     }
 
     @Test

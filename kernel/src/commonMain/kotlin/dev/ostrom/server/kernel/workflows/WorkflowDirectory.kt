@@ -8,7 +8,7 @@ import kotlin.uuid.Uuid
  * the workflow it plays (`createLaunch.workflowId`) and the spending names a workflow, without depending on that
  * module. Unbound, no workflow is known.
  */
-interface WorkflowDirectory {
+fun interface WorkflowDirectory {
     /**
      * The name of one of the organization's workflows.
      *

@@ -167,8 +167,8 @@ enum class GateStatus {
     UNGATED,
 }
 
-/** The path that asked for a gate. */
-enum class AskedVia { HOOK, CI, MCP }
+/** The path that asked for a gate: a workstation's hook, a GitHub check, the MCP, or a gate node of a server's run. */
+enum class AskedVia { HOOK, CI, MCP, WORKFLOW }
 
 /** Whether the person who asked may approve their own action. */
 enum class SelfApprovalPolicy {

@@ -40,6 +40,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -163,8 +164,11 @@ class GateJourneyPostgresTest {
         assertEquals(200, answered.status.value, answered.bodyAsText())
         val receipt = assertNotNull(answered.json()["receipt"]?.jsonObject, answered.bodyAsText())
         assertTrue(receipt["signature"]?.jsonPrimitive?.content.orEmpty().isNotEmpty(), answered.bodyAsText())
-        val verification = koin.get<VerifyReceiptUseCase>().verify(receipt)
-        assertTrue(verification.ok, "verification: $verification")
+        // The receipt names the organization it was signed for: bound there, refused anywhere else.
+        val orgId = Uuid.parse(receipt.getValue("orgId").jsonPrimitive.content)
+        val verification = koin.get<VerifyReceiptUseCase>().verify(orgId, receipt)
+        assertTrue(verification.ok && verification.orgBound, "verification: $verification")
+        assertFalse(koin.get<VerifyReceiptUseCase>().verify(Uuid.random(), receipt).ok, "another organization")
         val decision = receipt.getValue("decisions").jsonArray.single().jsonObject
         assertEquals(result, decision.getValue("result").jsonPrimitive.content)
         assertEquals(COMMIT, receipt.getValue("subject").jsonObject.getValue("id").jsonPrimitive.content)
