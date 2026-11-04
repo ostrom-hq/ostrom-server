@@ -10,6 +10,7 @@ import dev.ostrom.server.kernel.module.ServerModule
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.domain.services.AgentTokenService
 import dev.ostrom.server.launches.domain.services.CloudExecutions
+import dev.ostrom.server.launches.domain.services.HooksCheckRules
 import dev.ostrom.server.launches.domain.services.LaunchModelRules
 import dev.ostrom.server.launches.domain.services.LauncherResolver
 import dev.ostrom.server.launches.domain.usecases.CheckAgentPolicyUseCase
@@ -21,6 +22,8 @@ import dev.ostrom.server.launches.domain.usecases.EndLaunchUseCaseImpl
 import dev.ostrom.server.launches.domain.usecases.LaunchPolicy
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCase
 import dev.ostrom.server.launches.domain.usecases.OpenRunnerLaunchUseCaseImpl
+import dev.ostrom.server.launches.domain.usecases.ReportHooksMissingUseCase
+import dev.ostrom.server.launches.domain.usecases.ReportHooksMissingUseCaseImpl
 import dev.ostrom.server.launches.infrastructure.IdentityAgentTokens
 import dev.ostrom.server.launches.infrastructure.IdentityLauncherResolver
 import dev.ostrom.server.launches.infrastructure.LaunchAgents
@@ -30,6 +33,7 @@ import dev.ostrom.server.launches.infrastructure.LaunchWaitAgents
 import dev.ostrom.server.launches.infrastructure.LaunchesMigrations
 import dev.ostrom.server.launches.infrastructure.ModelAccessLaunchRules
 import dev.ostrom.server.launches.infrastructure.NoLaunchModelRules
+import dev.ostrom.server.launches.infrastructure.OrgsHooksCheckRules
 import dev.ostrom.server.launches.infrastructure.PostgresLaunchesRepository
 import dev.ostrom.server.launches.infrastructure.RunnerCloudExecutions
 import dev.ostrom.server.launches.presentation.LaunchesRoutesDependencies
@@ -55,6 +59,8 @@ import kotlin.time.Duration.Companion.hours
  * and the usage events ([LaunchRelayCallers]), so that an agent token reaches the organization's MCP servers, and the
  * agent token of the waits MCP server ([LaunchWaitAgents]), so that an agent asks a person. It also opens the launch of
  * a cloud session its runner asks for, and ends a launch when its own agent token asks (the end of `ostrom <agent>`).
+ * A launch tells the CLI when to look for the hooks and whether to stop an agent without them, and the launch's own
+ * agent token records `hooks.missing` in the organization's audit log when none ran.
  * Needs the identity, orgs, gates and runners modules; it binds the secrets module's `CallerResolver` and the
  * automations module's `WaitAgentResolver`, which those modules look up.
  */
@@ -70,12 +76,16 @@ object LaunchesModule : ServerModule {
         single<GateActorResolver> { LaunchGateActors(get(), get()) }
         single<CallerResolver> { LaunchRelayCallers(get(), get()) }
         single<WaitAgentResolver> { LaunchWaitAgents(get(), get()) }
+        single<HooksCheckRules> { OrgsHooksCheckRules(get(), get()) }
         single { LaunchPolicy(get()) }
         single<CheckAgentPolicyUseCase> { CheckAgentPolicyUseCaseImpl(get(), get()) }
-        single<CreateLaunchUseCase> { CreateLaunchUseCaseImpl(get(), get(), get(), get(), workflows = getOrNull()) }
+        single<CreateLaunchUseCase> {
+            CreateLaunchUseCaseImpl(get(), get(), get(), get(), get(), workflows = getOrNull())
+        }
         single<OpenRunnerLaunchUseCase> { OpenRunnerLaunchUseCaseImpl(get(), get()) }
         single<EndLaunchUseCase> { EndLaunchUseCaseImpl(get()) }
-        single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single<ReportHooksMissingUseCase> { ReportHooksMissingUseCaseImpl(get(), get()) }
+        single { LaunchesRoutesDependencies(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     }
 
     override val migrations: List<SchemaMigration> = LaunchesMigrations

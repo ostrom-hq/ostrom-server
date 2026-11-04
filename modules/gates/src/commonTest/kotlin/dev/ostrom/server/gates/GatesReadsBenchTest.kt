@@ -105,9 +105,8 @@ class GatesReadsBenchTest {
             }
         }
         writeReadReport("gates", measures)
-        measures.forEach { it.assertWithinBudget(setOf("gates_gates", "gates_requests")) }
         // No N+1: a page of 100 requests sends a handful of queries, as a page of none does.
-        measures.forEach { assertTrue(it.queries <= MAX_QUERIES, it.describe()) }
+        measures.forEach { it.assertWithinBudget(setOf("gates_gates", "gates_requests"), MAX_QUERIES) }
     }
 
     // acme's gates, requests and session links copied into [org], ids renamed: one org written through the repository

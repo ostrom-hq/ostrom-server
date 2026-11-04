@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.identity.presentation
 
+import dev.ostrom.server.identity.domain.AuditIntegrity
 import dev.ostrom.server.identity.domain.AuditReadForbiddenException
 import dev.ostrom.server.identity.domain.ListOrgAuditUseCase
 import dev.ostrom.server.identity.domain.OrgAuditLine
@@ -10,12 +11,15 @@ import dev.ostrom.server.kernel.auth.PrincipalOrgResolver
 import dev.ostrom.server.kernel.auth.authenticated
 import dev.ostrom.server.kernel.auth.requireOrgPrincipal
 import dev.ostrom.server.kernel.auth.requireScope
+import dev.ostrom.server.kernel.http.NullsKept
 import dev.ostrom.server.kernel.http.ReadThrottle
 import dev.ostrom.server.kernel.http.throttledReads
 import io.ktor.resources.Resource
 import io.ktor.server.resources.get
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KeepGeneratedSerializer
 import kotlinx.serialization.Serializable
 
 /** The scope that reads an organization's audit log; a browser session holds it. */
@@ -37,7 +41,10 @@ const val SERVER_ACTOR = "server:ostrom"
 class OrgAuditApi(val actor: String? = null, val event: String? = null, val before: String? = null)
 
 /**
- * A line of the audit log, the contract's `AuditEvent`.
+ * A line of the audit log, the contract's `AuditEvent`, with what a verifier needs to check it: the canonical form
+ * (`auditCanonicalForm`) is rebuilt from [id], [sequence], [event] (its `action`), [actorId], [meta] (its `details`),
+ * [at], the organization, [previousHash] and [subject] (`targetType:targetId`, split at its first colon); its SHA-256
+ * is [hash], [signature] verifies with the instance key [keyId], and [previousHash] is the [hash] of the line before.
  *
  * @property id The id of the signed event.
  * @property at When (ISO 8601).
@@ -46,8 +53,17 @@ class OrgAuditApi(val actor: String? = null, val event: String? = null, val befo
  *   not a person's (`service:…`, `agent:…`), [SERVER_ACTOR] for the server itself.
  * @property subject What it happened to, `type:id`.
  * @property meta Extra facts, never a secret; `credential` says how the person was signed in.
+ * @property sequence The position in the organization's chain, from 1.
+ * @property actorId The person's id as signed, null for a credential that is not a person's or the server.
+ * @property previousHash The hash of the previous line of the chain, null for the first one.
+ * @property hash The SHA-256 (hex) of the canonical form.
+ * @property signature The instance's Ed25519 signature of the canonical form (base64).
+ * @property keyId The instance key that signed it (`GET /api/v1/instance/keys`).
+ * @property integrity What the server found when it read the line: `verified`, `altered` or `unlinked`.
  */
-@Serializable
+@OptIn(ExperimentalSerializationApi::class)
+@KeepGeneratedSerializer
+@Serializable(with = OrgAuditEventResponse.Answer::class)
 data class OrgAuditEventResponse(
     val id: String,
     val at: String,
@@ -55,7 +71,17 @@ data class OrgAuditEventResponse(
     val actor: String,
     val subject: String,
     val meta: Map<String, String>,
-)
+    val sequence: Long,
+    val actorId: String?,
+    val previousHash: String?,
+    val hash: String,
+    val signature: String,
+    val keyId: String,
+    val integrity: String,
+) {
+    /** Writes the fields the contract declares required and nullable as `null` when null. */
+    object Answer : NullsKept<OrgAuditEventResponse>(generatedSerializer(), "actorId", "previousHash")
+}
 
 /**
  * A page of the audit log.
@@ -103,7 +129,17 @@ private fun OrgAuditLine.toResponse() = OrgAuditEventResponse(
     actor(),
     "${event.entry.targetType}:${event.entry.targetId}",
     event.entry.details,
+    event.sequence,
+    event.entry.actorId?.toString(),
+    event.previousHash,
+    event.hash,
+    event.signature,
+    event.keyId,
+    integrity.wireName(),
 )
+
+/** The contract's name of an integrity: `verified`, `altered`, `unlinked`. */
+internal fun AuditIntegrity.wireName(): String = name.lowercase()
 
 // The person's login, their id once they no longer exist, a credential that is not a person's by its kind and id (as
 // IdentityOrgAuditTrail writes them), or the server.

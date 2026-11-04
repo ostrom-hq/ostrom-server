@@ -71,11 +71,15 @@ class FakeOrgs(private val store: OrgsStore, private val audit: OrgAudit) : Orgs
     /** How many times [update] wrote. */
     var updates = 0
 
-    override suspend fun update(id: Uuid, name: String?, timeZone: String?) {
+    override suspend fun update(id: Uuid, name: String?, timeZone: String?, hooksDeadlineSeconds: Int?) {
         if (id in store.deleted) return
         updates++
         val org = store.orgs.getValue(id)
-        store.orgs[id] = org.copy(name = name ?: org.name, timeZone = timeZone ?: org.timeZone)
+        store.orgs[id] = org.copy(
+            name = name ?: org.name,
+            timeZone = timeZone ?: org.timeZone,
+            hooksDeadlineSeconds = hooksDeadlineSeconds ?: org.hooksDeadlineSeconds,
+        )
     }
 
     /** Whether [delete] fails, as a database that goes down in the middle of it: nothing is written. */

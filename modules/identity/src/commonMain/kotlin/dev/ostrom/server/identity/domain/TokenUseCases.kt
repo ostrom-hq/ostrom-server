@@ -81,8 +81,7 @@ class CreatePersonalTokenUseCaseImpl(
         scopes: Collection<String>,
         lifetime: Duration?,
     ): IssuedToken {
-        val label = name.trim()
-        if (label.isEmpty() || label.length > MAX_NAME) throw InvalidTokenNameException()
+        val label = tokenName(name)
         val validScopes = validateScopes(scopes)
         if (lifetime != null && (lifetime < 1.days || lifetime > MAX_TOKEN_LIFETIME)) {
             throw InvalidTokenLifetimeException()
@@ -97,10 +96,6 @@ class CreatePersonalTokenUseCaseImpl(
         val details = mapOf("scopes" to validScopes.sorted().joinToString(" "))
         audit.record(AuditEntry(null, userId, "token.created", "token", issued.token.id.toString(), details))
         return issued
-    }
-
-    private companion object {
-        const val MAX_NAME = 100
     }
 }
 

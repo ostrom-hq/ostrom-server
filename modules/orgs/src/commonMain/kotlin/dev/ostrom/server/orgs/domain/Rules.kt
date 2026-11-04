@@ -17,6 +17,15 @@ const val MAX_ORG_NAME = 100
 /** An organization's time zone until an owner or admin sets one. */
 const val DEFAULT_TIME_ZONE = "UTC"
 
+/** How long the launcher waits for the first hook of an agent session until an owner or admin sets it, in seconds. */
+const val DEFAULT_HOOKS_DEADLINE = 15
+
+/** The shortest wait for the hooks an organization may set, in seconds: a slow start is not missing hooks. */
+const val MIN_HOOKS_DEADLINE = 5
+
+/** The longest wait for the hooks an organization may set, in seconds. */
+const val MAX_HOOKS_DEADLINE = 300
+
 /**
  * How long a deleted organization is kept, out of everyone's reach, before it is erased for good (its audit log
  * stays).
@@ -136,6 +145,22 @@ fun validTimeZone(id: String): String {
         InvalidOrgRequestException("The time zone must be a known IANA zone, such as Europe/Paris.")
     }
     return id
+}
+
+/**
+ * Checks how long the launcher waits for the first hook of an agent session.
+ *
+ * @param seconds The wait, in seconds.
+ * @return The wait.
+ * @throws InvalidOrgRequestException Outside [MIN_HOOKS_DEADLINE] to [MAX_HOOKS_DEADLINE].
+ */
+fun validHooksDeadline(seconds: Int): Int {
+    ensure(seconds in MIN_HOOKS_DEADLINE..MAX_HOOKS_DEADLINE) {
+        InvalidOrgRequestException(
+            "hooksDeadlineSeconds: between $MIN_HOOKS_DEADLINE and $MAX_HOOKS_DEADLINE seconds."
+        )
+    }
+    return seconds
 }
 
 /**

@@ -228,6 +228,10 @@ jobs:
           umask 077
           psql -h localhost -U ostrom -d ostrom_ci -v ON_ERROR_STOP=1 -f "$RUNNER_TEMP/database-roles.sql"
           docker run --rm --network host -e OSTROM_DATABASE_MIGRATION_URL="$OWNER_URL" "$IMAGE" migrate
+          # Two organizations for the members search (ostrom-web e2e-real/membersSearch.spec.ts): one of 121 people,
+          # past the console's page of 100, which the free plan's 5 seats keep the API from making, and another team
+          # the search must not reach. Written as the migration role, once migrated; the server is unchanged.
+          psql "$OWNER_URL" -q -v ON_ERROR_STOP=1 -f server/ci/seed-large-org.sql
           # The server's non-root user writes the mails (0644); the journeys, as the runner's user, read them.
           mkdir -p "$RUNNER_TEMP/ostrom-mail" && chmod 0777 "$RUNNER_TEMP/ostrom-mail"
           # Test values only: sign-in mails are written to a directory, the console is `vite preview` on

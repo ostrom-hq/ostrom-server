@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 package dev.ostrom.server.launches.fakes
 
+import dev.ostrom.server.kernel.audit.OrgAuditRecord
+import dev.ostrom.server.kernel.audit.OrgAuditTrail
 import dev.ostrom.server.kernel.auth.AuthenticatedPrincipal
 import dev.ostrom.server.kernel.auth.OrgPrincipal
 import dev.ostrom.server.kernel.auth.OrgRole
 import dev.ostrom.server.kernel.workflows.WorkflowDirectory
+import dev.ostrom.server.launches.domain.models.HooksCheck
 import dev.ostrom.server.launches.domain.models.Launch
 import dev.ostrom.server.launches.domain.models.LaunchLimit
 import dev.ostrom.server.launches.domain.models.Launcher
 import dev.ostrom.server.launches.domain.repositories.LaunchesRepository
 import dev.ostrom.server.launches.domain.services.AgentTokenService
+import dev.ostrom.server.launches.domain.services.HooksCheckRules
 import dev.ostrom.server.launches.domain.services.LaunchModelRules
 import dev.ostrom.server.launches.domain.services.LauncherResolver
 import kotlin.time.Clock
@@ -115,5 +119,24 @@ class FakeWorkflows(private val names: Map<Pair<Uuid, String>, String>) : Workfl
     override suspend fun name(orgId: Uuid, workflowId: String): String? {
         asked += orgId to workflowId
         return names[orgId to workflowId]
+    }
+}
+
+/** Answers what it is set to, and remembers what it was asked. */
+class FakeHooksCheckRules(var afterSeconds: Int = 15, var stopAgent: Boolean = false) : HooksCheckRules {
+    val asked = mutableListOf<Pair<Uuid, String?>>()
+
+    override suspend fun check(orgId: Uuid, repo: String?): HooksCheck {
+        asked += orgId to repo
+        return HooksCheck(afterSeconds, stopAgent)
+    }
+}
+
+/** Keeps what was written to the audit log. */
+class RecordingAudit : OrgAuditTrail {
+    val records = mutableListOf<OrgAuditRecord>()
+
+    override suspend fun record(record: OrgAuditRecord) {
+        records += record
     }
 }
